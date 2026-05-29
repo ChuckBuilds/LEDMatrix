@@ -165,16 +165,36 @@ class PluginLoader:
         if not requirements_file.exists():
             return True  # No dependencies needed
         marker_path = plugin_dir_resolved / ".dependencies_installed"
-        current_hash = hashlib.sha256(requirements_file.read_bytes()).hexdigest()
+
+        # Validate both paths stay within the plugin directory (path containment check)
+        try:
+            requirements_file.relative_to(plugin_dir_resolved)
+            marker_path.relative_to(plugin_dir_resolved)
+        except ValueError:
+            self.logger.error("Dependency paths outside plugin directory for %s", plugin_id)
+            return False
+
+        try:
+            current_hash = hashlib.sha256(requirements_file.read_bytes()).hexdigest()
+        except OSError as e:
+            self.logger.error("Failed to read requirements.txt for %s: %s", plugin_id, e)
+            return False
 
         # Skip if requirements.txt hasn't changed since last install
         if marker_path.exists():
-            stored_hash = marker_path.read_text(encoding='utf-8').strip()
-            if stored_hash == current_hash:
-                self.logger.debug("Dependencies already installed for %s (requirements unchanged)", plugin_id)
-                return True
-            self.logger.info("Requirements changed for %s, reinstalling dependencies", plugin_id)
-        
+            try:
+                stored_hash = marker_path.read_text(encoding='utf-8').strip()
+            except OSError as e:
+                self.logger.warning(
+                    "Could not read dependency marker for %s (%s), will reinstall dependencies",
+                    plugin_id, e
+                )
+            else:
+                if stored_hash == current_hash:
+                    self.logger.debug("Dependencies already installed for %s (requirements unchanged)", plugin_id)
+                    return True
+                self.logger.info("Requirements changed for %s, reinstalling dependencies", plugin_id)
+
         try:
             self.logger.info("Installing dependencies for plugin %s...", plugin_id)
             result = subprocess.run(
@@ -184,10 +204,13 @@ class PluginLoader:
                 timeout=timeout,
                 check=False
             )
-            
+
             if result.returncode == 0:
-                marker_path.write_text(current_hash, encoding='utf-8')
-                ensure_file_permissions(marker_path, get_plugin_file_mode())
+                try:
+                    marker_path.write_text(current_hash, encoding='utf-8')
+                    ensure_file_permissions(marker_path, get_plugin_file_mode())
+                except OSError as marker_err:
+                    self.logger.debug("Could not write dependency marker for %s: %s", plugin_id, marker_err)
                 self.logger.info("Dependencies installed successfully for %s", plugin_id)
                 return True
             else:
@@ -202,8 +225,11 @@ class PluginLoader:
                         "Assuming they are satisfied: %s",
                         plugin_id, stderr.strip()
                     )
-                    marker_path.write_text(current_hash, encoding='utf-8')
-                    ensure_file_permissions(marker_path, get_plugin_file_mode())
+                    try:
+                        marker_path.write_text(current_hash, encoding='utf-8')
+                        ensure_file_permissions(marker_path, get_plugin_file_mode())
+                    except OSError as marker_err:
+                        self.logger.debug("Could not write dependency marker for %s: %s", plugin_id, marker_err)
                     return True
                 self.logger.warning(
                     "Dependency installation returned non-zero exit code for %s: %s",
