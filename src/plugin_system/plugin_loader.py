@@ -609,7 +609,12 @@ class PluginLoader:
         """
         # Install dependencies if needed
         if install_deps:
-            self.install_dependencies(plugin_dir, plugin_id, plugins_dir=plugins_dir)
+            if not self.install_dependencies(plugin_dir, plugin_id, plugins_dir=plugins_dir):
+                raise PluginError(
+                    f"Dependency installation failed for plugin {plugin_id} in {plugin_dir}",
+                    plugin_id=plugin_id,
+                    context={'plugin_dir': str(plugin_dir)},
+                )
         
         # Load module
         entry_point = manifest.get('entry_point', 'manager.py')
