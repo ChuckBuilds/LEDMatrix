@@ -239,6 +239,28 @@
             return;
         }
 
+        // Remove any existing delegated listener before re-render
+        if (st._gridClickHandler) grid.removeEventListener('click', st._gridClickHandler);
+        if (st._gridChangeHandler) grid.removeEventListener('change', st._gridChangeHandler);
+
+        // Event delegation: handles edit/delete/toggle via data attributes so
+        // filenames and category names are never interpolated into JS string literals.
+        st._gridClickHandler = function(e) {
+            const btn = e.target.closest('[data-pfm-action]');
+            if (!btn) return;
+            const action = btn.dataset.pfmAction;
+            const fId    = btn.dataset.pfmField;
+            if (action === 'edit')   window._pfmOpenEdit(fId, btn.dataset.pfmFile);
+            if (action === 'delete') window._pfmOpenDelete(fId, btn.dataset.pfmFile);
+        };
+        st._gridChangeHandler = function(e) {
+            const inp = e.target.closest('[data-pfm-action="toggle"]');
+            if (!inp) return;
+            window._pfmToggle(inp.dataset.pfmField, inp.dataset.pfmCategory, inp.checked);
+        };
+        grid.addEventListener('click',  st._gridClickHandler);
+        grid.addEventListener('change', st._gridChangeHandler);
+
         grid.innerHTML = st.files.map(f => `
             <div class="pfm-card${f.enabled === false ? ' disabled' : ''}" data-filename="${escHtml(f.filename)}" data-category="${escHtml(f.category_name)}">
                 <div class="pfm-card-top">
@@ -246,7 +268,8 @@
                     ${st.actions.toggle ? `
                     <label class="pfm-toggle-cb" title="${f.enabled !== false ? 'Click to disable' : 'Click to enable'}">
                         <input type="checkbox" ${f.enabled !== false ? 'checked' : ''}
-                            onchange="window._pfmToggle('${fieldId}','${escHtml(f.category_name)}',this.checked)">
+                            data-pfm-action="toggle" data-pfm-field="${escHtml(fieldId)}"
+                            data-pfm-category="${escHtml(f.category_name)}">
                         <span class="pfm-toggle-slider"></span>
                     </label>` : ''}
                 </div>
@@ -260,12 +283,14 @@
                 <div class="pfm-card-actions">
                     ${st.actions.get && st.actions.save ? `
                     <button class="pfm-btn pfm-btn-primary"
-                            onclick="window._pfmOpenEdit('${fieldId}','${escHtml(f.filename)}')">
+                            data-pfm-action="edit" data-pfm-field="${escHtml(fieldId)}"
+                            data-pfm-file="${escHtml(f.filename)}">
                         <i class="fas fa-edit"></i> Edit
                     </button>` : ''}
                     ${st.actions.delete ? `
                     <button class="pfm-btn pfm-btn-danger pfm-btn-sm"
-                            onclick="window._pfmOpenDelete('${fieldId}','${escHtml(f.filename)}')">
+                            data-pfm-action="delete" data-pfm-field="${escHtml(fieldId)}"
+                            data-pfm-file="${escHtml(f.filename)}">
                         <i class="fas fa-trash"></i>
                     </button>` : ''}
                 </div>
@@ -277,27 +302,30 @@
     window._pfmOpenEdit = async function (fieldId, filename) {
         const st = getState(fieldId);
         const overlay = createOverlay(fieldId);
-        overlay.innerHTML = `
-            <div class="pfm-modal">
-                <div class="pfm-modal-header">
-                    <span class="pfm-modal-title"><i class="fas fa-edit mr-2"></i>${escHtml(filename)}</span>
-                    <button class="pfm-btn pfm-btn-secondary pfm-btn-sm"
-                            onclick="window._pfmCloseModal('${fieldId}')">
-                        <i class="fas fa-times"></i>
-                    </button>
-                </div>
-                <div class="pfm-modal-body" id="${fieldId}_edit_body">
-                    <div class="pfm-empty"><i class="fas fa-spinner fa-spin"></i>Loading…</div>
-                </div>
-                <div class="pfm-modal-footer">
-                    <button class="pfm-btn pfm-btn-secondary"
-                            onclick="window._pfmCloseModal('${fieldId}')">Cancel</button>
-                    <button class="pfm-btn pfm-btn-primary" id="${fieldId}_save_btn"
-                            onclick="window._pfmSave('${fieldId}','${escHtml(filename)}')">
-                        <i class="fas fa-save mr-1"></i>Save
-                    </button>
-                </div>
+        // Build modal using DOM methods so filename never enters a JS string literal.
+        const modal = document.createElement('div');
+        modal.className = 'pfm-modal';
+        modal.innerHTML = `
+            <div class="pfm-modal-header">
+                <span class="pfm-modal-title"><i class="fas fa-edit mr-2"></i>${escHtml(filename)}</span>
+                <button class="pfm-btn pfm-btn-secondary pfm-btn-sm" id="${escHtml(fieldId)}_modal_close">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="pfm-modal-body" id="${escHtml(fieldId)}_edit_body">
+                <div class="pfm-empty"><i class="fas fa-spinner fa-spin"></i>Loading…</div>
+            </div>
+            <div class="pfm-modal-footer">
+                <button class="pfm-btn pfm-btn-secondary" id="${escHtml(fieldId)}_modal_cancel">Cancel</button>
+                <button class="pfm-btn pfm-btn-primary" id="${escHtml(fieldId)}_save_btn">
+                    <i class="fas fa-save mr-1"></i>Save
+                </button>
             </div>`;
+        overlay.appendChild(modal);
+        // Bind events after DOM insertion — filename captured in closure, not in HTML.
+        modal.querySelector(`#${CSS.escape(fieldId)}_modal_close`).addEventListener('click', () => window._pfmCloseModal(fieldId));
+        modal.querySelector(`#${CSS.escape(fieldId)}_modal_cancel`).addEventListener('click', () => window._pfmCloseModal(fieldId));
+        modal.querySelector(`#${CSS.escape(fieldId)}_save_btn`).addEventListener('click', () => window._pfmSave(fieldId, filename));
 
         const data = await callAction(st.pluginId, st.actions.get, { filename }).catch(() => null);
         const body = document.getElementById(`${fieldId}_edit_body`);
@@ -307,18 +335,20 @@
         }
 
         const content = data.content || data.data || {};
-        st._editData = content;
         st._editFilename = filename;
 
         if (isTabular(content)) {
+            // Table path: track cell edits live in _editData
+            st._editData = content;
             renderEntryTable(fieldId, body, content);
         } else {
-            // Fallback: JSON textarea
+            // Textarea path: _editData stays null; save() reads from the <textarea>
+            st._editData = null;
             body.innerHTML = `
-                <textarea id="${fieldId}_json_ta" rows="20"
+                <textarea id="${escHtml(fieldId)}_json_ta" rows="20"
                     style="width:100%;font-family:monospace;font-size:.75rem;border:1px solid #d1d5db;border-radius:.375rem;padding:.5rem;"
                 >${escHtml(JSON.stringify(content, null, 2))}</textarea>
-                <div id="${fieldId}_json_err" style="color:#dc2626;font-size:.75rem;margin-top:.25rem;"></div>`;
+                <div id="${escHtml(fieldId)}_json_err" style="color:#dc2626;font-size:.75rem;margin-top:.25rem;"></div>`;
         }
     };
 
@@ -401,13 +431,22 @@
             st._tableCols = cols;
         }
 
+        // Store buildPage in per-instance state so multiple instances don't
+        // clobber each other's pagination via a shared global.
+        st._buildPage = buildPage;
         buildPage(st._tablePage || 1);
-        window._pfmTablePage = function (fId, p) {
-            const s = getState(fId);
-            const totalP = Math.ceil(s._tableEntries.length / s.entriesPerPage);
-            buildPage(Math.max(1, Math.min(p, totalP)));
-        };
     }
+
+    // Global dispatcher — resolves the per-instance buildPage from state so
+    // multiple plugin-file-manager instances don't clobber each other.
+    window._pfmTablePage = function (fId, p) {
+        const s = getState(fId);
+        if (s._buildPage) {
+            const total = s._tableEntries ? s._tableEntries.length : 0;
+            const totalP = Math.ceil(total / s.entriesPerPage) || 1;
+            s._buildPage(Math.max(1, Math.min(p, totalP)));
+        }
+    };
 
     window._pfmCellEdit = function (fieldId, day, col, value) {
         const st = getState(fieldId);
@@ -454,30 +493,32 @@
 
     window._pfmOpenDelete = function (fieldId, filename) {
         const overlay = createOverlay(fieldId);
-        overlay.innerHTML = `
-            <div class="pfm-modal" style="max-width:28rem;">
-                <div class="pfm-modal-header">
-                    <span class="pfm-modal-title"><i class="fas fa-trash mr-2"></i>Delete File</span>
-                    <button class="pfm-btn pfm-btn-secondary pfm-btn-sm"
-                            onclick="window._pfmCloseModal('${fieldId}')">
-                        <i class="fas fa-times"></i>
-                    </button>
+        const modal = document.createElement('div');
+        modal.className = 'pfm-modal';
+        modal.style.maxWidth = '28rem';
+        modal.innerHTML = `
+            <div class="pfm-modal-header">
+                <span class="pfm-modal-title"><i class="fas fa-trash mr-2"></i>Delete File</span>
+                <button class="pfm-btn pfm-btn-secondary pfm-btn-sm" id="${escHtml(fieldId)}_del_close">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="pfm-modal-body">
+                <div class="pfm-danger-box">
+                    <strong>${escHtml(filename)}</strong> will be permanently deleted and removed
+                    from the plugin configuration. This cannot be undone.
                 </div>
-                <div class="pfm-modal-body">
-                    <div class="pfm-danger-box">
-                        <strong>${escHtml(filename)}</strong> will be permanently deleted and removed
-                        from the plugin configuration. This cannot be undone.
-                    </div>
-                </div>
-                <div class="pfm-modal-footer">
-                    <button class="pfm-btn pfm-btn-secondary"
-                            onclick="window._pfmCloseModal('${fieldId}')">Cancel</button>
-                    <button class="pfm-btn pfm-btn-danger"
-                            onclick="window._pfmConfirmDelete('${fieldId}','${escHtml(filename)}')">
-                        <i class="fas fa-trash mr-1"></i>Delete
-                    </button>
-                </div>
+            </div>
+            <div class="pfm-modal-footer">
+                <button class="pfm-btn pfm-btn-secondary" id="${escHtml(fieldId)}_del_cancel">Cancel</button>
+                <button class="pfm-btn pfm-btn-danger" id="${escHtml(fieldId)}_del_confirm">
+                    <i class="fas fa-trash mr-1"></i>Delete
+                </button>
             </div>`;
+        overlay.appendChild(modal);
+        modal.querySelector(`#${CSS.escape(fieldId)}_del_close`).addEventListener('click', () => window._pfmCloseModal(fieldId));
+        modal.querySelector(`#${CSS.escape(fieldId)}_del_cancel`).addEventListener('click', () => window._pfmCloseModal(fieldId));
+        modal.querySelector(`#${CSS.escape(fieldId)}_del_confirm`).addEventListener('click', () => window._pfmConfirmDelete(fieldId, filename));
     };
 
     window._pfmConfirmDelete = async function (fieldId, filename) {
@@ -499,35 +540,38 @@
         const st = getState(fieldId);
         const fields = st.createFields;
         const overlay = createOverlay(fieldId);
-        overlay.innerHTML = `
-            <div class="pfm-modal" style="max-width:32rem;">
-                <div class="pfm-modal-header">
-                    <span class="pfm-modal-title"><i class="fas fa-plus-circle mr-2"></i>Create New File</span>
-                    <button class="pfm-btn pfm-btn-secondary pfm-btn-sm"
-                            onclick="window._pfmCloseModal('${fieldId}')">
-                        <i class="fas fa-times"></i>
-                    </button>
-                </div>
-                <div class="pfm-modal-body">
-                    <div id="${fieldId}_create_err" class="pfm-field-error" style="margin-bottom:.5rem;"></div>
-                    ${fields.map(f => `
-                    <div class="pfm-field">
-                        <label for="${fieldId}_cf_${escHtml(f.key)}">${escHtml(f.label || f.key)}</label>
-                        <input type="text" id="${fieldId}_cf_${escHtml(f.key)}"
-                               placeholder="${escHtml(f.placeholder || '')}"
-                               ${f.pattern ? `pattern="${escHtml(f.pattern)}"` : ''}>
-                        ${f.hint ? `<div class="pfm-field-hint">${escHtml(f.hint)}</div>` : ''}
-                    </div>`).join('')}
-                </div>
-                <div class="pfm-modal-footer">
-                    <button class="pfm-btn pfm-btn-secondary"
-                            onclick="window._pfmCloseModal('${fieldId}')">Cancel</button>
-                    <button class="pfm-btn pfm-btn-create" id="${fieldId}_create_btn"
-                            onclick="window._pfmConfirmCreate('${fieldId}')">
-                        <i class="fas fa-plus mr-1"></i>Create
-                    </button>
-                </div>
+        const modal = document.createElement('div');
+        modal.className = 'pfm-modal';
+        modal.style.maxWidth = '32rem';
+        modal.innerHTML = `
+            <div class="pfm-modal-header">
+                <span class="pfm-modal-title"><i class="fas fa-plus-circle mr-2"></i>Create New File</span>
+                <button class="pfm-btn pfm-btn-secondary pfm-btn-sm" id="${escHtml(fieldId)}_cre_close">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="pfm-modal-body">
+                <div id="${escHtml(fieldId)}_create_err" class="pfm-field-error" style="margin-bottom:.5rem;"></div>
+                ${fields.map(f => `
+                <div class="pfm-field">
+                    <label for="${escHtml(fieldId)}_cf_${escHtml(f.key)}">${escHtml(f.label || f.key)}</label>
+                    <input type="text" id="${escHtml(fieldId)}_cf_${escHtml(f.key)}"
+                           placeholder="${escHtml(f.placeholder || '')}"
+                           ${f.pattern ? `pattern="${escHtml(f.pattern)}"` : ''}>
+                    ${f.hint ? `<div class="pfm-field-hint">${escHtml(f.hint)}</div>` : ''}
+                </div>`).join('')}
+            </div>
+            <div class="pfm-modal-footer">
+                <button class="pfm-btn pfm-btn-secondary" id="${escHtml(fieldId)}_cre_cancel">Cancel</button>
+                <button class="pfm-btn pfm-btn-create" id="${escHtml(fieldId)}_create_btn">
+                    <i class="fas fa-plus mr-1"></i>Create
+                </button>
+            </div>
             </div>`;
+        overlay.appendChild(modal);
+        modal.querySelector(`#${CSS.escape(fieldId)}_cre_close`).addEventListener('click', () => window._pfmCloseModal(fieldId));
+        modal.querySelector(`#${CSS.escape(fieldId)}_cre_cancel`).addEventListener('click', () => window._pfmCloseModal(fieldId));
+        modal.querySelector(`#${CSS.escape(fieldId)}_create_btn`).addEventListener('click', () => window._pfmConfirmCreate(fieldId));
     };
 
     window._pfmConfirmCreate = async function (fieldId) {

@@ -5,6 +5,10 @@ import logging
 import os
 import re
 from pathlib import Path
+
+# Strict allowlists for URL-derived values used in path and script operations.
+_SAFE_PLUGIN_ID_RE = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
+_SAFE_WEB_UI_FILE_RE = re.compile(r'^[a-zA-Z0-9_-]{1,64}\.html$')
 from src.web_interface.secret_helpers import mask_secret_fields
 
 logger = logging.getLogger(__name__)
@@ -110,22 +114,34 @@ def serve_plugin_web_ui(plugin_id, filename):
     Wraps the fragment with a minimal HTML page that injects window.PLUGIN_ID
     and loads Tailwind CSS so the fragment runs correctly in a sandboxed iframe.
     """
+    # Validate URL-derived values against strict allowlists before any path or
+    # script operations.  This satisfies CodeQL py/path-injection and
+    # py/reflected-xss by ensuring neither value contains path separators,
+    # HTML/JS special chars, or other unexpected content.
+    if not _SAFE_PLUGIN_ID_RE.match(plugin_id):
+        return 'Invalid plugin ID', 400, {'Content-Type': 'text/plain'}
+    if not _SAFE_WEB_UI_FILE_RE.match(filename):
+        return 'Invalid filename', 400, {'Content-Type': 'text/plain'}
+
     try:
         _plugins_base = Path(pages_v3.plugin_manager.plugins_dir).resolve()
         _plugin_dir   = (_plugins_base / plugin_id).resolve()
-        # Path traversal guard — plugin_dir must be inside plugins base
+        # Path containment guard — plugin_dir must be inside plugins base
         _plugin_dir.relative_to(_plugins_base)
 
         web_ui_path = (_plugin_dir / 'web_ui' / filename).resolve()
-        # Second guard — web_ui_path must stay inside web_ui/
+        # Second containment guard — must stay inside the plugin's web_ui dir
         web_ui_path.relative_to(_plugin_dir / 'web_ui')
 
         if not web_ui_path.exists():
-            return f'web_ui file not found: {filename}', 404
-        if web_ui_path.suffix.lower() != '.html':
-            return 'Only .html files may be served here', 403
+            return 'Not found', 404, {'Content-Type': 'text/plain'}
 
         fragment = web_ui_path.read_text(encoding='utf-8')
+
+        # json.dumps produces a safe JSON string, but </script> inside it could
+        # break the enclosing script tag.  Re-encode those bytes as Unicode
+        # escapes so the value is inert in an HTML context.
+        safe_plugin_id_js = json.dumps(plugin_id).replace('<', r'<').replace('>', r'>').replace('&', r'&')
 
         page = (
             '<!DOCTYPE html>\n'
@@ -134,8 +150,10 @@ def serve_plugin_web_ui(plugin_id, filename):
             '<meta charset="UTF-8">\n'
             '<meta name="viewport" content="width=device-width,initial-scale=1">\n'
             '<script>\n'
-            # Inject plugin context before the fragment runs
-            f'  window.PLUGIN_ID = {json.dumps(plugin_id)};\n'
+            # Inject plugin context before the fragment runs.
+            # plugin_id is validated to [a-zA-Z0-9_-] above, so this is safe,
+            # but we also Unicode-escape HTML meta-chars as defence in depth.
+            f'  window.PLUGIN_ID = {safe_plugin_id_js};\n'
             '</script>\n'
             # Tailwind v2 CDN — same version used by the parent LEDMatrix UI
             '<link rel="stylesheet" '
@@ -150,10 +168,10 @@ def serve_plugin_web_ui(plugin_id, filename):
         return page, 200, {'Content-Type': 'text/html; charset=utf-8'}
 
     except ValueError:
-        return 'Forbidden', 403
+        return 'Forbidden', 403, {'Content-Type': 'text/plain'}
     except Exception:
         logger.error('Error serving plugin web_ui %s/%s', plugin_id, filename, exc_info=True)
-        return 'Error serving file', 500
+        return 'Error serving file', 500, {'Content-Type': 'text/plain'}
 
 def _load_overview_partial():
     """Load overview partial with system stats"""

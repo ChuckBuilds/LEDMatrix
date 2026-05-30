@@ -526,7 +526,7 @@
                                     {% for col_name in display_columns %}
                                         {% set col_def = item_properties.get(col_name, {}) %}
                                         {% set col_type = col_def.get('type', 'string') %}
-                                        {% set col_xwidget = col_def.get('x-widget', '') %}
+                                        {% set col_xwidget = col_def.get('x-widget') or col_def.get('x_widget', '') %}
                                         {% set col_enum = col_def.get('enum', []) %}
                                         {% set col_value = item.get(col_name, col_def.get('default', '')) %}
                                         {% if col_xwidget == 'date-picker' %}{% set td_min_w = '140px' %}
@@ -1033,7 +1033,7 @@
            or if every action is marked ui_hidden in the manifest. #}
         {% set has_file_manager_widget = namespace(value=false) %}
         {% for _fk, _fp in schema.get('properties', {}).items() %}
-            {% if _fp.get('x-widget') in ('json-file-manager', 'plugin-file-manager') %}
+            {% if (_fp.get('x-widget') or _fp.get('x_widget')) in ('json-file-manager', 'plugin-file-manager') %}
                 {% set has_file_manager_widget.value = true %}
             {% endif %}
         {% endfor %}

@@ -111,16 +111,21 @@
 
     // ─── Helpers ────────────────────────────────────────────────────────────
 
+    // Keys that must never be assigned to prevent prototype pollution.
+    const _FORBIDDEN_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
+
     function setNestedValue(obj, path, value) {
         const parts = path.split('.');
         let cur = obj;
         for (let i = 0; i < parts.length - 1; i++) {
+            if (_FORBIDDEN_KEYS.has(parts[i])) return; // block prototype pollution
             if (cur[parts[i]] === undefined || typeof cur[parts[i]] !== 'object') {
                 cur[parts[i]] = {};
             }
             cur = cur[parts[i]];
         }
-        cur[parts[parts.length - 1]] = value;
+        const lastKey = parts[parts.length - 1];
+        if (!_FORBIDDEN_KEYS.has(lastKey)) cur[lastKey] = value;
     }
 
     function getNestedValue(obj, path) {

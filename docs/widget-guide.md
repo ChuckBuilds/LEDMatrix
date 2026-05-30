@@ -47,7 +47,7 @@ Full inline file management UI for plugins that manage files via the `web_ui_act
 }
 ```
 
-Not all 7 actions are required — omit any key to hide the corresponding UI element (e.g., no `create` = no New File button, no `toggle` = no enable/disable switch).
+**`list` is required** — the widget calls it on render to populate the file grid; omitting it leaves the widget stuck in a loading state. All other actions are optional — omit any key to hide its UI element (e.g., no `create` = no New File button, no `toggle` = no enable/disable switch).
 
 The edit view auto-detects whether file content is tabular (object-of-objects with uniform keys) and shows a paginated table editor with inline cells. Otherwise falls back to a JSON textarea.
 

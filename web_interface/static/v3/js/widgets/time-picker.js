@@ -148,6 +148,7 @@
             onClear: function(fieldId) {
                 const widget = window.LEDMatrixWidgets.get('time-picker');
                 widget.setValue(fieldId, '');
+                widget.validate(fieldId); // refresh required/error state
                 triggerChange(fieldId, '');
             }
         }
