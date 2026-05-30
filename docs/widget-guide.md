@@ -10,6 +10,98 @@ The LEDMatrix Widget Registry system allows plugins to use reusable UI component
 
 ## Available Core Widgets
 
+### Plugin File Manager Widget (`plugin-file-manager`)
+
+Full inline file management UI for plugins that manage files via the `web_ui_actions` system. Renders a card grid, upload zone, create/delete modals, and an entry table editor — entirely inline, no iframe.
+
+`plugin_id` is **automatically injected** from template context. File operations call `/api/v3/plugins/action` immediately on user action; no Save Configuration needed.
+
+**Schema Configuration:**
+```json
+{
+  "file_manager": {
+    "type": "null",
+    "title": "Data Files",
+    "x-widget": "plugin-file-manager",
+    "x-widget-config": {
+      "actions": {
+        "list":   "list-files",
+        "get":    "get-file",
+        "save":   "save-file",
+        "upload": "upload-file",
+        "delete": "delete-file",
+        "create": "create-file",
+        "toggle": "toggle-category"
+      },
+      "upload_hint":      "JSON files with day numbers 1–365 as keys",
+      "directory_label":  "my_data/",
+      "create_fields": [
+        { "key": "category_name", "label": "Category Name",
+          "placeholder": "e.g., my_words", "pattern": "^[a-z0-9_]+$",
+          "hint": "Lowercase letters, numbers, underscores" },
+        { "key": "display_name", "label": "Display Name",
+          "placeholder": "e.g., My Words", "hint": "Optional" }
+      ]
+    }
+  }
+}
+```
+
+Not all 7 actions are required — omit any key to hide the corresponding UI element (e.g., no `create` = no New File button, no `toggle` = no enable/disable switch).
+
+The edit view auto-detects whether file content is tabular (object-of-objects with uniform keys) and shows a paginated table editor with inline cells. Otherwise falls back to a JSON textarea.
+
+**Used by:** of-the-day
+
+---
+
+### Time Picker Widget (`time-picker`)
+
+Single time selection using the browser's native time input. Returns a string in `HH:MM` (24-hour) format. Generic — works in any plugin without configuration.
+
+**Schema Configuration:**
+```json
+{
+  "target_time": {
+    "type": "string",
+    "x-widget": "time-picker",
+    "default": "00:00",
+    "x-options": {
+      "placeholder": "Select time",
+      "clearable": true
+    }
+  }
+}
+```
+
+**Used by:** countdown
+
+---
+
+### File Upload Single Widget (`file-upload-single`)
+
+Single-image upload for string fields. Uploads to the plugin's asset folder (`assets/plugins/<plugin_id>/uploads/`) and sets the string field value to the returned relative path. Shows a thumbnail preview and a clear button. The `plugin_id` is **automatically injected** from the template context — no need to specify it in the schema.
+
+**Schema Configuration:**
+```json
+{
+  "image_path": {
+    "type": "string",
+    "x-widget": "file-upload-single",
+    "x-upload-config": {
+      "allowed_types": ["image/png", "image/jpeg", "image/bmp", "image/gif"],
+      "max_size_mb": 5
+    }
+  }
+}
+```
+
+Note: Unlike `file-upload` (array-level), this widget is for a single `string` field. It is ideal for per-item images inside `array-table` rows.
+
+**Used by:** countdown
+
+---
+
 ### File Upload Widget (`file-upload`)
 
 Upload and manage image files with drag-and-drop support, preview, delete, and scheduling.

@@ -497,15 +497,26 @@
                     {% endif %}
 
                     <div class="array-table-container mt-1" data-field-id="{{ field_id }}" data-full-key="{{ full_key }}" data-max-items="{{ max_items }}" data-plugin-id="{{ plugin_id }}">
-                        <table class="min-w-full divide-y divide-gray-200 border border-gray-300 rounded-lg">
+                        <div style="overflow-x:auto">
+                        <table class="divide-y divide-gray-200 border border-gray-300 rounded-lg" style="min-width:max-content;width:100%">
                             <thead class="bg-gray-50">
                                 <tr>
                                     {% for col_name in display_columns %}
                                         {% set col_def = item_properties.get(col_name, {}) %}
                                         {% set col_title = col_def.get('title', col_name|replace('_', ' ')|title) %}
-                                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{{ col_title }}</th>
+                                        {% set col_xwidget = col_def.get('x-widget', '') %}
+                                        {% set col_enum = col_def.get('enum', []) %}
+                                        {% set col_ctype = col_def.get('type', 'string') %}
+                                        {% if col_xwidget == 'date-picker' %}{% set col_min_w = '140px' %}
+                                        {% elif col_xwidget == 'time-picker' %}{% set col_min_w = '115px' %}
+                                        {% elif col_xwidget == 'file-upload-single' %}{% set col_min_w = '200px' %}
+                                        {% elif col_enum %}{% set col_min_w = '90px' %}
+                                        {% elif col_ctype == 'boolean' %}{% set col_min_w = '60px' %}
+                                        {% elif col_ctype in ['integer', 'number'] %}{% set col_min_w = '80px' %}
+                                        {% else %}{% set col_min_w = '110px' %}{% endif %}
+                                        <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider" style="min-width:{{ col_min_w }}">{{ col_title }}</th>
                                     {% endfor %}
-                                    <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-20">Actions</th>
+                                    <th class="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider" style="min-width:90px">Actions</th>
                                 </tr>
                             </thead>
                             <tbody id="{{ field_id }}_tbody" class="bg-white divide-y divide-gray-200">
@@ -515,8 +526,17 @@
                                     {% for col_name in display_columns %}
                                         {% set col_def = item_properties.get(col_name, {}) %}
                                         {% set col_type = col_def.get('type', 'string') %}
+                                        {% set col_xwidget = col_def.get('x-widget', '') %}
+                                        {% set col_enum = col_def.get('enum', []) %}
                                         {% set col_value = item.get(col_name, col_def.get('default', '')) %}
-                                        <td class="px-4 py-3 whitespace-nowrap">
+                                        {% if col_xwidget == 'date-picker' %}{% set td_min_w = '140px' %}
+                                        {% elif col_xwidget == 'time-picker' %}{% set td_min_w = '115px' %}
+                                        {% elif col_xwidget == 'file-upload-single' %}{% set td_min_w = '200px' %}
+                                        {% elif col_enum %}{% set td_min_w = '90px' %}
+                                        {% elif col_type == 'boolean' %}{% set td_min_w = '60px' %}
+                                        {% elif col_type in ['integer', 'number'] %}{% set td_min_w = '80px' %}
+                                        {% else %}{% set td_min_w = '110px' %}{% endif %}
+                                        <td class="px-3 py-3 whitespace-nowrap" style="min-width:{{ td_min_w }};vertical-align:middle">
                                             {% if col_type == 'boolean' %}
                                                 <input type="hidden" name="{{ full_key }}.{{ item_index }}.{{ col_name }}" value="false">
                                                 <input type="checkbox"
@@ -533,6 +553,43 @@
                                                        {% if col_type == 'integer' %}step="1"{% else %}step="any"{% endif %}
                                                        class="block w-20 px-2 py-1 border border-gray-300 rounded text-sm text-center"
                                                        {% if col_def.get('description') %}title="{{ col_def.get('description') }}"{% endif %}>
+                                            {% elif col_enum %}
+                                                <select name="{{ full_key }}.{{ item_index }}.{{ col_name }}"
+                                                        class="block w-full px-2 py-1 border border-gray-300 rounded text-sm bg-white">
+                                                    {% for opt in col_enum %}{% if opt is not none %}
+                                                    <option value="{{ opt }}" {% if col_value == opt or (col_value is none and col_def.get('default') == opt) %}selected{% endif %}>{{ opt }}</option>
+                                                    {% endif %}{% endfor %}
+                                                </select>
+                                            {% elif col_xwidget == 'date-picker' %}
+                                                <input type="date"
+                                                       name="{{ full_key }}.{{ item_index }}.{{ col_name }}"
+                                                       value="{{ col_value if col_value is not none else '' }}"
+                                                       class="block w-full px-2 py-1 border border-gray-300 rounded text-sm">
+                                            {% elif col_xwidget == 'time-picker' %}
+                                                <input type="time"
+                                                       name="{{ full_key }}.{{ item_index }}.{{ col_name }}"
+                                                       value="{{ col_value if col_value is not none else '00:00' }}"
+                                                       class="block w-full px-2 py-1 border border-gray-300 rounded text-sm">
+                                            {% elif col_xwidget == 'file-upload-single' %}
+                                                {% set cell_input_id = field_id ~ '_' ~ item_index ~ '_' ~ col_name %}
+                                                <div class="flex items-center gap-1">
+                                                    {% if col_value %}<img src="/{{ col_value }}" class="w-6 h-6 object-cover rounded flex-shrink-0" onerror="this.style.display='none'">{% endif %}
+                                                    <input type="text"
+                                                           id="{{ cell_input_id }}"
+                                                           name="{{ full_key }}.{{ item_index }}.{{ col_name }}"
+                                                           value="{{ col_value if col_value is not none else '' }}"
+                                                           class="block w-20 px-1 py-1 border border-gray-300 rounded text-xs"
+                                                           placeholder="path…">
+                                                    <label class="cursor-pointer flex-shrink-0 inline-flex items-center px-1 py-1 bg-blue-50 border border-blue-200 rounded text-xs text-blue-600 hover:bg-blue-100" title="Upload image">
+                                                        <i class="fas fa-upload"></i>
+                                                        <input type="file"
+                                                               accept="image/png,image/jpeg,image/bmp,image/gif"
+                                                               style="display:none"
+                                                               data-plugin-id="{{ plugin_id }}"
+                                                               data-target-input="{{ cell_input_id }}"
+                                                               onchange="(function(e){ const t=document.getElementById('{{ cell_input_id }}'); const p=t.previousElementSibling && t.previousElementSibling.tagName==='IMG' ? t.previousElementSibling : null; window.handleArrayTableImageUpload(e,t,p,'{{ plugin_id }}'); })(event)">
+                                                    </label>
+                                                </div>
                                             {% else %}
                                                 <input type="text"
                                                        name="{{ full_key }}.{{ item_index }}.{{ col_name }}"
@@ -545,13 +602,60 @@
                                             {% endif %}
                                         </td>
                                     {% endfor %}
-                                    <td class="px-4 py-3 whitespace-nowrap text-center">
+
+                                    {# Actions cell: delete + optional edit button for advanced props #}
+                                    {% set has_advanced = namespace(value=false) %}
+                                    {% for k in item_properties.keys() %}{% if k not in display_columns and k != 'id' %}{% set has_advanced.value = true %}{% endif %}{% endfor %}
+                                    <td class="px-3 py-3 whitespace-nowrap text-center" style="min-width:90px;vertical-align:middle">
                                         <button type="button"
                                                 onclick="removeArrayTableRow(this)"
                                                 class="text-red-600 hover:text-red-800 px-2 py-1">
                                             <i class="fas fa-trash"></i>
                                         </button>
+                                        {% if has_advanced.value %}
+                                        <button type="button"
+                                                onclick="openArrayTableRowEditor(this)"
+                                                class="text-blue-500 hover:text-blue-700 px-2 py-1 ml-1"
+                                                title="Edit layout, style and other advanced properties">
+                                            <i class="fas fa-sliders-h"></i>
+                                        </button>
+                                        {% endif %}
                                     </td>
+
+                                    {# Hidden cell: flat hidden inputs for non-displayed props (layout, style, etc.) #}
+                                    {% if has_advanced.value %}
+                                    {% set adv_schema = namespace(d={}) %}
+                                    {% for k, v in item_properties.items() %}{% if k not in display_columns and k != 'id' %}{% set _ = adv_schema.d.update({k: v}) %}{% endif %}{% endfor %}
+                                    <td style="display:none" class="array-table-advanced-data"
+                                        data-prop-schema='{{ adv_schema.d|tojson }}'>
+                                        {% for prop_name, prop_schema in adv_schema.d.items() %}
+                                            {% set prop_type = prop_schema.get('type', 'string') %}
+                                            {% if prop_type == 'object' and prop_schema.get('properties') %}
+                                                {% for sub_name, sub_schema in prop_schema.get('properties', {}).items() %}
+                                                    {% set sub_val = item.get(prop_name, {}).get(sub_name) %}
+                                                    {% set sub_default = sub_schema.get('default') %}
+                                                    {% set final_val = sub_val if sub_val is not none else sub_default %}
+                                                    <input type="hidden"
+                                                           name="{{ full_key }}.{{ item_index }}.{{ prop_name }}.{{ sub_name }}"
+                                                           data-nested-prop="{{ prop_name }}.{{ sub_name }}"
+                                                           data-prop-type="{{ sub_schema.get('type', 'string') }}"
+                                                           data-prop-schema='{{ sub_schema|tojson }}'
+                                                           value="{{ final_val if final_val is not none else '' }}">
+                                                {% endfor %}
+                                            {% else %}
+                                                {% set prop_val = item.get(prop_name) %}
+                                                {% set prop_default = prop_schema.get('default') %}
+                                                {% set final_val = prop_val if prop_val is not none else prop_default %}
+                                                <input type="hidden"
+                                                       name="{{ full_key }}.{{ item_index }}.{{ prop_name }}"
+                                                       data-nested-prop="{{ prop_name }}"
+                                                       data-prop-type="{{ prop_schema.get('type', 'string') }}"
+                                                       data-prop-schema='{{ prop_schema|tojson }}'
+                                                       value="{{ final_val if final_val is not none else '' }}">
+                                            {% endif %}
+                                        {% endfor %}
+                                    </td>
+                                    {% endif %}
                                 </tr>
                                 {% endfor %}
                             </tbody>
@@ -563,11 +667,58 @@
                                 data-max-items="{{ max_items }}"
                                 data-plugin-id="{{ plugin_id }}"
                                 data-item-properties='{% set ns = namespace(d={}) %}{% for k in display_columns %}{% if k in item_properties %}{% set _ = ns.d.update({k: item_properties[k]}) %}{% endif %}{% endfor %}{{ ns.d|tojson }}'
+                                data-full-item-properties='{{ item_properties|tojson }}'
                                 data-display-columns='{{ display_columns|tojson }}'
                                 class="mt-3 px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-md"
                                 {% if array_value|length >= max_items %}disabled style="opacity: 0.5;"{% endif %}>
                             <i class="fas fa-plus mr-1"></i> Add Item
                         </button>
+                        </div>{# end overflow-x:auto wrapper #}
+                    </div>
+                {% elif x_widget == 'color-picker' %}
+                    {# RGB color array: R / G / B number inputs + visual swatch + sync'd hex picker #}
+                    {% set color_arr = value if value is not none and value is iterable and value is not string else (prop.default if prop.default is defined and prop.default is iterable and prop.default is not string else [255, 255, 255]) %}
+                    {% set r_val = color_arr[0] if color_arr|length > 0 else 255 %}
+                    {% set g_val = color_arr[1] if color_arr|length > 1 else 255 %}
+                    {% set b_val = color_arr[2] if color_arr|length > 2 else 255 %}
+                    {% set hex_val = '#%02x%02x%02x' % (r_val|int, g_val|int, b_val|int) %}
+                    <div class="flex items-center gap-3 flex-wrap mt-1" id="{{ field_id }}_color_row">
+                        <input type="color"
+                               id="{{ field_id }}_hex"
+                               value="{{ hex_val }}"
+                               class="h-9 w-12 cursor-pointer rounded border border-gray-300"
+                               title="Color picker"
+                               oninput="(function(h){var r=parseInt(h.slice(1,3),16),g=parseInt(h.slice(3,5),16),b=parseInt(h.slice(5,7),16);document.getElementById('{{ field_id }}_r').value=r;document.getElementById('{{ field_id }}_g').value=g;document.getElementById('{{ field_id }}_b').value=b;})(this.value)">
+                        <div class="flex items-center gap-1">
+                            <label class="text-xs text-gray-500 font-medium">R</label>
+                            <input type="number" min="0" max="255" step="1"
+                                   id="{{ field_id }}_r"
+                                   name="{{ full_key }}.0"
+                                   value="{{ r_val }}"
+                                   class="w-16 px-2 py-1 border border-gray-300 rounded text-sm text-center"
+                                   oninput="(function(){var r=+document.getElementById('{{ field_id }}_r').value||0,g=+document.getElementById('{{ field_id }}_g').value||0,b=+document.getElementById('{{ field_id }}_b').value||0;document.getElementById('{{ field_id }}_hex').value='#'+[r,g,b].map(function(n){return n.toString(16).padStart(2,'0')}).join('')})()">
+                        </div>
+                        <div class="flex items-center gap-1">
+                            <label class="text-xs text-gray-500 font-medium">G</label>
+                            <input type="number" min="0" max="255" step="1"
+                                   id="{{ field_id }}_g"
+                                   name="{{ full_key }}.1"
+                                   value="{{ g_val }}"
+                                   class="w-16 px-2 py-1 border border-gray-300 rounded text-sm text-center"
+                                   oninput="(function(){var r=+document.getElementById('{{ field_id }}_r').value||0,g=+document.getElementById('{{ field_id }}_g').value||0,b=+document.getElementById('{{ field_id }}_b').value||0;document.getElementById('{{ field_id }}_hex').value='#'+[r,g,b].map(function(n){return n.toString(16).padStart(2,'0')}).join('')})()">
+                        </div>
+                        <div class="flex items-center gap-1">
+                            <label class="text-xs text-gray-500 font-medium">B</label>
+                            <input type="number" min="0" max="255" step="1"
+                                   id="{{ field_id }}_b"
+                                   name="{{ full_key }}.2"
+                                   value="{{ b_val }}"
+                                   class="w-16 px-2 py-1 border border-gray-300 rounded text-sm text-center"
+                                   oninput="(function(){var r=+document.getElementById('{{ field_id }}_r').value||0,g=+document.getElementById('{{ field_id }}_g').value||0,b=+document.getElementById('{{ field_id }}_b').value||0;document.getElementById('{{ field_id }}_hex').value='#'+[r,g,b].map(function(n){return n.toString(16).padStart(2,'0')}).join('')})()">
+                        </div>
+                        <div class="w-8 h-8 rounded border border-gray-300 flex-shrink-0"
+                             style="background-color: rgb({{ r_val }}, {{ g_val }}, {{ b_val }})"
+                             title="Color preview"></div>
                     </div>
                 {% else %}
                     {# Generic array-of-objects would go here if needed in the future #}
@@ -626,7 +777,19 @@
                            name="{{ full_key }}"
                            value="{{ str_value }}">
                 </div>
-            {% elif str_widget in ['text-input', 'textarea', 'select-dropdown', 'toggle-switch', 'radio-group', 'date-picker', 'slider', 'color-picker', 'email-input', 'url-input', 'password-input', 'font-selector'] %}
+            {% elif str_widget == 'json-file-manager' %}
+                {# Embedded file manager — plugin's web_ui/file_manager.html served via /v3/plugin-ui/ route #}
+                <div class="mt-1 rounded-lg border border-gray-200 overflow-hidden">
+                    <iframe id="{{ field_id }}_frame"
+                            src="/v3/plugin-ui/{{ plugin_id }}/web-ui/file_manager.html"
+                            style="width:100%;height:640px;border:none;"
+                            title="File Manager for {{ plugin_id }}"></iframe>
+                </div>
+                <p class="text-xs text-amber-600 mt-2 flex items-center">
+                    <i class="fas fa-info-circle mr-1"></i>
+                    Changes in the file manager save immediately — no need to click Save Configuration.
+                </p>
+            {% elif str_widget in ['text-input', 'textarea', 'select-dropdown', 'toggle-switch', 'radio-group', 'date-picker', 'time-picker', 'slider', 'color-picker', 'email-input', 'url-input', 'password-input', 'font-selector', 'file-upload-single', 'plugin-file-manager'] %}
                 {# Render widget container #}
                 <div id="{{ field_id }}_container" class="{{ str_widget }}-container"></div>
                 <script>
@@ -643,7 +806,9 @@
                             'enum': {{ (prop.enum or [])|tojson|safe }},
                             'minimum': {{ prop.minimum|tojson if prop.minimum is defined else 'null' }},
                             'maximum': {{ prop.maximum|tojson if prop.maximum is defined else 'null' }},
-                            'x-options': {{ (prop.get('x-options') or prop.get('x_options') or {})|tojson|safe }}
+                            'x-options': {{ (prop.get('x-options') or prop.get('x_options') or {})|tojson|safe }},
+                            'x-upload-config': {{ (prop.get('x-upload-config') or prop.get('x_upload_config') or {})|tojson|safe }},
+                            'x-widget-config': {{ (prop.get('x-widget-config') or prop.get('x_widget_config') or {})|tojson|safe }}
                         };
                         widget.render(container, config, value, { fieldId: '{{ field_id }}', name: '{{ full_key }}', pluginId: '{{ plugin_id }}' });
                     }
@@ -864,15 +1029,28 @@
             </div>
         </div>
         
-        {# Web UI Actions (if any) #}
-        {% if web_ui_actions %}
+        {# Web UI Actions — hide if schema has a dedicated file-manager widget,
+           or if every action is marked ui_hidden in the manifest. #}
+        {% set has_file_manager_widget = namespace(value=false) %}
+        {% for _fk, _fp in schema.get('properties', {}).items() %}
+            {% if _fp.get('x-widget') in ('json-file-manager', 'plugin-file-manager') %}
+                {% set has_file_manager_widget.value = true %}
+            {% endif %}
+        {% endfor %}
+        {% set visible_actions = [] %}
+        {% for _a in web_ui_actions %}
+            {% if not _a.get('ui_hidden', false) %}
+                {% set _ = visible_actions.append(_a) %}
+            {% endif %}
+        {% endfor %}
+        {% if visible_actions and not has_file_manager_widget.value %}
         <div class="mt-6 pt-4 border-t border-gray-200">
             <h3 class="text-md font-medium text-gray-900 mb-3">Plugin Actions</h3>
-            {% if web_ui_actions[0].section_description %}
-            <p class="text-sm text-gray-600 mb-4">{{ web_ui_actions[0].section_description }}</p>
+            {% if visible_actions[0].section_description %}
+            <p class="text-sm text-gray-600 mb-4">{{ visible_actions[0].section_description }}</p>
             {% endif %}
             <div class="space-y-3">
-                {% for action in web_ui_actions %}
+                {% for action in visible_actions %}
                 {% set action_id = "action-" ~ action.id ~ "-" ~ loop.index0 %}
                 {% set status_id = "action-status-" ~ action.id ~ "-" ~ loop.index0 %}
                 {% set bg_color = action.color or 'blue' %}

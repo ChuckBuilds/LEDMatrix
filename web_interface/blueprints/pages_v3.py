@@ -102,6 +102,59 @@ def load_plugin_config_partial(plugin_id):
         logger.error("Error loading plugin config partial for %s", plugin_id, exc_info=True)
         return '<div class="text-red-500 p-4">Error loading plugin config; see logs for details</div>', 500
 
+
+@pages_v3.route('/plugin-ui/<plugin_id>/web-ui/<path:filename>')
+def serve_plugin_web_ui(plugin_id, filename):
+    """Serve a plugin's web_ui/ HTML fragment as a standalone page.
+
+    Wraps the fragment with a minimal HTML page that injects window.PLUGIN_ID
+    and loads Tailwind CSS so the fragment runs correctly in a sandboxed iframe.
+    """
+    try:
+        _plugins_base = Path(pages_v3.plugin_manager.plugins_dir).resolve()
+        _plugin_dir   = (_plugins_base / plugin_id).resolve()
+        # Path traversal guard — plugin_dir must be inside plugins base
+        _plugin_dir.relative_to(_plugins_base)
+
+        web_ui_path = (_plugin_dir / 'web_ui' / filename).resolve()
+        # Second guard — web_ui_path must stay inside web_ui/
+        web_ui_path.relative_to(_plugin_dir / 'web_ui')
+
+        if not web_ui_path.exists():
+            return f'web_ui file not found: {filename}', 404
+        if web_ui_path.suffix.lower() != '.html':
+            return 'Only .html files may be served here', 403
+
+        fragment = web_ui_path.read_text(encoding='utf-8')
+
+        page = (
+            '<!DOCTYPE html>\n'
+            '<html lang="en">\n'
+            '<head>\n'
+            '<meta charset="UTF-8">\n'
+            '<meta name="viewport" content="width=device-width,initial-scale=1">\n'
+            '<script>\n'
+            # Inject plugin context before the fragment runs
+            f'  window.PLUGIN_ID = {json.dumps(plugin_id)};\n'
+            '</script>\n'
+            # Tailwind v2 CDN — same version used by the parent LEDMatrix UI
+            '<link rel="stylesheet" '
+            'href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" '
+            'crossorigin="anonymous">\n'
+            '<style>body{margin:0;padding:0;background:#fff;}</style>\n'
+            '</head>\n'
+            '<body>\n'
+            + fragment +
+            '\n</body>\n</html>'
+        )
+        return page, 200, {'Content-Type': 'text/html; charset=utf-8'}
+
+    except ValueError:
+        return 'Forbidden', 403
+    except Exception:
+        logger.error('Error serving plugin web_ui %s/%s', plugin_id, filename, exc_info=True)
+        return 'Error serving file', 500
+
 def _load_overview_partial():
     """Load overview partial with system stats"""
     try:
