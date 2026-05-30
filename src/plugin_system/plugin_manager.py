@@ -350,7 +350,8 @@ class PluginManager:
                 display_manager=self.display_manager,
                 cache_manager=self.cache_manager,
                 plugin_manager=self,
-                install_deps=True
+                install_deps=True,
+                plugins_dir=self.plugins_dir,
             )
             
             # Store module
