@@ -170,6 +170,9 @@ class PluginLoader:
             # CodeQL considers untainted.
             plugins_dir_real = os.path.realpath(str(plugins_dir))
             safe_dir_name = os.path.basename(plugin_dir_real)
+            if not safe_dir_name:
+                self.logger.error("Could not determine plugin directory name for %s", plugin_id)
+                return False
             safe_plugin_dir = os.path.join(plugins_dir_real, safe_dir_name)
             if not os.path.isdir(safe_plugin_dir):
                 self.logger.error(
