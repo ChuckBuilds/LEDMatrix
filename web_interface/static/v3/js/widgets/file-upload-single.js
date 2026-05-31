@@ -126,6 +126,7 @@
             html += `<div id="${fieldId}_status" class="mt-1 text-xs hidden"></div>`;
 
             html += '</div>';
+            // eslint-disable-next-line no-unsanitized/property -- all dynamic values sanitized by escapeHtml()
             container.innerHTML = html;
         },
 
@@ -216,10 +217,14 @@
                     return;
                 }
 
-                // Show uploading status
+                // Show uploading status — use DOM methods to avoid innerHTML with dynamic data
                 if (statusDiv) {
                     statusDiv.className = 'mt-1 text-xs text-gray-500';
-                    statusDiv.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>Uploading...';
+                    statusDiv.textContent = '';
+                    const spinner = document.createElement('i');
+                    spinner.className = 'fas fa-spinner fa-spin mr-1';
+                    statusDiv.appendChild(spinner);
+                    statusDiv.appendChild(document.createTextNode('Uploading…'));
                 }
 
                 const formData = new FormData();
@@ -247,8 +252,12 @@
 
                         if (statusDiv) {
                             statusDiv.className = 'mt-1 text-xs text-green-600';
-                            statusDiv.innerHTML = '<i class="fas fa-check-circle mr-1"></i>Uploaded successfully';
-                            setTimeout(() => { statusDiv.className = 'mt-1 text-xs hidden'; statusDiv.innerHTML = ''; }, 3000);
+                            statusDiv.textContent = '';
+                            const icon = document.createElement('i');
+                            icon.className = 'fas fa-check-circle mr-1';
+                            statusDiv.appendChild(icon);
+                            statusDiv.appendChild(document.createTextNode('Uploaded successfully'));
+                            setTimeout(() => { statusDiv.className = 'mt-1 text-xs hidden'; statusDiv.textContent = ''; }, 3000);
                         }
                         notifyFn('Image uploaded successfully', 'success');
                     } else {
@@ -257,7 +266,11 @@
                 } catch (error) {
                     if (statusDiv) {
                         statusDiv.className = 'mt-1 text-xs text-red-600';
-                        statusDiv.innerHTML = `<i class="fas fa-exclamation-circle mr-1"></i>${escapeHtml(error.message)}`;
+                        statusDiv.textContent = '';
+                        const errIcon = document.createElement('i');
+                        errIcon.className = 'fas fa-exclamation-circle mr-1';
+                        statusDiv.appendChild(errIcon);
+                        statusDiv.appendChild(document.createTextNode(error.message || 'Upload failed'));
                     }
                     notifyFn(`Upload error: ${error.message}`, 'error');
                 } finally {

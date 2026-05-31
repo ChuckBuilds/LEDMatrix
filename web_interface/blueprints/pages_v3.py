@@ -130,6 +130,9 @@ def serve_plugin_web_ui(plugin_id, filename):
     if not safe_id or not safe_fn:
         return 'Invalid path component', 400, {'Content-Type': 'text/plain'}
 
+    if not pages_v3.plugin_manager:
+        return 'Plugin manager not available', 503, {'Content-Type': 'text/plain'}
+
     try:
         _plugins_base = Path(pages_v3.plugin_manager.plugins_dir).resolve()
 

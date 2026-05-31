@@ -119,17 +119,21 @@
         let cur = obj;
         for (let i = 0; i < parts.length - 1; i++) {
             if (_FORBIDDEN_KEYS.has(parts[i])) return; // block prototype pollution
+            // eslint-disable-next-line security/detect-object-injection -- key validated by FORBIDDEN_KEYS
             if (cur[parts[i]] === undefined || typeof cur[parts[i]] !== 'object') {
-                cur[parts[i]] = {};
+                // Object.create(null) produces a null-prototype object that cannot be
+                // prototype-polluted via __proto__ assignment.
+                // eslint-disable-next-line security/detect-object-injection -- key validated above
+                cur[parts[i]] = Object.create(null);
             }
+            // eslint-disable-next-line security/detect-object-injection -- key validated above
             cur = cur[parts[i]];
         }
         const lastKey = parts[parts.length - 1];
-        if (!_FORBIDDEN_KEYS.has(lastKey)) cur[lastKey] = value;
-    }
-
-    function getNestedValue(obj, path) {
-        return path.split('.').reduce((o, k) => (o && o[k] !== undefined ? o[k] : undefined), obj);
+        if (!_FORBIDDEN_KEYS.has(lastKey)) {
+            // eslint-disable-next-line security/detect-object-injection -- key validated above
+            cur[lastKey] = value;
+        }
     }
 
     function coerceValue(strVal, typeHint) {
@@ -407,8 +411,6 @@
         const schema      = JSON.parse(advancedCell.dataset.propSchema || '{}');
         const tbody       = row.closest('tbody');
         const fieldId     = tbody ? tbody.id.replace('_tbody', '') : '';
-        const rowIndex    = parseInt(row.dataset.index, 10);
-
         // Close any existing modal
         const existing = document.getElementById('array-row-editor-modal');
         if (existing) existing.remove();
@@ -446,6 +448,7 @@
                 // Section for nested object
                 const section = document.createElement('div');
                 section.className = 'border border-gray-200 rounded-lg p-3';
+                // eslint-disable-next-line no-unsanitized/property -- content sanitized by escapeHtml()
                 section.innerHTML = `<h4 class="text-sm font-medium text-gray-700 mb-3">${escapeHtml(label)}</h4>`;
 
                 const grid = document.createElement('div');
@@ -462,6 +465,7 @@
                     const currentVal  = hiddenInput ? hiddenInput.value : (subSchema.default !== undefined ? subSchema.default : '');
 
                     const fieldDiv = document.createElement('div');
+                    // eslint-disable-next-line no-unsanitized/property -- content sanitized by escapeHtml()
                     fieldDiv.innerHTML = `<label class="block text-xs font-medium text-gray-600 mb-1" title="${escapeHtml(subDesc)}">${escapeHtml(subLabel)}</label>`;
                     fieldDiv.appendChild(buildModalInput(nestedPath, subSchema, subType, currentVal));
                     grid.appendChild(fieldDiv);
@@ -475,6 +479,7 @@
                 const currentVal  = hiddenInput ? hiddenInput.value : (propSchema.default !== undefined ? propSchema.default : '');
 
                 const fieldDiv = document.createElement('div');
+                // eslint-disable-next-line no-unsanitized/property -- content sanitized by escapeHtml()
                 fieldDiv.innerHTML = `<label class="block text-sm font-medium text-gray-700 mb-1" title="${escapeHtml(desc)}">${escapeHtml(label)}</label>`;
                 fieldDiv.appendChild(buildModalInput(propName, propSchema, propType, currentVal));
                 body.appendChild(fieldDiv);
@@ -744,9 +749,9 @@
         let displayColumns     = [];
         let fullItemProperties = {};
 
-        try { itemProperties     = JSON.parse(button.getAttribute('data-item-properties')     || '{}'); } catch(e) {}
-        try { displayColumns     = JSON.parse(button.getAttribute('data-display-columns')      || '[]'); } catch(e) {}
-        try { fullItemProperties = JSON.parse(button.getAttribute('data-full-item-properties') || '{}'); } catch(e) { fullItemProperties = itemProperties; }
+        try { itemProperties     = JSON.parse(button.getAttribute('data-item-properties')     || '{}'); } catch(_e) {}
+        try { displayColumns     = JSON.parse(button.getAttribute('data-display-columns')      || '[]'); } catch(_e) {}
+        try { fullItemProperties = JSON.parse(button.getAttribute('data-full-item-properties') || '{}'); } catch(_e) { fullItemProperties = itemProperties; }
 
         const tbody = document.getElementById(fieldId + '_tbody');
         if (!tbody) return;

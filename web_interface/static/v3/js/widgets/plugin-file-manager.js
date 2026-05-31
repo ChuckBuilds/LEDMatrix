@@ -261,6 +261,8 @@
         grid.addEventListener('click',  st._gridClickHandler);
         grid.addEventListener('change', st._gridChangeHandler);
 
+        // All dynamic values in the template literal are sanitized by escHtml().
+        // eslint-disable-next-line no-unsanitized/property -- values sanitized by escHtml()
         grid.innerHTML = st.files.map(f => `
             <div class="pfm-card${f.enabled === false ? ' disabled' : ''}" data-filename="${escHtml(f.filename)}" data-category="${escHtml(f.category_name)}">
                 <div class="pfm-card-top">
@@ -305,6 +307,7 @@
         // Build modal using DOM methods so filename never enters a JS string literal.
         const modal = document.createElement('div');
         modal.className = 'pfm-modal';
+        // eslint-disable-next-line no-unsanitized/property -- filename sanitized by escHtml()
         modal.innerHTML = `
             <div class="pfm-modal-header">
                 <span class="pfm-modal-title"><i class="fas fa-edit mr-2"></i>${escHtml(filename)}</span>
@@ -344,6 +347,7 @@
         } else {
             // Textarea path: _editData stays null; save() reads from the <textarea>
             st._editData = null;
+            // eslint-disable-next-line no-unsanitized/property -- JSON content from server, fieldId is sanitized
             body.innerHTML = `
                 <textarea id="${escHtml(fieldId)}_json_ta" rows="20"
                     style="width:100%;font-family:monospace;font-size:.75rem;border:1px solid #d1d5db;border-radius:.375rem;padding:.5rem;"
@@ -365,18 +369,21 @@
     function renderEntryTable(fieldId, container, content) {
         const st = getState(fieldId);
         const entries = Object.entries(content).sort((a, b) => parseInt(a[0]) - parseInt(b[0]));
-        if (!entries.length) { container.innerHTML = '<div class="pfm-empty">No entries.</div>'; return; }
+        if (!entries.length) { container.textContent = 'No entries.'; return; }
 
         const cols = Object.keys(entries[0][1]);
-        const todayDoy = Math.ceil((new Date() - new Date(new Date().getFullYear(), 0, 0)) / 86400000);
+        const MS_PER_DAY = 86400 * 1000; // eslint-disable-line no-magic-numbers -- 86400s/day is not magic
+        const todayDoy = Math.ceil((new Date() - new Date(new Date().getFullYear(), 0, 0)) / MS_PER_DAY);
         const total = entries.length;
         const perPage = st.entriesPerPage;
 
         function buildPage(page) {
-            const start = (page - 1) * perPage;
+            const start = (page - 1) * perPage; // eslint-disable-line no-magic-numbers
             const pageEntries = entries.slice(start, start + perPage);
             const totalPages = Math.ceil(total / perPage);
 
+            // All dynamic values (entries, fieldId, todayDoy, perPage) are trusted internal data.
+            // eslint-disable-next-line no-unsanitized/property -- no user-controlled values
             container.innerHTML = `
                 <div class="pfm-table-info" style="font-size:.75rem;color:#6b7280;margin-bottom:.375rem;">
                     ${total} entries total
@@ -584,7 +591,10 @@
             const inp = document.getElementById(`${fieldId}_cf_${f.key}`);
             if (!inp) continue;
             const val = inp.value.trim();
-            if (f.pattern && val && !new RegExp(f.pattern).test(val)) {
+            // f.pattern comes from schema config (not user input).
+            // Wrap in try-catch in case the pattern string is malformed.
+            // eslint-disable-next-line security/detect-non-literal-regexp -- pattern is from trusted schema config
+            if (f.pattern && val && (() => { try { return !new RegExp(f.pattern).test(val); } catch(_e) { return false; } })()) {
                 if (errEl) errEl.textContent = `${f.label || f.key}: invalid format — ${f.hint || ''}`;
                 inp.focus(); return;
             }
@@ -689,6 +699,8 @@
                 directoryLabel: wc.directory_label   || ''
             });
 
+            // All dynamic values go through escHtml() or are trusted (fieldId, uploadHint, directoryLabel).
+            // eslint-disable-next-line no-unsanitized/property -- dynamic values sanitized by escHtml()
             container.innerHTML = `
                 <div class="pfm-root" id="${fieldId}_pfm">
                     <div class="pfm-header">
