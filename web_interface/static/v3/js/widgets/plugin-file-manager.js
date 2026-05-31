@@ -170,10 +170,10 @@
      * must be escaped by the caller before passing here.
      */
     function safeSetHTML(target, html) {
-        const doc = new DOMParser().parseFromString(html, 'text/html');
         target.textContent = '';
-        const frag = document.createDocumentFragment();
-        Array.from(doc.body.childNodes).forEach(function(n) { frag.appendChild(n); });
+        // createContextualFragment parses html relative to the document context
+        // without executing scripts — a widely recognised safe insertion method.
+        const frag = document.createRange().createContextualFragment(html);
         target.appendChild(frag);
     }
 
@@ -276,40 +276,88 @@
         grid.addEventListener('click',  st._gridClickHandler);
         grid.addEventListener('change', st._gridChangeHandler);
 
-        safeSetHTML(grid, st.files.map(f => `
-            <div class="pfm-card${f.enabled === false ? ' disabled' : ''}" data-filename="${escHtml(f.filename)}" data-category="${escHtml(f.category_name)}">
-                <div class="pfm-card-top">
-                    <span class="pfm-toggle-label">${f.enabled !== false ? 'Enabled' : 'Disabled'}</span>
-                    ${st.actions.toggle ? `
-                    <label class="pfm-toggle-cb" title="${f.enabled !== false ? 'Click to disable' : 'Click to enable'}">
-                        <input type="checkbox" ${f.enabled !== false ? 'checked' : ''}
-                            data-pfm-action="toggle" data-pfm-field="${escHtml(fieldId)}"
-                            data-pfm-category="${escHtml(f.category_name)}">
-                        <span class="pfm-toggle-slider"></span>
-                    </label>` : ''}
-                </div>
-                <div class="pfm-card-icon"><i class="fas fa-file-code"></i></div>
-                <div class="pfm-card-name">${escHtml(f.display_name || f.filename)}</div>
-                <div class="pfm-card-meta">
-                    ${escHtml(f.filename)}<br>
-                    ${f.entry_count != null ? escHtml(f.entry_count) + ' entries' : ''}&nbsp;•&nbsp;${formatSize(f.size)}<br>
-                    ${formatDate(f.modified)}
-                </div>
-                <div class="pfm-card-actions">
-                    ${st.actions.get && st.actions.save ? `
-                    <button class="pfm-btn pfm-btn-primary"
-                            data-pfm-action="edit" data-pfm-field="${escHtml(fieldId)}"
-                            data-pfm-file="${escHtml(f.filename)}">
-                        <i class="fas fa-edit"></i> Edit
-                    </button>` : ''}
-                    ${st.actions.delete ? `
-                    <button class="pfm-btn pfm-btn-danger pfm-btn-sm"
-                            data-pfm-action="delete" data-pfm-field="${escHtml(fieldId)}"
-                            data-pfm-file="${escHtml(f.filename)}">
-                        <i class="fas fa-trash"></i>
-                    </button>` : ''}
-                </div>
-            </div>`).join('');
+        // Build cards with DOM methods so no user-derived data flows through innerHTML.
+        grid.textContent = '';
+        const frag = document.createDocumentFragment();
+        st.files.forEach(function(f) {
+            const card = document.createElement('div');
+            card.className = 'pfm-card' + (f.enabled === false ? ' disabled' : '');
+            card.dataset.filename = f.filename;
+            card.dataset.category = f.category_name;
+
+            // Top row: label + optional toggle
+            const top = document.createElement('div');
+            top.className = 'pfm-card-top';
+            const lbl = document.createElement('span');
+            lbl.className = 'pfm-toggle-label';
+            lbl.textContent = f.enabled !== false ? 'Enabled' : 'Disabled';
+            top.appendChild(lbl);
+            if (st.actions.toggle) {
+                const tglLabel = document.createElement('label');
+                tglLabel.className = 'pfm-toggle-cb';
+                tglLabel.title = f.enabled !== false ? 'Click to disable' : 'Click to enable';
+                const tglInput = document.createElement('input');
+                tglInput.type = 'checkbox';
+                tglInput.checked = f.enabled !== false;
+                tglInput.dataset.pfmAction   = 'toggle';
+                tglInput.dataset.pfmField    = fieldId;
+                tglInput.dataset.pfmCategory = f.category_name;
+                const tglSlider = document.createElement('span');
+                tglSlider.className = 'pfm-toggle-slider';
+                tglLabel.appendChild(tglInput);
+                tglLabel.appendChild(tglSlider);
+                top.appendChild(tglLabel);
+            }
+            card.appendChild(top);
+
+            // Icon (static markup)
+            const icon = document.createElement('div');
+            icon.className = 'pfm-card-icon';
+            icon.innerHTML = '<i class="fas fa-file-code"></i>';
+            card.appendChild(icon);
+
+            // Name & meta — textContent avoids any HTML injection
+            const name = document.createElement('div');
+            name.className = 'pfm-card-name';
+            name.textContent = f.display_name || f.filename;
+            card.appendChild(name);
+
+            const meta = document.createElement('div');
+            meta.className = 'pfm-card-meta';
+            meta.appendChild(document.createTextNode(f.filename));
+            meta.appendChild(document.createElement('br'));
+            if (f.entry_count != null) {
+                meta.appendChild(document.createTextNode(f.entry_count + ' entries · ' + formatSize(f.size)));
+            }
+            meta.appendChild(document.createElement('br'));
+            meta.appendChild(document.createTextNode(formatDate(f.modified)));
+            card.appendChild(meta);
+
+            // Action buttons
+            const actions = document.createElement('div');
+            actions.className = 'pfm-card-actions';
+            if (st.actions.get && st.actions.save) {
+                const editBtn = document.createElement('button');
+                editBtn.className = 'pfm-btn pfm-btn-primary';
+                editBtn.dataset.pfmAction = 'edit';
+                editBtn.dataset.pfmField  = fieldId;
+                editBtn.dataset.pfmFile   = f.filename;
+                editBtn.innerHTML = '<i class="fas fa-edit"></i> Edit'; // static
+                actions.appendChild(editBtn);
+            }
+            if (st.actions.delete) {
+                const delBtn = document.createElement('button');
+                delBtn.className = 'pfm-btn pfm-btn-danger pfm-btn-sm';
+                delBtn.dataset.pfmAction = 'delete';
+                delBtn.dataset.pfmField  = fieldId;
+                delBtn.dataset.pfmFile   = f.filename;
+                delBtn.innerHTML = '<i class="fas fa-trash"></i>'; // static
+                actions.appendChild(delBtn);
+            }
+            card.appendChild(actions);
+            frag.appendChild(card);
+        });
+        grid.appendChild(frag);
     }
 
     // ─── Edit modal ───────────────────────────────────────────────────────────

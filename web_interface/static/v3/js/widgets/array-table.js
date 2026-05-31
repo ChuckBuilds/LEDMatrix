@@ -112,10 +112,10 @@
     // ─── Helpers ────────────────────────────────────────────────────────────
 
     function safeSetHTML(target, html) {
-        const doc = new DOMParser().parseFromString(html, 'text/html');
         target.textContent = '';
-        const frag = document.createDocumentFragment();
-        Array.from(doc.body.childNodes).forEach(function(n) { frag.appendChild(n); });
+        // createContextualFragment parses html relative to the document context
+        // without executing scripts — a widely recognised safe insertion method.
+        const frag = document.createRange().createContextualFragment(html);
         target.appendChild(frag);
     }
 
