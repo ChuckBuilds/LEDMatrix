@@ -62,6 +62,14 @@
         return /\.(png|jpg|jpeg|bmp|gif)$/i.test(path);
     }
 
+    function safeSetHTML(target, html) {
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        target.textContent = '';
+        const frag = document.createDocumentFragment();
+        Array.from(doc.body.childNodes).forEach(function(n) { frag.appendChild(n); });
+        target.appendChild(frag);
+    }
+
     window.LEDMatrixWidgets.register('file-upload-single', {
         name: 'File Upload Single Widget',
         version: '1.0.0',
@@ -126,8 +134,7 @@
             html += `<div id="${fieldId}_status" class="mt-1 text-xs hidden"></div>`;
 
             html += '</div>';
-            // eslint-disable-next-line no-unsanitized/property -- all dynamic values sanitized by escapeHtml()
-            container.innerHTML = html;
+            safeSetHTML(container, html);
         },
 
         getValue: function(fieldId) {

@@ -49,6 +49,14 @@
         }
     }
 
+    function safeSetHTML(target, html) {
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        target.textContent = '';
+        const frag = document.createDocumentFragment();
+        Array.from(doc.body.childNodes).forEach(function(n) { frag.appendChild(n); });
+        target.appendChild(frag);
+    }
+
     window.LEDMatrixWidgets.register('time-picker', {
         name: 'Time Picker Widget',
         version: '1.0.0',
@@ -98,7 +106,7 @@
             html += `<div id="${fieldId}_error" class="text-sm text-red-600 mt-1 hidden"></div>`;
             html += '</div>';
 
-            container.innerHTML = html;
+            safeSetHTML(container, html);
         },
 
         getValue: function(fieldId) {

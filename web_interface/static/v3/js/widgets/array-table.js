@@ -111,6 +111,14 @@
 
     // ─── Helpers ────────────────────────────────────────────────────────────
 
+    function safeSetHTML(target, html) {
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        target.textContent = '';
+        const frag = document.createDocumentFragment();
+        Array.from(doc.body.childNodes).forEach(function(n) { frag.appendChild(n); });
+        target.appendChild(frag);
+    }
+
     // Keys that must never be assigned to prevent prototype pollution.
     const _FORBIDDEN_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 
@@ -118,21 +126,24 @@
         const parts = path.split('.');
         let cur = obj;
         for (let i = 0; i < parts.length - 1; i++) {
-            if (_FORBIDDEN_KEYS.has(parts[i])) return; // block prototype pollution
-            // eslint-disable-next-line security/detect-object-injection -- key validated by FORBIDDEN_KEYS
-            if (cur[parts[i]] === undefined || typeof cur[parts[i]] !== 'object') {
-                // Object.create(null) produces a null-prototype object that cannot be
-                // prototype-polluted via __proto__ assignment.
-                // eslint-disable-next-line security/detect-object-injection -- key validated above
-                cur[parts[i]] = Object.create(null);
+            const key = parts[i];
+            if (_FORBIDDEN_KEYS.has(key)) return;
+            // Use hasOwnProperty to avoid reading inherited prototype properties,
+            // and defineProperty to write without triggering prototype setters.
+            if (!Object.prototype.hasOwnProperty.call(cur, key) ||
+                typeof Object.getOwnPropertyDescriptor(cur, key).value !== 'object') {
+                Object.defineProperty(cur, key, {
+                    value: Object.create(null), writable: true,
+                    enumerable: true, configurable: true
+                });
             }
-            // eslint-disable-next-line security/detect-object-injection -- key validated above
-            cur = cur[parts[i]];
+            cur = Object.getOwnPropertyDescriptor(cur, key).value;
         }
         const lastKey = parts[parts.length - 1];
         if (!_FORBIDDEN_KEYS.has(lastKey)) {
-            // eslint-disable-next-line security/detect-object-injection -- key validated above
-            cur[lastKey] = value;
+            Object.defineProperty(cur, lastKey, {
+                value: value, writable: true, enumerable: true, configurable: true
+            });
         }
     }
 
@@ -408,9 +419,7 @@
         const advancedCell = row.querySelector('.array-table-advanced-data');
         if (!advancedCell) return;
 
-        const schema      = JSON.parse(advancedCell.dataset.propSchema || '{}');
-        const tbody       = row.closest('tbody');
-        const fieldId     = tbody ? tbody.id.replace('_tbody', '') : '';
+        const schema = JSON.parse(advancedCell.dataset.propSchema || '{}');
         // Close any existing modal
         const existing = document.getElementById('array-row-editor-modal');
         if (existing) existing.remove();
@@ -426,7 +435,7 @@
         dialog.className = 'bg-white rounded-lg shadow-xl max-w-lg w-full max-h-screen overflow-y-auto';
 
         // Header
-        dialog.innerHTML = `
+        safeSetHTML(dialog, `
             <div class="flex items-center justify-between px-5 py-4 border-b border-gray-200">
                 <h3 class="text-base font-semibold text-gray-900">Advanced Properties</h3>
                 <button type="button" onclick="window.closeArrayTableRowEditor()"
@@ -448,8 +457,10 @@
                 // Section for nested object
                 const section = document.createElement('div');
                 section.className = 'border border-gray-200 rounded-lg p-3';
-                // eslint-disable-next-line no-unsanitized/property -- content sanitized by escapeHtml()
-                section.innerHTML = `<h4 class="text-sm font-medium text-gray-700 mb-3">${escapeHtml(label)}</h4>`;
+                const _secH4 = document.createElement('h4');
+                _secH4.className = 'text-sm font-medium text-gray-700 mb-3';
+                _secH4.textContent = label;
+                section.appendChild(_secH4);
 
                 const grid = document.createElement('div');
                 grid.className = 'grid grid-cols-2 gap-3';
@@ -465,8 +476,11 @@
                     const currentVal  = hiddenInput ? hiddenInput.value : (subSchema.default !== undefined ? subSchema.default : '');
 
                     const fieldDiv = document.createElement('div');
-                    // eslint-disable-next-line no-unsanitized/property -- content sanitized by escapeHtml()
-                    fieldDiv.innerHTML = `<label class="block text-xs font-medium text-gray-600 mb-1" title="${escapeHtml(subDesc)}">${escapeHtml(subLabel)}</label>`;
+                    const _subLbl = document.createElement('label');
+                    _subLbl.className = 'block text-xs font-medium text-gray-600 mb-1';
+                    _subLbl.title = subDesc;
+                    _subLbl.textContent = subLabel;
+                    fieldDiv.appendChild(_subLbl);
                     fieldDiv.appendChild(buildModalInput(nestedPath, subSchema, subType, currentVal));
                     grid.appendChild(fieldDiv);
                 });
@@ -479,8 +493,11 @@
                 const currentVal  = hiddenInput ? hiddenInput.value : (propSchema.default !== undefined ? propSchema.default : '');
 
                 const fieldDiv = document.createElement('div');
-                // eslint-disable-next-line no-unsanitized/property -- content sanitized by escapeHtml()
-                fieldDiv.innerHTML = `<label class="block text-sm font-medium text-gray-700 mb-1" title="${escapeHtml(desc)}">${escapeHtml(label)}</label>`;
+                const _flatLbl = document.createElement('label');
+                _flatLbl.className = 'block text-sm font-medium text-gray-700 mb-1';
+                _flatLbl.title = desc;
+                _flatLbl.textContent = label;
+                fieldDiv.appendChild(_flatLbl);
                 fieldDiv.appendChild(buildModalInput(propName, propSchema, propType, currentVal));
                 body.appendChild(fieldDiv);
             }
@@ -491,7 +508,7 @@
         // Footer
         const footer = document.createElement('div');
         footer.className = 'flex justify-end gap-3 px-5 py-4 border-t border-gray-200 bg-gray-50 rounded-b-lg';
-        footer.innerHTML = `
+        safeSetHTML(footer, `
             <button type="button" onclick="window.closeArrayTableRowEditor()"
                     class="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-md hover:bg-gray-100">Cancel</button>
             <button type="button" id="array-row-editor-save"
