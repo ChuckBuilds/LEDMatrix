@@ -3,8 +3,13 @@ from markupsafe import escape
 import json
 import logging
 import os
+import os.path
 import re
 from pathlib import Path
+
+# Strict allowlists for URL-derived values used in path and script operations.
+_SAFE_PLUGIN_ID_RE = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
+_SAFE_WEB_UI_FILE_RE = re.compile(r'^[a-zA-Z0-9_-]{1,64}\.html$')
 from src.web_interface.secret_helpers import mask_secret_fields
 
 logger = logging.getLogger(__name__)
@@ -101,6 +106,99 @@ def load_plugin_config_partial(plugin_id):
     except Exception:
         logger.error("Error loading plugin config partial for %s", plugin_id, exc_info=True)
         return '<div class="text-red-500 p-4">Error loading plugin config; see logs for details</div>', 500
+
+
+@pages_v3.route('/plugin-ui/<plugin_id>/web-ui/<path:filename>')
+def serve_plugin_web_ui(plugin_id, filename):
+    """Serve a plugin's web_ui/ HTML fragment as a standalone page.
+
+    Wraps the fragment with a minimal HTML page that injects window.PLUGIN_ID
+    and loads Tailwind CSS so the fragment runs correctly in a sandboxed iframe.
+    """
+    # Validate URL-derived values against strict allowlists before any path or
+    # script operations.
+    if not _SAFE_PLUGIN_ID_RE.match(plugin_id):
+        return 'Invalid plugin ID', 400, {'Content-Type': 'text/plain'}
+    if not _SAFE_WEB_UI_FILE_RE.match(filename):
+        return 'Invalid filename', 400, {'Content-Type': 'text/plain'}
+
+    # os.path.basename() is the CodeQL-recognised path sanitizer used throughout
+    # this codebase (see plugin_loader.py).  Applying it here breaks the taint
+    # chain even though the allowlist above already prevents path separators.
+    safe_id = os.path.basename(plugin_id)
+    safe_fn = os.path.basename(filename)
+    if not safe_id or not safe_fn:
+        return 'Invalid path component', 400, {'Content-Type': 'text/plain'}
+
+    if not pages_v3.plugin_manager:
+        return 'Plugin manager not available', 503, {'Content-Type': 'text/plain'}
+
+    try:
+        _plugins_base = Path(pages_v3.plugin_manager.plugins_dir).resolve()
+
+        # Reconstruct from sanitised basename — CodeQL-approved pattern.
+        _plugin_dir = (_plugins_base / safe_id).resolve()
+        _plugin_dir.relative_to(_plugins_base)  # containment guard
+
+        # Mirror PluginManager's ledmatrix- prefix fallback.
+        if not _plugin_dir.exists():
+            _alt_id  = os.path.basename(f'ledmatrix-{safe_id}')
+            _alt     = (_plugins_base / _alt_id).resolve()
+            try:
+                _alt.relative_to(_plugins_base)
+                _plugin_dir = _alt
+            except ValueError:
+                pass
+
+        web_ui_path = (_plugin_dir / 'web_ui' / safe_fn).resolve()
+        web_ui_path.relative_to(_plugin_dir / 'web_ui')  # second guard
+
+        if not web_ui_path.exists():
+            return 'Not found', 404, {'Content-Type': 'text/plain'}
+
+        fragment = web_ui_path.read_text(encoding='utf-8')
+
+        # json.dumps wraps the value in quotes.  Replace HTML meta-chars with
+        # their JS Unicode escape sequences so the value cannot close or escape
+        # the enclosing <script> tag.
+        # r'<' is the 6-char literal string <, which JavaScript
+        # interprets as <.  This is the standard JSON-in-HTML hardening pattern.
+        safe_plugin_id_js = (
+            json.dumps(safe_id)
+            .replace('<', '\\u003c')
+            .replace('>', '\\u003e')
+            .replace('&', '\\u0026')
+        )
+
+        page = (
+            '<!DOCTYPE html>\n'
+            '<html lang="en">\n'
+            '<head>\n'
+            '<meta charset="UTF-8">\n'
+            '<meta name="viewport" content="width=device-width,initial-scale=1">\n'
+            '<script>\n'
+            # Inject plugin context before the fragment runs.
+            # plugin_id is validated to [a-zA-Z0-9_-] above, so this is safe,
+            # but we also Unicode-escape HTML meta-chars as defence in depth.
+            f'  window.PLUGIN_ID = {safe_plugin_id_js};\n'
+            '</script>\n'
+            # Tailwind v2 CDN — same version used by the parent LEDMatrix UI
+            '<link rel="stylesheet" '
+            'href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" '
+            'crossorigin="anonymous">\n'
+            '<style>body{margin:0;padding:0;background:#fff;}</style>\n'
+            '</head>\n'
+            '<body>\n'
+            + fragment +
+            '\n</body>\n</html>'
+        )
+        return page, 200, {'Content-Type': 'text/html; charset=utf-8'}
+
+    except ValueError:
+        return 'Forbidden', 403, {'Content-Type': 'text/plain'}
+    except Exception:
+        logger.error('Error serving plugin web_ui %s/%s', plugin_id, filename, exc_info=True)
+        return 'Error serving file', 500, {'Content-Type': 'text/plain'}
 
 def _load_overview_partial():
     """Load overview partial with system stats"""

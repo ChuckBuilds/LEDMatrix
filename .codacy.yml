@@ -1,0 +1,7 @@
+---
+exclude_paths:
+  - "plugin-repos/**"
+  - "plugins/**"
+  - "assets/**"
+  - "test/**"
+  - "scripts/debug/**"
