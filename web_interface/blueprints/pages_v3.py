@@ -129,6 +129,16 @@ def serve_plugin_web_ui(plugin_id, filename):
         # Path containment guard — plugin_dir must be inside plugins base
         _plugin_dir.relative_to(_plugins_base)
 
+        # Mirror PluginManager's ledmatrix- prefix fallback so both naming
+        # conventions (e.g. "flights" installed as "ledmatrix-flights") work.
+        if not _plugin_dir.exists():
+            _alt = (_plugins_base / f'ledmatrix-{plugin_id}').resolve()
+            try:
+                _alt.relative_to(_plugins_base)
+                _plugin_dir = _alt
+            except ValueError:
+                pass  # alt path escaped base — ignore
+
         web_ui_path = (_plugin_dir / 'web_ui' / filename).resolve()
         # Second containment guard — must stay inside the plugin's web_ui dir
         web_ui_path.relative_to(_plugin_dir / 'web_ui')
