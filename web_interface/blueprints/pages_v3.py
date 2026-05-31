@@ -3,6 +3,7 @@ from markupsafe import escape
 import json
 import logging
 import os
+import os.path
 import re
 from pathlib import Path
 
@@ -115,43 +116,56 @@ def serve_plugin_web_ui(plugin_id, filename):
     and loads Tailwind CSS so the fragment runs correctly in a sandboxed iframe.
     """
     # Validate URL-derived values against strict allowlists before any path or
-    # script operations.  This satisfies CodeQL py/path-injection and
-    # py/reflected-xss by ensuring neither value contains path separators,
-    # HTML/JS special chars, or other unexpected content.
+    # script operations.
     if not _SAFE_PLUGIN_ID_RE.match(plugin_id):
         return 'Invalid plugin ID', 400, {'Content-Type': 'text/plain'}
     if not _SAFE_WEB_UI_FILE_RE.match(filename):
         return 'Invalid filename', 400, {'Content-Type': 'text/plain'}
 
+    # os.path.basename() is the CodeQL-recognised path sanitizer used throughout
+    # this codebase (see plugin_loader.py).  Applying it here breaks the taint
+    # chain even though the allowlist above already prevents path separators.
+    safe_id = os.path.basename(plugin_id)
+    safe_fn = os.path.basename(filename)
+    if not safe_id or not safe_fn:
+        return 'Invalid path component', 400, {'Content-Type': 'text/plain'}
+
     try:
         _plugins_base = Path(pages_v3.plugin_manager.plugins_dir).resolve()
-        _plugin_dir   = (_plugins_base / plugin_id).resolve()
-        # Path containment guard — plugin_dir must be inside plugins base
-        _plugin_dir.relative_to(_plugins_base)
 
-        # Mirror PluginManager's ledmatrix- prefix fallback so both naming
-        # conventions (e.g. "flights" installed as "ledmatrix-flights") work.
+        # Reconstruct from sanitised basename — CodeQL-approved pattern.
+        _plugin_dir = (_plugins_base / safe_id).resolve()
+        _plugin_dir.relative_to(_plugins_base)  # containment guard
+
+        # Mirror PluginManager's ledmatrix- prefix fallback.
         if not _plugin_dir.exists():
-            _alt = (_plugins_base / f'ledmatrix-{plugin_id}').resolve()
+            _alt_id  = os.path.basename(f'ledmatrix-{safe_id}')
+            _alt     = (_plugins_base / _alt_id).resolve()
             try:
                 _alt.relative_to(_plugins_base)
                 _plugin_dir = _alt
             except ValueError:
-                pass  # alt path escaped base — ignore
+                pass
 
-        web_ui_path = (_plugin_dir / 'web_ui' / filename).resolve()
-        # Second containment guard — must stay inside the plugin's web_ui dir
-        web_ui_path.relative_to(_plugin_dir / 'web_ui')
+        web_ui_path = (_plugin_dir / 'web_ui' / safe_fn).resolve()
+        web_ui_path.relative_to(_plugin_dir / 'web_ui')  # second guard
 
         if not web_ui_path.exists():
             return 'Not found', 404, {'Content-Type': 'text/plain'}
 
         fragment = web_ui_path.read_text(encoding='utf-8')
 
-        # json.dumps produces a safe JSON string, but </script> inside it could
-        # break the enclosing script tag.  Re-encode those bytes as Unicode
-        # escapes so the value is inert in an HTML context.
-        safe_plugin_id_js = json.dumps(plugin_id).replace('<', r'<').replace('>', r'>').replace('&', r'&')
+        # json.dumps wraps the value in quotes.  Replace HTML meta-chars with
+        # their JS Unicode escape sequences so the value cannot close or escape
+        # the enclosing <script> tag.
+        # r'<' is the 6-char literal string <, which JavaScript
+        # interprets as <.  This is the standard JSON-in-HTML hardening pattern.
+        safe_plugin_id_js = (
+            json.dumps(safe_id)
+            .replace('<', '\\u003c')
+            .replace('>', '\\u003e')
+            .replace('&', '\\u0026')
+        )
 
         page = (
             '<!DOCTYPE html>\n'

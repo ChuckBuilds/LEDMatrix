@@ -504,9 +504,14 @@
                                     {% for col_name in display_columns %}
                                         {% set col_def = item_properties.get(col_name, {}) %}
                                         {% set col_title = col_def.get('title', col_name|replace('_', ' ')|title) %}
-                                        {% set col_xwidget = col_def.get('x-widget', '') %}
+                                        {% set col_xwidget = col_def.get('x-widget') or col_def.get('x_widget', '') %}
                                         {% set col_enum = col_def.get('enum', []) %}
-                                        {% set col_ctype = col_def.get('type', 'string') %}
+                                        {% set _raw_ctype = col_def.get('type', 'string') %}
+                                        {% if _raw_ctype is iterable and _raw_ctype is not string %}
+                                            {% set col_ctype = (_raw_ctype | reject('equalto','null') | list | first) or 'string' %}
+                                        {% else %}
+                                            {% set col_ctype = _raw_ctype or 'string' %}
+                                        {% endif %}
                                         {% if col_xwidget == 'date-picker' %}{% set col_min_w = '140px' %}
                                         {% elif col_xwidget == 'time-picker' %}{% set col_min_w = '115px' %}
                                         {% elif col_xwidget == 'file-upload-single' %}{% set col_min_w = '200px' %}
@@ -525,7 +530,13 @@
                                 <tr class="array-table-row" data-index="{{ item_index }}">
                                     {% for col_name in display_columns %}
                                         {% set col_def = item_properties.get(col_name, {}) %}
-                                        {% set col_type = col_def.get('type', 'string') %}
+                                        {# Normalize nullable types e.g. ["null","integer"] → "integer" #}
+                                        {% set _raw_type = col_def.get('type', 'string') %}
+                                        {% if _raw_type is iterable and _raw_type is not string %}
+                                            {% set col_type = (_raw_type | reject('equalto','null') | list | first) or 'string' %}
+                                        {% else %}
+                                            {% set col_type = _raw_type or 'string' %}
+                                        {% endif %}
                                         {% set col_xwidget = col_def.get('x-widget') or col_def.get('x_widget', '') %}
                                         {% set col_enum = col_def.get('enum', []) %}
                                         {% set col_value = item.get(col_name, col_def.get('default', '')) %}

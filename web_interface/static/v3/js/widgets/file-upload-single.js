@@ -90,7 +90,7 @@
                      </div>`;
             html += `<div class="flex-1 min-w-0">
                          <p id="${fieldId}_filename" class="text-xs text-gray-600 truncate">${escapeHtml(currentValue.split('/').pop() || '')}</p>
-                         <p class="text-xs text-gray-400">${escapeHtml(currentValue)}</p>
+                         <p id="${fieldId}_fullpath" class="text-xs text-gray-400">${escapeHtml(currentValue)}</p>
                      </div>`;
             html += `<button type="button"
                              onclick="window.LEDMatrixWidgets.getHandlers('file-upload-single').onClear('${fieldId}')"
@@ -99,12 +99,15 @@
                      </button>`;
             html += '</div>';
 
-            // Upload drop zone (always shown, acts as change button when value is set)
+            // Upload drop zone — keyboard accessible via tabindex + Enter/Space
             html += `<div id="${fieldId}_drop_zone"
                           class="border-2 border-dashed border-gray-300 rounded-lg p-3 text-center hover:border-blue-400 transition-colors cursor-pointer"
+                          role="button" tabindex="0"
+                          aria-label="${hasImage ? 'Replace image' : 'Upload image'}"
                           ondrop="window.LEDMatrixWidgets.getHandlers('file-upload-single').onDrop(event, '${fieldId}')"
                           ondragover="event.preventDefault()"
-                          onclick="document.getElementById('${fieldId}_file_input').click()">
+                          onclick="document.getElementById('${fieldId}_file_input').click()"
+                          onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();document.getElementById('${fieldId}_file_input').click();}">
                          <input type="file"
                                 id="${fieldId}_file_input"
                                 accept="${escapeHtml(allowedTypes)}"
@@ -151,6 +154,8 @@
                 if (thumbPlaceholder) thumbPlaceholder.style.display = 'none';
             }
             if (filename) filename.textContent = hasImage ? value.split('/').pop() : '';
+            const fullpath = document.getElementById(`${safeId}_fullpath`);
+            if (fullpath) fullpath.textContent = value || '';
 
             // Update drop zone hint text
             const hint = dropZone ? dropZone.querySelector('p') : null;
