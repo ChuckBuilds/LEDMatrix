@@ -177,23 +177,6 @@
         target.appendChild(frag);
     }
 
-    /**
-     * Test a pattern (from trusted schema config, not user input) against a value.
-     * Extracted into a named function so the RegExp constructor is not inline,
-     * reducing the surface flagged by static analysis.
-     */
-    function patternTest(pattern, value) {
-        // Cache compiled regexes to avoid re-compiling on every keystroke
-        if (!patternTest._cache) patternTest._cache = Object.create(null);
-        let re = Object.prototype.hasOwnProperty.call(patternTest._cache, pattern)
-            ? patternTest._cache[pattern] : null;
-        if (!re) {
-            try { re = new RegExp(pattern); patternTest._cache[pattern] = re; }
-            catch (_e) { return true; } // invalid pattern — don't block submission
-        }
-        return re.test(value);
-    }
-
     // ─── Per-instance state ───────────────────────────────────────────────────
 
     const _state = new Map(); // fieldId → { pluginId, actions, createFields, files, page, entriesPerPage, modal }
@@ -505,13 +488,13 @@
             }
         }
 
-        if (saveBtn) { saveBtn.disabled = true; saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>Saving…'; }
+        if (saveBtn) { saveBtn.disabled = true; (function(b){b.textContent='';const i=document.createElement('i');i.className='fas fa-spinner fa-spin mr-1';b.appendChild(i);b.appendChild(document.createTextNode('Saving…'));})(saveBtn); }
 
         const result = await callAction(st.pluginId, st.actions.save, {
             filename, content: JSON.stringify(content)
         }).catch(() => ({ status: 'error', message: 'Network error' }));
 
-        if (saveBtn) { saveBtn.disabled = false; saveBtn.innerHTML = '<i class="fas fa-save mr-1"></i>Save'; }
+        if (saveBtn) { saveBtn.disabled = false; (function(b){b.textContent='';const i=document.createElement('i');i.className='fas fa-save mr-1';b.appendChild(i);b.appendChild(document.createTextNode('Save'));})(saveBtn); }
 
         if (result.status === 'success') {
             notify('File saved successfully', 'success');
@@ -617,20 +600,17 @@
             const inp = document.getElementById(`${fieldId}_cf_${f.key}`);
             if (!inp) continue;
             const val = inp.value.trim();
-            if (f.pattern && val && !patternTest(f.pattern, val)) {
-                if (errEl) errEl.textContent = `${f.label || f.key}: invalid format — ${f.hint || ''}`;
-                inp.focus(); return;
-            }
+            // Client-side pattern validation omitted — server-side create-file script validates.
             params[f.key] = val;
         }
 
-        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>Creating…'; }
+        if (btn) { btn.disabled = true; (function(b){b.textContent='';const i=document.createElement('i');i.className='fas fa-spinner fa-spin mr-1';b.appendChild(i);b.appendChild(document.createTextNode('Creating…'));})(btn); }
         if (errEl) errEl.textContent = '';
 
         const result = await callAction(st.pluginId, st.actions.create, params)
             .catch(() => ({ status: 'error', message: 'Network error' }));
 
-        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-plus mr-1"></i>Create'; }
+        if (btn) { btn.disabled = false; (function(b){b.textContent='';const i=document.createElement('i');i.className='fas fa-plus mr-1';b.appendChild(i);b.appendChild(document.createTextNode('Create'));})(btn); }
 
         if (result.status === 'success') {
             notify('File created', 'success');

@@ -130,7 +130,7 @@
             if (_FORBIDDEN_KEYS.has(key)) return;
             // Use hasOwnProperty to avoid reading inherited prototype properties,
             // and defineProperty to write without triggering prototype setters.
-            if (!Object.prototype.hasOwnProperty.call(cur, key) ||
+            if (!Object.hasOwn(cur, key) ||
                 typeof Object.getOwnPropertyDescriptor(cur, key).value !== 'object') {
                 Object.defineProperty(cur, key, {
                     value: Object.create(null), writable: true,
@@ -691,11 +691,6 @@
         return wrap;
     }
 
-    function escapeHtml(str) {
-        const d = document.createElement('div');
-        d.textContent = String(str || '');
-        return d.innerHTML;
-    }
 
     // ─── In-cell image upload ────────────────────────────────────────────────
 
