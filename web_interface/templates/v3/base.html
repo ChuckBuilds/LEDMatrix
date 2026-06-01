@@ -352,15 +352,14 @@
                         }
                     });
 
-                    // Set data-loaded on tab containers after HTMX settles their content,
-                    // preventing repeated re-fetches on every tab switch.
-                    // Scoped to elements with hx-trigger="revealed" (tab containers only) so
-                    // modals and plugin config panels that legitimately reload are unaffected.
+                    // Mark tab containers as loaded once their content settles, so switching
+                    // away and back doesn't re-fetch. Scoped to the "loadtab" trigger (tab
+                    // containers only) so modals and plugin config panels can still reload.
                     document.body.addEventListener('htmx:afterSettle', function(event) {
                         if (event.detail && event.detail.target) {
                             var target = event.detail.target;
                             var trigger = target.getAttribute('hx-trigger') || '';
-                            if (trigger.includes('revealed')) {
+                            if (trigger.includes('loadtab')) {
                                 target.setAttribute('data-loaded', 'true');
                             }
                         }
@@ -1030,7 +1029,7 @@
         <div id="tab-content" class="space-y-6">
             <!-- Overview tab -->
             <div x-show="activeTab === 'overview'" x-transition>
-                <div id="overview-content" hx-get="/v3/partials/overview" hx-trigger="revealed" hx-swap="innerHTML" hx-on::htmx:response-error="loadOverviewDirect()">
+                <div id="overview-content" hx-get="/v3/partials/overview" hx-trigger="loadtab" hx-swap="innerHTML" hx-on::htmx:response-error="loadOverviewDirect()">
                     <div class="animate-pulse">
                         <div class="bg-white rounded-lg shadow p-6">
                             <div class="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
@@ -1098,7 +1097,7 @@
 
             <!-- General tab -->
             <div x-show="activeTab === 'general'" x-transition>
-                <div id="general-content" hx-get="/v3/partials/general" hx-trigger="revealed" hx-swap="innerHTML">
+                <div id="general-content" hx-get="/v3/partials/general" hx-trigger="loadtab" hx-swap="innerHTML">
                     <div class="animate-pulse">
                         <div class="bg-white rounded-lg shadow p-6">
                             <div class="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
@@ -1116,7 +1115,7 @@
             <div x-show="activeTab === 'wifi'" x-transition>
                 <div id="wifi-content" 
                      hx-get="/v3/partials/wifi" 
-                     hx-trigger="revealed" 
+                     hx-trigger="loadtab" 
                      hx-swap="innerHTML"
                      hx-on::htmx:response-error="loadWifiDirect()">
                     <div class="animate-pulse">
@@ -1167,7 +1166,7 @@
 
             <!-- Schedule tab -->
             <div x-show="activeTab === 'schedule'" x-transition>
-                <div id="schedule-content" hx-get="/v3/partials/schedule" hx-trigger="revealed" hx-swap="innerHTML">
+                <div id="schedule-content" hx-get="/v3/partials/schedule" hx-trigger="loadtab" hx-swap="innerHTML">
                     <div class="animate-pulse">
                         <div class="bg-white rounded-lg shadow p-6">
                             <div class="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
@@ -1183,7 +1182,7 @@
 
             <!-- Display tab -->
             <div x-show="activeTab === 'display'" x-transition>
-                <div id="display-content" hx-get="/v3/partials/display" hx-trigger="revealed" hx-swap="innerHTML">
+                <div id="display-content" hx-get="/v3/partials/display" hx-trigger="loadtab" hx-swap="innerHTML">
                     <div class="animate-pulse">
                         <div class="bg-white rounded-lg shadow p-6">
                             <div class="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
@@ -1198,7 +1197,7 @@
 
             <!-- Backup & Restore tab -->
             <div x-show="activeTab === 'backup-restore'" x-transition>
-                <div id="backup-restore-content" hx-get="/v3/partials/backup-restore" hx-trigger="revealed" hx-swap="innerHTML">
+                <div id="backup-restore-content" hx-get="/v3/partials/backup-restore" hx-trigger="loadtab" hx-swap="innerHTML">
                     <div class="animate-pulse">
                         <div class="bg-white rounded-lg shadow p-6">
                             <div class="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
@@ -1210,7 +1209,7 @@
 
             <!-- Config Editor tab -->
             <div x-show="activeTab === 'config-editor'" x-transition>
-                <div id="config-editor-content" hx-get="/v3/partials/raw-json" hx-trigger="revealed" hx-swap="innerHTML">
+                <div id="config-editor-content" hx-get="/v3/partials/raw-json" hx-trigger="loadtab" hx-swap="innerHTML">
                     <div class="animate-pulse">
                         <div class="bg-white rounded-lg shadow p-6">
                             <div class="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
@@ -1225,7 +1224,7 @@
 
             <!-- Plugins tab -->
             <div x-show="activeTab === 'plugins'" x-transition>
-                <div id="plugins-content" hx-get="/v3/partials/plugins" hx-trigger="revealed" hx-swap="innerHTML"
+                <div id="plugins-content" hx-get="/v3/partials/plugins" hx-trigger="loadtab" hx-swap="innerHTML"
                      hx-on::response-error="loadPluginsDirect()">
                     <div class="animate-pulse">
                         <div class="bg-white rounded-lg shadow p-6">
@@ -1242,7 +1241,7 @@
 
             <!-- Fonts tab -->
             <div x-show="activeTab === 'fonts'" x-transition>
-                <div id="fonts-content" hx-get="/v3/partials/fonts" hx-trigger="revealed" hx-swap="innerHTML">
+                <div id="fonts-content" hx-get="/v3/partials/fonts" hx-trigger="loadtab" hx-swap="innerHTML">
                     <div class="animate-pulse">
                         <div class="bg-white rounded-lg shadow p-6">
                             <div class="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
@@ -1257,7 +1256,7 @@
 
             <!-- Logs tab -->
             <div x-show="activeTab === 'logs'" x-transition>
-                <div id="logs-content" hx-get="/v3/partials/logs" hx-trigger="revealed" hx-swap="innerHTML">
+                <div id="logs-content" hx-get="/v3/partials/logs" hx-trigger="loadtab" hx-swap="innerHTML">
                     <div class="animate-pulse">
                         <div class="bg-white rounded-lg shadow p-6">
                             <div class="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
@@ -1269,7 +1268,7 @@
 
             <!-- Cache tab -->
             <div x-show="activeTab === 'cache'" x-transition>
-                <div id="cache-content" hx-get="/v3/partials/cache" hx-trigger="revealed" hx-swap="innerHTML">
+                <div id="cache-content" hx-get="/v3/partials/cache" hx-trigger="loadtab" hx-swap="innerHTML">
                     <div class="animate-pulse">
                         <div class="bg-white rounded-lg shadow p-6">
                             <div class="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
@@ -1281,7 +1280,7 @@
 
             <!-- Operation History tab -->
             <div x-show="activeTab === 'operation-history'" x-transition>
-                <div id="operation-history-content" hx-get="/v3/partials/operation-history" hx-trigger="revealed" hx-swap="innerHTML">
+                <div id="operation-history-content" hx-get="/v3/partials/operation-history" hx-trigger="loadtab" hx-swap="innerHTML">
                     <div class="animate-pulse">
                         <div class="bg-white rounded-lg shadow p-6">
                             <div class="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
@@ -1861,28 +1860,40 @@
                 },
 
                 loadTabContent(tab) {
-                    // Try to load content for the active tab
+                    const contentEl = document.getElementById(tab + '-content');
+                    if (!contentEl || contentEl.hasAttribute('data-loaded')) return;
+                    const url = contentEl.getAttribute('hx-get');
+                    if (!url) return;
+
+                    // htmx.ajax issues the request and swaps the response into the panel
+                    // directly, so it works even before htmx has wired up the element's
+                    // hx-trigger listeners — unlike htmx.trigger, which is lost if dispatched
+                    // before the element is processed. The htmx:afterSettle handler stamps
+                    // data-loaded so a panel loads exactly once, when its tab first opens.
+                    const swap = contentEl.getAttribute('hx-swap') || 'innerHTML';
+                    const load = () => htmx.ajax('GET', url, { target: contentEl, swap: swap })
+                        .then(() => contentEl.setAttribute('data-loaded', 'true'))
+                        .catch(() => {}); // leave unstamped on failure so it can retry
+
                     if (typeof htmx !== 'undefined') {
-                        const contentId = tab + '-content';
-                        const contentEl = document.getElementById(contentId);
-                        if (contentEl && !contentEl.hasAttribute('data-loaded')) {
-                            // Trigger HTMX load
-                            htmx.trigger(contentEl, 'revealed');
-                        }
-                    } else {
-                        // HTMX is still loading asynchronously — retry when it signals ready,
-                        // or fall back to direct fetch if it fails to load entirely.
-                        const self = this;
-                        function onReady() { window.removeEventListener('htmx-load-failed', onFailed); self.loadTabContent(tab); }
-                        function onFailed() {
-                            window.removeEventListener('htmx:ready', onReady);
+                        load();
+                        return;
+                    }
+
+                    // htmx is loaded from a CDN and may not be ready yet. Poll until it is,
+                    // then load; if it never arrives, fall back to a direct fetch.
+                    let tries = 0;
+                    const timer = setInterval(() => {
+                        if (typeof htmx !== 'undefined') {
+                            clearInterval(timer);
+                            if (!contentEl.hasAttribute('data-loaded')) load();
+                        } else if (++tries > 100) { // ~10s
+                            clearInterval(timer);
                             if (tab === 'overview' && typeof loadOverviewDirect === 'function') loadOverviewDirect();
                             else if (tab === 'wifi' && typeof loadWifiDirect === 'function') loadWifiDirect();
                             else if (tab === 'plugins' && typeof loadPluginsDirect === 'function') loadPluginsDirect();
                         }
-                        window.addEventListener('htmx:ready', onReady, { once: true });
-                        window.addEventListener('htmx-load-failed', onFailed, { once: true });
-                    }
+                    }, 100);
                 },
 
                 async loadInstalledPlugins() {
