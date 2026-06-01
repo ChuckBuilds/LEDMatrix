@@ -1861,19 +1861,31 @@
 
                 loadTabContent(tab) {
                     const contentEl = document.getElementById(tab + '-content');
-                    if (!contentEl || contentEl.hasAttribute('data-loaded')) return;
+                    // data-loaded: already fetched. data-loading: a fetch is queued or in
+                    // flight. Both guard against re-entry so a panel loads exactly once, even
+                    // if the tab is reopened before an in-progress (or polling) load settles.
+                    if (!contentEl || contentEl.hasAttribute('data-loaded') || contentEl.hasAttribute('data-loading')) return;
                     const url = contentEl.getAttribute('hx-get');
                     if (!url) return;
 
+                    contentEl.setAttribute('data-loading', 'true');
+
                     // htmx.ajax issues the request and swaps the response into the panel
                     // directly, so it works even before htmx has wired up the element's
-                    // hx-trigger listeners — unlike htmx.trigger, which is lost if dispatched
-                    // before the element is processed. The htmx:afterSettle handler stamps
-                    // data-loaded so a panel loads exactly once, when its tab first opens.
+                    // hx-trigger listeners. data-loaded is stamped on success so the panel
+                    // loads once; the activeTab check drops loads for a tab the user navigated
+                    // away from while htmx was still loading (avoids fetching hidden panels).
                     const swap = contentEl.getAttribute('hx-swap') || 'innerHTML';
-                    const load = () => htmx.ajax('GET', url, { target: contentEl, swap: swap })
-                        .then(() => contentEl.setAttribute('data-loaded', 'true'))
-                        .catch(() => {}); // leave unstamped on failure so it can retry
+                    const load = () => {
+                        if (this.activeTab !== tab || contentEl.hasAttribute('data-loaded')) {
+                            contentEl.removeAttribute('data-loading');
+                            return;
+                        }
+                        return htmx.ajax('GET', url, { target: contentEl, swap: swap })
+                            .then(() => contentEl.setAttribute('data-loaded', 'true'))
+                            .catch(() => {}) // leave unstamped on failure so it can retry
+                            .finally(() => contentEl.removeAttribute('data-loading'));
+                    };
 
                     if (typeof htmx !== 'undefined') {
                         load();
@@ -1886,9 +1898,10 @@
                     const timer = setInterval(() => {
                         if (typeof htmx !== 'undefined') {
                             clearInterval(timer);
-                            if (!contentEl.hasAttribute('data-loaded')) load();
+                            load();
                         } else if (++tries > 100) { // ~10s
                             clearInterval(timer);
+                            contentEl.removeAttribute('data-loading');
                             if (tab === 'overview' && typeof loadOverviewDirect === 'function') loadOverviewDirect();
                             else if (tab === 'wifi' && typeof loadWifiDirect === 'function') loadWifiDirect();
                             else if (tab === 'plugins' && typeof loadPluginsDirect === 'function') loadPluginsDirect();
