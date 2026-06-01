@@ -1707,7 +1707,8 @@ class DisplayController:
 
                 manager_to_display = None
                 
-                logger.info(f"Processing mode: {active_mode}, available_modes: {len(self.available_modes)}, plugin_modes: {list(self.plugin_modes.keys())}")
+                logger.info("Processing mode: %s (%d available)", active_mode, len(self.available_modes))
+                logger.debug("Loaded plugin modes: %s", list(self.plugin_modes.keys()))
                 
                 # Handle plugin-based display modes
                 if active_mode in self.plugin_modes:
@@ -1904,9 +1905,9 @@ class DisplayController:
                     min_duration = base_duration
                     if dynamic_enabled:
                         # Try to get plugin-calculated cycle duration first
-                        logger.info("Attempting to get cycle duration for mode %s", active_mode)
+                        logger.debug("Attempting to get cycle duration for mode %s", active_mode)
                         plugin_cycle_duration = self._plugin_cycle_duration(manager_to_display, active_mode)
-                        logger.info("Got cycle duration: %s", plugin_cycle_duration)
+                        logger.debug("Got cycle duration: %s", plugin_cycle_duration)
                         
                         # Get caps for validation
                         plugin_cap = self._plugin_dynamic_cap(manager_to_display)
@@ -2046,7 +2047,7 @@ class DisplayController:
                         if needs_high_fps:
                             # Ultra-smooth FPS for scrolling plugins (8ms = 125 FPS)
                             display_interval = 0.008
-                            logger.info(
+                            logger.debug(
                                 "Entering high-FPS loop for %s with display_interval=%.3fs (%.1f FPS)",
                                 active_mode,
                                 display_interval,
@@ -2098,7 +2099,7 @@ class DisplayController:
                         else:
                             # Normal FPS for other plugins (1 second)
                             display_interval = 1.0
-                            logger.info(
+                            logger.debug(
                                 "Entering normal FPS loop for %s with display_interval=%.3fs",
                                 active_mode,
                                 display_interval
