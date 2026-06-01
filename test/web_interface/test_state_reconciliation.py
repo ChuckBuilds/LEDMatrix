@@ -224,20 +224,14 @@ class TestStateReconciliation(unittest.TestCase):
         with open(manifest_path, 'w') as f:
             json.dump({"version": "1.0.0", "name": "Plugin 1"}, f)
         
-        # Mock save_config to track calls
-        saved_configs = []
-        def save_config(config):
-            saved_configs.append(config)
-        
-        self.config_manager.save_config = save_config
-        
         # Run reconciliation
         result = self.reconciler.reconcile_state()
-        
-        # Verify fix was attempted
+
+        # config.json is the source of truth for enabled state. The fix syncs
+        # the state manager to match config (config says True → state set True),
+        # rather than overwriting the config with the stale state value.
         self.assertEqual(len(result.inconsistencies_fixed), 1)
-        self.assertEqual(len(saved_configs), 1)
-        self.assertEqual(saved_configs[0]["plugin1"]["enabled"], False)
+        self.state_manager.set_plugin_enabled.assert_called_once_with("plugin1", True)
     
     def test_multiple_inconsistencies(self):
         """Test reconciliation with multiple inconsistencies."""

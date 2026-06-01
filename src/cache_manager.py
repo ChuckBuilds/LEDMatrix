@@ -1,3 +1,28 @@
+"""
+Cache Manager — multi-tier response cache for the LEDMatrix application.
+
+:class:`CacheManager` provides a unified caching layer used by all plugins
+to reduce external API calls and survive network outages gracefully.
+
+Two storage tiers
+-----------------
+* **Memory tier** (:class:`~src.cache.memory_cache.MemoryCache`): fast LRU
+  cache (up to 1 000 entries by default).  Hit on this tier before touching
+  disk.
+* **Disk tier** (:class:`~src.cache.disk_cache.DiskCache`): filesystem-backed
+  persistent store that survives process restarts.
+
+Data written to cache is serialised as JSON.  :class:`DateTimeEncoder` handles
+``datetime`` objects transparently so callers don't have to pre-serialise them.
+
+Typical plugin usage::
+
+    data = self.cache_manager.get_cached_data('my_key', max_age=300)
+    if data is None:
+        data = fetch_from_api()
+        self.cache_manager.save_cache('my_key', data)
+"""
+
 import json
 import os
 import time
@@ -15,7 +40,10 @@ from src.cache.cache_metrics import CacheMetrics
 from src.logging_config import get_logger
 
 class DateTimeEncoder(json.JSONEncoder):
+    """JSON encoder that serialises ``datetime`` objects as ISO-8601 strings."""
+
     def default(self, obj):
+        """Return ISO-8601 string for datetime; delegate all other types to the base encoder."""
         if isinstance(obj, datetime):
             return obj.isoformat()
         return super().default(obj)

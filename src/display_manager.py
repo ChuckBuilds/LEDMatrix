@@ -1,3 +1,28 @@
+"""
+Display Manager — hardware abstraction layer for the RGB LED matrix.
+
+This module provides :class:`DisplayManager`, the single interface between
+application code and the physical (or emulated) LED panel.
+
+Key responsibilities
+--------------------
+* Initialise the ``RGBMatrix`` (hardware) or ``RGBMatrixEmulator`` depending
+  on the ``EMULATOR`` environment variable.
+* Expose a PIL ``Image``/``ImageDraw`` canvas that plugins draw into, then
+  flush it to the matrix via double-buffering (:meth:`DisplayManager.update_display`).
+* Load and cache TTF/BDF fonts; expose ``draw_text`` for consistent text rendering.
+* Provide ``width`` / ``height`` properties — always use these instead of
+  hard-coding display dimensions.
+* Write periodic PNG snapshots to ``/tmp/led_matrix_preview.png`` for the
+  web-interface live preview.
+* Track scrolling state and gate deferred updates so plugins don't race with
+  an in-progress scroll.
+
+Singleton: only one ``DisplayManager`` instance exists per process.  The
+first call to ``DisplayManager(config)`` creates it; subsequent calls return
+the same object.
+"""
+
 import json
 import os
 import tempfile
@@ -18,6 +43,24 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)  # Set to INFO level
 
 class DisplayManager:
+    """
+    Singleton hardware abstraction layer for the RGB LED matrix.
+
+    Plugins should never interact with ``RGBMatrix`` directly; they use this
+    class to draw content and call :meth:`update_display` to push frames to
+    the panel.
+
+    Typical plugin usage::
+
+        canvas = Image.new('RGB', (self.display_manager.width,
+                                   self.display_manager.height), (0, 0, 0))
+        draw = ImageDraw.Draw(canvas)
+        # ... draw content ...
+        self.display_manager.image = canvas
+        self.display_manager.draw = ImageDraw.Draw(self.display_manager.image)
+        self.display_manager.update_display()
+    """
+
     _instance = None
     _initialized = False
 
@@ -33,6 +76,10 @@ class DisplayManager:
         self._suppress_test_pattern = suppress_test_pattern
         # When True, update_display() and clear() skip hardware writes (used during off-screen content capture)
         self._capture_mode_active = False
+        # Text-width measurement cache: (text, id(font)) -> pixel_width
+        # Avoids re-measuring the same string+font on every display() call.
+        # Cleared on _load_fonts() so stale entries don't survive a font reload.
+        self._text_width_cache: Dict[tuple, int] = {}
         # Snapshot settings for web preview integration (service writes, web reads)
         self._snapshot_path = "/tmp/led_matrix_preview.png"  # nosec B108 - fixed path intentional; web UI reads same path
         self._snapshot_min_interval_sec = 0.2  # max ~5 fps
@@ -437,6 +484,9 @@ class DisplayManager:
 
     def _load_fonts(self):
         """Load fonts with proper error handling."""
+        # Font objects get new id()s after reload, so the text-width cache would
+        # return stale measurements keyed on the old ids.  Clear it here.
+        self._text_width_cache.clear()
         try:
             # Load Press Start 2P font
             self.regular_font = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 8)
@@ -497,22 +547,32 @@ class DisplayManager:
 
 
     def get_text_width(self, text, font):
-        """Get the width of text when rendered with the given font."""
+        """Get the width of text when rendered with the given font.
+
+        Results are cached by (text, font identity) so plugins that measure
+        the same string every frame (e.g. to centre a score) pay only one
+        measurement per unique (text, font) pair.
+        """
+        cache_key = (text, id(font))
+        cached = self._text_width_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         try:
             if isinstance(font, freetype.Face):
-                # For FreeType faces, calculate width using freetype
                 width = 0
                 for char in text:
                     font.load_char(char)
                     width += font.glyph.advance.x >> 6
-                return width
             else:
-                # For PIL fonts, use textbbox
                 bbox = self.draw.textbbox((0, 0), text, font=font)
-                return bbox[2] - bbox[0]
-        except Exception as e:
-            logger.error(f"Error getting text width: {e}")
-            return 0  # Return 0 as fallback
+                width = bbox[2] - bbox[0]
+        except (AttributeError, TypeError, ValueError, OSError) as e:
+            logger.error("Error getting text width: %s", e)
+            return 0
+
+        self._text_width_cache[cache_key] = width
+        return width
 
     def get_font_height(self, font):
         """Get the height of the given font for line spacing purposes."""

@@ -49,9 +49,10 @@ class TestBasketballScoreboardPlugin(PluginTestBase):
         """Test that plugin has display modes."""
         manifest = self.load_plugin_manifest(plugin_id)
         assert 'display_modes' in manifest
-        assert 'basketball_live' in manifest['display_modes']
-        assert 'basketball_recent' in manifest['display_modes']
-        assert 'basketball_upcoming' in manifest['display_modes']
+        # Manifest uses league-prefixed modes (nba_, wnba_, ncaam_, ncaaw_)
+        assert 'nba_live' in manifest['display_modes']
+        assert 'nba_recent' in manifest['display_modes']
+        assert 'nba_upcoming' in manifest['display_modes']
     
     def test_plugin_has_get_display_modes(self, plugin_id):
         """Test that plugin can return display modes."""

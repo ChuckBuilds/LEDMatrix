@@ -1,3 +1,29 @@
+"""
+Config Manager — reads, writes, and validates ``config/config.json``.
+
+:class:`ConfigManager` is the single owner of the on-disk configuration
+files:
+
+* ``config/config.json``         — main user-editable configuration.
+* ``config/config_secrets.json`` — sensitive values (API keys, tokens).
+
+All writes go through :class:`~src.config_manager_atomic.AtomicConfigManager`
+which performs a backup before overwriting, validates the result, and rolls
+back on error.  This makes config corruption essentially impossible.
+
+Plugin configuration
+--------------------
+Plugin configs are stored inside ``config.json`` under the plugin's ID key
+and survive plugin reinstalls.  Use :meth:`ConfigManager.update_plugin_config`
+to write plugin settings; never write directly to the plugin directory.
+
+Hot-reload
+----------
+:class:`~src.config_service.ConfigService` wraps ``ConfigManager`` and
+detects file changes, broadcasting the new config to registered listeners
+without requiring a restart.
+"""
+
 import json
 import os
 import logging
@@ -17,6 +43,13 @@ from src.common.permission_utils import (
 )
 
 class ConfigManager:
+    """
+    Reads and writes the main application configuration files.
+
+    Wraps :class:`~src.config_manager_atomic.AtomicConfigManager` for safe
+    atomic writes with automatic backup and rollback.  Also exposes helpers
+    for plugin configuration persistence and secret-field masking.
+    """
     def __init__(self, config_path: Optional[str] = None, secrets_path: Optional[str] = None) -> None:
         # Use current working directory as base
         self.config_path: str = config_path or "config/config.json"
@@ -29,9 +62,11 @@ class ConfigManager:
         self._atomic_manager: Optional[AtomicConfigManager] = None
 
     def get_config_path(self) -> str:
+        """Return the path to the main config file (``config/config.json``)."""
         return self.config_path
 
     def get_secrets_path(self) -> str:
+        """Return the path to the secrets file (``config/config_secrets.json``)."""
         return self.secrets_path
     
     def _get_atomic_manager(self) -> AtomicConfigManager:

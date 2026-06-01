@@ -617,7 +617,8 @@ class TestDottedKeyNormalization:
             'leagues': {'eng.1': {'enabled': True, 'favorite_teams': []}},
         }
         schema_mgr.merge_with_defaults.side_effect = lambda config, defaults: {**defaults, **config}
-        schema_mgr.validate_config_against_schema.return_value = []
+        # Must be a (bool, list) tuple: the endpoint does is_valid, errors = validate_config_against_schema(...)
+        schema_mgr.validate_config_against_schema.return_value = (True, [])
         api_v3.schema_manager = schema_mgr
 
         request_data = {
@@ -679,7 +680,7 @@ class TestDottedKeyNormalization:
             'leagues': {'eng.1': {'favorite_teams': []}},
         }
         schema_mgr.merge_with_defaults.side_effect = lambda config, defaults: {**defaults, **config}
-        schema_mgr.validate_config_against_schema.return_value = []
+        schema_mgr.validate_config_against_schema.return_value = (True, [])
         api_v3.schema_manager = schema_mgr
 
         request_data = {

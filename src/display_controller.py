@@ -1,3 +1,25 @@
+"""
+Display Controller — top-level orchestration for the LEDMatrix application.
+
+This module owns the main run loop that drives the LED display.  It ties
+together every major subsystem:
+
+  - ConfigManager / ConfigService  — loads config.json, hot-reloads on change
+  - DisplayManager                 — hardware (or emulator) output interface
+  - FontManager                    — TTF/BDF font loading and caching
+  - CacheManager                   — multi-tier API response cache
+  - PluginManager                  — plugin lifecycle (load, update, display)
+  - DisplaySyncManager             — optional leader/follower multi-Pi sync
+  - VegasModeCoordinator           — optional continuous Vegas scroll mode
+
+The main loop inside :meth:`DisplayController.run` rotates through enabled
+plugin display modes, respecting schedule windows, brightness dim schedules,
+on-demand overrides, and live-priority interrupts.
+
+Entry point: :func:`main` — instantiates :class:`DisplayController` and calls
+:meth:`~DisplayController.run`.
+"""
+
 import time
 import os
 import json
@@ -28,6 +50,24 @@ DEFAULT_DYNAMIC_DURATION_CAP = 180.0
 WIFI_STATUS_FILE = None  # Will be initialized in __init__
 
 class DisplayController:
+    """
+    Top-level controller that owns the LED display run loop.
+
+    Responsibilities
+    ----------------
+    * Initialise and wire together all subsystems at startup.
+    * Rotate through plugin display modes in :meth:`run`.
+    * Honour schedule windows (active/inactive hours) and dim schedules.
+    * Handle on-demand override requests (external callers can pin a
+      specific plugin/mode for a fixed duration via the cache bus).
+    * Coordinate with a follower Pi when multi-display sync is configured.
+    * Delegate all actual content to the plugin system — this class contains
+      no display logic of its own.
+
+    There is exactly one instance per process; call :func:`main` to create
+    it and start the run loop.
+    """
+
     def __init__(self):
         start_time = time.time()
         logger.info("Starting DisplayController initialization")
@@ -148,7 +188,11 @@ class DisplayController:
         self.wifi_status_file = WIFI_STATUS_FILE
         self.wifi_status_active = False
         self.wifi_status_expires_at: Optional[float] = None
-        
+
+        # Plugin display() signature cache — must be initialised before the plugin
+        # loading loop below so the .pop() invalidation at load time is always safe.
+        self._plugin_accepts_display_mode: Dict[str, bool] = {}
+
         try:
             logger.info("Attempting to import plugin system...")
             from src.plugin_system import PluginManager
@@ -321,6 +365,8 @@ class DisplayController:
                             self.plugin_modes[mode] = plugin_instance
                             self.mode_to_plugin_id[mode] = plugin_id
                             logger.debug("  Added mode: %s", mode)
+                        # Invalidate signature cache so the new instance is re-inspected
+                        self._plugin_accepts_display_mode.pop(plugin_id, None)
                         
                         # Show progress
                         progress_pct = int((loaded_count / enabled_count) * 100)
@@ -367,10 +413,38 @@ class DisplayController:
         self.is_display_active = True
         self._was_display_active = True  # Track previous state for schedule change detection
 
+        # --- Opt #2: cached config values ---
+        # Avoids chained dict.get() with temporary {} defaults on every hot path call.
+        # Refreshed via _refresh_config_cache() on every hot-reload.
+        self._normal_brightness: int = (
+            self.config.get('display', {}).get('hardware', {}).get('brightness', 90)
+        )
+        self._scroll_speed: float = (
+            self.config.get('display', {}).get('vegas_scroll', {}).get('scroll_speed', 75)
+        )
+
         # Brightness state tracking for dim schedule
-        self.current_brightness = self.config.get('display', {}).get('hardware', {}).get('brightness', 90)
+        self.current_brightness = self._normal_brightness
         self.is_dimmed = False
         self._was_dimmed = False
+
+        # --- Opt #3: schedule minute-gate ---
+        # Both _check_schedule and _check_dim_schedule re-evaluated at most once per
+        # clock minute.  Storing the (hour, minute) tuple that was last evaluated lets
+        # the methods skip all timezone / strptime work within the same minute.
+        # Reset to None on config change so the next call re-evaluates immediately.
+        self._tz = None                              # pytz timezone, lazily built from config
+        self._schedule_checked_minute: Optional[tuple] = None
+        self._dim_checked_minute: Optional[tuple] = None
+        self._cached_target_brightness: int = self._normal_brightness
+
+        # Register controller-level hot-reload callback so cached config values
+        # (_normal_brightness, _scroll_speed, _tz, minute-gates) stay in sync
+        # when the user saves settings via the web UI.
+        def _controller_config_change(old_config: Dict[str, Any], new_config: Dict[str, Any]) -> None:
+            self._refresh_config_cache(new_config)
+
+        self.config_service.subscribe(_controller_config_change)
 
         # Publish initial on-demand state
         try:
@@ -533,17 +607,24 @@ class DisplayController:
             logger.debug("Schedule is disabled - display always active")
             return
 
-        # Get configured timezone, default to UTC
-        timezone_str = self.config.get('timezone', 'UTC')
-        try:
-            tz = pytz.timezone(timezone_str)
-        except pytz.UnknownTimeZoneError:
-            logger.warning(f"Unknown timezone '{timezone_str}', using UTC")
-            tz = pytz.UTC
+        # Lazily build the timezone object once; reuse on every subsequent call.
+        if self._tz is None:
+            timezone_str = self.config.get('timezone', 'UTC')
+            try:
+                self._tz = pytz.timezone(timezone_str)
+            except pytz.UnknownTimeZoneError:
+                logger.warning("Unknown timezone '%s', using UTC", timezone_str)
+                self._tz = pytz.UTC
 
-        # Use timezone-aware current time
-        current_time = datetime.now(tz)
-        current_day = current_time.strftime('%A').lower()  # Get day name (monday, tuesday, etc.)
+        current_time = datetime.now(self._tz)
+        # Gate: schedule state can only change on a minute boundary, so skip
+        # all the strptime / comparison work if we already evaluated this minute.
+        current_minute_key = (current_time.hour, current_time.minute)
+        if current_minute_key == self._schedule_checked_minute:
+            return
+        self._schedule_checked_minute = current_minute_key
+
+        current_day = current_time.strftime('%A').lower()  # e.g. 'monday'
         current_time_only = current_time.time()
         
         # Check if per-day schedule is configured
@@ -632,8 +713,8 @@ class DisplayController:
             Target brightness level (dim_brightness if in dim period,
             normal brightness otherwise)
         """
-        # Get normal brightness from config
-        normal_brightness = self.config.get('display', {}).get('hardware', {}).get('brightness', 90)
+        # Opt #2: use cached brightness rather than re-traversing config dict
+        normal_brightness = self._normal_brightness
 
         # If display is OFF via schedule, don't process dim schedule
         if not self.is_display_active:
@@ -647,15 +728,21 @@ class DisplayController:
             self.is_dimmed = False
             return normal_brightness
 
-        # Get configured timezone
-        timezone_str = self.config.get('timezone', 'UTC')
-        try:
-            tz = pytz.timezone(timezone_str)
-        except pytz.UnknownTimeZoneError:
-            logger.warning(f"Unknown timezone '{timezone_str}' in dim schedule, using UTC")
-            tz = pytz.UTC
+        # Opt #3: lazily build timezone; gate full re-parse to once per clock minute
+        if self._tz is None:
+            timezone_str = self.config.get('timezone', 'UTC')
+            try:
+                self._tz = pytz.timezone(timezone_str)
+            except pytz.UnknownTimeZoneError:
+                logger.warning("Unknown timezone '%s' in dim schedule, using UTC", timezone_str)
+                self._tz = pytz.UTC
 
-        current_time = datetime.now(tz)
+        current_time = datetime.now(self._tz)
+        current_minute_key = (current_time.hour, current_time.minute)
+        if current_minute_key == self._dim_checked_minute:
+            return self._cached_target_brightness
+        self._dim_checked_minute = current_minute_key
+
         current_day = current_time.strftime('%A').lower()
         current_time_only = current_time.time()
 
@@ -703,10 +790,12 @@ class DisplayController:
                 logger.info(f"Dim schedule deactivated: brightness restored to {target_brightness}%")
 
             self._was_dimmed = self.is_dimmed
+            self._cached_target_brightness = target_brightness  # persist for minute-gate
             return target_brightness
 
         except ValueError as e:
-            logger.warning(f"Invalid dim schedule time format: {e}")
+            logger.warning("Invalid dim schedule time format: %s", e)
+            self._cached_target_brightness = normal_brightness  # persist for minute-gate
             return normal_brightness
 
     def _update_modules(self):
@@ -1483,12 +1572,8 @@ class DisplayController:
                     rp = vc.render_pipeline if (vc and vc.render_pipeline) else None
                     width = self.display_manager.width
 
-                    # Advance local position at Vegas scroll speed (px/s → px/tick)
-                    vegas_speed = (
-                        self.config.get('display', {})
-                            .get('vegas_scroll', {})
-                            .get('scroll_speed', 75)
-                    )
+                    # Opt #2: use pre-cached scroll speed (constant for the run)
+                    vegas_speed = self._scroll_speed
                     local_x = getattr(self, '_follower_local_x', None)
                     if local_x is None:
                         local_x = float(width)  # safe start (past pre-roll guard)
@@ -1628,7 +1713,8 @@ class DisplayController:
 
                 manager_to_display = None
                 
-                logger.info(f"Processing mode: {active_mode}, available_modes: {len(self.available_modes)}, plugin_modes: {list(self.plugin_modes.keys())}")
+                logger.info("Processing mode: %s (%d available)", active_mode, len(self.available_modes))
+                logger.debug("Loaded plugin modes: %s", list(self.plugin_modes.keys()))
                 
                 # Handle plugin-based display modes
                 if active_mode in self.plugin_modes:
@@ -1664,17 +1750,22 @@ class DisplayController:
                     try:
                         logger.debug(f"Calling display() for {active_mode} with force_clear={self.force_change}")
                         if hasattr(manager_to_display, 'display'):
-                            # Check if plugin accepts display_mode parameter
-                            import inspect
-                            sig = inspect.signature(manager_to_display.display)
-                            
+                            # Opt #1: look up (or compute once) whether display() accepts display_mode
+                            _cache_key = plugin_id
+                            if _cache_key not in self._plugin_accepts_display_mode:
+                                import inspect as _inspect
+                                self._plugin_accepts_display_mode[_cache_key] = (
+                                    'display_mode' in _inspect.signature(manager_to_display.display).parameters
+                                )
+                            _accepts_display_mode = self._plugin_accepts_display_mode[_cache_key]
+
                             # Use PluginExecutor for safe execution with timeout
                             if self.plugin_manager and hasattr(self.plugin_manager, 'plugin_executor'):
                                 result = self.plugin_manager.plugin_executor.execute_display(
                                     manager_to_display,
                                     plugin_id,
                                     force_clear=self.force_change,
-                                    display_mode=active_mode if 'display_mode' in sig.parameters else None
+                                    display_mode=active_mode if _accepts_display_mode else None
                                 )
                                 # execute_display returns bool, convert to expected format
                                 if result:
@@ -1683,7 +1774,7 @@ class DisplayController:
                                     result = False  # Failed
                             else:
                                 # Fallback to direct call if executor not available
-                                if 'display_mode' in sig.parameters:
+                                if _accepts_display_mode:
                                     result = manager_to_display.display(display_mode=active_mode, force_clear=self.force_change)
                                 else:
                                     result = manager_to_display.display(force_clear=self.force_change)
@@ -1820,9 +1911,9 @@ class DisplayController:
                     min_duration = base_duration
                     if dynamic_enabled:
                         # Try to get plugin-calculated cycle duration first
-                        logger.info("Attempting to get cycle duration for mode %s", active_mode)
+                        logger.debug("Attempting to get cycle duration for mode %s", active_mode)
                         plugin_cycle_duration = self._plugin_cycle_duration(manager_to_display, active_mode)
-                        logger.info("Got cycle duration: %s", plugin_cycle_duration)
+                        logger.debug("Got cycle duration: %s", plugin_cycle_duration)
                         
                         # Get caps for validation
                         plugin_cap = self._plugin_dynamic_cap(manager_to_display)
@@ -1962,7 +2053,7 @@ class DisplayController:
                         if needs_high_fps:
                             # Ultra-smooth FPS for scrolling plugins (8ms = 125 FPS)
                             display_interval = 0.008
-                            logger.info(
+                            logger.debug(
                                 "Entering high-FPS loop for %s with display_interval=%.3fs (%.1f FPS)",
                                 active_mode,
                                 display_interval,
@@ -1972,7 +2063,7 @@ class DisplayController:
                             while True:
                                 try:
                                     # Pass display_mode to maintain sticky manager state
-                                    if 'display_mode' in sig.parameters:
+                                    if _accepts_display_mode:
                                         result = manager_to_display.display(display_mode=active_mode, force_clear=False)
                                     else:
                                         result = manager_to_display.display(force_clear=False)
@@ -2014,7 +2105,7 @@ class DisplayController:
                         else:
                             # Normal FPS for other plugins (1 second)
                             display_interval = 1.0
-                            logger.info(
+                            logger.debug(
                                 "Entering normal FPS loop for %s with display_interval=%.3fs",
                                 active_mode,
                                 display_interval
@@ -2036,7 +2127,7 @@ class DisplayController:
 
                                 try:
                                     # Pass display_mode to maintain sticky manager state
-                                    if 'display_mode' in sig.parameters:
+                                    if _accepts_display_mode:
                                         result = manager_to_display.display(display_mode=active_mode, force_clear=False)
                                     else:
                                         result = manager_to_display.display(force_clear=False)
@@ -2333,6 +2424,30 @@ class DisplayController:
             self.wifi_status_active = False
             self.wifi_status_expires_at = None
 
+    def _refresh_config_cache(self, new_config: Dict[str, Any]) -> None:
+        """Refresh all config-derived caches when a hot-reload fires.
+
+        Called by the controller-level ConfigService subscriber.  Keeps
+        ``_normal_brightness``, ``_scroll_speed``, the cached timezone, and the
+        schedule minute-gates consistent with the live config so callers never
+        read stale values after the user saves settings via the web UI.
+        """
+        self.config = new_config
+        self._normal_brightness = (
+            self.config.get('display', {}).get('hardware', {}).get('brightness', 90)
+        )
+        self._scroll_speed = (
+            self.config.get('display', {}).get('vegas_scroll', {}).get('scroll_speed', 75)
+        )
+        # Force the timezone to be re-derived from the new config on next schedule check
+        self._tz = None
+        # Invalidate minute-gates so the new schedule/dim times take effect immediately
+        self._schedule_checked_minute = None
+        self._dim_checked_minute = None
+        self._cached_target_brightness = self._normal_brightness
+        logger.debug("Config cache refreshed (brightness=%s, scroll_speed=%s)",
+                     self._normal_brightness, self._scroll_speed)
+
     def cleanup(self):
         """Clean up resources."""
         # Shutdown config service if it exists
@@ -2347,6 +2462,7 @@ class DisplayController:
         logger.info("Cleanup complete.")
 
 def main():
+    """Application entry point — create a DisplayController and run until interrupted."""
     controller = DisplayController()
     controller.run()
 

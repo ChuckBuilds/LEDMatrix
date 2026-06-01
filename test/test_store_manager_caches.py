@@ -58,19 +58,15 @@ class TestGitInfoCache(unittest.TestCase):
         (self.plugin_path / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
 
     def _fake_subprocess_run(self, *args, **kwargs):
-        # Return different dummy values depending on which git subcommand
-        # was invoked so the code paths that parse output all succeed.
+        # _get_local_git_info now reads branch and remote_url directly from
+        # .git/HEAD and .git/config (no subprocess) and uses a single
+        # ``git log --format=%H%n%cI`` call that returns SHA on line 1 and
+        # ISO date on line 2.  Adjust the fake accordingly.
         cmd = args[0]
         result = MagicMock()
         result.returncode = 0
-        if "rev-parse" in cmd and "HEAD" in cmd and "--abbrev-ref" not in cmd:
-            result.stdout = "abcdef1234567890\n"
-        elif "--abbrev-ref" in cmd:
-            result.stdout = "main\n"
-        elif "config" in cmd:
-            result.stdout = "https://example.com/repo.git\n"
-        elif "log" in cmd:
-            result.stdout = "2026-04-08T12:00:00+00:00\n"
+        if "log" in cmd:
+            result.stdout = "abcdef1234567890\n2026-04-08T12:00:00+00:00\n"
         else:
             result.stdout = ""
         return result
@@ -84,7 +80,8 @@ class TestGitInfoCache(unittest.TestCase):
             self.assertIsNotNone(first)
             self.assertEqual(first["short_sha"], "abcdef1")
             calls_after_first = mock_run.call_count
-            self.assertEqual(calls_after_first, 4)
+            # Production code now uses a single ``git log`` call.
+            self.assertEqual(calls_after_first, 1)
 
             # Second call with unchanged HEAD: zero new subprocess calls.
             second = self.sm._get_local_git_info(self.plugin_path)
@@ -105,7 +102,8 @@ class TestGitInfoCache(unittest.TestCase):
             os.utime(head, (new_time, new_time))
 
             self.sm._get_local_git_info(self.plugin_path)
-            self.assertEqual(mock_run.call_count, calls_after_first + 4)
+            # One new ``git log`` call after cache invalidation.
+            self.assertEqual(mock_run.call_count, calls_after_first + 1)
 
     def test_no_git_directory_returns_none(self):
         non_git = self.plugins_dir / "no_git"
@@ -192,14 +190,11 @@ class TestGitInfoCache(unittest.TestCase):
             result = MagicMock()
             result.returncode = 0
             cmd = args[0]
-            if "rev-parse" in cmd and "--abbrev-ref" not in cmd:
-                result.stdout = branch_file.read_text().strip() + "\n"
-            elif "--abbrev-ref" in cmd:
-                result.stdout = "main\n"
-            elif "config" in cmd:
-                result.stdout = "https://example.com/repo.git\n"
-            elif "log" in cmd:
-                result.stdout = "2026-04-08T12:00:00+00:00\n"
+            # Production code now uses a single ``git log --format=%H%n%cI``.
+            # Branch and remote_url are read directly from .git/HEAD/.git/config.
+            if "log" in cmd:
+                sha = branch_file.read_text().strip()
+                result.stdout = f"{sha}\n2026-04-08T12:00:00+00:00\n"
             else:
                 result.stdout = ""
             return result

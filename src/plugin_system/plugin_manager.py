@@ -15,7 +15,7 @@ import threading
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 import logging
-from src.exceptions import PluginError
+from src.exceptions import PluginError, ConfigError
 from src.logging_config import get_logger
 from src.plugin_system.plugin_loader import PluginLoader
 from src.plugin_system.plugin_executor import PluginExecutor
@@ -81,7 +81,13 @@ class PluginManager:
         self.plugin_manifests: Dict[str, Dict[str, Any]] = {}
         self.plugin_modules: Dict[str, Any] = {}
         self.plugin_last_update: Dict[str, float] = {}
-        
+
+        # Cached data-fetch intervals per plugin_id.
+        # _get_plugin_update_interval falls back to config_manager.get_config()
+        # (a full dict copy) when the manifest lacks an interval — caching avoids
+        # that copy on every 30-fps tick.  Cleared on load/unload.
+        self._update_interval_cache: Dict[str, Optional[float]] = {}
+
         # Health tracking (optional, set by display_controller if available)
         self.health_tracker = None
         self.resource_monitor = None
@@ -388,6 +394,8 @@ class PluginManager:
             # Store plugin instance
             self.plugins[plugin_id] = plugin_instance
             self.plugin_last_update[plugin_id] = 0.0
+            # Invalidate cached interval so next tick re-derives it for this plugin
+            self._update_interval_cache.pop(plugin_id, None)
             
             # Update state based on enabled status
             if config.get('enabled', True):
@@ -444,8 +452,8 @@ class PluginManager:
             
             # Remove from active plugins
             del self.plugins[plugin_id]
-            if plugin_id in self.plugin_last_update:
-                del self.plugin_last_update[plugin_id]
+            self.plugin_last_update.pop(plugin_id, None)
+            self._update_interval_cache.pop(plugin_id, None)
             
             # Remove main module from sys.modules if present
             module_name = f"plugin_{plugin_id.replace('-', '_')}"
@@ -639,41 +647,46 @@ class PluginManager:
 
     def _get_plugin_update_interval(self, plugin_id: str, plugin_instance: Any) -> Optional[float]:
         """
-        Get the update interval for a plugin.
-        
-        Args:
-            plugin_id: Plugin identifier
-            plugin_instance: Plugin instance
-            
-        Returns:
-            Update interval in seconds or None if not configured
+        Get the data-fetch interval for a plugin (seconds between update() calls).
+
+        Result is cached per plugin_id after the first lookup to avoid calling
+        config_manager.get_config() — which returns a full dict copy — on every
+        tick of the 30-fps display loop.  The cache is invalidated when a plugin
+        is loaded or unloaded.
         """
-        # Check manifest first
+        if plugin_id in self._update_interval_cache:
+            return self._update_interval_cache[plugin_id]
+
+        interval: Optional[float] = None
+
+        # 1. Manifest (immutable after load — preferred source)
         manifest = self.plugin_manifests.get(plugin_id, {})
-        update_interval = manifest.get('update_interval')
-        
-        if update_interval:
+        raw = manifest.get('update_interval')
+        if raw is not None:
             try:
-                return float(update_interval)
+                interval = float(raw)
             except (ValueError, TypeError):
                 pass
-        
-        # Check plugin config
-        if self.config_manager:
+
+        # 2. Plugin config (mutable; only read once and then cached)
+        if interval is None and self.config_manager:
             try:
                 config = self.config_manager.get_config()
-                plugin_config = config.get(plugin_id, {})
-                update_interval = plugin_config.get('update_interval')
-                if update_interval:
+                raw = config.get(plugin_id, {}).get('update_interval')
+                if raw is not None:
                     try:
-                        return float(update_interval)
+                        interval = float(raw)
                     except (ValueError, TypeError):
                         pass
-            except Exception as e:
+            except (ConfigError, OSError, ValueError, TypeError) as e:
                 self.logger.debug("Could not get update interval from config: %s", e)
-        
-        # Default: 60 seconds
-        return 60.0
+
+        # 3. Default
+        if interval is None:
+            interval = 60.0
+
+        self._update_interval_cache[plugin_id] = interval
+        return interval
 
     def _record_update_failure(
         self,
