@@ -354,28 +354,33 @@ class ScrollHelper:
         slices (128×32 = 12 KB) used here.
         """
         _size = (self.display_width, self.display_height)
+        img_w = self.cached_image.width
 
-        if end_x <= self.cached_image.width:
+        if end_x <= img_w:
             # Normal case: single contiguous slice (fastest path)
-            # np.ascontiguousarray ensures the slice is contiguous before frombytes
             frame_array = np.ascontiguousarray(self.cached_array[:, start_x:end_x])
             return Image.frombytes('RGB', _size, frame_array.tobytes())
         else:
-            # Wrap-around case: combine two slices into pre-allocated buffer
-            width1 = self.cached_image.width - start_x
-            if width1 > 0:
-                if self._frame_buffer is None or self._frame_buffer.shape != (self.display_height, self.display_width, 3):
-                    self._frame_buffer = np.zeros((self.display_height, self.display_width, 3), dtype=np.uint8)
+            # Ensure frame buffer is allocated for all non-simple paths
+            if self._frame_buffer is None or self._frame_buffer.shape != (self.display_height, self.display_width, 3):
+                self._frame_buffer = np.zeros((self.display_height, self.display_width, 3), dtype=np.uint8)
 
+            width1 = img_w - start_x
+            if width1 > 0:
+                # Wrap-around: tail of image + head of image
                 self._frame_buffer[:, :width1] = self.cached_array[:, start_x:]
                 remaining_width = self.display_width - width1
                 self._frame_buffer[:, width1:] = self.cached_array[:, :remaining_width]
-
-                return Image.frombytes('RGB', _size, self._frame_buffer.tobytes())
             else:
-                # Edge case: start_x >= image width, wrap to beginning
-                frame_array = np.ascontiguousarray(self.cached_array[:, :self.display_width])
-                return Image.frombytes('RGB', _size, frame_array.tobytes())
+                # Edge case: start_x at or past image end — show from beginning,
+                # clamped to available width (scroll_position should wrap before
+                # reaching this state in normal operation).
+                available = min(self.display_width, img_w)
+                self._frame_buffer[:, :available] = self.cached_array[:, :available]
+                if available < self.display_width:
+                    self._frame_buffer[:, available:] = 0
+
+            return Image.frombytes('RGB', _size, self._frame_buffer.tobytes())
     
     def _get_visible_portion_subpixel(self, start_x_int: int, fractional: float) -> Image.Image:
         """
