@@ -440,7 +440,7 @@
                 <h3 class="text-base font-semibold text-gray-900">Advanced Properties</h3>
                 <button type="button" onclick="window.closeArrayTableRowEditor()"
                         class="text-gray-400 hover:text-gray-600"><i class="fas fa-times"></i></button>
-            </div>`;
+            </div>`);
 
         const body = document.createElement('div');
         body.className = 'px-5 py-4 space-y-4';
@@ -512,7 +512,7 @@
             <button type="button" onclick="window.closeArrayTableRowEditor()"
                     class="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-md hover:bg-gray-100">Cancel</button>
             <button type="button" id="array-row-editor-save"
-                    class="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-md">Save</button>`;
+                    class="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-md">Save</button>`);
 
         // Save handler
         footer.querySelector('#array-row-editor-save').onclick = function() {
