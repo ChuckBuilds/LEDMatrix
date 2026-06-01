@@ -188,7 +188,11 @@ class DisplayController:
         self.wifi_status_file = WIFI_STATUS_FILE
         self.wifi_status_active = False
         self.wifi_status_expires_at: Optional[float] = None
-        
+
+        # Plugin display() signature cache — must be initialised before the plugin
+        # loading loop below so the .pop() invalidation at load time is always safe.
+        self._plugin_accepts_display_mode: Dict[str, bool] = {}
+
         try:
             logger.info("Attempting to import plugin system...")
             from src.plugin_system import PluginManager
@@ -362,8 +366,7 @@ class DisplayController:
                             self.mode_to_plugin_id[mode] = plugin_id
                             logger.debug("  Added mode: %s", mode)
                         # Invalidate signature cache so the new instance is re-inspected
-                        if hasattr(self, '_plugin_accepts_display_mode'):
-                            self._plugin_accepts_display_mode.pop(plugin_id, None)
+                        self._plugin_accepts_display_mode.pop(plugin_id, None)
                         
                         # Show progress
                         progress_pct = int((loaded_count / enabled_count) * 100)
@@ -434,11 +437,6 @@ class DisplayController:
         self._schedule_checked_minute: Optional[tuple] = None
         self._dim_checked_minute: Optional[tuple] = None
         self._cached_target_brightness: int = self._normal_brightness
-
-        # --- Opt #1: plugin display() signature cache ---
-        # inspect.signature() is called at most once per plugin_id; result stored here.
-        # Cleared for a plugin when its instance is replaced in plugin_modes.
-        self._plugin_accepts_display_mode: Dict[str, bool] = {}
 
         # Register controller-level hot-reload callback so cached config values
         # (_normal_brightness, _scroll_speed, _tz, minute-gates) stay in sync
