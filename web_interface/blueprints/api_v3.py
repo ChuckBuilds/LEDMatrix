@@ -2412,6 +2412,13 @@ def reconcile_plugin_state():
 
         from src.plugin_system.state_reconciliation import StateReconciliation
 
+        # Parse optional `force` flag from request body, guarding against
+        # non-dict bodies (bare string, array, null) that would raise AttributeError.
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            payload = {}
+        force = _coerce_to_bool(payload.get('force', False))
+
         reconciler = StateReconciliation(
             state_manager=api_v3.plugin_state_manager,
             config_manager=api_v3.config_manager,
@@ -2419,7 +2426,7 @@ def reconcile_plugin_state():
             plugins_dir=Path(api_v3.plugin_manager.plugins_dir)
         )
 
-        result = reconciler.reconcile_state()
+        result = reconciler.reconcile_state(force=force)
 
         return success_response(
             data={
@@ -2846,6 +2853,79 @@ def update_plugin():
             status_code=500
         )
 
+def _do_transactional_uninstall(plugin_id, preserve_config):
+    """Execute an uninstall with snapshot-based rollback.
+
+    Order of operations:
+      1. Snapshot main config + secrets (abort on unexpected errors, proceed on expected I/O errors).
+      2. Clean up plugin config (abort with 500 if this raises — avoids orphaned files).
+      3. Unload plugin from runtime if loaded (rollback + 500 if this raises).
+      4. Remove plugin files (rollback + 500 if this returns False or raises).
+      5. Finish (remove state, invalidate caches).
+
+    Rollback restores the config snapshot and, if the plugin had been
+    loaded before unload, calls load_plugin to restore runtime state.
+
+    Returns (True, None) on success or (False, error_message) on failure.
+    """
+    from src.exceptions import ConfigError
+
+    # --- Step 1: snapshot ---
+    main_snapshot = None
+    try:
+        main_snapshot = api_v3.config_manager.get_raw_file_content('main')
+    except (OSError, ConfigError):
+        pass  # Proceed without snapshot; narrow catch preserves TypeError/AttributeError
+
+    # --- Step 2: cleanup config first (abort before touching filesystem) ---
+    if not preserve_config:
+        api_v3.config_manager.cleanup_plugin_config(plugin_id, remove_secrets=True)
+
+    # Record whether the plugin was running before we touch anything.
+    was_loaded = (
+        api_v3.plugin_manager is not None
+        and plugin_id in api_v3.plugin_manager.plugins
+    )
+
+    def _rollback(reload_plugin):
+        if main_snapshot is not None:
+            try:
+                api_v3.config_manager.save_raw_file_content('main', main_snapshot)
+            except Exception as restore_err:
+                logger.error("Failed to restore config snapshot for %s: %s", plugin_id, restore_err)
+        if reload_plugin and api_v3.plugin_manager is not None:
+            try:
+                api_v3.plugin_manager.load_plugin(plugin_id)
+            except Exception as reload_err:
+                logger.error("Failed to reload plugin %s during rollback: %s", plugin_id, reload_err)
+
+    # --- Step 3: unload ---
+    if was_loaded:
+        try:
+            api_v3.plugin_manager.unload_plugin(plugin_id)
+        except Exception as unload_err:
+            _rollback(reload_plugin=False)  # unload failed — runtime state unchanged
+            return False, f"Failed to unload plugin {plugin_id}: {unload_err}"
+
+    # --- Step 4: remove files ---
+    try:
+        success = api_v3.plugin_store_manager.uninstall_plugin(plugin_id)
+    except Exception as remove_err:
+        _rollback(reload_plugin=was_loaded)
+        return False, f"Failed to remove plugin {plugin_id}: {remove_err}"
+
+    if not success:
+        _rollback(reload_plugin=was_loaded)
+        return False, f"Failed to uninstall plugin {plugin_id}"
+
+    # --- Step 5: finish ---
+    if api_v3.schema_manager:
+        api_v3.schema_manager.invalidate_cache(plugin_id)
+    if api_v3.plugin_state_manager:
+        api_v3.plugin_state_manager.remove_plugin_state(plugin_id)
+    return True, None
+
+
 @api_v3.route('/plugins/uninstall', methods=['POST'])
 def uninstall_plugin():
     """Uninstall plugin"""
@@ -2925,31 +3005,10 @@ def uninstall_plugin():
                 message='Plugin uninstallation queued'
             )
         else:
-            # Fallback to direct uninstall
-            # Unload the plugin first if it's loaded
-            if api_v3.plugin_manager and plugin_id in api_v3.plugin_manager.plugins:
-                api_v3.plugin_manager.unload_plugin(plugin_id)
-
-            # Uninstall the plugin
-            success = api_v3.plugin_store_manager.uninstall_plugin(plugin_id)
+            # Direct (non-queued) transactional uninstall
+            success, error_msg = _do_transactional_uninstall(plugin_id, preserve_config)
 
             if success:
-                # Invalidate schema cache
-                if api_v3.schema_manager:
-                    api_v3.schema_manager.invalidate_cache(plugin_id)
-
-                # Clean up plugin configuration if not preserving
-                if not preserve_config:
-                    try:
-                        api_v3.config_manager.cleanup_plugin_config(plugin_id, remove_secrets=True)
-                    except Exception as cleanup_err:
-                        logger.warning("Failed to cleanup config after uninstall: %s", cleanup_err)
-
-                # Remove from state manager
-                if api_v3.plugin_state_manager:
-                    api_v3.plugin_state_manager.remove_plugin_state(plugin_id)
-
-                # Record in history
                 if api_v3.operation_history:
                     api_v3.operation_history.record_operation(
                         "uninstall",
@@ -2957,7 +3016,6 @@ def uninstall_plugin():
                         status="success",
                         details={"preserve_config": preserve_config}
                     )
-
                 return success_response(message='Plugin uninstalled successfully')
             else:
                 if api_v3.operation_history:
@@ -2965,12 +3023,11 @@ def uninstall_plugin():
                         "uninstall",
                         plugin_id=plugin_id,
                         status="failed",
-                        error='Plugin uninstall failed'
+                        error=error_msg
                     )
-
                 return error_response(
                     ErrorCode.PLUGIN_UNINSTALL_FAILED,
-                    'Plugin uninstall failed',
+                    error_msg or 'Plugin uninstall failed',
                     status_code=500
                 )
 
@@ -4217,7 +4274,9 @@ def save_plugin_config():
                             nested_dict = config_dict.get(prop_key)
 
                         if isinstance(nested_dict, dict):
-                            fix_array_structures(nested_dict, prop_schema['properties'], nested_prefix)
+                            # Pass no prefix: config_dict is already the navigated sub-dict,
+                            # so path segments from the parent would mis-navigate it.
+                            fix_array_structures(nested_dict, prop_schema['properties'])
 
             # Also ensure array fields that are None get converted to empty arrays
             def ensure_array_defaults(config_dict, schema_props, prefix=''):
@@ -4277,7 +4336,8 @@ def save_plugin_config():
                                 nested_dict = config_dict[prop_key]
 
                         if isinstance(nested_dict, dict):
-                            ensure_array_defaults(nested_dict, prop_schema['properties'], nested_prefix)
+                            # Pass no prefix: config_dict is already navigated.
+                            ensure_array_defaults(nested_dict, prop_schema['properties'])
 
             if schema and 'properties' in schema:
                 # First, fix any dict structures that should be arrays
@@ -4376,6 +4436,21 @@ def save_plugin_config():
         if schema:
             defaults = schema_mgr.generate_default_config(plugin_id, use_cache=True)
             plugin_config = schema_mgr.merge_with_defaults(plugin_config, defaults)
+
+        # After merging defaults, replace any None array values with their schema defaults.
+        # merge_with_defaults gives user config higher priority, so a None submitted by
+        # the client can survive the merge — this pass cleans those up.
+        def _fix_none_arrays(cfg, props):
+            for k, pschema in props.items():
+                if pschema.get('type') == 'array':
+                    if isinstance(cfg, dict) and (k not in cfg or cfg[k] is None):
+                        cfg[k] = pschema.get('default', [])
+                elif pschema.get('type') == 'object' and 'properties' in pschema:
+                    if isinstance(cfg, dict) and isinstance(cfg.get(k), dict):
+                        _fix_none_arrays(cfg[k], pschema['properties'])
+
+        if schema and 'properties' in schema and isinstance(plugin_config, dict):
+            _fix_none_arrays(plugin_config, schema['properties'])
 
         # Ensure enabled state is preserved after defaults merge
         # Defaults should not overwrite an explicitly preserved enabled value

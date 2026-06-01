@@ -229,18 +229,20 @@ class TestDisplayControllerSchedule:
     def test_inactive_hours(self, test_display_controller):
         """Test inactive hours check."""
         controller = test_display_controller
+        # Inject schedule directly into self.config (what _check_schedule actually reads)
+        # and reset the minute gate so the cached result from any prior call is cleared.
+        controller.config['schedule'] = {
+            "enabled": True,
+            "start_time": "09:00",
+            "end_time": "17:00",
+        }
+        controller._schedule_checked_minute = None
+        controller._tz = None
+
         with patch('src.display_controller.datetime') as mock_datetime:
             mock_datetime.now.return_value.strftime.return_value.lower.return_value = "monday"
             mock_datetime.now.return_value.time.return_value = datetime.strptime("20:00", "%H:%M").time()
             mock_datetime.strptime = datetime.strptime
 
-            schedule_config = {
-                "schedule": {
-                    "enabled": True,
-                    "start_time": "09:00",
-                    "end_time": "17:00"
-                }
-            }
-            with patch.object(controller.config_service, 'get_config', return_value=schedule_config):
-                controller._check_schedule()
-                assert controller.is_display_active is False
+            controller._check_schedule()
+            assert controller.is_display_active is False
