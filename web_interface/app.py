@@ -391,6 +391,22 @@ def captive_portal_redirect():
     # Redirect to lightweight captive portal setup page (not the full UI)
     return redirect(url_for('pages_v3.captive_setup'), code=302)
 
+# Append a content-version query param (file mtime) to every static URL so the
+# long-lived `immutable` cache (see add_security_headers below) is actually safe:
+# when a static file changes its URL changes, so browsers refetch it. Without
+# this, edited JS/CSS were served immutable under an unchanging URL and never
+# reached clients until a manual cache clear.
+@app.url_defaults
+def add_static_version(endpoint, values):
+    if endpoint == 'static' and values.get('filename'):
+        try:
+            file_path = os.path.join(app.static_folder, values['filename'])
+            values['v'] = int(os.path.getmtime(file_path))
+        except OSError:
+            # File missing (e.g. plugin asset not yet installed) — skip versioning.
+            pass
+
+
 # Add security headers and caching to all responses
 @app.after_request
 def add_security_headers(response):
