@@ -15,7 +15,7 @@ import threading
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 import logging
-from src.exceptions import PluginError
+from src.exceptions import PluginError, ConfigError
 from src.logging_config import get_logger
 from src.plugin_system.plugin_loader import PluginLoader
 from src.plugin_system.plugin_executor import PluginExecutor
@@ -678,7 +678,7 @@ class PluginManager:
                         interval = float(raw)
                     except (ValueError, TypeError):
                         pass
-            except Exception as e:
+            except (ConfigError, OSError, ValueError, TypeError) as e:
                 self.logger.debug("Could not get update interval from config: %s", e)
 
         # 3. Default

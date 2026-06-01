@@ -2870,12 +2870,17 @@ def _do_transactional_uninstall(plugin_id, preserve_config):
     """
     from src.exceptions import ConfigError
 
-    # --- Step 1: snapshot ---
+    # --- Step 1: snapshot main + secrets ---
     main_snapshot = None
+    secrets_snapshot = None
     try:
         main_snapshot = api_v3.config_manager.get_raw_file_content('main')
     except (OSError, ConfigError):
         pass  # Proceed without snapshot; narrow catch preserves TypeError/AttributeError
+    try:
+        secrets_snapshot = api_v3.config_manager.get_raw_file_content('secrets')
+    except (OSError, ConfigError):
+        pass
 
     # --- Step 2: cleanup config first (abort before touching filesystem) ---
     if not preserve_config:
@@ -2892,7 +2897,12 @@ def _do_transactional_uninstall(plugin_id, preserve_config):
             try:
                 api_v3.config_manager.save_raw_file_content('main', main_snapshot)
             except Exception as restore_err:
-                logger.error("Failed to restore config snapshot for %s: %s", plugin_id, restore_err)
+                logger.error("Failed to restore main config snapshot for %s: %s", plugin_id, restore_err)
+        if secrets_snapshot is not None:
+            try:
+                api_v3.config_manager.save_raw_file_content('secrets', secrets_snapshot)
+            except Exception as restore_err:
+                logger.error("Failed to restore secrets snapshot for %s: %s", plugin_id, restore_err)
         if reload_plugin and api_v3.plugin_manager is not None:
             try:
                 api_v3.plugin_manager.load_plugin(plugin_id)
@@ -2945,19 +2955,13 @@ def uninstall_plugin():
         plugin_id = data['plugin_id']
         preserve_config = data.get('preserve_config', False)
 
-        # Use operation queue if available
+        # Both queued and direct paths use the same transactional helper so
+        # snapshot/rollback behaviour is consistent regardless of deployment.
         if api_v3.operation_queue:
             def uninstall_callback(operation):
-                """Callback to execute plugin uninstallation."""
-                # Unload the plugin first if it's loaded
-                if api_v3.plugin_manager and plugin_id in api_v3.plugin_manager.plugins:
-                    api_v3.plugin_manager.unload_plugin(plugin_id)
-
-                # Uninstall the plugin
-                success = api_v3.plugin_store_manager.uninstall_plugin(plugin_id)
-
+                """Callback to execute plugin uninstallation via transactional helper."""
+                success, error_msg = _do_transactional_uninstall(plugin_id, preserve_config)
                 if not success:
-                    error_msg = f'Failed to uninstall plugin {plugin_id}'
                     if api_v3.operation_history:
                         api_v3.operation_history.record_operation(
                             "uninstall",
@@ -2965,24 +2969,7 @@ def uninstall_plugin():
                             status="failed",
                             error=error_msg
                         )
-                    raise Exception(error_msg)
-
-                # Invalidate schema cache
-                if api_v3.schema_manager:
-                    api_v3.schema_manager.invalidate_cache(plugin_id)
-
-                # Clean up plugin configuration if not preserving
-                if not preserve_config:
-                    try:
-                        api_v3.config_manager.cleanup_plugin_config(plugin_id, remove_secrets=True)
-                    except Exception as cleanup_err:
-                        logger.warning("Failed to cleanup config after uninstall: %s", cleanup_err)
-
-                # Remove from state manager
-                if api_v3.plugin_state_manager:
-                    api_v3.plugin_state_manager.remove_plugin_state(plugin_id)
-
-                # Record in history
+                    raise Exception(error_msg or f'Failed to uninstall plugin {plugin_id}')
                 if api_v3.operation_history:
                     api_v3.operation_history.record_operation(
                         "uninstall",
@@ -2990,7 +2977,6 @@ def uninstall_plugin():
                         status="success",
                         details={"preserve_config": preserve_config}
                     )
-
                 return {'success': True, 'message': 'Plugin uninstalled successfully'}
 
             # Enqueue operation

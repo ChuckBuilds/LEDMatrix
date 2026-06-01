@@ -412,7 +412,7 @@ class DisplayController:
 
         # --- Opt #2: cached config values ---
         # Avoids chained dict.get() with temporary {} defaults on every hot path call.
-        # Update these in _refresh_config_cache() whenever self.config changes.
+        # Refreshed via _refresh_config_cache() on every hot-reload.
         self._normal_brightness: int = (
             self.config.get('display', {}).get('hardware', {}).get('brightness', 90)
         )
@@ -439,6 +439,14 @@ class DisplayController:
         # inspect.signature() is called at most once per plugin_id; result stored here.
         # Cleared for a plugin when its instance is replaced in plugin_modes.
         self._plugin_accepts_display_mode: Dict[str, bool] = {}
+
+        # Register controller-level hot-reload callback so cached config values
+        # (_normal_brightness, _scroll_speed, _tz, minute-gates) stay in sync
+        # when the user saves settings via the web UI.
+        def _controller_config_change(old_config: Dict[str, Any], new_config: Dict[str, Any]) -> None:
+            self._refresh_config_cache(new_config)
+
+        self.config_service.subscribe(_controller_config_change)
 
         # Publish initial on-demand state
         try:
@@ -2417,6 +2425,30 @@ class DisplayController:
             # Reset state on any error
             self.wifi_status_active = False
             self.wifi_status_expires_at = None
+
+    def _refresh_config_cache(self, new_config: Dict[str, Any]) -> None:
+        """Refresh all config-derived caches when a hot-reload fires.
+
+        Called by the controller-level ConfigService subscriber.  Keeps
+        ``_normal_brightness``, ``_scroll_speed``, the cached timezone, and the
+        schedule minute-gates consistent with the live config so callers never
+        read stale values after the user saves settings via the web UI.
+        """
+        self.config = new_config
+        self._normal_brightness = (
+            self.config.get('display', {}).get('hardware', {}).get('brightness', 90)
+        )
+        self._scroll_speed = (
+            self.config.get('display', {}).get('vegas_scroll', {}).get('scroll_speed', 75)
+        )
+        # Force the timezone to be re-derived from the new config on next schedule check
+        self._tz = None
+        # Invalidate minute-gates so the new schedule/dim times take effect immediately
+        self._schedule_checked_minute = None
+        self._dim_checked_minute = None
+        self._cached_target_brightness = self._normal_brightness
+        logger.debug("Config cache refreshed (brightness=%s, scroll_speed=%s)",
+                     self._normal_brightness, self._scroll_speed)
 
     def cleanup(self):
         """Clean up resources."""

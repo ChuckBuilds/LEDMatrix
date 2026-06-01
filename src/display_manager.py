@@ -567,7 +567,7 @@ class DisplayManager:
             else:
                 bbox = self.draw.textbbox((0, 0), text, font=font)
                 width = bbox[2] - bbox[0]
-        except Exception as e:
+        except (AttributeError, TypeError, ValueError, OSError) as e:
             logger.error("Error getting text width: %s", e)
             return 0
 
