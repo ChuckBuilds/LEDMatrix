@@ -1,3 +1,25 @@
+"""
+Display Controller — top-level orchestration for the LEDMatrix application.
+
+This module owns the main run loop that drives the LED display.  It ties
+together every major subsystem:
+
+  - ConfigManager / ConfigService  — loads config.json, hot-reloads on change
+  - DisplayManager                 — hardware (or emulator) output interface
+  - FontManager                    — TTF/BDF font loading and caching
+  - CacheManager                   — multi-tier API response cache
+  - PluginManager                  — plugin lifecycle (load, update, display)
+  - DisplaySyncManager             — optional leader/follower multi-Pi sync
+  - VegasModeCoordinator           — optional continuous Vegas scroll mode
+
+The main loop inside :meth:`DisplayController.run` rotates through enabled
+plugin display modes, respecting schedule windows, brightness dim schedules,
+on-demand overrides, and live-priority interrupts.
+
+Entry point: :func:`main` — instantiates :class:`DisplayController` and calls
+:meth:`~DisplayController.run`.
+"""
+
 import time
 import os
 import json
@@ -28,6 +50,24 @@ DEFAULT_DYNAMIC_DURATION_CAP = 180.0
 WIFI_STATUS_FILE = None  # Will be initialized in __init__
 
 class DisplayController:
+    """
+    Top-level controller that owns the LED display run loop.
+
+    Responsibilities
+    ----------------
+    * Initialise and wire together all subsystems at startup.
+    * Rotate through plugin display modes in :meth:`run`.
+    * Honour schedule windows (active/inactive hours) and dim schedules.
+    * Handle on-demand override requests (external callers can pin a
+      specific plugin/mode for a fixed duration via the cache bus).
+    * Coordinate with a follower Pi when multi-display sync is configured.
+    * Delegate all actual content to the plugin system — this class contains
+      no display logic of its own.
+
+    There is exactly one instance per process; call :func:`main` to create
+    it and start the run loop.
+    """
+
     def __init__(self):
         start_time = time.time()
         logger.info("Starting DisplayController initialization")
@@ -2347,6 +2387,7 @@ class DisplayController:
         logger.info("Cleanup complete.")
 
 def main():
+    """Application entry point — create a DisplayController and run until interrupted."""
     controller = DisplayController()
     controller.run()
 

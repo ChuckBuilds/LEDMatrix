@@ -1,3 +1,30 @@
+"""
+Font Manager — TTF/BDF font loading, caching, and dynamic registration.
+
+:class:`FontManager` serves two purposes:
+
+1. **System fonts** — loads the configured small/medium/large TTF fonts (and
+   their BDF bitmap equivalents) at startup, caches metrics, and exposes them
+   via ``DisplayManager`` attributes (``small_font``, ``medium_font``, etc.).
+
+2. **Plugin fonts** — lets plugins register their own fonts at runtime via
+   :meth:`FontManager.register_manager_font` and resolve them later via
+   :meth:`FontManager.resolve_font`.  Registered fonts are namespaced by
+   plugin ID so they cannot collide.
+
+Font sources
+------------
+* Local paths relative to the project root.
+* Remote URLs — downloaded once, cached to disk, and never re-fetched while
+  the cached copy is fresh.
+
+BDF fallback
+------------
+Pixel-accurate LED fonts are stored as ``.bdf`` (Bitmap Distribution Format)
+files.  When PIL cannot measure BDF glyphs natively, ``freetype-py`` is used
+for accurate width/height calculations.
+"""
+
 import os
 import logging
 import freetype

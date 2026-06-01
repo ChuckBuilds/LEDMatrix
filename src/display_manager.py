@@ -1,3 +1,28 @@
+"""
+Display Manager — hardware abstraction layer for the RGB LED matrix.
+
+This module provides :class:`DisplayManager`, the single interface between
+application code and the physical (or emulated) LED panel.
+
+Key responsibilities
+--------------------
+* Initialise the ``RGBMatrix`` (hardware) or ``RGBMatrixEmulator`` depending
+  on the ``EMULATOR`` environment variable.
+* Expose a PIL ``Image``/``ImageDraw`` canvas that plugins draw into, then
+  flush it to the matrix via double-buffering (:meth:`DisplayManager.update_display`).
+* Load and cache TTF/BDF fonts; expose ``draw_text`` for consistent text rendering.
+* Provide ``width`` / ``height`` properties — always use these instead of
+  hard-coding display dimensions.
+* Write periodic PNG snapshots to ``/tmp/led_matrix_preview.png`` for the
+  web-interface live preview.
+* Track scrolling state and gate deferred updates so plugins don't race with
+  an in-progress scroll.
+
+Singleton: only one ``DisplayManager`` instance exists per process.  The
+first call to ``DisplayManager(config)`` creates it; subsequent calls return
+the same object.
+"""
+
 import json
 import os
 import tempfile
@@ -18,6 +43,24 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)  # Set to INFO level
 
 class DisplayManager:
+    """
+    Singleton hardware abstraction layer for the RGB LED matrix.
+
+    Plugins should never interact with ``RGBMatrix`` directly; they use this
+    class to draw content and call :meth:`update_display` to push frames to
+    the panel.
+
+    Typical plugin usage::
+
+        canvas = Image.new('RGB', (self.display_manager.width,
+                                   self.display_manager.height), (0, 0, 0))
+        draw = ImageDraw.Draw(canvas)
+        # ... draw content ...
+        self.display_manager.image = canvas
+        self.display_manager.draw = ImageDraw.Draw(self.display_manager.image)
+        self.display_manager.update_display()
+    """
+
     _instance = None
     _initialized = False
 
