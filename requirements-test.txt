@@ -1,0 +1,6 @@
+# Test-only dependencies for the plugin safety harness and pytest suite.
+# Install alongside requirements.txt:  pip install -r requirements.txt -r requirements-test.txt
+pytest>=7.4
+pytest-cov>=4.1
+jsonschema>=4.0          # manifest validation
+freezegun>=1.2           # deterministic time for golden-image tests

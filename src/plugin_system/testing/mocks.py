@@ -63,11 +63,14 @@ class MockCacheManager:
     """Mock cache manager for testing."""
     
     def __init__(self):
+        import tempfile
         self._cache: Dict[str, Any] = {}
         self._cache_timestamps: Dict[str, float] = {}
         self.get_calls = []
         self.set_calls = []
         self.delete_calls = []
+        # Real temp dir for plugins that write/read files under cache_dir.
+        self.cache_dir = tempfile.mkdtemp(prefix="ledmatrix-mock-cache-")
     
     def get(self, key: str, max_age: Optional[float] = None) -> Optional[Any]:
         """Get a value from cache."""

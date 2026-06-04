@@ -1,0 +1,112 @@
+"""
+Bounds-checking display manager.
+
+A VisualTestDisplayManager that draws onto an oversized canvas (the declared
+panel size plus a right/bottom margin) while still reporting the declared size
+to the plugin. Content that a plugin draws past the right or bottom edge lands
+in the margin instead of being silently clipped by PIL, so the harness can
+detect overflow — the classic symptom of hardcoded coordinates or fonts/icons
+that don't scale down to a smaller panel.
+
+Limitations (documented on purpose):
+- Overflow past the LEFT or TOP edge (negative coordinates) is still clipped by
+  PIL and not detected here. The dominant real-world breakage is content that is
+  too wide/tall for a smaller panel, which this catches.
+- BDF text is clipped to the declared bounds by the parent's bitmap drawer, so
+  BDF overflow is not flagged. Golden-image regression covers those plugins.
+- If a plugin replaces the canvas with its own image (display_manager.image = ...),
+  the margin can't be measured and overflow is reported as undetermined (None).
+"""
+
+from typing import Optional, Tuple
+
+from .visual_display_manager import VisualTestDisplayManager, _MatrixProxy
+
+
+class BoundsCheckingDisplayManager(VisualTestDisplayManager):
+    """Detects drawing that overflows the declared panel size."""
+
+    MARGIN = 16  # extra pixels on the right/bottom used to catch overflow
+
+    def __init__(self, width: int = 128, height: int = 32):
+        self._declared_width = int(width)
+        self._declared_height = int(height)
+        # Parent builds the (oversized) backing canvas + fonts.
+        super().__init__(self._declared_width + self.MARGIN,
+                         self._declared_height + self.MARGIN)
+        # Plugins must see the DECLARED size, not the padded canvas size.
+        self.matrix = _MatrixProxy(self._declared_width, self._declared_height)
+
+    # -- declared dimensions (override parent's image-derived properties) --
+
+    @property
+    def width(self) -> int:
+        return self._declared_width
+
+    @property
+    def height(self) -> int:
+        return self._declared_height
+
+    @property
+    def display_width(self) -> int:
+        return self._declared_width
+
+    @property
+    def display_height(self) -> int:
+        return self._declared_height
+
+    # -- overflow detection --
+
+    def _canvas_is_padded(self) -> bool:
+        return self.image.size == (
+            self._declared_width + self.MARGIN,
+            self._declared_height + self.MARGIN,
+        )
+
+    def check_overflow(self) -> Optional[Tuple[int, int, int, int]]:
+        """Bounding box (in full-canvas coords) of any drawing beyond the
+        declared panel, or None if nothing overflowed / undetermined."""
+        if not self._canvas_is_padded():
+            return None
+
+        exp_w = self._declared_width + self.MARGIN
+        exp_h = self._declared_height + self.MARGIN
+        boxes = []
+
+        right = self.image.crop((self._declared_width, 0, exp_w, exp_h)).getbbox()
+        if right:
+            boxes.append((right[0] + self._declared_width, right[1],
+                          right[2] + self._declared_width, right[3]))
+
+        bottom = self.image.crop((0, self._declared_height, exp_w, exp_h)).getbbox()
+        if bottom:
+            boxes.append((bottom[0], bottom[1] + self._declared_height,
+                          bottom[2], bottom[3] + self._declared_height))
+
+        if not boxes:
+            return None
+        return (
+            min(b[0] for b in boxes), min(b[1] for b in boxes),
+            max(b[2] for b in boxes), max(b[3] for b in boxes),
+        )
+
+    # -- snapshot/image accessors return the cropped, true-panel image --
+
+    def declared_image(self):
+        """The visible panel: the canvas cropped to the declared size."""
+        if self._canvas_is_padded():
+            return self.image.crop((0, 0, self._declared_width, self._declared_height))
+        return self.image
+
+    def save_snapshot(self, path: str) -> None:
+        self.declared_image().save(path, format='PNG')
+
+    def get_image(self):
+        return self.declared_image()
+
+    def get_image_base64(self) -> str:
+        import base64
+        import io
+        buffer = io.BytesIO()
+        self.declared_image().save(buffer, format='PNG')
+        return base64.b64encode(buffer.getvalue()).decode('utf-8')
