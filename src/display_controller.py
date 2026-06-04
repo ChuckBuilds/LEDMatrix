@@ -178,7 +178,11 @@ class DisplayController:
         self.on_demand_last_event: Optional[str] = None
         self.on_demand_schedule_override = False
         self.rotation_resume_index: Optional[int] = None
-        
+        # Saved rotation position when a live-priority plugin preempts the
+        # rotation, so it resumes where it left off (not after the live plugin)
+        # once live priority ends.
+        self._live_resume_index: Optional[int] = None
+
         # WiFi status message tracking
         global WIFI_STATUS_FILE
         if WIFI_STATUS_FILE is None:
@@ -1471,6 +1475,36 @@ class DisplayController:
         except Exception as e:
             logger.debug(f"Error logging memory stats: {e}")
 
+    def _apply_live_priority(self, live_priority_mode):
+        """Switch to a live-priority mode, or resume rotation when it ends.
+
+        When a live-priority plugin preempts the rotation, the position the
+        rotation had reached is saved so that, once live priority ends, the
+        rotation resumes from there instead of continuing after the live
+        plugin's mode (which would skip every mode between the two). The save
+        happens only on the initial switch, not on each re-check while the
+        live hold continues.
+        """
+        if live_priority_mode:
+            if self.current_display_mode != live_priority_mode:
+                logger.info("Live content detected - switching immediately to %s", live_priority_mode)
+                if self._live_resume_index is None:
+                    self._live_resume_index = self.current_mode_index
+                self.current_display_mode = live_priority_mode
+                self.force_change = True
+                # Update mode index to match the new mode
+                try:
+                    self.current_mode_index = self.available_modes.index(live_priority_mode)
+                except ValueError:
+                    pass
+        elif self._live_resume_index is not None and self.available_modes:
+            # Live priority ended — resume rotation where it was interrupted.
+            self.current_mode_index = self._live_resume_index % len(self.available_modes)
+            self.current_display_mode = self.available_modes[self.current_mode_index]
+            self.force_change = True
+            logger.info("Live priority ended - resuming rotation at %s", self.current_display_mode)
+            self._live_resume_index = None
+
     def _check_live_priority(self):
         """
         Check all plugins for live priority content.
@@ -1658,15 +1692,7 @@ class DisplayController:
                 # Check for live priority content and switch to it immediately
                 if not self.on_demand_active and not wifi_status_data:
                     live_priority_mode = self._check_live_priority()
-                    if live_priority_mode and self.current_display_mode != live_priority_mode:
-                        logger.info("Live content detected - switching immediately to %s", live_priority_mode)
-                        self.current_display_mode = live_priority_mode
-                        self.force_change = True
-                        # Update mode index to match the new mode
-                        try:
-                            self.current_mode_index = self.available_modes.index(live_priority_mode)
-                        except ValueError:
-                            pass
+                    self._apply_live_priority(live_priority_mode)
 
                 # Vegas scroll mode - continuous ticker across all plugins
                 # Priority: on-demand > wifi-status > live-priority > vegas > normal rotation

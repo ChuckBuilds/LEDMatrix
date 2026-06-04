@@ -167,6 +167,53 @@ class TestDisplayControllerLivePriority:
         assert controller.current_display_mode == "test_plugin_live"
         assert controller.force_change is True
 
+    def test_live_priority_resume_continues_rotation(self, test_display_controller):
+        """Regression: when live priority ends, rotation resumes where it was
+        interrupted, not after the live plugin's mode.
+
+        Without the fix, _apply_live_priority left current_mode_index pointing at
+        the live plugin's slot, so the next rotation step skipped every mode
+        between the interrupted position and the live plugin (e.g. elections,
+        which sits just before a flights plugin in the order)."""
+        controller = test_display_controller
+        controller.available_modes = [
+            "weather", "forecast", "almanac", "election_ticker", "flight_live"
+        ]
+        # Rotation is about to show the 3rd mode (index 2).
+        controller.current_mode_index = 2
+        controller.current_display_mode = "almanac"
+        controller._live_resume_index = None
+
+        # Live priority (e.g. planes overhead) preempts -> flight_live (index 4).
+        controller._apply_live_priority("flight_live")
+        assert controller.current_display_mode == "flight_live"
+        assert controller.current_mode_index == 4
+        assert controller._live_resume_index == 2  # saved rotation position
+
+        # Re-checks while the hold continues must not move the saved position.
+        controller._apply_live_priority("flight_live")
+        assert controller._live_resume_index == 2
+
+        # Live priority ends -> resume at the saved index (almanac), so the next
+        # rotation step lands on election_ticker (index 3) rather than skipping it.
+        controller._apply_live_priority(None)
+        assert controller.current_mode_index == 2
+        assert controller.current_display_mode == "almanac"
+        assert controller._live_resume_index is None
+
+    def test_live_priority_no_resume_when_idle(self, test_display_controller):
+        """No saved position + no live content is a no-op (normal rotation)."""
+        controller = test_display_controller
+        controller.available_modes = ["a", "b", "c"]
+        controller.current_mode_index = 1
+        controller.current_display_mode = "b"
+        controller._live_resume_index = None
+
+        controller._apply_live_priority(None)
+
+        assert controller.current_mode_index == 1
+        assert controller.current_display_mode == "b"
+
 
 class TestDisplayControllerDynamicDuration:
     """Test dynamic duration handling."""
