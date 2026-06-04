@@ -190,7 +190,7 @@ def _ensure_display_service_running():
     if status.get('active'):
         status['started'] = False
         return status
-    result = _run_systemctl_command(['sudo', 'systemctl', 'start', 'ledmatrix'])
+    result = _run_systemctl_command(['sudo', 'systemctl', 'start', 'ledmatrix.service'])
     service_status = _get_display_service_status()
     result['started'] = result.get('returncode') == 0
     result['active'] = service_status.get('active')
@@ -199,7 +199,7 @@ def _ensure_display_service_running():
 
 def _stop_display_service():
     """Stop the ledmatrix display service."""
-    result = _run_systemctl_command(['sudo', 'systemctl', 'stop', 'ledmatrix'])
+    result = _run_systemctl_command(['sudo', 'systemctl', 'stop', 'ledmatrix.service'])
     status = _get_display_service_status()
     result['active'] = status.get('active')
     result['status'] = status
@@ -1461,7 +1461,7 @@ def execute_system_action():
                 # For on-demand modes, we would need to integrate with the display controller
                 # For now, just start the display service
                 try:
-                    result = subprocess.run(['sudo', 'systemctl', 'start', 'ledmatrix'],
+                    result = subprocess.run(['sudo', 'systemctl', 'start', 'ledmatrix.service'],
                                          capture_output=True, text=True, timeout=10)
                 except subprocess.TimeoutExpired as e:
                     logger.error("start_display (%s) timed out: %s", mode, e)
@@ -1478,16 +1478,16 @@ def execute_system_action():
                     resp['stderr'] = result.stderr.strip()
                 return jsonify(resp)
             else:
-                result = subprocess.run(['sudo', 'systemctl', 'start', 'ledmatrix'],
+                result = subprocess.run(['sudo', 'systemctl', 'start', 'ledmatrix.service'],
                                      capture_output=True, text=True, timeout=10)
         elif action == 'stop_display':
-            result = subprocess.run(['sudo', 'systemctl', 'stop', 'ledmatrix'],
+            result = subprocess.run(['sudo', 'systemctl', 'stop', 'ledmatrix.service'],
                                  capture_output=True, text=True, timeout=10)
         elif action == 'enable_autostart':
-            result = subprocess.run(['sudo', 'systemctl', 'enable', 'ledmatrix'],
+            result = subprocess.run(['sudo', 'systemctl', 'enable', 'ledmatrix.service'],
                                  capture_output=True, text=True, timeout=10)
         elif action == 'disable_autostart':
-            result = subprocess.run(['sudo', 'systemctl', 'disable', 'ledmatrix'],
+            result = subprocess.run(['sudo', 'systemctl', 'disable', 'ledmatrix.service'],
                                  capture_output=True, text=True, timeout=10)
         elif action == 'reboot_system':
             result = subprocess.run(['sudo', 'reboot'],
@@ -1568,11 +1568,11 @@ def execute_system_action():
                 'message': pull_message,
             })
         elif action == 'restart_display_service':
-            result = subprocess.run(['sudo', 'systemctl', 'restart', 'ledmatrix'],
+            result = subprocess.run(['sudo', 'systemctl', 'restart', 'ledmatrix.service'],
                                  capture_output=True, text=True, timeout=10)
         elif action == 'restart_web_service':
             # Try to restart the web service (assuming it's ledmatrix-web.service)
-            result = subprocess.run(['sudo', 'systemctl', 'restart', 'ledmatrix-web'],
+            result = subprocess.run(['sudo', 'systemctl', 'restart', 'ledmatrix-web.service'],
                                  capture_output=True, text=True, timeout=10)
         else:
             return jsonify({'status': 'error', 'message': 'Unknown action'}), 400
