@@ -3709,13 +3709,14 @@ def _parse_form_value_with_schema(value, key_path, schema):
                 except ValueError:
                     return prop.get('default', 0.0)
 
-        # Try parsing as number (fallback)
-        try:
-            if '.' in stripped:
-                return float(stripped)
-            return int(stripped)
-        except ValueError:
-            pass
+        # Try parsing as number (fallback) — skip when schema explicitly says string
+        if not (prop and prop.get('type') == 'string'):
+            try:
+                if '.' in stripped:
+                    return float(stripped)
+                return int(stripped)
+            except ValueError:
+                pass
 
         # Return as string
         return value
