@@ -6,10 +6,14 @@ These don't load real plugins, so they run anywhere (including core CI where
 plugin-repos is empty).
 """
 
+import pytest
 from PIL import Image
 
 from src.plugin_system.testing.bounds_display_manager import BoundsCheckingDisplayManager
 from src.plugin_system.testing.harness import compare_images, list_modes
+from src.plugin_system.testing.sizes import (
+    DEFAULT_TEST_SIZES, coerce_sizes, parse_size_token, resolve_test_sizes,
+)
 
 
 class TestBoundsDetection:
@@ -61,6 +65,52 @@ class TestBoundsDetection:
         dm.save_snapshot(str(out))
         with Image.open(out) as img:
             assert img.size == (128, 32)
+
+
+class TestArbitraryPanelSizes:
+    """The harness must handle any panel shape, not a fixed supported list."""
+
+    def test_overflow_extent_pads_to_largest_in_run(self):
+        # A wide run (extent 256) means content at x=200 on a 64-wide panel is
+        # caught; the same draw with a small extent would be clipped (false pass).
+        wide = BoundsCheckingDisplayManager(width=64, height=32, overflow_extent=(256, 32))
+        wide.draw.rectangle([200, 5, 210, 10], fill=(255, 0, 0))
+        assert wide.check_overflow() is not None
+
+        tight = BoundsCheckingDisplayManager(width=64, height=32, overflow_extent=(64, 32))
+        tight.draw.rectangle([200, 5, 210, 10], fill=(255, 0, 0))
+        assert tight.check_overflow() is None  # clipped beyond the small canvas
+
+    def test_unusual_shapes_report_their_declared_size(self):
+        for w, h in [(8, 2), (6, 6), (200, 8), (64, 96)]:
+            dm = BoundsCheckingDisplayManager(width=w, height=h)
+            assert dm.width == w and dm.height == h
+            assert dm.matrix.width == w and dm.matrix.height == h
+
+
+class TestSizeParsing:
+    def test_parse_size_token_ok(self):
+        assert parse_size_token(" 128X32 ") == (128, 32)
+
+    def test_parse_size_token_rejects_garbage(self):
+        with pytest.raises(ValueError):
+            parse_size_token("128xabc")
+        with pytest.raises(ValueError):
+            parse_size_token("128-32")
+
+    def test_coerce_sizes_from_string_and_pairs(self):
+        assert coerce_sizes("8x16,64x64") == [(8, 16), (64, 64)]
+        assert coerce_sizes([[8, 16], (64, 64)]) == [(8, 16), (64, 64)]
+        assert coerce_sizes(None) is None
+        assert coerce_sizes("") is None
+
+    def test_resolve_precedence_env_then_spec_then_default(self, monkeypatch):
+        monkeypatch.delenv("LEDMATRIX_TEST_SIZES", raising=False)
+        assert resolve_test_sizes(None) == list(DEFAULT_TEST_SIZES)
+        assert resolve_test_sizes([[8, 16]]) == [(8, 16)]
+        monkeypatch.setenv("LEDMATRIX_TEST_SIZES", "5x5")
+        # env wins over a per-plugin spec
+        assert resolve_test_sizes([[8, 16]]) == [(5, 5)]
 
 
 class TestCompareImages:

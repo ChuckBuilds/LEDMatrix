@@ -20,18 +20,19 @@ Limitations (documented on purpose):
 
 from typing import Optional, Tuple
 
-from .sizes import SUPPORTED_SIZES
+from .sizes import DEFAULT_TEST_SIZES
 from .visual_display_manager import VisualTestDisplayManager, _MatrixProxy
 
 # Smallest extra band kept on the right/bottom so a few pixels of overflow are
-# still visible even on the largest panel.
+# still visible even on the largest panel in a run.
 _BASE_MARGIN = 16
-# Largest panel the harness supports. We extend every (smaller) canvas out to at
-# least this size so content drawn at a coordinate meant for a bigger build —
-# e.g. x=200 on a 64-wide panel — lands in the padded region and is flagged,
-# instead of being clipped off-canvas and read as a false pass.
-_MAX_SUPPORTED_WIDTH = max(w for w, _ in SUPPORTED_SIZES)
-_MAX_SUPPORTED_HEIGHT = max(h for _, h in SUPPORTED_SIZES)
+# Fallback overflow reference when a caller doesn't pass one: the largest shape
+# in the default sample. We extend every (smaller) canvas out to at least this
+# size so content drawn at a coordinate meant for a bigger build — e.g. x=200 on
+# a 64-wide panel — lands in the padded region and is flagged, instead of being
+# clipped off-canvas and read as a false pass.
+_DEFAULT_EXTENT_WIDTH = max(w for w, _ in DEFAULT_TEST_SIZES)
+_DEFAULT_EXTENT_HEIGHT = max(h for _, h in DEFAULT_TEST_SIZES)
 
 
 class BoundsCheckingDisplayManager(VisualTestDisplayManager):
@@ -40,13 +41,17 @@ class BoundsCheckingDisplayManager(VisualTestDisplayManager):
     # Kept for backwards compatibility; real padding is computed per-axis below.
     MARGIN = _BASE_MARGIN
 
-    def __init__(self, width: int = 128, height: int = 32):
+    def __init__(self, width: int = 128, height: int = 32,
+                 overflow_extent: Optional[Tuple[int, int]] = None):
         self._declared_width = int(width)
         self._declared_height = int(height)
-        # Pad out to at least the largest supported panel (+ a base margin) so
-        # far-overshoot coordinates are caught, not clipped, on small panels.
-        self._canvas_width = max(self._declared_width, _MAX_SUPPORTED_WIDTH) + _BASE_MARGIN
-        self._canvas_height = max(self._declared_height, _MAX_SUPPORTED_HEIGHT) + _BASE_MARGIN
+        # Pad the canvas out to at least `overflow_extent` (the largest panel
+        # this run cares about) plus a base margin, so coordinates meant for a
+        # bigger build are caught — not clipped — when rendering a smaller panel.
+        # Defaults to the largest shape in the sample when no run is known.
+        ext_w, ext_h = overflow_extent or (_DEFAULT_EXTENT_WIDTH, _DEFAULT_EXTENT_HEIGHT)
+        self._canvas_width = max(self._declared_width, int(ext_w)) + _BASE_MARGIN
+        self._canvas_height = max(self._declared_height, int(ext_h)) + _BASE_MARGIN
         # Parent builds the (oversized) backing canvas + fonts.
         super().__init__(self._canvas_width, self._canvas_height)
         # Plugins must see the DECLARED size, not the padded canvas size.

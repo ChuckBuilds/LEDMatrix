@@ -22,7 +22,7 @@ from PIL import Image, ImageChops
 from src.logging_config import get_logger
 from .bounds_display_manager import BoundsCheckingDisplayManager
 from .loading import load_config_defaults, load_manifest
-from .sizes import SUPPORTED_SIZES, safe_mode_filename, size_label
+from .sizes import DEFAULT_TEST_SIZES, safe_mode_filename, size_label
 
 logger = get_logger("[Plugin Harness]")
 
@@ -147,27 +147,32 @@ def render_plugin_matrix(
     # Start from config_schema.json defaults so the plugin behaves like a real
     # install; explicit caller config still wins over a schema default.
     config = {"enabled": True, **load_config_defaults(plugin_dir), **(config or {})}
-    sizes = sizes or SUPPORTED_SIZES
+    sizes = sizes or DEFAULT_TEST_SIZES
     results: List[RenderResult] = []
+
+    # The largest panel in this run. Every (smaller) canvas is padded out to it
+    # so a coordinate meant for the biggest configuration is still caught when
+    # rendering a smaller one, instead of being clipped into a false pass.
+    extent = (max(w for w, _ in sizes), max(h for _, h in sizes))
 
     with _freeze(freeze_time):
         for width, height in sizes:
             results.extend(_render_size(
                 plugin_id, manifest, plugin_dir, config, mock_data or {},
-                width, height, run_update,
+                width, height, run_update, extent,
             ))
 
     return results
 
 
 def _render_size(plugin_id, manifest, plugin_dir, config, mock_data,
-                 width, height, run_update) -> List[RenderResult]:
+                 width, height, run_update, extent) -> List[RenderResult]:
     """Render every mode at one size. A fresh instance per mode avoids state leaks."""
     results: List[RenderResult] = []
 
     # Discover modes once per size (instance build can depend on config).
     try:
-        probe_dm = BoundsCheckingDisplayManager(width=width, height=height)
+        probe_dm = BoundsCheckingDisplayManager(width=width, height=height, overflow_extent=extent)
         probe = _instantiate(plugin_id, manifest, plugin_dir, config, mock_data, probe_dm)
         modes = list_modes(probe, manifest, plugin_id)
     except Exception as e:  # noqa: BLE001 — surface any load failure as a result
@@ -175,7 +180,7 @@ def _render_size(plugin_id, manifest, plugin_dir, config, mock_data,
 
     for mode in modes:
         result = RenderResult(plugin_id, width, height, mode)
-        dm = BoundsCheckingDisplayManager(width=width, height=height)
+        dm = BoundsCheckingDisplayManager(width=width, height=height, overflow_extent=extent)
         try:
             inst = _instantiate(plugin_id, manifest, plugin_dir, config, mock_data, dm)
             if run_update:

@@ -43,7 +43,7 @@ from src.plugin_system.testing.harness import (  # noqa: E402
     RenderResult, render_plugin_matrix, compare_to_goldens, write_goldens,
 )
 from src.plugin_system.testing.sizes import (  # noqa: E402
-    SUPPORTED_SIZES, safe_mode_filename, size_label,
+    DEFAULT_TEST_SIZES, parse_size_token, safe_mode_filename, size_label,
 )
 
 logger = get_logger("[Check Plugin]")
@@ -69,19 +69,15 @@ def discover_plugins(search_dirs: List[str]) -> List[str]:
 
 def parse_sizes(spec: Optional[str]):
     if not spec:
-        return SUPPORTED_SIZES
+        return DEFAULT_TEST_SIZES
     sizes = []
     for token in spec.split(','):
-        token = token.strip().lower()
-        if 'x' not in token:
-            raise SystemExit(f"Invalid size '{token}' (expected WxH, e.g. 128x32)")
-        w, h = token.split('x', 1)
+        if not token.strip():
+            continue
         try:
-            sizes.append((int(w), int(h)))
+            sizes.append(parse_size_token(token))
         except ValueError as exc:
-            raise SystemExit(
-                f"Invalid size '{token}' (expected numeric WxH, e.g. 128x32)"
-            ) from exc
+            raise SystemExit(str(exc)) from exc
     return sizes
 
 
