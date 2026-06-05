@@ -17,7 +17,6 @@ import os
 import json
 import argparse
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence, Union
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -28,47 +27,13 @@ os.environ['EMULATOR'] = 'true'
 
 # Import logger after path setup so src.logging_config is importable
 from src.logging_config import get_logger  # noqa: E402
+from src.plugin_system.testing.loading import (  # noqa: E402
+    find_plugin_dir, load_manifest, load_config_defaults,
+)
 logger = get_logger("[Render Plugin]")
 
 MIN_DIMENSION = 1
 MAX_DIMENSION = 512
-
-
-def find_plugin_dir(plugin_id: str, search_dirs: Sequence[Union[str, Path]]) -> Optional[Path]:
-    """Find a plugin directory by searching multiple paths."""
-    from src.plugin_system.plugin_loader import PluginLoader
-    loader = PluginLoader()
-    for search_dir in search_dirs:
-        search_path = Path(search_dir)
-        if not search_path.exists():
-            continue
-        result = loader.find_plugin_directory(plugin_id, search_path)
-        if result:
-            return Path(result)
-    return None
-
-
-def load_manifest(plugin_dir: Path) -> Dict[str, Any]:
-    """Load and return manifest.json from plugin directory."""
-    manifest_path = plugin_dir / 'manifest.json'
-    if not manifest_path.exists():
-        raise FileNotFoundError(f"No manifest.json in {plugin_dir}")
-    with open(manifest_path, 'r') as f:
-        return json.load(f)
-
-
-def load_config_defaults(plugin_dir: Path) -> Dict[str, Any]:
-    """Extract default values from config_schema.json."""
-    schema_path = plugin_dir / 'config_schema.json'
-    if not schema_path.exists():
-        return {}
-    with open(schema_path, 'r') as f:
-        schema = json.load(f)
-    defaults: Dict[str, Any] = {}
-    for key, prop in schema.get('properties', {}).items():
-        if 'default' in prop:
-            defaults[key] = prop['default']
-    return defaults
 
 
 def main() -> int:
