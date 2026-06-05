@@ -12,7 +12,11 @@ via BoundsCheckingDisplayManager, and golden-image comparison.
 """
 
 import contextlib
+import http.client
 import inspect
+import socket
+import ssl
+import urllib.error
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -27,6 +31,32 @@ from .sizes import DEFAULT_TEST_SIZES, safe_mode_filename, size_label
 logger = get_logger("[Plugin Harness]")
 
 
+def _tolerated_update_errors() -> Tuple[type, ...]:
+    """Exception types from update() we treat as a tolerated no-connectivity
+    failure (expected in CI / headless dev) rather than a real plugin bug.
+
+    Anything NOT in this set is a genuine regression — a plugin that lets a
+    non-network exception escape update() should fail the harness, not pass
+    green because display() happened to survive.
+    """
+    types: List[type] = [
+        ConnectionError, TimeoutError,        # builtins
+        socket.gaierror, socket.timeout,      # DNS / socket timeouts
+        ssl.SSLError,
+        urllib.error.URLError,
+        http.client.HTTPException,
+    ]
+    try:  # requests is optional; cover its whole error tree when present
+        import requests
+        types.append(requests.exceptions.RequestException)
+    except Exception:  # pragma: no cover - requests not installed
+        pass
+    return tuple(types)
+
+
+_TOLERATED_UPDATE_ERRORS = _tolerated_update_errors()
+
+
 @dataclass
 class RenderResult:
     """Outcome of rendering one (size, mode) of a plugin."""
@@ -35,8 +65,8 @@ class RenderResult:
     height: int
     mode: str
     image: Optional[Image.Image] = None
-    error: Optional[str] = None          # exception during load/display (fatal)
-    update_error: Optional[str] = None   # exception during update() (non-fatal: no network in CI)
+    error: Optional[str] = None          # fatal: load/display crash, or a non-network update() error
+    update_error: Optional[str] = None   # tolerated: connectivity error from update() (no network in CI)
     overflow: Optional[Tuple[int, int, int, int]] = None  # bbox past the panel
     # golden comparison (populated only when a golden was provided)
     golden_checked: bool = False
@@ -186,16 +216,21 @@ def _render_size(plugin_id, manifest, plugin_dir, config, mock_data,
             if run_update:
                 try:
                     inst.update()
-                except Exception as e:  # noqa: BLE001 — non-fatal: CI often has no network
-                    # Don't bury this at debug — a real update() regression would
-                    # otherwise pass as long as display() survives. Record it on the
-                    # result and warn so it's visible, without failing connectivity
-                    # errors that are expected in a headless run.
+                except _TOLERATED_UPDATE_ERRORS as e:
+                    # Expected when CI / headless dev has no network: record it
+                    # (surfaced in the report) but don't fail the run.
                     result.update_error = repr(e)
-                    logger.warning("update() raised for %s [%s]: %s", plugin_id, mode, e)
-            _render_mode(inst, mode)
-            result.image = dm.get_image()
-            result.overflow = dm.check_overflow()
+                    logger.debug("update() connectivity error for %s [%s]: %s", plugin_id, mode, e)
+                except Exception as e:  # noqa: BLE001 — a non-network update() failure is a real bug
+                    # A regression in update() must not pass green just because
+                    # display() survives, so treat it as a failure of this render.
+                    result.error = repr(e)
+                    logger.warning("update() raised a non-connectivity error for %s [%s]: %s",
+                                   plugin_id, mode, e)
+            if result.error is None:
+                _render_mode(inst, mode)
+                result.image = dm.get_image()
+                result.overflow = dm.check_overflow()
         except Exception as e:  # noqa: BLE001 — a display crash is a real failure
             result.error = repr(e)
         results.append(result)

@@ -10,7 +10,9 @@ import pytest
 from PIL import Image
 
 from src.plugin_system.testing.bounds_display_manager import BoundsCheckingDisplayManager
-from src.plugin_system.testing.harness import compare_images, list_modes
+from src.plugin_system.testing.harness import (
+    _TOLERATED_UPDATE_ERRORS, compare_images, list_modes,
+)
 from src.plugin_system.testing.sizes import (
     DEFAULT_TEST_SIZES, coerce_sizes, parse_size_token, resolve_test_sizes,
 )
@@ -86,6 +88,22 @@ class TestArbitraryPanelSizes:
             dm = BoundsCheckingDisplayManager(width=w, height=h)
             assert dm.width == w and dm.height == h
             assert dm.matrix.width == w and dm.matrix.height == h
+
+
+class TestUpdateErrorClassification:
+    """update() may fail for lack of network (tolerated) but a logic bug must
+    not pass green just because display() survives."""
+
+    def test_connectivity_errors_are_tolerated(self):
+        import socket
+        import urllib.error
+        for exc in (ConnectionError("x"), TimeoutError("x"), socket.gaierror("x"),
+                    urllib.error.URLError("x")):
+            assert isinstance(exc, _TOLERATED_UPDATE_ERRORS)
+
+    def test_logic_errors_are_not_tolerated(self):
+        for exc in (ValueError("x"), KeyError("x"), AttributeError("x"), TypeError("x")):
+            assert not isinstance(exc, _TOLERATED_UPDATE_ERRORS)
 
 
 class TestSizeParsing:
