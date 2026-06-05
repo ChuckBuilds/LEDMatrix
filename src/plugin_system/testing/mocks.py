@@ -63,14 +63,23 @@ class MockCacheManager:
     """Mock cache manager for testing."""
     
     def __init__(self):
+        import shutil
         import tempfile
+        import weakref
         self._cache: Dict[str, Any] = {}
         self._cache_timestamps: Dict[str, float] = {}
         self.get_calls = []
         self.set_calls = []
         self.delete_calls = []
         # Real temp dir for plugins that write/read files under cache_dir.
+        # Registered for cleanup so each mock instance doesn't leak a tmp dir.
         self.cache_dir = tempfile.mkdtemp(prefix="ledmatrix-mock-cache-")
+        self._finalizer = weakref.finalize(
+            self, shutil.rmtree, self.cache_dir, ignore_errors=True)
+
+    def cleanup(self) -> None:
+        """Remove the temp cache directory created for this instance."""
+        self._finalizer()
     
     def get(self, key: str, max_age: Optional[float] = None) -> Optional[Any]:
         """Get a value from cache."""

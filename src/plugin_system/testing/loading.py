@@ -70,7 +70,13 @@ def load_harness_spec(plugin_dir: Union[str, Path]) -> Dict[str, Any]:
     mock_rel = spec.get('mock_data')
     if mock_rel:
         mock_path = Path(plugin_dir) / mock_rel
-        if mock_path.exists():
-            with open(mock_path, 'r') as mf:
-                spec['mock_data_contents'] = json.load(mf)
+        if not mock_path.exists():
+            # A declared-but-missing fixture is a harness config error: failing
+            # loudly beats silently rendering the plugin with no mock data.
+            raise FileNotFoundError(
+                f"harness.json references mock_data '{mock_rel}' but "
+                f"{mock_path} does not exist"
+            )
+        with open(mock_path, 'r') as mf:
+            spec['mock_data_contents'] = json.load(mf)
     return spec

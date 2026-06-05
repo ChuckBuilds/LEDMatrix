@@ -17,8 +17,19 @@ class TestBoundsDetection:
         dm = BoundsCheckingDisplayManager(width=64, height=32)
         assert dm.width == 64 and dm.height == 32
         assert dm.matrix.width == 64 and dm.matrix.height == 32
-        # backing canvas is padded
-        assert dm.image.size == (64 + dm.MARGIN, 32 + dm.MARGIN)
+        # Backing canvas is padded out past the declared panel so far-overshoot
+        # coordinates land on-canvas and get flagged instead of clipped.
+        canvas_w, canvas_h = dm.image.size
+        assert canvas_w > 64 and canvas_h > 32
+
+    def test_far_overshoot_on_small_panel_is_detected(self):
+        # A coordinate meant for a wide build (x past 64) must still be caught
+        # when the declared panel is only 64 wide.
+        dm = BoundsCheckingDisplayManager(width=64, height=32)
+        dm.draw.rectangle([200, 5, 210, 10], fill=(255, 0, 0))
+        bbox = dm.check_overflow()
+        assert bbox is not None
+        assert bbox[0] >= 64
 
     def test_in_bounds_drawing_has_no_overflow(self):
         dm = BoundsCheckingDisplayManager(width=64, height=32)

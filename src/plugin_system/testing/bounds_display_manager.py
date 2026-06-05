@@ -20,20 +20,35 @@ Limitations (documented on purpose):
 
 from typing import Optional, Tuple
 
+from .sizes import SUPPORTED_SIZES
 from .visual_display_manager import VisualTestDisplayManager, _MatrixProxy
+
+# Smallest extra band kept on the right/bottom so a few pixels of overflow are
+# still visible even on the largest panel.
+_BASE_MARGIN = 16
+# Largest panel the harness supports. We extend every (smaller) canvas out to at
+# least this size so content drawn at a coordinate meant for a bigger build —
+# e.g. x=200 on a 64-wide panel — lands in the padded region and is flagged,
+# instead of being clipped off-canvas and read as a false pass.
+_MAX_SUPPORTED_WIDTH = max(w for w, _ in SUPPORTED_SIZES)
+_MAX_SUPPORTED_HEIGHT = max(h for _, h in SUPPORTED_SIZES)
 
 
 class BoundsCheckingDisplayManager(VisualTestDisplayManager):
     """Detects drawing that overflows the declared panel size."""
 
-    MARGIN = 16  # extra pixels on the right/bottom used to catch overflow
+    # Kept for backwards compatibility; real padding is computed per-axis below.
+    MARGIN = _BASE_MARGIN
 
     def __init__(self, width: int = 128, height: int = 32):
         self._declared_width = int(width)
         self._declared_height = int(height)
+        # Pad out to at least the largest supported panel (+ a base margin) so
+        # far-overshoot coordinates are caught, not clipped, on small panels.
+        self._canvas_width = max(self._declared_width, _MAX_SUPPORTED_WIDTH) + _BASE_MARGIN
+        self._canvas_height = max(self._declared_height, _MAX_SUPPORTED_HEIGHT) + _BASE_MARGIN
         # Parent builds the (oversized) backing canvas + fonts.
-        super().__init__(self._declared_width + self.MARGIN,
-                         self._declared_height + self.MARGIN)
+        super().__init__(self._canvas_width, self._canvas_height)
         # Plugins must see the DECLARED size, not the padded canvas size.
         self.matrix = _MatrixProxy(self._declared_width, self._declared_height)
 
@@ -58,10 +73,7 @@ class BoundsCheckingDisplayManager(VisualTestDisplayManager):
     # -- overflow detection --
 
     def _canvas_is_padded(self) -> bool:
-        return self.image.size == (
-            self._declared_width + self.MARGIN,
-            self._declared_height + self.MARGIN,
-        )
+        return self.image.size == (self._canvas_width, self._canvas_height)
 
     def check_overflow(self) -> Optional[Tuple[int, int, int, int]]:
         """Bounding box (in full-canvas coords) of any drawing beyond the
@@ -69,8 +81,8 @@ class BoundsCheckingDisplayManager(VisualTestDisplayManager):
         if not self._canvas_is_padded():
             return None
 
-        exp_w = self._declared_width + self.MARGIN
-        exp_h = self._declared_height + self.MARGIN
+        exp_w = self._canvas_width
+        exp_h = self._canvas_height
         boxes = []
 
         right = self.image.crop((self._declared_width, 0, exp_w, exp_h)).getbbox()

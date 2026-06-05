@@ -42,7 +42,9 @@ from src.plugin_system.testing.loading import (  # noqa: E402
 from src.plugin_system.testing.harness import (  # noqa: E402
     RenderResult, render_plugin_matrix, compare_to_goldens, write_goldens,
 )
-from src.plugin_system.testing.sizes import SUPPORTED_SIZES, size_label  # noqa: E402
+from src.plugin_system.testing.sizes import (  # noqa: E402
+    SUPPORTED_SIZES, safe_mode_filename, size_label,
+)
 
 logger = get_logger("[Check Plugin]")
 
@@ -74,7 +76,12 @@ def parse_sizes(spec: Optional[str]):
         if 'x' not in token:
             raise SystemExit(f"Invalid size '{token}' (expected WxH, e.g. 128x32)")
         w, h = token.split('x', 1)
-        sizes.append((int(w), int(h)))
+        try:
+            sizes.append((int(w), int(h)))
+        except ValueError as exc:
+            raise SystemExit(
+                f"Invalid size '{token}' (expected numeric WxH, e.g. 128x32)"
+            ) from exc
     return sizes
 
 
@@ -111,7 +118,7 @@ def check_one(plugin_id: str, search_dirs: List[str], sizes, mock_data: Dict,
                 continue
             dest = out_dir / plugin_id / size_label(r.width, r.height)
             dest.mkdir(parents=True, exist_ok=True)
-            r.image.save(dest / f"{r.mode}.png", format="PNG")
+            r.image.save(dest / f"{safe_mode_filename(r.mode)}.png", format="PNG")
 
     return results
 
@@ -127,6 +134,8 @@ def print_report(all_results: Dict[str, List[RenderResult]]) -> bool:
                 detail = ""
                 if r.golden_checked:
                     detail = " (golden ✓)"
+                if r.update_error is not None:
+                    detail += f" (update warn: {r.update_error})"
             else:
                 everything_ok = False
                 if r.error is not None:
@@ -168,6 +177,9 @@ def main() -> int:
     except json.JSONDecodeError as e:
         logger.error("Invalid --config JSON: %s", e)
         return 2
+    if not isinstance(config, dict):
+        logger.error("--config must be a JSON object, got %s", type(config).__name__)
+        return 2
 
     mock_data = {}
     if args.mock_data:
@@ -177,6 +189,10 @@ def main() -> int:
             return 2
         with open(mock_path) as f:
             mock_data = json.load(f)
+        if not isinstance(mock_data, dict):
+            logger.error("--mock-data must be a JSON object (key -> cache value), got %s",
+                         type(mock_data).__name__)
+            return 2
 
     plugin_ids = discover_plugins(search_dirs) if args.all else [args.plugin]
     if not plugin_ids:
@@ -195,9 +211,9 @@ def main() -> int:
             golden_dir_override=golden_dir_override, freeze_time=args.freeze_time,
         )
 
+    # When refreshing goldens we skip drift comparison, but a crash or overflow
+    # still means the plugin is broken — never let --update-golden mask that.
     ok = print_report(all_results)
-    if args.update_golden:
-        return 0
     return 0 if ok else 1
 
 

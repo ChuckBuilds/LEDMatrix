@@ -15,6 +15,7 @@ A plugin opts into golden-image checks by adding test/golden/<WxH>/<mode>.png
 
 import os
 from pathlib import Path
+from typing import Dict, List
 
 import pytest
 
@@ -25,17 +26,22 @@ from src.plugin_system.testing.loading import load_config_defaults, load_harness
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
+# Set LEDMATRIX_REQUIRE_PLUGINS=1 in any CI/hardware pipeline where plugins are
+# expected to be present, so a discovery drift (empty search path) fails loudly
+# instead of silently skipping and losing this safety signal.
+_REQUIRE_PLUGINS = os.environ.get("LEDMATRIX_REQUIRE_PLUGINS") == "1"
 
-def _plugin_search_dirs():
+
+def _plugin_search_dirs() -> List[Path]:
     env = os.environ.get("LEDMATRIX_PLUGINS_DIR")
     if env:
         return [Path(p) for p in env.split(os.pathsep) if p]
     return [PROJECT_ROOT / "plugin-repos", PROJECT_ROOT / "plugins"]
 
 
-def _discover():
+def _discover() -> Dict[str, Path]:
     """Map plugin_id -> plugin_dir for all plugins on the search path."""
-    found = {}
+    found: Dict[str, Path] = {}
     for base in _plugin_search_dirs():
         if not base.exists():
             continue
@@ -49,9 +55,28 @@ _PLUGINS = _discover()
 
 
 @pytest.mark.plugin
+def test_plugins_were_discovered() -> None:
+    """Guard against silently skipping the whole matrix when discovery drifts.
+
+    Local dev and the plugin-less core CI legitimately have no plugins, so we
+    skip there; but when LEDMATRIX_REQUIRE_PLUGINS=1 an empty search path is a
+    hard failure rather than a green no-op.
+    """
+    if _PLUGINS:
+        return
+    search = [str(p) for p in _plugin_search_dirs()]
+    if _REQUIRE_PLUGINS:
+        pytest.fail(
+            "LEDMATRIX_REQUIRE_PLUGINS=1 but no plugins were discovered on the "
+            f"search path: {search}"
+        )
+    pytest.skip(f"no plugins found on the search path: {search}")
+
+
+@pytest.mark.plugin
 @pytest.mark.skipif(not _PLUGINS, reason="no plugins found on the search path")
 @pytest.mark.parametrize("plugin_id", sorted(_PLUGINS))
-def test_plugin_renders_across_sizes_and_screens(plugin_id):
+def test_plugin_renders_across_sizes_and_screens(plugin_id: str) -> None:
     plugin_dir = _PLUGINS[plugin_id]
     spec = load_harness_spec(plugin_dir)
 

@@ -22,3 +22,14 @@ SUPPORTED_SIZES: List[Tuple[int, int]] = [
 def size_label(width: int, height: int) -> str:
     """Human/path-friendly label for a size, e.g. '128x32'."""
     return f"{width}x{height}"
+
+
+def safe_mode_filename(mode: str) -> str:
+    """A filesystem-safe basename for a plugin mode.
+
+    Mode names come from plugin metadata/render state, so a value containing
+    '/' or '..' could otherwise escape the intended output directory. Collapse
+    anything that isn't alphanumeric / dash / underscore to '_'.
+    """
+    cleaned = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in mode)
+    return cleaned or "mode"

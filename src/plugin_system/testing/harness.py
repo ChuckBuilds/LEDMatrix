@@ -21,8 +21,8 @@ from PIL import Image, ImageChops
 
 from src.logging_config import get_logger
 from .bounds_display_manager import BoundsCheckingDisplayManager
-from .loading import load_manifest
-from .sizes import SUPPORTED_SIZES, size_label
+from .loading import load_config_defaults, load_manifest
+from .sizes import SUPPORTED_SIZES, safe_mode_filename, size_label
 
 logger = get_logger("[Plugin Harness]")
 
@@ -35,7 +35,8 @@ class RenderResult:
     height: int
     mode: str
     image: Optional[Image.Image] = None
-    error: Optional[str] = None          # exception during load/update/display
+    error: Optional[str] = None          # exception during load/display (fatal)
+    update_error: Optional[str] = None   # exception during update() (non-fatal: no network in CI)
     overflow: Optional[Tuple[int, int, int, int]] = None  # bbox past the panel
     # golden comparison (populated only when a golden was provided)
     golden_checked: bool = False
@@ -143,7 +144,9 @@ def render_plugin_matrix(
     """
     plugin_dir = Path(plugin_dir)
     manifest = load_manifest(plugin_dir)
-    config = {"enabled": True, **(config or {})}
+    # Start from config_schema.json defaults so the plugin behaves like a real
+    # install; explicit caller config still wins over a schema default.
+    config = {"enabled": True, **load_config_defaults(plugin_dir), **(config or {})}
     sizes = sizes or SUPPORTED_SIZES
     results: List[RenderResult] = []
 
@@ -178,8 +181,13 @@ def _render_size(plugin_id, manifest, plugin_dir, config, mock_data,
             if run_update:
                 try:
                     inst.update()
-                except Exception as e:  # noqa: BLE001 — no network in CI is fine
-                    logger.debug("update() raised for %s [%s]: %s", plugin_id, mode, e)
+                except Exception as e:  # noqa: BLE001 — non-fatal: CI often has no network
+                    # Don't bury this at debug — a real update() regression would
+                    # otherwise pass as long as display() survives. Record it on the
+                    # result and warn so it's visible, without failing connectivity
+                    # errors that are expected in a headless run.
+                    result.update_error = repr(e)
+                    logger.warning("update() raised for %s [%s]: %s", plugin_id, mode, e)
             _render_mode(inst, mode)
             result.image = dm.get_image()
             result.overflow = dm.check_overflow()
@@ -225,8 +233,12 @@ def compare_images(rendered: Image.Image, golden: Image.Image,
 
 
 def golden_path(golden_dir: Path, width: int, height: int, mode: str) -> Path:
-    """Location of a golden image: <golden_dir>/<WxH>/<mode>.png."""
-    return Path(golden_dir) / size_label(width, height) / f"{mode}.png"
+    """Location of a golden image: <golden_dir>/<WxH>/<mode>.png.
+
+    The mode is sanitized to a safe basename so a mode name with '/' or '..'
+    can't read or write outside the golden directory.
+    """
+    return Path(golden_dir) / size_label(width, height) / f"{safe_mode_filename(mode)}.png"
 
 
 def compare_to_goldens(results: List[RenderResult], golden_dir: Path,
