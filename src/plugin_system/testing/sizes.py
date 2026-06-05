@@ -55,11 +55,16 @@ def parse_size_token(token: str) -> Tuple[int, int]:
         raise ValueError(f"Invalid size '{token}' (expected WxH, e.g. 128x32)")
     w, h = cleaned.split("x", 1)
     try:
-        return (int(w), int(h))
+        width, height = int(w), int(h)
     except ValueError as exc:
         raise ValueError(
             f"Invalid size '{token}' (expected numeric WxH, e.g. 128x32)"
         ) from exc
+    if width <= 0 or height <= 0:
+        raise ValueError(
+            f"Invalid size '{token}' (width and height must be positive, e.g. 128x32)"
+        )
+    return (width, height)
 
 
 def coerce_sizes(
@@ -78,7 +83,10 @@ def coerce_sizes(
     sizes: List[Tuple[int, int]] = []
     for pair in value:
         w, h = pair  # raises if not a 2-element sequence
-        sizes.append((int(w), int(h)))
+        width, height = int(w), int(h)
+        if width <= 0 or height <= 0:
+            raise ValueError(f"Invalid size pair {pair!r} (width and height must be positive)")
+        sizes.append((width, height))
     return sizes or None
 
 

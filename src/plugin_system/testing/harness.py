@@ -49,8 +49,8 @@ def _tolerated_update_errors() -> Tuple[type, ...]:
     try:  # requests is optional; cover its whole error tree when present
         import requests
         types.append(requests.exceptions.RequestException)
-    except Exception:  # pragma: no cover - requests not installed
-        pass
+    except ImportError:  # pragma: no cover - requests not installed
+        logger.debug("requests not installed; its connectivity errors won't be specifically tolerated")
     return tuple(types)
 
 

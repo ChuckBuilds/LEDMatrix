@@ -116,6 +116,15 @@ class TestSizeParsing:
         with pytest.raises(ValueError):
             parse_size_token("128-32")
 
+    def test_rejects_non_positive_dimensions(self):
+        for bad in ("0x32", "-64x32", "64x0", "64x-1"):
+            with pytest.raises(ValueError):
+                parse_size_token(bad)
+        with pytest.raises(ValueError):
+            coerce_sizes([[0, 32]])
+        with pytest.raises(ValueError):
+            coerce_sizes("64x-1")
+
     def test_coerce_sizes_from_string_and_pairs(self):
         assert coerce_sizes("8x16,64x64") == [(8, 16), (64, 64)]
         assert coerce_sizes([[8, 16], (64, 64)]) == [(8, 16), (64, 64)]
