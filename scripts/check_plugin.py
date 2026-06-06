@@ -37,13 +37,13 @@ os.environ['EMULATOR'] = 'true'
 
 from src.logging_config import get_logger  # noqa: E402
 from src.plugin_system.testing.loading import (  # noqa: E402
-    find_plugin_dir, load_config_defaults,
+    find_plugin_dir, load_config_defaults, load_harness_spec,
 )
 from src.plugin_system.testing.harness import (  # noqa: E402
     RenderResult, render_plugin_matrix, compare_to_goldens, write_goldens,
 )
 from src.plugin_system.testing.sizes import (  # noqa: E402
-    DEFAULT_TEST_SIZES, parse_size_token, safe_mode_filename, size_label,
+    parse_size_token, resolve_test_sizes, safe_mode_filename, size_label,
 )
 
 logger = get_logger("[Check Plugin]")
@@ -69,7 +69,7 @@ def discover_plugins(search_dirs: List[str]) -> List[str]:
 
 def parse_sizes(spec: Optional[str]):
     if not spec:
-        return DEFAULT_TEST_SIZES
+        return None
     sizes = []
     for token in spec.split(','):
         if not token.strip():
@@ -90,15 +90,30 @@ def check_one(plugin_id: str, search_dirs: List[str], sizes, mock_data: Dict,
         logger.error("Plugin '%s' not found in: %s", plugin_id, search_dirs)
         return [RenderResult(plugin_id, 0, 0, "<not-found>", error="plugin directory not found")]
 
-    # Start from config_schema defaults so plugins behave like a real install.
+    # Per-plugin test/harness.json holds the deterministic settings the committed
+    # goldens were generated with (config, mock data, frozen time, sizes). Load
+    # them so the CLI/CI render reproduces the golden the same way the pytest
+    # matrix path does; explicit CLI flags still override the file.
+    spec = load_harness_spec(plugin_dir)
+
+    # config_schema defaults (real-install behavior), then harness.json config,
+    # then CLI --config — most specific wins.
     full_config = {"enabled": True}
     full_config.update(load_config_defaults(plugin_dir))
+    full_config.update(spec.get("config", {}))
     full_config.update(config)
+
+    # Precedence: CLI flag > LEDMATRIX_TEST_SIZES env > harness.json > default.
+    effective_sizes = sizes if sizes else resolve_test_sizes(spec.get("sizes"))
+    # CLI value wins when provided, else fall back to the harness.json setting.
+    effective_mock_data = mock_data or spec.get("mock_data_contents", {})
+    effective_freeze = freeze_time or spec.get("freeze_time")
+    effective_run_update = run_update and not spec.get("skip_update", False)
 
     results = render_plugin_matrix(
         plugin_id=plugin_id, plugin_dir=plugin_dir, config=full_config,
-        mock_data=mock_data, sizes=sizes, run_update=run_update,
-        freeze_time=freeze_time,
+        mock_data=effective_mock_data, sizes=effective_sizes,
+        run_update=effective_run_update, freeze_time=effective_freeze,
     )
 
     golden_dir = golden_dir_override or (plugin_dir / 'test' / 'golden')
