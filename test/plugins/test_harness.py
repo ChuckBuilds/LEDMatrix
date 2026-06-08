@@ -6,6 +6,10 @@ These don't load real plugins, so they run anywhere (including core CI where
 plugin-repos is empty).
 """
 
+import importlib.util
+import json
+from pathlib import Path
+
 import pytest
 from PIL import Image
 
@@ -180,3 +184,72 @@ class TestListModes:
     def test_falls_back_to_plugin_id(self):
         inst = type("P", (), {})()
         assert list_modes(inst, {}, "pid") == ["pid"]
+
+
+def _load_check_plugin_cli():
+    """Load scripts/check_plugin.py by path (it isn't an importable package)."""
+    root = Path(__file__).resolve().parents[2]
+    path = root / "scripts" / "check_plugin.py"
+    spec = importlib.util.spec_from_file_location("check_plugin_cli", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _make_fixture_plugin(tmp_path, harness):
+    """Create a minimal plugin dir with a test/harness.json; return its parent
+    (the search dir)."""
+    pdir = tmp_path / "plugins" / "demo-clock"
+    (pdir / "test").mkdir(parents=True)
+    (pdir / "manifest.json").write_text(json.dumps({
+        "id": "demo-clock", "name": "Demo Clock", "version": "1.0.0",
+        "author": "test", "entry_point": "manager.py", "class_name": "DemoClock",
+        "display_modes": ["demo-clock"], "compatible_versions": ["*"],
+    }))
+    (pdir / "test" / "harness.json").write_text(json.dumps(harness))
+    return pdir.parent
+
+
+class TestCheckPluginHonorsHarnessJson:
+    """Regression: check_plugin.py (the CI tool) must apply test/harness.json so
+    its render reproduces the committed goldens — otherwise time/data-dependent
+    plugins drift on every CI run."""
+
+    def test_harness_json_supplies_render_settings(self, tmp_path, monkeypatch):
+        mod = _load_check_plugin_cli()
+        search = _make_fixture_plugin(tmp_path, {
+            "config": {"timezone": "UTC"},
+            "freeze_time": "2025-08-01 15:25:00",
+            "sizes": [[128, 32]],
+        })
+        captured = {}
+        monkeypatch.setattr(mod, "render_plugin_matrix",
+                            lambda **kw: captured.update(kw) or [])
+        monkeypatch.setattr(mod, "compare_to_goldens", lambda *a, **k: [])
+        mod.check_one(
+            plugin_id="demo-clock", search_dirs=[str(search)], sizes=None,
+            mock_data={}, config={}, run_update=True, out_dir=None,
+            update_golden=False, golden_dir_override=None, freeze_time=None,
+        )
+        assert captured["freeze_time"] == "2025-08-01 15:25:00"
+        assert captured["config"]["timezone"] == "UTC"
+        assert captured["sizes"] == [(128, 32)]
+
+    def test_cli_flags_override_harness_json(self, tmp_path, monkeypatch):
+        mod = _load_check_plugin_cli()
+        search = _make_fixture_plugin(tmp_path, {
+            "config": {"timezone": "UTC"},
+            "freeze_time": "2025-08-01 15:25:00",
+        })
+        captured = {}
+        monkeypatch.setattr(mod, "render_plugin_matrix",
+                            lambda **kw: captured.update(kw) or [])
+        monkeypatch.setattr(mod, "compare_to_goldens", lambda *a, **k: [])
+        mod.check_one(
+            plugin_id="demo-clock", search_dirs=[str(search)], sizes=None,
+            mock_data={}, config={"timezone": "America/New_York"},
+            run_update=True, out_dir=None, update_golden=False,
+            golden_dir_override=None, freeze_time="2030-01-01 00:00:00",
+        )
+        assert captured["freeze_time"] == "2030-01-01 00:00:00"
+        assert captured["config"]["timezone"] == "America/New_York"
