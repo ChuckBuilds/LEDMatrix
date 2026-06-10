@@ -2186,6 +2186,23 @@ class DisplayController:
                                     loop_completed = True
                                     break
 
+                        # LOAD-BEARING: if current_display_mode changed mid-loop (on-demand
+                        # activation, live priority, etc.), restart the main loop now instead
+                        # of falling into the "honour minimum duration" sleep below. That sleep
+                        # can run for up to the *previous* mode's full display_duration (default
+                        # 30s) and doesn't poll on-demand requests or re-check the mode, so a
+                        # freshly-requested mode switch would sit invisible for up to 30s — or
+                        # get clobbered by a queued stop request — before ever rendering.
+                        #
+                        # This guard was added in #298 (live priority interrupting long display
+                        # durations) and was accidentally dropped in #330 as collateral damage of
+                        # an unrelated time.monotonic() -> time.time() cleanup in the same hunk.
+                        # Removing it again will silently reintroduce both issues. _activate_on_demand
+                        # already sets force_change=True and clears the display, so the next loop
+                        # iteration renders the new mode immediately.
+                        if self.current_display_mode != active_mode:
+                            continue
+
                         # Ensure we honour minimum duration when not dynamic and loop ended early
                         if (
                             not dynamic_enabled
