@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import warnings
+from collections import deque
 from pathlib import Path
 
 # How many trailing lines of a failed command's output to keep for the
@@ -27,8 +28,13 @@ def _run(cmd):
     with tempfile.TemporaryFile(mode='w+b') as f:
         result = subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT)  # nosec B603 B607 - hardcoded apt/pip args  # nosemgrep
         f.seek(0)
-        lines = f.read().decode('utf-8', errors='replace').splitlines()
-    return result.returncode == 0, '\n'.join(lines[-ERROR_TAIL_LINES:])
+        # Stream line-by-line so only the last ERROR_TAIL_LINES are ever held
+        # in memory, regardless of how much output the command produced.
+        tail = deque(
+            (line.decode('utf-8', errors='replace').rstrip('\n') for line in f),
+            maxlen=ERROR_TAIL_LINES,
+        )
+    return result.returncode == 0, '\n'.join(tail)
 
 
 def install_via_apt(package_name):
@@ -84,14 +90,22 @@ def install_via_pip(package_name):
     return False, output
 
 
+# Distribution (pip/apt) names whose importable module name differs.
+IMPORT_NAME_MAP = {
+    'python-dateutil': 'dateutil',
+    'websocket-client': 'websocket',
+}
+
+
 def check_package_installed(package_name):
     """Check if a package is already installed."""
+    import_name = IMPORT_NAME_MAP.get(package_name, package_name)
     # Suppress deprecation warnings when checking if packages are installed
     # (we're just checking, not using them)
     with warnings.catch_warnings():
         warnings.filterwarnings('ignore', category=DeprecationWarning)
         try:
-            __import__(package_name)
+            __import__(import_name)
             return True
         except ImportError:
             return False
