@@ -6,6 +6,7 @@ then falls back to pip with --break-system-packages
 
 import subprocess
 import sys
+import tempfile
 import warnings
 from pathlib import Path
 
@@ -16,13 +17,18 @@ ERROR_TAIL_LINES = 15
 
 
 def _run(cmd):
-    """Run a command, capturing combined stdout/stderr.
+    """Run a command, streaming combined stdout/stderr to a temp file.
 
     Returns (success, output) instead of raising, so callers can report
-    *why* a command failed rather than just that it failed.
+    *why* a command failed rather than just that it failed. `output` is
+    bounded to the last ERROR_TAIL_LINES lines so failures from very
+    chatty commands (e.g. pip build logs) don't get buffered in memory.
     """
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    return result.returncode == 0, (result.stdout or "") + (result.stderr or "")
+    with tempfile.TemporaryFile(mode='w+b') as f:
+        result = subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT)  # nosec B603 B607 - hardcoded apt/pip args, not user input
+        f.seek(0)
+        lines = f.read().decode('utf-8', errors='replace').splitlines()
+    return result.returncode == 0, '\n'.join(lines[-ERROR_TAIL_LINES:])
 
 
 def install_via_apt(package_name):
@@ -47,8 +53,6 @@ def install_via_apt(package_name):
     apt_package = apt_package_map.get(package_name, f'python3-{package_name}')
 
     print(f"Trying to install {apt_package} via apt...")
-    _run(['sudo', 'apt', 'update'])  # best-effort refresh; ignore failures here
-
     success, output = _run(['sudo', 'apt', 'install', '-y', apt_package])
     if success:
         print(f"Successfully installed {apt_package} via apt")
@@ -112,6 +116,9 @@ def print_failure_summary(failed_packages, failure_details):
 def main():
     """Main installation function."""
     print("Installing dependencies for LED Matrix Web Interface V2...")
+
+    print("Refreshing apt package index...")
+    _run(['sudo', 'apt', 'update'])  # best-effort; individual installs surface their own errors
 
     # List of required packages
     required_packages = [
