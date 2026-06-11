@@ -208,7 +208,7 @@ def main():
             if setup_py.exists():
                 # Try installing - use regular install, not editable mode
                 # This is optional for web interface and should already be installed in Step 6
-                ok, output = _run([sys.executable, '-m', 'pip', 'install', '--break-system-packages', '--ignore-installed', str(rgbmatrix_path)])
+                ok, output = _run([sys.executable, '-m', 'pip', 'install', '--break-system-packages', str(rgbmatrix_path)])
                 if ok:
                     print("rgbmatrix module installed successfully")
                 else:
