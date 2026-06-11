@@ -340,9 +340,14 @@ main() {
     echo ""
     
     # Execute with proper error handling and non-interactive mode
-    # Temporarily disable errexit to capture exit code instead of exiting immediately
+    # Temporarily disable errexit AND the ERR trap to capture exit code instead of
+    # exiting immediately. `set +e` alone does not suppress the ERR trap, so without
+    # `trap '' ERR` a non-zero exit from first_time_install.sh would trigger on_error
+    # here with the generic "Main installation" message instead of the detailed
+    # if/else handling below.
     set +e
-    
+    trap '' ERR
+
     # Check /tmp permissions - only fix if actually wrong (common in automated scenarios)
     # When running manually, /tmp usually has correct permissions (1777)
     TMP_PERMS=$(stat -c '%a' /tmp 2>/dev/null || echo "unknown")
@@ -370,6 +375,7 @@ main() {
         sudo -E env TMPDIR=/tmp LEDMATRIX_ASSUME_YES=1 bash ./first_time_install.sh -y </dev/null
     fi
     INSTALL_EXIT_CODE=$?
+    trap 'on_error $LINENO' ERR  # Re-enable ERR trap
     set -e  # Re-enable errexit
     
     if [ $INSTALL_EXIT_CODE -eq 0 ]; then
