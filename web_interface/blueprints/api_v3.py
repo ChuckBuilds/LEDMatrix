@@ -1571,7 +1571,7 @@ def execute_system_action():
                                 "Re-removed %d uninstalled plugin(s) restored by update: %s",
                                 len(purged), ", ".join(purged),
                             )
-                    except Exception as purge_err:
+                    except (OSError, RuntimeError) as purge_err:
                         logger.warning("Post-update plugin purge failed: %s", purge_err)
             else:
                 logger.warning("git pull failed (returncode=%d): %s", result.returncode, result.stderr)

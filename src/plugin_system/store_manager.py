@@ -7,6 +7,7 @@ from both the official registry and custom GitHub repositories.
 
 import hashlib
 import os
+import re
 import json
 import stat
 import subprocess
@@ -43,6 +44,13 @@ class PluginStoreManager:
     """
     
     REGISTRY_URL = "https://raw.githubusercontent.com/ChuckBuilds/ledmatrix-plugins/main/plugins.json"
+
+    # A valid plugin id is a single path component: starts alphanumeric, then
+    # alphanumerics / dot / dash / underscore. Used to keep the uninstall
+    # registry from ever turning a corrupt or hand-edited entry (e.g. "",
+    # "..", "../x") into a filesystem path that purge_uninstalled_plugins
+    # would delete — an empty id resolves to the plugins root itself.
+    _PLUGIN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
     
     def __init__(self, plugins_dir: str = "plugins",
                  uninstalled_registry_path: Optional[str] = None):
@@ -103,6 +111,9 @@ class PluginStoreManager:
             self._uninstalled_registry_path = (
                 Path(__file__).parent.parent.parent / "config" / "uninstalled_plugins.json"
             )
+        # Serializes read-modify-write of the registry file so concurrent
+        # install/uninstall requests can't lose updates.
+        self._uninstalled_registry_lock = threading.Lock()
 
         # Cache for _get_local_git_info: {plugin_path_str: (signature, data)}
         # where ``signature`` is a tuple of (head_mtime, resolved_ref_mtime,
@@ -163,24 +174,42 @@ class PluginStoreManager:
             return False
         return True
 
+    def _is_valid_plugin_id(self, plugin_id: Any) -> bool:
+        """Return True if ``plugin_id`` is a safe single-component plugin id.
+
+        Rejects empty strings, anything with a path separator, and traversal
+        sequences like ``..`` so a registry entry can never escape (or target
+        the root of) ``self.plugins_dir`` during a purge.
+        """
+        return isinstance(plugin_id, str) and bool(self._PLUGIN_ID_RE.match(plugin_id))
+
     def _read_uninstalled_registry(self) -> Set[str]:
         """Read the persistent set of uninstalled plugin IDs.
 
         Returns an empty set if the file is missing, unreadable, or corrupt —
-        a broken registry must never block normal plugin operations.
+        a broken registry must never block normal plugin operations. Invalid
+        ids are dropped here so callers never turn them into paths.
         """
         try:
             if not self._uninstalled_registry_path.exists():
                 return set()
             with open(self._uninstalled_registry_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-            if isinstance(data, list):
-                return {str(pid) for pid in data}
-            self.logger.warning(
-                "Uninstalled-plugin registry at %s is not a list; ignoring it",
-                self._uninstalled_registry_path,
-            )
-            return set()
+            if not isinstance(data, list):
+                self.logger.warning(
+                    "Uninstalled-plugin registry at %s is not a list; ignoring it",
+                    self._uninstalled_registry_path,
+                )
+                return set()
+            valid: Set[str] = set()
+            for pid in data:
+                if self._is_valid_plugin_id(pid):
+                    valid.add(pid)
+                else:
+                    self.logger.warning(
+                        "Ignoring invalid plugin id in uninstall registry: %r", pid
+                    )
+            return valid
         except (OSError, ValueError) as e:
             self.logger.warning(
                 "Could not read uninstalled-plugin registry at %s: %s",
@@ -207,11 +236,15 @@ class PluginStoreManager:
 
         Survives restarts so a core update cannot resurrect the plugin.
         """
-        recorded = self._read_uninstalled_registry()
-        if plugin_id not in recorded:
-            recorded.add(plugin_id)
-            self._write_uninstalled_registry(recorded)
-            self.logger.info("Recorded %s as uninstalled (persistent)", plugin_id)
+        if not self._is_valid_plugin_id(plugin_id):
+            self.logger.error("Refusing to record invalid plugin id: %r", plugin_id)
+            return
+        with self._uninstalled_registry_lock:
+            recorded = self._read_uninstalled_registry()
+            if plugin_id not in recorded:
+                recorded.add(plugin_id)
+                self._write_uninstalled_registry(recorded)
+                self.logger.info("Recorded %s as uninstalled (persistent)", plugin_id)
 
     def forget_uninstalled_plugin(self, *plugin_ids: str) -> None:
         """Drop ``plugin_ids`` from the persistent uninstall registry.
@@ -219,13 +252,14 @@ class PluginStoreManager:
         Called when a plugin is deliberately (re)installed so future updates
         keep it.
         """
-        recorded = self._read_uninstalled_registry()
-        to_remove = {pid for pid in plugin_ids if pid in recorded}
-        if to_remove:
-            self._write_uninstalled_registry(recorded - to_remove)
-            self.logger.info(
-                "Cleared uninstall record for %s", ", ".join(sorted(to_remove))
-            )
+        with self._uninstalled_registry_lock:
+            recorded = self._read_uninstalled_registry()
+            to_remove = {pid for pid in plugin_ids if pid in recorded}
+            if to_remove:
+                self._write_uninstalled_registry(recorded - to_remove)
+                self.logger.info(
+                    "Cleared uninstall record for %s", ", ".join(sorted(to_remove))
+                )
 
     def get_uninstalled_plugins(self) -> Set[str]:
         """Return the persistent set of user-uninstalled plugin IDs."""
@@ -245,8 +279,17 @@ class PluginStoreManager:
         list of plugin IDs whose directories were actually removed.
         """
         removed: List[str] = []
+        plugins_root = self.plugins_dir.resolve()
         for plugin_id in sorted(self._read_uninstalled_registry()):
             plugin_path = self.plugins_dir / plugin_id
+            # Defense in depth: ids are already validated on read, but never
+            # remove anything that isn't a direct child of the plugins root.
+            resolved = plugin_path.resolve()
+            if resolved == plugins_root or resolved.parent != plugins_root:
+                self.logger.error(
+                    "Refusing to purge unsafe plugin path for id %r", plugin_id
+                )
+                continue
             if not plugin_path.exists():
                 continue
             self.logger.info(

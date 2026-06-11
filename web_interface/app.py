@@ -90,7 +90,7 @@ try:
             "Re-removed %d uninstalled plugin(s) restored since last run: %s",
             len(_purged), ", ".join(_purged),
         )
-except Exception as _purge_err:
+except (OSError, RuntimeError) as _purge_err:
     logging.getLogger(__name__).warning(
         "Startup plugin purge failed: %s", _purge_err
     )

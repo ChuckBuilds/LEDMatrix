@@ -120,6 +120,37 @@ class TestPersistentUninstallRegistry(unittest.TestCase):
         self.assertEqual(self.sm.get_uninstalled_plugins(), set())
         self.assertFalse(self.sm.is_plugin_uninstalled("web-ui-info"))
 
+    def _write_raw_registry(self, value):
+        self.registry_path.parent.mkdir(parents=True, exist_ok=True)
+        import json as _json
+        self.registry_path.write_text(_json.dumps(value))
+
+    def test_empty_id_does_not_wipe_plugins_root(self):
+        # An empty id resolves to plugins_dir itself; purge must never delete it.
+        self._make_plugin_dir("baseball-scoreboard")
+        self._write_raw_registry([""])
+
+        removed = self.sm.purge_uninstalled_plugins()
+
+        self.assertEqual(removed, [])
+        self.assertTrue(self.plugins_dir.exists())
+        self.assertTrue((self.plugins_dir / "baseball-scoreboard").exists())
+        # Invalid id is filtered out entirely.
+        self.assertEqual(self.sm.get_uninstalled_plugins(), set())
+
+    def test_traversal_ids_are_ignored(self):
+        for bad in ["..", "../evil", "a/b", "."]:
+            with self.subTest(bad=bad):
+                self.assertFalse(self.sm._is_valid_plugin_id(bad))
+        self._write_raw_registry(["../evil", "..", "web-ui-info"])
+        # Only the safe id survives the read.
+        self.assertEqual(self.sm.get_uninstalled_plugins(), {"web-ui-info"})
+
+    def test_record_rejects_invalid_id(self):
+        self.sm.record_uninstalled_plugin("")
+        self.sm.record_uninstalled_plugin("../escape")
+        self.assertEqual(self.sm.get_uninstalled_plugins(), set())
+
 
 class TestGitInfoCache(unittest.TestCase):
     def setUp(self):
