@@ -79,6 +79,21 @@ plugin_manager = PluginManager(
     cache_manager=None     # Not needed for web interface
 )
 plugin_store_manager = PluginStoreManager(plugins_dir=str(plugins_dir))
+# A core `git pull` update (or any checkout) restores built-in plugins
+# committed under plugin-repos/, even ones the user uninstalled. Re-remove any
+# the user previously uninstalled at startup so a manual update on the Pi
+# doesn't resurrect them.
+try:
+    _purged = plugin_store_manager.purge_uninstalled_plugins()
+    if _purged:
+        logging.getLogger(__name__).info(
+            "Re-removed %d uninstalled plugin(s) restored since last run: %s",
+            len(_purged), ", ".join(_purged),
+        )
+except Exception as _purge_err:
+    logging.getLogger(__name__).warning(
+        "Startup plugin purge failed: %s", _purge_err
+    )
 saved_repositories_manager = SavedRepositoriesManager()
 
 # Initialize schema manager

@@ -322,10 +322,19 @@ class StateReconciliation:
                 and hasattr(self.store_manager, 'was_recently_uninstalled')
                 and self.store_manager.was_recently_uninstalled(plugin_id)
             )
+            # Also refuse to resurrect a plugin the user has persistently
+            # uninstalled. Unlike the in-memory race guard above, this record
+            # survives restarts, so the user's removal sticks across updates.
+            persistently_uninstalled = (
+                self.store_manager is not None
+                and hasattr(self.store_manager, 'is_plugin_uninstalled')
+                and self.store_manager.is_plugin_uninstalled(plugin_id)
+            )
             can_repair = (
                 self.store_manager is not None
                 and not previously_unrecoverable
                 and not recently_uninstalled
+                and not persistently_uninstalled
             )
             inconsistencies.append(Inconsistency(
                 plugin_id=plugin_id,
