@@ -25,7 +25,7 @@ def _run(cmd):
     chatty commands (e.g. pip build logs) don't get buffered in memory.
     """
     with tempfile.TemporaryFile(mode='w+b') as f:
-        result = subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT)  # nosec B603 B607 - hardcoded apt/pip args, not user input
+        result = subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT)  # nosec B603 B607 - hardcoded apt/pip args  # nosemgrep
         f.seek(0)
         lines = f.read().decode('utf-8', errors='replace').splitlines()
     return result.returncode == 0, '\n'.join(lines[-ERROR_TAIL_LINES:])
