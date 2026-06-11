@@ -202,8 +202,33 @@ retry() {
     done
 }
 
-apt_update() { retry apt update; }
-apt_install() { retry apt install -y "$@"; }
+# Wait for another apt/dpkg process (commonly unattended-upgrades running
+# shortly after first boot) to release its lock before we try apt ourselves.
+# Without this, apt_update/apt_install can fail outright in the first couple
+# minutes after a fresh Pi OS boot with a generic "Command failed after 3
+# attempts" error.
+wait_for_apt_lock() {
+    command -v flock >/dev/null 2>&1 || return 0
+    local lock_file="/var/lib/dpkg/lock-frontend"
+    local max_wait=180
+    local waited=0
+    local printed=0
+    while ! flock -n "$lock_file" -c true 2>/dev/null; do
+        if [ "$printed" -eq 0 ]; then
+            echo "⚠ Waiting for another apt/dpkg process to finish (e.g. unattended-upgrades on first boot)..."
+            printed=1
+        fi
+        if [ "$waited" -ge "$max_wait" ]; then
+            echo "⚠ Still waiting after ${max_wait}s; proceeding anyway."
+            break
+        fi
+        sleep 5
+        waited=$((waited+5))
+    done
+}
+
+apt_update() { wait_for_apt_lock; retry apt update; }
+apt_install() { wait_for_apt_lock; retry apt install -y "$@"; }
 apt_remove() { apt-get remove -y "$@" || true; }
 
 check_network() {
@@ -220,6 +245,22 @@ check_network() {
     echo "✗ No internet connectivity detected."
     echo "Please connect your Raspberry Pi to the internet and re-run this script."
     exit 1
+}
+
+check_disk_space() {
+    command -v df >/dev/null 2>&1 || return 0
+    local available_mb
+    available_mb=$(df -m "$PROJECT_ROOT_DIR" | awk 'NR==2{print $4}')
+    available_mb=${available_mb:-0}
+    if [ "$available_mb" -lt 500 ]; then
+        echo "✗ ERROR: Insufficient disk space: ${available_mb}MB available (need at least 500MB)"
+        echo "  Free up space first, e.g.: sudo apt clean && sudo apt autoremove"
+        exit 1
+    elif [ "$available_mb" -lt 1024 ]; then
+        echo "⚠ Limited disk space: ${available_mb}MB available (recommend at least 1GB for the rpi-rgb-led-matrix build in Step 6)"
+    else
+        echo "✓ Disk space sufficient: ${available_mb}MB available"
+    fi
 }
 
 echo ""
@@ -271,8 +312,9 @@ CURRENT_STEP="Install system dependencies"
 echo "Step 1: Installing system dependencies..."
 echo "----------------------------------------"
 
-# Ensure network is available before APT operations
+# Pre-flight checks before APT operations
 check_network
+check_disk_space
 
 # Update package list
 apt_update
@@ -822,14 +864,14 @@ else
         # Try to initialize submodule if .gitmodules exists
         if [ -f "$PROJECT_ROOT_DIR/.gitmodules" ] && grep -q "rpi-rgb-led-matrix" "$PROJECT_ROOT_DIR/.gitmodules"; then
             echo "Initializing rpi-rgb-led-matrix submodule..."
-            if ! git submodule update --init --recursive rpi-rgb-led-matrix-master 2>&1; then
+            if ! retry git submodule update --init --recursive rpi-rgb-led-matrix-master; then
                 echo "⚠ Submodule init failed, cloning directly from GitHub..."
-                git clone https://github.com/hzeller/rpi-rgb-led-matrix.git rpi-rgb-led-matrix-master
+                retry git clone https://github.com/hzeller/rpi-rgb-led-matrix.git rpi-rgb-led-matrix-master
             fi
         else
             # Fallback: clone directly if submodule not configured
             echo "Submodule not configured, cloning directly from GitHub..."
-            git clone https://github.com/hzeller/rpi-rgb-led-matrix.git rpi-rgb-led-matrix-master
+            retry git clone https://github.com/hzeller/rpi-rgb-led-matrix.git rpi-rgb-led-matrix-master
         fi
     fi
     
@@ -841,23 +883,34 @@ else
             cd "$PROJECT_ROOT_DIR"
             rm -rf rpi-rgb-led-matrix-master
             if [ -f "$PROJECT_ROOT_DIR/.gitmodules" ] && grep -q "rpi-rgb-led-matrix" "$PROJECT_ROOT_DIR/.gitmodules"; then
-                git submodule update --init --recursive rpi-rgb-led-matrix-master
+                retry git submodule update --init --recursive rpi-rgb-led-matrix-master
             else
-                git clone https://github.com/hzeller/rpi-rgb-led-matrix.git rpi-rgb-led-matrix-master
+                retry git clone https://github.com/hzeller/rpi-rgb-led-matrix.git rpi-rgb-led-matrix-master
             fi
         fi
-        
+
         pushd "$PROJECT_ROOT_DIR/rpi-rgb-led-matrix-master" >/dev/null
         echo "Installing rpi-rgb-led-matrix Python package (scikit-build-core + cmake)..."
         echo "  Build deps required: python-dev-is-python3 cmake"
         echo "  This compiles C++ — may take 2-5 minutes on Pi 4/5..."
-        if ! python3 -m pip install --break-system-packages .; then
+        BUILD_OUTPUT=$(mktemp)
+        BUILD_SUCCESS=false
+        if python3 -m pip install --break-system-packages . > "$BUILD_OUTPUT" 2>&1; then
+            BUILD_SUCCESS=true
+        fi
+        cat "$BUILD_OUTPUT" >> "$LOG_FILE"
+        if [ "$BUILD_SUCCESS" != true ]; then
             echo "✗ Failed to install rpi-rgb-led-matrix Python package"
             echo "  Ensure build tools are installed:"
             echo "  sudo apt install -y python-dev-is-python3 cmake build-essential"
+            echo ""
+            echo "-- Last 50 lines of build output --"
+            tail -n 50 "$BUILD_OUTPUT"
+            rm -f "$BUILD_OUTPUT"
             popd >/dev/null
             exit 1
         fi
+        rm -f "$BUILD_OUTPUT"
         popd >/dev/null
     else
         echo "✗ rpi-rgb-led-matrix-master directory not found at $PROJECT_ROOT_DIR"
