@@ -43,6 +43,115 @@ class TestUninstallTombstone(unittest.TestCase):
         self.assertNotIn("foo", self.sm._uninstall_tombstones)
 
 
+class TestPersistentUninstallRegistry(unittest.TestCase):
+    """Regression tests for the persistent uninstall registry that stops a
+    core `git pull` update from resurrecting built-in plugins the user
+    removed (plugins committed under plugin-repos/)."""
+
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.plugins_dir = Path(self._tmp.name) / "plugin-repos"
+        self.plugins_dir.mkdir()
+        self.registry_path = Path(self._tmp.name) / "config" / "uninstalled_plugins.json"
+        self.sm = PluginStoreManager(
+            plugins_dir=str(self.plugins_dir),
+            uninstalled_registry_path=str(self.registry_path),
+        )
+
+    def _make_plugin_dir(self, plugin_id):
+        """Simulate a built-in plugin restored on disk (e.g. by git pull)."""
+        d = self.plugins_dir / plugin_id
+        d.mkdir(parents=True)
+        (d / "manifest.json").write_text('{"id": "%s"}' % plugin_id)
+        return d
+
+    def test_unrecorded_plugin_is_not_uninstalled(self):
+        self.assertFalse(self.sm.is_plugin_uninstalled("web-ui-info"))
+        self.assertEqual(self.sm.get_uninstalled_plugins(), set())
+
+    def test_record_persists_across_instances(self):
+        self.sm.record_uninstalled_plugin("web-ui-info")
+        self.assertTrue(self.registry_path.exists())
+        # A fresh manager (simulating a service restart after update) still sees it.
+        fresh = PluginStoreManager(
+            plugins_dir=str(self.plugins_dir),
+            uninstalled_registry_path=str(self.registry_path),
+        )
+        self.assertTrue(fresh.is_plugin_uninstalled("web-ui-info"))
+
+    def test_forget_clears_record(self):
+        self.sm.record_uninstalled_plugin("web-ui-info")
+        self.sm.forget_uninstalled_plugin("web-ui-info")
+        self.assertFalse(self.sm.is_plugin_uninstalled("web-ui-info"))
+
+    def test_purge_removes_resurrected_plugin(self):
+        # The bug: user removed web-ui-info, then a git pull restored its
+        # committed files. Recorded uninstall + purge must re-remove it.
+        self._make_plugin_dir("web-ui-info")
+        self.sm.record_uninstalled_plugin("web-ui-info")
+        self.assertTrue((self.plugins_dir / "web-ui-info").exists())
+
+        removed = self.sm.purge_uninstalled_plugins()
+
+        self.assertEqual(removed, ["web-ui-info"])
+        self.assertFalse((self.plugins_dir / "web-ui-info").exists())
+        # Record is kept so the purge stays idempotent across future updates.
+        self.assertTrue(self.sm.is_plugin_uninstalled("web-ui-info"))
+
+    def test_purge_leaves_non_uninstalled_plugins_alone(self):
+        self._make_plugin_dir("baseball-scoreboard")  # present, not recorded
+        self._make_plugin_dir("web-ui-info")
+        self.sm.record_uninstalled_plugin("web-ui-info")
+
+        self.sm.purge_uninstalled_plugins()
+
+        self.assertTrue((self.plugins_dir / "baseball-scoreboard").exists())
+        self.assertFalse((self.plugins_dir / "web-ui-info").exists())
+
+    def test_purge_noop_when_plugin_absent(self):
+        # Recorded but never restored on disk — nothing to remove.
+        self.sm.record_uninstalled_plugin("web-ui-info")
+        self.assertEqual(self.sm.purge_uninstalled_plugins(), [])
+
+    def test_corrupt_registry_is_ignored(self):
+        self.registry_path.parent.mkdir(parents=True, exist_ok=True)
+        self.registry_path.write_text("{ not valid json")
+        self.assertEqual(self.sm.get_uninstalled_plugins(), set())
+        self.assertFalse(self.sm.is_plugin_uninstalled("web-ui-info"))
+
+    def _write_raw_registry(self, value):
+        self.registry_path.parent.mkdir(parents=True, exist_ok=True)
+        import json as _json
+        self.registry_path.write_text(_json.dumps(value))
+
+    def test_empty_id_does_not_wipe_plugins_root(self):
+        # An empty id resolves to plugins_dir itself; purge must never delete it.
+        self._make_plugin_dir("baseball-scoreboard")
+        self._write_raw_registry([""])
+
+        removed = self.sm.purge_uninstalled_plugins()
+
+        self.assertEqual(removed, [])
+        self.assertTrue(self.plugins_dir.exists())
+        self.assertTrue((self.plugins_dir / "baseball-scoreboard").exists())
+        # Invalid id is filtered out entirely.
+        self.assertEqual(self.sm.get_uninstalled_plugins(), set())
+
+    def test_traversal_ids_are_ignored(self):
+        for bad in ["..", "../evil", "a/b", "."]:
+            with self.subTest(bad=bad):
+                self.assertFalse(self.sm._is_valid_plugin_id(bad))
+        self._write_raw_registry(["../evil", "..", "web-ui-info"])
+        # Only the safe id survives the read.
+        self.assertEqual(self.sm.get_uninstalled_plugins(), {"web-ui-info"})
+
+    def test_record_rejects_invalid_id(self):
+        self.sm.record_uninstalled_plugin("")
+        self.sm.record_uninstalled_plugin("../escape")
+        self.assertEqual(self.sm.get_uninstalled_plugins(), set())
+
+
 class TestGitInfoCache(unittest.TestCase):
     def setUp(self):
         self._tmp = TemporaryDirectory()

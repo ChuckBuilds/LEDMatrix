@@ -8,6 +8,7 @@ config/config_secrets.json
 config/config.json
 config/config.json.backup
 config/wifi_config.json
+config/uninstalled_plugins.json
 credentials.json
 token.pickle
 

@@ -1559,6 +1559,20 @@ def execute_system_action():
                     pull_message = f"Code updated successfully. Local changes were automatically stashed.{stash_info}"
                 if result.stdout and "Already up to date" not in result.stdout:
                     pull_message = f"Code updated successfully.{stash_info}"
+                # A `git pull` restores built-in plugins (committed under
+                # plugin-repos/) even if the user uninstalled them. Re-remove
+                # any the user previously uninstalled so the update doesn't
+                # resurrect them.
+                if api_v3.plugin_store_manager:
+                    try:
+                        purged = api_v3.plugin_store_manager.purge_uninstalled_plugins()
+                        if purged:
+                            logger.info(
+                                "Re-removed %d uninstalled plugin(s) restored by update: %s",
+                                len(purged), ", ".join(purged),
+                            )
+                    except (OSError, RuntimeError) as purge_err:
+                        logger.warning("Post-update plugin purge failed: %s", purge_err)
             else:
                 logger.warning("git pull failed (returncode=%d): %s", result.returncode, result.stderr)
                 pull_message = "Update failed; check logs for details"
@@ -2933,6 +2947,13 @@ def _do_transactional_uninstall(plugin_id, preserve_config):
         api_v3.schema_manager.invalidate_cache(plugin_id)
     if api_v3.plugin_state_manager:
         api_v3.plugin_state_manager.remove_plugin_state(plugin_id)
+    # Persistently record the uninstall so a later core `git pull` update
+    # cannot resurrect a built-in plugin (committed under plugin-repos/) that
+    # the user removed. Best-effort: never fail the uninstall over this.
+    try:
+        api_v3.plugin_store_manager.record_uninstalled_plugin(plugin_id)
+    except Exception as record_err:
+        logger.warning("Could not record uninstall for %s: %s", plugin_id, record_err)
     return True, None
 
 
