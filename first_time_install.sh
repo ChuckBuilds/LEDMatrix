@@ -15,8 +15,8 @@ on_error() {
     echo "✗ An error occurred during: $CURRENT_STEP (line $line_no, exit $exit_code)" >&2
     if [ -n "${LOG_FILE:-}" ]; then
         echo "See the log for details: $LOG_FILE" >&2
-        echo "-- Last 50 lines from log --" >&2
-        tail -n 50 "$LOG_FILE" >&2 || true
+        echo "-- Last 100 lines from log --" >&2
+        tail -n 100 "$LOG_FILE" >&2 || true
     fi
     echo "\nCommon fixes:" >&2
     echo "- Ensure the Pi is online (try: ping -c1 8.8.8.8)." >&2
@@ -912,7 +912,9 @@ else
     # Try to install dependencies using the smart installer if available
     if [ -f "$PROJECT_ROOT_DIR/scripts/install_dependencies_apt.py" ]; then
         echo "Using smart dependency installer..."
-        python3 "$PROJECT_ROOT_DIR/scripts/install_dependencies_apt.py"
+        # -u: unbuffered stdout/stderr so output is captured in $LOG_FILE in
+        # real time and in order relative to this script's own echo statements
+        python3 -u "$PROJECT_ROOT_DIR/scripts/install_dependencies_apt.py"
     else
         echo "Using pip to install dependencies..."
         if [ -f "$PROJECT_ROOT_DIR/requirements_web_v2.txt" ]; then
