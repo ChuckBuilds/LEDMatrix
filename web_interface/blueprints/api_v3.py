@@ -3558,21 +3558,29 @@ def _get_schema_property(schema, key_path):
 
     parts = key_path.split('.')
     current = schema['properties']
+    i = 0
 
-    for i, part in enumerate(parts):
-        if part not in current:
-            return None
-
-        prop = current[part]
-
-        # If this is the last part, return the property
-        if i == len(parts) - 1:
-            return prop
-
-        # If this is an object with properties, navigate deeper
-        if isinstance(prop, dict) and 'properties' in prop:
-            current = prop['properties']
-        else:
+    while i < len(parts):
+        # Try progressively longer candidates, longest first, so schema keys that
+        # themselves contain dots (e.g. league keys like "fifa.world") are matched
+        # instead of being mistaken for nested "fifa" -> "world" objects.
+        matched = False
+        for j in range(len(parts), i, -1):
+            candidate = '.'.join(parts[i:j])
+            if isinstance(current, dict) and candidate in current:
+                prop = current[candidate]
+                # Consumed all remaining parts — this is the target property.
+                if j == len(parts):
+                    return prop
+                # Navigate deeper through an object with properties.
+                if isinstance(prop, dict) and 'properties' in prop:
+                    current = prop['properties']
+                    i = j
+                    matched = True
+                    break
+                # Matched a non-object before consuming the path — can't go deeper.
+                return None
+        if not matched:
             return None
 
     return None
@@ -3745,10 +3753,45 @@ def _parse_form_value_with_schema(value, key_path, schema):
     return value
 
 
+def _resolve_key_segments(key_path, config):
+    """Split a dot-notation path into segments, greedily preserving keys that
+    themselves contain dots (e.g. league keys like "fifa.world").
+
+    At each level the longest candidate that matches a key already present in the
+    config wins; otherwise the path splits on the next dot (the normal
+    nested-create case). Because dotted keys such as ``leagues."fifa.world"``
+    always exist in the saved config being updated, this routes the value to the
+    real league object instead of fabricating a ``leagues.fifa.world`` tree.
+    """
+    parts = key_path.split('.')
+    segments = []
+    node = config
+    i = 0
+    while i < len(parts):
+        matched = False
+        if isinstance(node, dict):
+            for j in range(len(parts), i, -1):
+                candidate = '.'.join(parts[i:j])
+                if candidate in node:
+                    segments.append(candidate)
+                    node = node[candidate]
+                    i = j
+                    matched = True
+                    break
+        if not matched:
+            part = parts[i]
+            segments.append(part)
+            node = node.get(part) if isinstance(node, dict) else None
+            i += 1
+    return segments
+
+
 def _set_nested_value(config, key_path, value):
     """
     Set a value in a nested dict using dot notation path.
     Handles existing nested dicts correctly by merging instead of replacing.
+    Keys containing dots (e.g. league keys like "fifa.world") are preserved when
+    they already exist in the config rather than being split into nested objects.
 
     Args:
         config: The config dict to modify
@@ -3758,22 +3801,22 @@ def _set_nested_value(config, key_path, value):
     # Skip setting if value is the sentinel
     if value is _SKIP_FIELD:
         return
-    
-    parts = key_path.split('.')
+
+    segments = _resolve_key_segments(key_path, config)
     current = config
 
     # Navigate/create intermediate dicts
-    for i, part in enumerate(parts[:-1]):
-        if part not in current:
-            current[part] = {}
-        elif not isinstance(current[part], dict):
+    for seg in segments[:-1]:
+        if seg not in current:
+            current[seg] = {}
+        elif not isinstance(current[seg], dict):
             # If the existing value is not a dict, replace it with a dict
-            current[part] = {}
-        current = current[part]
+            current[seg] = {}
+        current = current[seg]
 
     # Set the final value (don't overwrite with empty dict if value is None and we want to preserve structure)
-    if value is not None or parts[-1] not in current:
-        current[parts[-1]] = value
+    if value is not None or segments[-1] not in current:
+        current[segments[-1]] = value
 
 
 def _set_missing_booleans_to_false(config, schema_props, form_keys, prefix='', config_node=None):
