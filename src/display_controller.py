@@ -1505,30 +1505,68 @@ class DisplayController:
             logger.info("Live priority ended - resuming rotation at %s", self.current_display_mode)
             self._live_resume_index = None
 
-    def _check_live_priority(self):
+    def _collect_live_modes(self):
+        """Return every currently live-priority mode, in registration order.
+
+        Scans all registered plugin modes; for each plugin that has live
+        priority *and* live content, collects the specific live mode(s) it
+        reports via get_live_modes() (only those actually registered), falling
+        back to the scanned mode name when it ends in '_live'. Deduplicated,
+        preserving order. A plugin registered under several mode keys (the
+        sports plugins register one per league) contributes each live mode once.
         """
-        Check all plugins for live priority content.
-        Returns the mode that should be displayed if live content is found, None otherwise.
-        """
+        live = []
+        seen = set()
         for mode_name, plugin_instance in self.plugin_modes.items():
-            if hasattr(plugin_instance, 'has_live_priority') and hasattr(plugin_instance, 'has_live_content'):
-                try:
-                    if plugin_instance.has_live_priority() and plugin_instance.has_live_content():
-                        # Get the specific live mode from the plugin if available
-                        if hasattr(plugin_instance, 'get_live_modes'):
-                            live_modes = plugin_instance.get_live_modes()
-                            if live_modes and len(live_modes) > 0:
-                                # Verify the mode actually exists before returning it
-                                for suggested_mode in live_modes:
-                                    if suggested_mode in self.plugin_modes:
-                                        return suggested_mode
-                                # If suggested modes don't exist, fall through to check current mode
-                        # Fallback: if this mode ends with _live, return it
-                        if mode_name.endswith('_live'):
-                            return mode_name
-                except Exception as e:
-                    logger.warning("Error checking live priority for %s: %s", mode_name, e)
-        return None
+            if not (hasattr(plugin_instance, 'has_live_priority')
+                    and hasattr(plugin_instance, 'has_live_content')):
+                continue
+            try:
+                if not (plugin_instance.has_live_priority()
+                        and plugin_instance.has_live_content()):
+                    continue
+                resolved = []
+                if hasattr(plugin_instance, 'get_live_modes'):
+                    for suggested_mode in (plugin_instance.get_live_modes() or []):
+                        if suggested_mode in self.plugin_modes:
+                            resolved.append(suggested_mode)
+                if not resolved and mode_name.endswith('_live'):
+                    resolved.append(mode_name)
+                for m in resolved:
+                    if m not in seen:
+                        seen.add(m)
+                        live.append(m)
+            except Exception as e:
+                logger.warning("Error checking live priority for %s: %s", mode_name, e)
+        return live
+
+    def _check_live_priority(self, advance=False):
+        """Return the live-priority mode to display, or None if nothing is live.
+
+        When several plugins report live content at once (e.g. a baseball game
+        and a soccer match), this round-robins between them so the display
+        alternates each dwell instead of pinning to whichever plugin is first in
+        registration order.
+
+        advance=False (default): a non-advancing peek — returns the live mode
+        already on screen if it is still live, otherwise the first live mode.
+        Used by the Vegas coordinator and the vegas-active check, which only
+        need to know whether *any* game is live (and must not spin the cursor).
+
+        advance=True: the rotation pick — returns the live mode *after* the one
+        currently shown, so each dwell advances to the next live game. The
+        currently-displayed mode is the cursor, so this stays correct as games
+        start and end (no separate index to keep in sync).
+        """
+        live_modes = self._collect_live_modes()
+        if not live_modes:
+            return None
+        if self.current_display_mode in live_modes:
+            if advance:
+                idx = live_modes.index(self.current_display_mode)
+                return live_modes[(idx + 1) % len(live_modes)]
+            return self.current_display_mode
+        return live_modes[0]
 
     def run(self):
         """Run the display controller, switching between displays."""
@@ -1689,9 +1727,11 @@ class DisplayController:
                             # Display failed, clear the status and continue normally
                             wifi_status_data = None
 
-                # Check for live priority content and switch to it immediately
+                # Check for live priority content and switch to it immediately.
+                # advance=True so multiple simultaneously-live games take turns
+                # (round-robin) instead of pinning to the first plugin.
                 if not self.on_demand_active and not wifi_status_data:
-                    live_priority_mode = self._check_live_priority()
+                    live_priority_mode = self._check_live_priority(advance=True)
                     self._apply_live_priority(live_priority_mode)
 
                 # Vegas scroll mode - continuous ticker across all plugins
