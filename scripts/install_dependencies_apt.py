@@ -75,12 +75,20 @@ def install_via_pip(package_name):
     Debian/Ubuntu-based systems without a virtual environment.
     --prefer-binary prefers pre-built wheels over source distributions to avoid
     exhausting /tmp space during compilation.
+    --ignore-installed stops pip from trying to *uninstall* packages that were
+    installed by apt (e.g. python3-requests). Those Debian packages ship no
+    pip RECORD file, so an uninstall attempt fails with "uninstall-no-record-file"
+    and aborts the whole install. With --ignore-installed, pip lays the new
+    version down in /usr/local where it shadows the apt copy instead of removing
+    it. This matters when a pip dependency (google-api-python-client pulls a
+    newer requests) needs to upgrade an apt-managed package.
 
     Returns (success, output).
     """
     print(f"Installing {package_name} via pip...")
     success, output = _run([
-        sys.executable, '-m', 'pip', 'install', '--break-system-packages', '--prefer-binary', package_name
+        sys.executable, '-m', 'pip', 'install',
+        '--break-system-packages', '--prefer-binary', '--ignore-installed', package_name
     ])
     if success:
         print(f"Successfully installed {package_name} via pip")
@@ -200,7 +208,7 @@ def main():
             if setup_py.exists():
                 # Try installing - use regular install, not editable mode
                 # This is optional for web interface and should already be installed in Step 6
-                ok, output = _run([sys.executable, '-m', 'pip', 'install', '--break-system-packages', str(rgbmatrix_path)])
+                ok, output = _run([sys.executable, '-m', 'pip', 'install', '--break-system-packages', '--ignore-installed', str(rgbmatrix_path)])
                 if ok:
                     print("rgbmatrix module installed successfully")
                 else:
