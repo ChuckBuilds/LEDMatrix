@@ -214,6 +214,104 @@ class TestDisplayControllerLivePriority:
         assert controller.current_mode_index == 1
         assert controller.current_display_mode == "b"
 
+    # --- Round-robin between multiple simultaneous live games --------------
+
+    @staticmethod
+    def _live_plugin(live_modes):
+        """A mock plugin that is live and reports the given live mode names."""
+        p = MagicMock()
+        p.has_live_priority = MagicMock(return_value=True)
+        p.has_live_content = MagicMock(return_value=True)
+        p.get_live_modes = MagicMock(return_value=list(live_modes))
+        return p
+
+    def test_collect_live_modes_dedupes_multi_mode_plugin(self, test_display_controller):
+        """A sports plugin registered under several mode keys (one per league)
+        contributes each live mode once, in registration order; plugins with no
+        live content are skipped."""
+        controller = test_display_controller
+        baseball = self._live_plugin(["baseball_live"])
+        soccer = self._live_plugin(["soccer_fifa.world_live"])
+        idle = MagicMock()
+        idle.has_live_priority = MagicMock(return_value=True)
+        idle.has_live_content = MagicMock(return_value=False)
+        controller.plugin_modes = {
+            "baseball_live": baseball,
+            "baseball_recent": baseball,
+            "soccer_fifa.world_live": soccer,
+            "soccer_usa.1_live": soccer,
+            "soccer_recent": soccer,
+            "clock": idle,
+        }
+        assert controller._collect_live_modes() == [
+            "baseball_live", "soccer_fifa.world_live"
+        ]
+
+    def test_round_robin_alternates_between_simultaneous_live_games(self, test_display_controller):
+        """Regression: with two games live at once, the live-priority pick
+        round-robins each dwell instead of pinning to the first plugin in
+        registration order (the bug where a baseball game hid a live World Cup
+        match)."""
+        controller = test_display_controller
+        baseball = self._live_plugin(["baseball_live"])
+        soccer = self._live_plugin(["soccer_fifa.world_live"])
+        controller.plugin_modes = {
+            "baseball_live": baseball,
+            "soccer_fifa.world_live": soccer,
+        }
+        # First entry into live priority from an ambient mode -> first live game.
+        controller.current_display_mode = "clock"
+        assert controller._check_live_priority(advance=True) == "baseball_live"
+        # The controller switches to it; the next dwell advances to the other.
+        controller.current_display_mode = "baseball_live"
+        assert controller._check_live_priority(advance=True) == "soccer_fifa.world_live"
+        # And wraps back again.
+        controller.current_display_mode = "soccer_fifa.world_live"
+        assert controller._check_live_priority(advance=True) == "baseball_live"
+
+    def test_single_live_game_holds_without_flipping(self, test_display_controller):
+        """One live game: advancing returns the same mode, so the hold is stable."""
+        controller = test_display_controller
+        controller.plugin_modes = {"baseball_live": self._live_plugin(["baseball_live"])}
+        controller.current_display_mode = "baseball_live"
+        assert controller._check_live_priority(advance=True) == "baseball_live"
+
+    def test_non_advancing_peek_does_not_rotate(self, test_display_controller):
+        """The default (advance=False) peek used by the Vegas coordinator must
+        not spin the cursor: it returns the live mode already on screen."""
+        controller = test_display_controller
+        controller.plugin_modes = {
+            "baseball_live": self._live_plugin(["baseball_live"]),
+            "soccer_fifa.world_live": self._live_plugin(["soccer_fifa.world_live"]),
+        }
+        controller.current_display_mode = "soccer_fifa.world_live"
+        assert controller._check_live_priority() == "soccer_fifa.world_live"
+        assert controller._check_live_priority() == "soccer_fifa.world_live"
+        # From an ambient mode the peek reports the first live game (truthy).
+        controller.current_display_mode = "clock"
+        assert controller._check_live_priority() == "baseball_live"
+
+    def test_no_live_content_returns_none(self, test_display_controller):
+        controller = test_display_controller
+        idle = MagicMock()
+        idle.has_live_priority = MagicMock(return_value=True)
+        idle.has_live_content = MagicMock(return_value=False)
+        controller.plugin_modes = {"clock": idle}
+        controller.current_display_mode = "clock"
+        assert controller._check_live_priority(advance=True) is None
+
+    def test_fallback_to_mode_name_when_get_live_modes_unhelpful(self, test_display_controller):
+        """A live plugin whose get_live_modes returns nothing registered falls
+        back to its own '_live' mode name (legacy behavior preserved)."""
+        controller = test_display_controller
+        legacy = MagicMock()
+        legacy.has_live_priority = MagicMock(return_value=True)
+        legacy.has_live_content = MagicMock(return_value=True)
+        legacy.get_live_modes = MagicMock(return_value=["unregistered_mode"])
+        controller.plugin_modes = {"hockey_live": legacy}
+        controller.current_display_mode = "clock"
+        assert controller._check_live_priority(advance=True) == "hockey_live"
+
 
 class TestDisplayControllerDynamicDuration:
     """Test dynamic duration handling."""
