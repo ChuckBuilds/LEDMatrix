@@ -1,0 +1,306 @@
+<div class="space-y-6" id="tools-root">
+
+    <!-- Git & Updates -->
+    <div class="bg-white rounded-lg shadow p-6">
+        <div class="border-b border-gray-200 pb-4 mb-6">
+            <h2 class="text-lg font-semibold text-gray-900">Git &amp; Updates</h2>
+            <p class="mt-1 text-sm text-gray-600">Inspect the current git state and pull or reset to the latest remote code.</p>
+        </div>
+
+        <!-- Git status info -->
+        <div id="git-info-panel" class="mb-6 bg-gray-50 border border-gray-200 rounded-lg p-4 text-sm">
+            <div class="animate-pulse text-gray-400">Loading git info…</div>
+        </div>
+
+        <div class="space-y-4">
+            <!-- Pull latest -->
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <p class="text-sm font-medium text-gray-900">Pull latest (rebase)</p>
+                    <p class="text-xs text-gray-500 mt-0.5">Stashes local changes, runs <code class="bg-gray-100 px-1 rounded">git pull --rebase</code>, then restores the stash.</p>
+                </div>
+                <button id="btn-git-pull" onclick="toolsAction('git_pull', 'btn-git-pull', 'result-git-pull')"
+                        class="shrink-0 inline-flex items-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
+                    <i class="fas fa-download mr-2"></i>Pull Latest
+                </button>
+            </div>
+            <div id="result-git-pull" class="hidden"></div>
+
+            <!-- Force reset -->
+            <div class="flex items-start justify-between gap-4 pt-4 border-t border-gray-100">
+                <div>
+                    <p class="text-sm font-medium text-gray-900">Force reset to <code class="bg-gray-100 px-1 rounded">origin/main</code></p>
+                    <p class="text-xs text-gray-500 mt-0.5">Runs <code class="bg-gray-100 px-1 rounded">git fetch origin</code> then <code class="bg-gray-100 px-1 rounded">git reset --hard origin/main</code>. Discards all local changes.</p>
+                </div>
+                <div class="shrink-0 flex flex-col items-end gap-2">
+                    <button id="btn-force-reset-confirm" onclick="showForceResetConfirm()"
+                            class="inline-flex items-center px-3 py-2 border border-red-300 text-sm font-medium rounded-md text-red-700 bg-white hover:bg-red-50">
+                        <i class="fas fa-exclamation-triangle mr-2"></i>Force Reset…
+                    </button>
+                    <div id="force-reset-confirm-row" class="hidden flex items-center gap-2">
+                        <span class="text-xs text-red-700 font-medium">This discards all local changes. Sure?</span>
+                        <button onclick="toolsAction('force_git_reset', 'btn-force-reset-confirm', 'result-force-reset'); hideForceResetConfirm()"
+                                class="inline-flex items-center px-3 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700">
+                            Yes, reset
+                        </button>
+                        <button onclick="hideForceResetConfirm()"
+                                class="inline-flex items-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div id="result-force-reset" class="hidden"></div>
+        </div>
+    </div>
+
+    <!-- Python Dependencies -->
+    <div class="bg-white rounded-lg shadow p-6">
+        <div class="border-b border-gray-200 pb-4 mb-6">
+            <h2 class="text-lg font-semibold text-gray-900">Python Dependencies</h2>
+            <p class="mt-1 text-sm text-gray-600">Re-run <code class="bg-gray-100 px-1 rounded">pip install</code> to fix missing or broken packages.</p>
+        </div>
+
+        <div class="space-y-4">
+            <!-- Base requirements -->
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <p class="text-sm font-medium text-gray-900">Reinstall base requirements</p>
+                    <p class="text-xs text-gray-500 mt-0.5">Installs from <code class="bg-gray-100 px-1 rounded">requirements.txt</code> in the project root.</p>
+                </div>
+                <button id="btn-base-reqs" onclick="toolsAction('install_base_requirements', 'btn-base-reqs', 'result-base-reqs', true)"
+                        class="shrink-0 inline-flex items-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
+                    <i class="fas fa-box mr-2"></i>Reinstall Base
+                </button>
+            </div>
+            <div id="result-base-reqs" class="hidden"></div>
+
+            <!-- Plugin requirements -->
+            <div class="flex items-start justify-between gap-4 pt-4 border-t border-gray-100">
+                <div>
+                    <p class="text-sm font-medium text-gray-900">Reinstall plugin requirements</p>
+                    <p class="text-xs text-gray-500 mt-0.5">Runs <code class="bg-gray-100 px-1 rounded">pip install</code> for every installed plugin that has a <code class="bg-gray-100 px-1 rounded">requirements.txt</code>.</p>
+                </div>
+                <button id="btn-plugin-reqs" onclick="toolsAction('install_plugin_requirements', 'btn-plugin-reqs', 'result-plugin-reqs', false, true)"
+                        class="shrink-0 inline-flex items-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
+                    <i class="fas fa-puzzle-piece mr-2"></i>Reinstall Plugin Deps
+                </button>
+            </div>
+            <div id="result-plugin-reqs" class="hidden"></div>
+        </div>
+    </div>
+
+    <!-- Maintenance -->
+    <div class="bg-white rounded-lg shadow p-6">
+        <div class="border-b border-gray-200 pb-4 mb-6">
+            <h2 class="text-lg font-semibold text-gray-900">Maintenance</h2>
+            <p class="mt-1 text-sm text-gray-600">Housekeeping operations that don't affect config or plugins.</p>
+        </div>
+
+        <div class="space-y-4">
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <p class="text-sm font-medium text-gray-900">Clear Python cache</p>
+                    <p class="text-xs text-gray-500 mt-0.5">Deletes all <code class="bg-gray-100 px-1 rounded">__pycache__</code> directories in the project. Useful after switching branches or debugging import issues.</p>
+                </div>
+                <button id="btn-clear-pycache" onclick="toolsAction('clear_pycache', 'btn-clear-pycache', 'result-clear-pycache')"
+                        class="shrink-0 inline-flex items-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
+                    <i class="fas fa-broom mr-2"></i>Clear Cache
+                </button>
+            </div>
+            <div id="result-clear-pycache" class="hidden"></div>
+        </div>
+    </div>
+
+    <!-- Services -->
+    <div class="bg-white rounded-lg shadow p-6">
+        <div class="border-b border-gray-200 pb-4 mb-6">
+            <h2 class="text-lg font-semibold text-gray-900">Services</h2>
+            <p class="mt-1 text-sm text-gray-600">Quick access to service restarts.</p>
+        </div>
+
+        <div class="space-y-4">
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <p class="text-sm font-medium text-gray-900">Restart display service</p>
+                    <p class="text-xs text-gray-500 mt-0.5">Restarts <code class="bg-gray-100 px-1 rounded">ledmatrix.service</code>.</p>
+                </div>
+                <button id="btn-restart-display" onclick="toolsAction('restart_display_service', 'btn-restart-display', 'result-restart-display')"
+                        class="shrink-0 inline-flex items-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
+                    <i class="fas fa-sync-alt mr-2"></i>Restart Display
+                </button>
+            </div>
+            <div id="result-restart-display" class="hidden"></div>
+
+            <div class="flex items-start justify-between gap-4 pt-4 border-t border-gray-100">
+                <div>
+                    <p class="text-sm font-medium text-gray-900">Restart web interface</p>
+                    <p class="text-xs text-gray-500 mt-0.5">Restarts <code class="bg-gray-100 px-1 rounded">ledmatrix-web.service</code>. The page will go offline briefly.</p>
+                </div>
+                <button id="btn-restart-web" onclick="toolsAction('restart_web_service', 'btn-restart-web', 'result-restart-web')"
+                        class="shrink-0 inline-flex items-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
+                    <i class="fas fa-globe mr-2"></i>Restart Web
+                </button>
+            </div>
+            <div id="result-restart-web" class="hidden"></div>
+        </div>
+    </div>
+
+</div>
+
+<script>
+(function () {
+    // ── helpers ──────────────────────────────────────────────────────────────
+
+    function setBusy(btnId, busy) {
+        const btn = document.getElementById(btnId);
+        if (!btn) return;
+        btn.disabled = busy;
+        btn.style.opacity = busy ? '0.6' : '';
+        btn.style.cursor  = busy ? 'wait' : '';
+        const icon = btn.querySelector('i');
+        if (icon) {
+            if (busy) {
+                icon.dataset.origClass = icon.className;
+                icon.className = 'fas fa-spinner fa-spin mr-2';
+            } else if (icon.dataset.origClass) {
+                icon.className = icon.dataset.origClass;
+            }
+        }
+    }
+
+    function showResult(resultId, ok, message, output, pluginDetails) {
+        const el = document.getElementById(resultId);
+        if (!el) return;
+        el.classList.remove('hidden');
+
+        const color = ok ? 'green' : 'red';
+        const icon  = ok ? 'fa-check-circle' : 'fa-times-circle';
+
+        let html = `
+            <div class="mt-3 rounded-md p-3 bg-${color}-50 border border-${color}-200">
+                <div class="flex items-start gap-2">
+                    <i class="fas ${icon} text-${color}-600 mt-0.5"></i>
+                    <span class="text-sm text-${color}-800">${escHtml(message)}</span>
+                </div>`;
+
+        if (output) {
+            html += `
+                <details class="mt-2">
+                    <summary class="text-xs text-${color}-700 cursor-pointer hover:underline">Show output</summary>
+                    <pre class="mt-2 text-xs bg-gray-900 text-gray-100 rounded p-3 overflow-x-auto whitespace-pre-wrap">${escHtml(output)}</pre>
+                </details>`;
+        }
+
+        if (pluginDetails && pluginDetails.length > 0) {
+            html += `<ul class="mt-3 space-y-1">`;
+            for (const d of pluginDetails) {
+                const dc = d.ok ? 'green' : 'red';
+                const di = d.ok ? 'fa-check' : 'fa-times';
+                html += `<li class="text-xs flex items-start gap-1">
+                    <i class="fas ${di} text-${dc}-600 mt-0.5 w-3"></i>
+                    <span class="text-gray-700">${escHtml(d.plugin)}</span>`;
+                if (d.output) {
+                    html += ` <details class="inline"><summary class="cursor-pointer text-gray-400 hover:underline ml-1">output</summary>
+                        <pre class="mt-1 text-xs bg-gray-900 text-gray-100 rounded p-2 overflow-x-auto whitespace-pre-wrap">${escHtml(d.output)}</pre></details>`;
+                }
+                html += `</li>`;
+            }
+            html += `</ul>`;
+        }
+
+        html += `</div>`;
+        el.innerHTML = html;
+    }
+
+    function escHtml(s) {
+        return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    // ── main action dispatcher ────────────────────────────────────────────────
+
+    window.toolsAction = function(action, btnId, resultId, showOutput, showPluginDetails) {
+        setBusy(btnId, true);
+        const el = document.getElementById(resultId);
+        if (el) el.classList.add('hidden');
+
+        fetch('/api/v3/system/action', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({action})
+        })
+        .then(r => r.json())
+        .then(data => {
+            const ok = data.status === 'success';
+            showResult(
+                resultId, ok,
+                data.message || (ok ? 'Done' : 'Failed'),
+                showOutput ? (data.output || '') : '',
+                showPluginDetails ? (data.details || []) : null
+            );
+        })
+        .catch(err => {
+            showResult(resultId, false, 'Request failed: ' + err.message);
+        })
+        .finally(() => setBusy(btnId, false));
+    };
+
+    // ── force-reset confirm helpers ───────────────────────────────────────────
+
+    window.showForceResetConfirm = function() {
+        document.getElementById('force-reset-confirm-row').classList.remove('hidden');
+        document.getElementById('btn-force-reset-confirm').classList.add('hidden');
+    };
+
+    window.hideForceResetConfirm = function() {
+        document.getElementById('force-reset-confirm-row').classList.add('hidden');
+        document.getElementById('btn-force-reset-confirm').classList.remove('hidden');
+    };
+
+    // ── git info panel ────────────────────────────────────────────────────────
+
+    function loadGitInfo() {
+        const panel = document.getElementById('git-info-panel');
+        if (!panel) return;
+
+        fetch('/api/v3/system/git-info')
+            .then(r => r.json())
+            .then(d => {
+                const dirtyBadge = d.dirty
+                    ? '<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800">dirty</span>'
+                    : '<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">clean</span>';
+
+                let html = `<div class="space-y-2">
+                    <div class="flex items-center gap-2">
+                        <i class="fas fa-code-branch text-gray-400"></i>
+                        <span class="font-mono text-gray-800">${escHtml(d.branch || 'unknown')}</span>
+                        ${dirtyBadge}
+                    </div>`;
+
+                if (d.dirty && d.status) {
+                    html += `<pre class="text-xs bg-yellow-50 border border-yellow-200 rounded p-2 overflow-x-auto whitespace-pre-wrap text-yellow-900">${escHtml(d.status)}</pre>`;
+                }
+
+                if (d.recent_commits) {
+                    html += `<div class="mt-2">
+                        <p class="text-xs text-gray-500 mb-1">Recent commits</p>
+                        <pre class="text-xs bg-gray-50 border border-gray-200 rounded p-2 overflow-x-auto whitespace-pre-wrap text-gray-700">${escHtml(d.recent_commits)}</pre>
+                    </div>`;
+                }
+
+                if (d.remote_url) {
+                    html += `<p class="text-xs text-gray-400 mt-1"><i class="fas fa-cloud mr-1"></i>${escHtml(d.remote_url)}</p>`;
+                }
+
+                html += `</div>`;
+                panel.innerHTML = html;
+            })
+            .catch(() => {
+                panel.innerHTML = '<span class="text-sm text-red-600">Could not load git info.</span>';
+            });
+    }
+
+    // Load on first render; HTMX will have already swapped us in by this point.
+    loadGitInfo();
+})();
+</script>

@@ -90,6 +90,8 @@ def load_partial(partial_name):
             return _load_cache_partial()
         elif partial_name == 'operation-history':
             return _load_operation_history_partial()
+        elif partial_name == 'tools':
+            return _load_tools_partial()
         else:
             return "Partial not found", 404
 
@@ -444,6 +446,15 @@ def _load_operation_history_partial():
     try:
         return render_template('v3/partials/operation_history.html')
     except Exception as e:
+        logger.error("Error loading partial", exc_info=True)
+        return "Error loading partial", 500
+
+
+def _load_tools_partial():
+    """Load tools/utilities partial."""
+    try:
+        return render_template('v3/partials/tools.html')
+    except Exception:
         logger.error("Error loading partial", exc_info=True)
         return "Error loading partial", 500
 

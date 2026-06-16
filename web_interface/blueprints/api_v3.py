@@ -705,7 +705,8 @@ def save_main_config():
         display_fields = ['rows', 'cols', 'chain_length', 'parallel', 'brightness', 'hardware_mapping',
                          'gpio_slowdown', 'rp1_rio', 'scan_mode', 'disable_hardware_pulsing', 'inverse_colors', 'show_refresh_rate',
                          'pwm_bits', 'pwm_dither_bits', 'pwm_lsb_nanoseconds', 'limit_refresh_rate_hz', 'use_short_date_format',
-                         'max_dynamic_duration_seconds', 'led_rgb_sequence', 'multiplexing', 'panel_type']
+                         'max_dynamic_duration_seconds', 'led_rgb_sequence', 'multiplexing', 'panel_type',
+                         'row_address_type']
 
         if any(k in data for k in display_fields):
             if 'display' not in current_config:
@@ -736,14 +737,23 @@ def save_main_config():
                 except (ValueError, TypeError):
                     return jsonify({'status': 'error', 'message': f"Invalid multiplexing value '{data['multiplexing']}'. Must be an integer from 0 to 22."}), 400
 
+            # Validate row_address_type
+            if 'row_address_type' in data:
+                try:
+                    rat_val = int(data['row_address_type'])
+                    if rat_val < 0 or rat_val > 4:
+                        return jsonify({'status': 'error', 'message': f"Invalid row_address_type '{data['row_address_type']}'. Must be an integer from 0 to 4."}), 400
+                except (ValueError, TypeError):
+                    return jsonify({'status': 'error', 'message': f"Invalid row_address_type '{data['row_address_type']}'. Must be an integer from 0 to 4."}), 400
+
             # Handle hardware settings
             for field in ['rows', 'cols', 'chain_length', 'parallel', 'brightness', 'hardware_mapping', 'scan_mode',
                          'pwm_bits', 'pwm_dither_bits', 'pwm_lsb_nanoseconds', 'limit_refresh_rate_hz',
-                         'led_rgb_sequence', 'multiplexing', 'panel_type']:
+                         'led_rgb_sequence', 'multiplexing', 'panel_type', 'row_address_type']:
                 if field in data:
                     if field in ['rows', 'cols', 'chain_length', 'parallel', 'brightness', 'scan_mode',
                                'pwm_bits', 'pwm_dither_bits', 'pwm_lsb_nanoseconds', 'limit_refresh_rate_hz',
-                               'multiplexing']:
+                               'multiplexing', 'row_address_type']:
                         current_config['display']['hardware'][field] = int(data[field])
                     else:
                         current_config['display']['hardware'][field] = data[field]
@@ -1615,6 +1625,66 @@ def execute_system_action():
             # Try to restart the web service (assuming it's ledmatrix-web.service)
             result = subprocess.run(['sudo', 'systemctl', 'restart', 'ledmatrix-web.service'],
                                  capture_output=True, text=True, timeout=10)
+        elif action == 'install_base_requirements':
+            req_file = PROJECT_ROOT / 'requirements.txt'
+            if not req_file.exists():
+                return jsonify({'status': 'error', 'message': 'No requirements.txt found at project root'})
+            result = subprocess.run(
+                [sys.executable, '-m', 'pip', 'install', '--break-system-packages', '-r', str(req_file)],
+                capture_output=True, text=True, timeout=120, cwd=str(PROJECT_ROOT)
+            )
+            return jsonify({
+                'status': 'success' if result.returncode == 0 else 'error',
+                'message': 'Base requirements installed successfully' if result.returncode == 0 else 'pip install failed',
+                'output': (result.stdout + result.stderr).strip()
+            })
+        elif action == 'install_plugin_requirements':
+            plugins_dir = Path(plugin_manager.plugins_dir) if plugin_manager else PROJECT_ROOT / 'plugin-repos'
+            results = []
+            if plugins_dir.exists():
+                for p in sorted(plugins_dir.iterdir()):
+                    req = p / 'requirements.txt'
+                    if p.is_dir() and req.exists():
+                        r = subprocess.run(
+                            [sys.executable, '-m', 'pip', 'install', '--break-system-packages', '-r', str(req)],
+                            capture_output=True, text=True, timeout=60
+                        )
+                        results.append({
+                            'plugin': p.name,
+                            'ok': r.returncode == 0,
+                            'output': (r.stdout + r.stderr).strip()
+                        })
+            ok_count = sum(1 for r in results if r['ok'])
+            all_ok = all(r['ok'] for r in results) if results else True
+            return jsonify({
+                'status': 'success' if all_ok else 'error',
+                'message': f'Processed {len(results)} plugin(s) — {ok_count} succeeded' if results else 'No plugin requirements.txt files found',
+                'details': results
+            })
+        elif action == 'force_git_reset':
+            project_dir = str(PROJECT_ROOT)
+            fetch = subprocess.run(
+                ['git', 'fetch', 'origin'],
+                capture_output=True, text=True, timeout=30, cwd=project_dir
+            )
+            if fetch.returncode != 0:
+                return jsonify({'status': 'error', 'message': 'git fetch failed', 'output': fetch.stderr.strip()})
+            reset = subprocess.run(
+                ['git', 'reset', '--hard', 'origin/main'],
+                capture_output=True, text=True, timeout=30, cwd=project_dir
+            )
+            return jsonify({
+                'status': 'success' if reset.returncode == 0 else 'error',
+                'message': 'Reset to origin/main successfully' if reset.returncode == 0 else 'git reset failed',
+                'output': (reset.stdout + reset.stderr).strip()
+            })
+        elif action == 'clear_pycache':
+            cleared = 0
+            for d in PROJECT_ROOT.rglob('__pycache__'):
+                if d.is_dir():
+                    shutil.rmtree(d, ignore_errors=True)
+                    cleared += 1
+            return jsonify({'status': 'success', 'message': f'Cleared {cleared} __pycache__ directories'})
         else:
             return jsonify({'status': 'error', 'message': 'Unknown action'}), 400
 
@@ -1636,6 +1706,27 @@ def execute_system_action():
     except Exception as e:
         logger.error("execute_system_action failed: %s", e, exc_info=True)
         return jsonify({'status': 'error', 'message': 'Action failed; see logs for details'}), 500
+
+@api_v3.route('/system/git-info', methods=['GET'])
+def get_git_info():
+    """Return branch, dirty state, recent commits and remote URL for the Tools tab."""
+    d = str(PROJECT_ROOT)
+    try:
+        branch = subprocess.run(['git', 'branch', '--show-current'], capture_output=True, text=True, timeout=10, cwd=d)
+        status = subprocess.run(['git', 'status', '--short', '--untracked-files=no'], capture_output=True, text=True, timeout=15, cwd=d)
+        log    = subprocess.run(['git', 'log', '--oneline', '-5'], capture_output=True, text=True, timeout=10, cwd=d)
+        remote = subprocess.run(['git', 'remote', 'get-url', 'origin'], capture_output=True, text=True, timeout=10, cwd=d)
+        return jsonify({
+            'branch': branch.stdout.strip(),
+            'dirty': bool(status.stdout.strip()),
+            'status': status.stdout.strip(),
+            'recent_commits': log.stdout.strip(),
+            'remote_url': remote.stdout.strip(),
+        })
+    except Exception as e:
+        logger.error("get_git_info failed: %s", e, exc_info=True)
+        return jsonify({'status': 'error', 'message': 'Failed to get git info'}), 500
+
 
 @api_v3.route('/hardware/status', methods=['GET'])
 def get_hardware_status():

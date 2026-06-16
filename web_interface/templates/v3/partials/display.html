@@ -166,6 +166,18 @@
                     </select>
                     <p class="mt-1 text-sm text-gray-600">Special panel chipset initialization (use Standard unless your panel requires it)</p>
                 </div>
+
+                <div class="form-group">
+                    <label for="row_address_type" class="block text-sm font-medium text-gray-700">Row Address Type</label>
+                    <select id="row_address_type" name="row_address_type" class="form-control">
+                        <option value="0" {% if main_config.display.hardware.get('row_address_type', 0)|int == 0 %}selected{% endif %}>0 - Default</option>
+                        <option value="1" {% if main_config.display.hardware.get('row_address_type', 0)|int == 1 %}selected{% endif %}>1 - AB-addressed panels</option>
+                        <option value="2" {% if main_config.display.hardware.get('row_address_type', 0)|int == 2 %}selected{% endif %}>2 - Row direct</option>
+                        <option value="3" {% if main_config.display.hardware.get('row_address_type', 0)|int == 3 %}selected{% endif %}>3 - ABC-addressed panels</option>
+                        <option value="4" {% if main_config.display.hardware.get('row_address_type', 0)|int == 4 %}selected{% endif %}>4 - ABC Shift + DE direct</option>
+                    </select>
+                    <p class="mt-1 text-sm text-gray-600">Row addressing scheme — leave at Default (0) unless your panel requires a specific type</p>
+                </div>
             </div>
 
             <div class="grid grid-cols-1 md:grid-cols-3 gap-4">

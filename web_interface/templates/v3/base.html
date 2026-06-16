@@ -1009,6 +1009,11 @@
                             class="nav-tab">
                         <i class="fas fa-history"></i>Operation History
                     </button>
+                    <button @click="activeTab = 'tools'"
+                            :class="activeTab === 'tools' ? 'nav-tab-active' : ''"
+                            class="nav-tab">
+                        <i class="fas fa-tools"></i>Tools
+                    </button>
                 </nav>
             </div>
 
@@ -1285,6 +1290,18 @@
                         <div class="bg-white rounded-lg shadow p-6">
                             <div class="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
                             <div class="h-64 bg-gray-200 rounded"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tools tab -->
+            <div x-show="activeTab === 'tools'" x-transition>
+                <div id="tools-content" hx-get="/v3/partials/tools" hx-trigger="loadtab" hx-swap="innerHTML">
+                    <div class="animate-pulse">
+                        <div class="bg-white rounded-lg shadow p-6">
+                            <div class="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
+                            <div class="h-32 bg-gray-200 rounded"></div>
                         </div>
                     </div>
                 </div>
