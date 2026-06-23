@@ -109,11 +109,114 @@ class TestDisplayManagerDrawing:
 
 class TestDisplayManagerResourceManagement:
     """Test resource management."""
-    
+
     def test_cleanup(self, test_config, mock_rgb_matrix):
         """Test cleanup operation."""
         with patch.dict('os.environ', {'EMULATOR': 'false'}):
             dm = DisplayManager(test_config)
             dm.cleanup()
-            
+
             dm.matrix.Clear.assert_called()
+
+
+class TestDisplayManagerDoubleSided:
+    """Double-sided mode: render once at logical size, tile across the chain."""
+
+    def _config(self, **double_sided):
+        """Build a config (physical 128x32) with the given double_sided block."""
+        return {
+            'display': {
+                'hardware': {
+                    'rows': 32, 'cols': 64, 'chain_length': 2, 'parallel': 1,
+                    'hardware_mapping': 'adafruit-hat-pwm', 'brightness': 90,
+                },
+                'runtime': {'gpio_slowdown': 2},
+                'double_sided': double_sided,
+            },
+            'timezone': 'UTC',
+            'plugin_system': {'plugins_directory': 'plugins'},
+        }
+
+    def _captured_physical(self, mock_rgb_matrix):
+        """Return the image handed to the canvas on the last update_display()."""
+        canvas = mock_rgb_matrix['matrix_instance'].CreateFrameCanvas.return_value
+        return canvas.SetImage.call_args[0][0]
+
+    def test_horizontal_reports_logical_dimensions(self, mock_rgb_matrix):
+        """Plugins see the per-screen size, not the full physical chain."""
+        DisplayManager._instance = None
+        with patch.dict('os.environ', {'EMULATOR': 'false'}):
+            dm = DisplayManager(self._config(enabled=True, copies=2, axis='horizontal'),
+                                suppress_test_pattern=True)
+            # Physical chain is 128x32; two side-by-side copies -> logical 64x32.
+            assert dm.matrix.width == 64
+            assert dm.matrix.height == 32
+            assert (dm.width, dm.height) == (64, 32)
+            assert dm.image.size == (64, 32)
+
+    def test_horizontal_tiles_image_across_chain(self, mock_rgb_matrix):
+        """The logical screen is duplicated left/right into a full-chain frame."""
+        from PIL import Image
+        DisplayManager._instance = None
+        with patch.dict('os.environ', {'EMULATOR': 'false'}):
+            dm = DisplayManager(self._config(enabled=True, copies=2, axis='horizontal'),
+                                suppress_test_pattern=True)
+            logical = Image.new('RGB', (64, 32), (0, 0, 0))
+            logical.putpixel((5, 5), (255, 0, 0))
+            dm.image = logical
+            dm.update_display()
+
+            physical = self._captured_physical(mock_rgb_matrix)
+            assert physical.size == (128, 32)
+            assert physical.getpixel((5, 5)) == (255, 0, 0)
+            assert physical.getpixel((69, 5)) == (255, 0, 0)  # copy shifted +64
+
+    def test_vertical_axis_tiles_stacked(self, mock_rgb_matrix):
+        """Vertical axis stacks copies (for panels on parallel outputs)."""
+        from PIL import Image
+        DisplayManager._instance = None
+        with patch.dict('os.environ', {'EMULATOR': 'false'}):
+            dm = DisplayManager(self._config(enabled=True, copies=2, axis='vertical'),
+                                suppress_test_pattern=True)
+            # 128x32 split vertically -> logical 128x16.
+            assert (dm.matrix.width, dm.matrix.height) == (128, 16)
+            logical = Image.new('RGB', (128, 16), (0, 0, 0))
+            logical.putpixel((10, 3), (0, 255, 0))
+            dm.image = logical
+            dm.update_display()
+
+            physical = self._captured_physical(mock_rgb_matrix)
+            assert physical.size == (128, 32)
+            assert physical.getpixel((10, 3)) == (0, 255, 0)
+            assert physical.getpixel((10, 19)) == (0, 255, 0)  # copy shifted +16
+
+    def test_indivisible_dimension_disables_mode(self, mock_rgb_matrix):
+        """A physical size that doesn't divide evenly falls back to single."""
+        DisplayManager._instance = None
+        with patch.dict('os.environ', {'EMULATOR': 'false'}):
+            dm = DisplayManager(self._config(enabled=True, copies=3, axis='horizontal'),
+                                suppress_test_pattern=True)
+            assert dm._double_sided is None  # 128 % 3 != 0
+            assert dm.matrix.width == 128
+            assert dm.image.size == (128, 32)
+
+    def test_disabled_blits_logical_image_unchanged(self, mock_rgb_matrix):
+        """With the feature off, the rendered image is sent through untouched."""
+        from PIL import Image
+        DisplayManager._instance = None
+        with patch.dict('os.environ', {'EMULATOR': 'false'}):
+            dm = DisplayManager(self._config(enabled=False), suppress_test_pattern=True)
+            assert dm._double_sided is None
+            img = Image.new('RGB', (128, 32))
+            dm.image = img
+            dm.update_display()
+            assert self._captured_physical(mock_rgb_matrix) is img
+
+    def test_brightness_write_forwards_through_proxy(self, mock_rgb_matrix):
+        """Setting brightness via the proxy reaches the real matrix."""
+        DisplayManager._instance = None
+        with patch.dict('os.environ', {'EMULATOR': 'false'}):
+            dm = DisplayManager(self._config(enabled=True, copies=2, axis='horizontal'),
+                                suppress_test_pattern=True)
+            assert dm.set_brightness(70) is True
+            assert mock_rgb_matrix['matrix_instance'].brightness == 70
