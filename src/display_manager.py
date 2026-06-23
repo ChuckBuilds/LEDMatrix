@@ -33,7 +33,7 @@ else:
 from contextlib import contextmanager
 from PIL import Image, ImageDraw, ImageFont
 import time
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import logging
 import math
 import freetype
@@ -55,33 +55,37 @@ class _LogicalMatrix:
     itself happens once per frame in :meth:`DisplayManager.update_display`.
     """
 
-    __slots__ = ("_matrix", "_logical_width", "_logical_height")
+    __slots__ = ("_logical_height", "_logical_width", "_matrix")
 
-    def __init__(self, matrix, logical_width, logical_height):
+    def __init__(self, matrix: RGBMatrix, logical_width: int, logical_height: int) -> None:
         object.__setattr__(self, "_matrix", matrix)
         object.__setattr__(self, "_logical_width", logical_width)
         object.__setattr__(self, "_logical_height", logical_height)
 
     @property
-    def width(self):
+    def width(self) -> int:
+        """Logical (per-screen) width reported to plugins."""
         return self._logical_width
 
     @property
-    def height(self):
+    def height(self) -> int:
+        """Logical (per-screen) height reported to plugins."""
         return self._logical_height
 
-    def __getattr__(self, name):
-        # Reached only when normal lookup fails (i.e. not width/height/_*),
-        # so forward every other attribute access to the physical matrix.
+    def __getattr__(self, name: str) -> Any:
+        """Forward any non-overridden attribute access to the physical matrix.
+
+        Reached only when normal lookup fails (i.e. not width/height/_*).
+        """
         return getattr(object.__getattribute__(self, "_matrix"), name)
 
-    def __setattr__(self, name, value):
-        # Forward writes (e.g. ``matrix.brightness = 80``) to the real matrix.
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Forward attribute writes (e.g. ``matrix.brightness = 80``) to it."""
         setattr(object.__getattribute__(self, "_matrix"), name, value)
 
 
 def _resolve_double_sided(physical_width: int, physical_height: int,
-                          ds_config: Dict[str, Any]):
+                          ds_config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Validate the ``display.double_sided`` config against the physical size.
 
     Returns a dict ``{copies, axis, logical_width, logical_height}`` when the
