@@ -258,6 +258,48 @@
             </div>
         </div>
 
+        <!-- Double-Sided Display -->
+        <div class="bg-gray-50 rounded-lg p-4">
+            <h3 class="text-md font-medium text-gray-900 mb-1">Double-Sided Display</h3>
+            <p class="text-sm text-gray-600 mb-4">Show the same content on every panel in the chain &mdash; e.g. two 64&times;32 panels mirrored, or four panels as two identical screens. Rendered once and duplicated, so it adds no extra CPU. Takes effect after a display restart.</p>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div class="form-group">
+                    <label class="flex items-center gap-2">
+                        <input type="checkbox"
+                               id="double_sided_enabled"
+                               name="double_sided_enabled"
+                               value="true"
+                               {% if main_config.display.get('double_sided', {}).get('enabled') %}checked{% endif %}
+                               class="form-control h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                        <span class="text-sm font-medium text-gray-700">Enabled</span>
+                    </label>
+                    <p class="mt-1 text-sm text-gray-600">Mirror one screen across all panels.</p>
+                </div>
+
+                <div class="form-group">
+                    <label for="double_sided_copies" class="block text-sm font-medium text-gray-700">Copies</label>
+                    <input type="number"
+                           id="double_sided_copies"
+                           name="double_sided_copies"
+                           value="{{ main_config.display.get('double_sided', {}).get('copies', 2) }}"
+                           min="2"
+                           max="8"
+                           class="form-control">
+                    <p class="mt-1 text-sm text-gray-600">Number of identical screens. Must divide the panel evenly.</p>
+                </div>
+
+                <div class="form-group">
+                    <label for="double_sided_axis" class="block text-sm font-medium text-gray-700">Split Axis</label>
+                    <select id="double_sided_axis" name="double_sided_axis" class="form-control">
+                        <option value="horizontal" {% if main_config.display.get('double_sided', {}).get('axis', 'horizontal') == 'horizontal' %}selected{% endif %}>Horizontal &mdash; chained panels (side by side)</option>
+                        <option value="vertical" {% if main_config.display.get('double_sided', {}).get('axis', 'horizontal') == 'vertical' %}selected{% endif %}>Vertical &mdash; parallel chains (stacked)</option>
+                    </select>
+                    <p class="mt-1 text-sm text-gray-600">Horizontal splits the chain; vertical splits parallel outputs.</p>
+                </div>
+            </div>
+        </div>
+
         <!-- Display Options -->
         <div class="bg-gray-50 rounded-lg p-4">
             <h3 class="text-md font-medium text-gray-900 mb-4">Display Options</h3>

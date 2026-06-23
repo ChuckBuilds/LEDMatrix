@@ -773,6 +773,33 @@ def save_main_config():
                     current_config['display']['dynamic_duration'] = {}
                 current_config['display']['dynamic_duration']['max_duration_seconds'] = int(data['max_dynamic_duration_seconds'])
 
+        # Handle double-sided display settings
+        double_sided_fields = ['double_sided_enabled', 'double_sided_copies', 'double_sided_axis']
+        if any(k in data for k in double_sided_fields):
+            if 'display' not in current_config:
+                current_config['display'] = {}
+            if 'double_sided' not in current_config['display']:
+                current_config['display']['double_sided'] = {}
+            ds_config = current_config['display']['double_sided']
+
+            # Enabled checkbox: omitted from the form when unchecked.
+            ds_config['enabled'] = _coerce_to_bool(data.get('double_sided_enabled'))
+
+            if 'double_sided_copies' in data and data['double_sided_copies'] not in ('', None):
+                try:
+                    copies = int(data['double_sided_copies'])
+                except (ValueError, TypeError):
+                    return jsonify({'status': 'error', 'message': "Double-sided copies must be an integer"}), 400
+                if not (2 <= copies <= 8):
+                    return jsonify({'status': 'error', 'message': "Double-sided copies must be between 2 and 8"}), 400
+                ds_config['copies'] = copies
+
+            if 'double_sided_axis' in data:
+                axis = data['double_sided_axis']
+                if axis not in ('horizontal', 'vertical'):
+                    return jsonify({'status': 'error', 'message': "Double-sided axis must be 'horizontal' or 'vertical'"}), 400
+                ds_config['axis'] = axis
+
         # Handle Vegas scroll mode settings
         vegas_fields = ['vegas_scroll_enabled', 'vegas_scroll_speed', 'vegas_separator_width',
                        'vegas_target_fps', 'vegas_buffer_ahead', 'vegas_plugin_order', 'vegas_excluded_plugins']
