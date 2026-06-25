@@ -141,9 +141,62 @@ class TestConfigAPI:
             data=json.dumps(invalid_config),
             content_type='application/json'
         )
-        
+
         assert response.status_code in [400, 500]
-    
+
+    def test_save_double_sided_settings(self, client, mock_config_manager):
+        """Double-sided form fields are persisted under display.double_sided."""
+        response = client.post(
+            '/api/v3/config/main',
+            data={
+                'double_sided_enabled': 'true',
+                'double_sided_copies': '2',
+                'double_sided_axis': 'vertical',
+            },
+            content_type='application/x-www-form-urlencoded',
+        )
+
+        assert response.status_code == 200
+        saved = mock_config_manager.save_config_atomic.call_args[0][0]
+        assert saved['display']['double_sided'] == {
+            'enabled': True, 'copies': 2, 'axis': 'vertical',
+        }
+
+    def test_save_double_sided_unchecked_disables(self, client, mock_config_manager):
+        """An omitted 'enabled' checkbox is saved as disabled, not left stale."""
+        response = client.post(
+            '/api/v3/config/main',
+            data={'double_sided_copies': '4', 'double_sided_axis': 'horizontal'},
+            content_type='application/x-www-form-urlencoded',
+        )
+
+        assert response.status_code == 200
+        ds = mock_config_manager.save_config_atomic.call_args[0][0]['display']['double_sided']
+        assert ds['enabled'] is False
+        assert ds['copies'] == 4
+
+    def test_save_double_sided_invalid_copies_rejected(self, client, mock_config_manager):
+        """copies < 2 is rejected with a 400 before any save."""
+        response = client.post(
+            '/api/v3/config/main',
+            data={'double_sided_enabled': 'true', 'double_sided_copies': '1'},
+            content_type='application/x-www-form-urlencoded',
+        )
+
+        assert response.status_code == 400
+        mock_config_manager.save_config_atomic.assert_not_called()
+
+    def test_save_double_sided_invalid_axis_rejected(self, client, mock_config_manager):
+        """An unknown axis is rejected with a 400 before any save."""
+        response = client.post(
+            '/api/v3/config/main',
+            data={'double_sided_enabled': 'true', 'double_sided_axis': 'diagonal'},
+            content_type='application/x-www-form-urlencoded',
+        )
+
+        assert response.status_code == 400
+        mock_config_manager.save_config_atomic.assert_not_called()
+
     def test_get_secrets_config(self, client, mock_config_manager):
         """Test getting secrets configuration."""
         response = client.get('/api/v3/config/secrets')

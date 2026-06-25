@@ -33,7 +33,7 @@ else:
 from contextlib import contextmanager
 from PIL import Image, ImageDraw, ImageFont
 import time
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import logging
 import math
 import freetype
@@ -41,6 +41,106 @@ import freetype
 # Get logger without configuring
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)  # Set to INFO level
+
+
+class _LogicalMatrix:
+    """Proxy that reports a logical (per-screen) size for a physical matrix.
+
+    In double-sided mode the physical panel chain shows N identical copies of a
+    smaller logical screen. Plugins size themselves from ``matrix.width`` /
+    ``matrix.height`` (the documented convention, used at 30+ call sites), so
+    this proxy reports the logical dimensions while delegating every real
+    operation — ``CreateFrameCanvas``, ``SwapOnVSync``, ``brightness``,
+    ``Clear`` and so on — to the underlying physical matrix. The duplication
+    itself happens once per frame in :meth:`DisplayManager.update_display`.
+    """
+
+    __slots__ = ("_logical_height", "_logical_width", "_matrix")
+
+    def __init__(self, matrix: RGBMatrix, logical_width: int, logical_height: int) -> None:
+        object.__setattr__(self, "_matrix", matrix)
+        object.__setattr__(self, "_logical_width", logical_width)
+        object.__setattr__(self, "_logical_height", logical_height)
+
+    @property
+    def width(self) -> int:
+        """Logical (per-screen) width reported to plugins."""
+        return self._logical_width
+
+    @property
+    def height(self) -> int:
+        """Logical (per-screen) height reported to plugins."""
+        return self._logical_height
+
+    def __getattr__(self, name: str) -> Any:
+        """Forward any non-overridden attribute access to the physical matrix.
+
+        Reached only when normal lookup fails (i.e. not width/height/_*).
+        """
+        return getattr(object.__getattribute__(self, "_matrix"), name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Forward attribute writes (e.g. ``matrix.brightness = 80``) to it."""
+        setattr(object.__getattribute__(self, "_matrix"), name, value)
+
+
+def _resolve_double_sided(physical_width: int, physical_height: int,
+                          ds_config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Validate the ``display.double_sided`` config against the physical size.
+
+    Returns a dict ``{copies, axis, logical_width, logical_height}`` when the
+    feature is enabled and the physical panel divides evenly into ``copies``
+    along the chosen axis, otherwise ``None`` (single-screen behaviour). Bad
+    config is logged and disabled rather than raised — a misconfigured panel
+    should still light up.
+    """
+    if not isinstance(ds_config, dict) or not ds_config.get('enabled', False):
+        return None
+
+    copies = ds_config.get('copies', 2)
+    if not isinstance(copies, int) or copies < 2:
+        logger.warning(
+            "double_sided: 'copies' must be an integer >= 2 (got %r); "
+            "disabling double-sided mode", copies)
+        return None
+
+    axis = ds_config.get('axis', 'horizontal')
+    if axis not in ('horizontal', 'vertical'):
+        logger.warning(
+            "double_sided: 'axis' must be 'horizontal' or 'vertical' "
+            "(got %r); defaulting to 'horizontal'", axis)
+        axis = 'horizontal'
+
+    # Horizontal splits the chain (panels side by side); vertical splits the
+    # parallel outputs (panels stacked). The split axis must divide evenly.
+    if axis == 'horizontal':
+        if physical_width % copies != 0:
+            logger.warning(
+                "double_sided: physical width %d is not divisible by copies "
+                "%d; disabling double-sided mode", physical_width, copies)
+            return None
+        logical_width = physical_width // copies
+        logical_height = physical_height
+    else:
+        if physical_height % copies != 0:
+            logger.warning(
+                "double_sided: physical height %d is not divisible by copies "
+                "%d; disabling double-sided mode", physical_height, copies)
+            return None
+        logical_width = physical_width
+        logical_height = physical_height // copies
+
+    logger.info(
+        "double_sided enabled: %d copies on %s axis — logical screen %dx%d "
+        "tiled across physical %dx%d", copies, axis, logical_width,
+        logical_height, physical_width, physical_height)
+    return {
+        'copies': copies,
+        'axis': axis,
+        'logical_width': logical_width,
+        'logical_height': logical_height,
+    }
+
 
 class DisplayManager:
     """
@@ -76,6 +176,10 @@ class DisplayManager:
         self._suppress_test_pattern = suppress_test_pattern
         # When True, update_display() and clear() skip hardware writes (used during off-screen content capture)
         self._capture_mode_active = False
+        # Double-sided mode state (resolved in _setup_matrix). When disabled,
+        # the logical image is blitted to the matrix unchanged.
+        self._double_sided = None  # dict {copies, axis, logical_width, logical_height} or None
+        self._physical_image = None  # full-chain buffer reused each frame when tiling
         # Text-width measurement cache: (text, id(font)) -> pixel_width
         # Avoids re-measuring the same string+font on every display() call.
         # Cleared on _load_fonts() so stale entries don't survive a font reload.
@@ -168,13 +272,26 @@ class DisplayManager:
             # Initialize the matrix
             self.matrix = RGBMatrix(options=options)
             logger.info("RGB Matrix initialized successfully")
-            
-            # Create double buffer for smooth updates
+
+            # Create double buffer for smooth updates. The canvases are always
+            # full physical size — they back the real chain regardless of mode.
             self.offscreen_canvas = self.matrix.CreateFrameCanvas()
             self.current_canvas = self.matrix.CreateFrameCanvas()
             logger.info("Frame canvases created successfully")
-            
-            # Create image with full chain width
+
+            # Double-sided mode: wrap the physical matrix so plugins see the
+            # logical (per-screen) size, and keep a full-chain buffer to tile
+            # the rendered screen into once per frame.
+            ds_config = self.config.get('display', {}).get('double_sided', {})
+            ds = _resolve_double_sided(self.matrix.width, self.matrix.height, ds_config)
+            self._double_sided = ds
+            if ds is not None:
+                self._physical_image = Image.new(
+                    'RGB', (self.matrix.width, self.matrix.height))
+                self.matrix = _LogicalMatrix(
+                    self.matrix, ds['logical_width'], ds['logical_height'])
+
+            # Create image with the (logical) display dimensions
             self.image = Image.new('RGB', (self.matrix.width, self.matrix.height))
             self.draw = ImageDraw.Draw(self.image)
             logger.info(f"Image canvas created with dimensions: {self.matrix.width}x{self.matrix.height}")
@@ -201,8 +318,16 @@ class DisplayManager:
                 rows = int(hardware_config.get('rows', 32))
                 cols = int(hardware_config.get('cols', 64))
                 chain_length = int(hardware_config.get('chain_length', 2))
+                parallel = int(hardware_config.get('parallel', 1))
                 fallback_width = max(1, cols * chain_length)
-                fallback_height = max(1, rows)
+                fallback_height = max(1, rows * parallel)
+                # Mirror double-sided in fallback so the preview shows one screen.
+                ds_config = self.config.get('display', {}).get('double_sided', {}) if self.config else {}
+                ds = _resolve_double_sided(fallback_width, fallback_height, ds_config)
+                self._double_sided = ds
+                if ds is not None:
+                    fallback_width = ds['logical_width']
+                    fallback_height = ds['logical_height']
             except Exception:
                 fallback_width, fallback_height = 128, 32
 
@@ -364,6 +489,25 @@ class DisplayManager:
         finally:
             self._capture_mode_active = False
 
+    def _composite_double_sided(self):
+        """Tile the logical screen across the full physical chain.
+
+        Renders once into ``self._physical_image`` by pasting the rendered
+        logical image ``copies`` times along the configured axis. The paste is
+        a single memcpy per copy, so the per-frame cost is negligible and the
+        plugin render path is untouched.
+        """
+        ds = self._double_sided
+        phys = self._physical_image
+        lw = ds['logical_width']
+        lh = ds['logical_height']
+        for i in range(ds['copies']):
+            if ds['axis'] == 'vertical':
+                phys.paste(self.image, (0, i * lh))
+            else:
+                phys.paste(self.image, (i * lw, 0))
+        return phys
+
     def update_display(self):
         """Update the display using double buffering with proper sync."""
         try:
@@ -377,8 +521,12 @@ class DisplayManager:
             if self._capture_mode_active:
                 return  # Skip hardware write — content is being captured off-screen
 
-            # Copy the current image to the offscreen canvas
-            self.offscreen_canvas.SetImage(self.image)
+            # Copy the current image to the offscreen canvas. In double-sided
+            # mode the logical screen is first tiled across the full chain.
+            if self._double_sided is not None:
+                self.offscreen_canvas.SetImage(self._composite_double_sided())
+            else:
+                self.offscreen_canvas.SetImage(self.image)
 
             # Swap buffers immediately
             self.matrix.SwapOnVSync(self.offscreen_canvas)

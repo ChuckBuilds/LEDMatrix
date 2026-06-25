@@ -115,6 +115,11 @@
             "gpio_slowdown": 3,
             "rp1_rio": 0
         },
+        "double_sided": {
+            "enabled": false,
+            "copies": 2,
+            "axis": "horizontal"
+        },
         "display_durations": {},
         "use_short_date_format": true,
         "vegas_scroll": {
