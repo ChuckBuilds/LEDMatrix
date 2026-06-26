@@ -4619,6 +4619,42 @@ def save_plugin_config():
         if 'application/json' in content_type:
             schema = schema_mgr.load_schema(plugin_id, use_cache=False)
 
+        # JSON path: fix numeric-keyed dicts that should be arrays.
+        # JS dotToNested() converts feeds.custom_feeds.0.name → {'0': {name:...}}
+        # instead of [{name:...}]. The form-data path has fix_array_structures for this;
+        # mirror that logic here for JSON submissions.
+        if 'application/json' in content_type and schema and 'properties' in schema:
+            def _fix_json_arrays(cfg, props):
+                for k, ps in props.items():
+                    if not isinstance(cfg, dict) or k not in cfg:
+                        continue
+                    pt = ps.get('type')
+                    val = cfg[k]
+                    if pt == 'array' and isinstance(val, dict):
+                        keys = list(val.keys())
+                        if keys and all(str(x).isdigit() for x in keys):
+                            sorted_keys = sorted(keys, key=lambda x: int(str(x)))
+                            items_schema = ps.get('items', {})
+                            item_type = items_schema.get('type')
+                            arr = [val[sk] for sk in sorted_keys]
+                            if item_type in ('integer', 'number'):
+                                converted = []
+                                for v in arr:
+                                    if isinstance(v, str):
+                                        try:
+                                            converted.append(int(v) if item_type == 'integer' else float(v))
+                                        except (ValueError, TypeError):
+                                            converted.append(v)
+                                    else:
+                                        converted.append(v)
+                                arr = converted
+                            cfg[k] = arr
+                        elif not keys:
+                            cfg[k] = []
+                    elif pt == 'object' and 'properties' in ps and isinstance(val, dict):
+                        _fix_json_arrays(val, ps['properties'])
+            _fix_json_arrays(plugin_config, schema['properties'])
+
         # PRE-PROCESSING: Preserve 'enabled' state if not in request
         # This prevents overwriting the enabled state when saving config from a form that doesn't include the toggle
         if 'enabled' not in plugin_config:
