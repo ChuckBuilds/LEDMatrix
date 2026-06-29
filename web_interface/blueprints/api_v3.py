@@ -1701,7 +1701,7 @@ def execute_system_action():
                         except subprocess.TimeoutExpired:
                             results.append({'plugin': p.name, 'ok': False, 'output': 'pip install timed out'})
                         except OSError as exc:
-                            results.append({'plugin': p.name, 'ok': False, 'output': str(exc)})
+                            results.append({'plugin': p.name, 'ok': False, 'output': exc.strerror or 'OS error'})
             ok_count = sum(1 for r in results if r['ok'])
             all_ok = all(r['ok'] for r in results) if results else True
             return jsonify({
