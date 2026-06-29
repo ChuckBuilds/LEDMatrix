@@ -229,7 +229,14 @@
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({action})
         })
-        .then(r => r.json())
+        .then(r => {
+            if (!r.ok) {
+                return r.json()
+                    .then(d => Promise.reject(new Error(d.message || `HTTP ${r.status}`)))
+                    .catch(() => Promise.reject(new Error(`HTTP ${r.status}`)));
+            }
+            return r.json();
+        })
         .then(data => {
             const ok = data.status === 'success';
             showResult(
