@@ -229,7 +229,14 @@
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({action})
         })
-        .then(r => r.json())
+        .then(r => {
+            if (!r.ok) {
+                return r.json()
+                    .then(d => Promise.reject(new Error(d.message || `HTTP ${r.status}`)))
+                    .catch(() => Promise.reject(new Error(`HTTP ${r.status}`)));
+            }
+            return r.json();
+        })
         .then(data => {
             const ok = data.status === 'success';
             showResult(
@@ -273,6 +280,7 @@
                     panel.innerHTML = `<span class="text-sm text-red-600">${escHtml(d.message || 'Git info unavailable.')}</span>`;
                     return;
                 }
+
 
                 const dirtyBadge = d.dirty
                     ? '<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800">dirty</span>'

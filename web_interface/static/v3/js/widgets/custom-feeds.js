@@ -54,15 +54,18 @@
                 const logoIdInput = row.querySelector('input[name*=".logo.id"]');
                 
                 if (nameInput && urlInput) {
-                    feeds.push({
+                    const feedObj = {
                         name: nameInput.value,
                         url: urlInput.value,
-                        enabled: enabledInput ? enabledInput.checked : true,
-                        logo: logoPathInput || logoIdInput ? {
+                        enabled: enabledInput ? enabledInput.checked : true
+                    };
+                    if (logoPathInput || logoIdInput) {
+                        feedObj.logo = {
                             path: logoPathInput ? logoPathInput.value : '',
                             id: logoIdInput ? logoIdInput.value : ''
-                        } : null
-                    });
+                        };
+                    }
+                    feeds.push(feedObj);
                 }
             });
             

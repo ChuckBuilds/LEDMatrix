@@ -10,6 +10,7 @@ import tempfile
 import warnings
 from collections import deque
 from pathlib import Path
+from typing import List, Tuple
 
 # How many trailing lines of a failed command's output to keep for the
 # end-of-run failure summary. Keeps the root cause near the end of the log,
@@ -17,7 +18,7 @@ from pathlib import Path
 ERROR_TAIL_LINES = 15
 
 
-def _run(cmd):
+def _run(cmd: List[str]) -> Tuple[bool, str]:
     """Run a command, streaming combined stdout/stderr to a temp file.
 
     Returns (success, output) instead of raising, so callers can report
@@ -37,7 +38,7 @@ def _run(cmd):
     return result.returncode == 0, '\n'.join(tail)
 
 
-def install_via_apt(package_name):
+def install_via_apt(package_name: str) -> Tuple[bool, str]:
     """Try to install a package via apt. Returns (success, output)."""
     # Map pip package names to apt package names
     apt_package_map = {
@@ -59,7 +60,7 @@ def install_via_apt(package_name):
     apt_package = apt_package_map.get(package_name, f'python3-{package_name}')
 
     print(f"Trying to install {apt_package} via apt...")
-    success, output = _run(['sudo', 'apt', 'install', '-y', apt_package])
+    success, output = _run(['sudo', 'apt-get', '-o', 'DPkg::Lock::Timeout=180', 'install', '-y', apt_package])
     if success:
         print(f"Successfully installed {apt_package} via apt")
         return True, ""
@@ -68,7 +69,7 @@ def install_via_apt(package_name):
     return False, output
 
 
-def install_via_pip(package_name):
+def install_via_pip(package_name: str) -> Tuple[bool, str]:
     """Install a package via pip with --break-system-packages and --prefer-binary.
 
     --break-system-packages allows pip to install into the system Python on
@@ -105,7 +106,7 @@ IMPORT_NAME_MAP = {
 }
 
 
-def check_package_installed(package_name):
+def check_package_installed(package_name: str) -> bool:
     """Check if a package is already installed."""
     import_name = IMPORT_NAME_MAP.get(package_name, package_name)
     # Suppress deprecation warnings when checking if packages are installed
@@ -119,7 +120,7 @@ def check_package_installed(package_name):
             return False
 
 
-def print_failure_summary(failed_packages, failure_details):
+def print_failure_summary(failed_packages: List[str], failure_details: dict) -> None:
     print("\n" + "=" * 60)
     print("DEPENDENCY INSTALLATION FAILURES - DETAILS")
     print("=" * 60)
@@ -208,7 +209,7 @@ def main():
             if setup_py.exists():
                 # Try installing - use regular install, not editable mode
                 # This is optional for web interface and should already be installed in Step 6
-                ok, output = _run([sys.executable, '-m', 'pip', 'install', '--break-system-packages', '--ignore-installed', str(rgbmatrix_path)])
+                ok, output = _run([sys.executable, '-m', 'pip', 'install', '--break-system-packages', str(rgbmatrix_path)])
                 if ok:
                     print("rgbmatrix module installed successfully")
                 else:

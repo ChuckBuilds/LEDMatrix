@@ -1682,7 +1682,13 @@ def execute_system_action():
             })
         elif action == 'install_plugin_requirements':
             active_pm = getattr(api_v3, 'plugin_manager', None)
-            plugins_dir = Path(active_pm.plugins_dir) if active_pm else PROJECT_ROOT / 'plugin-repos'
+            if active_pm:
+                plugins_dir = Path(active_pm.plugins_dir)
+            else:
+                _cm = getattr(api_v3, 'config_manager', None)
+                _cfg = _cm.load_config() if _cm else {}
+                _dir_name = _cfg.get('plugin_system', {}).get('plugins_directory', 'plugin-repos')
+                plugins_dir = Path(_dir_name) if os.path.isabs(_dir_name) else PROJECT_ROOT / _dir_name
             results = []
             if plugins_dir.exists():
                 for p in sorted(plugins_dir.iterdir()):
@@ -4618,6 +4624,49 @@ def save_plugin_config():
         # For JSON requests, schema wasn't loaded yet
         if 'application/json' in content_type:
             schema = schema_mgr.load_schema(plugin_id, use_cache=False)
+
+        # JSON path: fix numeric-keyed dicts that should be arrays.
+        # JS dotToNested() converts feeds.custom_feeds.0.name → {'0': {name:...}}
+        # instead of [{name:...}]. The form-data path has fix_array_structures for this;
+        # mirror that logic here for JSON submissions.
+        if 'application/json' in content_type and schema and 'properties' in schema:
+            def _fix_json_arrays(cfg, props):
+                for k, ps in props.items():
+                    if not isinstance(cfg, dict) or k not in cfg:
+                        continue
+                    pt = ps.get('type')
+                    val = cfg[k]
+                    if pt == 'array':
+                        items_schema = ps.get('items', {})
+                        item_type = items_schema.get('type')
+                        if isinstance(val, dict):
+                            keys = list(val.keys())
+                            if keys and all(str(x).isdigit() for x in keys):
+                                sorted_keys = sorted(keys, key=lambda x: int(str(x)))
+                                arr = [val[sk] for sk in sorted_keys]
+                                if item_type in ('integer', 'number'):
+                                    converted = []
+                                    for v in arr:
+                                        if isinstance(v, str):
+                                            try:
+                                                converted.append(int(v) if item_type == 'integer' else float(v))
+                                            except (ValueError, TypeError):
+                                                converted.append(v)
+                                        else:
+                                            converted.append(v)
+                                    arr = converted
+                                cfg[k] = arr
+                            elif not keys:
+                                cfg[k] = []
+                        # Recurse into each element when items are objects with properties,
+                        # covering both freshly-converted and already-list values.
+                        if item_type == 'object' and 'properties' in items_schema:
+                            for elem in (cfg[k] if isinstance(cfg[k], list) else []):
+                                if isinstance(elem, dict):
+                                    _fix_json_arrays(elem, items_schema['properties'])
+                    elif pt == 'object' and 'properties' in ps and isinstance(val, dict):
+                        _fix_json_arrays(val, ps['properties'])
+            _fix_json_arrays(plugin_config, schema['properties'])
 
         # PRE-PROCESSING: Preserve 'enabled' state if not in request
         # This prevents overwriting the enabled state when saving config from a form that doesn't include the toggle
