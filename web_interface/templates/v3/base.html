@@ -1922,7 +1922,22 @@
                             if (tab === 'overview' && typeof loadOverviewDirect === 'function') loadOverviewDirect();
                             else if (tab === 'wifi' && typeof loadWifiDirect === 'function') loadWifiDirect();
                             else if (tab === 'plugins' && typeof loadPluginsDirect === 'function') loadPluginsDirect();
-                        }
+                            else if (tab === 'tools') {
+                                fetch('/v3/partials/tools')
+                                    .then(r => {
+                                        if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
+                                        return r.text();
+                                    })
+                                    .then(html => {
+                                        contentEl.innerHTML = html;
+                                        contentEl.setAttribute('data-loaded', 'true');
+                                        if (window.Alpine) window.Alpine.initTree(contentEl);
+                                    })
+                                    .catch(err => {
+                                        console.error('Failed to load tools content:', err);
+                                        contentEl.innerHTML = '<div class="bg-red-50 border border-red-200 rounded-lg p-4"><p class="text-red-800">Failed to load Tools. Please refresh the page.</p></div>';
+                                    });
+                            }
                     }, 100);
                 },
 

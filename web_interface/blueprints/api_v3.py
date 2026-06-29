@@ -1666,7 +1666,8 @@ def execute_system_action():
                 'output': _truncate_output(result.stdout, result.stderr)
             })
         elif action == 'install_plugin_requirements':
-            plugins_dir = Path(plugin_manager.plugins_dir) if plugin_manager else PROJECT_ROOT / 'plugin-repos'
+            active_pm = getattr(api_v3, 'plugin_manager', None)
+            plugins_dir = Path(active_pm.plugins_dir) if active_pm else PROJECT_ROOT / 'plugin-repos'
             results = []
             if plugins_dir.exists():
                 for p in sorted(plugins_dir.iterdir()):

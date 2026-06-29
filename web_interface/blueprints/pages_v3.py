@@ -1,4 +1,5 @@
 from flask import Blueprint, render_template, flash
+from jinja2 import TemplateNotFound
 from markupsafe import escape
 import json
 import logging
@@ -454,9 +455,12 @@ def _load_tools_partial():
     """Load tools/utilities partial."""
     try:
         return render_template('v3/partials/tools.html')
-    except Exception:
-        logger.error("Error loading partial", exc_info=True)
-        return "Error loading partial", 500
+    except TemplateNotFound:
+        logger.error("[Pages V3][Tools] Template not found: v3/partials/tools.html", exc_info=True)
+        return "[Pages V3][Tools] Template is missing.", 500
+    except OSError as exc:
+        logger.error("[Pages V3][Tools] I/O error loading tools partial: %s", exc, exc_info=True)
+        return "[Pages V3][Tools] Failed to load due to a file system error. Check logs.", 500
 
 
 def _load_plugin_config_partial(plugin_id):
