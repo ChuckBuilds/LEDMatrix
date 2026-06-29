@@ -227,8 +227,8 @@ wait_for_apt_lock() {
     done
 }
 
-apt_update() { wait_for_apt_lock; retry apt update; }
-apt_install() { wait_for_apt_lock; retry apt install -y "$@"; }
+apt_update() { wait_for_apt_lock; retry apt-get -o DPkg::Lock::Timeout=180 update; }
+apt_install() { wait_for_apt_lock; retry apt-get -o DPkg::Lock::Timeout=180 install -y "$@"; }
 apt_remove() { apt-get remove -y "$@" || true; }
 
 check_network() {
@@ -857,24 +857,30 @@ if [ "$_SKIP_BUILD" = "1" ]; then
     echo "rgbmatrix already installed${_skip_suffix}; skipping build (set RPI_RGB_FORCE_REBUILD=1 to force rebuild)."
 else
     # Ensure rpi-rgb-led-matrix submodule is initialized
+    # Wrapper used with retry(): removes any partial clone dir before each attempt
+    # so git clone doesn't fail with "destination path already exists".
+    _clone_rpi_rgb() {
+        rm -rf "$PROJECT_ROOT_DIR/rpi-rgb-led-matrix-master"
+        git clone https://github.com/hzeller/rpi-rgb-led-matrix.git rpi-rgb-led-matrix-master
+    }
     if [ ! -d "$PROJECT_ROOT_DIR/rpi-rgb-led-matrix-master" ]; then
         echo "rpi-rgb-led-matrix-master not found. Initializing git submodule..."
         cd "$PROJECT_ROOT_DIR"
-        
+
         # Try to initialize submodule if .gitmodules exists
         if [ -f "$PROJECT_ROOT_DIR/.gitmodules" ] && grep -q "rpi-rgb-led-matrix" "$PROJECT_ROOT_DIR/.gitmodules"; then
             echo "Initializing rpi-rgb-led-matrix submodule..."
             if ! retry git submodule update --init --recursive rpi-rgb-led-matrix-master; then
                 echo "⚠ Submodule init failed, cloning directly from GitHub..."
-                retry git clone https://github.com/hzeller/rpi-rgb-led-matrix.git rpi-rgb-led-matrix-master
+                retry _clone_rpi_rgb
             fi
         else
             # Fallback: clone directly if submodule not configured
             echo "Submodule not configured, cloning directly from GitHub..."
-            retry git clone https://github.com/hzeller/rpi-rgb-led-matrix.git rpi-rgb-led-matrix-master
+            retry _clone_rpi_rgb
         fi
     fi
-    
+
     # Build and install rpi-rgb-led-matrix Python bindings
     if [ -d "$PROJECT_ROOT_DIR/rpi-rgb-led-matrix-master" ]; then
         # Check if submodule is properly initialized (not empty)
@@ -885,7 +891,7 @@ else
             if [ -f "$PROJECT_ROOT_DIR/.gitmodules" ] && grep -q "rpi-rgb-led-matrix" "$PROJECT_ROOT_DIR/.gitmodules"; then
                 retry git submodule update --init --recursive rpi-rgb-led-matrix-master
             else
-                retry git clone https://github.com/hzeller/rpi-rgb-led-matrix.git rpi-rgb-led-matrix-master
+                retry _clone_rpi_rgb
             fi
         fi
 
