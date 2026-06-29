@@ -14,6 +14,7 @@ import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any
+from urllib.parse import urlparse, urlunparse
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,32 @@ from src.error_aggregator import get_error_aggregator
 
 _SUDO = shutil.which('sudo')
 _JOURNALCTL = shutil.which('journalctl')
+_GIT = shutil.which('git')
+
+# Cap subprocess output returned to the browser — pip can produce MBs on build failures.
+_MAX_OUTPUT_BYTES = 51_200  # 50 KB
+
+
+def _truncate_output(stdout: str, stderr: str) -> str:
+    """Combine stdout+stderr and truncate to _MAX_OUTPUT_BYTES (keeping the tail)."""
+    combined = (stdout + stderr).strip()
+    if len(combined) > _MAX_OUTPUT_BYTES:
+        combined = '[...output truncated...]\n' + combined[-_MAX_OUTPUT_BYTES:]
+    return combined
+
+
+def _scrub_git_remote_url(url: str) -> str:
+    """Strip embedded username/password from an HTTPS remote URL before returning it to the UI."""
+    try:
+        p = urlparse(url)
+        if p.scheme in ('http', 'https') and (p.username or p.password):
+            netloc = p.hostname or ''
+            if p.port:
+                netloc += f':{p.port}'
+            return urlunparse(p._replace(netloc=netloc))
+    except Exception:
+        pass
+    return url
 
 # Will be initialized when blueprint is registered
 config_manager = None
@@ -1636,7 +1663,7 @@ def execute_system_action():
             return jsonify({
                 'status': 'success' if result.returncode == 0 else 'error',
                 'message': 'Base requirements installed successfully' if result.returncode == 0 else 'pip install failed',
-                'output': (result.stdout + result.stderr).strip()
+                'output': _truncate_output(result.stdout, result.stderr)
             })
         elif action == 'install_plugin_requirements':
             plugins_dir = Path(plugin_manager.plugins_dir) if plugin_manager else PROJECT_ROOT / 'plugin-repos'
@@ -1652,7 +1679,7 @@ def execute_system_action():
                         results.append({
                             'plugin': p.name,
                             'ok': r.returncode == 0,
-                            'output': (r.stdout + r.stderr).strip()
+                            'output': _truncate_output(r.stdout, r.stderr)
                         })
             ok_count = sum(1 for r in results if r['ok'])
             all_ok = all(r['ok'] for r in results) if results else True
@@ -1662,15 +1689,17 @@ def execute_system_action():
                 'details': results
             })
         elif action == 'force_git_reset':
+            if not _GIT:
+                return jsonify({'status': 'error', 'message': 'git not found on this system'}), 503
             project_dir = str(PROJECT_ROOT)
             fetch = subprocess.run(
-                ['git', 'fetch', 'origin'],
+                [_GIT, 'fetch', 'origin'],
                 capture_output=True, text=True, timeout=30, cwd=project_dir
             )
             if fetch.returncode != 0:
                 return jsonify({'status': 'error', 'message': 'git fetch failed', 'output': fetch.stderr.strip()})
             reset = subprocess.run(
-                ['git', 'reset', '--hard', 'origin/main'],
+                [_GIT, 'reset', '--hard', 'origin/main'],
                 capture_output=True, text=True, timeout=30, cwd=project_dir
             )
             return jsonify({
@@ -1680,11 +1709,18 @@ def execute_system_action():
             })
         elif action == 'clear_pycache':
             cleared = 0
+            failed = 0
             for d in PROJECT_ROOT.rglob('__pycache__'):
                 if d.is_dir():
-                    shutil.rmtree(d, ignore_errors=True)
-                    cleared += 1
-            return jsonify({'status': 'success', 'message': f'Cleared {cleared} __pycache__ directories'})
+                    try:
+                        shutil.rmtree(d)
+                        cleared += 1
+                    except OSError:
+                        failed += 1
+            msg = f'Cleared {cleared} __pycache__ directories'
+            if failed:
+                msg += f' ({failed} could not be removed)'
+            return jsonify({'status': 'success', 'message': msg})
         else:
             return jsonify({'status': 'error', 'message': 'Unknown action'}), 400
 
@@ -1710,18 +1746,26 @@ def execute_system_action():
 @api_v3.route('/system/git-info', methods=['GET'])
 def get_git_info():
     """Return branch, dirty state, recent commits and remote URL for the Tools tab."""
+    if not _GIT:
+        return jsonify({'status': 'error', 'message': 'git not found on this system'}), 503
     d = str(PROJECT_ROOT)
     try:
-        branch = subprocess.run(['git', 'branch', '--show-current'], capture_output=True, text=True, timeout=10, cwd=d)
-        status = subprocess.run(['git', 'status', '--short', '--untracked-files=no'], capture_output=True, text=True, timeout=15, cwd=d)
-        log    = subprocess.run(['git', 'log', '--oneline', '-5'], capture_output=True, text=True, timeout=10, cwd=d)
-        remote = subprocess.run(['git', 'remote', 'get-url', 'origin'], capture_output=True, text=True, timeout=10, cwd=d)
+        branch = subprocess.run([_GIT, 'branch', '--show-current'], capture_output=True, text=True, timeout=10, cwd=d)
+        if branch.returncode != 0:
+            return jsonify({'status': 'error', 'message': f'git branch failed: {branch.stderr.strip()}'}), 500
+
+        status = subprocess.run([_GIT, 'status', '--short', '--untracked-files=no'], capture_output=True, text=True, timeout=15, cwd=d)
+        if status.returncode != 0:
+            return jsonify({'status': 'error', 'message': f'git status failed: {status.stderr.strip()}'}), 500
+
+        log    = subprocess.run([_GIT, 'log', '--oneline', '-5'], capture_output=True, text=True, timeout=10, cwd=d)
+        remote = subprocess.run([_GIT, 'remote', 'get-url', 'origin'], capture_output=True, text=True, timeout=10, cwd=d)
         return jsonify({
             'branch': branch.stdout.strip(),
             'dirty': bool(status.stdout.strip()),
             'status': status.stdout.strip(),
-            'recent_commits': log.stdout.strip(),
-            'remote_url': remote.stdout.strip(),
+            'recent_commits': log.stdout.strip() if log.returncode == 0 else '',
+            'remote_url': _scrub_git_remote_url(remote.stdout.strip()) if remote.returncode == 0 else '',
         })
     except Exception as e:
         logger.error("get_git_info failed: %s", e, exc_info=True)
