@@ -14,6 +14,7 @@ import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any
+from urllib.parse import urlparse, urlunparse
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,32 @@ from src.error_aggregator import get_error_aggregator
 
 _SUDO = shutil.which('sudo')
 _JOURNALCTL = shutil.which('journalctl')
+_GIT = shutil.which('git')
+
+# Cap subprocess output returned to the browser — pip can produce MBs on build failures.
+_MAX_OUTPUT_BYTES = 51_200  # 50 KB
+
+
+def _truncate_output(stdout: str, stderr: str) -> str:
+    """Combine stdout+stderr and truncate to _MAX_OUTPUT_BYTES (keeping the tail)."""
+    combined = (stdout + stderr).strip()
+    if len(combined) > _MAX_OUTPUT_BYTES:
+        combined = '[...output truncated...]\n' + combined[-_MAX_OUTPUT_BYTES:]
+    return combined
+
+
+def _scrub_git_remote_url(url: str) -> str:
+    """Strip embedded username/password from an HTTPS remote URL before returning it to the UI."""
+    try:
+        p = urlparse(url)
+        if p.scheme in ('http', 'https') and (p.username or p.password):
+            netloc = p.hostname or ''
+            if p.port:
+                netloc += f':{p.port}'
+            return urlunparse(p._replace(netloc=netloc))
+    except Exception:
+        pass
+    return url
 
 # Will be initialized when blueprint is registered
 config_manager = None
@@ -705,7 +732,8 @@ def save_main_config():
         display_fields = ['rows', 'cols', 'chain_length', 'parallel', 'brightness', 'hardware_mapping',
                          'gpio_slowdown', 'rp1_rio', 'scan_mode', 'disable_hardware_pulsing', 'inverse_colors', 'show_refresh_rate',
                          'pwm_bits', 'pwm_dither_bits', 'pwm_lsb_nanoseconds', 'limit_refresh_rate_hz', 'use_short_date_format',
-                         'max_dynamic_duration_seconds', 'led_rgb_sequence', 'multiplexing', 'panel_type']
+                         'max_dynamic_duration_seconds', 'led_rgb_sequence', 'multiplexing', 'panel_type',
+                         'row_address_type']
 
         if any(k in data for k in display_fields):
             if 'display' not in current_config:
@@ -736,14 +764,23 @@ def save_main_config():
                 except (ValueError, TypeError):
                     return jsonify({'status': 'error', 'message': f"Invalid multiplexing value '{data['multiplexing']}'. Must be an integer from 0 to 22."}), 400
 
+            # Validate row_address_type
+            if 'row_address_type' in data:
+                try:
+                    rat_val = int(data['row_address_type'])
+                    if rat_val < 0 or rat_val > 4:
+                        return jsonify({'status': 'error', 'message': f"Invalid row_address_type '{data['row_address_type']}'. Must be an integer from 0 to 4."}), 400
+                except (ValueError, TypeError):
+                    return jsonify({'status': 'error', 'message': f"Invalid row_address_type '{data['row_address_type']}'. Must be an integer from 0 to 4."}), 400
+
             # Handle hardware settings
             for field in ['rows', 'cols', 'chain_length', 'parallel', 'brightness', 'hardware_mapping', 'scan_mode',
                          'pwm_bits', 'pwm_dither_bits', 'pwm_lsb_nanoseconds', 'limit_refresh_rate_hz',
-                         'led_rgb_sequence', 'multiplexing', 'panel_type']:
+                         'led_rgb_sequence', 'multiplexing', 'panel_type', 'row_address_type']:
                 if field in data:
                     if field in ['rows', 'cols', 'chain_length', 'parallel', 'brightness', 'scan_mode',
                                'pwm_bits', 'pwm_dither_bits', 'pwm_lsb_nanoseconds', 'limit_refresh_rate_hz',
-                               'multiplexing']:
+                               'multiplexing', 'row_address_type']:
                         current_config['display']['hardware'][field] = int(data[field])
                     else:
                         current_config['display']['hardware'][field] = data[field]
@@ -792,6 +829,19 @@ def save_main_config():
                     return jsonify({'status': 'error', 'message': "Double-sided copies must be an integer"}), 400
                 if not (2 <= copies <= 8):
                     return jsonify({'status': 'error', 'message': "Double-sided copies must be between 2 and 8"}), 400
+                # Validate divisibility against the relevant hardware dimension.
+                # Use axis from this request if provided, else from stored config.
+                hw = current_config.get('display', {}).get('hardware', {})
+                effective_axis = (data.get('double_sided_axis')
+                                  or current_config.get('display', {}).get('double_sided', {}).get('axis', 'horizontal'))
+                if effective_axis == 'horizontal':
+                    chain_length = int(hw.get('chain_length', 2) or 2)
+                    if chain_length % copies != 0:
+                        return jsonify({'status': 'error', 'message': f"Double-sided copies ({copies}) must divide chain length ({chain_length}) evenly"}), 400
+                elif effective_axis == 'vertical':
+                    parallel = int(hw.get('parallel', 1) or 1)
+                    if parallel % copies != 0:
+                        return jsonify({'status': 'error', 'message': f"Double-sided copies ({copies}) must divide parallel ({parallel}) evenly"}), 400
                 ds_config['copies'] = copies
 
             if 'double_sided_axis' in data:
@@ -1044,6 +1094,8 @@ def save_main_config():
             if key in sync_fields:
                 continue
             if key in vegas_fields:
+                continue
+            if key in double_sided_fields:
                 continue
             # For any remaining keys (including plugin keys), use deep merge to preserve existing settings
             if key in current_config and isinstance(current_config[key], dict) and isinstance(data[key], dict):
@@ -1615,6 +1667,81 @@ def execute_system_action():
             # Try to restart the web service (assuming it's ledmatrix-web.service)
             result = subprocess.run(['sudo', 'systemctl', 'restart', 'ledmatrix-web.service'],
                                  capture_output=True, text=True, timeout=10)
+        elif action == 'install_base_requirements':
+            req_file = PROJECT_ROOT / 'requirements.txt'
+            if not req_file.exists():
+                return jsonify({'status': 'error', 'message': 'No requirements.txt found at project root'})
+            result = subprocess.run(
+                [sys.executable, '-m', 'pip', 'install', '--break-system-packages', '-r', str(req_file)],
+                capture_output=True, text=True, timeout=120, cwd=str(PROJECT_ROOT)
+            )
+            return jsonify({
+                'status': 'success' if result.returncode == 0 else 'error',
+                'message': 'Base requirements installed successfully' if result.returncode == 0 else 'pip install failed',
+                'output': _truncate_output(result.stdout, result.stderr)
+            })
+        elif action == 'install_plugin_requirements':
+            active_pm = getattr(api_v3, 'plugin_manager', None)
+            plugins_dir = Path(active_pm.plugins_dir) if active_pm else PROJECT_ROOT / 'plugin-repos'
+            results = []
+            if plugins_dir.exists():
+                for p in sorted(plugins_dir.iterdir()):
+                    req = p / 'requirements.txt'
+                    if p.is_dir() and req.exists():
+                        try:
+                            r = subprocess.run(
+                                [sys.executable, '-m', 'pip', 'install', '--break-system-packages', '-r', str(req)],
+                                capture_output=True, text=True, timeout=60
+                            )
+                            results.append({
+                                'plugin': p.name,
+                                'ok': r.returncode == 0,
+                                'output': _truncate_output(r.stdout, r.stderr)
+                            })
+                        except subprocess.TimeoutExpired:
+                            results.append({'plugin': p.name, 'ok': False, 'output': 'pip install timed out'})
+                        except OSError as exc:
+                            results.append({'plugin': p.name, 'ok': False, 'output': exc.strerror or 'OS error'})
+            ok_count = sum(1 for r in results if r['ok'])
+            all_ok = all(r['ok'] for r in results) if results else True
+            return jsonify({
+                'status': 'success' if all_ok else 'error',
+                'message': f'Processed {len(results)} plugin(s) — {ok_count} succeeded' if results else 'No plugin requirements.txt files found',
+                'details': results
+            })
+        elif action == 'force_git_reset':
+            if not _GIT:
+                return jsonify({'status': 'error', 'message': 'git not found on this system'}), 503
+            project_dir = str(PROJECT_ROOT)
+            fetch = subprocess.run(
+                [_GIT, 'fetch', 'origin'],
+                capture_output=True, text=True, timeout=30, cwd=project_dir
+            )
+            if fetch.returncode != 0:
+                return jsonify({'status': 'error', 'message': 'git fetch failed', 'output': fetch.stderr.strip()})
+            reset = subprocess.run(
+                [_GIT, 'reset', '--hard', 'origin/main'],
+                capture_output=True, text=True, timeout=30, cwd=project_dir
+            )
+            return jsonify({
+                'status': 'success' if reset.returncode == 0 else 'error',
+                'message': 'Reset to origin/main successfully' if reset.returncode == 0 else 'git reset failed',
+                'output': (reset.stdout + reset.stderr).strip()
+            })
+        elif action == 'clear_pycache':
+            cleared = 0
+            failed = 0
+            for d in PROJECT_ROOT.rglob('__pycache__'):
+                if d.is_dir():
+                    try:
+                        shutil.rmtree(d)
+                        cleared += 1
+                    except OSError:
+                        failed += 1
+            msg = f'Cleared {cleared} __pycache__ directories'
+            if failed:
+                msg += f' ({failed} could not be removed)'
+            return jsonify({'status': 'success', 'message': msg})
         else:
             return jsonify({'status': 'error', 'message': 'Unknown action'}), 400
 
@@ -1636,6 +1763,35 @@ def execute_system_action():
     except Exception as e:
         logger.error("execute_system_action failed: %s", e, exc_info=True)
         return jsonify({'status': 'error', 'message': 'Action failed; see logs for details'}), 500
+
+@api_v3.route('/system/git-info', methods=['GET'])
+def get_git_info():
+    """Return branch, dirty state, recent commits and remote URL for the Tools tab."""
+    if not _GIT:
+        return jsonify({'status': 'error', 'message': 'git not found on this system'}), 503
+    d = str(PROJECT_ROOT)
+    try:
+        branch = subprocess.run([_GIT, 'branch', '--show-current'], capture_output=True, text=True, timeout=10, cwd=d)
+        if branch.returncode != 0:
+            return jsonify({'status': 'error', 'message': f'git branch failed: {branch.stderr.strip()}'}), 500
+
+        status = subprocess.run([_GIT, 'status', '--short', '--untracked-files=no'], capture_output=True, text=True, timeout=15, cwd=d)
+        if status.returncode != 0:
+            return jsonify({'status': 'error', 'message': f'git status failed: {status.stderr.strip()}'}), 500
+
+        log    = subprocess.run([_GIT, 'log', '--oneline', '-5'], capture_output=True, text=True, timeout=10, cwd=d)
+        remote = subprocess.run([_GIT, 'remote', 'get-url', 'origin'], capture_output=True, text=True, timeout=10, cwd=d)
+        return jsonify({
+            'branch': branch.stdout.strip(),
+            'dirty': bool(status.stdout.strip()),
+            'status': status.stdout.strip(),
+            'recent_commits': log.stdout.strip() if log.returncode == 0 else '',
+            'remote_url': _scrub_git_remote_url(remote.stdout.strip()) if remote.returncode == 0 else '',
+        })
+    except Exception as e:
+        logger.error("get_git_info failed: %s", e, exc_info=True)
+        return jsonify({'status': 'error', 'message': 'Failed to get git info'}), 500
+
 
 @api_v3.route('/hardware/status', methods=['GET'])
 def get_hardware_status():

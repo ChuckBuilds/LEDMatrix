@@ -1009,6 +1009,11 @@
                             class="nav-tab">
                         <i class="fas fa-history"></i>Operation History
                     </button>
+                    <button @click="activeTab = 'tools'"
+                            :class="activeTab === 'tools' ? 'nav-tab-active' : ''"
+                            class="nav-tab">
+                        <i class="fas fa-tools"></i>Tools
+                    </button>
                 </nav>
             </div>
 
@@ -1285,6 +1290,18 @@
                         <div class="bg-white rounded-lg shadow p-6">
                             <div class="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
                             <div class="h-64 bg-gray-200 rounded"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tools tab -->
+            <div x-show="activeTab === 'tools'" x-transition>
+                <div id="tools-content" hx-get="/v3/partials/tools" hx-trigger="loadtab" hx-swap="innerHTML">
+                    <div class="animate-pulse">
+                        <div class="bg-white rounded-lg shadow p-6">
+                            <div class="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
+                            <div class="h-32 bg-gray-200 rounded"></div>
                         </div>
                     </div>
                 </div>
@@ -1905,7 +1922,22 @@
                             if (tab === 'overview' && typeof loadOverviewDirect === 'function') loadOverviewDirect();
                             else if (tab === 'wifi' && typeof loadWifiDirect === 'function') loadWifiDirect();
                             else if (tab === 'plugins' && typeof loadPluginsDirect === 'function') loadPluginsDirect();
-                        }
+                            else if (tab === 'tools') {
+                                fetch('/v3/partials/tools')
+                                    .then(r => {
+                                        if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
+                                        return r.text();
+                                    })
+                                    .then(html => {
+                                        contentEl.innerHTML = html;
+                                        contentEl.setAttribute('data-loaded', 'true');
+                                        if (window.Alpine) window.Alpine.initTree(contentEl);
+                                    })
+                                    .catch(err => {
+                                        console.error('Failed to load tools content:', err);
+                                        contentEl.innerHTML = '<div class="bg-red-50 border border-red-200 rounded-lg p-4"><p class="text-red-800">Failed to load Tools. Please refresh the page.</p></div>';
+                                    });
+                            }
                     }, 100);
                 },
 
