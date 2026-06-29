@@ -17,7 +17,7 @@
             <div class="flex items-start justify-between gap-4">
                 <div>
                     <p class="text-sm font-medium text-gray-900">Pull latest (rebase)</p>
-                    <p class="text-xs text-gray-500 mt-0.5">Stashes local changes, runs <code class="bg-gray-100 px-1 rounded">git pull --rebase</code>, then restores the stash.</p>
+                    <p class="text-xs text-gray-500 mt-0.5">Stashes any local changes, then runs <code class="bg-gray-100 px-1 rounded">git pull --rebase</code>. The stash is preserved but not re-applied.</p>
                 </div>
                 <button id="btn-git-pull" onclick="toolsAction('git_pull', 'btn-git-pull', 'result-git-pull')"
                         class="shrink-0 inline-flex items-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
@@ -264,8 +264,16 @@
         if (!panel) return;
 
         fetch('/api/v3/system/git-info')
-            .then(r => r.json())
+            .then(r => {
+                if (!r.ok) return r.json().then(d => Promise.reject(d.message || `HTTP ${r.status}`));
+                return r.json();
+            })
             .then(d => {
+                if (d.status === 'error') {
+                    panel.innerHTML = `<span class="text-sm text-red-600">${escHtml(d.message || 'Git info unavailable.')}</span>`;
+                    return;
+                }
+
                 const dirtyBadge = d.dirty
                     ? '<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800">dirty</span>'
                     : '<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">clean</span>';
@@ -295,8 +303,8 @@
                 html += `</div>`;
                 panel.innerHTML = html;
             })
-            .catch(() => {
-                panel.innerHTML = '<span class="text-sm text-red-600">Could not load git info.</span>';
+            .catch(err => {
+                panel.innerHTML = `<span class="text-sm text-red-600">Could not load git info: ${escHtml(String(err))}</span>`;
             });
     }
 

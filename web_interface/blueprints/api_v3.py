@@ -829,6 +829,19 @@ def save_main_config():
                     return jsonify({'status': 'error', 'message': "Double-sided copies must be an integer"}), 400
                 if not (2 <= copies <= 8):
                     return jsonify({'status': 'error', 'message': "Double-sided copies must be between 2 and 8"}), 400
+                # Validate divisibility against the relevant hardware dimension.
+                # Use axis from this request if provided, else from stored config.
+                hw = current_config.get('display', {}).get('hardware', {})
+                effective_axis = (data.get('double_sided_axis')
+                                  or current_config.get('display', {}).get('double_sided', {}).get('axis', 'horizontal'))
+                if effective_axis == 'horizontal':
+                    chain_length = int(hw.get('chain_length', 2) or 2)
+                    if chain_length % copies != 0:
+                        return jsonify({'status': 'error', 'message': f"Double-sided copies ({copies}) must divide chain length ({chain_length}) evenly"}), 400
+                elif effective_axis == 'vertical':
+                    parallel = int(hw.get('parallel', 1) or 1)
+                    if parallel % copies != 0:
+                        return jsonify({'status': 'error', 'message': f"Double-sided copies ({copies}) must divide parallel ({parallel}) evenly"}), 400
                 ds_config['copies'] = copies
 
             if 'double_sided_axis' in data:
@@ -1081,6 +1094,8 @@ def save_main_config():
             if key in sync_fields:
                 continue
             if key in vegas_fields:
+                continue
+            if key in double_sided_fields:
                 continue
             # For any remaining keys (including plugin keys), use deep merge to preserve existing settings
             if key in current_config and isinstance(current_config[key], dict) and isinstance(data[key], dict):
@@ -1673,15 +1688,20 @@ def execute_system_action():
                 for p in sorted(plugins_dir.iterdir()):
                     req = p / 'requirements.txt'
                     if p.is_dir() and req.exists():
-                        r = subprocess.run(
-                            [sys.executable, '-m', 'pip', 'install', '--break-system-packages', '-r', str(req)],
-                            capture_output=True, text=True, timeout=60
-                        )
-                        results.append({
-                            'plugin': p.name,
-                            'ok': r.returncode == 0,
-                            'output': _truncate_output(r.stdout, r.stderr)
-                        })
+                        try:
+                            r = subprocess.run(
+                                [sys.executable, '-m', 'pip', 'install', '--break-system-packages', '-r', str(req)],
+                                capture_output=True, text=True, timeout=60
+                            )
+                            results.append({
+                                'plugin': p.name,
+                                'ok': r.returncode == 0,
+                                'output': _truncate_output(r.stdout, r.stderr)
+                            })
+                        except subprocess.TimeoutExpired:
+                            results.append({'plugin': p.name, 'ok': False, 'output': 'pip install timed out'})
+                        except OSError as exc:
+                            results.append({'plugin': p.name, 'ok': False, 'output': str(exc)})
             ok_count = sum(1 for r in results if r['ok'])
             all_ok = all(r['ok'] for r in results) if results else True
             return jsonify({
