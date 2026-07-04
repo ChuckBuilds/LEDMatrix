@@ -43,6 +43,42 @@ def _truncate_output(stdout: str, stderr: str) -> str:
     return combined
 
 
+def _pip_install_requirements(req_file: Path, timeout: int) -> subprocess.CompletedProcess:
+    """Install a requirements.txt file, preferring the vetted sudo wrapper so
+    the packages are visible to root-run ledmatrix.service — not just to
+    whichever non-root user runs this web process. Falls back to installing
+    for the current process only if the wrapper isn't set up yet (i.e. the
+    admin hasn't run scripts/install/configure_web_sudo.sh since upgrading),
+    so the button still does *something* useful rather than hard-failing.
+    """
+    wrapper = PROJECT_ROOT / 'scripts' / 'fix_perms' / 'safe_pip_install.sh'
+    if wrapper.exists():
+        result = subprocess.run(
+            ['sudo', '-n', str(wrapper), str(req_file)],
+            capture_output=True, text=True, timeout=timeout, cwd=str(PROJECT_ROOT)
+        )
+        if result.returncode == 0:
+            return result
+        note = (
+            f"[Root install unavailable ({result.stderr.strip() or 'sudo denied'}); "
+            "installed for the web service's user only. Packages may not be "
+            "visible to ledmatrix.service if it runs as a different user — "
+            "run scripts/install/configure_web_sudo.sh to fix this.]\n"
+        )
+    else:
+        note = (
+            "[safe_pip_install.sh not found; installed for the web service's "
+            "user only. Run scripts/install/configure_web_sudo.sh to enable "
+            "root installs visible to ledmatrix.service.]\n"
+        )
+    result = subprocess.run(
+        [sys.executable, '-m', 'pip', 'install', '--break-system-packages', '-r', str(req_file)],
+        capture_output=True, text=True, timeout=timeout, cwd=str(PROJECT_ROOT)
+    )
+    result.stdout = note + (result.stdout or '')
+    return result
+
+
 def _scrub_git_remote_url(url: str) -> str:
     """Strip embedded username/password from an HTTPS remote URL before returning it to the UI."""
     try:
@@ -1671,10 +1707,7 @@ def execute_system_action():
             req_file = PROJECT_ROOT / 'requirements.txt'
             if not req_file.exists():
                 return jsonify({'status': 'error', 'message': 'No requirements.txt found at project root'})
-            result = subprocess.run(
-                [sys.executable, '-m', 'pip', 'install', '--break-system-packages', '-r', str(req_file)],
-                capture_output=True, text=True, timeout=120, cwd=str(PROJECT_ROOT)
-            )
+            result = _pip_install_requirements(req_file, timeout=120)
             return jsonify({
                 'status': 'success' if result.returncode == 0 else 'error',
                 'message': 'Base requirements installed successfully' if result.returncode == 0 else 'pip install failed',
@@ -1695,10 +1728,7 @@ def execute_system_action():
                     req = p / 'requirements.txt'
                     if p.is_dir() and req.exists():
                         try:
-                            r = subprocess.run(
-                                [sys.executable, '-m', 'pip', 'install', '--break-system-packages', '-r', str(req)],
-                                capture_output=True, text=True, timeout=60
-                            )
+                            r = _pip_install_requirements(req, timeout=60)
                             results.append({
                                 'plugin': p.name,
                                 'ok': r.returncode == 0,

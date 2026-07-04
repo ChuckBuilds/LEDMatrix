@@ -33,6 +33,7 @@ POWEROFF_PATH=$(command -v poweroff)  || true
 BASH_PATH=$(command -v bash)        || true
 JOURNALCTL_PATH=$(command -v journalctl) || true
 SAFE_RM_PATH="$PROJECT_ROOT/scripts/fix_perms/safe_plugin_rm.sh"
+SAFE_PIP_INSTALL_PATH="$PROJECT_ROOT/scripts/fix_perms/safe_pip_install.sh"
 
 # Validate required commands (systemctl, bash, python3 are essential)
 for CMD_NAME in SYSTEMCTL_PATH BASH_PATH PYTHON_PATH; do
@@ -48,9 +49,13 @@ if [ ${#MISSING_CMDS[@]} -gt 0 ]; then
     exit 1
 fi
 
-# Validate helper script exists
+# Validate helper scripts exist
 if [ ! -f "$SAFE_RM_PATH" ]; then
     echo "Error: Safe plugin removal helper not found: $SAFE_RM_PATH" >&2
+    exit 1
+fi
+if [ ! -f "$SAFE_PIP_INSTALL_PATH" ]; then
+    echo "Error: Safe pip install helper not found: $SAFE_PIP_INSTALL_PATH" >&2
     exit 1
 fi
 
@@ -62,6 +67,7 @@ echo "  Poweroff: ${POWEROFF_PATH:-(not found, skipping)}"
 echo "  Bash: $BASH_PATH"
 echo "  Journalctl: ${JOURNALCTL_PATH:-(not found, skipping)}"
 echo "  Safe plugin rm: $SAFE_RM_PATH"
+echo "  Safe pip install: $SAFE_PIP_INSTALL_PATH"
 
 # Create a temporary sudoers file
 TEMP_SUDOERS="/tmp/ledmatrix_web_sudoers_$$"
@@ -101,13 +107,22 @@ TEMP_SUDOERS="/tmp/ledmatrix_web_sudoers_$$"
     fi
 
     # Required: python3, bash
-    echo "$WEB_USER ALL=(ALL) NOPASSWD: $PYTHON_PATH $PROJECT_DIR/display_controller.py"
-    echo "$WEB_USER ALL=(ALL) NOPASSWD: $BASH_PATH $PROJECT_DIR/start_display.sh"
-    echo "$WEB_USER ALL=(ALL) NOPASSWD: $BASH_PATH $PROJECT_DIR/stop_display.sh"
+    # NOTE: display_controller.py/start_display.sh/stop_display.sh live at the
+    # project root, not under scripts/install/ (where this script lives) —
+    # must use PROJECT_ROOT here, not PROJECT_DIR.
+    echo "$WEB_USER ALL=(ALL) NOPASSWD: $PYTHON_PATH $PROJECT_ROOT/display_controller.py"
+    echo "$WEB_USER ALL=(ALL) NOPASSWD: $BASH_PATH $PROJECT_ROOT/start_display.sh"
+    echo "$WEB_USER ALL=(ALL) NOPASSWD: $BASH_PATH $PROJECT_ROOT/stop_display.sh"
     echo ""
     echo "# Allow web user to remove plugin directories via vetted helper script"
     echo "# The helper validates that the target path resolves inside plugin-repos/ or plugins/"
     echo "$WEB_USER ALL=(ALL) NOPASSWD: $BASH_PATH $SAFE_RM_PATH *"
+    echo ""
+    echo "# Allow web user to install a plugin's requirements.txt as root via vetted"
+    echo "# helper script, so packages are visible to root-run ledmatrix.service"
+    echo "# (not just the web interface's own user). The helper validates the target"
+    echo "# is requirements.txt at the project root or under plugin-repos/ or plugins/."
+    echo "$WEB_USER ALL=(ALL) NOPASSWD: $BASH_PATH $SAFE_PIP_INSTALL_PATH *"
 } > "$TEMP_SUDOERS"
 
 echo ""
@@ -126,6 +141,7 @@ echo "- Run display_controller.py directly"
 echo "- Execute start_display.sh and stop_display.sh"
 echo "- Reboot and shutdown the system"
 echo "- Remove plugin directories (for update/uninstall when root-owned files block deletion)"
+echo "- Install plugin/base requirements.txt as root (so ledmatrix.service can see them)"
 echo ""
 
 # Ask for confirmation
@@ -147,6 +163,13 @@ fi
 if ! sudo chmod 755 "$SAFE_RM_PATH"; then
     echo "Warning: Could not set permissions on $SAFE_RM_PATH"
 fi
+echo "Hardening safe_pip_install.sh ownership..."
+if ! sudo chown root:root "$SAFE_PIP_INSTALL_PATH"; then
+    echo "Warning: Could not set ownership on $SAFE_PIP_INSTALL_PATH"
+fi
+if ! sudo chmod 755 "$SAFE_PIP_INSTALL_PATH"; then
+    echo "Warning: Could not set permissions on $SAFE_PIP_INSTALL_PATH"
+fi
 
 if sudo cp "$TEMP_SUDOERS" /etc/sudoers.d/ledmatrix_web; then
     echo "Configuration applied successfully!"
@@ -160,7 +183,7 @@ if sudo cp "$TEMP_SUDOERS" /etc/sudoers.d/ledmatrix_web; then
         echo "✗ systemctl status ledmatrix.service - Failed"
     fi
     
-    if sudo -n test -f "$PROJECT_DIR/start_display.sh"; then
+    if sudo -n test -f "$PROJECT_ROOT/start_display.sh"; then
         echo "✓ File access test - OK"
     else
         echo "✗ File access test - Failed"
