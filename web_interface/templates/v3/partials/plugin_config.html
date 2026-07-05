@@ -450,15 +450,16 @@
                                             </div>
                                         </td>
                                         <td class="px-4 py-3 whitespace-nowrap text-center">
-                                            <input type="hidden" name="{{ full_key }}.{{ item_index }}.enabled" value="false">
-                                            <input type="checkbox" 
+                                            <input type="hidden" name="{{ full_key }}.{{ item_index }}.enabled" value="{{ 'true' if item.get('enabled', true) else 'false' }}">
+                                            <input type="checkbox"
                                                    name="{{ full_key }}.{{ item_index }}.enabled"
                                                    {% if item.get('enabled', true) %}checked{% endif %}
                                                    value="true"
+                                                   onchange="this.previousElementSibling.value = this.checked ? 'true' : 'false'"
                                                    class="h-4 w-4 text-blue-600">
                                         </td>
                                         <td class="px-4 py-3 whitespace-nowrap text-center">
-                                            <button type="button" 
+                                            <button type="button"
                                                     onclick="removeCustomFeedRow(this)"
                                                     class="text-red-600 hover:text-red-800 px-2 py-1">
                                                 <i class="fas fa-trash"></i>
@@ -549,11 +550,18 @@
                                         {% else %}{% set td_min_w = '110px' %}{% endif %}
                                         <td class="px-3 py-3 whitespace-nowrap" style="min-width:{{ td_min_w }};vertical-align:middle">
                                             {% if col_type == 'boolean' %}
-                                                <input type="hidden" name="{{ full_key }}.{{ item_index }}.{{ col_name }}" value="false">
+                                                {# Hidden sentinel ensures unchecked boxes still submit "false" (browsers
+                                                   omit unchecked checkboxes entirely). It shares the checkbox's `name`,
+                                                   so it must always mirror the checkbox's actual state — both here at
+                                                   render time and on every toggle — or whichever of the two same-named
+                                                   inputs the save request happens to prefer can silently revert this
+                                                   field to false regardless of what's checked. #}
+                                                <input type="hidden" name="{{ full_key }}.{{ item_index }}.{{ col_name }}" value="{{ 'true' if col_value else 'false' }}">
                                                 <input type="checkbox"
                                                        name="{{ full_key }}.{{ item_index }}.{{ col_name }}"
                                                        {% if col_value %}checked{% endif %}
                                                        value="true"
+                                                       onchange="this.previousElementSibling.value = this.checked ? 'true' : 'false'"
                                                        class="h-4 w-4 text-blue-600">
                                             {% elif col_type == 'integer' or col_type == 'number' %}
                                                 <input type="number"

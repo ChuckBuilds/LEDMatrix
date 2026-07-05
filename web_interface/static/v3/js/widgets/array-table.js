@@ -174,11 +174,16 @@
         cell.style.verticalAlign = 'middle';
 
         if (colType === 'boolean') {
-            // Boolean: hidden sentinel + visible checkbox
+            // Boolean: hidden sentinel + visible checkbox, same `name` (so
+            // unchecked boxes still submit "false"). Keep the hidden's value
+            // synced to the checkbox at all times — some form-collection
+            // paths prefer whichever of the two same-named inputs comes
+            // first/last in the DOM, and a stale hidden value previously
+            // caused this field to silently revert to false on every save.
             const hidden = document.createElement('input');
             hidden.type  = 'hidden';
             hidden.name  = inputName;
-            hidden.value = 'false';
+            hidden.value = String(Boolean(colValue));
             cell.appendChild(hidden);
 
             const cb = document.createElement('input');
@@ -187,6 +192,9 @@
             cb.checked   = Boolean(colValue);
             cb.value     = 'true';
             cb.className = 'h-4 w-4 text-blue-600';
+            cb.addEventListener('change', () => {
+                hidden.value = String(cb.checked);
+            });
             cell.appendChild(cb);
 
         } else if (colType === 'integer' || colType === 'number') {
