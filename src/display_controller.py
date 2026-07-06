@@ -1545,10 +1545,11 @@ class DisplayController:
     def run(self):
         """Run the display controller, switching between displays."""
         if not self.available_modes:
-            logger.warning("No display modes are enabled. Exiting.")
-            self.display_manager.cleanup()
-            return
-             
+            logger.warning(
+                "No display modes are enabled at startup; idling until a "
+                "plugin is enabled via the web UI."
+            )
+
         try:
             # Initialize with cached data for fast startup - let background updates refresh naturally
             logger.info("Starting display with cached data (fast startup mode)")
@@ -1564,6 +1565,14 @@ class DisplayController:
                 if self._pending_plugin_reconcile and not self.on_demand_active:
                     self._pending_plugin_reconcile = False
                     self._reconcile_enabled_plugins()
+
+                if not self.available_modes:
+                    # Nothing to render yet; keep servicing plugin update
+                    # schedules and the reconcile flag so we pick up a mode
+                    # as soon as one is enabled via the web UI, instead of
+                    # having exited already at startup.
+                    self._sleep_with_plugin_updates(30)
+                    continue
 
                 # Handle on-demand commands before rendering
                 self._poll_on_demand_requests()
@@ -2302,7 +2311,7 @@ class DisplayController:
                         except Exception as e:
                             logger.warning("Error checking live priority for %s: %s", active_mode, e)
                 
-                if should_rotate:
+                if should_rotate and self.available_modes:
                     self.current_mode_index = (self.current_mode_index + 1) % len(self.available_modes)
                     self.current_display_mode = self.available_modes[self.current_mode_index]
                     self.last_mode_change = time.time()
@@ -2551,13 +2560,16 @@ class DisplayController:
             self.plugin_modes.pop(mode, None)
             self.mode_to_plugin_id.pop(mode, None)
 
-        # Unsubscribe the plugin's config-change callback.
-        callback = self._plugin_config_callbacks.pop(plugin_id, None)
+        # Unsubscribe the plugin's config-change callback. Pop only after the
+        # unsubscribe attempt so a failed unsubscribe doesn't lose our only
+        # reference to the callback before config_service has processed it.
+        callback = self._plugin_config_callbacks.get(plugin_id)
         if callback is not None and hasattr(self, 'config_service'):
             try:
                 self.config_service.unsubscribe(callback, plugin_id=plugin_id)
             except Exception as e:
                 logger.debug("Error unsubscribing plugin %s from config changes: %s", plugin_id, e)
+        self._plugin_config_callbacks.pop(plugin_id, None)
 
         self._plugin_accepts_display_mode.pop(plugin_id, None)
 
@@ -2590,7 +2602,8 @@ class DisplayController:
             return
         try:
             config = self.config_service.get_config()
-        except Exception:
+        except Exception as e:
+            logger.warning("Plugin reconcile: falling back to cached config: %s", e)
             config = self.config
         try:
             discovered = set(self.plugin_manager.discover_plugins())
@@ -2598,7 +2611,10 @@ class DisplayController:
             logger.error("Plugin reconcile: discovery failed: %s", e, exc_info=True)
             return
 
-        desired = {p for p in discovered if config.get(p, {}).get('enabled', False)}
+        desired = {
+            p for p in discovered
+            if isinstance(config.get(p), dict) and config.get(p, {}).get('enabled', False)
+        }
         current = set(self.plugin_display_modes.keys())
         to_add = desired - current
         to_remove = current - desired

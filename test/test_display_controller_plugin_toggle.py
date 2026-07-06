@@ -131,6 +131,48 @@ class TestPluginEnableDisableHotReload:
         assert controller.plugin_manager.load_plugin.call_count == load_calls
         assert controller.plugin_manager.unload_plugin.call_count == unload_calls
 
+    def test_reconcile_ignores_non_dict_config_value(self, test_display_controller):
+        """A malformed config value (e.g. a stray string where a plugin's
+        section should be a dict) must be treated as disabled, not crash
+        the reconcile with AttributeError."""
+        controller = test_display_controller
+        plugin = _make_plugin(["foo"])
+        _wire_plugin_manager(controller, {"foo": plugin}, discovered=["foo"])
+        _set_config(controller, {"foo": "not-a-dict"})
+
+        controller._reconcile_enabled_plugins()  # must not raise
+
+        assert "foo" not in controller.plugin_display_modes
+        assert "foo" not in controller.available_modes
+
+
+class TestRunWithNoModesEnabled:
+    """Before hot-reload, an empty available_modes at startup was permanent
+    -- the display never came back without a restart. Now that a plugin can
+    be enabled live from the web UI, run() must idle rather than exit."""
+
+    def test_idles_instead_of_exiting(self, test_display_controller):
+        controller = test_display_controller
+        assert controller.available_modes == []
+
+        sleep_calls = []
+
+        def fake_sleep(duration, tick_interval=1.0):
+            sleep_calls.append(duration)
+            if len(sleep_calls) >= 3:
+                # Stand in for the process being torn down; run() catches
+                # this via its broad except + finally, same as any other
+                # unexpected error during the loop.
+                raise RuntimeError("stop-test-loop")
+
+        controller._sleep_with_plugin_updates = fake_sleep
+
+        controller.run()
+
+        # Old behavior returned before ever reaching the loop body, so
+        # _sleep_with_plugin_updates would never have been called.
+        assert sleep_calls == [30, 30, 30]
+
 
 class TestEnabledSetChanged:
     def test_detects_toggle(self, test_display_controller):
