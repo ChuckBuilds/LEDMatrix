@@ -62,20 +62,60 @@ def _pip_install_requirements(req_file: Path, timeout: int) -> subprocess.Comple
         # install that only has the specific rules this script provisions —
         # it only appeared to work in prior testing because that device also
         # had a broader, non-standard NOPASSWD: ALL grant.
-        bash_path = shutil.which('bash') or '/bin/bash'
-        result = subprocess.run(
-            ['sudo', '-n', bash_path, str(wrapper), str(req_file)],
-            capture_output=True, text=True, timeout=timeout, cwd=str(PROJECT_ROOT)
+        #
+        # $BASH_PATH is resolved once at setup time (configure_web_sudo.sh's
+        # `command -v bash`) and baked into the static sudoers file as a
+        # literal path; sudo requires an exact string match against that, so
+        # if this process's own PATH resolves bash somewhere else, the
+        # sudoers rule won't match here either. Try the standard Debian/
+        # Raspberry Pi OS locations first, then this process's own
+        # resolution, so a divergence in just one of them doesn't break this.
+        bash_candidates = []
+        for candidate in ('/usr/bin/bash', '/bin/bash', shutil.which('bash')):
+            if candidate and candidate not in bash_candidates:
+                bash_candidates.append(candidate)
+
+        result = None
+        for bash_path in bash_candidates:
+            result = subprocess.run(
+                ['sudo', '-n', bash_path, str(wrapper), str(req_file)],
+                capture_output=True, text=True, timeout=timeout, cwd=str(PROJECT_ROOT)
+            )
+            if result.returncode == 0:
+                return result
+            # Best-effort distinction between "sudo rejected this exact
+            # command line" (no matching NOPASSWD rule for this bash path —
+            # worth trying the next candidate) and "sudo ran it but the
+            # wrapper/pip itself failed" (a real error — stop and surface it
+            # rather than uselessly retrying other bash paths or doubling up
+            # with a redundant non-root install attempt).
+            denied = any(
+                phrase in result.stderr
+                for phrase in ('a password is required', 'is not allowed to run', 'no tty present')
+            )
+            if not denied:
+                logger.warning(
+                    "[Pip Install] Root install failed (rc=%s) for %s: %s",
+                    result.returncode, req_file, result.stderr.strip()[:500],
+                )
+                return result
+
+        logger.warning(
+            "[Pip Install] Root wrapper denied via sudo for %s; falling back "
+            "to user-level install: %s",
+            req_file, result.stderr.strip()[:500] if result else 'no bash candidates found',
         )
-        if result.returncode == 0:
-            return result
         note = (
-            f"[Root install unavailable ({result.stderr.strip() or 'sudo denied'}); "
+            f"[Root install unavailable ({(result.stderr.strip() if result else 'sudo denied') or 'sudo denied'}); "
             "installed for the web service's user only. Packages may not be "
             "visible to ledmatrix.service if it runs as a different user — "
             "run scripts/install/configure_web_sudo.sh to fix this.]\n"
         )
     else:
+        logger.warning(
+            "[Pip Install] safe_pip_install.sh not found; falling back to user-level install for %s",
+            req_file,
+        )
         note = (
             "[safe_pip_install.sh not found; installed for the web service's "
             "user only. Run scripts/install/configure_web_sudo.sh to enable "
