@@ -53,8 +53,18 @@ def _pip_install_requirements(req_file: Path, timeout: int) -> subprocess.Comple
     """
     wrapper = PROJECT_ROOT / 'scripts' / 'fix_perms' / 'safe_pip_install.sh'
     if wrapper.exists():
+        # Must invoke via an explicit `bash <path>` — matching both the
+        # sudoers rule configure_web_sudo.sh provisions ($BASH_PATH
+        # $SAFE_PIP_INSTALL_PATH *) and the existing safe_plugin_rm.sh call
+        # in src/common/permission_utils.py. Calling the script path directly
+        # (relying on its shebang) makes sudo check a different command line
+        # than what's actually allowlisted, so `sudo -n` denies it on any
+        # install that only has the specific rules this script provisions —
+        # it only appeared to work in prior testing because that device also
+        # had a broader, non-standard NOPASSWD: ALL grant.
+        bash_path = shutil.which('bash') or '/bin/bash'
         result = subprocess.run(
-            ['sudo', '-n', str(wrapper), str(req_file)],
+            ['sudo', '-n', bash_path, str(wrapper), str(req_file)],
             capture_output=True, text=True, timeout=timeout, cwd=str(PROJECT_ROOT)
         )
         if result.returncode == 0:
