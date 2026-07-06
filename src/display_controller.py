@@ -24,7 +24,7 @@ import time
 import os
 import json
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Callable
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed  # pylint: disable=no-name-in-module
 import pytz
@@ -163,6 +163,13 @@ class DisplayController:
         self.plugin_modes = {}  # mode -> plugin_instance mapping for plugin-first dispatch
         self.mode_to_plugin_id: Dict[str, str] = {}
         self.plugin_display_modes: Dict[str, List[str]] = {}
+        # Per-plugin config-change callbacks, kept so we can unsubscribe a
+        # plugin when it is disabled live.
+        self._plugin_config_callbacks: Dict[str, Callable] = {}
+        # Set by the config-watcher thread when the enabled-plugin set changes;
+        # the main run loop reconciles (loads/unloads) on its own thread so
+        # mutating available_modes never races with rendering.
+        self._pending_plugin_reconcile = False
         self.on_demand_active = False
         self.on_demand_mode: Optional[str] = None
         self.on_demand_modes: List[str] = []  # All modes for the on-demand plugin
@@ -331,47 +338,10 @@ class DisplayController:
                         logger.info("✓ Loaded plugin %s in %.3f seconds (%d/%d)", 
                                   plugin_id, result['load_time'], loaded_count, enabled_count)
                         
-                        # Get plugin instance and manifest
-                        plugin_instance = self.plugin_manager.get_plugin(plugin_id)
-                        manifest = self.plugin_manager.plugin_manifests.get(plugin_id, {})
-                        
-                        # Prefer plugin's modes attribute if available (dynamic based on enabled leagues)
-                        # Fall back to manifest display_modes if plugin doesn't provide modes
-                        if plugin_instance and hasattr(plugin_instance, 'modes') and plugin_instance.modes:
-                            display_modes = list(plugin_instance.modes)
-                            logger.debug("Using plugin.modes for %s: %s", plugin_id, display_modes)
-                        else:
-                            display_modes = manifest.get('display_modes', [plugin_id])
-                            logger.debug("Using manifest display_modes for %s: %s", plugin_id, display_modes)
-                        
-                        if isinstance(display_modes, list) and display_modes:
-                            self.plugin_display_modes[plugin_id] = list(display_modes)
-                        else:
-                            display_modes = [plugin_id]
-                            self.plugin_display_modes[plugin_id] = list(display_modes)
-                        
-                        # Subscribe plugin to config changes for hot-reload
-                        if hasattr(self, 'config_service') and hasattr(plugin_instance, 'on_config_change'):
-                            def config_change_callback(old_config: Dict[str, Any], new_config: Dict[str, Any]) -> None:
-                                """Callback for plugin config changes."""
-                                try:
-                                    plugin_instance.on_config_change(new_config)
-                                    logger.debug("Plugin %s notified of config change", plugin_id)
-                                except Exception as e:
-                                    logger.error("Error in plugin %s config change handler: %s", plugin_id, e, exc_info=True)
-                            
-                            self.config_service.subscribe(config_change_callback, plugin_id=plugin_id)
-                            logger.debug("Subscribed plugin %s to config changes", plugin_id)
-                        
-                        # Add plugin modes to available modes
-                        for mode in display_modes:
-                            self.available_modes.append(mode)
-                            self.plugin_modes[mode] = plugin_instance
-                            self.mode_to_plugin_id[mode] = plugin_id
-                            logger.debug("  Added mode: %s", mode)
-                        # Invalidate signature cache so the new instance is re-inspected
-                        self._plugin_accepts_display_mode.pop(plugin_id, None)
-                        
+                        # Register the loaded plugin's modes, config subscription
+                        # and dispatch maps (shared with live enable hot-reload).
+                        self._register_loaded_plugin(plugin_id)
+
                         # Show progress
                         progress_pct = int((loaded_count / enabled_count) * 100)
                         elapsed = time.time() - plugin_time
@@ -447,6 +417,10 @@ class DisplayController:
         # when the user saves settings via the web UI.
         def _controller_config_change(old_config: Dict[str, Any], new_config: Dict[str, Any]) -> None:
             self._refresh_config_cache(new_config)
+            # If a plugin was enabled/disabled, flag a reconcile for the main
+            # loop to apply (loading/unloading off the watcher thread is unsafe).
+            if self._enabled_set_changed(old_config, new_config):
+                self._pending_plugin_reconcile = True
 
         self.config_service.subscribe(_controller_config_change)
 
@@ -1571,10 +1545,11 @@ class DisplayController:
     def run(self):
         """Run the display controller, switching between displays."""
         if not self.available_modes:
-            logger.warning("No display modes are enabled. Exiting.")
-            self.display_manager.cleanup()
-            return
-             
+            logger.warning(
+                "No display modes are enabled at startup; idling until a "
+                "plugin is enabled via the web UI."
+            )
+
         try:
             # Initialize with cached data for fast startup - let background updates refresh naturally
             logger.info("Starting display with cached data (fast startup mode)")
@@ -1582,6 +1557,25 @@ class DisplayController:
             logger.info(f"Initial mode set to: {self.current_display_mode} (index: {self.current_mode_index}, total modes: {len(self.available_modes)})")
             
             while True:
+                # Apply plugin enable/disable edits saved via the web UI. The
+                # config-watcher thread only sets the flag; loading/unloading and
+                # rebuilding available_modes happens here on the render thread so
+                # it can't race with rendering. Deferred while on-demand is active
+                # (the flag stays set) so we don't fight its temporary-enable.
+                if self._pending_plugin_reconcile and not self.on_demand_active:
+                    # Only clear the flag on success -- a retryable failure
+                    # (e.g. discovery) leaves it set so the request isn't lost.
+                    if self._reconcile_enabled_plugins():
+                        self._pending_plugin_reconcile = False
+
+                if not self.available_modes:
+                    # Nothing to render yet. Re-check _pending_plugin_reconcile
+                    # every ~1s (rather than a long sleep) so enabling a plugin
+                    # via the web UI is picked up about as promptly as it would
+                    # be once modes exist and the loop is iterating per-frame.
+                    self._sleep_with_plugin_updates(1)
+                    continue
+
                 # Handle on-demand commands before rendering
                 self._poll_on_demand_requests()
                 self._check_on_demand_expiration()
@@ -2319,7 +2313,7 @@ class DisplayController:
                         except Exception as e:
                             logger.warning("Error checking live priority for %s: %s", active_mode, e)
                 
-                if should_rotate:
+                if should_rotate and self.available_modes:
                     self.current_mode_index = (self.current_mode_index + 1) % len(self.available_modes)
                     self.current_display_mode = self.available_modes[self.current_mode_index]
                     self.last_mode_change = time.time()
@@ -2506,6 +2500,176 @@ class DisplayController:
             # Reset state on any error
             self.wifi_status_active = False
             self.wifi_status_expires_at = None
+
+    def _register_loaded_plugin(self, plugin_id: str) -> List[str]:
+        """Register an already-loaded plugin's display modes, config-change
+        subscription and dispatch maps with the controller.
+
+        Shared by startup loading and live enable hot-reload so both paths
+        build identical controller state. Returns the registered modes.
+        """
+        plugin_instance = self.plugin_manager.get_plugin(plugin_id)
+        manifest = self.plugin_manager.plugin_manifests.get(plugin_id, {})
+
+        # Prefer the plugin's dynamic modes attribute (e.g. based on enabled
+        # leagues), else fall back to manifest display_modes, else the id.
+        if plugin_instance is not None and getattr(plugin_instance, 'modes', None):
+            display_modes = list(plugin_instance.modes)
+            logger.debug("Using plugin.modes for %s: %s", plugin_id, display_modes)
+        else:
+            display_modes = manifest.get('display_modes', [plugin_id])
+            logger.debug("Using manifest display_modes for %s: %s", plugin_id, display_modes)
+        if not (isinstance(display_modes, list) and display_modes):
+            display_modes = [plugin_id]
+        self.plugin_display_modes[plugin_id] = list(display_modes)
+
+        # Subscribe to config changes for per-plugin hot-reload. Bind plugin_id
+        # and instance as defaults so each plugin's callback targets its own
+        # instance (avoids late-binding when registering many plugins), and
+        # remember the callback so we can unsubscribe on disable.
+        if hasattr(self, 'config_service') and hasattr(plugin_instance, 'on_config_change'):
+            def config_change_callback(old_config: Dict[str, Any], new_config: Dict[str, Any],
+                                       _pid: str = plugin_id, _plugin: Any = plugin_instance) -> None:
+                """Callback for plugin config changes."""
+                try:
+                    _plugin.on_config_change(new_config)
+                    logger.debug("Plugin %s notified of config change", _pid)
+                except Exception as e:
+                    logger.error("Error in plugin %s config change handler: %s", _pid, e, exc_info=True)
+
+            self.config_service.subscribe(config_change_callback, plugin_id=plugin_id)
+            self._plugin_config_callbacks[plugin_id] = config_change_callback
+            logger.debug("Subscribed plugin %s to config changes", plugin_id)
+
+        # Add modes to the dispatch maps.
+        for mode in display_modes:
+            if mode not in self.available_modes:
+                self.available_modes.append(mode)
+            self.plugin_modes[mode] = plugin_instance
+            self.mode_to_plugin_id[mode] = plugin_id
+            logger.debug("  Added mode: %s", mode)
+        # Invalidate signature cache so the new instance is re-inspected.
+        self._plugin_accepts_display_mode.pop(plugin_id, None)
+        return display_modes
+
+    def _unregister_plugin(self, plugin_id: str) -> None:
+        """Remove a plugin's modes, config subscription and instance, then
+        unload it. Used by live disable hot-reload."""
+        modes = self.plugin_display_modes.pop(plugin_id, [])
+        for mode in modes:
+            if mode in self.available_modes:
+                self.available_modes.remove(mode)
+            self.plugin_modes.pop(mode, None)
+            self.mode_to_plugin_id.pop(mode, None)
+
+        # Unsubscribe the plugin's config-change callback. Pop only on a
+        # successful unsubscribe -- if it raises, keep our reference so a
+        # later retry (or at least cleanup) still has the real callback
+        # instead of a lost one.
+        callback = self._plugin_config_callbacks.get(plugin_id)
+        if callback is not None and hasattr(self, 'config_service'):
+            try:
+                self.config_service.unsubscribe(callback, plugin_id=plugin_id)
+            except Exception as e:
+                logger.debug("Error unsubscribing plugin %s from config changes: %s", plugin_id, e)
+            else:
+                self._plugin_config_callbacks.pop(plugin_id, None)
+        else:
+            self._plugin_config_callbacks.pop(plugin_id, None)
+
+        self._plugin_accepts_display_mode.pop(plugin_id, None)
+
+        # Tear down the instance (cleanup + on_disable + module unload).
+        try:
+            self.plugin_manager.unload_plugin(plugin_id)
+        except Exception as e:
+            logger.error("Error unloading plugin %s: %s", plugin_id, e, exc_info=True)
+
+        logger.info("Disabled plugin %s live (removed modes: %s)", plugin_id, modes)
+
+    def _enabled_set_changed(self, old_config: Dict[str, Any], new_config: Dict[str, Any]) -> bool:
+        """True if any top-level section's ``enabled`` flag differs between two
+        configs. A cheap watcher-thread check that gates the full reconcile.
+        Non-plugin sections (e.g. schedule) may match too; the reconcile
+        no-ops for anything that isn't a discovered plugin."""
+        def enabled_map(cfg: Dict[str, Any]) -> Dict[str, bool]:
+            return {
+                key: bool(value.get('enabled', False))
+                for key, value in cfg.items()
+                if isinstance(value, dict)
+            }
+        return enabled_map(old_config) != enabled_map(new_config)
+
+    def _reconcile_enabled_plugins(self) -> bool:
+        """Load/unload plugins so the running set matches the enabled set in
+        config. Runs on the main display thread (never the config-watcher
+        thread) so mutating available_modes is race-free against rendering.
+
+        Returns True if reconciliation completed (including a no-op), or
+        False on a retryable failure -- the caller keeps the pending-reconcile
+        flag set in that case so the request isn't silently dropped."""
+        if self.plugin_manager is None:
+            return True
+        try:
+            config = self.config_service.get_config()
+        except Exception as e:
+            logger.warning("Plugin reconcile: falling back to cached config: %s", e)
+            config = self.config
+        try:
+            discovered = set(self.plugin_manager.discover_plugins())
+        except Exception as e:
+            logger.error("Plugin reconcile: discovery failed: %s", e, exc_info=True)
+            return False
+
+        for p in discovered:
+            if p in config and not isinstance(config.get(p), dict):
+                logger.warning(
+                    "Plugin reconcile: config for %s is a %s, not a dict; treating as disabled",
+                    p, type(config.get(p)).__name__
+                )
+
+        desired = {
+            p for p in discovered
+            if isinstance(config.get(p), dict) and config.get(p, {}).get('enabled', False)
+        }
+        current = set(self.plugin_display_modes.keys())
+        to_add = desired - current
+        to_remove = current - desired
+        if not to_add and not to_remove:
+            return True
+
+        previous_mode = self.current_display_mode
+
+        for plugin_id in to_remove:
+            self._unregister_plugin(plugin_id)
+
+        for plugin_id in to_add:
+            try:
+                if self.plugin_manager.load_plugin(plugin_id):
+                    modes = self._register_loaded_plugin(plugin_id)
+                    logger.info("Enabled plugin %s live (modes: %s)", plugin_id, modes)
+                else:
+                    logger.warning("Plugin reconcile: failed to load %s", plugin_id)
+            except Exception as e:
+                logger.error("Plugin reconcile: error enabling %s: %s", plugin_id, e, exc_info=True)
+
+        self._resync_mode_index_after_change(previous_mode)
+        logger.info("Plugin reconcile complete: +%s -%s (%d modes)",
+                    sorted(to_add), sorted(to_remove), len(self.available_modes))
+        return True
+
+    def _resync_mode_index_after_change(self, previous_mode: Optional[str]) -> None:
+        """Clamp rotation state after available_modes changed. Stays on the
+        previous mode if it survived, otherwise restarts cleanly within range."""
+        if not self.available_modes:
+            self.current_mode_index = 0
+            self.current_display_mode = None
+            return
+        if previous_mode in self.available_modes:
+            self.current_mode_index = self.available_modes.index(previous_mode)
+        else:
+            self.current_mode_index %= len(self.available_modes)
+            self.current_display_mode = self.available_modes[self.current_mode_index]
 
     def _refresh_config_cache(self, new_config: Dict[str, Any]) -> None:
         """Refresh all config-derived caches when a hot-reload fires.
