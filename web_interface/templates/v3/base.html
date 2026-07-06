@@ -960,7 +960,7 @@
                     <i class="fas fa-exclamation-triangle text-lg"></i>
                     <span class="text-sm font-medium" id="power-warning-banner-text"
                           aria-live="polite" aria-atomic="true">
-                        Under-voltage detected right now — the display may flicker. Check your power supply.
+                        A power/thermal issue detected right now — the display may flicker or degrade. Check your power supply and cooling.
                     </span>
                 </div>
                 <button type="button" onclick="dismissPowerWarningBanner()"
@@ -1480,28 +1480,45 @@
             window._powerWarningDismissed = true;
         };
 
+        // Labels for whichever "_now" flags from _get_power_status() are set,
+        // used to build accurate banner/tooltip text instead of hardcoding
+        // "under-voltage" for what may actually be throttling/freq-capping/
+        // thermal limiting.
+        function _activePowerConditionLabels(power) {
+            const labels = [];
+            if (power.under_voltage_now) labels.push('under-voltage');
+            if (power.throttled_now) labels.push('throttling');
+            if (power.freq_capped_now) labels.push('CPU frequency capped');
+            if (power.soft_temp_limit_now) labels.push('soft thermal limit');
+            return labels;
+        }
+
         function updatePowerStatus(power) {
             const statEl = document.getElementById('power-stat');
             const banner = document.getElementById('power-warning-banner');
+            const bannerText = document.getElementById('power-warning-banner-text');
 
             if (!power) {
                 if (statEl) statEl.classList.add('hidden');
                 return;
             }
 
-            const activeNow = power.under_voltage_now || power.throttled_now;
-            const occurredEarlier = power.under_voltage_occurred || power.throttled_occurred;
+            const activeNow = power.under_voltage_now || power.throttled_now ||
+                power.freq_capped_now || power.soft_temp_limit_now;
+            const occurredEarlier = power.under_voltage_occurred || power.throttled_occurred ||
+                power.freq_capped_occurred || power.soft_temp_limit_occurred;
 
             if (statEl) {
                 statEl.classList.remove('text-red-600', 'text-yellow-600');
                 if (activeNow) {
                     statEl.classList.remove('hidden');
                     statEl.classList.add('flex', 'text-red-600');
-                    statEl.title = 'Under-voltage/throttling detected right now — check your power supply';
+                    statEl.title = _activePowerConditionLabels(power).join('/') +
+                        ' detected right now — check your power supply and cooling';
                 } else if (occurredEarlier) {
                     statEl.classList.remove('hidden');
                     statEl.classList.add('flex', 'text-yellow-600');
-                    statEl.title = 'Under-voltage/throttling was detected earlier (currently OK)';
+                    statEl.title = 'Under-voltage/throttling/thermal limiting was detected earlier (currently OK)';
                 } else {
                     statEl.classList.add('hidden');
                 }
@@ -1509,6 +1526,11 @@
 
             if (banner) {
                 if (activeNow) {
+                    if (bannerText) {
+                        const labels = _activePowerConditionLabels(power);
+                        bannerText.textContent = (labels.length ? labels.join('/') : 'A power/thermal issue') +
+                            ' detected right now — the display may flicker or degrade. Check your power supply and cooling.';
+                    }
                     if (!window._powerWarningDismissed) {
                         banner.style.display = '';
                     }
@@ -1563,23 +1585,31 @@
 
             const powerStatusEl = document.getElementById('power-status');
             const powerStatusIconEl = document.getElementById('power-status-icon');
-            if (powerStatusEl && data.power) {
-                const activeNow = data.power.under_voltage_now || data.power.throttled_now;
-                const occurredEarlier = data.power.under_voltage_occurred || data.power.throttled_occurred;
-                if (activeNow) {
-                    powerStatusEl.textContent = 'Under-voltage';
-                    powerStatusEl.className = 'text-lg font-medium text-red-600';
-                } else if (occurredEarlier) {
-                    powerStatusEl.textContent = 'OK (past issue)';
-                    powerStatusEl.className = 'text-lg font-medium text-yellow-600';
+            if (powerStatusEl) {
+                if (!data.power) {
+                    powerStatusEl.textContent = 'Not available';
+                    powerStatusEl.className = 'text-lg font-medium text-gray-400';
+                    if (powerStatusIconEl) powerStatusIconEl.className = 'fas fa-bolt text-gray-400 text-xl';
                 } else {
-                    powerStatusEl.textContent = 'OK';
-                    powerStatusEl.className = 'text-lg font-medium text-green-600';
-                }
-                if (powerStatusIconEl) {
-                    powerStatusIconEl.className = activeNow ?
-                        'fas fa-bolt text-red-600 text-xl' :
-                        (occurredEarlier ? 'fas fa-bolt text-yellow-500 text-xl' : 'fas fa-bolt text-gray-400 text-xl');
+                    const activeNow = data.power.under_voltage_now || data.power.throttled_now ||
+                        data.power.freq_capped_now || data.power.soft_temp_limit_now;
+                    const occurredEarlier = data.power.under_voltage_occurred || data.power.throttled_occurred ||
+                        data.power.freq_capped_occurred || data.power.soft_temp_limit_occurred;
+                    if (activeNow) {
+                        powerStatusEl.textContent = 'Issue detected';
+                        powerStatusEl.className = 'text-lg font-medium text-red-600';
+                    } else if (occurredEarlier) {
+                        powerStatusEl.textContent = 'OK (past issue)';
+                        powerStatusEl.className = 'text-lg font-medium text-yellow-600';
+                    } else {
+                        powerStatusEl.textContent = 'OK';
+                        powerStatusEl.className = 'text-lg font-medium text-green-600';
+                    }
+                    if (powerStatusIconEl) {
+                        powerStatusIconEl.className = activeNow ?
+                            'fas fa-bolt text-red-600 text-xl' :
+                            (occurredEarlier ? 'fas fa-bolt text-yellow-500 text-xl' : 'fas fa-bolt text-gray-400 text-xl');
+                    }
                 }
             }
 

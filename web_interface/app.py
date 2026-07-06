@@ -528,7 +528,7 @@ def _get_power_status():
             'soft_temp_limit_occurred': bool(bits & 0x80000),
         }
     except (subprocess.SubprocessError, OSError, ValueError) as e:
-        app.logger.debug("vcgencmd get_throttled failed: %s", e)
+        app.logger.warning("vcgencmd get_throttled failed: %s", e)
         return None
 
 # System status generator for SSE
