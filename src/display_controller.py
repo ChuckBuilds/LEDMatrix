@@ -1563,15 +1563,17 @@ class DisplayController:
                 # it can't race with rendering. Deferred while on-demand is active
                 # (the flag stays set) so we don't fight its temporary-enable.
                 if self._pending_plugin_reconcile and not self.on_demand_active:
-                    self._pending_plugin_reconcile = False
-                    self._reconcile_enabled_plugins()
+                    # Only clear the flag on success -- a retryable failure
+                    # (e.g. discovery) leaves it set so the request isn't lost.
+                    if self._reconcile_enabled_plugins():
+                        self._pending_plugin_reconcile = False
 
                 if not self.available_modes:
-                    # Nothing to render yet; keep servicing plugin update
-                    # schedules and the reconcile flag so we pick up a mode
-                    # as soon as one is enabled via the web UI, instead of
-                    # having exited already at startup.
-                    self._sleep_with_plugin_updates(30)
+                    # Nothing to render yet. Re-check _pending_plugin_reconcile
+                    # every ~1s (rather than a long sleep) so enabling a plugin
+                    # via the web UI is picked up about as promptly as it would
+                    # be once modes exist and the loop is iterating per-frame.
+                    self._sleep_with_plugin_updates(1)
                     continue
 
                 # Handle on-demand commands before rendering
@@ -2560,16 +2562,20 @@ class DisplayController:
             self.plugin_modes.pop(mode, None)
             self.mode_to_plugin_id.pop(mode, None)
 
-        # Unsubscribe the plugin's config-change callback. Pop only after the
-        # unsubscribe attempt so a failed unsubscribe doesn't lose our only
-        # reference to the callback before config_service has processed it.
+        # Unsubscribe the plugin's config-change callback. Pop only on a
+        # successful unsubscribe -- if it raises, keep our reference so a
+        # later retry (or at least cleanup) still has the real callback
+        # instead of a lost one.
         callback = self._plugin_config_callbacks.get(plugin_id)
         if callback is not None and hasattr(self, 'config_service'):
             try:
                 self.config_service.unsubscribe(callback, plugin_id=plugin_id)
             except Exception as e:
                 logger.debug("Error unsubscribing plugin %s from config changes: %s", plugin_id, e)
-        self._plugin_config_callbacks.pop(plugin_id, None)
+            else:
+                self._plugin_config_callbacks.pop(plugin_id, None)
+        else:
+            self._plugin_config_callbacks.pop(plugin_id, None)
 
         self._plugin_accepts_display_mode.pop(plugin_id, None)
 
@@ -2594,12 +2600,16 @@ class DisplayController:
             }
         return enabled_map(old_config) != enabled_map(new_config)
 
-    def _reconcile_enabled_plugins(self) -> None:
+    def _reconcile_enabled_plugins(self) -> bool:
         """Load/unload plugins so the running set matches the enabled set in
         config. Runs on the main display thread (never the config-watcher
-        thread) so mutating available_modes is race-free against rendering."""
+        thread) so mutating available_modes is race-free against rendering.
+
+        Returns True if reconciliation completed (including a no-op), or
+        False on a retryable failure -- the caller keeps the pending-reconcile
+        flag set in that case so the request isn't silently dropped."""
         if self.plugin_manager is None:
-            return
+            return True
         try:
             config = self.config_service.get_config()
         except Exception as e:
@@ -2609,7 +2619,14 @@ class DisplayController:
             discovered = set(self.plugin_manager.discover_plugins())
         except Exception as e:
             logger.error("Plugin reconcile: discovery failed: %s", e, exc_info=True)
-            return
+            return False
+
+        for p in discovered:
+            if p in config and not isinstance(config.get(p), dict):
+                logger.warning(
+                    "Plugin reconcile: config for %s is a %s, not a dict; treating as disabled",
+                    p, type(config.get(p)).__name__
+                )
 
         desired = {
             p for p in discovered
@@ -2619,7 +2636,7 @@ class DisplayController:
         to_add = desired - current
         to_remove = current - desired
         if not to_add and not to_remove:
-            return
+            return True
 
         previous_mode = self.current_display_mode
 
@@ -2639,6 +2656,7 @@ class DisplayController:
         self._resync_mode_index_after_change(previous_mode)
         logger.info("Plugin reconcile complete: +%s -%s (%d modes)",
                     sorted(to_add), sorted(to_remove), len(self.available_modes))
+        return True
 
     def _resync_mode_index_after_change(self, previous_mode: Optional[str]) -> None:
         """Clamp rotation state after available_modes changed. Stays on the

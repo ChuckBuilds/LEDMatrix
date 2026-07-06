@@ -131,19 +131,72 @@ class TestPluginEnableDisableHotReload:
         assert controller.plugin_manager.load_plugin.call_count == load_calls
         assert controller.plugin_manager.unload_plugin.call_count == unload_calls
 
-    def test_reconcile_ignores_non_dict_config_value(self, test_display_controller):
+    def test_reconcile_ignores_non_dict_config_value(self, test_display_controller, caplog):
         """A malformed config value (e.g. a stray string where a plugin's
         section should be a dict) must be treated as disabled, not crash
-        the reconcile with AttributeError."""
+        the reconcile with AttributeError, and should be logged so it's
+        visible to whoever has to debug the malformed config."""
         controller = test_display_controller
         plugin = _make_plugin(["foo"])
         _wire_plugin_manager(controller, {"foo": plugin}, discovered=["foo"])
         _set_config(controller, {"foo": "not-a-dict"})
 
-        controller._reconcile_enabled_plugins()  # must not raise
+        with caplog.at_level("WARNING"):
+            controller._reconcile_enabled_plugins()  # must not raise
 
         assert "foo" not in controller.plugin_display_modes
         assert "foo" not in controller.available_modes
+        assert any("foo" in r.message and "not a dict" in r.message for r in caplog.records)
+
+    def test_disable_keeps_callback_when_unsubscribe_fails(self, test_display_controller):
+        """If config_service.unsubscribe() raises, _unregister_plugin must
+        keep the callback in _plugin_config_callbacks rather than losing the
+        only reference to it (it still tears down the plugin itself)."""
+        controller = test_display_controller
+        plugin = _make_plugin(["live"])
+        _wire_plugin_manager(controller, {"sports": plugin}, discovered=["sports"])
+
+        _set_config(controller, {"sports": {"enabled": True}})
+        controller._reconcile_enabled_plugins()
+        assert "sports" in controller._plugin_config_callbacks
+
+        controller.config_service.unsubscribe = MagicMock(side_effect=RuntimeError("boom"))
+
+        _set_config(controller, {"sports": {"enabled": False}})
+        controller._reconcile_enabled_plugins()
+
+        assert "sports" not in controller.plugin_display_modes
+        assert "sports" in controller._plugin_config_callbacks
+
+
+class TestReconcileReturnValue:
+    """_reconcile_enabled_plugins() returns True/False so the caller (run()'s
+    loop) only clears _pending_plugin_reconcile on success, keeping a
+    retryable failure's request alive instead of silently dropping it."""
+
+    def test_returns_true_on_success(self, test_display_controller):
+        controller = test_display_controller
+        plugin = _make_plugin(["foo"])
+        _wire_plugin_manager(controller, {"foo": plugin}, discovered=["foo"])
+        _set_config(controller, {"foo": {"enabled": True}})
+        assert controller._reconcile_enabled_plugins() is True
+
+    def test_returns_true_for_noop(self, test_display_controller):
+        controller = test_display_controller
+        _wire_plugin_manager(controller, {}, discovered=[])
+        _set_config(controller, {})
+        assert controller._reconcile_enabled_plugins() is True
+
+    def test_returns_false_on_discovery_failure(self, test_display_controller):
+        controller = test_display_controller
+        controller.plugin_manager.discover_plugins.side_effect = RuntimeError("boom")
+        _set_config(controller, {})
+        assert controller._reconcile_enabled_plugins() is False
+
+    def test_returns_true_when_no_plugin_manager(self, test_display_controller):
+        controller = test_display_controller
+        controller.plugin_manager = None
+        assert controller._reconcile_enabled_plugins() is True
 
 
 class TestRunWithNoModesEnabled:
@@ -170,8 +223,11 @@ class TestRunWithNoModesEnabled:
         controller.run()
 
         # Old behavior returned before ever reaching the loop body, so
-        # _sleep_with_plugin_updates would never have been called.
-        assert sleep_calls == [30, 30, 30]
+        # _sleep_with_plugin_updates would never have been called. The idle
+        # tick is short (not a long sleep) so a plugin enabled via the web
+        # UI while idle is picked up about as promptly as it would be once
+        # modes exist and the loop is iterating per-frame.
+        assert sleep_calls == [1, 1, 1]
 
 
 class TestEnabledSetChanged:
