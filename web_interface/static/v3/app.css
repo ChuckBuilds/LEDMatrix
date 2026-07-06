@@ -1040,3 +1040,26 @@ button.bg-white {
 [data-theme="dark"] .update-banner-dismiss {
     color: #93c5fd;
 }
+
+/* Under-voltage / throttling warning banner */
+.power-warning-banner {
+    background-color: #fef2f2;
+    border-color: #fecaca;
+    color: #991b1b;
+}
+.power-warning-banner-dismiss {
+    color: #991b1b;
+    opacity: 0.6;
+}
+.power-warning-banner-dismiss:hover {
+    opacity: 1;
+}
+
+[data-theme="dark"] .power-warning-banner {
+    background-color: #450a0a;
+    border-color: #7f1d1d;
+    color: #fca5a5;
+}
+[data-theme="dark"] .power-warning-banner-dismiss {
+    color: #fca5a5;
+}

@@ -913,6 +913,10 @@
                             <i class="fas fa-thermometer-half"></i>
                             <span>--°C</span>
                         </span>
+                        <span id="power-stat" class="hidden items-center space-x-1" title="">
+                            <i class="fas fa-bolt"></i>
+                            <span>Power</span>
+                        </span>
                     </div>
                 </div>
             </div>
@@ -943,6 +947,27 @@
                         <i class="fas fa-times text-sm"></i>
                     </button>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Under-voltage / throttling warning banner -->
+    <div id="power-warning-banner" style="display:none"
+         class="power-warning-banner border-b transition-all duration-300 ease-in-out">
+        <div class="mx-auto px-4 sm:px-6 lg:px-8 xl:px-12 2xl:px-16 py-2" style="max-width:100%">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-3">
+                    <i class="fas fa-exclamation-triangle text-lg"></i>
+                    <span class="text-sm font-medium" id="power-warning-banner-text"
+                          aria-live="polite" aria-atomic="true">
+                        Under-voltage detected right now — the display may flicker. Check your power supply.
+                    </span>
+                </div>
+                <button type="button" onclick="dismissPowerWarningBanner()"
+                        class="power-warning-banner-dismiss rounded p-1 transition-colors duration-150"
+                        title="Dismiss" aria-label="Dismiss power warning">
+                    <i class="fas fa-times text-sm"></i>
+                </button>
             </div>
         </div>
     </div>
@@ -1445,6 +1470,56 @@
         window.statsSource.addEventListener('error', window._statsErrorHandler);
         window.displaySource.addEventListener('error', window._displayErrorHandler);
 
+        // Reset any time the currently-active warning clears, so a future
+        // (new) occurrence shows the banner again even if this one was dismissed.
+        window._powerWarningDismissed = false;
+
+        window.dismissPowerWarningBanner = function() {
+            const banner = document.getElementById('power-warning-banner');
+            if (banner) banner.style.display = 'none';
+            window._powerWarningDismissed = true;
+        };
+
+        function updatePowerStatus(power) {
+            const statEl = document.getElementById('power-stat');
+            const banner = document.getElementById('power-warning-banner');
+
+            if (!power) {
+                if (statEl) statEl.classList.add('hidden');
+                return;
+            }
+
+            const activeNow = power.under_voltage_now || power.throttled_now;
+            const occurredEarlier = power.under_voltage_occurred || power.throttled_occurred;
+
+            if (statEl) {
+                statEl.classList.remove('text-red-600', 'text-yellow-600');
+                if (activeNow) {
+                    statEl.classList.remove('hidden');
+                    statEl.classList.add('flex', 'text-red-600');
+                    statEl.title = 'Under-voltage/throttling detected right now — check your power supply';
+                } else if (occurredEarlier) {
+                    statEl.classList.remove('hidden');
+                    statEl.classList.add('flex', 'text-yellow-600');
+                    statEl.title = 'Under-voltage/throttling was detected earlier (currently OK)';
+                } else {
+                    statEl.classList.add('hidden');
+                }
+            }
+
+            if (banner) {
+                if (activeNow) {
+                    if (!window._powerWarningDismissed) {
+                        banner.style.display = '';
+                    }
+                } else {
+                    banner.style.display = 'none';
+                    // Let a future occurrence show the banner again.
+                    window._powerWarningDismissed = false;
+                }
+            }
+        }
+
         function updateSystemStats(data) {
             // Update CPU in header
             const cpuEl = document.getElementById('cpu-stat');
@@ -1467,6 +1542,9 @@
                 if (spans.length > 0) spans[spans.length - 1].textContent = data.cpu_temp + '°C';
             }
 
+            // Update Power (under-voltage / throttling) status in header + banner
+            updatePowerStatus(data.power);
+
             // Update Overview tab stats (if visible)
             const cpuUsageEl = document.getElementById('cpu-usage');
             if (cpuUsageEl && data.cpu_percent !== undefined) {
@@ -1481,6 +1559,28 @@
             const cpuTempEl = document.getElementById('cpu-temp');
             if (cpuTempEl && data.cpu_temp !== undefined) {
                 cpuTempEl.textContent = data.cpu_temp + '°C';
+            }
+
+            const powerStatusEl = document.getElementById('power-status');
+            const powerStatusIconEl = document.getElementById('power-status-icon');
+            if (powerStatusEl && data.power) {
+                const activeNow = data.power.under_voltage_now || data.power.throttled_now;
+                const occurredEarlier = data.power.under_voltage_occurred || data.power.throttled_occurred;
+                if (activeNow) {
+                    powerStatusEl.textContent = 'Under-voltage';
+                    powerStatusEl.className = 'text-lg font-medium text-red-600';
+                } else if (occurredEarlier) {
+                    powerStatusEl.textContent = 'OK (past issue)';
+                    powerStatusEl.className = 'text-lg font-medium text-yellow-600';
+                } else {
+                    powerStatusEl.textContent = 'OK';
+                    powerStatusEl.className = 'text-lg font-medium text-green-600';
+                }
+                if (powerStatusIconEl) {
+                    powerStatusIconEl.className = activeNow ?
+                        'fas fa-bolt text-red-600 text-xl' :
+                        (occurredEarlier ? 'fas fa-bolt text-yellow-500 text-xl' : 'fas fa-bolt text-gray-400 text-xl');
+                }
             }
 
             const displayStatusEl = document.getElementById('display-status');

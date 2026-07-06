@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import queue
+import re
 import shutil
 import sys
 import subprocess
@@ -27,6 +28,7 @@ from src.plugin_system.health_monitor import PluginHealthMonitor
 
 _JOURNALCTL = shutil.which('journalctl')
 _SYSTEMCTL = shutil.which('systemctl')
+_VCGENCMD = shutil.which('vcgencmd')
 
 # Create Flask app
 app = Flask(__name__)
@@ -498,6 +500,37 @@ class _StreamBroadcaster:
                         except queue.Full:
                             pass
 
+def _get_power_status():
+    """Check Raspberry Pi under-voltage/throttling status via vcgencmd.
+
+    Returns a dict of decoded flags, or None on non-Pi platforms (no
+    vcgencmd) or if the call fails for any reason. See:
+    https://www.raspberrypi.com/documentation/computers/os.html#get_throttled
+    """
+    if not _VCGENCMD:
+        return None
+    try:
+        result = subprocess.run(
+            [_VCGENCMD, 'get_throttled'], capture_output=True, text=True, timeout=2
+        )
+        match = re.search(r'0x([0-9a-fA-F]+)', result.stdout)
+        if not match:
+            return None
+        bits = int(match.group(1), 16)
+        return {
+            'under_voltage_now': bool(bits & 0x1),
+            'freq_capped_now': bool(bits & 0x2),
+            'throttled_now': bool(bits & 0x4),
+            'soft_temp_limit_now': bool(bits & 0x8),
+            'under_voltage_occurred': bool(bits & 0x10000),
+            'freq_capped_occurred': bool(bits & 0x20000),
+            'throttled_occurred': bool(bits & 0x40000),
+            'soft_temp_limit_occurred': bool(bits & 0x80000),
+        }
+    except (subprocess.SubprocessError, OSError, ValueError) as e:
+        app.logger.debug("vcgencmd get_throttled failed: %s", e)
+        return None
+
 # System status generator for SSE
 def system_status_generator():
     """Generate system status updates"""
@@ -544,7 +577,8 @@ def system_status_generator():
                 'cpu_percent': cpu_percent,
                 'memory_used_percent': memory_used_percent,
                 'cpu_temp': cpu_temp,
-                'disk_used_percent': 0
+                'disk_used_percent': 0,
+                'power': _get_power_status()
             }
             yield status
         except Exception as e:
