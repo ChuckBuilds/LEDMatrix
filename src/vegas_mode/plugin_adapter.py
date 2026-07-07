@@ -279,6 +279,19 @@ class PluginAdapter:
             # Copy the image to prevent modification
             img = cached_image.copy()
 
+            # Plugins that build their own ticker image via this shared
+            # ScrollHelper's create_scrolling_image() get a solid-black
+            # leading margin exactly `display_width` columns wide baked in
+            # (scroll_helper.py's "initial gap before first item"). Vegas mode
+            # adds its own leading gap/separator around every item already,
+            # so leaving this in stacks a second, uncontrolled blank margin on
+            # top of vegas_scroll.separator_width — making this plugin's
+            # transitions look inconsistent with plugins that provide content
+            # via get_vegas_content() (which carries no such margin). Strip it
+            # here so every plugin contributes only its real content and the
+            # gap between items is governed solely by separator_width.
+            img = self._strip_scroll_padding(img, scroll_helper, plugin_id)
+
             # Ensure correct height
             if img.height != self.display_height:
                 logger.info(
@@ -305,6 +318,62 @@ class PluginAdapter:
         except (AttributeError, TypeError, ValueError, OSError):
             logger.exception("[%s] Error getting scroll_helper content", plugin_id)
             return None
+
+    def _strip_scroll_padding(
+        self, img: Image.Image, scroll_helper: Any, plugin_id: str
+    ) -> Image.Image:
+        """
+        Crop off a plugin's own leading/trailing blank margins, if present.
+
+        create_scrolling_image() always pads the *start* of its cached image
+        with exactly `scroll_helper.display_width` columns of solid black
+        (0, 0, 0) ("initial gap before first item"). Some ticker-style plugins
+        also pad the *end* of their own cached image (e.g. so their standalone
+        display exits cleanly before looping). Vegas mode already adds its own
+        gap/separator around every item, so either margin left in place stacks
+        an extra, uncontrolled blank stretch on top of `separator_width` —
+        only when running inside Vegas mode does this matter, since the
+        plugin's own standalone display still wants that margin. Detect solid
+        black margins up to `scroll_helper.display_width` wide on each edge and
+        crop them here. Images built via set_scrolling_image() (no such
+        margins) are left untouched.
+
+        Args:
+            img: Captured scroll_helper.cached_image (already copied)
+            scroll_helper: The plugin's ScrollHelper instance
+            plugin_id: Plugin identifier for logging
+
+        Returns:
+            img, cropped on whichever edge(s) had a matching blank margin
+        """
+        pad_width = getattr(scroll_helper, 'display_width', None)
+        if not isinstance(pad_width, int) or pad_width <= 0 or pad_width >= img.width:
+            return img
+
+        def is_solid_black(strip: Image.Image) -> bool:
+            return strip.convert('RGB').getextrema() == ((0, 0), (0, 0), (0, 0))
+
+        left = pad_width if is_solid_black(img.crop((0, 0, pad_width, img.height))) else 0
+        right = (
+            pad_width
+            if is_solid_black(img.crop((img.width - pad_width, 0, img.width, img.height)))
+            else 0
+        )
+
+        if not left and not right:
+            return img
+
+        # Degenerate case (e.g. an all-black cached image): don't crop past
+        # zero width, just leave the image as-is.
+        if left + right >= img.width:
+            return img
+
+        cropped = img.crop((left, 0, img.width - right, img.height))
+        logger.info(
+            "[%s] Stripping scroll_helper padding (left=%dpx, right=%dpx): %dpx -> %dpx",
+            plugin_id, left, right, img.width, cropped.width
+        )
+        return cropped
 
     def _trigger_scroll_content_generation(
         self, plugin: 'BasePlugin', plugin_id: str, scroll_helper: Any
