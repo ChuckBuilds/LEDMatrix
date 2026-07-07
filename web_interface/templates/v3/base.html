@@ -1594,36 +1594,6 @@
                 cpuTempEl.textContent = data.cpu_temp + '°C';
             }
 
-            const powerStatusEl = document.getElementById('power-status');
-            const powerStatusIconEl = document.getElementById('power-status-icon');
-            if (powerStatusEl) {
-                if (!data.power) {
-                    powerStatusEl.textContent = 'Not available';
-                    powerStatusEl.className = 'text-lg font-medium text-gray-400';
-                    if (powerStatusIconEl) powerStatusIconEl.className = 'fas fa-bolt text-gray-400 text-xl';
-                } else {
-                    const activeNow = data.power.under_voltage_now || data.power.throttled_now ||
-                        data.power.freq_capped_now || data.power.soft_temp_limit_now;
-                    const occurredEarlier = data.power.under_voltage_occurred || data.power.throttled_occurred ||
-                        data.power.freq_capped_occurred || data.power.soft_temp_limit_occurred;
-                    if (activeNow) {
-                        powerStatusEl.textContent = 'Issue detected';
-                        powerStatusEl.className = 'text-lg font-medium text-red-600';
-                    } else if (occurredEarlier) {
-                        powerStatusEl.textContent = 'OK (past issue)';
-                        powerStatusEl.className = 'text-lg font-medium text-yellow-600';
-                    } else {
-                        powerStatusEl.textContent = 'OK';
-                        powerStatusEl.className = 'text-lg font-medium text-green-600';
-                    }
-                    if (powerStatusIconEl) {
-                        powerStatusIconEl.className = activeNow ?
-                            'fas fa-bolt text-red-600 text-xl' :
-                            (occurredEarlier ? 'fas fa-bolt text-yellow-500 text-xl' : 'fas fa-bolt text-gray-400 text-xl');
-                    }
-                }
-            }
-
             const displayStatusEl = document.getElementById('display-status');
             if (displayStatusEl) {
                 displayStatusEl.textContent = data.service_active ? 'Active' : 'Inactive';
