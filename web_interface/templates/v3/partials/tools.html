@@ -112,6 +112,17 @@
         </div>
     </div>
 
+    <!-- Power Supply Diagnostics -->
+    <div class="bg-white rounded-lg shadow p-6">
+        <div class="border-b border-gray-200 pb-4 mb-6">
+            <h2 class="text-lg font-semibold text-gray-900">Power Supply</h2>
+            <p class="mt-1 text-sm text-gray-600">Raspberry Pi under-voltage/throttling status (via <code class="bg-gray-100 px-1 rounded">vcgencmd get_throttled</code>). A marginal power supply is a common cause of visible flicker or dimming on LED panels.</p>
+        </div>
+        <div id="power-info-panel" class="text-sm">
+            <div class="animate-pulse text-gray-400">Waiting for live stats…</div>
+        </div>
+    </div>
+
     <!-- Services -->
     <div class="bg-white rounded-lg shadow p-6">
         <div class="border-b border-gray-200 pb-4 mb-6">
@@ -314,6 +325,76 @@
             .catch(err => {
                 panel.innerHTML = `<span class="text-sm text-red-600">Could not load git info: ${escHtml(String(err))}</span>`;
             });
+    }
+
+    // ── power supply diagnostics panel ────────────────────────────────────────
+    // Reuses the same SSE stream (window.statsSource, set up in base.html)
+    // that already drives the header badge/banner and Overview card, instead
+    // of polling a separate endpoint.
+
+    const FLAG_LABELS = [
+        ['under_voltage_now', 'Under-voltage (right now)'],
+        ['throttled_now', 'Throttled (right now)'],
+        ['freq_capped_now', 'ARM frequency capped (right now)'],
+        ['soft_temp_limit_now', 'Soft temperature limit active (right now)'],
+        ['under_voltage_occurred', 'Under-voltage occurred (since boot)'],
+        ['throttled_occurred', 'Throttled occurred (since boot)'],
+        ['freq_capped_occurred', 'ARM frequency capped occurred (since boot)'],
+        ['soft_temp_limit_occurred', 'Soft temperature limit occurred (since boot)'],
+    ];
+
+    function renderPowerInfo(power) {
+        const panel = document.getElementById('power-info-panel');
+        if (!panel) return;
+
+        if (!power) {
+            panel.innerHTML = '<span class="text-gray-500">Not available on this platform (no <code class="bg-gray-100 px-1 rounded">vcgencmd</code> found — this isn\'t a Raspberry Pi, or it\'s not on PATH).</span>';
+            return;
+        }
+
+        const activeNow = power.under_voltage_now || power.throttled_now ||
+            power.freq_capped_now || power.soft_temp_limit_now;
+        const occurredEarlier = power.under_voltage_occurred || power.throttled_occurred ||
+            power.freq_capped_occurred || power.soft_temp_limit_occurred;
+        const summaryColor = activeNow ? 'red' : (occurredEarlier ? 'yellow' : 'green');
+        // _activePowerConditionLabels is defined in base.html's inline script;
+        // both are classic (non-module) scripts sharing the global scope.
+        const activeLabels = (typeof _activePowerConditionLabels === 'function')
+            ? _activePowerConditionLabels(power) : [];
+        const summaryText = activeNow
+            ? `Actively ${activeLabels.length ? activeLabels.join('/') : 'under-voltage/throttled'} right now`
+            : (occurredEarlier ? 'OK right now (but occurred earlier this boot)' : 'OK — no issues detected');
+
+        let html = `
+            <div class="flex items-center gap-2 mb-3">
+                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-${summaryColor}-100 text-${summaryColor}-800">
+                    <i class="fas fa-bolt mr-1"></i>${escHtml(summaryText)}
+                </span>
+            </div>
+            <ul class="space-y-1">`;
+        for (const [key, label] of FLAG_LABELS) {
+            const set = !!power[key];
+            html += `<li class="flex items-center gap-2">
+                <i class="fas ${set ? 'fa-exclamation-circle text-red-500' : 'fa-check text-green-500'} w-4"></i>
+                <span class="text-gray-700">${escHtml(label)}</span>
+            </li>`;
+        }
+        html += `</ul>`;
+
+        if (activeNow || occurredEarlier) {
+            html += `<p class="mt-3 text-xs text-gray-500">Consider a higher-amperage 5V supply wired directly to the panel(s), or check for a loose power connector. See the README's Power Supply section for sizing guidance.</p>`;
+        }
+
+        panel.innerHTML = html;
+    }
+
+    if (window.statsSource) {
+        window.statsSource.addEventListener('message', function(event) {
+            try {
+                const data = JSON.parse(event.data);
+                if (data && 'power' in data) renderPowerInfo(data.power);
+            } catch (e) { /* ignore malformed frames */ }
+        });
     }
 
     // Load on first render; HTMX will have already swapped us in by this point.

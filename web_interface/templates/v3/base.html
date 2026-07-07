@@ -913,6 +913,10 @@
                             <i class="fas fa-thermometer-half"></i>
                             <span>--°C</span>
                         </span>
+                        <span id="power-stat" class="hidden items-center space-x-1" title="">
+                            <i class="fas fa-bolt"></i>
+                            <span>Power</span>
+                        </span>
                     </div>
                 </div>
             </div>
@@ -943,6 +947,27 @@
                         <i class="fas fa-times text-sm"></i>
                     </button>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Under-voltage / throttling warning banner -->
+    <div id="power-warning-banner" style="display:none"
+         class="power-warning-banner border-b transition-all duration-300 ease-in-out">
+        <div class="mx-auto px-4 sm:px-6 lg:px-8 xl:px-12 2xl:px-16 py-2" style="max-width:100%">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-3">
+                    <i class="fas fa-exclamation-triangle text-lg"></i>
+                    <span class="text-sm font-medium" id="power-warning-banner-text"
+                          aria-live="polite" aria-atomic="true">
+                        A power/thermal issue detected right now — the display may flicker or degrade. Check your power supply and cooling.
+                    </span>
+                </div>
+                <button type="button" onclick="dismissPowerWarningBanner()"
+                        class="power-warning-banner-dismiss rounded p-1 transition-colors duration-150"
+                        title="Dismiss" aria-label="Dismiss power warning">
+                    <i class="fas fa-times text-sm"></i>
+                </button>
             </div>
         </div>
     </div>
@@ -1445,6 +1470,89 @@
         window.statsSource.addEventListener('error', window._statsErrorHandler);
         window.displaySource.addEventListener('error', window._displayErrorHandler);
 
+        // Reset any time the currently-active warning clears, so a future
+        // (new) occurrence shows the banner again even if this one was dismissed.
+        window._powerWarningDismissed = false;
+
+        window.dismissPowerWarningBanner = function() {
+            const banner = document.getElementById('power-warning-banner');
+            if (banner) banner.style.display = 'none';
+            window._powerWarningDismissed = true;
+        };
+
+        // Labels for whichever flags from _get_power_status() are set (pass
+        // suffix='_occurred' for the "happened earlier" variant), used to
+        // build accurate banner/tooltip text instead of hardcoding
+        // "under-voltage" for what may actually be throttling/freq-capping/
+        // thermal limiting.
+        function _activePowerConditionLabels(power, suffix) {
+            suffix = suffix || '_now';
+            const labels = [];
+            if (power['under_voltage' + suffix]) labels.push('under-voltage');
+            if (power['throttled' + suffix]) labels.push('throttling');
+            if (power['freq_capped' + suffix]) labels.push('CPU frequency capped');
+            if (power['soft_temp_limit' + suffix]) labels.push('soft thermal limit');
+            return labels;
+        }
+
+        function updatePowerStatus(power) {
+            const statEl = document.getElementById('power-stat');
+            const banner = document.getElementById('power-warning-banner');
+            const bannerText = document.getElementById('power-warning-banner-text');
+
+            if (!power) {
+                if (statEl) statEl.classList.add('hidden');
+                if (banner) {
+                    banner.style.display = 'none';
+                    // Let a future occurrence show the banner again rather
+                    // than leaving stale text/visibility from before this
+                    // (likely transient) missing-data tick.
+                    window._powerWarningDismissed = false;
+                }
+                return;
+            }
+
+            const activeNow = power.under_voltage_now || power.throttled_now ||
+                power.freq_capped_now || power.soft_temp_limit_now;
+            const occurredEarlier = power.under_voltage_occurred || power.throttled_occurred ||
+                power.freq_capped_occurred || power.soft_temp_limit_occurred;
+
+            if (statEl) {
+                statEl.classList.remove('text-red-600', 'text-yellow-600');
+                if (activeNow) {
+                    statEl.classList.remove('hidden');
+                    statEl.classList.add('flex', 'text-red-600');
+                    statEl.title = _activePowerConditionLabels(power).join('/') +
+                        ' detected right now — check your power supply and cooling';
+                } else if (occurredEarlier) {
+                    statEl.classList.remove('hidden');
+                    statEl.classList.add('flex', 'text-yellow-600');
+                    const occurredLabels = _activePowerConditionLabels(power, '_occurred');
+                    statEl.title = (occurredLabels.length ? occurredLabels.join('/') : 'An issue') +
+                        ' was detected earlier (currently OK)';
+                } else {
+                    statEl.classList.add('hidden');
+                }
+            }
+
+            if (banner) {
+                if (activeNow) {
+                    if (bannerText) {
+                        const labels = _activePowerConditionLabels(power);
+                        bannerText.textContent = (labels.length ? labels.join('/') : 'A power/thermal issue') +
+                            ' detected right now — the display may flicker or degrade. Check your power supply and cooling.';
+                    }
+                    if (!window._powerWarningDismissed) {
+                        banner.style.display = '';
+                    }
+                } else {
+                    banner.style.display = 'none';
+                    // Let a future occurrence show the banner again.
+                    window._powerWarningDismissed = false;
+                }
+            }
+        }
+
         function updateSystemStats(data) {
             // Update CPU in header
             const cpuEl = document.getElementById('cpu-stat');
@@ -1466,6 +1574,9 @@
                 const spans = tempEl.querySelectorAll('span');
                 if (spans.length > 0) spans[spans.length - 1].textContent = data.cpu_temp + '°C';
             }
+
+            // Update Power (under-voltage / throttling) status in header + banner
+            updatePowerStatus(data.power);
 
             // Update Overview tab stats (if visible)
             const cpuUsageEl = document.getElementById('cpu-usage');
