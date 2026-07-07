@@ -1480,16 +1480,18 @@
             window._powerWarningDismissed = true;
         };
 
-        // Labels for whichever "_now" flags from _get_power_status() are set,
-        // used to build accurate banner/tooltip text instead of hardcoding
+        // Labels for whichever flags from _get_power_status() are set (pass
+        // suffix='_occurred' for the "happened earlier" variant), used to
+        // build accurate banner/tooltip text instead of hardcoding
         // "under-voltage" for what may actually be throttling/freq-capping/
         // thermal limiting.
-        function _activePowerConditionLabels(power) {
+        function _activePowerConditionLabels(power, suffix) {
+            suffix = suffix || '_now';
             const labels = [];
-            if (power.under_voltage_now) labels.push('under-voltage');
-            if (power.throttled_now) labels.push('throttling');
-            if (power.freq_capped_now) labels.push('CPU frequency capped');
-            if (power.soft_temp_limit_now) labels.push('soft thermal limit');
+            if (power['under_voltage' + suffix]) labels.push('under-voltage');
+            if (power['throttled' + suffix]) labels.push('throttling');
+            if (power['freq_capped' + suffix]) labels.push('CPU frequency capped');
+            if (power['soft_temp_limit' + suffix]) labels.push('soft thermal limit');
             return labels;
         }
 
@@ -1500,6 +1502,13 @@
 
             if (!power) {
                 if (statEl) statEl.classList.add('hidden');
+                if (banner) {
+                    banner.style.display = 'none';
+                    // Let a future occurrence show the banner again rather
+                    // than leaving stale text/visibility from before this
+                    // (likely transient) missing-data tick.
+                    window._powerWarningDismissed = false;
+                }
                 return;
             }
 
@@ -1518,7 +1527,9 @@
                 } else if (occurredEarlier) {
                     statEl.classList.remove('hidden');
                     statEl.classList.add('flex', 'text-yellow-600');
-                    statEl.title = 'Under-voltage/throttling/thermal limiting was detected earlier (currently OK)';
+                    const occurredLabels = _activePowerConditionLabels(power, '_occurred');
+                    statEl.title = (occurredLabels.length ? occurredLabels.join('/') : 'An issue') +
+                        ' was detected earlier (currently OK)';
                 } else {
                     statEl.classList.add('hidden');
                 }
