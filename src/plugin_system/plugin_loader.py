@@ -135,16 +135,6 @@ class PluginLoader:
         
         return None
     
-    def _write_dependency_marker(self, marker_file: str, current_hash: str, plugin_id: str) -> None:
-        """Write the dependency hash marker file, used by both the direct-success
-        and apt-conflict-retry-fallback paths in install_dependencies."""
-        try:
-            with open(marker_file, 'w', encoding='utf-8') as fh:
-                fh.write(current_hash)
-            ensure_file_permissions(Path(marker_file), get_plugin_file_mode())
-        except OSError as marker_err:
-            self.logger.debug("Could not write dependency marker for %s: %s", plugin_id, marker_err)
-
     def install_dependencies(
         self,
         plugin_dir: Path,
@@ -235,7 +225,12 @@ class PluginLoader:
             )
 
             if result.returncode == 0:
-                self._write_dependency_marker(marker_file, current_hash, plugin_id)
+                try:
+                    with open(marker_file, 'w', encoding='utf-8') as fh:
+                        fh.write(current_hash)
+                    ensure_file_permissions(Path(marker_file), get_plugin_file_mode())
+                except OSError as marker_err:
+                    self.logger.debug("Could not write dependency marker for %s: %s", plugin_id, marker_err)
                 self.logger.info("Dependencies installed successfully for %s", plugin_id)
                 return True
             else:
@@ -285,7 +280,12 @@ class PluginLoader:
                             "system-managed version satisfies the requirement",
                             plugin_id
                         )
-                    self._write_dependency_marker(marker_file, current_hash, plugin_id)
+                    try:
+                        with open(marker_file, 'w', encoding='utf-8') as fh:
+                            fh.write(current_hash)
+                        ensure_file_permissions(Path(marker_file), get_plugin_file_mode())
+                    except OSError as marker_err:
+                        self.logger.debug("Could not write dependency marker for %s: %s", plugin_id, marker_err)
                     return True
                 self.logger.warning(
                     "Dependency installation returned non-zero exit code for %s: %s",
