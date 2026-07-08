@@ -1,6 +1,7 @@
-from flask import Blueprint, render_template, flash
+from flask import Blueprint, render_template, flash, jsonify
 from jinja2 import TemplateNotFound
 from markupsafe import escape
+from html.parser import HTMLParser
 import json
 import logging
 import os
@@ -21,6 +22,114 @@ plugin_manager = None
 plugin_store_manager = None
 
 pages_v3 = Blueprint('pages_v3', __name__)
+
+
+class _SettingsIndexParser(HTMLParser):
+    """Extract searchable settings fields from a rendered partial's HTML.
+
+    Captures one entry per ``<div class="form-group" id="setting-…">``: the
+    anchor id, ``data-setting-key``, the field's ``<label>`` text, the
+    ``.help-tip`` tooltip text (``data-tooltip``), and the nearest preceding
+    ``<h3>``/``<h4>`` section heading. Parsing the *rendered* HTML (rather than
+    the schema) guarantees the anchor ids match the live DOM exactly, so the
+    search index cannot drift from what users actually see.
+    """
+
+    def __init__(self, tab, tab_label):
+        super().__init__(convert_charrefs=True)
+        self.tab = tab
+        self.tab_label = tab_label
+        self.fields = []
+        self._section = ''
+        self._field = None
+        self._depth = 0            # open-div depth within the current field
+        self._in_label = False
+        self._label_parts = []
+        self._in_heading = False
+        self._heading_parts = []
+
+    def handle_starttag(self, tag, attrs):
+        a = {k: (v or '') for k, v in attrs}
+        classes = a.get('class', '').split()
+        # Section headings (only when not already inside a field)
+        if tag in ('h3', 'h4') and self._field is None:
+            self._in_heading = True
+            self._heading_parts = []
+        if tag == 'div':
+            fid = a.get('id', '')
+            if self._field is None and 'form-group' in classes and fid.startswith('setting-'):
+                self._field = {
+                    'anchorId': fid,
+                    'key': a.get('data-setting-key', '') or fid[len('setting-'):],
+                    'label': '',
+                    'help': '',
+                    'section': self._section,
+                    'tab': self.tab,
+                    'tabLabel': self.tab_label,
+                }
+                self._depth = 1
+                return
+            if self._field is not None:
+                self._depth += 1
+        if self._field is not None:
+            if tag == 'label' and not self._field['label']:
+                self._in_label = True
+                self._label_parts = []
+            if tag == 'button' and 'help-tip' in classes and not self._field['help']:
+                self._field['help'] = a.get('data-tooltip', '')
+
+    def handle_data(self, data):
+        if self._in_label:
+            self._label_parts.append(data)
+        elif self._in_heading:
+            self._heading_parts.append(data)
+
+    def handle_endtag(self, tag):
+        if tag in ('h3', 'h4') and self._in_heading:
+            self._in_heading = False
+            self._section = ' '.join(''.join(self._heading_parts).split()).strip()
+            return
+        if self._field is None:
+            return
+        if tag == 'label' and self._in_label:
+            self._in_label = False
+            self._field['label'] = ' '.join(''.join(self._label_parts).split()).strip()
+        elif tag == 'div':
+            self._depth -= 1
+            if self._depth <= 0:
+                if self._field['label']:
+                    self.fields.append(self._field)
+                self._field = None
+                self._depth = 0
+
+
+def _partial_html(loader):
+    """Run a partial loader and return its HTML string ('' on error)."""
+    try:
+        result = loader()
+    except Exception:
+        logger.warning("search-index: partial render failed", exc_info=True)
+        return ''
+    if isinstance(result, str):
+        return result
+    if isinstance(result, tuple):  # loaders return (msg, status) on error
+        return ''
+    try:
+        return result.get_data(as_text=True)
+    except Exception:
+        return ''
+
+
+def _extract_settings_fields(html, tab, tab_label):
+    parser = _SettingsIndexParser(tab, tab_label)
+    parser.feed(html)
+    return parser.fields
+
+
+# Cache the built index keyed on the installed-plugin set. Core labels/tooltips
+# are static template text, so only a change in installed plugins invalidates it.
+_SEARCH_INDEX_CACHE = {'sig': None, 'fields': None}
+
 
 @pages_v3.route('/')
 def index():
@@ -109,6 +218,55 @@ def load_plugin_config_partial(plugin_id):
     except Exception:
         logger.error("Error loading plugin config partial for %s", plugin_id, exc_info=True)
         return '<div class="text-red-500 p-4">Error loading plugin config; see logs for details</div>', 500
+
+
+@pages_v3.route('/settings/search-index')
+def settings_search_index():
+    """Return a flat JSON index of every searchable setting (core + plugin).
+
+    Powers the web UI's global settings search. Built by rendering the settings
+    partials server-side and extracting field metadata, then cached per
+    installed-plugin set so it is off the display's hot path.
+    """
+    # Core settings tabs: (activeTab value, human label, loader).
+    core_tabs = [
+        ('general', 'General', _load_general_partial),
+        ('display', 'Display', _load_display_partial),
+        ('schedule', 'Schedule', _load_schedule_partial),
+        ('wifi', 'WiFi', _load_wifi_partial),
+    ]
+    try:
+        plugin_ids = []
+        if pages_v3.plugin_manager:
+            try:
+                pages_v3.plugin_manager.discover_plugins()
+                plugin_ids = sorted(
+                    pi.get('id') for pi in pages_v3.plugin_manager.get_all_plugin_info()
+                    if pi.get('id')
+                )
+            except Exception:
+                logger.warning("search-index: could not enumerate plugins", exc_info=True)
+
+        sig = tuple(plugin_ids)
+        if _SEARCH_INDEX_CACHE['sig'] == sig and _SEARCH_INDEX_CACHE['fields'] is not None:
+            return jsonify({'fields': _SEARCH_INDEX_CACHE['fields']})
+
+        fields = []
+        for tab, label, loader in core_tabs:
+            fields.extend(_extract_settings_fields(_partial_html(loader), tab, label))
+
+        for pid in plugin_ids:
+            info = pages_v3.plugin_manager.get_plugin_info(pid) or {}
+            label = info.get('name', pid)
+            html = _partial_html(lambda pid=pid: _load_plugin_config_partial(pid))
+            fields.extend(_extract_settings_fields(html, pid, label))
+
+        _SEARCH_INDEX_CACHE['sig'] = sig
+        _SEARCH_INDEX_CACHE['fields'] = fields
+        return jsonify({'fields': fields})
+    except Exception:
+        logger.error("Error building settings search index", exc_info=True)
+        return jsonify({'fields': []}), 500
 
 
 @pages_v3.route('/plugin-ui/<plugin_id>/web-ui/<path:filename>')

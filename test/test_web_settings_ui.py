@@ -115,3 +115,28 @@ def test_display_tooltip_carries_rich_text(client):
     body = client.get("/v3/partials/display").get_data(as_text=True)
     assert 'id="setting-display-brightness"' in body
     assert "Recommended:" in body  # rich detail authored into a tooltip
+
+
+def test_search_index_endpoint(client):
+    """The server-built search index powers the global settings search."""
+    resp = client.get("/v3/settings/search-index")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert isinstance(data, dict) and isinstance(data.get("fields"), list)
+    fields = data["fields"]
+    assert len(fields) >= 40, "expected the core settings fields to be indexed"
+
+    by_id = {f["anchorId"]: f for f in fields}
+    # Representative fields across tabs must be present with usable text.
+    for anchor in ("setting-general-timezone", "setting-display-brightness",
+                   "setting-wifi-password"):
+        assert anchor in by_id, f"{anchor} missing from search index"
+        entry = by_id[anchor]
+        assert entry["label"], f"{anchor} has no label"
+        assert entry["help"], f"{anchor} has no tooltip help"
+        assert entry["tab"] and entry["tabLabel"]
+
+    # Every entry must carry a non-empty label and a stable anchor id.
+    assert all(f["label"] and f["anchorId"].startswith("setting-") for f in fields)
+    # Section context is captured for grouped fields (e.g. Display hardware).
+    assert by_id["setting-display-brightness"]["section"] == "Hardware Configuration"

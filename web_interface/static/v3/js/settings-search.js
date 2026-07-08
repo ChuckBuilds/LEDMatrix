@@ -22,23 +22,7 @@
     if (window._settingsSearchInit) return;
     window._settingsSearchInit = true;
 
-    // Core settings tabs to index. Only tabs that contain real settings fields
-    // (a .form-group[id^="setting-"]) are listed. Operational/action tabs
-    // (overview, logs, history, cache, tools, fonts, backup/restore, raw config
-    // editor, plugin store) have nothing to navigate to and are excluded.
-    var CORE_TABS = [
-        { tab: 'general', label: 'General', url: '/v3/partials/general' },
-        { tab: 'display', label: 'Display', url: '/v3/partials/display' },
-        { tab: 'schedule', label: 'Schedule', url: '/v3/partials/schedule' },
-        { tab: 'wifi', label: 'WiFi', url: '/v3/partials/wifi' }
-    ];
-
     var MAX_RESULTS = 25;
-
-    // Plugin ids are constrained to this allowlist (mirrors the server's
-    // _SAFE_PLUGIN_ID_RE in pages_v3.py) before they can appear in a request
-    // path, so a fetched URL can never be influenced by untrusted input.
-    var PLUGIN_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 
     function debounce(fn, ms) {
         var t;
@@ -60,75 +44,29 @@
 
     // --- Index building -------------------------------------------------------
 
-    // Extract one index entry per settings field from a parsed document.
-    function scanDoc(doc, tab, tabLabel) {
-        var entries = [];
-        var nodes = doc.querySelectorAll('h2, h3, h4, .form-group[id^="setting-"]');
-        var section = '';
-        nodes.forEach(function (node) {
-            var tag = node.tagName.toLowerCase();
-            if (tag === 'h3' || tag === 'h4') {
-                section = textOf(node);
-                return;
-            }
-            if (tag === 'h2') { section = ''; return; }
-            // A settings .form-group
-            var labelEl = node.querySelector('label');
-            var label = textOf(labelEl) || node.id.replace(/^setting-/, '');
-            var tipEl = node.querySelector('.help-tip');
-            var help = tipEl ? (tipEl.getAttribute('data-tooltip') || '') : '';
-            var key = node.getAttribute('data-setting-key') || node.id.replace(/^setting-/, '');
-            entries.push({
-                tab: tab,
-                tabLabel: tabLabel,
-                section: section,
-                key: key,
-                label: label,
-                help: help,
-                anchorId: node.id,
-                hay: [label, help, key, tabLabel, section].join(' ').toLowerCase()
-            });
-        });
-        return entries;
-    }
-
-    function fetchAndScan(url, tab, tabLabel) {
-        // `url` is always one of our own same-origin settings partial paths
-        // (CORE_TABS literals or a plugin path built from an allowlisted id).
-        return fetch(url, { headers: { 'X-Requested-With': 'settings-search' } })
-            .then(function (r) { return r.ok ? r.text() : ''; })
-            .then(function (html) {
-                if (!html) return [];
-                // Parsed into an inert document: scripts do not run and it is
-                // never inserted into the live DOM — we only read labels and
-                // tooltip text from it to build the search index.
-                var doc = new DOMParser().parseFromString(html, 'text/html');
-                return scanDoc(doc, tab, tabLabel);
-            })
-            .catch(function () { return []; });
-    }
-
     var buildPromise = null;
+
+    // Fetch the prebuilt index from the server (one literal-URL JSON request)
+    // and cache it for the session. Each entry gets a lowercased `hay` haystack
+    // for matching. The server owns which tabs/plugins are included.
     function buildIndex(force) {
         if (window._settingsIndex && !force) return Promise.resolve(window._settingsIndex);
         if (buildPromise && !force) return buildPromise;
 
-        var jobs = CORE_TABS.map(function (t) { return fetchAndScan(t.url, t.tab, t.label); });
-
-        var plugins = (window.installedPlugins || []);
-        plugins.forEach(function (p) {
-            // Skip ids that don't match the strict allowlist so the request
-            // path is always built from safe, validated components.
-            if (!p || !p.id || !PLUGIN_ID_RE.test(p.id)) return;
-            jobs.push(fetchAndScan('/v3/partials/plugin-config/' + p.id, p.id, p.name || p.id));
-        });
-
-        buildPromise = Promise.all(jobs).then(function (lists) {
-            var index = [];
-            lists.forEach(function (l) { index = index.concat(l); });
-            window._settingsIndex = index;
-            return index;
-        });
+        buildPromise = fetch('/v3/settings/search-index', { headers: { 'X-Requested-With': 'settings-search' } })
+            .then(function (r) { return r.ok ? r.json() : { fields: [] }; })
+            .then(function (data) {
+                var fields = (data && data.fields) || [];
+                fields.forEach(function (f) {
+                    f.hay = [f.label, f.help, f.key, f.tabLabel, f.section].join(' ').toLowerCase();
+                });
+                window._settingsIndex = fields;
+                return fields;
+            })
+            .catch(function () {
+                window._settingsIndex = [];
+                return window._settingsIndex;
+            });
         return buildPromise;
     }
 
