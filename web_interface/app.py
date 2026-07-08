@@ -160,6 +160,22 @@ api_v3.health_monitor = health_monitor
 from src.cache_manager import CacheManager
 api_v3.cache_manager = CacheManager()
 
+# Wire plugin health/metrics for the web process. The display service records
+# health and execution-time metrics to the shared on-disk cache; giving the web
+# process its own tracker/monitor backed by that same cache lets the health API
+# routes (/api/v3/plugins/health, /plugins/metrics) read that persisted data.
+# Guarded so any init failure degrades to "not available" rather than breaking
+# the web server.
+try:
+    from src.plugin_system.plugin_health import PluginHealthTracker
+    from src.plugin_system.resource_monitor import PluginResourceMonitor
+    plugin_manager.health_tracker = PluginHealthTracker(api_v3.cache_manager)
+    plugin_manager.resource_monitor = PluginResourceMonitor(api_v3.cache_manager)
+except Exception as _hm_err:  # pragma: no cover - defensive startup guard
+    logging.getLogger(__name__).warning(
+        "Could not enable plugin health/metrics for web UI: %s", _hm_err
+    )
+
 app.register_blueprint(pages_v3, url_prefix='/v3')
 app.register_blueprint(api_v3, url_prefix='/api/v3')
 

@@ -2073,6 +2073,18 @@ def get_installed_plugins():
                 return None
 
         def _build_plugin_entry_inner(plugin_info, plugin_id):
+            # Capture runtime state (state machine + error context) before the
+            # manifest merge below can shadow the 'state' key. get_all_plugin_info
+            # attaches this via PluginStateManager.get_state_info(); surfacing it
+            # lets the UI show *why* a plugin isn't running instead of just
+            # 'loaded: false'.
+            state_info = plugin_info.get('state')
+            plugin_state = None
+            plugin_error_info = None
+            if isinstance(state_info, dict):
+                plugin_state = state_info.get('state')
+                plugin_error_info = state_info.get('error_info')
+
             # Re-read manifest from disk to ensure we have the latest metadata
             manifest_path = Path(api_v3.plugin_manager.plugins_dir) / plugin_id / "manifest.json"
             if manifest_path.exists():
@@ -2154,6 +2166,8 @@ def get_installed_plugins():
                 'enabled': enabled,
                 'verified': verified,
                 'loaded': plugin_info.get('loaded', False),
+                'state': plugin_state,
+                'error_info': plugin_error_info,
                 'last_updated': last_updated,
                 'last_commit': last_commit,
                 'last_commit_message': last_commit_message,
@@ -2173,6 +2187,31 @@ def get_installed_plugins():
         logger.error('Error in get_installed_plugins', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
 
+def _installed_plugin_ids():
+    """Best-effort list of installed plugin IDs for the web process.
+
+    Health/metrics state is written by the separate display service to the
+    shared on-disk cache, so the tracker's in-memory set is empty here. We
+    enumerate the installed plugins and read each one's persisted summary by ID
+    instead of relying on the tracker's in-memory `get_all_*` view.
+    """
+    pm = api_v3.plugin_manager
+    manifests = getattr(pm, 'plugin_manifests', None)
+    if not manifests:
+        # Only pay for a discovery scan when we haven't discovered anything yet;
+        # subsequent polls reuse the already-populated manifest map.
+        try:
+            pm.discover_plugins()
+        except Exception:
+            logger.debug('discover_plugins failed while listing plugin ids', exc_info=True)
+        manifests = getattr(pm, 'plugin_manifests', None)
+    try:
+        return list(manifests.keys()) if manifests else []
+    except Exception:
+        logger.debug('listing plugin_manifests failed while building plugin ids', exc_info=True)
+        return []
+
+
 @api_v3.route('/plugins/health', methods=['GET'])
 def get_plugin_health():
     """Get health metrics for all plugins"""
@@ -2188,8 +2227,20 @@ def get_plugin_health():
                 'message': 'Health tracking not available'
             })
 
-        # Get health summaries for all plugins
-        health_summaries = api_v3.plugin_manager.health_tracker.get_all_health_summaries()
+        tracker = api_v3.plugin_manager.health_tracker
+        # Build per-plugin summaries by ID so persisted (cross-process) health
+        # is included, then fold in any in-memory-only entries.
+        health_summaries = {}
+        for pid in _installed_plugin_ids():
+            try:
+                health_summaries[pid] = tracker.get_health_summary(pid)
+            except Exception:
+                logger.debug('Could not read health summary for %s', pid, exc_info=True)
+        try:
+            for pid, summary in tracker.get_all_health_summaries().items():
+                health_summaries.setdefault(pid, summary)
+        except Exception:
+            logger.debug('get_all_health_summaries failed', exc_info=True)
 
         return jsonify({
             'status': 'success',
@@ -2264,8 +2315,20 @@ def get_plugin_metrics():
                 'message': 'Resource monitoring not available'
             })
 
-        # Get metrics summaries for all plugins
-        metrics_summaries = api_v3.plugin_manager.resource_monitor.get_all_metrics_summaries()
+        monitor = api_v3.plugin_manager.resource_monitor
+        # Build per-plugin summaries by ID so persisted (cross-process) metrics
+        # are included, then fold in any in-memory-only entries.
+        metrics_summaries = {}
+        for pid in _installed_plugin_ids():
+            try:
+                metrics_summaries[pid] = monitor.get_metrics_summary(pid)
+            except Exception:
+                logger.debug('Could not read metrics summary for %s', pid, exc_info=True)
+        try:
+            for pid, summary in monitor.get_all_metrics_summaries().items():
+                metrics_summaries.setdefault(pid, summary)
+        except Exception:
+            logger.debug('get_all_metrics_summaries failed', exc_info=True)
 
         return jsonify({
             'status': 'success',
