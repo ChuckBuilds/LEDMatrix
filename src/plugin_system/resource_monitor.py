@@ -71,17 +71,32 @@ class PluginResourceMonitor:
         self.cache_manager = cache_manager
         self.enable_monitoring = enable_monitoring and PSUTIL_AVAILABLE
         self.logger = logging.getLogger(__name__)
-        
+
         # Resource metrics per plugin
         self._metrics: Dict[str, ResourceMetrics] = {}
         self._limits: Dict[str, ResourceLimits] = {}
-        
+
         # Thread-local storage for execution tracking
         self._local = threading.local()
-        
+
         # Lock for thread-safe access
         self._lock = threading.Lock()
-        
+
+        # Cache a single psutil.Process handle. Reusing the same handle is what
+        # lets cpu_percent() be read non-blocking (interval=None): psutil returns
+        # the utilisation since the *previous* call on that same object. Creating
+        # a fresh Process() per call would force interval-based sampling that
+        # blocks the caller — unacceptable on the display loop's update path.
+        self._process = None
+        if self.enable_monitoring:
+            try:
+                self._process = psutil.Process()
+                # Prime cpu_percent so the first real measurement returns a
+                # meaningful delta instead of 0.0.
+                self._process.cpu_percent(interval=None)
+            except Exception:  # pragma: no cover - psutil edge cases
+                self._process = None
+
         if not PSUTIL_AVAILABLE and enable_monitoring:
             self.logger.warning(
                 "psutil not available - resource monitoring will be limited to execution time only"
@@ -137,21 +152,24 @@ class PluginResourceMonitor:
     
     def _get_process_memory_mb(self) -> float:
         """Get current process memory usage in MB."""
-        if not self.enable_monitoring:
+        if not self.enable_monitoring or self._process is None:
             return 0.0
         try:
-            process = psutil.Process()
-            return process.memory_info().rss / 1024 / 1024
+            return self._process.memory_info().rss / 1024 / 1024
         except Exception:
             return 0.0
-    
-    def _get_process_cpu_percent(self, interval: float = 0.1) -> float:
-        """Get current process CPU usage percentage."""
-        if not self.enable_monitoring:
+
+    def _get_process_cpu_percent(self) -> float:
+        """Get current process CPU usage percentage (non-blocking).
+
+        Reads cpu_percent(interval=None) against the cached process handle, so
+        it returns immediately with the utilisation observed since the previous
+        call rather than blocking to sample a fresh interval.
+        """
+        if not self.enable_monitoring or self._process is None:
             return 0.0
         try:
-            process = psutil.Process()
-            return process.cpu_percent(interval=interval)
+            return self._process.cpu_percent(interval=None)
         except Exception:
             return 0.0
     

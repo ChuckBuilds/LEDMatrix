@@ -230,7 +230,24 @@ class DisplayController:
                 cache_manager=self.cache_manager,
                 font_manager=self.font_manager
             )
-            
+
+            # Activate the plugin health/metrics subsystem. PluginManager leaves
+            # health_tracker/resource_monitor as None by default; wiring real
+            # instances here turns on the circuit breaker (a repeatedly-failing
+            # plugin's update() is skipped after consecutive failures, then
+            # retried after a cooldown) and per-plugin execution-time metrics.
+            # Both persist to the shared cache so the web UI can surface them.
+            # Done before discovery/loading so load-time schema warnings have a
+            # tracker to record against.
+            try:
+                from src.plugin_system.plugin_health import PluginHealthTracker
+                from src.plugin_system.resource_monitor import PluginResourceMonitor
+                self.plugin_manager.health_tracker = PluginHealthTracker(self.cache_manager)
+                self.plugin_manager.resource_monitor = PluginResourceMonitor(self.cache_manager)
+                logger.info("Plugin health tracking and resource monitoring enabled")
+            except Exception as e:
+                logger.warning("Could not enable plugin health/resource monitoring: %s", e)
+
             # Validate plugins after plugin manager is created
             try:
                 from src.startup_validator import StartupValidator

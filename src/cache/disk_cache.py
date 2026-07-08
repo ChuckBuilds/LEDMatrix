@@ -105,7 +105,13 @@ class DiskCache:
                     record_ts = None
             
             now = time.time()
-            if record_ts is None or (now - record_ts) <= max_age:
+            # max_age=None means "never expires" (mirrors MemoryCache and the
+            # cache_manager docstring). Guard it explicitly — otherwise the
+            # comparison below raises TypeError and the record is treated as a
+            # miss, which silently breaks callers that persist long-lived state
+            # via get(key, max_age=None) (e.g. plugin health/metrics that must
+            # survive restarts and be read cross-process).
+            if record_ts is None or max_age is None or (now - record_ts) <= max_age:
                 return record
             else:
                 # Stale on disk; keep file for potential diagnostics but treat as miss

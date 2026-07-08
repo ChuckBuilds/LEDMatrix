@@ -139,6 +139,28 @@ class PluginHealthTracker:
         
         self._save_health_state(plugin_id, state)
     
+    def set_degraded(self, plugin_id: str, reason: Optional[str]) -> None:
+        """Flag (or clear) a plugin as degraded without touching the circuit breaker.
+
+        Used for non-fatal issues — e.g. a config that no longer satisfies the
+        plugin's schema — that should be surfaced to the user but must NOT cause
+        the plugin to be skipped or counted as a runtime failure. Passing
+        ``reason=None`` clears the flag. The write is skipped when nothing
+        actually changes, so calling this on every load is cheap.
+
+        Args:
+            plugin_id: Plugin identifier
+            reason: Human-readable reason string, or None to clear the flag
+        """
+        state = self.get_health_state(plugin_id)
+        new_degraded = bool(reason)
+        new_reason = reason if reason else None
+        if state.get('degraded', False) == new_degraded and state.get('degraded_reason') == new_reason:
+            return  # No change — avoid a redundant cache write
+        state['degraded'] = new_degraded
+        state['degraded_reason'] = new_reason
+        self._save_health_state(plugin_id, state)
+
     def should_skip_plugin(self, plugin_id: str) -> bool:
         """
         Check if plugin should be skipped due to circuit breaker.
@@ -201,6 +223,8 @@ class PluginHealthTracker:
             'last_failure_time': state.get('last_failure_time'),
             'last_error': state.get('last_error'),
             'is_healthy': state.get('circuit_state') == CircuitState.CLOSED.value,
+            'degraded': state.get('degraded', False),
+            'degraded_reason': state.get('degraded_reason'),
             'circuit_opened_time': state.get('circuit_opened_time'),
             'half_open_start_time': state.get('half_open_start_time')
         }
