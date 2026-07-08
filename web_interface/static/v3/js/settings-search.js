@@ -6,15 +6,16 @@
  * .help-tip[data-tooltip]), so it can never drift from what is rendered:
  *
  *   1. Global search (header box): finds settings across ALL tabs, even ones
- *      not yet opened, by fetching each tab's partial once and scanning it.
+ *      not yet opened, by fetching a single server-side JSON index
+ *      (/v3/settings/search-index) built from all rendered partials.
  *      Clicking a result switches to the tab, waits for the field to load,
  *      then scrolls to and flashes it.
  *   2. Per-tab filter (the .settings-filter box under a partial title):
  *      hides non-matching fields on the current tab. Delegated, so it keeps
  *      working across HTMX swaps.
  *
- * No backend endpoint is required — plugins are enumerated from
- * window.installedPlugins and their config partials are fetched the same way.
+ * The server owns index generation (including plugin enumeration) and caches
+ * it per installed-plugin set, so the client makes exactly one JSON request.
  */
 (function () {
     'use strict';
@@ -64,8 +65,10 @@
                 return fields;
             })
             .catch(function () {
-                window._settingsIndex = [];
-                return window._settingsIndex;
+                // Don't cache the failure: clear the in-flight promise so a
+                // later call can retry after a transient fetch error.
+                buildPromise = null;
+                return [];
             });
         return buildPromise;
     }
@@ -309,10 +312,12 @@
     // --- Per-tab filter (delegated) -------------------------------------------
 
     function filterScope(input) {
+        // Return the nearest tab/content container, or null — never `document`,
+        // which would let the filter hide setting fields across unrelated tabs.
         return input.closest('.plugin-config-tab') ||
                input.closest('[id$="-content"]') ||
                input.closest('.bg-white') ||
-               document;
+               null;
     }
 
     function fieldHay(fg) {
@@ -364,7 +369,8 @@
     document.addEventListener('input', function (e) {
         var box = e.target.closest ? e.target.closest('.settings-filter') : null;
         if (!box) return;
-        applyTabFilter(filterScope(box), box.value);
+        var scope = filterScope(box);
+        if (scope) applyTabFilter(scope, box.value);
     });
 
     // --- Boot -----------------------------------------------------------------

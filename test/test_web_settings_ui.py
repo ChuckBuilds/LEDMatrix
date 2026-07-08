@@ -129,7 +129,7 @@ def test_search_index_endpoint(client):
     by_id = {f["anchorId"]: f for f in fields}
     # Representative fields across tabs must be present with usable text.
     for anchor in ("setting-general-timezone", "setting-display-brightness",
-                   "setting-wifi-password"):
+                   "setting-wifi-password", "setting-durations-clock"):
         assert anchor in by_id, f"{anchor} missing from search index"
         entry = by_id[anchor]
         assert entry["label"], f"{anchor} has no label"

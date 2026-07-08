@@ -232,6 +232,7 @@ def settings_search_index():
     core_tabs = [
         ('general', 'General', _load_general_partial),
         ('display', 'Display', _load_display_partial),
+        ('durations', 'Durations', _load_durations_partial),
         ('schedule', 'Schedule', _load_schedule_partial),
         ('wifi', 'WiFi', _load_wifi_partial),
     ]
