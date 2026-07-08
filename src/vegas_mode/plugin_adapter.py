@@ -369,7 +369,14 @@ class PluginAdapter:
             return img
 
         cropped = img.crop((left, 0, img.width - right, img.height))
-        logger.info(
+
+        # Both edges matching at once is a much stronger signal of genuine
+        # baked-in padding than a single edge (which has a small chance of
+        # coinciding with real all-black content, e.g. a dark logo touching
+        # one boundary). Log that case at warning level so an unexpected
+        # double-edge crop is easy to spot in the field.
+        log = logger.warning if (left and right) else logger.info
+        log(
             "[%s] Stripping scroll_helper padding (left=%dpx, right=%dpx): %dpx -> %dpx",
             plugin_id, left, right, img.width, cropped.width
         )
