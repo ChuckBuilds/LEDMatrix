@@ -109,11 +109,11 @@
         if (!t) return;
         // Only auto-show on keyboard focus, so a mouse/touch focus does not
         // fight the click handler below.
-        var focusVisible = true;
+        var focusVisible;
         try {
             focusVisible = t.matches(':focus-visible');
-        } catch (err) {
-            focusVisible = true; // older browsers: fall back to always show
+        } catch { // older browsers without :focus-visible
+            focusVisible = true;
         }
         if (focusVisible) show(t);
     });

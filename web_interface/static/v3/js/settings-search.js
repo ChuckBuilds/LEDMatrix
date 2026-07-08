@@ -44,10 +44,9 @@
         };
     }
 
-    function escapeHtml(s) {
-        return String(s == null ? '' : s)
-            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    // True when every search term is present in the haystack.
+    function termsMatch(hay, terms) {
+        return terms.every(function (t) { return hay.indexOf(t) !== -1; });
     }
 
     function textOf(el) {
@@ -130,43 +129,54 @@
         q = q.trim().toLowerCase();
         if (!q) return [];
         var terms = q.split(/\s+/);
-        var index = window._settingsIndex || [];
         var out = [];
-        for (var i = 0; i < index.length && out.length < MAX_RESULTS; i++) {
-            var hay = index[i].hay;
-            var ok = true;
-            for (var j = 0; j < terms.length; j++) {
-                if (hay.indexOf(terms[j]) === -1) { ok = false; break; }
-            }
-            if (ok) out.push(index[i]);
-        }
+        (window._settingsIndex || []).some(function (entry) {
+            if (termsMatch(entry.hay, terms)) out.push(entry);
+            return out.length >= MAX_RESULTS; // stop once we have enough
+        });
         return out;
     }
 
+    function span(cls, text) {
+        var s = document.createElement('span');
+        s.className = cls;
+        s.textContent = text;
+        return s;
+    }
+
+    // Build the dropdown with DOM nodes + textContent (never innerHTML) so
+    // setting labels/help can never be interpreted as markup.
     function renderResults(results) {
         currentResults = results;
         activeIndex = -1;
+        resultsBox.textContent = '';
         if (!results.length) {
-            resultsBox.innerHTML = '<div class="ssr-empty">No settings found.</div>';
+            resultsBox.appendChild(span('ssr-empty', 'No settings found.'));
             openResults();
             return;
         }
-        var html = '';
         var lastTab = null;
         results.forEach(function (r, i) {
             if (r.tabLabel !== lastTab) {
-                html += '<div class="ssr-group">' + escapeHtml(r.tabLabel) + '</div>';
+                var group = document.createElement('div');
+                group.className = 'ssr-group';
+                group.textContent = r.tabLabel;
+                resultsBox.appendChild(group);
                 lastTab = r.tabLabel;
             }
             var sub = r.section ? (r.section + ' · ') : '';
             var snippet = r.help ? r.help.split('\n')[0] : '';
-            html += '<button type="button" class="ssr-option" role="option" id="ssr-' + i + '" data-idx="' + i + '">' +
-                '<span class="ssr-label">' + escapeHtml(r.label) + '</span>' +
-                (snippet ? '<span class="ssr-help">' + escapeHtml(sub + snippet) + '</span>'
-                         : (sub ? '<span class="ssr-help">' + escapeHtml(r.section) + '</span>' : '')) +
-                '</button>';
+            var opt = document.createElement('button');
+            opt.type = 'button';
+            opt.className = 'ssr-option';
+            opt.setAttribute('role', 'option');
+            opt.id = 'ssr-' + i;
+            opt.setAttribute('data-idx', String(i));
+            opt.appendChild(span('ssr-label', r.label));
+            var helpText = snippet ? (sub + snippet) : (sub ? r.section : '');
+            if (helpText) opt.appendChild(span('ssr-help', helpText));
+            resultsBox.appendChild(opt);
         });
-        resultsBox.innerHTML = html;
         openResults();
     }
 
@@ -188,7 +198,7 @@
         opts.forEach(function (o) { o.classList.remove('active'); });
         if (idx < 0 || idx >= opts.length) { activeIndex = -1; return; }
         activeIndex = idx;
-        var el = opts[idx];
+        var el = opts.item(idx);
         el.classList.add('active');
         el.scrollIntoView({ block: 'nearest' });
         input.setAttribute('aria-activedescendant', el.id);
@@ -314,12 +324,10 @@
                 e.preventDefault();
                 highlight(Math.max(activeIndex - 1, 0));
             } else if (e.key === 'Enter') {
-                if (activeIndex >= 0 && currentResults[activeIndex]) {
+                var chosen = currentResults.at(activeIndex >= 0 ? activeIndex : 0);
+                if (chosen) {
                     e.preventDefault();
-                    navigateToSetting(currentResults[activeIndex]);
-                } else if (currentResults.length) {
-                    e.preventDefault();
-                    navigateToSetting(currentResults[0]);
+                    navigateToSetting(chosen);
                 }
             } else if (e.key === 'Escape') {
                 closeResults();
@@ -333,7 +341,8 @@
             if (!opt) return;
             e.preventDefault();
             var idx = parseInt(opt.getAttribute('data-idx'), 10);
-            if (currentResults[idx]) navigateToSetting(currentResults[idx]);
+            var chosen = currentResults.at(idx);
+            if (chosen) navigateToSetting(chosen);
         });
 
         document.addEventListener('click', function (e) {
@@ -367,13 +376,7 @@
         var anyVisible = false;
 
         fields.forEach(function (fg) {
-            var show = true;
-            if (terms.length) {
-                var hay = fieldHay(fg);
-                for (var i = 0; i < terms.length; i++) {
-                    if (hay.indexOf(terms[i]) === -1) { show = false; break; }
-                }
-            }
+            var show = !terms.length || termsMatch(fieldHay(fg), terms);
             fg.style.display = show ? '' : 'none';
             if (show) anyVisible = true;
         });
