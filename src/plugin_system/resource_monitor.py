@@ -110,13 +110,21 @@ class PluginResourceMonitor:
         """Get cache key for plugin limits."""
         return f"plugin_limits:{plugin_id}"
     
-    def get_metrics(self, plugin_id: str) -> ResourceMetrics:
-        """Get current metrics for a plugin."""
+    def get_metrics(self, plugin_id: str, force_reload: bool = False) -> ResourceMetrics:
+        """Get current metrics for a plugin.
+
+        ``force_reload=True`` bypasses both the in-memory copy and the cache
+        manager's memory tier so a read-only consumer (e.g. the web process)
+        sees the writer process's latest persisted metrics rather than a stale
+        first snapshot.
+        """
         with self._lock:
-            if plugin_id not in self._metrics:
+            if force_reload or plugin_id not in self._metrics:
                 # Try to load from cache
                 cache_key = self._get_metrics_key(plugin_id)
-                cached = self.cache_manager.get(cache_key, max_age=None)
+                cached = self.cache_manager.get(
+                    cache_key, max_age=None, memory_ttl=0 if force_reload else None
+                )
                 if cached:
                     metrics = ResourceMetrics(**cached)
                 else:
@@ -299,9 +307,13 @@ class PluginResourceMonitor:
             self.logger.error(error_msg)
             raise ResourceLimitExceeded(error_msg)
     
-    def get_metrics_summary(self, plugin_id: str) -> Dict[str, Any]:
-        """Get metrics summary for a plugin."""
-        metrics = self.get_metrics(plugin_id)
+    def get_metrics_summary(self, plugin_id: str, force_reload: bool = False) -> Dict[str, Any]:
+        """Get metrics summary for a plugin.
+
+        ``force_reload=True`` refreshes from the persisted cache first so
+        cross-process readers reflect the writer's latest metrics.
+        """
+        metrics = self.get_metrics(plugin_id, force_reload=force_reload)
         limits = self.get_limits(plugin_id)
         
         avg_execution_time = 0.0

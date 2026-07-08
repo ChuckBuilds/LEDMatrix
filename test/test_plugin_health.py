@@ -61,3 +61,33 @@ def test_default_summary_has_degraded_fields():
     summary = tracker.get_health_summary("never-seen")
     assert summary["degraded"] is False
     assert summary["degraded_reason"] is None
+
+
+def test_force_reload_refreshes_stale_in_memory_snapshot():
+    """A long-lived reader (e.g. the web process) must not be pinned to the
+    first snapshot: force_reload re-reads persisted state and bypasses the
+    cache manager's memory tier so cross-process updates are visible."""
+    cache = _cache()
+    tracker = PluginHealthTracker(cache)
+
+    # First read snapshots an empty (healthy) state into the in-memory copy.
+    assert tracker.get_health_summary("p")["consecutive_failures"] == 0
+
+    # The display service later persists a failing/open state.
+    cache.get.return_value = {
+        "consecutive_failures": 5,
+        "circuit_state": "open",
+        "total_failures": 5,
+        "total_successes": 0,
+    }
+
+    # A plain read is still pinned to the stale snapshot...
+    assert tracker.get_health_summary("p")["consecutive_failures"] == 0
+
+    # ...but force_reload observes the new persisted state.
+    fresh = tracker.get_health_summary("p", force_reload=True)
+    assert fresh["consecutive_failures"] == 5
+    assert fresh["circuit_state"] == "open"
+
+    # and it asked the cache to bypass the in-memory tier (memory_ttl=0).
+    assert any(c.kwargs.get("memory_ttl") == 0 for c in cache.get.call_args_list)

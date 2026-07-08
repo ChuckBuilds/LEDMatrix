@@ -100,3 +100,30 @@ class TestResourceLimits:
         assert mon.get_metrics("p").call_count == 1
         mon.reset_metrics("p")
         assert mon.get_metrics("p").call_count == 0
+
+
+class TestForceReload:
+    def test_force_reload_refreshes_stale_snapshot(self):
+        """A read-only consumer must see the writer process's latest persisted
+        metrics rather than a pinned first snapshot."""
+        cache = MagicMock()
+        persisted = {"value": None}  # only the metrics key returns data
+
+        def cache_get(key, max_age=None, memory_ttl=None):
+            return persisted["value"] if key.startswith("plugin_metrics:") else None
+
+        cache.get.side_effect = cache_get
+        mon = PluginResourceMonitor(cache, enable_monitoring=False)
+
+        # First read snapshots empty metrics.
+        assert mon.get_metrics_summary("p")["call_count"] == 0
+
+        # The display service later persists real metrics.
+        persisted["value"] = {"call_count": 7, "total_execution_time": 1.4}
+
+        # Plain read stays stale...
+        assert mon.get_metrics_summary("p")["call_count"] == 0
+        # ...force_reload picks up the persisted values and bypasses memory.
+        fresh = mon.get_metrics_summary("p", force_reload=True)
+        assert fresh["call_count"] == 7
+        assert any(c.kwargs.get("memory_ttl") == 0 for c in cache.get.call_args_list)

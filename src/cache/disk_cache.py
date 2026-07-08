@@ -68,14 +68,15 @@ class DiskCache:
             return None
         return os.path.join(self.cache_dir, f"{key}.json")
     
-    def get(self, key: str, max_age: int = 300) -> Optional[Dict[str, Any]]:
+    def get(self, key: str, max_age: Optional[int] = 300) -> Optional[Dict[str, Any]]:
         """
         Get data from disk cache.
-        
+
         Args:
             key: Cache key
-            max_age: Maximum age in seconds
-            
+            max_age: Maximum age in seconds; None disables age-based expiry
+                (the record never counts as stale). Mirrors MemoryCache.get.
+
         Returns:
             Cached data or None if not found or expired
         """

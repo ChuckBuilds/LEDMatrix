@@ -52,11 +52,18 @@ class PluginHealthTracker:
         """Get cache key for plugin health data."""
         return f"plugin_health:{plugin_id}"
     
-    def _load_health_state(self, plugin_id: str) -> Dict[str, Any]:
-        """Load health state from cache or return defaults."""
+    def _load_health_state(self, plugin_id: str, force_reload: bool = False) -> Dict[str, Any]:
+        """Load health state from cache or return defaults.
+
+        ``force_reload=True`` bypasses the cache manager's in-memory tier so a
+        read-only consumer (e.g. the web process) observes the writer process's
+        latest persisted state instead of a stale first snapshot.
+        """
         cache_key = self._get_health_key(plugin_id)
-        cached = self.cache_manager.get(cache_key, max_age=None)
-        
+        cached = self.cache_manager.get(
+            cache_key, max_age=None, memory_ttl=0 if force_reload else None
+        )
+
         if cached:
             return cached
         
@@ -79,10 +86,17 @@ class PluginHealthTracker:
         self.cache_manager.set(cache_key, state)  # Persist indefinitely
         self._health_state[plugin_id] = state
     
-    def get_health_state(self, plugin_id: str) -> Dict[str, Any]:
-        """Get current health state for a plugin."""
-        if plugin_id not in self._health_state:
-            self._health_state[plugin_id] = self._load_health_state(plugin_id)
+    def get_health_state(self, plugin_id: str, force_reload: bool = False) -> Dict[str, Any]:
+        """Get current health state for a plugin.
+
+        ``force_reload=True`` re-reads the persisted state from the cache,
+        bypassing the in-memory copy — needed by cross-process readers that
+        would otherwise be pinned to the first snapshot they loaded.
+        """
+        if force_reload or plugin_id not in self._health_state:
+            self._health_state[plugin_id] = self._load_health_state(
+                plugin_id, force_reload=force_reload
+            )
         return self._health_state[plugin_id]
     
     def record_success(self, plugin_id: str) -> None:
@@ -203,9 +217,13 @@ class PluginHealthTracker:
         
         return False
     
-    def get_health_summary(self, plugin_id: str) -> Dict[str, Any]:
-        """Get health summary for a plugin."""
-        state = self.get_health_state(plugin_id)
+    def get_health_summary(self, plugin_id: str, force_reload: bool = False) -> Dict[str, Any]:
+        """Get health summary for a plugin.
+
+        ``force_reload=True`` refreshes from the persisted cache first so
+        cross-process readers reflect the writer's latest state.
+        """
+        state = self.get_health_state(plugin_id, force_reload=force_reload)
         
         total_calls = state.get('total_successes', 0) + state.get('total_failures', 0)
         success_rate = 0.0

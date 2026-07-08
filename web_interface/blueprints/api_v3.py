@@ -2233,7 +2233,10 @@ def get_plugin_health():
         health_summaries = {}
         for pid in _installed_plugin_ids():
             try:
-                health_summaries[pid] = tracker.get_health_summary(pid)
+                # force_reload: this process only reads; bypass the in-memory
+                # snapshot so each poll reflects the display service's latest
+                # persisted state.
+                health_summaries[pid] = tracker.get_health_summary(pid, force_reload=True)
             except Exception:
                 logger.debug('Could not read health summary for %s', pid, exc_info=True)
         try:
@@ -2321,7 +2324,9 @@ def get_plugin_metrics():
         metrics_summaries = {}
         for pid in _installed_plugin_ids():
             try:
-                metrics_summaries[pid] = monitor.get_metrics_summary(pid)
+                # force_reload: read-only path — bypass the in-memory snapshot so
+                # each poll reflects the display service's latest persisted metrics.
+                metrics_summaries[pid] = monitor.get_metrics_summary(pid, force_reload=True)
             except Exception:
                 logger.debug('Could not read metrics summary for %s', pid, exc_info=True)
         try:

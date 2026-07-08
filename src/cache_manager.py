@@ -574,9 +574,19 @@ class CacheManager:
         }
         return self.save_cache(data_type, cache_data)
 
-    def get(self, key: str, max_age: int = 300) -> Optional[Dict[str, Any]]:
-        """Get data from cache if it exists and is not stale."""
-        cached_data = self.get_cached_data(key, max_age)
+    def get(self, key: str, max_age: Optional[int] = 300,
+            memory_ttl: Optional[int] = None) -> Optional[Dict[str, Any]]:
+        """Get data from cache if it exists and is not stale.
+
+        Args:
+            key: Cache key
+            max_age: Max age (seconds) for the on-disk entry; None never expires.
+            memory_ttl: Max age (seconds) for the in-memory entry. Pass 0 to
+                bypass the memory tier and force a fresh read from disk — used by
+                cross-process readers that must observe another process's latest
+                write rather than a stale first snapshot. Defaults to max_age.
+        """
+        cached_data = self.get_cached_data(key, max_age, memory_ttl=memory_ttl)
         if cached_data and 'data' in cached_data:
             return cached_data['data']
         return cached_data
