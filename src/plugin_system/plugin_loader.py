@@ -235,16 +235,35 @@ class PluginLoader:
                 return True
             else:
                 stderr = result.stderr or ""
-                # uninstall-no-record-file means the package is already present at the
-                # system level (e.g. installed via dnf/apt without a pip RECORD file).
-                # pip can't replace it, but it IS installed — write the marker so we
-                # don't retry on every restart.
+                # uninstall-no-record-file means a system-managed copy of a package
+                # (e.g. apt's python3-requests, which ships no pip RECORD file) is in
+                # the way of the version this requirements.txt pins. Retry with
+                # --ignore-installed so pip lays the pinned version down alongside
+                # the system copy instead of trying to replace it — matching the
+                # retry already used by install_dependencies_apt.py / safe_pip_install.sh.
+                # Without this retry, the plugin would silently keep running against
+                # whatever version the system happened to ship, even though the
+                # marker below claims the requirement is satisfied.
                 if "uninstall-no-record-file" in stderr:
                     self.logger.warning(
-                        "Dependencies for %s include system-managed packages (no pip RECORD). "
-                        "Assuming they are satisfied: %s",
+                        "Dependencies for %s conflict with a system-managed package "
+                        "(no pip RECORD); retrying with --ignore-installed: %s",
                         plugin_id, stderr.strip()
                     )
+                    retry_result = subprocess.run(
+                        [sys.executable, "-m", "pip", "install", "--break-system-packages",
+                         "--ignore-installed", "-r", requirements_file],
+                        capture_output=True,
+                        text=True,
+                        timeout=timeout,
+                        check=False
+                    )
+                    if retry_result.returncode != 0:
+                        self.logger.warning(
+                            "Retry with --ignore-installed also failed for %s; assuming the "
+                            "system-managed version satisfies the requirement: %s",
+                            plugin_id, (retry_result.stderr or "").strip()
+                        )
                     try:
                         with open(marker_file, 'w', encoding='utf-8') as fh:
                             fh.write(current_hash)

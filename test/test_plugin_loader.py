@@ -216,7 +216,56 @@ class TestPluginLoader:
         requirements_file.write_text("package1==1.0.0\n")
         
         mock_subprocess.return_value = MagicMock(returncode=1)
-        
+
         result = plugin_loader.install_dependencies(plugin_dir, "test_plugin")
-        
+
         assert result is False
+
+    @patch('subprocess.run')
+    def test_install_dependencies_retries_with_ignore_installed_on_apt_conflict(
+        self, mock_subprocess, plugin_loader, tmp_plugins_dir
+    ):
+        """An apt-managed package with no pip RECORD file triggers a retry with
+        --ignore-installed rather than silently assuming the old version satisfies
+        the requirement."""
+        plugin_dir = tmp_plugins_dir / "test_plugin"
+        plugin_dir.mkdir()
+        requirements_file = plugin_dir / "requirements.txt"
+        requirements_file.write_text("requests>=2.33.0,<3.0.0\n")
+
+        first_attempt = MagicMock(
+            returncode=1,
+            stderr="ERROR: Cannot uninstall requests 2.32.3\nuninstall-no-record-file"
+        )
+        retry_attempt = MagicMock(returncode=0, stderr="")
+        mock_subprocess.side_effect = [first_attempt, retry_attempt]
+
+        result = plugin_loader.install_dependencies(plugin_dir, "test_plugin")
+
+        assert result is True
+        assert mock_subprocess.call_count == 2
+        retry_cmd = mock_subprocess.call_args_list[1][0][0]
+        assert "--ignore-installed" in retry_cmd
+
+    @patch('subprocess.run')
+    def test_install_dependencies_apt_conflict_retry_also_fails(
+        self, mock_subprocess, plugin_loader, tmp_plugins_dir
+    ):
+        """Still tolerates the failure (returns True) if the --ignore-installed
+        retry itself fails, matching the prior soft-fallback behavior."""
+        plugin_dir = tmp_plugins_dir / "test_plugin"
+        plugin_dir.mkdir()
+        requirements_file = plugin_dir / "requirements.txt"
+        requirements_file.write_text("requests>=2.33.0,<3.0.0\n")
+
+        first_attempt = MagicMock(
+            returncode=1,
+            stderr="ERROR: Cannot uninstall requests 2.32.3\nuninstall-no-record-file"
+        )
+        retry_attempt = MagicMock(returncode=1, stderr="some other pip error")
+        mock_subprocess.side_effect = [first_attempt, retry_attempt]
+
+        result = plugin_loader.install_dependencies(plugin_dir, "test_plugin")
+
+        assert result is True
+        assert mock_subprocess.call_count == 2
