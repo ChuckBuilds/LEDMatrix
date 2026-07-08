@@ -882,6 +882,25 @@
 
                 <!-- Connection status and theme toggle -->
                 <div class="flex items-center space-x-4">
+                    <!-- Global settings search -->
+                    <div class="relative hidden sm:block" id="settings-search-wrap">
+                        <input id="settings-search"
+                               type="text"
+                               role="combobox"
+                               aria-expanded="false"
+                               aria-autocomplete="list"
+                               aria-controls="settings-search-results"
+                               aria-label="Search settings"
+                               placeholder="Search settings…"
+                               autocomplete="off"
+                               class="form-control text-sm pl-8 pr-4 py-1.5 w-48 lg:w-64">
+                        <i class="fas fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 text-xs" aria-hidden="true"></i>
+                        <div id="settings-search-results"
+                             role="listbox"
+                             aria-label="Settings search results"
+                             class="hidden absolute right-0 mt-1 w-80 max-h-96 overflow-y-auto"></div>
+                    </div>
+
                     <!-- Theme toggle -->
                     <button id="theme-toggle"
                             type="button"
@@ -4747,7 +4766,11 @@
 
     <!-- Custom v3 JavaScript -->
     <script src="{{ url_for('static', filename='v3/app.js') }}" defer></script>
-    
+
+    <!-- Settings tooltips + settings search -->
+    <script src="{{ url_for('static', filename='v3/js/tooltips.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='v3/js/settings-search.js') }}" defer></script>
+
     <!-- Modular Plugin Management JavaScript -->
     <!-- Load utilities first -->
     <script src="{{ url_for('static', filename='v3/js/utils/error_handler.js') }}" defer></script>

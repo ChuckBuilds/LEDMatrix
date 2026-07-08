@@ -1,3 +1,4 @@
+{% import 'v3/partials/_macros.html' as ui %}
 <div class="space-y-6" id="backup-restore-root">
 
     <!-- Security warning -->
@@ -70,12 +71,12 @@
 
                 <h3 class="text-sm font-medium text-gray-900 mt-4 mb-2">Choose what to restore</h3>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-gray-700">
-                    <label class="flex items-center gap-2"><input type="checkbox" id="opt-config" checked> <span>Main configuration</span></label>
-                    <label class="flex items-center gap-2"><input type="checkbox" id="opt-secrets" checked> <span>API keys (secrets)</span></label>
-                    <label class="flex items-center gap-2"><input type="checkbox" id="opt-wifi" checked> <span>WiFi configuration</span></label>
-                    <label class="flex items-center gap-2"><input type="checkbox" id="opt-fonts" checked> <span>User-uploaded fonts</span></label>
-                    <label class="flex items-center gap-2"><input type="checkbox" id="opt-plugin-uploads" checked> <span>Plugin image uploads</span></label>
-                    <label class="flex items-center gap-2"><input type="checkbox" id="opt-reinstall" checked> <span>Reinstall missing plugins</span></label>
+                    <label class="flex items-center gap-2"><input type="checkbox" id="opt-config" checked> <span>Main configuration</span>{{ ui.help_tip('Restore config.json — display settings, schedules, location, and plugin configuration.', 'Main configuration') }}</label>
+                    <label class="flex items-center gap-2"><input type="checkbox" id="opt-secrets" checked> <span>API keys (secrets)</span>{{ ui.help_tip('Restore config_secrets.json — your weather, sports, and other service API keys.\nLeave off if you prefer to re-enter keys by hand.', 'API keys') }}</label>
+                    <label class="flex items-center gap-2"><input type="checkbox" id="opt-wifi" checked> <span>WiFi configuration</span>{{ ui.help_tip('Restore saved WiFi network names and credentials.', 'WiFi configuration') }}</label>
+                    <label class="flex items-center gap-2"><input type="checkbox" id="opt-fonts" checked> <span>User-uploaded fonts</span>{{ ui.help_tip('Restore any custom fonts you uploaded via the Fonts tab.', 'User-uploaded fonts') }}</label>
+                    <label class="flex items-center gap-2"><input type="checkbox" id="opt-plugin-uploads" checked> <span>Plugin image uploads</span>{{ ui.help_tip('Restore images and files that plugins let you upload (logos, backgrounds, etc.).', 'Plugin image uploads') }}</label>
+                    <label class="flex items-center gap-2"><input type="checkbox" id="opt-reinstall" checked> <span>Reinstall missing plugins</span>{{ ui.help_tip('After restoring, re-download any plugins that were installed in the backup but are missing now.', 'Reinstall missing plugins') }}</label>
                 </div>
 
                 <div class="mt-4 flex gap-2">

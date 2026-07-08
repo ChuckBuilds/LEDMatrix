@@ -1,8 +1,11 @@
+{% import 'v3/partials/_macros.html' as ui %}
 <div class="bg-white rounded-lg shadow p-6">
     <div class="border-b border-gray-200 pb-4 mb-6">
         <h2 class="text-lg font-semibold text-gray-900">Display Settings</h2>
         <p class="mt-1 text-sm text-gray-600">Configure LED matrix hardware settings and display options.</p>
     </div>
+
+    {{ ui.settings_filter('Filter display settings…') }}
 
     <!-- Hardware status banner: shown when display service is in fallback/simulation mode -->
     <div x-data="{ show: false, errorMsg: '' }"
@@ -37,8 +40,8 @@
             <h3 class="text-md font-medium text-gray-900 mb-4">Hardware Configuration</h3>
 
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-4 2xl:grid-cols-4 gap-4 mb-4">
-                <div class="form-group">
-                    <label for="rows" class="block text-sm font-medium text-gray-700">Rows</label>
+                <div class="form-group" id="setting-display-rows" data-setting-key="display.hardware.rows">
+                    <label for="rows" class="block text-sm font-medium text-gray-700">Rows{{ ui.help_tip('Number of LED rows on a single panel.\nCommon: 16, 32, or 64. Default: 32. Must match your panel.', 'Rows') }}</label>
                     <input type="number"
                            id="rows"
                            name="rows"
@@ -46,11 +49,10 @@
                            min="1"
                            max="64"
                            class="form-control">
-                    <p class="mt-1 text-sm text-gray-600">Number of LED rows</p>
                 </div>
 
-                <div class="form-group">
-                    <label for="cols" class="block text-sm font-medium text-gray-700">Columns</label>
+                <div class="form-group" id="setting-display-cols" data-setting-key="display.hardware.cols">
+                    <label for="cols" class="block text-sm font-medium text-gray-700">Columns{{ ui.help_tip('Number of LED columns on a single panel.\nCommon: 32 or 64. Default: 64. Must match your panel.', 'Columns') }}</label>
                     <input type="number"
                            id="cols"
                            name="cols"
@@ -58,11 +60,10 @@
                            min="1"
                            max="128"
                            class="form-control">
-                    <p class="mt-1 text-sm text-gray-600">Number of LED columns</p>
                 </div>
 
-                <div class="form-group">
-                    <label for="chain_length" class="block text-sm font-medium text-gray-700">Chain Length</label>
+                <div class="form-group" id="setting-display-chain_length" data-setting-key="display.hardware.chain_length">
+                    <label for="chain_length" class="block text-sm font-medium text-gray-700">Chain Length{{ ui.help_tip('How many panels are wired end-to-end in one chain.\nDefault: 2. Example: two 64×32 panels chained make a 128×32 display.', 'Chain Length') }}</label>
                     <input type="number"
                            id="chain_length"
                            name="chain_length"
@@ -70,11 +71,10 @@
                            min="1"
                            max="24"
                            class="form-control">
-                    <p class="mt-1 text-sm text-gray-600">Number of LED panels chained together</p>
                 </div>
 
-                <div class="form-group">
-                    <label for="parallel" class="block text-sm font-medium text-gray-700">Parallel</label>
+                <div class="form-group" id="setting-display-parallel" data-setting-key="display.hardware.parallel">
+                    <label for="parallel" class="block text-sm font-medium text-gray-700">Parallel{{ ui.help_tip('Number of separate chains driven in parallel from the HAT.\nDefault: 1. The Raspberry Pi supports up to 3 (some HATs allow more).', 'Parallel') }}</label>
                     <input type="number"
                            id="parallel"
                            name="parallel"
@@ -82,13 +82,12 @@
                            min="1"
                            max="4"
                            class="form-control">
-                    <p class="mt-1 text-sm text-gray-600">Number of parallel chains</p>
                 </div>
             </div>
 
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div class="form-group">
-                    <label for="brightness" class="block text-sm font-medium text-gray-700">Brightness</label>
+                <div class="form-group" id="setting-display-brightness" data-setting-key="display.hardware.brightness">
+                    <label for="brightness" class="block text-sm font-medium text-gray-700">Brightness{{ ui.help_tip('Overall LED brightness (1–100%).\nLower is dimmer, higher is brighter. Recommended: 70–90 indoors, 90–100 in bright rooms.', 'Brightness') }}</label>
                     <div class="flex items-center space-x-2">
                         <input type="range"
                                id="brightness"
@@ -99,11 +98,10 @@
                                class="flex-1">
                         <span id="brightness-value" class="text-sm font-medium w-12">{{ main_config.display.hardware.brightness or 95 }}</span>
                     </div>
-                    <p class="mt-1 text-sm text-gray-600">LED brightness: <span id="brightness-display">{{ main_config.display.hardware.brightness or 95 }}</span>%</p>
                 </div>
 
-                <div class="form-group">
-                    <label for="hardware_mapping" class="block text-sm font-medium text-gray-700">Hardware Mapping</label>
+                <div class="form-group" id="setting-display-hardware_mapping" data-setting-key="display.hardware.hardware_mapping">
+                    <label for="hardware_mapping" class="block text-sm font-medium text-gray-700">Hardware Mapping{{ ui.help_tip('How the LED panel is wired to the Pi.\nUse "Adafruit HAT PWM" for an Adafruit HAT/Bonnet with the PWM solder mod; "Adafruit HAT" without it; "Regular" for direct GPIO wiring.', 'Hardware Mapping') }}</label>
                     <select id="hardware_mapping" name="hardware_mapping" class="form-control">
                         <option value="adafruit-hat-pwm" {% if main_config.display.hardware.hardware_mapping == "adafruit-hat-pwm" %}selected{% endif %}>Adafruit HAT PWM</option>
                         <option value="adafruit-hat" {% if main_config.display.hardware.hardware_mapping == "adafruit-hat" %}selected{% endif %}>Adafruit HAT</option>
@@ -114,8 +112,8 @@
             </div>
 
             <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div class="form-group">
-                    <label for="led_rgb_sequence" class="block text-sm font-medium text-gray-700">LED RGB Sequence</label>
+                <div class="form-group" id="setting-display-led_rgb_sequence" data-setting-key="display.hardware.led_rgb_sequence">
+                    <label for="led_rgb_sequence" class="block text-sm font-medium text-gray-700">LED RGB Sequence{{ ui.help_tip('Order the panel expects color channels in.\nChange this only if reds/greens/blues look swapped. Default: RGB.', 'LED RGB Sequence') }}</label>
                     <select id="led_rgb_sequence" name="led_rgb_sequence" class="form-control">
                         <option value="RGB" {% if main_config.display.hardware.get('led_rgb_sequence', 'RGB') == "RGB" %}selected{% endif %}>RGB</option>
                         <option value="RBG" {% if main_config.display.hardware.get('led_rgb_sequence', 'RGB') == "RBG" %}selected{% endif %}>RBG</option>
@@ -124,11 +122,10 @@
                         <option value="BRG" {% if main_config.display.hardware.get('led_rgb_sequence', 'RGB') == "BRG" %}selected{% endif %}>BRG</option>
                         <option value="BGR" {% if main_config.display.hardware.get('led_rgb_sequence', 'RGB') == "BGR" %}selected{% endif %}>BGR</option>
                     </select>
-                    <p class="mt-1 text-sm text-gray-600">Color channel order for your LED panels</p>
                 </div>
 
-                <div class="form-group">
-                    <label for="multiplexing" class="block text-sm font-medium text-gray-700">Multiplexing</label>
+                <div class="form-group" id="setting-display-multiplexing" data-setting-key="display.hardware.multiplexing">
+                    <label for="multiplexing" class="block text-sm font-medium text-gray-700">Multiplexing{{ ui.help_tip('Pixel-mapping scheme used by outdoor/specialty panels.\nLeave at 0 (Direct) for most indoor panels. Only change if the image is scrambled — try values until it looks right.', 'Multiplexing') }}</label>
                     <select id="multiplexing" name="multiplexing" class="form-control">
                         <option value="0" {% if main_config.display.hardware.get('multiplexing', 0)|int == 0 %}selected{% endif %}>0 - Direct</option>
                         <option value="1" {% if main_config.display.hardware.get('multiplexing', 0)|int == 1 %}selected{% endif %}>1 - Stripe</option>
@@ -154,21 +151,19 @@
                         <option value="21" {% if main_config.display.hardware.get('multiplexing', 0)|int == 21 %}selected{% endif %}>21 - DoubleZMultiplex</option>
                         <option value="22" {% if main_config.display.hardware.get('multiplexing', 0)|int == 22 %}selected{% endif %}>22 - P4Outdoor-80x40</option>
                     </select>
-                    <p class="mt-1 text-sm text-gray-600">Multiplexing scheme for your LED panels</p>
                 </div>
 
-                <div class="form-group">
-                    <label for="panel_type" class="block text-sm font-medium text-gray-700">Panel Type</label>
+                <div class="form-group" id="setting-display-panel_type" data-setting-key="display.hardware.panel_type">
+                    <label for="panel_type" class="block text-sm font-medium text-gray-700">Panel Type{{ ui.help_tip('Special initialization for panels with a specific driver chip (e.g. FM6126A, FM6127).\nLeave on Standard unless your panel stays blank or shows only the first pixel.', 'Panel Type') }}</label>
                     <select id="panel_type" name="panel_type" class="form-control">
                         <option value="" {% if not main_config.display.hardware.get('panel_type', '') %}selected{% endif %}>Standard</option>
                         <option value="FM6126A" {% if main_config.display.hardware.get('panel_type', '') == "FM6126A" %}selected{% endif %}>FM6126A</option>
                         <option value="FM6127" {% if main_config.display.hardware.get('panel_type', '') == "FM6127" %}selected{% endif %}>FM6127</option>
                     </select>
-                    <p class="mt-1 text-sm text-gray-600">Special panel chipset initialization (use Standard unless your panel requires it)</p>
                 </div>
 
-                <div class="form-group">
-                    <label for="row_address_type" class="block text-sm font-medium text-gray-700">Row Address Type</label>
+                <div class="form-group" id="setting-display-row_address_type" data-setting-key="display.hardware.row_address_type">
+                    <label for="row_address_type" class="block text-sm font-medium text-gray-700">Row Address Type{{ ui.help_tip('Row addressing scheme used by the panel.\nLeave at 0 (Default) unless your panel needs AB/ABC addressing — a wrong value shows a garbled or shifted image.', 'Row Address Type') }}</label>
                     <select id="row_address_type" name="row_address_type" class="form-control">
                         <option value="0" {% if main_config.display.hardware.get('row_address_type', 0)|int == 0 %}selected{% endif %}>0 - Default</option>
                         <option value="1" {% if main_config.display.hardware.get('row_address_type', 0)|int == 1 %}selected{% endif %}>1 - AB-addressed panels</option>
@@ -176,13 +171,12 @@
                         <option value="3" {% if main_config.display.hardware.get('row_address_type', 0)|int == 3 %}selected{% endif %}>3 - ABC-addressed panels</option>
                         <option value="4" {% if main_config.display.hardware.get('row_address_type', 0)|int == 4 %}selected{% endif %}>4 - ABC Shift + DE direct</option>
                     </select>
-                    <p class="mt-1 text-sm text-gray-600">Row addressing scheme — leave at Default (0) unless your panel requires a specific type</p>
                 </div>
             </div>
 
             <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div class="form-group">
-                    <label for="gpio_slowdown" class="block text-sm font-medium text-gray-700">GPIO Slowdown</label>
+                <div class="form-group" id="setting-display-gpio_slowdown" data-setting-key="display.runtime.gpio_slowdown">
+                    <label for="gpio_slowdown" class="block text-sm font-medium text-gray-700">GPIO Slowdown{{ ui.help_tip('Slows the GPIO signal so the panel keeps up.\nGuide: Pi 3 → 1–2, Pi 4 → 2–4, Pi 5 (PIO) → 1–3. Increase if the display shows garbage or flicker; in RIO mode higher values may improve performance.', 'GPIO Slowdown') }}</label>
                     <input type="number"
                            id="gpio_slowdown"
                            name="gpio_slowdown"
@@ -190,22 +184,20 @@
                            min="0"
                            max="10"
                            class="form-control">
-                    <p class="mt-1 text-sm text-gray-600">Pi 3: 1&ndash;2 &middot; Pi 4: 2&ndash;4 &middot; Pi 5 PIO: 1&ndash;3. Increase if display shows garbage; in RIO mode higher values may improve performance.</p>
                 </div>
 
-                <div class="form-group">
+                <div class="form-group" id="setting-display-rp1_rio" data-setting-key="display.runtime.rp1_rio">
                     <label for="rp1_rio" class="block text-sm font-medium text-gray-700">
-                        RP1 Backend <span class="text-xs text-gray-400 font-normal">(Pi 5 only)</span>
+                        RP1 Backend <span class="text-xs text-gray-400 font-normal">(Pi 5 only)</span>{{ ui.help_tip('Pi 5 RP1 coprocessor driver mode.\nPIO (0) is the default and uses less CPU. RIO (1) can push a higher refresh rate but inverts the GPIO Slowdown behavior. Ignored on Pi 3/4.', 'RP1 Backend') }}
                     </label>
                     <select id="rp1_rio" name="rp1_rio" class="form-control">
                         <option value="0" {% if main_config.display.get('runtime', {}).get('rp1_rio', 0)|int == 0 %}selected{% endif %}>0 &mdash; PIO (default, low CPU)</option>
                         <option value="1" {% if main_config.display.get('runtime', {}).get('rp1_rio', 0)|int == 1 %}selected{% endif %}>1 &mdash; RIO (higher throughput; slowdown inverted)</option>
                     </select>
-                    <p class="mt-1 text-sm text-gray-600">Pi 5 RP1 coprocessor mode. Ignored on Pi 3/4.</p>
                 </div>
 
-                <div class="form-group">
-                    <label for="scan_mode" class="block text-sm font-medium text-gray-700">Scan Mode</label>
+                <div class="form-group" id="setting-display-scan_mode" data-setting-key="display.hardware.scan_mode">
+                    <label for="scan_mode" class="block text-sm font-medium text-gray-700">Scan Mode{{ ui.help_tip('Order rows are refreshed in.\n0 = progressive (default), 1 = interlaced. Change only if you see banding or flicker on certain panels.', 'Scan Mode') }}</label>
                     <input type="number"
                            id="scan_mode"
                            name="scan_mode"
@@ -213,13 +205,12 @@
                            min="0"
                            max="1"
                            class="form-control">
-                    <p class="mt-1 text-sm text-gray-600">Scan mode for LED matrix (0-1)</p>
                 </div>
             </div>
 
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div class="form-group">
-                    <label for="pwm_bits" class="block text-sm font-medium text-gray-700">PWM Bits</label>
+                <div class="form-group" id="setting-display-pwm_bits" data-setting-key="display.hardware.pwm_bits">
+                    <label for="pwm_bits" class="block text-sm font-medium text-gray-700">PWM Bits{{ ui.help_tip('Color depth per channel (1–11).\nHigher means smoother color but a lower refresh rate; lower means faster refresh with more banding. Default: 11 (this build defaults to 9).', 'PWM Bits') }}</label>
                     <input type="number"
                            id="pwm_bits"
                            name="pwm_bits"
@@ -227,11 +218,10 @@
                            min="1"
                            max="11"
                            class="form-control">
-                    <p class="mt-1 text-sm text-gray-600">PWM bits for brightness control (1-11)</p>
                 </div>
 
-                <div class="form-group">
-                    <label for="pwm_dither_bits" class="block text-sm font-medium text-gray-700">PWM Dither Bits</label>
+                <div class="form-group" id="setting-display-pwm_dither_bits" data-setting-key="display.hardware.pwm_dither_bits">
+                    <label for="pwm_dither_bits" class="block text-sm font-medium text-gray-700">PWM Dither Bits{{ ui.help_tip('Time-dithering to gain apparent color depth (0–4).\nDefault: 0. Raising it can smooth gradients at the cost of a slightly lower refresh rate.', 'PWM Dither Bits') }}</label>
                     <input type="number"
                            id="pwm_dither_bits"
                            name="pwm_dither_bits"
@@ -239,13 +229,12 @@
                            min="0"
                            max="4"
                            class="form-control">
-                    <p class="mt-1 text-sm text-gray-600">PWM dither bits (0-4)</p>
                 </div>
             </div>
 
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div class="form-group">
-                    <label for="pwm_lsb_nanoseconds" class="block text-sm font-medium text-gray-700">PWM LSB Nanoseconds</label>
+                <div class="form-group" id="setting-display-pwm_lsb_nanoseconds" data-setting-key="display.hardware.pwm_lsb_nanoseconds">
+                    <label for="pwm_lsb_nanoseconds" class="block text-sm font-medium text-gray-700">PWM LSB Nanoseconds{{ ui.help_tip('Base time for the least-significant color bit (50–500 ns).\nDefault: 130. Raising it can reduce flicker on some panels but lowers the maximum refresh rate.', 'PWM LSB Nanoseconds') }}</label>
                     <input type="number"
                            id="pwm_lsb_nanoseconds"
                            name="pwm_lsb_nanoseconds"
@@ -253,11 +242,10 @@
                            min="50"
                            max="500"
                            class="form-control">
-                    <p class="mt-1 text-sm text-gray-600">PWM LSB nanoseconds (50-500)</p>
                 </div>
 
-                <div class="form-group">
-                    <label for="limit_refresh_rate_hz" class="block text-sm font-medium text-gray-700">Limit Refresh Rate (Hz)</label>
+                <div class="form-group" id="setting-display-limit_refresh_rate_hz" data-setting-key="display.hardware.limit_refresh_rate_hz">
+                    <label for="limit_refresh_rate_hz" class="block text-sm font-medium text-gray-700">Limit Refresh Rate (Hz){{ ui.help_tip('Caps the panel refresh rate (1–1000 Hz).\nDefault: 120. A steady cap reduces flicker in camera recordings and keeps timing consistent. Set higher or to the max your panel supports for the smoothest motion.', 'Limit Refresh Rate') }}</label>
                     <input type="number"
                            id="limit_refresh_rate_hz"
                            name="limit_refresh_rate_hz"
@@ -265,7 +253,6 @@
                            min="1"
                            max="1000"
                            class="form-control">
-                    <p class="mt-1 text-sm text-gray-600">Limit refresh rate in Hz (1-1000)</p>
                 </div>
             </div>
         </div>
@@ -276,7 +263,7 @@
             <p class="text-sm text-gray-600 mb-4">Show the same content on every panel in the chain &mdash; e.g. two 64&times;32 panels mirrored, or four panels as two identical screens. Rendered once and duplicated, so it adds no extra CPU. Takes effect after a display restart.</p>
 
             <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div class="form-group">
+                <div class="form-group" id="setting-display-double_sided_enabled" data-setting-key="display.double_sided.enabled">
                     <label class="flex items-center gap-2">
                         <input type="checkbox"
                                id="double_sided_enabled"
@@ -285,12 +272,12 @@
                                {% if main_config.display.get('double_sided', {}).get('enabled') %}checked{% endif %}
                                class="form-control h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
                         <span class="text-sm font-medium text-gray-700">Enabled</span>
+                        {{ ui.help_tip('Show the same content mirrored across every panel in the chain.\nRendered once and duplicated, so it adds no extra CPU. Takes effect after a display restart.', 'Double-Sided Enabled') }}
                     </label>
-                    <p class="mt-1 text-sm text-gray-600">Mirror one screen across all panels.</p>
                 </div>
 
-                <div class="form-group">
-                    <label for="double_sided_copies" class="block text-sm font-medium text-gray-700">Copies</label>
+                <div class="form-group" id="setting-display-double_sided_copies" data-setting-key="display.double_sided.copies">
+                    <label for="double_sided_copies" class="block text-sm font-medium text-gray-700">Copies{{ ui.help_tip('How many identical screens to split the panel area into (2–8).\nMust divide the panel evenly — e.g. 2 for a two-sided cube.', 'Copies') }}</label>
                     <input type="number"
                            id="double_sided_copies"
                            name="double_sided_copies"
@@ -298,16 +285,14 @@
                            min="2"
                            max="8"
                            class="form-control">
-                    <p class="mt-1 text-sm text-gray-600">Number of identical screens. Must divide the panel evenly.</p>
                 </div>
 
-                <div class="form-group">
-                    <label for="double_sided_axis" class="block text-sm font-medium text-gray-700">Split Axis</label>
+                <div class="form-group" id="setting-display-double_sided_axis" data-setting-key="display.double_sided.axis">
+                    <label for="double_sided_axis" class="block text-sm font-medium text-gray-700">Split Axis{{ ui.help_tip('Direction the display is divided into copies.\nHorizontal splits along the chained panels (side by side); Vertical splits along parallel chains (stacked).', 'Split Axis') }}</label>
                     <select id="double_sided_axis" name="double_sided_axis" class="form-control">
                         <option value="horizontal" {% if main_config.display.get('double_sided', {}).get('axis', 'horizontal') == 'horizontal' %}selected{% endif %}>Horizontal &mdash; chained panels (side by side)</option>
                         <option value="vertical" {% if main_config.display.get('double_sided', {}).get('axis', 'horizontal') == 'vertical' %}selected{% endif %}>Vertical &mdash; parallel chains (stacked)</option>
                     </select>
-                    <p class="mt-1 text-sm text-gray-600">Horizontal splits the chain; vertical splits parallel outputs.</p>
                 </div>
             </div>
         </div>
@@ -317,7 +302,7 @@
             <h3 class="text-md font-medium text-gray-900 mb-4">Display Options</h3>
 
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div class="form-group">
+                <div class="form-group" id="setting-display-disable_hardware_pulsing" data-setting-key="display.hardware.disable_hardware_pulsing">
                     <label class="flex items-center">
                         <input type="checkbox"
                                name="disable_hardware_pulsing"
@@ -325,10 +310,11 @@
                                {% if main_config.display.hardware.disable_hardware_pulsing %}checked{% endif %}
                                class="form-control h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
                         <span class="ml-2 text-sm font-medium text-gray-900">Disable Hardware Pulsing</span>
+                        {{ ui.help_tip('Turn off hardware PWM pulsing.\nEnable this if the Pi audio is in use or you hear buzzing / see instability. Slightly increases CPU usage.', 'Disable Hardware Pulsing') }}
                     </label>
                 </div>
 
-                <div class="form-group">
+                <div class="form-group" id="setting-display-inverse_colors" data-setting-key="display.hardware.inverse_colors">
                     <label class="flex items-center">
                         <input type="checkbox"
                                name="inverse_colors"
@@ -336,10 +322,11 @@
                                {% if main_config.display.hardware.inverse_colors %}checked{% endif %}
                                class="form-control h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
                         <span class="ml-2 text-sm font-medium text-gray-900">Inverse Colors</span>
+                        {{ ui.help_tip('Invert every color the panel shows.\nDefault: off. Only needed for panels wired with inverted color logic.', 'Inverse Colors') }}
                     </label>
                 </div>
 
-                <div class="form-group">
+                <div class="form-group" id="setting-display-show_refresh_rate" data-setting-key="display.hardware.show_refresh_rate">
                     <label class="flex items-center">
                         <input type="checkbox"
                                name="show_refresh_rate"
@@ -347,10 +334,11 @@
                                {% if main_config.display.hardware.show_refresh_rate %}checked{% endif %}
                                class="form-control h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
                         <span class="ml-2 text-sm font-medium text-gray-900">Show Refresh Rate</span>
+                        {{ ui.help_tip('Overlay the live panel refresh rate on the display.\nUseful for tuning GPIO Slowdown and PWM settings; turn off for normal use.', 'Show Refresh Rate') }}
                     </label>
                 </div>
 
-                <div class="form-group">
+                <div class="form-group" id="setting-display-use_short_date_format" data-setting-key="display.use_short_date_format">
                     <label class="flex items-center">
                         <input type="checkbox"
                                name="use_short_date_format"
@@ -358,6 +346,7 @@
                                {% if main_config.display.use_short_date_format %}checked{% endif %}
                                class="form-control h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
                         <span class="ml-2 text-sm font-medium text-gray-900">Use Short Date Format</span>
+                        {{ ui.help_tip('Show dates in a compact form (e.g. 7/8 instead of July 8).\nHandy on narrow displays where space is tight.', 'Use Short Date Format') }}
                     </label>
                 </div>
             </div>
@@ -366,8 +355,8 @@
             <div class="mt-6 pt-4 border-t border-gray-300">
                 <h4 class="text-sm font-medium text-gray-900 mb-3">Dynamic Duration</h4>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div class="form-group">
-                        <label for="max_dynamic_duration_seconds" class="block text-sm font-medium text-gray-700">Max Dynamic Duration (seconds)</label>
+                    <div class="form-group" id="setting-display-max_dynamic_duration_seconds" data-setting-key="display.dynamic_duration.max_duration_seconds">
+                        <label for="max_dynamic_duration_seconds" class="block text-sm font-medium text-gray-700">Max Dynamic Duration (seconds){{ ui.help_tip('Ceiling on how long a plugin may extend its own on-screen time (30–1800s).\nDefault: 180. Plugins with live content (e.g. a game in progress) can request extra time up to this limit.', 'Max Dynamic Duration') }}</label>
                         <input type="number"
                                id="max_dynamic_duration_seconds"
                                name="max_dynamic_duration_seconds"
@@ -375,7 +364,6 @@
                                min="30"
                                max="1800"
                                class="form-control">
-                        <p class="mt-1 text-sm text-gray-600">Maximum time plugins can extend display duration (30-1800 seconds)</p>
                     </div>
                 </div>
             </div>
@@ -405,8 +393,8 @@
             <!-- Vegas Settings (shown when enabled) -->
             <div id="vegas_scroll_settings" class="space-y-4" style="{% if not main_config.display.get('vegas_scroll', {}).get('enabled', false) %}display: none;{% endif %}">
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div class="form-group">
-                        <label for="vegas_scroll_speed" class="block text-sm font-medium text-gray-700">Scroll Speed (pixels/second)</label>
+                    <div class="form-group" id="setting-display-vegas_scroll_speed" data-setting-key="display.vegas_scroll.scroll_speed">
+                        <label for="vegas_scroll_speed" class="block text-sm font-medium text-gray-700">Scroll Speed (pixels/second){{ ui.help_tip('How fast the Vegas ticker scrolls (10–200 px/s).\nDefault: 50. Higher is faster but harder to read.', 'Scroll Speed') }}</label>
                         <div class="flex items-center space-x-2">
                             <input type="range"
                                    id="vegas_scroll_speed"
@@ -418,11 +406,10 @@
                                    class="flex-1">
                             <span id="vegas_scroll_speed_value" class="text-sm font-medium w-12">{{ main_config.display.get('vegas_scroll', {}).get('scroll_speed', 50) }}</span>
                         </div>
-                        <p class="mt-1 text-sm text-gray-600">Speed of the scrolling ticker (10-200 px/s)</p>
                     </div>
 
-                    <div class="form-group">
-                        <label for="vegas_separator_width" class="block text-sm font-medium text-gray-700">Separator Width (pixels)</label>
+                    <div class="form-group" id="setting-display-vegas_separator_width" data-setting-key="display.vegas_scroll.separator_width">
+                        <label for="vegas_separator_width" class="block text-sm font-medium text-gray-700">Separator Width (pixels){{ ui.help_tip('Blank gap inserted between each plugin block in the ticker (0–128 px).\nDefault: 32. Larger values make the boundary between plugins clearer.', 'Separator Width') }}</label>
                         <input type="number"
                                id="vegas_separator_width"
                                name="vegas_separator_width"
@@ -430,29 +417,26 @@
                                min="0"
                                max="128"
                                class="form-control">
-                        <p class="mt-1 text-sm text-gray-600">Gap between plugin content blocks (0-128 px)</p>
                     </div>
                 </div>
 
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div class="form-group">
-                        <label for="vegas_target_fps" class="block text-sm font-medium text-gray-700">Target FPS</label>
+                    <div class="form-group" id="setting-display-vegas_target_fps" data-setting-key="display.vegas_scroll.target_fps">
+                        <label for="vegas_target_fps" class="block text-sm font-medium text-gray-700">Target FPS{{ ui.help_tip('Frames per second the Vegas ticker aims to render.\nHigher = smoother scrolling but more CPU. Default: 125 (smoothest). Drop to 60/90 if the Pi runs hot.', 'Target FPS') }}</label>
                         <select id="vegas_target_fps" name="vegas_target_fps" class="form-control">
                             <option value="60" {% if main_config.display.get('vegas_scroll', {}).get('target_fps', 125) == 60 %}selected{% endif %}>60 FPS (Lower CPU)</option>
                             <option value="90" {% if main_config.display.get('vegas_scroll', {}).get('target_fps', 125) == 90 %}selected{% endif %}>90 FPS (Balanced)</option>
                             <option value="125" {% if main_config.display.get('vegas_scroll', {}).get('target_fps', 125) == 125 %}selected{% endif %}>125 FPS (Smoothest)</option>
                         </select>
-                        <p class="mt-1 text-sm text-gray-600">Higher FPS = smoother scroll, more CPU usage</p>
                     </div>
 
-                    <div class="form-group">
-                        <label for="vegas_buffer_ahead" class="block text-sm font-medium text-gray-700">Buffer Ahead</label>
+                    <div class="form-group" id="setting-display-vegas_buffer_ahead" data-setting-key="display.vegas_scroll.buffer_ahead">
+                        <label for="vegas_buffer_ahead" class="block text-sm font-medium text-gray-700">Buffer Ahead{{ ui.help_tip('How many upcoming plugins to pre-render so the scroll never stalls.\nDefault: 2 (recommended). More uses extra memory; less saves memory but risks hitches.', 'Buffer Ahead') }}</label>
                         <select id="vegas_buffer_ahead" name="vegas_buffer_ahead" class="form-control">
                             <option value="1" {% if main_config.display.get('vegas_scroll', {}).get('buffer_ahead', 2) == 1 %}selected{% endif %}>1 Plugin (Less memory)</option>
                             <option value="2" {% if main_config.display.get('vegas_scroll', {}).get('buffer_ahead', 2) == 2 %}selected{% endif %}>2 Plugins (Recommended)</option>
                             <option value="3" {% if main_config.display.get('vegas_scroll', {}).get('buffer_ahead', 2) == 3 %}selected{% endif %}>3 Plugins (More buffer)</option>
                         </select>
-                        <p class="mt-1 text-sm text-gray-600">How many plugins to pre-load ahead</p>
                     </div>
                 </div>
 
@@ -485,18 +469,17 @@
             </div>
 
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div class="form-group">
-                    <label for="sync_role" class="block text-sm font-medium text-gray-700">Role</label>
+                <div class="form-group" id="setting-display-sync_role" data-setting-key="sync.role">
+                    <label for="sync_role" class="block text-sm font-medium text-gray-700">Role{{ ui.help_tip('This unit\'s part in a two-display setup.\nStandalone = sync off. Set one Pi to Leader (drives the scroll) and the other to Follower (receives frames). Restart required after changing.', 'Sync Role') }}</label>
                     <select id="sync_role" name="sync_role" class="form-control" onchange="updateSyncUI()">
                         <option value="standalone" {% if main_config.get('sync', {}).get('role', 'standalone') == 'standalone' %}selected{% endif %}>Standalone (disabled)</option>
                         <option value="leader"     {% if main_config.get('sync', {}).get('role', 'standalone') == 'leader'     %}selected{% endif %}>Leader (drives scroll)</option>
                         <option value="follower"   {% if main_config.get('sync', {}).get('role', 'standalone') == 'follower'   %}selected{% endif %}>Follower (receives frames)</option>
                     </select>
-                    <p class="mt-1 text-sm text-gray-600">Set Leader on one Pi, Follower on the other. Restart required after changing.</p>
                 </div>
 
-                <div class="form-group">
-                    <label for="sync_port" class="block text-sm font-medium text-gray-700">UDP Port</label>
+                <div class="form-group" id="setting-display-sync_port" data-setting-key="sync.port">
+                    <label for="sync_port" class="block text-sm font-medium text-gray-700">UDP Port{{ ui.help_tip('UDP port the two displays use to exchange frames (1024–65535).\nDefault: 5765. Must match on both Pis. If the ufw firewall is active, allow it with: sudo ufw allow ' ~ main_config.get('sync', {}).get('port', 5765) ~ '/udp', 'Sync UDP Port') }}</label>
                     <input type="number"
                            id="sync_port"
                            name="sync_port"
@@ -504,19 +487,14 @@
                            min="1024"
                            max="65535"
                            class="form-control">
-                    <p class="mt-1 text-sm text-gray-600">
-                        Must match on both Pis. If ufw is active:
-                        <code class="text-xs bg-gray-200 px-1 rounded">sudo ufw allow {{ main_config.get('sync', {}).get('port', 5765) }}/udp</code>
-                    </p>
                 </div>
 
-                <div class="form-group" id="sync_position_group" style="display:none">
-                    <label for="sync_follower_position" class="block text-sm font-medium text-gray-700">Position</label>
+                <div class="form-group" id="setting-display-sync_follower_position" data-setting-key="sync.follower_position" style="display:none">
+                    <label for="sync_follower_position" class="block text-sm font-medium text-gray-700">Position{{ ui.help_tip('Which side of the leader this follower display sits on.\nSets whether this unit shows the left or right half of the extended scroll.', 'Follower Position') }}</label>
                     <select id="sync_follower_position" name="sync_follower_position" class="form-control">
                         <option value="left"  {% if main_config.get('sync', {}).get('follower_position', 'left') == 'left'  %}selected{% endif %}>Left of leader</option>
                         <option value="right" {% if main_config.get('sync', {}).get('follower_position', 'left') == 'right' %}selected{% endif %}>Right of leader</option>
                     </select>
-                    <p class="mt-1 text-sm text-gray-600">Which side of the leader display this unit sits on.</p>
                 </div>
             </div>
 
@@ -795,7 +773,7 @@ if (typeof window.fixInvalidNumberInputs !== 'function') {
     function updateSyncUI() {
         const role = document.getElementById('sync_role').value;
         const bar = document.getElementById('sync_status_bar');
-        const posGroup = document.getElementById('sync_position_group');
+        const posGroup = document.getElementById('setting-display-sync_follower_position');
         if (role === 'standalone') {
             bar.classList.add('hidden');
             document.getElementById('sync_error_detail').classList.add('hidden');

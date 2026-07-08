@@ -1,0 +1,42 @@
+{# ============================================================================ #}
+{# Shared UI macros for the v3 web interface.                                    #}
+{#                                                                               #}
+{# Import at the top of a partial with:                                          #}
+{#   {% import 'v3/partials/_macros.html' as ui %}                               #}
+{#                                                                               #}
+{# These power the settings tooltips and the settings search feature:           #}
+{#   - help_tip(text, label): the (i) info icon whose hover/focus tooltip        #}
+{#       explains a setting. This replaces the old always-visible <p> help.      #}
+{#   - fg_id(tab, key): stable anchor id for a .form-group so global search      #}
+{#       can scroll to it (e.g. "setting-display-brightness").                   #}
+{#   - settings_filter(): the per-tab filter box shown under a partial title.    #}
+{# ============================================================================ #}
+
+{# Info (i) tooltip trigger placed next to a setting label.                      #}
+{# `text` supports "\n" line breaks (rendered via CSS white-space: pre-line).    #}
+{# Renders nothing when `text` is empty so callers can pass through schema data. #}
+{% macro help_tip(text, label='') -%}
+{%- if text -%}
+<button type="button" class="help-tip" data-tooltip="{{ text }}"
+        aria-label="{% if label %}Help for {{ label }}{% else %}More information{% endif %}">
+<i class="fas fa-circle-info" aria-hidden="true"></i>
+</button>
+{%- endif -%}
+{%- endmacro %}
+
+{# Stable anchor id for a settings field's .form-group wrapper. #}
+{% macro fg_id(tab, key) -%}setting-{{ tab }}-{{ key }}{%- endmacro %}
+
+{# Per-tab filter box. Place directly under a partial's <h2> title block. #}
+{# The delegated handler in settings-search.js scopes to the enclosing tab. #}
+{% macro settings_filter(placeholder='Filter these settings…') -%}
+<div class="settings-filter-wrap relative mb-6">
+<input type="text"
+class="settings-filter form-control text-sm pl-9 pr-4 py-2 w-full"
+placeholder="{{ placeholder }}"
+aria-label="Filter settings on this tab"
+autocomplete="off">
+<i class="fas fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 text-sm" aria-hidden="true"></i>
+<p class="settings-filter-empty text-sm text-gray-500 mt-3 hidden">No settings match your filter.</p>
+</div>
+{%- endmacro %}

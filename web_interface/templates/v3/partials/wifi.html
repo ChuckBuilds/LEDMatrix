@@ -1,3 +1,4 @@
+{% import 'v3/partials/_macros.html' as ui %}
 <div class="bg-white rounded-lg shadow p-6" x-data="wifiSetup()" x-init="init(); loadStatus()">
     <!-- Captive Portal Banner (shown when AP mode is active) -->
     <div x-show="status.ap_mode_active" 
@@ -22,6 +23,8 @@
         </h2>
         <p class="mt-1 text-sm text-gray-600">Configure WiFi connection for your Raspberry Pi. Access point mode will automatically activate when no WiFi connection is detected.</p>
     </div>
+
+    {{ ui.settings_filter('Filter WiFi settings…') }}
 
     <!-- Current WiFi Status -->
     <div class="mb-6 p-4 bg-gray-50 rounded-lg">
@@ -73,9 +76,9 @@
         <h3 class="text-sm font-medium text-gray-900 mb-4">Connect to WiFi Network</h3>
         
         <!-- Network Selection -->
-        <div class="form-group mb-4">
+        <div class="form-group mb-4" id="setting-wifi-ssid" data-setting-key="wifi.ssid">
             <label for="wifi-ssid" class="block text-sm font-medium text-gray-700 mb-2">
-                Step 1: Select Network
+                Step 1: Select Network{{ ui.help_tip('Choose the WiFi network to join.\nClick Scan to list nearby networks, or type the name manually below if it is hidden.', 'Select Network') }}
             </label>
             <div class="flex gap-2">
                 <select id="wifi-ssid" 
@@ -98,7 +101,6 @@
                     <span class="ml-2">Scan</span>
                 </button>
             </div>
-            <p class="mt-1 text-sm text-gray-600">Scan for available networks or manually enter SSID below.</p>
             <!-- Show selected network -->
             <div x-show="selectedSSID" class="mt-2 p-2 bg-blue-50 border border-blue-200 rounded text-sm" x-cloak>
                 <i class="fas fa-check-circle text-blue-600 mr-2"></i>
@@ -107,9 +109,9 @@
         </div>
 
         <!-- Manual SSID Entry -->
-        <div class="form-group mb-4">
+        <div class="form-group mb-4" id="setting-wifi-manual_ssid" data-setting-key="wifi.manual_ssid">
             <label for="manual-ssid" class="block text-sm font-medium text-gray-700 mb-2">
-                Or Enter SSID Manually
+                Or Enter SSID Manually{{ ui.help_tip('Type a network name by hand when it is hidden or not shown in the scan results.\nExact spelling and capitalization matter.', 'Enter SSID Manually') }}
             </label>
             <input type="text" 
                    id="manual-ssid"
@@ -120,19 +122,15 @@
         </div>
 
         <!-- Password -->
-        <div class="form-group mb-4">
+        <div class="form-group mb-4" id="setting-wifi-password" data-setting-key="wifi.password">
             <label for="wifi-password" class="block text-sm font-medium text-gray-700 mb-2">
-                Step 2: Enter Password
+                Step 2: Enter Password{{ ui.help_tip('Password for the selected network.\nLeave empty if the network is open (no password required).', 'WiFi Password') }}
             </label>
-            <input type="password" 
+            <input type="password"
                    id="wifi-password"
                    x-model="password"
                    placeholder="Enter password (leave empty for open networks)"
                    class="form-control">
-            <p class="mt-1 text-sm text-gray-600">
-                <i class="fas fa-info-circle mr-1"></i>
-                Enter the WiFi password. Leave empty if the network is open (no password required).
-            </p>
         </div>
 
         <!-- Connect Button -->
@@ -154,14 +152,10 @@
         </p>
         
         <!-- Auto-Enable Toggle -->
-        <div class="mb-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+        <div class="form-group mb-4 p-4 bg-gray-50 rounded-lg border border-gray-200" id="setting-wifi-auto_enable_ap_mode" data-setting-key="wifi.auto_enable_ap_mode">
             <div class="flex items-start justify-between gap-4">
                 <div class="flex-1">
-                    <label class="text-sm font-medium text-gray-900 block mb-1">Auto-Enable AP Mode</label>
-                    <p class="text-xs text-gray-600">
-                        When enabled, AP mode will automatically activate when both WiFi and Ethernet are disconnected.
-                        When disabled, AP mode must be manually enabled.
-                    </p>
+                    <label class="text-sm font-medium text-gray-900 block mb-1">Auto-Enable AP Mode{{ ui.help_tip('Automatically start access-point mode when both WiFi and Ethernet are disconnected, so you can always reach the device to reconfigure it.\nDefault: on. When off, AP mode must be enabled manually.', 'Auto-Enable AP Mode') }}</label>
                 </div>
                 <div class="flex-shrink-0">
                     <button type="button"

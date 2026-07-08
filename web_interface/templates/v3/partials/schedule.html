@@ -1,8 +1,11 @@
+{% import 'v3/partials/_macros.html' as ui %}
 <div class="bg-white rounded-lg shadow p-6">
     <div class="border-b border-gray-200 pb-4 mb-6">
         <h2 class="text-lg font-semibold text-gray-900">Schedule Settings</h2>
         <p class="mt-1 text-sm text-gray-600">Configure when the LED matrix display should be active. You can set global hours or customize times for each day of the week.</p>
     </div>
+
+    {{ ui.settings_filter() }}
 
     <form id="schedule_form"
           hx-post="/api/v3/config/schedule"
@@ -42,9 +45,9 @@
           class="space-y-6">
 
         <!-- Dim Brightness Level -->
-        <div class="bg-gray-50 rounded-lg p-4 mb-4">
+        <div class="form-group bg-gray-50 rounded-lg p-4 mb-4" id="setting-schedule-dim_brightness" data-setting-key="dim_schedule.dim_brightness">
             <label for="dim_brightness" class="block text-sm font-medium text-gray-700 mb-2">
-                Dim Brightness Level
+                Dim Brightness Level{{ ui.help_tip('Brightness the display drops to during dim hours (0–100%).\nApplies only while the display is on. Your normal brightness is currently ' ~ normal_brightness ~ '%.', 'Dim Brightness Level') }}
             </label>
             <div class="flex items-center space-x-4">
                 <input type="range"
@@ -59,7 +62,6 @@
                     {{ dim_schedule_config.dim_brightness | default(30) }}%
                 </span>
             </div>
-            <p class="mt-1 text-xs text-gray-500">Current normal brightness: {{ normal_brightness }}%</p>
         </div>
 
         <!-- Dim Schedule Picker Widget Container -->

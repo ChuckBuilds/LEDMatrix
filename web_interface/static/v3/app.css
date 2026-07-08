@@ -766,6 +766,151 @@ button.bg-white {
     }
 }
 
+/* ============================================================================ */
+/* Settings tooltips (help_tip macro + tooltips.js)                             */
+/* ============================================================================ */
+
+/* The (i) info trigger placed next to a setting label. */
+.help-tip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.15rem;
+    height: 1.15rem;
+    margin-left: 0.375rem;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--color-text-tertiary);
+    font-size: 0.8125rem;
+    line-height: 1;
+    cursor: help;
+    vertical-align: middle;
+    border-radius: 9999px;
+    transition: color 0.12s ease;
+}
+
+.help-tip:hover,
+.help-tip:focus-visible {
+    color: var(--color-primary);
+}
+
+.help-tip:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+}
+
+/* Singleton tooltip panel appended to <body> by tooltips.js. */
+#ledm-tooltip {
+    position: fixed;
+    z-index: 1000;
+    max-width: 20rem;
+    padding: 0.5rem 0.75rem;
+    background: var(--color-surface);
+    color: var(--color-text-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: 0.5rem;
+    box-shadow: var(--shadow-lg);
+    font-size: 0.8125rem;
+    line-height: 1.45;
+    white-space: pre-line; /* renders authored "\n" line breaks */
+    pointer-events: none;  /* never steals hover/click from the page */
+    animation: tooltipFade 0.12s ease;
+}
+
+#ledm-tooltip[hidden] {
+    display: none;
+}
+
+@keyframes tooltipFade {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+/* ============================================================================ */
+/* Settings search — global header dropdown + per-tab filter                    */
+/* ============================================================================ */
+
+#settings-search-results {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 0.5rem;
+    box-shadow: var(--shadow-lg);
+    z-index: 50;
+    padding: 0.25rem;
+}
+
+.ssr-group {
+    padding: 0.375rem 0.625rem 0.25rem;
+    font-size: 0.6875rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--color-text-tertiary);
+    position: sticky;
+    top: 0;
+    background: var(--color-surface);
+}
+
+.ssr-option {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    text-align: left;
+    padding: 0.4rem 0.625rem;
+    border: none;
+    background: transparent;
+    border-radius: 0.375rem;
+    cursor: pointer;
+    color: var(--color-text-primary);
+}
+
+.ssr-option:hover,
+.ssr-option.active {
+    background: var(--color-info-bg);
+}
+
+.ssr-label {
+    font-size: 0.875rem;
+    font-weight: 500;
+}
+
+.ssr-help {
+    font-size: 0.75rem;
+    color: var(--color-text-tertiary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+}
+
+.ssr-empty {
+    padding: 0.75rem 0.625rem;
+    font-size: 0.8125rem;
+    color: var(--color-text-tertiary);
+}
+
+/* Flash highlight applied to a field after search navigation. */
+@keyframes settingFlash {
+    0% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0); }
+    25% { box-shadow: 0 0 0 3px var(--color-primary); }
+    100% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0); }
+}
+
+.setting-flash {
+    animation: settingFlash 1.4s ease;
+    border-radius: 0.5rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    #ledm-tooltip { animation: none; }
+    .setting-flash {
+        animation: none;
+        outline: 2px solid var(--color-primary);
+        outline-offset: 2px;
+    }
+}
+
 /* Removed .divider and .divider-light - not used anywhere */
 
 /* Enhanced Spacing Utilities - Only unique classes not in main utility section */
