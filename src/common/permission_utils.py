@@ -379,9 +379,11 @@ def install_requirements_file(req_file: Path, timeout: int = 300) -> subprocess.
     # sys.executable is this process's own interpreter (not
     # attacker-influenced), and req_file is a Path built internally by callers
     # (store_manager.py plugin paths, PROJECT_ROOT/requirements.txt), never
-    # raw external/user input.
+    # raw external/user input. --ignore-installed matches safe_pip_install.sh:
+    # apt-managed packages (e.g. python3-requests) ship no pip RECORD file, so
+    # upgrading them would otherwise abort with "uninstall-no-record-file".
     result = subprocess.run(  # nosec B603 - no shell invoked (list-form argv)  # nosemgrep
-        [sys.executable, "-m", "pip", "install", "--break-system-packages", "-r", str(req_file)],
+        [sys.executable, "-m", "pip", "install", "--break-system-packages", "--ignore-installed", "-r", str(req_file)],
         capture_output=True, text=True, timeout=timeout, cwd=str(project_root)
     )
     result.stdout = note + (result.stdout or "")
