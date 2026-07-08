@@ -250,7 +250,10 @@ class PluginLoader:
                         "(no pip RECORD); retrying with --ignore-installed: %s",
                         plugin_id, stderr.strip()
                     )
-                    retry_result = subprocess.run(
+                    # sys.executable is this process's own interpreter (not
+                    # attacker-influenced), and requirements_file is a path built
+                    # internally by find_plugin_directory, never raw external input.
+                    retry_result = subprocess.run(  # nosec B603 - no shell invoked (list-form argv)  # nosemgrep
                         [sys.executable, "-m", "pip", "install", "--break-system-packages",
                          "--ignore-installed", "-r", requirements_file],
                         capture_output=True,
