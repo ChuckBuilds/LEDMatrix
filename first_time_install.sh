@@ -726,7 +726,11 @@ if [ -f "$PROJECT_ROOT_DIR/requirements.txt" ]; then
         
         if command -v timeout >/dev/null 2>&1; then
             # Use timeout if available (10 minutes = 600 seconds)
-            if timeout 600 python3 -m pip install --break-system-packages --no-cache-dir --prefer-binary --verbose "$line" > "$INSTALL_OUTPUT" 2>&1; then
+            # --ignore-installed: apt-managed packages (e.g. python3-requests)
+            # ship no pip RECORD file, so upgrading them would otherwise abort
+            # with "uninstall-no-record-file"; this lays the new version down
+            # alongside instead of trying to uninstall the apt copy first.
+            if timeout 600 python3 -m pip install --break-system-packages --no-cache-dir --prefer-binary --ignore-installed --verbose "$line" > "$INSTALL_OUTPUT" 2>&1; then
                 INSTALL_SUCCESS=true
             else
                 EXIT_CODE=$?
@@ -734,7 +738,7 @@ if [ -f "$PROJECT_ROOT_DIR/requirements.txt" ]; then
                     echo "✗ Timeout (10 minutes) installing: $line"
                     echo "  This package may require building from source, which can be slow on Raspberry Pi."
                     echo "  You can try installing it manually later with:"
-                    echo "    python3 -m pip install --break-system-packages --no-cache-dir --prefer-binary --verbose '$line'"
+                    echo "    python3 -m pip install --break-system-packages --no-cache-dir --prefer-binary --ignore-installed --verbose '$line'"
                 else
                     echo "✗ Failed to install: $line (exit code: $EXIT_CODE)"
                 fi
@@ -742,7 +746,7 @@ if [ -f "$PROJECT_ROOT_DIR/requirements.txt" ]; then
         else
             # No timeout command available, install without timeout
             echo "  Note: timeout command not available, installation may take a while..."
-            if python3 -m pip install --break-system-packages --no-cache-dir --prefer-binary --verbose "$line" > "$INSTALL_OUTPUT" 2>&1; then
+            if python3 -m pip install --break-system-packages --no-cache-dir --prefer-binary --ignore-installed --verbose "$line" > "$INSTALL_OUTPUT" 2>&1; then
                 INSTALL_SUCCESS=true
             else
                 EXIT_CODE=$?
@@ -794,7 +798,7 @@ if [ -f "$PROJECT_ROOT_DIR/requirements.txt" ]; then
         echo "  1. Ensure you have enough disk space: df -h"
         echo "  2. Check available memory: free -h"
         echo "  3. Try installing failed packages individually with verbose output:"
-        echo "     python3 -m pip install --break-system-packages --no-cache-dir --prefer-binary --verbose <package>"
+        echo "     python3 -m pip install --break-system-packages --no-cache-dir --prefer-binary --ignore-installed --verbose <package>"
         echo "  4. For packages that build from source (like numpy), consider:"
         echo "     - Installing pre-built wheels: python3 -m pip install --only-binary :all: <package>"
         echo "     - Or installing via apt if available: sudo apt install python3-<package>"
@@ -816,7 +820,10 @@ echo ""
 # Install web interface dependencies
 echo "Installing web interface dependencies..."
 if [ -f "$PROJECT_ROOT_DIR/web_interface/requirements.txt" ]; then
-    if python3 -m pip install --break-system-packages --prefer-binary -r "$PROJECT_ROOT_DIR/web_interface/requirements.txt"; then
+    # --ignore-installed: apt-managed packages (e.g. python3-requests) ship no
+    # pip RECORD file, so upgrading them to the version pinned here would
+    # otherwise abort the whole install with "uninstall-no-record-file".
+    if python3 -m pip install --break-system-packages --prefer-binary --ignore-installed -r "$PROJECT_ROOT_DIR/web_interface/requirements.txt"; then
         echo "✓ Web interface dependencies installed"
         # Create marker file to indicate dependencies are installed
         touch "$PROJECT_ROOT_DIR/.web_deps_installed"
@@ -977,7 +984,9 @@ else
     else
         echo "Using pip to install dependencies..."
         if [ -f "$PROJECT_ROOT_DIR/requirements_web_v2.txt" ]; then
-            python3 -m pip install --break-system-packages --prefer-binary -r requirements_web_v2.txt
+            # --ignore-installed: see the Step 5 web_interface/requirements.txt
+            # install above — same apt/pip RECORD-file conflict applies here.
+            python3 -m pip install --break-system-packages --prefer-binary --ignore-installed -r requirements_web_v2.txt
         else
             echo "⚠ requirements_web_v2.txt not found; skipping web dependency install"
         fi
