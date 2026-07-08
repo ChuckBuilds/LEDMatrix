@@ -135,6 +135,16 @@ class PluginLoader:
         
         return None
     
+    def _write_dependency_marker(self, marker_file: str, current_hash: str, plugin_id: str) -> None:
+        """Write the dependency hash marker file, used by both the direct-success
+        and apt-conflict-retry-fallback paths in install_dependencies."""
+        try:
+            with open(marker_file, 'w', encoding='utf-8') as fh:
+                fh.write(current_hash)
+            ensure_file_permissions(Path(marker_file), get_plugin_file_mode())
+        except OSError as marker_err:
+            self.logger.debug("Could not write dependency marker for %s: %s", plugin_id, marker_err)
+
     def install_dependencies(
         self,
         plugin_dir: Path,
@@ -225,12 +235,7 @@ class PluginLoader:
             )
 
             if result.returncode == 0:
-                try:
-                    with open(marker_file, 'w', encoding='utf-8') as fh:
-                        fh.write(current_hash)
-                    ensure_file_permissions(Path(marker_file), get_plugin_file_mode())
-                except OSError as marker_err:
-                    self.logger.debug("Could not write dependency marker for %s: %s", plugin_id, marker_err)
+                self._write_dependency_marker(marker_file, current_hash, plugin_id)
                 self.logger.info("Dependencies installed successfully for %s", plugin_id)
                 return True
             else:
@@ -250,29 +255,37 @@ class PluginLoader:
                         "(no pip RECORD); retrying with --ignore-installed: %s",
                         plugin_id, stderr.strip()
                     )
-                    # sys.executable is this process's own interpreter (not
-                    # attacker-influenced), and requirements_file is a path built
-                    # internally by find_plugin_directory, never raw external input.
-                    retry_result = subprocess.run(  # nosec B603 - no shell invoked (list-form argv)  # nosemgrep
-                        [sys.executable, "-m", "pip", "install", "--break-system-packages",
-                         "--ignore-installed", "-r", requirements_file],
-                        capture_output=True,
-                        text=True,
-                        timeout=timeout,
-                        check=False
-                    )
-                    if retry_result.returncode != 0:
-                        self.logger.warning(
-                            "Retry with --ignore-installed also failed for %s; assuming the "
-                            "system-managed version satisfies the requirement: %s",
-                            plugin_id, (retry_result.stderr or "").strip()
-                        )
+                    # Wrapped in its own try/except so a retry timeout is
+                    # tolerated the same way as a retry failure, instead of
+                    # propagating to the outer handler and returning False
+                    # (which would contradict the "assume satisfied" fallback
+                    # below).
                     try:
-                        with open(marker_file, 'w', encoding='utf-8') as fh:
-                            fh.write(current_hash)
-                        ensure_file_permissions(Path(marker_file), get_plugin_file_mode())
-                    except OSError as marker_err:
-                        self.logger.debug("Could not write dependency marker for %s: %s", plugin_id, marker_err)
+                        # sys.executable is this process's own interpreter (not
+                        # attacker-influenced), and requirements_file is a path
+                        # built internally by find_plugin_directory, never raw
+                        # external input.
+                        retry_result = subprocess.run(  # nosec B603 - no shell invoked (list-form argv)  # nosemgrep
+                            [sys.executable, "-m", "pip", "install", "--break-system-packages",
+                             "--ignore-installed", "-r", requirements_file],
+                            capture_output=True,
+                            text=True,
+                            timeout=timeout,
+                            check=False
+                        )
+                        if retry_result.returncode != 0:
+                            self.logger.warning(
+                                "Retry with --ignore-installed also failed for %s; assuming the "
+                                "system-managed version satisfies the requirement: %s",
+                                plugin_id, (retry_result.stderr or "").strip()
+                            )
+                    except subprocess.TimeoutExpired:
+                        self.logger.warning(
+                            "Retry with --ignore-installed timed out for %s; assuming the "
+                            "system-managed version satisfies the requirement",
+                            plugin_id
+                        )
+                    self._write_dependency_marker(marker_file, current_hash, plugin_id)
                     return True
                 self.logger.warning(
                     "Dependency installation returned non-zero exit code for %s: %s",

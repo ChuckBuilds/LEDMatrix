@@ -4,6 +4,8 @@ Tests for PluginLoader.
 Tests plugin directory discovery, module loading, and class instantiation.
 """
 
+import subprocess
+
 import pytest
 from unittest.mock import MagicMock, patch
 from src.plugin_system.plugin_loader import PluginLoader
@@ -264,6 +266,32 @@ class TestPluginLoader:
         )
         retry_attempt = MagicMock(returncode=1, stderr="some other pip error")
         mock_subprocess.side_effect = [first_attempt, retry_attempt]
+
+        result = plugin_loader.install_dependencies(plugin_dir, "test_plugin")
+
+        assert result is True
+        assert mock_subprocess.call_count == 2
+
+    @patch('subprocess.run')
+    def test_install_dependencies_apt_conflict_retry_times_out(
+        self, mock_subprocess, plugin_loader, tmp_plugins_dir
+    ):
+        """A retry timeout must be tolerated the same way as a retry failure
+        (return True), not propagate to the outer TimeoutExpired handler and
+        return False."""
+        plugin_dir = tmp_plugins_dir / "test_plugin"
+        plugin_dir.mkdir()
+        requirements_file = plugin_dir / "requirements.txt"
+        requirements_file.write_text("requests>=2.33.0,<3.0.0\n")
+
+        first_attempt = MagicMock(
+            returncode=1,
+            stderr="ERROR: Cannot uninstall requests 2.32.3\nuninstall-no-record-file"
+        )
+        mock_subprocess.side_effect = [
+            first_attempt,
+            subprocess.TimeoutExpired(cmd="pip", timeout=300),
+        ]
 
         result = plugin_loader.install_dependencies(plugin_dir, "test_plugin")
 
