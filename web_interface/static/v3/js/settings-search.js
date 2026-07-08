@@ -241,24 +241,29 @@
         });
     }
 
+    function isNodeHidden(node) {
+        return node.classList.contains('hidden') ||
+            (node.style && node.style.display === 'none') ||
+            window.getComputedStyle(node).display === 'none';
+    }
+
+    function revealNode(node) {
+        // toggleSection handles the class, inline display, and chevron.
+        if (node.id && typeof window.toggleSection === 'function') {
+            window.toggleSection(node.id);
+        } else {
+            node.classList.remove('hidden');
+            node.style.display = 'block';
+        }
+    }
+
     // Reveal any collapsed nested section (from render_nested_section) so the
     // target field is actually visible before we scroll to it.
     function revealAncestors(el) {
         var node = el.parentElement;
         while (node && node !== document.body) {
-            if (node.classList && node.classList.contains('nested-content')) {
-                var hidden = node.classList.contains('hidden') ||
-                    (node.style && node.style.display === 'none') ||
-                    (window.getComputedStyle(node).display === 'none');
-                if (hidden) {
-                    // toggleSection handles the class, inline display, and chevron.
-                    if (node.id && typeof window.toggleSection === 'function') {
-                        window.toggleSection(node.id);
-                    } else {
-                        node.classList.remove('hidden');
-                        node.style.display = 'block';
-                    }
-                }
+            if (node.classList && node.classList.contains('nested-content') && isNodeHidden(node)) {
+                revealNode(node);
             }
             node = node.parentElement;
         }
