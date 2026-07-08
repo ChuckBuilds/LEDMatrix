@@ -31,7 +31,8 @@ def adapter():
     return PluginAdapter(FakeDisplayManager())
 
 
-def _solid(width, height, color):
+def _solid(width: int, height: int, color: tuple) -> Image.Image:
+    """Create a solid-color RGB image of the given dimensions."""
     return Image.new('RGB', (width, height), color)
 
 
