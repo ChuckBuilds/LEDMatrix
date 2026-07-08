@@ -35,6 +35,11 @@
 
     var MAX_RESULTS = 25;
 
+    // Plugin ids are constrained to this allowlist (mirrors the server's
+    // _SAFE_PLUGIN_ID_RE in pages_v3.py) before they can appear in a request
+    // path, so a fetched URL can never be influenced by untrusted input.
+    var PLUGIN_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
+
     function debounce(fn, ms) {
         var t;
         return function () {
@@ -88,10 +93,15 @@
     }
 
     function fetchAndScan(url, tab, tabLabel) {
+        // `url` is always one of our own same-origin settings partial paths
+        // (CORE_TABS literals or a plugin path built from an allowlisted id).
         return fetch(url, { headers: { 'X-Requested-With': 'settings-search' } })
             .then(function (r) { return r.ok ? r.text() : ''; })
             .then(function (html) {
                 if (!html) return [];
+                // Parsed into an inert document: scripts do not run and it is
+                // never inserted into the live DOM — we only read labels and
+                // tooltip text from it to build the search index.
                 var doc = new DOMParser().parseFromString(html, 'text/html');
                 return scanDoc(doc, tab, tabLabel);
             })
@@ -107,9 +117,10 @@
 
         var plugins = (window.installedPlugins || []);
         plugins.forEach(function (p) {
-            if (!p || !p.id) return;
-            jobs.push(fetchAndScan('/v3/partials/plugin-config/' + encodeURIComponent(p.id),
-                p.id, p.name || p.id));
+            // Skip ids that don't match the strict allowlist so the request
+            // path is always built from safe, validated components.
+            if (!p || !p.id || !PLUGIN_ID_RE.test(p.id)) return;
+            jobs.push(fetchAndScan('/v3/partials/plugin-config/' + p.id, p.id, p.name || p.id));
         });
 
         buildPromise = Promise.all(jobs).then(function (lists) {
@@ -158,7 +169,7 @@
         var lastTab = null;
         results.forEach(function (r, i) {
             if (r.tabLabel !== lastTab) {
-                var group = document.createElement('div');
+                const group = document.createElement('div');
                 group.className = 'ssr-group';
                 group.textContent = r.tabLabel;
                 resultsBox.appendChild(group);
@@ -329,7 +340,7 @@
                 e.preventDefault();
                 highlight(Math.max(activeIndex - 1, 0));
             } else if (e.key === 'Enter') {
-                var chosen = currentResults.at(activeIndex >= 0 ? activeIndex : 0);
+                const chosen = currentResults.at(activeIndex >= 0 ? activeIndex : 0);
                 if (chosen) {
                     e.preventDefault();
                     navigateToSetting(chosen);
@@ -345,8 +356,8 @@
             var opt = e.target.closest('.ssr-option');
             if (!opt) return;
             e.preventDefault();
-            var idx = parseInt(opt.getAttribute('data-idx'), 10);
-            var chosen = currentResults.at(idx);
+            const idx = parseInt(opt.getAttribute('data-idx'), 10);
+            const chosen = currentResults.at(idx);
             if (chosen) navigateToSetting(chosen);
         });
 
@@ -405,9 +416,9 @@
         });
 
         // Toggle the "no matches" note if the filter box provides one.
-        var wrap = scope.querySelector('.settings-filter-wrap');
+        const wrap = scope.querySelector('.settings-filter-wrap');
         if (wrap) {
-            var empty = wrap.querySelector('.settings-filter-empty');
+            const empty = wrap.querySelector('.settings-filter-empty');
             if (empty) empty.classList.toggle('hidden', !(terms.length && !anyVisible));
         }
     }
