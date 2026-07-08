@@ -209,6 +209,18 @@
         }
     }
 
+    // Re-collapse a nested section the filter previously opened. toggleSection is
+    // state-based, so only toggle while the node is actually visible.
+    function collapseNode(node) {
+        if (isNodeHidden(node)) return;
+        if (node.id && typeof window.toggleSection === 'function') {
+            window.toggleSection(node.id);
+        } else {
+            node.classList.add('hidden');
+            node.style.display = 'none';
+        }
+    }
+
     // Reveal any collapsed nested section (from render_nested_section) so the
     // target field is actually visible before we scroll to it.
     function revealAncestors(el) {
@@ -216,6 +228,19 @@
         while (node && node !== document.body) {
             if (node.classList && node.classList.contains('nested-content') && isNodeHidden(node)) {
                 revealNode(node);
+            }
+            node = node.parentElement;
+        }
+    }
+
+    // Like revealAncestors, but tags each section we open so the per-tab filter
+    // can restore the original collapsed layout once the query is cleared.
+    function expandNestedFor(el) {
+        var node = el.parentElement;
+        while (node && node !== document.body) {
+            if (node.classList && node.classList.contains('nested-content') && isNodeHidden(node)) {
+                revealNode(node);
+                node.dataset.filterExpanded = '1';
             }
             node = node.parentElement;
         }
@@ -232,6 +257,8 @@
 
     function navigateToSetting(entry) {
         closeResults();
+        // Clear the box so it doesn't re-open stale results when refocused.
+        if (input) input.value = '';
         setActiveTab(entry.tab);
         waitForElement(entry.anchorId, 6000).then(function (el) {
             if (!el) return;
@@ -307,6 +334,20 @@
             if (e.target === input || resultsBox.contains(e.target)) return;
             closeResults();
         });
+
+        // Reliable dismiss: close shortly after focus leaves the box. Result
+        // selection uses mousedown + preventDefault (focus stays on the input),
+        // so this never fires on a result click; the guard covers focus landing
+        // in the results list (e.g. dragging its scrollbar).
+        input.addEventListener('blur', function () {
+            setTimeout(function () {
+                if (resultsBox && resultsBox.contains(document.activeElement)) return;
+                closeResults();
+            }, 120);
+        });
+
+        // A tab swap (including our own search navigation) should dismiss it.
+        document.body.addEventListener('htmx:afterSwap', closeResults);
     }
 
     // --- Per-tab filter (delegated) -------------------------------------------
@@ -337,11 +378,36 @@
         fields.forEach(function (fg) {
             var show = !terms.length || termsMatch(fieldHay(fg), terms);
             fg.style.display = show ? '' : 'none';
-            if (show) anyVisible = true;
+            if (show) {
+                anyVisible = true;
+                // Expand any collapsed nested section holding this match so it
+                // is actually visible (plugin tabs default their sections shut).
+                if (terms.length) expandNestedFor(fg);
+            }
         });
 
-        // Hide section headings whose settings all got filtered out.
-        var nodes = scope.querySelectorAll('h3, h4, .form-group');
+        if (!terms.length) {
+            // Filter cleared: restore the sections we opened and un-hide every
+            // nested-section wrapper, leaving user-expanded sections untouched.
+            scope.querySelectorAll('.nested-content[data-filter-expanded]').forEach(function (nc) {
+                collapseNode(nc);
+                delete nc.dataset.filterExpanded;
+            });
+            scope.querySelectorAll('.nested-section').forEach(function (ns) { ns.style.display = ''; });
+        } else {
+            // Hide nested-section wrappers whose fields all filtered out.
+            scope.querySelectorAll('.nested-section').forEach(function (ns) {
+                var secFields = ns.querySelectorAll('.form-group[id^="setting-"]');
+                var visible = 0;
+                secFields.forEach(function (f) { if (f.style.display !== 'none') visible++; });
+                ns.style.display = (secFields.length > 0 && visible === 0) ? 'none' : '';
+            });
+        }
+
+        // Hide section headings whose settings all got filtered out. A visible
+        // nested-section (plugin tabs) counts as content for its parent heading,
+        // so a heading isn't hidden while a subsection below it still has matches.
+        var nodes = scope.querySelectorAll('h3, h4, .form-group, .nested-section');
         var headings = [];
         var current = null;
         nodes.forEach(function (node) {
@@ -349,6 +415,9 @@
                 current = { el: node, total: 0, visible: 0 };
                 headings.push(current);
             } else if (current && node.matches('.form-group[id^="setting-"]')) {
+                current.total++;
+                if (node.style.display !== 'none') current.visible++;
+            } else if (current && node.classList.contains('nested-section')) {
                 current.total++;
                 if (node.style.display !== 'none') current.visible++;
             }

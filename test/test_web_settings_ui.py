@@ -140,3 +140,45 @@ def test_search_index_endpoint(client):
     assert all(f["label"] and f["anchorId"].startswith("setting-") for f in fields)
     # Section context is captured for grouped fields (e.g. Display hardware).
     assert by_id["setting-display-brightness"]["section"] == "Hardware Configuration"
+
+
+def test_plugin_config_partial_has_filter_and_nested_anchors():
+    """Plugin config tabs expose the per-tab filter and anchor nested fields.
+
+    The client fixture has no installed plugins, so render the partial directly
+    with a schema that includes a nested section (render_nested_section).
+    """
+    from jinja2 import Environment, FileSystemLoader, select_autoescape
+
+    env = Environment(
+        loader=FileSystemLoader(str(PROJECT_ROOT / "web_interface" / "templates")),
+        autoescape=select_autoescape(["html"]),
+    )
+    plugin = {
+        "id": "demo-plugin", "name": "Demo Plugin", "description": "A demo",
+        "enabled": True, "author": "me", "version": "1.0.0",
+    }
+    schema = {
+        "type": "object",
+        "properties": {
+            "title_text": {"type": "string", "title": "Title Text",
+                           "description": "The heading."},
+            "advanced": {
+                "type": "object", "title": "Advanced Options",
+                "description": "Nested options.",
+                "properties": {
+                    "scroll_speed": {"type": "integer", "title": "Scroll Speed",
+                                     "description": "Pixels per second."},
+                },
+            },
+        },
+    }
+    config = {"title_text": "Hi", "advanced": {"scroll_speed": 50}}
+    html = env.get_template("v3/partials/plugin_config.html").render(
+        plugin=plugin, schema=schema, config=config
+    )
+
+    assert 'class="settings-filter' in html, "plugin config: per-tab filter box missing"
+    assert "nested-content" in html, "plugin config: nested section not rendered"
+    assert 'id="setting-' in html, "plugin config: no search anchors rendered"
+    assert 'class="help-tip"' in html, "plugin config: no tooltips rendered"
