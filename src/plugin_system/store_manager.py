@@ -25,7 +25,7 @@ import logging
 
 from urllib.parse import urlparse
 
-from src.common.permission_utils import sudo_remove_directory
+from src.common.permission_utils import sudo_remove_directory, install_requirements_file
 
 try:
     from jsonschema import Draft7Validator, ValidationError
@@ -1915,13 +1915,19 @@ class PluginStoreManager:
         
         try:
             self.logger.info(f"Installing dependencies for {plugin_path.name}")
-            subprocess.run(
-                ['pip3', 'install', '--break-system-packages', '-r', str(requirements_file)],
-                check=True,
-                capture_output=True,
-                text=True,
-                timeout=300
-            )
+            # Routed through the shared root-visible installer (same one the
+            # web UI's "Reinstall Plugin Deps" tool uses) rather than a bare
+            # `pip`/`pip3` off PATH: a bare pip binary can silently resolve to
+            # a different Python installation than the one that actually runs
+            # ledmatrix.service, so pip reports success while the package
+            # stays invisible to the running plugin (e.g. missing `astral`
+            # for the weather plugin even though "install" succeeded).
+            result = install_requirements_file(requirements_file, timeout=300)
+            if result.returncode != 0:
+                self.logger.error(
+                    f"Error installing dependencies for {plugin_path.name}: {result.stderr}"
+                )
+                return False
             self.logger.info(f"Dependencies installed successfully for {plugin_path.name}")
             # Write hash marker so plugin_loader skips redundant pip run on next startup
             try:
@@ -1930,10 +1936,7 @@ class PluginStoreManager:
             except OSError as marker_err:
                 self.logger.debug("Could not write dependency marker for %s: %s", plugin_path.name, marker_err)
             return True
-            
-        except subprocess.CalledProcessError as e:
-            self.logger.error(f"Error installing dependencies: {e.stderr}")
-            return False
+
         except subprocess.TimeoutExpired:
             self.logger.error("Dependency installation timed out")
             return False

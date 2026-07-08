@@ -26,6 +26,7 @@ from src.web_interface.validators import (
     validate_file_upload
 )
 from src.error_aggregator import get_error_aggregator
+from src.common.permission_utils import install_requirements_file
 
 _SUDO = shutil.which('sudo')
 _JOURNALCTL = shutil.which('journalctl')
@@ -50,83 +51,12 @@ def _pip_install_requirements(req_file: Path, timeout: int) -> subprocess.Comple
     for the current process only if the wrapper isn't set up yet (i.e. the
     admin hasn't run scripts/install/configure_web_sudo.sh since upgrading),
     so the button still does *something* useful rather than hard-failing.
+
+    Thin wrapper around the shared implementation in permission_utils so the
+    Plugin Store's own dependency installation (store_manager.py) follows the
+    exact same root-visible install path instead of a divergent one.
     """
-    wrapper = PROJECT_ROOT / 'scripts' / 'fix_perms' / 'safe_pip_install.sh'
-    if wrapper.exists():
-        # Must invoke via an explicit `bash <path>` — matching both the
-        # sudoers rule configure_web_sudo.sh provisions ($BASH_PATH
-        # $SAFE_PIP_INSTALL_PATH *) and the existing safe_plugin_rm.sh call
-        # in src/common/permission_utils.py. Calling the script path directly
-        # (relying on its shebang) makes sudo check a different command line
-        # than what's actually allowlisted, so `sudo -n` denies it on any
-        # install that only has the specific rules this script provisions —
-        # it only appeared to work in prior testing because that device also
-        # had a broader, non-standard NOPASSWD: ALL grant.
-        #
-        # $BASH_PATH is resolved once at setup time (configure_web_sudo.sh's
-        # `command -v bash`) and baked into the static sudoers file as a
-        # literal path; sudo requires an exact string match against that, so
-        # if this process's own PATH resolves bash somewhere else, the
-        # sudoers rule won't match here either. Try the standard Debian/
-        # Raspberry Pi OS locations first, then this process's own
-        # resolution, so a divergence in just one of them doesn't break this.
-        bash_candidates = []
-        for candidate in ('/usr/bin/bash', '/bin/bash', shutil.which('bash')):
-            if candidate and candidate not in bash_candidates:
-                bash_candidates.append(candidate)
-
-        result = None
-        for bash_path in bash_candidates:
-            result = subprocess.run(
-                ['sudo', '-n', bash_path, str(wrapper), str(req_file)],
-                capture_output=True, text=True, timeout=timeout, cwd=str(PROJECT_ROOT)
-            )
-            if result.returncode == 0:
-                return result
-            # Best-effort distinction between "sudo rejected this exact
-            # command line" (no matching NOPASSWD rule for this bash path —
-            # worth trying the next candidate) and "sudo ran it but the
-            # wrapper/pip itself failed" (a real error — stop and surface it
-            # rather than uselessly retrying other bash paths or doubling up
-            # with a redundant non-root install attempt).
-            denied = any(
-                phrase in result.stderr
-                for phrase in ('a password is required', 'is not allowed to run', 'no tty present')
-            )
-            if not denied:
-                logger.warning(
-                    "[Pip Install] Root install failed (rc=%s) for %s: %s",
-                    result.returncode, req_file, result.stderr.strip()[:500],
-                )
-                return result
-
-        logger.warning(
-            "[Pip Install] Root wrapper denied via sudo for %s; falling back "
-            "to user-level install: %s",
-            req_file, result.stderr.strip()[:500] if result else 'no bash candidates found',
-        )
-        note = (
-            f"[Root install unavailable ({(result.stderr.strip() if result else 'sudo denied') or 'sudo denied'}); "
-            "installed for the web service's user only. Packages may not be "
-            "visible to ledmatrix.service if it runs as a different user — "
-            "run scripts/install/configure_web_sudo.sh to fix this.]\n"
-        )
-    else:
-        logger.warning(
-            "[Pip Install] safe_pip_install.sh not found; falling back to user-level install for %s",
-            req_file,
-        )
-        note = (
-            "[safe_pip_install.sh not found; installed for the web service's "
-            "user only. Run scripts/install/configure_web_sudo.sh to enable "
-            "root installs visible to ledmatrix.service.]\n"
-        )
-    result = subprocess.run(
-        [sys.executable, '-m', 'pip', 'install', '--break-system-packages', '-r', str(req_file)],
-        capture_output=True, text=True, timeout=timeout, cwd=str(PROJECT_ROOT)
-    )
-    result.stdout = note + (result.stdout or '')
-    return result
+    return install_requirements_file(req_file, timeout=timeout)
 
 
 def _scrub_git_remote_url(url: str) -> str:
