@@ -331,7 +331,10 @@ def install_requirements_file(req_file: Path, timeout: int = 300) -> subprocess.
 
         result = None
         for bash_path in bash_candidates:
-            result = subprocess.run(
+            # bash_path and wrapper are fixed, known-good paths, and
+            # safe_pip_install.sh independently re-validates req_file is an
+            # allowed requirements.txt before installing anything as root.
+            result = subprocess.run(  # nosec B603 - no shell invoked (list-form argv)
                 ["sudo", "-n", bash_path, str(wrapper), str(req_file)],
                 capture_output=True, text=True, timeout=timeout, cwd=str(project_root)
             )
@@ -373,7 +376,11 @@ def install_requirements_file(req_file: Path, timeout: int = 300) -> subprocess.
             "root installs visible to ledmatrix.service.]\n"
         )
 
-    result = subprocess.run(
+    # sys.executable is this process's own interpreter (not
+    # attacker-influenced), and req_file is a Path built internally by callers
+    # (store_manager.py plugin paths, PROJECT_ROOT/requirements.txt), never
+    # raw external/user input.
+    result = subprocess.run(  # nosec B603 - no shell invoked (list-form argv)
         [sys.executable, "-m", "pip", "install", "--break-system-packages", "-r", str(req_file)],
         capture_output=True, text=True, timeout=timeout, cwd=str(project_root)
     )
