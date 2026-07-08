@@ -10,6 +10,7 @@ import os
 import logging
 import shutil as _shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -286,4 +287,105 @@ def sudo_remove_directory(path: Path, allowed_bases: Optional[list] = None) -> b
     except Exception as e:
         logger.error(f"Unexpected error during sudo helper for {path}: {e}")
         return False
+
+
+def install_requirements_file(req_file: Path, timeout: int = 300) -> subprocess.CompletedProcess:
+    """
+    Install a requirements.txt file for a plugin (or the project itself).
+
+    Prefers the vetted sudo wrapper (scripts/fix_perms/safe_pip_install.sh) so
+    packages end up visible to root-run ledmatrix.service, not just to
+    whichever non-root user happens to run the calling process (e.g. the web
+    interface). Falls back to installing with the calling process's own
+    interpreter if the wrapper isn't set up yet (the admin hasn't run
+    scripts/install/configure_web_sudo.sh), so dependency installation still
+    does *something* useful rather than hard-failing.
+
+    Always installs with the interpreter that will actually run the code
+    (``sys.executable`` in the fallback path, the wrapper's ``python3`` in the
+    sudo path) rather than a bare ``pip``/``pip3`` off PATH, which can
+    silently resolve to a different Python installation (e.g. system Python
+    vs. a virtualenv) than the one importing the package at runtime.
+
+    Args:
+        req_file: Path to a requirements.txt file
+        timeout: Subprocess timeout in seconds
+
+    Returns:
+        subprocess.CompletedProcess from the pip (or wrapper) invocation.
+        Never raises on a non-zero exit; callers should check ``returncode``.
+        ``stdout`` is prefixed with an explanatory note when the root wrapper
+        was unavailable and the fallback path was used.
+    """
+    project_root = Path(__file__).resolve().parent.parent.parent
+    wrapper = project_root / "scripts" / "fix_perms" / "safe_pip_install.sh"
+
+    if wrapper.exists():
+        # See sudo_remove_directory / configure_web_sudo.sh for why bash must
+        # be invoked with an explicit, known path rather than relying on the
+        # wrapper's shebang: sudoers matches the exact command line.
+        bash_candidates = []
+        for candidate in ("/usr/bin/bash", "/bin/bash", _shutil.which("bash")):
+            if candidate and candidate not in bash_candidates:
+                bash_candidates.append(candidate)
+
+        result = None
+        for bash_path in bash_candidates:
+            # bash_path and wrapper are fixed, known-good paths, and
+            # safe_pip_install.sh independently re-validates req_file is an
+            # allowed requirements.txt before installing anything as root.
+            result = subprocess.run(  # nosec B603 - no shell invoked (list-form argv)  # nosemgrep
+                ["sudo", "-n", bash_path, str(wrapper), str(req_file)],
+                capture_output=True, text=True, timeout=timeout, cwd=str(project_root)
+            )
+            if result.returncode == 0:
+                return result
+            # Distinguish "sudo rejected this exact command line" (worth
+            # trying the next bash candidate) from "sudo ran it but pip
+            # itself failed" (a real error — stop and surface it).
+            denied = any(
+                phrase in result.stderr
+                for phrase in ("a password is required", "is not allowed to run", "no tty present")
+            )
+            if not denied:
+                logger.warning(
+                    "Root pip install failed (rc=%s) for %s: %s",
+                    result.returncode, req_file, result.stderr.strip()[:500],
+                )
+                return result
+
+        logger.warning(
+            "Root pip install wrapper denied via sudo for %s; falling back to "
+            "user-level install: %s",
+            req_file, result.stderr.strip()[:500] if result else "no bash candidates found",
+        )
+        note = (
+            f"[Root install unavailable ({(result.stderr.strip() if result else 'sudo denied') or 'sudo denied'}); "
+            "installed for the current process's user only. Packages may not be "
+            "visible to ledmatrix.service if it runs as a different user — "
+            "run scripts/install/configure_web_sudo.sh to fix this.]\n"
+        )
+    else:
+        logger.warning(
+            "safe_pip_install.sh not found; falling back to user-level install for %s",
+            req_file,
+        )
+        note = (
+            "[safe_pip_install.sh not found; installed for the current process's "
+            "user only. Run scripts/install/configure_web_sudo.sh to enable "
+            "root installs visible to ledmatrix.service.]\n"
+        )
+
+    # sys.executable is this process's own interpreter (not
+    # attacker-influenced), and req_file is a Path built internally by callers
+    # (store_manager.py plugin paths, PROJECT_ROOT/requirements.txt), never
+    # raw external/user input. --ignore-installed matches safe_pip_install.sh:
+    # apt-managed packages (e.g. python3-requests) ship no pip RECORD file, so
+    # upgrading them would otherwise abort with "uninstall-no-record-file".
+    result = subprocess.run(  # nosec B603 - no shell invoked (list-form argv)  # nosemgrep
+        [sys.executable, "-m", "pip", "install", "--break-system-packages", "--ignore-installed", "-r", str(req_file)],
+        capture_output=True, text=True, timeout=timeout, cwd=str(project_root)
+    )
+    result.stdout = note + (result.stdout or "")
+    return result
 
