@@ -1,5 +1,23 @@
 <div class="space-y-6" id="tools-root">
 
+    <!-- System Diagnostics -->
+    <div class="bg-white rounded-lg shadow p-6">
+        <div class="border-b border-gray-200 pb-4 mb-6 flex items-start justify-between gap-4">
+            <div>
+                <h2 class="text-lg font-semibold text-gray-900">System Diagnostics</h2>
+                <p class="mt-1 text-sm text-gray-600">Live CPU, memory, temperature, disk, and uptime for this Raspberry Pi.</p>
+            </div>
+            <button id="btn-diag-refresh" onclick="loadSystemDiagnostics()"
+                    class="shrink-0 inline-flex items-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
+                <i class="fas fa-sync-alt mr-2"></i>Refresh
+            </button>
+        </div>
+
+        <div id="diag-panel" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div class="animate-pulse text-gray-400 col-span-full">Loading diagnostics…</div>
+        </div>
+    </div>
+
     <!-- Git & Updates -->
     <div class="bg-white rounded-lg shadow p-6">
         <div class="border-b border-gray-200 pb-4 mb-6">
@@ -123,6 +141,46 @@
         </div>
     </div>
 
+    <!-- Network Radio -->
+    <div class="bg-white rounded-lg shadow p-6">
+        <div class="border-b border-gray-200 pb-4 mb-6">
+            <h2 class="text-lg font-semibold text-gray-900">Network Radio</h2>
+            <p class="mt-1 text-sm text-gray-600">Turn the WiFi radio on or off. Full WiFi setup (scan, connect, hotspot) lives on the <span class="font-medium">WiFi</span> tab.</p>
+        </div>
+
+        <div class="flex items-start justify-between gap-4">
+            <div>
+                <p class="text-sm font-medium text-gray-900">WiFi radio</p>
+                <p id="wifi-radio-note" class="text-xs text-gray-500 mt-0.5">Checking current state…</p>
+            </div>
+            <div class="shrink-0 flex flex-col items-end gap-2">
+                <!-- Toggle switch -->
+                <button id="wifi-radio-toggle" type="button" role="switch" aria-checked="false"
+                        onclick="onWifiRadioToggleClick()" disabled
+                        class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent bg-gray-200 transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 opacity-60">
+                    <span id="wifi-radio-knob" aria-hidden="true"
+                          class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out translate-x-0"></span>
+                </button>
+
+                <!-- Force-off confirm row (shown only when disabling without Ethernet is refused) -->
+                <div id="wifi-radio-force-row" class="hidden flex-col items-end gap-2">
+                    <span class="text-xs text-red-700 font-medium text-right max-w-xs">No wired connection detected — turning WiFi off will disconnect you from this page. Continue anyway?</span>
+                    <div class="flex items-center gap-2">
+                        <button onclick="forceDisableWifiRadio()"
+                                class="inline-flex items-center px-3 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700">
+                            Turn WiFi off anyway
+                        </button>
+                        <button onclick="hideWifiForceRow()"
+                                class="inline-flex items-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div id="result-wifi-radio" class="hidden"></div>
+    </div>
+
     <!-- Services -->
     <div class="bg-white rounded-lg shadow p-6">
         <div class="border-b border-gray-200 pb-4 mb-6">
@@ -154,6 +212,68 @@
                 </button>
             </div>
             <div id="result-restart-web" class="hidden"></div>
+        </div>
+    </div>
+
+    <!-- System Power -->
+    <div class="bg-white rounded-lg shadow p-6">
+        <div class="border-b border-gray-200 pb-4 mb-6">
+            <h2 class="text-lg font-semibold text-gray-900">System Power</h2>
+            <p class="mt-1 text-sm text-gray-600">Reboot or shut down the Raspberry Pi. The web interface will go offline.</p>
+        </div>
+
+        <div class="space-y-4">
+            <!-- Reboot -->
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <p class="text-sm font-medium text-gray-900">Reboot</p>
+                    <p class="text-xs text-gray-500 mt-0.5">Runs <code class="bg-gray-100 px-1 rounded">sudo reboot</code>. The Pi will restart and come back online in a minute or two.</p>
+                </div>
+                <div class="shrink-0 flex flex-col items-end gap-2">
+                    <button id="btn-reboot" onclick="showPowerConfirm('reboot')"
+                            class="inline-flex items-center px-3 py-2 border border-amber-300 text-sm font-medium rounded-md text-amber-700 bg-white hover:bg-amber-50">
+                        <i class="fas fa-power-off mr-2"></i>Reboot…
+                    </button>
+                    <div id="reboot-confirm-row" class="hidden flex items-center gap-2">
+                        <span class="text-xs text-amber-700 font-medium">Reboot now?</span>
+                        <button onclick="powerAction('reboot_system', 'btn-reboot', 'result-reboot', 'Reboot command sent — the Pi is restarting. This page will go offline and should return in a minute or two.'); hidePowerConfirm('reboot')"
+                                class="inline-flex items-center px-3 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-amber-600 hover:bg-amber-700">
+                            Yes, reboot
+                        </button>
+                        <button onclick="hidePowerConfirm('reboot')"
+                                class="inline-flex items-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div id="result-reboot" class="hidden"></div>
+
+            <!-- Shutdown -->
+            <div class="flex items-start justify-between gap-4 pt-4 border-t border-gray-100">
+                <div>
+                    <p class="text-sm font-medium text-gray-900">Shut down</p>
+                    <p class="text-xs text-gray-500 mt-0.5">Runs <code class="bg-gray-100 px-1 rounded">sudo poweroff</code>. The Pi will power off and must be unplugged/replugged (or power-cycled) to turn back on.</p>
+                </div>
+                <div class="shrink-0 flex flex-col items-end gap-2">
+                    <button id="btn-shutdown" onclick="showPowerConfirm('shutdown')"
+                            class="inline-flex items-center px-3 py-2 border border-red-300 text-sm font-medium rounded-md text-red-700 bg-white hover:bg-red-50">
+                        <i class="fas fa-plug mr-2"></i>Shut Down…
+                    </button>
+                    <div id="shutdown-confirm-row" class="hidden flex items-center gap-2">
+                        <span class="text-xs text-red-700 font-medium">Power off now?</span>
+                        <button onclick="powerAction('shutdown_system', 'btn-shutdown', 'result-shutdown', 'Shutdown command sent — the Pi is powering off. You will need to power-cycle it to turn it back on.'); hidePowerConfirm('shutdown')"
+                                class="inline-flex items-center px-3 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700">
+                            Yes, shut down
+                        </button>
+                        <button onclick="hidePowerConfirm('shutdown')"
+                                class="inline-flex items-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div id="result-shutdown" class="hidden"></div>
         </div>
     </div>
 
@@ -397,7 +517,208 @@
         });
     }
 
+    // ── system diagnostics panel ──────────────────────────────────────────────
+    // Reads the existing /api/v3/system/status JSON endpoint (10s cached) for
+    // richer metrics (disk, uptime, memory MB) than the SSE stats stream carries.
+
+    function diagTile(icon, iconColor, label, value, sub) {
+        return `
+            <div class="bg-gray-50 rounded-lg p-4">
+                <div class="flex items-center">
+                    <div class="flex-shrink-0"><i class="fas ${icon} ${iconColor} text-xl"></i></div>
+                    <div class="ml-3 w-0 flex-1">
+                        <dt class="text-sm font-medium text-gray-500 truncate">${escHtml(label)}</dt>
+                        <dd class="text-lg font-medium text-gray-900">${escHtml(value)}</dd>
+                        ${sub ? `<dd class="text-xs text-gray-400 mt-0.5">${escHtml(sub)}</dd>` : ''}
+                    </div>
+                </div>
+            </div>`;
+    }
+
+    window.loadSystemDiagnostics = function() {
+        const panel = document.getElementById('diag-panel');
+        if (!panel) return;
+
+        fetch('/api/v3/system/status')
+            .then(r => {
+                if (!r.ok) return r.json()
+                    .then(d => Promise.reject(d.message || `HTTP ${r.status}`))
+                    .catch(() => Promise.reject(`HTTP ${r.status}`));
+                return r.json();
+            })
+            .then(res => {
+                const d = (res && res.data) || {};
+                const mUsedGb = d.memory_used_mb != null ? (d.memory_used_mb / 1024).toFixed(1) : null;
+                const mTotGb  = d.memory_total_mb != null ? (d.memory_total_mb / 1024).toFixed(1) : null;
+                const temp    = d.cpu_temp != null ? d.cpu_temp + '°C' : 'N/A';
+                panel.innerHTML =
+                    diagTile('fa-microchip', 'text-blue-600', 'CPU Usage',
+                        (d.cpu_percent != null ? d.cpu_percent : '--') + '%', null) +
+                    diagTile('fa-memory', 'text-green-600', 'Memory',
+                        (d.memory_used_percent != null ? d.memory_used_percent : '--') + '%',
+                        (mUsedGb && mTotGb) ? `${mUsedGb} / ${mTotGb} GB` : null) +
+                    diagTile('fa-thermometer-half', 'text-red-600', 'CPU Temp', temp, null) +
+                    diagTile('fa-hdd', 'text-indigo-600', 'Disk',
+                        (d.disk_used_percent != null ? d.disk_used_percent : '--') + '%',
+                        (d.disk_used_gb != null && d.disk_total_gb != null) ? `${d.disk_used_gb} / ${d.disk_total_gb} GB` : null) +
+                    diagTile('fa-clock', 'text-purple-600', 'Uptime', d.uptime || '--', null) +
+                    diagTile('fa-desktop', d.service_active ? 'text-green-600' : 'text-gray-400',
+                        'Display Service', d.service_active ? 'Active' : 'Inactive', null);
+            })
+            .catch(err => {
+                panel.innerHTML = `<div class="col-span-full text-sm text-red-600">Diagnostics unavailable: ${escHtml(String(err))}</div>`;
+            });
+    };
+
+    // ── system power (reboot / shutdown) ──────────────────────────────────────
+    // Like toolsAction, but a dropped connection is the expected, successful
+    // outcome (the Pi is going down), so it is reported as info, not an error.
+
+    window.powerAction = function(action, btnId, resultId, offlineMsg) {
+        setBusy(btnId, true);
+        const el = document.getElementById(resultId);
+        if (el) el.classList.add('hidden');
+
+        fetch('/api/v3/system/action', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({action})
+        })
+        .then(r => r.json().catch(() => ({status: 'success'})))
+        .then(data => {
+            if (data.status === 'error') {
+                showResult(resultId, false, data.message || 'Command failed');
+            } else {
+                showResult(resultId, true, offlineMsg);
+            }
+        })
+        .catch(() => {
+            // Connection dropped mid-request — expected when the Pi reboots/powers off.
+            showResult(resultId, true, offlineMsg);
+        })
+        .finally(() => setBusy(btnId, false));
+    };
+
+    window.showPowerConfirm = function(kind) {
+        document.getElementById(kind + '-confirm-row').classList.remove('hidden');
+        document.getElementById('btn-' + kind).classList.add('hidden');
+    };
+    window.hidePowerConfirm = function(kind) {
+        document.getElementById(kind + '-confirm-row').classList.add('hidden');
+        document.getElementById('btn-' + kind).classList.remove('hidden');
+    };
+
+    // ── WiFi radio toggle ─────────────────────────────────────────────────────
+
+    function renderWifiRadio(state) {
+        const toggle = document.getElementById('wifi-radio-toggle');
+        const knob   = document.getElementById('wifi-radio-knob');
+        const note   = document.getElementById('wifi-radio-note');
+        if (!toggle || !knob || !note) return;
+
+        const setKnob = (on) => {
+            if (on) {
+                knob.classList.remove('translate-x-0'); knob.classList.add('translate-x-5');
+                toggle.classList.remove('bg-gray-200'); toggle.classList.add('bg-blue-600');
+            } else {
+                knob.classList.remove('translate-x-5'); knob.classList.add('translate-x-0');
+                toggle.classList.remove('bg-blue-600'); toggle.classList.add('bg-gray-200');
+            }
+        };
+
+        if (!state || state.available === false) {
+            toggle.disabled = true;
+            toggle.classList.add('opacity-60');
+            toggle.setAttribute('aria-checked', 'false');
+            setKnob(false);
+            note.textContent = 'WiFi radio control is not available on this system (nmcli not found).';
+            note.className = 'text-xs text-gray-500 mt-0.5';
+            return;
+        }
+
+        const on = state.enabled === true;
+        toggle.disabled = false;
+        toggle.classList.remove('opacity-60');
+        toggle.setAttribute('aria-checked', on ? 'true' : 'false');
+        setKnob(on);
+        const eth = state.ethernet_connected
+            ? 'Wired connection detected — safe to turn WiFi off.'
+            : 'No wired connection — turning WiFi off will disconnect this page.';
+        note.textContent = `Radio is ${on ? 'on' : 'off'}. ${eth}`;
+        note.className = 'text-xs mt-0.5 ' + (state.ethernet_connected ? 'text-gray-500' : 'text-amber-600');
+    }
+
+    window.loadWifiRadio = function() {
+        fetch('/api/v3/wifi/radio')
+            .then(r => r.json())
+            .then(res => renderWifiRadio(res && res.data))
+            .catch(() => renderWifiRadio(null));
+    };
+
+    window.onWifiRadioToggleClick = function() {
+        const toggle = document.getElementById('wifi-radio-toggle');
+        if (!toggle || toggle.disabled) return;
+        const currentlyOn = toggle.getAttribute('aria-checked') === 'true';
+        setWifiRadio(!currentlyOn, false);
+    };
+
+    function setWifiRadio(enabled, force) {
+        const toggle = document.getElementById('wifi-radio-toggle');
+        const resultEl = document.getElementById('result-wifi-radio');
+        if (toggle) toggle.disabled = true;
+        if (resultEl) resultEl.classList.add('hidden');
+        hideWifiForceRow();
+
+        fetch('/api/v3/wifi/radio', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({enabled, force})
+        })
+        .then(r => r.json().then(d => ({ok: r.ok, d})))
+        .then(({ok, d}) => {
+            if (ok && d.status === 'success') {
+                if (d.data) renderWifiRadio(d.data); else window.loadWifiRadio();
+                showResult('result-wifi-radio', true, d.message || 'Done');
+            } else if (!enabled && !force) {
+                // Disable refused for safety (no wired fallback) — offer the force path.
+                showWifiForceRow();
+                window.loadWifiRadio();
+            } else {
+                showResult('result-wifi-radio', false, d.message || 'Failed to change WiFi radio.');
+                window.loadWifiRadio();
+            }
+        })
+        .catch(err => {
+            showResult('result-wifi-radio', false, 'Request failed: ' + err.message);
+            window.loadWifiRadio();
+        })
+        .finally(() => { if (toggle) toggle.disabled = false; });
+    }
+
+    window.forceDisableWifiRadio = function() {
+        hideWifiForceRow();
+        setWifiRadio(false, true);
+    };
+
+    function showWifiForceRow() {
+        const row = document.getElementById('wifi-radio-force-row');
+        if (row) { row.classList.remove('hidden'); row.classList.add('flex'); }
+    }
+    window.hideWifiForceRow = function() {
+        const row = document.getElementById('wifi-radio-force-row');
+        if (row) { row.classList.add('hidden'); row.classList.remove('flex'); }
+    };
+
     // Load on first render; HTMX will have already swapped us in by this point.
     loadGitInfo();
+
+    // System diagnostics: load now, then refresh every 10s while this tab is
+    // mounted. Clear any prior interval so re-swapping the partial doesn't stack.
+    if (window._diagPollInterval) clearInterval(window._diagPollInterval);
+    window.loadSystemDiagnostics();
+    window._diagPollInterval = setInterval(window.loadSystemDiagnostics, 10000);
+
+    // WiFi radio current state.
+    window.loadWifiRadio();
 })();
 </script>

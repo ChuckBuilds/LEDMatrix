@@ -1883,7 +1883,93 @@ class WiFiManager:
         
         logger.warning(f"Failed to enable WiFi radio after {max_retries} attempts")
         return False
-    
+
+    def get_wifi_radio_state(self) -> Dict:
+        """
+        Report whether the WiFi radio is currently enabled, plus whether a wired
+        fallback exists. Used by the web UI's radio toggle so it can warn before
+        an action that could disconnect the browser.
+
+        Returns:
+            {
+                'enabled': Optional[bool],   # True/False, or None if undeterminable
+                'ethernet_connected': bool,  # wired fallback present
+                'available': bool,           # nmcli present / radio state readable
+            }
+        """
+        ethernet_connected = self._is_ethernet_connected()
+        enabled: Optional[bool] = None
+        available = False
+        try:
+            result = subprocess.run(
+                ["nmcli", "radio", "wifi"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                status = result.stdout.strip().lower()
+                if status in ("enabled", "disabled"):
+                    enabled = status == "enabled"
+                    available = True
+        except Exception as e:
+            logger.debug(f"Could not read WiFi radio state: {e}")
+        return {
+            'enabled': enabled,
+            'ethernet_connected': ethernet_connected,
+            'available': available,
+        }
+
+    def set_wifi_radio(self, enabled: bool, force: bool = False) -> Tuple[bool, str]:
+        """
+        Turn the WiFi radio on or off.
+
+        Turning the radio OFF from the web interface is dangerous: if the device
+        is reachable only over WiFi, disabling it disconnects the very page that
+        issued the request. To prevent that lockout, disabling is refused unless a
+        wired (Ethernet) fallback is present, or the caller explicitly passes
+        force=True to acknowledge the risk.
+
+        Enabling reuses the hardened _ensure_wifi_radio_enabled() path (handles
+        rfkill soft-blocks + retries). Both directions rely only on
+        `nmcli radio wifi on|off`, which is already covered by the passwordless
+        sudoers allowlist (configure_wifi_permissions.sh) — no new privileged
+        command is introduced.
+
+        Returns:
+            (success, human-readable message)
+        """
+        if enabled:
+            if self._ensure_wifi_radio_enabled():
+                return True, "WiFi radio enabled."
+            return False, "Failed to enable WiFi radio. Check logs for details."
+
+        # Disabling — guard against locking the user out of the web interface.
+        if not force and not self._is_ethernet_connected():
+            return False, (
+                "Refusing to disable WiFi: no wired (Ethernet) connection was "
+                "detected, so turning off WiFi would disconnect you from this "
+                "page. Connect Ethernet first, or force it if you're sure."
+            )
+
+        try:
+            result = subprocess.run(
+                ["sudo", "nmcli", "radio", "wifi", "off"],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            if result.returncode == 0:
+                logger.info("WiFi radio disabled via web interface (force=%s)", force)
+                return True, "WiFi radio disabled."
+            logger.warning("Failed to disable WiFi radio: %s", result.stderr.strip())
+            return False, "Failed to disable WiFi radio. Check logs for details."
+        except subprocess.TimeoutExpired:
+            return False, "Command timed out while disabling WiFi radio."
+        except Exception as e:
+            logger.error("Error disabling WiFi radio: %s", e)
+            return False, "An error occurred while disabling WiFi radio."
+
     def enable_ap_mode(self, force: bool = False) -> Tuple[bool, str]:
         """
         Enable access point mode

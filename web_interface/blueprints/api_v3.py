@@ -7184,6 +7184,69 @@ def set_auto_enable_ap_mode():
             'message': 'An error occurred; see logs for details'
         }), 500
 
+@api_v3.route('/wifi/radio', methods=['GET'])
+def get_wifi_radio():
+    """Get current WiFi radio state (enabled/disabled) and wired-fallback status."""
+    try:
+        from src.wifi_manager import WiFiManager
+
+        wifi_manager = WiFiManager()
+        state = wifi_manager.get_wifi_radio_state()
+
+        return jsonify({
+            'status': 'success',
+            'data': state
+        })
+    except Exception as e:
+        logger.error("Error getting WiFi radio state", exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'message': 'An error occurred; see logs for details'
+        }), 500
+
+@api_v3.route('/wifi/radio', methods=['POST'])
+def set_wifi_radio():
+    """Turn the WiFi radio on or off.
+
+    Body: {"enabled": bool, "force": bool (optional)}. Disabling is refused
+    unless Ethernet is connected or force=True, to avoid locking the user out
+    of this web interface.
+    """
+    try:
+        from src.wifi_manager import WiFiManager
+
+        data = request.get_json(silent=True) or {}
+        if 'enabled' not in data:
+            return jsonify({
+                'status': 'error',
+                'message': 'enabled is required'
+            }), 400
+
+        enabled = bool(data['enabled'])
+        _force_raw = data.get('force', False)
+        force = _force_raw is True or (isinstance(_force_raw, str) and _force_raw.lower() in ('true', '1', 'yes'))
+
+        wifi_manager = WiFiManager()
+        success, message = wifi_manager.set_wifi_radio(enabled, force=force)
+
+        if success:
+            return jsonify({
+                'status': 'success',
+                'message': message,
+                'data': wifi_manager.get_wifi_radio_state()
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': message
+            }), 400
+    except Exception as e:
+        logger.error("Error setting WiFi radio state", exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'message': 'An error occurred; see logs for details'
+        }), 500
+
 @api_v3.route('/cache/list', methods=['GET'])
 def list_cache_files():
     """List all cache files with metadata"""
