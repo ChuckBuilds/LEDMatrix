@@ -1969,8 +1969,8 @@ class WiFiManager:
             return False, "Failed to disable WiFi radio. Check logs for details.", 'command_failed'
         except subprocess.TimeoutExpired:
             return False, "Command timed out while disabling WiFi radio.", 'timeout'
-        except Exception as e:
-            logger.error("Error disabling WiFi radio: %s", e)
+        except (OSError, subprocess.SubprocessError) as e:
+            logger.error("Error disabling WiFi radio: %s", e, exc_info=True)
             return False, "An error occurred while disabling WiFi radio.", 'error'
 
     def enable_ap_mode(self, force: bool = False) -> Tuple[bool, str]:
