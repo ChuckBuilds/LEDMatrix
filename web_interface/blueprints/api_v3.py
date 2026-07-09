@@ -7222,12 +7222,16 @@ def set_wifi_radio():
                 'message': 'enabled is required'
             }), 400
 
-        enabled = bool(data['enabled'])
+        # Parse defensively: bool("false") is True, so mirror the string-aware
+        # coercion used for `force` — the endpoint is a public contract, not just
+        # the shipped UI (which always sends real JSON booleans).
+        _enabled_raw = data['enabled']
+        enabled = _enabled_raw is True or (isinstance(_enabled_raw, str) and _enabled_raw.lower() in ('true', '1', 'yes'))
         _force_raw = data.get('force', False)
         force = _force_raw is True or (isinstance(_force_raw, str) and _force_raw.lower() in ('true', '1', 'yes'))
 
         wifi_manager = WiFiManager()
-        success, message = wifi_manager.set_wifi_radio(enabled, force=force)
+        success, message, reason = wifi_manager.set_wifi_radio(enabled, force=force)
 
         if success:
             return jsonify({
@@ -7238,7 +7242,8 @@ def set_wifi_radio():
         else:
             return jsonify({
                 'status': 'error',
-                'message': message
+                'message': message,
+                'reason': reason
             }), 400
     except Exception as e:
         logger.error("Error setting WiFi radio state", exc_info=True)

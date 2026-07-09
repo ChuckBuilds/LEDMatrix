@@ -679,7 +679,7 @@
             if (ok && d.status === 'success') {
                 if (d.data) renderWifiRadio(d.data); else window.loadWifiRadio();
                 showResult('result-wifi-radio', true, d.message || 'Done');
-            } else if (!enabled && !force) {
+            } else if (!enabled && !force && d.reason === 'no_ethernet') {
                 // Disable refused for safety (no wired fallback) — offer the force path.
                 showWifiForceRow();
                 window.loadWifiRadio();
@@ -712,11 +712,18 @@
     // Load on first render; HTMX will have already swapped us in by this point.
     loadGitInfo();
 
-    // System diagnostics: load now, then refresh every 10s while this tab is
-    // mounted. Clear any prior interval so re-swapping the partial doesn't stack.
+    // System diagnostics: load now, then refresh every 10s. Clear any prior
+    // interval so re-swapping the partial doesn't stack. The recurring poll is
+    // gated on visibility — the partial stays in the DOM (hidden via x-show)
+    // when another tab is active, so without this it would keep hitting
+    // /api/v3/system/status every 10s and churn the Pi while off-screen.
     if (window._diagPollInterval) clearInterval(window._diagPollInterval);
     window.loadSystemDiagnostics();
-    window._diagPollInterval = setInterval(window.loadSystemDiagnostics, 10000);
+    window._diagPollInterval = setInterval(function () {
+        const panel = document.getElementById('diag-panel');
+        if (!panel || document.hidden || panel.offsetParent === null) return;
+        window.loadSystemDiagnostics();
+    }, 10000);
 
     // WiFi radio current state.
     window.loadWifiRadio();

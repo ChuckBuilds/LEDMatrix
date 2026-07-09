@@ -1920,7 +1920,7 @@ class WiFiManager:
             'available': available,
         }
 
-    def set_wifi_radio(self, enabled: bool, force: bool = False) -> Tuple[bool, str]:
+    def set_wifi_radio(self, enabled: bool, force: bool = False) -> Tuple[bool, str, Optional[str]]:
         """
         Turn the WiFi radio on or off.
 
@@ -1937,12 +1937,15 @@ class WiFiManager:
         command is introduced.
 
         Returns:
-            (success, human-readable message)
+            (success, human-readable message, reason_code). reason_code is
+            'no_ethernet' when a disable is refused for lockout safety, or a
+            short failure code otherwise; None on success. The web UI keys on
+            'no_ethernet' to decide whether to offer a force-off prompt.
         """
         if enabled:
             if self._ensure_wifi_radio_enabled():
-                return True, "WiFi radio enabled."
-            return False, "Failed to enable WiFi radio. Check logs for details."
+                return True, "WiFi radio enabled.", None
+            return False, "Failed to enable WiFi radio. Check logs for details.", 'enable_failed'
 
         # Disabling — guard against locking the user out of the web interface.
         if not force and not self._is_ethernet_connected():
@@ -1950,7 +1953,7 @@ class WiFiManager:
                 "Refusing to disable WiFi: no wired (Ethernet) connection was "
                 "detected, so turning off WiFi would disconnect you from this "
                 "page. Connect Ethernet first, or force it if you're sure."
-            )
+            ), 'no_ethernet'
 
         try:
             result = subprocess.run(
@@ -1961,14 +1964,14 @@ class WiFiManager:
             )
             if result.returncode == 0:
                 logger.info("WiFi radio disabled via web interface (force=%s)", force)
-                return True, "WiFi radio disabled."
+                return True, "WiFi radio disabled.", None
             logger.warning("Failed to disable WiFi radio: %s", result.stderr.strip())
-            return False, "Failed to disable WiFi radio. Check logs for details."
+            return False, "Failed to disable WiFi radio. Check logs for details.", 'command_failed'
         except subprocess.TimeoutExpired:
-            return False, "Command timed out while disabling WiFi radio."
+            return False, "Command timed out while disabling WiFi radio.", 'timeout'
         except Exception as e:
             logger.error("Error disabling WiFi radio: %s", e)
-            return False, "An error occurred while disabling WiFi radio."
+            return False, "An error occurred while disabling WiFi radio.", 'error'
 
     def enable_ap_mode(self, force: bool = False) -> Tuple[bool, str]:
         """
