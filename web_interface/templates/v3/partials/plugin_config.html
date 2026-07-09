@@ -1,6 +1,8 @@
 {# Plugin Configuration Partial - Server-side rendered form #}
 {# This template is loaded via HTMX when a plugin tab is clicked #}
 
+{% import 'v3/partials/_macros.html' as ui %}
+
 {# ===== MACROS FOR FORM FIELD GENERATION ===== #}
 
 {# Render a single form field based on schema type #}
@@ -18,9 +20,8 @@
         {% if obj_widget == 'schedule-picker' %}
             {# Schedule picker widget - renders enable/mode/times UI #}
             {% set obj_value = value if value is not none else {} %}
-            <div class="form-group mb-4">
-                <label class="block text-sm font-medium text-gray-700 mb-1">{{ label }}</label>
-                {% if description %}<p class="text-sm text-gray-500 mb-2">{{ description }}</p>{% endif %}
+            <div class="form-group mb-4" id="setting-{{ field_id }}" data-setting-key="{{ full_key }}">
+                <label class="block text-sm font-medium text-gray-700 mb-1">{{ label }}{{ ui.help_tip(description, label) }}</label>
                 <div id="{{ field_id }}_container" class="schedule-picker-container mt-1"></div>
                 <input type="hidden" id="{{ field_id }}_data" name="{{ full_key }}" value='{{ (obj_value|tojson|safe)|replace("'", "&#39;") }}'>
             </div>
@@ -46,9 +47,8 @@
         {% elif obj_widget == 'time-range' %}
             {# Time range widget - renders start/end time inputs #}
             {% set obj_value = value if value is not none else {} %}
-            <div class="form-group mb-4">
-                <label class="block text-sm font-medium text-gray-700 mb-1">{{ label }}</label>
-                {% if description %}<p class="text-sm text-gray-500 mb-2">{{ description }}</p>{% endif %}
+            <div class="form-group mb-4" id="setting-{{ field_id }}" data-setting-key="{{ full_key }}">
+                <label class="block text-sm font-medium text-gray-700 mb-1">{{ label }}{{ ui.help_tip(description, label) }}</label>
                 <div id="{{ field_id }}_container" class="time-range-container mt-1"></div>
                 <input type="hidden" id="{{ field_id }}_data" name="{{ full_key }}" value='{{ (obj_value|tojson|safe)|replace("'", "&#39;") }}'>
             </div>
@@ -75,15 +75,11 @@
             {{ render_nested_section(key, prop, value, prefix, plugin_id) }}
         {% endif %}
     {% else %}
-        <div class="form-group mb-4">
+        <div class="form-group mb-4" id="setting-{{ field_id }}" data-setting-key="{{ full_key }}">
             <label for="{{ field_id }}" class="block text-sm font-medium text-gray-700 mb-1">
-                {{ label }}
+                {{ label }}{{ ui.help_tip(description, label) }}
             </label>
-            
-            {% if description %}
-            <p class="text-sm text-gray-500 mb-2">{{ description }}</p>
-            {% endif %}
-            
+
             {# Boolean - check for widget first #}
             {% if field_type == 'boolean' %}
             {% set bool_widget = prop.get('x-widget') or prop.get('x_widget') %}
@@ -1003,6 +999,7 @@
             {# Configuration Form Panel #}
             <div class="bg-gray-50 rounded-lg p-4">
                 <h3 class="text-md font-medium text-gray-900 mb-3">Configuration</h3>
+                {{ ui.settings_filter("Filter this plugin's settings…") }}
                 <div class="space-y-4 max-h-96 overflow-y-auto pr-2">
                     {% if schema and schema.properties %}
                         {# Use property order if defined, otherwise use natural order #}
