@@ -52,11 +52,18 @@ class PluginHealthTracker:
         """Get cache key for plugin health data."""
         return f"plugin_health:{plugin_id}"
     
-    def _load_health_state(self, plugin_id: str) -> Dict[str, Any]:
-        """Load health state from cache or return defaults."""
+    def _load_health_state(self, plugin_id: str, force_reload: bool = False) -> Dict[str, Any]:
+        """Load health state from cache or return defaults.
+
+        ``force_reload=True`` bypasses the cache manager's in-memory tier so a
+        read-only consumer (e.g. the web process) observes the writer process's
+        latest persisted state instead of a stale first snapshot.
+        """
         cache_key = self._get_health_key(plugin_id)
-        cached = self.cache_manager.get(cache_key, max_age=None)
-        
+        cached = self.cache_manager.get(
+            cache_key, max_age=None, memory_ttl=0 if force_reload else None
+        )
+
         if cached:
             return cached
         
@@ -79,10 +86,17 @@ class PluginHealthTracker:
         self.cache_manager.set(cache_key, state)  # Persist indefinitely
         self._health_state[plugin_id] = state
     
-    def get_health_state(self, plugin_id: str) -> Dict[str, Any]:
-        """Get current health state for a plugin."""
-        if plugin_id not in self._health_state:
-            self._health_state[plugin_id] = self._load_health_state(plugin_id)
+    def get_health_state(self, plugin_id: str, force_reload: bool = False) -> Dict[str, Any]:
+        """Get current health state for a plugin.
+
+        ``force_reload=True`` re-reads the persisted state from the cache,
+        bypassing the in-memory copy — needed by cross-process readers that
+        would otherwise be pinned to the first snapshot they loaded.
+        """
+        if force_reload or plugin_id not in self._health_state:
+            self._health_state[plugin_id] = self._load_health_state(
+                plugin_id, force_reload=force_reload
+            )
         return self._health_state[plugin_id]
     
     def record_success(self, plugin_id: str) -> None:
@@ -139,6 +153,28 @@ class PluginHealthTracker:
         
         self._save_health_state(plugin_id, state)
     
+    def set_degraded(self, plugin_id: str, reason: Optional[str]) -> None:
+        """Flag (or clear) a plugin as degraded without touching the circuit breaker.
+
+        Used for non-fatal issues — e.g. a config that no longer satisfies the
+        plugin's schema — that should be surfaced to the user but must NOT cause
+        the plugin to be skipped or counted as a runtime failure. Passing
+        ``reason=None`` clears the flag. The write is skipped when nothing
+        actually changes, so calling this on every load is cheap.
+
+        Args:
+            plugin_id: Plugin identifier
+            reason: Human-readable reason string, or None to clear the flag
+        """
+        state = self.get_health_state(plugin_id)
+        new_degraded = bool(reason)
+        new_reason = reason if reason else None
+        if state.get('degraded', False) == new_degraded and state.get('degraded_reason') == new_reason:
+            return  # No change — avoid a redundant cache write
+        state['degraded'] = new_degraded
+        state['degraded_reason'] = new_reason
+        self._save_health_state(plugin_id, state)
+
     def should_skip_plugin(self, plugin_id: str) -> bool:
         """
         Check if plugin should be skipped due to circuit breaker.
@@ -181,9 +217,13 @@ class PluginHealthTracker:
         
         return False
     
-    def get_health_summary(self, plugin_id: str) -> Dict[str, Any]:
-        """Get health summary for a plugin."""
-        state = self.get_health_state(plugin_id)
+    def get_health_summary(self, plugin_id: str, force_reload: bool = False) -> Dict[str, Any]:
+        """Get health summary for a plugin.
+
+        ``force_reload=True`` refreshes from the persisted cache first so
+        cross-process readers reflect the writer's latest state.
+        """
+        state = self.get_health_state(plugin_id, force_reload=force_reload)
         
         total_calls = state.get('total_successes', 0) + state.get('total_failures', 0)
         success_rate = 0.0
@@ -201,6 +241,8 @@ class PluginHealthTracker:
             'last_failure_time': state.get('last_failure_time'),
             'last_error': state.get('last_error'),
             'is_healthy': state.get('circuit_state') == CircuitState.CLOSED.value,
+            'degraded': state.get('degraded', False),
+            'degraded_reason': state.get('degraded_reason'),
             'circuit_opened_time': state.get('circuit_opened_time'),
             'half_open_start_time': state.get('half_open_start_time')
         }

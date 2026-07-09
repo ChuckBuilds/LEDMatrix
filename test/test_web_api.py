@@ -759,3 +759,54 @@ class TestDottedKeyNormalization:
         teams = soccer_cfg.get('leagues', {}).get('eng.1', {}).get('favorite_teams')
         assert isinstance(teams, list), f"Expected list, got: {type(teams)}"
         assert teams == [], f"Expected empty default list, got: {teams}"
+
+
+class TestPluginHealthRoutes:
+    """Phase 1: /plugins/health and /plugins/metrics build per-installed-id so
+    they surface cross-process data persisted by the display service."""
+
+    def test_health_route_builds_per_installed_id(self, client, mock_plugin_manager):
+        from web_interface.blueprints.api_v3 import api_v3
+        from src.plugin_system.plugin_health import PluginHealthTracker
+
+        cache = MagicMock()
+        cache.get.return_value = None
+        api_v3.plugin_manager = mock_plugin_manager
+        mock_plugin_manager.plugin_manifests = {'p1': {}, 'p2': {}}
+        mock_plugin_manager.health_tracker = PluginHealthTracker(cache)
+
+        resp = client.get('/api/v3/plugins/health')
+        assert resp.status_code == 200
+        data = resp.get_json()['data']
+        assert set(data.keys()) == {'p1', 'p2'}
+        assert data['p1']['is_healthy'] is True
+        assert data['p1']['degraded'] is False
+
+    def test_health_route_reports_not_available_without_tracker(self, client, mock_plugin_manager):
+        from web_interface.blueprints.api_v3 import api_v3
+        api_v3.plugin_manager = mock_plugin_manager
+        mock_plugin_manager.health_tracker = None
+
+        resp = client.get('/api/v3/plugins/health')
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body['data'] == {}
+        assert 'not available' in body['message'].lower()
+
+    def test_metrics_route_builds_per_installed_id(self, client, mock_plugin_manager):
+        from web_interface.blueprints.api_v3 import api_v3
+        from src.plugin_system.resource_monitor import PluginResourceMonitor
+
+        cache = MagicMock()
+        cache.get.return_value = None
+        api_v3.plugin_manager = mock_plugin_manager
+        mock_plugin_manager.plugin_manifests = {'p1': {}}
+        mock_plugin_manager.resource_monitor = PluginResourceMonitor(
+            cache, enable_monitoring=False
+        )
+
+        resp = client.get('/api/v3/plugins/metrics')
+        assert resp.status_code == 200
+        data = resp.get_json()['data']
+        assert 'p1' in data
+        assert data['p1']['call_count'] == 0
