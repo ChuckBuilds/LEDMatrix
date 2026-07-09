@@ -90,10 +90,39 @@
             "min_height": {
               "type": "integer",
               "minimum": 1
+            },
+            "max_width": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "max_height": {
+              "type": "integer",
+              "minimum": 1
             }
           }
         }
       }
+    },
+    "display": {
+      "type": "object",
+      "properties": {
+        "design_size": {
+          "type": "object",
+          "properties": {
+            "width": {
+              "type": "integer",
+              "minimum": 8
+            },
+            "height": {
+              "type": "integer",
+              "minimum": 8
+            }
+          },
+          "required": ["width", "height"],
+          "description": "Panel size the plugin's layout was authored against; core derives the adaptive-layout scale factor from it. Defaults to 128x32 when omitted."
+        }
+      },
+      "description": "Display/layout hints for the adaptive layout system"
     },
     "config_schema": {
       "type": "string",

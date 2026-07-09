@@ -15,6 +15,19 @@ import logging
 from src.logging_config import get_logger
 
 
+_shared_fallback_font_manager: Optional[Any] = None
+
+
+def _fallback_font_manager() -> Any:
+    """Shared FontManager for environments (unit tests, mocks) where the
+    plugin manager doesn't carry one. Scans assets/fonts like the real one."""
+    global _shared_fallback_font_manager
+    if _shared_fallback_font_manager is None:
+        from src.font_manager import FontManager
+        _shared_fallback_font_manager = FontManager({})
+    return _shared_fallback_font_manager
+
+
 class VegasDisplayMode(Enum):
     """
     Display mode for Vegas scroll integration.
@@ -129,6 +142,97 @@ class BasePlugin(ABC):
                 self.display_manager.update_display()
         """
         raise NotImplementedError("Plugins must implement display()")
+
+    # -------------------------------------------------------------------------
+    # Adaptive layout support (opt-in)
+    # -------------------------------------------------------------------------
+    @property
+    def layout(self) -> Any:
+        """
+        LayoutContext for the current logical display size.
+
+        Lazily built and rebuilt automatically when the display size changes
+        (e.g. Vegas segment widths, double-sided logical screens). Provides
+        Region carving (self.layout.bounds), breakpoint tiers, a geometry
+        scale factor vs. the manifest's display.design_size, and fit-text
+        queries against font ladders. See src/adaptive_layout.py.
+
+        Example:
+            rows = self.layout.bounds.inset(1).split_v(3, 1, gap=1)
+            self.draw_fit(big_text, rows[0], ladder=LADDER_ARCADE)
+            self.draw_fit(small_text, rows[1])
+        """
+        from src.adaptive_layout import LayoutContext
+
+        width = getattr(self.display_manager, "width", None)
+        height = getattr(self.display_manager, "height", None)
+        if not width or not height:
+            matrix = getattr(self.display_manager, "matrix", None)
+            width = getattr(matrix, "width", 128)
+            height = getattr(matrix, "height", 32)
+
+        font_manager = self._get_font_manager()
+        generation = getattr(font_manager, "cache_generation", 0)
+        cached = getattr(self, "_layout_context", None)
+        if (cached is not None
+                and (cached.width, cached.height) == (width, height)
+                and getattr(self, "_layout_font_generation", None) == generation):
+            return cached
+
+        context = LayoutContext(
+            width, height, font_manager,
+            design_size=self._get_design_size(),
+        )
+        self._layout_context = context
+        self._layout_font_generation = generation
+        return context
+
+    def draw_fit(self, text: str, box: Any,
+                 color: tuple = (255, 255, 255),
+                 ladder: Optional[Any] = None,
+                 align: str = "center", valign: str = "center") -> Any:
+        """
+        Fit text to a Region with the largest crisp font that fits, then draw
+        it aligned within that region via the display manager.
+
+        Args:
+            text: Text to display (ellipsized if even the smallest rung is too wide)
+            box: Region (or (w, h) tuple anchored at 0,0) to fit and align within
+            color: RGB color tuple
+            ladder: FontLadder to walk (default LADDER_GRID; use LADDER_ARCADE
+                    for headline text like clocks and scores)
+            align/valign: alignment of the text ink within the box
+
+        Returns:
+            FitResult (font, family, size_px, text, ink metrics, fits flag)
+        """
+        from src.adaptive_layout import LADDER_DEFAULT, draw_fitted_text
+
+        fit = self.layout.fit_text(text, box, ladder=ladder or LADDER_DEFAULT)
+        draw_fitted_text(self.display_manager, fit, box,
+                         color=color, align=align, valign=valign)
+        return fit
+
+    def _get_font_manager(self) -> Any:
+        """The shared FontManager, or a module-level fallback when running
+        under mocks/harnesses that don't provide one."""
+        font_manager = getattr(self.plugin_manager, "font_manager", None)
+        if font_manager is not None and hasattr(font_manager, "get_font"):
+            return font_manager
+        return _fallback_font_manager()
+
+    def _get_design_size(self) -> tuple:
+        """Panel size this plugin's layout was authored against, from the
+        manifest's optional display.design_size (defaults to 128x32)."""
+        from src.adaptive_layout import DEFAULT_DESIGN_SIZE
+
+        if self.plugin_manager and hasattr(self.plugin_manager, "plugin_manifests"):
+            manifest = self.plugin_manager.plugin_manifests.get(self.plugin_id, {})
+            declared = manifest.get("display", {}).get("design_size", {})
+            width, height = declared.get("width"), declared.get("height")
+            if width and height:
+                return (int(width), int(height))
+        return DEFAULT_DESIGN_SIZE
 
     def get_display_duration(self) -> float:
         """
