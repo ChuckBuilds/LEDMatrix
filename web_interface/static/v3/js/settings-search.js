@@ -295,7 +295,12 @@
         input.addEventListener('input', debounce(function () {
             var q = input.value;
             if (!q.trim()) { closeResults(); return; }
-            buildIndex().then(function () { renderResults(search(q)); });
+            // Focus may have left during the debounce (typed then clicked away);
+            // don't re-open a dropdown the user has already dismissed.
+            if (document.activeElement !== input) return;
+            buildIndex().then(function () {
+                if (document.activeElement === input) renderResults(search(q));
+            });
         }, 200));
 
         input.addEventListener('keydown', function (e) {
@@ -329,11 +334,18 @@
             if (chosen) navigateToSetting(chosen);
         });
 
-        document.addEventListener('click', function (e) {
-            if (!input) return;
-            if (e.target === input || resultsBox.contains(e.target)) return;
-            closeResults();
-        });
+        // Close when a click/tap lands outside the search widget. Capture phase
+        // (the `true`) runs on the way DOWN, before any bubbling stopPropagation
+        // from Alpine/HTMX/widget handlers can swallow the event — a plain
+        // bubble-phase document listener was being eaten and never closing us.
+        // pointerdown also covers touch (Raspberry Pi screen).
+        document.addEventListener('pointerdown', function (e) {
+            if (!input || resultsBox.classList.contains('hidden')) return;
+            var wrap = document.getElementById('settings-search-wrap');
+            var inside = wrap ? wrap.contains(e.target)
+                              : (e.target === input || resultsBox.contains(e.target));
+            if (!inside) closeResults();
+        }, true);
 
         // Reliable dismiss: close shortly after focus leaves the box. Result
         // selection uses mousedown + preventDefault (focus stays on the input),
