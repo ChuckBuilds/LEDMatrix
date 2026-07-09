@@ -157,6 +157,38 @@
         </div>
     </div>
 
+    <!-- Plugin Health -->
+    <div class="bg-white rounded-lg shadow p-6">
+        <div class="border-b border-gray-200 pb-4 mb-6 flex items-start justify-between gap-4">
+            <div>
+                <h2 class="text-lg font-semibold text-gray-900">Plugin Health</h2>
+                <p class="mt-1 text-sm text-gray-600">Circuit-breaker status and per-plugin update timings recorded by the display service. A plugin whose <code class="bg-gray-100 px-1 rounded">update()</code> keeps failing is paused ("Circuit open") and retried automatically after a cooldown.</p>
+            </div>
+            <button id="btn-plugin-health-refresh" onclick="refreshPluginHealth(true)"
+                    class="shrink-0 inline-flex items-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
+                <i class="fas fa-sync-alt mr-2"></i>Refresh
+            </button>
+        </div>
+        <div id="plugin-health-message" class="hidden mb-4 text-sm text-gray-500"></div>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Plugin</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                        <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Avg update</th>
+                        <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Max update</th>
+                        <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Updates</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Last error</th>
+                    </tr>
+                </thead>
+                <tbody id="plugin-health-tbody" class="bg-white divide-y divide-gray-200">
+                    <tr><td colspan="6" class="px-4 py-8 text-center text-gray-500">Loading…</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
 </div>
 
 <script>
@@ -397,7 +429,80 @@
         });
     }
 
+    // ── plugin health panel ──────────────────────────────────────────────────
+    function phEscape(s) {
+        return String(s).replace(/[&<>"']/g, function (c) {
+            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+        });
+    }
+    function phFmtSecs(v) {
+        if (typeof v !== 'number' || !isFinite(v)) return '—';
+        return v.toFixed(3) + 's';
+    }
+    function phStatus(h) {
+        if (!h) return { label: 'Unknown', cls: 'warning' };
+        if (h.circuit_state === 'open') return { label: 'Circuit open', cls: 'error' };
+        if (h.circuit_state === 'half_open') return { label: 'Recovering', cls: 'warning' };
+        if (h.degraded) return { label: 'Degraded', cls: 'warning' };
+        if (h.is_healthy) return { label: 'Healthy', cls: 'success' };
+        return { label: 'Unknown', cls: 'warning' };
+    }
+    async function refreshPluginHealth(force) {
+        const tbody = document.getElementById('plugin-health-tbody');
+        const msg = document.getElementById('plugin-health-message');
+        if (!tbody || !window.PluginAPI) return;
+        try {
+            if (force && PluginAPI.clearCache) PluginAPI.clearCache();
+            const results = await Promise.all([
+                PluginAPI.getPluginHealth(),
+                PluginAPI.getPluginMetrics()
+            ]);
+            const health = results[0] || {};
+            const metrics = results[1] || {};
+            const ids = Array.from(new Set(Object.keys(health).concat(Object.keys(metrics)))).sort();
+            if (!ids.length) {
+                if (msg) {
+                    msg.textContent = 'No plugin health data yet — it appears once the display service has run plugins.';
+                    msg.classList.remove('hidden');
+                }
+                tbody.innerHTML = '<tr><td colspan="6" class="px-4 py-8 text-center text-gray-500">No data</td></tr>';
+                return;
+            }
+            if (msg) msg.classList.add('hidden');
+            let rows = '';
+            ids.forEach(function (id) {
+                const h = health[id] || {};
+                const m = metrics[id] || {};
+                const st = phStatus(h);
+                const lastErr = h.degraded_reason || h.last_error || '';
+                const calls = (typeof m.call_count === 'number') ? m.call_count : '—';
+                const errCell = lastErr
+                    ? '<span title="' + phEscape(lastErr) + '">' + phEscape(lastErr) + '</span>'
+                    : '<span class="text-gray-400">—</span>';
+                rows += '<tr>' +
+                    '<td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">' + phEscape(id) + '</td>' +
+                    '<td class="px-4 py-3 whitespace-nowrap"><span class="status-indicator ' + st.cls + '">' + st.label + '</span></td>' +
+                    '<td class="px-4 py-3 whitespace-nowrap text-right text-sm text-gray-600">' + phFmtSecs(m.avg_execution_time) + '</td>' +
+                    '<td class="px-4 py-3 whitespace-nowrap text-right text-sm text-gray-600">' + phFmtSecs(m.max_execution_time) + '</td>' +
+                    '<td class="px-4 py-3 whitespace-nowrap text-right text-sm text-gray-600">' + calls + '</td>' +
+                    '<td class="px-4 py-3 text-sm text-red-600 max-w-xs truncate">' + errCell + '</td>' +
+                    '</tr>';
+            });
+            tbody.innerHTML = rows;
+        } catch (e) {
+            const emsg = (e && e.message) ? e.message : String(e);
+            tbody.innerHTML = '<tr><td colspan="6" class="px-4 py-6 text-center text-red-500">Failed to load plugin health: ' + phEscape(emsg) + '</td></tr>';
+        }
+    }
+    window.refreshPluginHealth = refreshPluginHealth;
+
     // Load on first render; HTMX will have already swapped us in by this point.
     loadGitInfo();
+    refreshPluginHealth(false);
+    // Refresh periodically. Guard against duplicate timers if this partial is
+    // re-swapped in by HTMX; the handler re-resolves DOM nodes by id each tick.
+    if (!window._pluginHealthTimer) {
+        window._pluginHealthTimer = setInterval(function () { refreshPluginHealth(true); }, 15000);
+    }
 })();
 </script>

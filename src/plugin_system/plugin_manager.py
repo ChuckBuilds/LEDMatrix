@@ -390,7 +390,15 @@ class PluginManager:
                     self.logger.error("Error validating plugin %s config: %s", plugin_id, e, exc_info=True)
                     self.state_manager.set_state(plugin_id, PluginState.ERROR, error=e)
                     return False
-            
+
+            # Schema validation (warn/degrade only — never blocks loading).
+            # A config that violates the plugin's JSON schema is surfaced to the
+            # user (log warning + degraded flag in the health tracker) but the
+            # plugin still loads exactly as it does today. This deliberately does
+            # NOT change load_plugin()'s pass/fail behaviour for any plugin that
+            # loads under the current code.
+            self._validate_config_schema_soft(plugin_id, config)
+
             # Store plugin instance
             self.plugins[plugin_id] = plugin_instance
             self.plugin_last_update[plugin_id] = 0.0
@@ -419,6 +427,59 @@ class PluginManager:
             self.state_manager.set_state(plugin_id, PluginState.ERROR, error=e)
             return False
     
+    def _validate_config_schema_soft(self, plugin_id: str, config: Dict[str, Any]) -> None:
+        """Validate a plugin's config against its JSON schema — warn/degrade only.
+
+        On a schema violation this logs a warning and marks the plugin degraded
+        in the health tracker (when one is wired), so the problem is visible in
+        the web UI. It never raises, never changes plugin state, and never
+        affects whether the plugin loads. ``config`` here has already been
+        merged with schema defaults by the caller, so fields that ship a default
+        never appear "missing" — only genuinely user-supplied required fields
+        (e.g. an API key) can trip the required-field check.
+        """
+        try:
+            schema = self.schema_manager.load_schema(plugin_id)
+        except Exception as e:  # pragma: no cover - defensive
+            self.logger.debug("Could not load schema for %s: %s", plugin_id, e)
+            return
+
+        if not schema:
+            # No schema shipped — nothing to validate. Clear any stale flag.
+            self._set_degraded_safe(plugin_id, None)
+            return
+
+        try:
+            is_valid, errors = self.schema_manager.validate_config_against_schema(
+                config, schema, plugin_id
+            )
+        except Exception as e:  # pragma: no cover - defensive
+            # Validation machinery itself failed — do not penalise the plugin.
+            self.logger.debug("Schema validation raised for %s: %s", plugin_id, e)
+            return
+
+        if is_valid or not errors:
+            self._set_degraded_safe(plugin_id, None)
+            return
+
+        summary = "; ".join(errors[:5])
+        if len(errors) > 5:
+            summary += f" (+{len(errors) - 5} more)"
+        self.logger.warning(
+            "Plugin %s config does not match its schema (loading anyway): %s",
+            plugin_id, summary,
+        )
+        self._set_degraded_safe(plugin_id, f"Config schema: {summary}")
+
+    def _set_degraded_safe(self, plugin_id: str, reason: Optional[str]) -> None:
+        """Best-effort ``health_tracker.set_degraded`` that never raises."""
+        if not self.health_tracker:
+            return
+        try:
+            self.health_tracker.set_degraded(plugin_id, reason)
+        except Exception as e:  # pragma: no cover - defensive
+            self.logger.debug("Could not set degraded flag for %s: %s", plugin_id, e)
+
     def unload_plugin(self, plugin_id: str) -> bool:
         """
         Unload a plugin by ID.
@@ -836,7 +897,7 @@ class PluginManager:
             
             # Get health tracker metrics if available
             if self.health_tracker:
-                health_info = self.health_tracker.get_plugin_health(plugin_id)
+                health_info = self.health_tracker.get_health_summary(plugin_id)
                 plugin_metrics['health'] = health_info
             else:
                 plugin_metrics['health'] = {'status': 'unknown'}
@@ -861,7 +922,7 @@ class PluginManager:
             
             # Get resource monitor metrics if available
             if self.resource_monitor:
-                resource_info = self.resource_monitor.get_plugin_metrics(plugin_id)
+                resource_info = self.resource_monitor.get_metrics_summary(plugin_id)
                 plugin_metrics['resources'] = resource_info
             else:
                 plugin_metrics['resources'] = {'status': 'unknown'}

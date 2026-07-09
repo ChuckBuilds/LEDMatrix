@@ -340,9 +340,23 @@ const PluginAPI = {
      * @returns {Promise<Object>} Health data
      */
     async getPluginHealth(pluginId = null) {
-        const endpoint = pluginId 
+        const endpoint = pluginId
             ? `/plugins/health/${pluginId}`
             : '/plugins/health';
+        const response = await this.request(endpoint);
+        return response.data || {};
+    },
+
+    /**
+     * Get plugin resource metrics (execution time, memory, cpu).
+     *
+     * @param {string} pluginId - Optional plugin identifier (null for all)
+     * @returns {Promise<Object>} Metrics data keyed by plugin id
+     */
+    async getPluginMetrics(pluginId = null) {
+        const endpoint = pluginId
+            ? `/plugins/metrics/${pluginId}`
+            : '/plugins/metrics';
         const response = await this.request(endpoint);
         return response.data || {};
     }

@@ -279,10 +279,23 @@ class TestDiskCache:
         """Test getting expired cache entry."""
         cache = DiskCache(cache_dir=str(tmp_path))
         cache.set("test_key", {"data": "value"})
-        
+
         # Get with max_age=0 to force expiration
         result = cache.get("test_key", max_age=0)
         assert result is None
+
+    def test_get_max_age_none_never_expires(self, tmp_path):
+        """max_age=None must return persisted records regardless of age.
+
+        Regression: the age comparison raised TypeError for max_age=None,
+        which was swallowed and treated as a miss — silently breaking
+        long-lived state (plugin health/metrics) read across processes.
+        """
+        cache = DiskCache(cache_dir=str(tmp_path))
+        cache.set("test_key", {"data": "value", "timestamp": 0})  # epoch → very old
+        result = cache.get("test_key", max_age=None)
+        assert result is not None
+        assert result["data"] == "value"
     
     def test_get_nonexistent(self, tmp_path):
         """Test getting non-existent key."""

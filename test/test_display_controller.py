@@ -391,3 +391,16 @@ class TestDisplayControllerSchedule:
 
             controller._check_schedule()
             assert controller.is_display_active is False
+
+
+class TestPluginHealthWiring:
+    """Phase 1: DisplayController activates the dormant plugin health/metrics
+    subsystem by wiring real tracker/monitor instances onto the plugin manager."""
+
+    def test_health_tracker_and_resource_monitor_wired(self, test_display_controller):
+        from src.plugin_system.plugin_health import PluginHealthTracker
+        from src.plugin_system.resource_monitor import PluginResourceMonitor
+
+        pm = test_display_controller.plugin_manager
+        assert isinstance(pm.health_tracker, PluginHealthTracker)
+        assert isinstance(pm.resource_monitor, PluginResourceMonitor)
