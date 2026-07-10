@@ -90,7 +90,7 @@ class TestScoreboardRegions:
     @pytest.mark.parametrize("w,h", DEFAULT_TEST_SIZES + [(8, 8)])
     def test_invariants_at_all_sizes(self, w, h):
         regs = scoreboard_regions(Region(0, 0, w, h))
-        assert regs.logo_slot == min(h, w // 2)
+        assert regs.logo_slot <= min(h, w // 2)
         # slots hug the edges and never overlap the center column
         assert regs.away_slot.x == 0 and regs.home_slot.right == w
         assert regs.away_slot.right <= regs.center_col.x or regs.center_col.w == 0
@@ -105,6 +105,55 @@ class TestScoreboardRegions:
             assert reg.w >= 0 and reg.h >= 0
             assert reg.x >= 0 and reg.y >= 0
             assert reg.right <= w and reg.bottom <= h
+
+    @pytest.mark.parametrize("w,h", [(96, 48), (128, 64), (256, 128), (64, 32), (128, 96)])
+    def test_2to1_aspect_gets_a_center_reserve(self, w, h):
+        """These sizes are all <= 2:1 aspect, where the raw min(h, w//2)
+        formula claims the entire width for logos and leaves zero pixels
+        for a center column — the bug this reserve exists to fix."""
+        regs = scoreboard_regions(Region(0, 0, w, h))
+        assert regs.center_col.w >= int(w * 0.15) - 1  # -1 for int() rounding
+
+    @pytest.mark.parametrize("w,h", [(128, 32), (192, 48), (256, 32)])
+    def test_wide_panels_unaffected_by_center_reserve(self, w, h):
+        """Wide (>= ~4:1) panels already have height as the tighter
+        constraint, so the center reserve must be a no-op there — the
+        design-size baseline's proportions shouldn't shift."""
+        regs = scoreboard_regions(Region(0, 0, w, h))
+        assert regs.logo_slot == min(h, w // 2)
+
+    def test_center_reserve_fraction_is_configurable(self):
+        # min_center_design_px=0 isolates the fraction term (otherwise the
+        # scaled absolute floor can dominate and mask a fraction change).
+        regs_default = scoreboard_regions(Region(0, 0, 128, 64), min_center_design_px=0)
+        regs_wider = scoreboard_regions(Region(0, 0, 128, 64), min_center_fraction=0.5,
+                                        min_center_design_px=0)
+        assert regs_wider.center_col.w > regs_default.center_col.w
+        assert regs_wider.logo_slot < regs_default.logo_slot
+
+    def test_score_bleed_extends_past_center_col(self):
+        regs = scoreboard_regions(Region(0, 0, 128, 64), score_bleed_fraction=0.5)
+        assert regs.score_area.w > regs.center_col.w
+        assert regs.score_area.x < regs.center_col.x
+        assert regs.score_area.right > regs.center_col.right
+
+    def test_score_bleed_zero_matches_center_col(self):
+        regs = scoreboard_regions(Region(0, 0, 128, 64), score_bleed_fraction=0.0)
+        assert regs.score_area.w == regs.center_col.w
+        assert regs.score_area.x == regs.center_col.x
+
+    @pytest.mark.parametrize("w,h", [(64, 32), (96, 48), (128, 64), (256, 128), (128, 96)])
+    def test_score_never_needs_ellipsis_for_a_short_score(self, w, h, font_manager):
+        """The concrete regression this whole reserve/bleed system exists to
+        prevent: a real game score like '17-21' must always render in full,
+        never truncated, at every 2:1-or-tighter aspect ratio in the sample."""
+        ctx = LayoutContext(w, h, font_manager)
+        regs = scoreboard_regions(Region(0, 0, w, h), ctx=ctx)
+        height_scale = h / 32.0
+        fit = ctx.fit_text_proportional("17-21", regs.score_area, base_size_px=10,
+                                        ladder=LADDER_ARCADE, scale=height_scale)
+        assert fit.text == "17-21"
+        assert fit.fits
 
     def test_ctx_scales_band_heights(self, font_manager):
         small = scoreboard_regions(Region(0, 0, 128, 32),

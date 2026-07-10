@@ -607,12 +607,12 @@ def draw_fitted_text(display_manager: Any, fit: FitResult,
 class ScoreboardRegions:
     """The two-logos-plus-center-score card shared by the sports plugins."""
     bounds: Region
-    logo_slot: int        # width of each logo slot: min(H, W // 2)
+    logo_slot: int        # width of each logo slot: min(H, W // 2), center-reserved
     away_slot: Region     # left logo slot
     home_slot: Region     # right logo slot
-    center_col: Region    # column between the slots (0-wide on square panels)
+    center_col: Region    # column between the slots (>= min_center_fraction of width)
     status_band: Region   # top band (replaces the magic y = 1)
-    score_area: Region    # center column minus the bands (replaces y = H//2 - 3)
+    score_area: Region    # center_col's true width, between the bands (replaces y = H//2 - 3)
     detail_band: Region   # bottom band (replaces the magic y = H - 7)
     bottom_left: Region   # bottom corner: away records / timeouts
     bottom_right: Region  # bottom corner: home records / timeouts
@@ -620,19 +620,55 @@ class ScoreboardRegions:
 
 def scoreboard_regions(bounds: Region, *, ctx: Optional["LayoutContext"] = None,
                        status_h: Optional[int] = None,
-                       detail_h: Optional[int] = None) -> ScoreboardRegions:
+                       detail_h: Optional[int] = None,
+                       min_center_fraction: float = 0.15,
+                       min_center_design_px: int = 40,
+                       score_bleed_fraction: float = 0.5) -> ScoreboardRegions:
     """Carve a game-card Region into the standard scoreboard arrangement.
 
     Encodes the invariant duplicated across the sports plugins:
     ``logo_slot = min(height, width // 2)`` (capped at half the card so the
     home slot never collapses), away logo centered in the left slot, home in
-    the right. The text bands (status/score/detail) span the FULL card width
-    and overlay the logo slots — exactly like the classic layouts, where
-    outlined text is drawn over the logos; on square-ish panels the column
-    between the slots can be zero-wide, so full-width bands are the only
-    correct home for text. Band heights default to the classic 128x32
-    values, scaled by the context's geometry factor when one is provided.
-    Works on a full panel or on a scroll-mode card Region.
+    the right.
+
+    That formula alone has a blind spot: at exactly 2:1 aspect ratio
+    (width == 2 * height — a very common shape, e.g. two, four, or more
+    square modules stacked into a taller panel) ``width // 2`` and
+    ``height`` are equal, so the two logo slots claim the *entire* width
+    and leave zero pixels for a center column, no matter how large the
+    panel gets. It isn't a "small panel" problem: 96x48, 128x64, and
+    256x128 (all exactly 2:1) hit it identically, while wide panels like
+    the 128x32 design baseline or a 192x48/256x32 panel never do, because
+    height is already the tighter constraint there.
+
+    Two knobs fix it, both defaulted to values verified against the full
+    harness size spread (see test_adaptive_layout.py::TestScoreboardRegions):
+
+    - ``min_center_fraction`` / ``min_center_design_px`` reserve at least
+      ``max(width * min_center_fraction, min_center_design_px * ctx.scale)``
+      for the center column, capping ``logo_slot`` further when needed. The
+      design-px term (scaled by the context's geometry factor, so it grows
+      on bigger panels like everything else in ``px()``) matters most on
+      small panels where a flat fraction alone reserves too little absolute
+      space for even a short score string. On wide panels the height
+      constraint already leaves more room than either reserves, so both are
+      a no-op there — 128x32/192x48-style layouts are unaffected.
+    - ``score_bleed_fraction`` extends the score's own *fit box* (not the
+      logo slots themselves) an extra ``logo_slot * score_bleed_fraction``
+      into each side — controlled, intentional overlap with the logo art,
+      the same way real broadcast scoreboards let a big score number's
+      edges cross into the team marks flanking it. Without this, on a
+      square-ish panel the center reserve alone can be too narrow for even
+      a modest score to render without truncating (`"17-21"` -> `"17-2…"`),
+      which is worse than a little overlap.
+
+    status_band and detail_band span the FULL card width and overlay the
+    logo slots — matching the classic layouts, where short outlined status/
+    date text is drawn over the logos without issue; only score_area (the
+    one element whose size actively grows with the panel) uses the
+    narrower, bleed-adjusted box. Band heights default to the classic
+    128x32 values, scaled by the context's geometry factor when one is
+    provided. Works on a full panel or on a scroll-mode card Region.
     """
     if status_h is None:
         status_h = ctx.px(9, minimum=7) if ctx else 9
@@ -640,13 +676,26 @@ def scoreboard_regions(bounds: Region, *, ctx: Optional["LayoutContext"] = None,
         detail_h = ctx.px(8, minimum=7) if ctx else 8
 
     logo_slot = min(bounds.h, bounds.w // 2)
+    design_reserve = int(min_center_design_px * (ctx.scale if ctx else 1.0))
+    min_center_w = max(1, int(bounds.w * min_center_fraction), design_reserve)
+    max_logo_slot_by_center = max(1, (bounds.w - min_center_w) // 2)
+    logo_slot = min(logo_slot, max_logo_slot_by_center)
     away_slot = bounds.left_col(logo_slot)
     home_slot = bounds.right_col(logo_slot)
     center_col = Region(bounds.x + logo_slot, bounds.y,
                         bounds.w - 2 * logo_slot, bounds.h)
     status_band = bounds.top_band(status_h)
     detail_band = bounds.bottom_band(detail_h)
-    score_area = bounds.middle(status_band.h, detail_band.h)
+    middle = bounds.middle(status_band.h, detail_band.h)
+    # score_area is the true center gap's width plus a controlled bleed
+    # into each logo slot (see score_bleed_fraction above) -- narrower than
+    # the full card width status/detail get, since it's the one element
+    # whose size actively grows with the panel and needs its *fit box* to
+    # reflect real available space, but generous enough that a short score
+    # string never has to truncate on a square-ish panel.
+    bleed = int(logo_slot * score_bleed_fraction)
+    score_area = Region(center_col.x - bleed, middle.y,
+                        center_col.w + 2 * bleed, middle.h)
     bottom = bounds.bottom_band(detail_h)
     return ScoreboardRegions(
         bounds=bounds, logo_slot=logo_slot,
