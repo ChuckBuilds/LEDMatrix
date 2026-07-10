@@ -10,7 +10,10 @@ from src.adaptive_layout import (
     Region,
     draw_fitted_text,
     measure_ink,
+    media_row,
+    scoreboard_regions,
 )
+from src.plugin_system.testing.sizes import DEFAULT_TEST_SIZES
 from src.font_manager import FontManager
 
 
@@ -76,6 +79,60 @@ class TestRegion:
         r = Region(0, 0, 128, 32)
         assert r.left_col(32) == Region(0, 0, 32, 32)
         assert r.right_col(32) == Region(96, 0, 32, 32)
+
+    def test_offset_translates_without_resizing(self):
+        r = Region(5, 5, 20, 10).offset(3, -2)
+        assert r == Region(8, 3, 20, 10)
+
+
+class TestScoreboardRegions:
+    @pytest.mark.parametrize("w,h", DEFAULT_TEST_SIZES + [(8, 8)])
+    def test_invariants_at_all_sizes(self, w, h):
+        regs = scoreboard_regions(Region(0, 0, w, h))
+        assert regs.logo_slot == min(h, w // 2)
+        # slots hug the edges and never overlap the center column
+        assert regs.away_slot.x == 0 and regs.home_slot.right == w
+        assert regs.away_slot.right <= regs.center_col.x or regs.center_col.w == 0
+        assert regs.center_col.right <= regs.home_slot.x or regs.center_col.w == 0
+        # bands stack inside the center column without overlap
+        assert regs.status_band.bottom <= regs.score_area.y or regs.score_area.h == 0
+        assert regs.score_area.bottom <= regs.detail_band.y or regs.score_area.h == 0
+        # everything within bounds, nothing negative
+        for reg in (regs.away_slot, regs.home_slot, regs.center_col,
+                    regs.status_band, regs.score_area, regs.detail_band,
+                    regs.bottom_left, regs.bottom_right):
+            assert reg.w >= 0 and reg.h >= 0
+            assert reg.x >= 0 and reg.y >= 0
+            assert reg.right <= w and reg.bottom <= h
+
+    def test_ctx_scales_band_heights(self, font_manager):
+        small = scoreboard_regions(Region(0, 0, 128, 32),
+                                   ctx=LayoutContext(128, 32, font_manager))
+        big = scoreboard_regions(Region(0, 0, 256, 64),
+                                 ctx=LayoutContext(256, 64, font_manager))
+        assert big.status_band.h > small.status_band.h
+
+    def test_works_on_offset_card_region(self):
+        card = Region(10, 4, 100, 24)
+        regs = scoreboard_regions(card)
+        assert regs.away_slot.x == 10
+        assert regs.home_slot.right == card.right
+
+
+class TestMediaRow:
+    def test_square_art_plus_body(self):
+        row = media_row(Region(0, 0, 128, 32))
+        assert row.art == Region(0, 0, 32, 32)
+        assert row.body.x == 32 + 2 and row.body.right == 128
+
+    def test_non_square(self):
+        row = media_row(Region(0, 0, 100, 20), square=False, gap=4)
+        assert row.art.w == 50
+        assert row.body.x == 54
+
+    def test_narrow_panel_clamps(self):
+        row = media_row(Region(0, 0, 16, 32))
+        assert row.art.w == 16 and row.body.w == 0
 
 
 class TestLayoutContext:

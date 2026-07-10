@@ -28,6 +28,7 @@ freetype.Face, so it drops straight into DisplayManager.draw_text().
 """
 
 import logging
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
@@ -87,6 +88,12 @@ class Region:
         if dy is None:
             dy = dx
         return Region(self.x + dx, self.y + dy, self.w - 2 * dx, self.h - 2 * dy)
+
+    def offset(self, dx: int, dy: int) -> "Region":
+        """Translate without resizing — the hook for user x/y-offset
+        customization: compute regions first, then apply the user's
+        configured offsets as a final translation."""
+        return Region(self.x + dx, self.y + dy, self.w, self.h)
 
     def top_band(self, h: int) -> "Region":
         return Region(self.x, self.y, self.w, min(h, self.h))
@@ -290,6 +297,12 @@ class LayoutContext:
         self.scale = min(self.width / max(1, design_w),
                          self.height / max(1, design_h))
         self._fit_cache: Dict[Any, FitResult] = {}
+        # LRU-bounded (images are big, unlike text fits). Entries hold a
+        # strong reference to the source image when keyed by id() so the id
+        # can't be recycled out from under the cache.
+        self._image_cache: "OrderedDict[Any, Tuple[Any, Any]]" = OrderedDict()
+
+    _IMAGE_CACHE_MAX = 64
 
     # ---- the three adaptation patterns --------------------------------
 
@@ -414,6 +427,41 @@ class LayoutContext:
         self._fit_cache[key] = result
         return result
 
+    # ---- images ---------------------------------------------------------
+
+    def fit_image(self, img: Any, box: Union[Region, Tuple[int, int]], *,
+                  mode: str = "contain", crop_to_ink: bool = False,
+                  anchor: str = "center", resample: Any = None,
+                  upscale: bool = True, cache_key: Any = None) -> Any:
+        """Fit an image into a box (see src/adaptive_images.py for modes),
+        cached per (image, box size, options) for this panel size.
+
+        Prefer a stable ``cache_key`` (e.g. "logo:KC") for images that get
+        reloaded — the default id()-based key is safe (the entry pins the
+        source image) but misses across reloads of the same content.
+        """
+        from src.adaptive_images import fit_image as _fit_image
+
+        box_w, box_h = _box_dims(box)
+        resample_name = getattr(resample, "name", repr(resample)) if resample is not None else "default"
+        identity = cache_key if cache_key is not None else ("id", id(img))
+        key = ("image", identity, img.size, box_w, box_h, mode,
+               crop_to_ink, anchor, resample_name, upscale)
+
+        cached = self._image_cache.get(key)
+        if cached is not None:
+            self._image_cache.move_to_end(key)
+            return cached[0]
+
+        result = _fit_image(img, (box_w, box_h), mode=mode,
+                            crop_to_ink=crop_to_ink, anchor=anchor,
+                            resample=resample, upscale=upscale)
+        # Pin the source only for id()-keyed entries (see docstring).
+        self._image_cache[key] = (result, img if cache_key is None else None)
+        while len(self._image_cache) > self._IMAGE_CACHE_MAX:
+            self._image_cache.popitem(last=False)
+        return result
+
     # ---- text utilities ------------------------------------------------
 
     def ellipsize(self, text: str, font: Any, max_w: int) -> str:
@@ -435,6 +483,7 @@ class LayoutContext:
     def clear_cache(self) -> None:
         """Drop cached fit results (call after fonts are reloaded)."""
         self._fit_cache.clear()
+        self._image_cache.clear()
 
 
 def _pick_tier(tiers: Tuple[Tuple[str, int], ...], value: int) -> str:
@@ -462,3 +511,85 @@ def draw_fitted_text(display_manager: Any, fit: FitResult,
     x, y = region.align_xy(fit.width, fit.height, align, valign)
     display_manager.draw_text(fit.text, x=x, y=y - fit.y_offset,
                               color=color, font=fit.font)
+
+
+# ---------------------------------------------------------------------------
+# Composite layouts — the region arrangements repeated across plugins,
+# expressed as Region math so migrated plugins stop hand-copying coordinate
+# formulas. Deliberately tiny: these return Regions, they don't draw.
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class ScoreboardRegions:
+    """The two-logos-plus-center-score card shared by the sports plugins."""
+    bounds: Region
+    logo_slot: int        # width of each logo slot: min(H, W // 2)
+    away_slot: Region     # left logo slot
+    home_slot: Region     # right logo slot
+    center_col: Region    # column between the slots (0-wide on square panels)
+    status_band: Region   # top band (replaces the magic y = 1)
+    score_area: Region    # center column minus the bands (replaces y = H//2 - 3)
+    detail_band: Region   # bottom band (replaces the magic y = H - 7)
+    bottom_left: Region   # bottom corner: away records / timeouts
+    bottom_right: Region  # bottom corner: home records / timeouts
+
+
+def scoreboard_regions(bounds: Region, *, ctx: Optional["LayoutContext"] = None,
+                       status_h: Optional[int] = None,
+                       detail_h: Optional[int] = None) -> ScoreboardRegions:
+    """Carve a game-card Region into the standard scoreboard arrangement.
+
+    Encodes the invariant duplicated across the sports plugins:
+    ``logo_slot = min(height, width // 2)`` (capped at half the card so the
+    home slot never collapses), away logo centered in the left slot, home in
+    the right, score/status/detail stacked in the middle column. Band
+    heights default to the classic 128x32 values, scaled by the context's
+    geometry factor when one is provided. Works on a full panel or on a
+    scroll-mode card Region.
+    """
+    if status_h is None:
+        status_h = ctx.px(9, minimum=7) if ctx else 9
+    if detail_h is None:
+        detail_h = ctx.px(8, minimum=7) if ctx else 8
+
+    logo_slot = min(bounds.h, bounds.w // 2)
+    away_slot = bounds.left_col(logo_slot)
+    home_slot = bounds.right_col(logo_slot)
+    center_col = Region(bounds.x + logo_slot, bounds.y,
+                        bounds.w - 2 * logo_slot, bounds.h)
+    status_band = center_col.top_band(status_h)
+    detail_band = center_col.bottom_band(detail_h)
+    score_area = center_col.middle(status_band.h, detail_band.h)
+    bottom = bounds.bottom_band(detail_h)
+    return ScoreboardRegions(
+        bounds=bounds, logo_slot=logo_slot,
+        away_slot=away_slot, home_slot=home_slot, center_col=center_col,
+        status_band=status_band, score_area=score_area, detail_band=detail_band,
+        bottom_left=bottom.left_col(logo_slot),
+        bottom_right=bottom.right_col(logo_slot),
+    )
+
+
+@dataclass(frozen=True)
+class MediaRow:
+    """Art/icon on the left, text column on the right (music's idiom)."""
+    art: Region
+    body: Region
+
+
+def media_row(bounds: Region, *, ctx: Optional["LayoutContext"] = None,
+              square: bool = True, gap: Optional[int] = None) -> MediaRow:
+    """Split a Region into an art slot and a body column.
+
+    With ``square=True`` the art slot is bounds.h wide (album-art style);
+    otherwise it takes the left half. The gap defaults to 2px scaled by the
+    context's geometry factor.
+    """
+    if gap is None:
+        gap = ctx.px(2, minimum=1) if ctx else 2
+    art_w = bounds.h if square else bounds.w // 2
+    art_w = min(art_w, bounds.w)
+    art = bounds.left_col(art_w)
+    body = Region(bounds.x + art_w + gap, bounds.y,
+                  bounds.w - art_w - gap, bounds.h)
+    return MediaRow(art=art, body=body)

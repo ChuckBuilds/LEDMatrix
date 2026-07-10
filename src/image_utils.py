@@ -1,3 +1,9 @@
+"""Deprecated: use src/adaptive_images.py (fit_image) instead.
+
+This module predates the adaptive image system and has no known callers.
+It is kept only so any out-of-tree code importing it keeps working.
+"""
+
 import logging
 from PIL import Image
 

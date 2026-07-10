@@ -213,6 +213,42 @@ class BasePlugin(ABC):
                          color=color, align=align, valign=valign)
         return fit
 
+    def draw_image(self, img: Any, box: Any, *,
+                   mode: str = "contain", align: str = "center",
+                   valign: str = "center", crop_to_ink: bool = False,
+                   anchor: str = "center", resample: Optional[Any] = None,
+                   cache_key: Optional[Any] = None,
+                   offset: tuple = (0, 0)) -> Any:
+        """
+        Fit an image into a Region and paste it aligned within that region
+        onto the display canvas — the image counterpart to draw_fit().
+
+        Args:
+            img: Source PIL image (logos, art, icons)
+            box: Region (or (w, h) tuple) to fit and align within
+            mode: "contain" (letterbox), "cover" (crop-to-fill),
+                  "fill_height" (logo-style), "stretch"
+            crop_to_ink: Trim transparent padding before fitting
+            anchor: "center" or "top" for cover crops
+            resample: PIL filter; default LANCZOS. Use RESAMPLE_NEAREST
+                  (from src.adaptive_images) for pixel art/flags
+            cache_key: Stable identity (e.g. "logo:KC") for cross-reload
+                  caching; defaults to the image object's identity
+            offset: Final (dx, dy) translation — the hook for user
+                  x/y-offset customization
+
+        Returns:
+            ImageFitResult (processed image + dimensions + scale)
+        """
+        from src.adaptive_images import draw_fitted_image
+
+        ifit = self.layout.fit_image(img, box, mode=mode,
+                                     crop_to_ink=crop_to_ink, anchor=anchor,
+                                     resample=resample, cache_key=cache_key)
+        draw_fitted_image(self.display_manager, ifit, box,
+                          align=align, valign=valign, offset=offset)
+        return ifit
+
     def _get_font_manager(self) -> Any:
         """The shared FontManager, or a module-level fallback when running
         under mocks/harnesses that don't provide one."""
