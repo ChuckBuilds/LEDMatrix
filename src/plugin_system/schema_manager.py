@@ -110,12 +110,17 @@ class SchemaManager:
         try:
             with open(schema_path, 'r', encoding='utf-8') as f:
                 schema = json.load(f)
-            
+
             # Validate schema structure (basic check)
             if not isinstance(schema, dict):
                 self.logger.error(f"Invalid schema format for {plugin_id}: not a dictionary")
                 return None
-            
+
+            # Expand x-style-elements declarations BEFORE caching, so every
+            # consumer (config form GET, save path, validation, defaults
+            # generation) sees the identical expanded shape.
+            schema = self._expand_style_elements(schema)
+
             # Cache the schema
             self._schema_cache[plugin_id] = schema
             
@@ -132,10 +137,41 @@ class SchemaManager:
             self.logger.error(f"Error loading schema for {plugin_id}: {e}")
             return None
     
+    # ------------------------------------------------------------------
+    # x-style-elements expansion
+    # ------------------------------------------------------------------
+    # Plugins declare styleable display elements compactly via an
+    # "x-style-elements" object on their customization schema; load_schema
+    # expands each declaration into full font/font_size/text_color/offset
+    # property blocks before caching, so the config form, save path,
+    # validation, and defaults generation all see the same expanded shape.
+    # The single implementation lives in src.element_style (pure, also used
+    # by plugins reading their own schema file) — see that module for the
+    # declaration format.
+
+    @staticmethod
+    def get_style_elements(schema: Dict[str, Any]) -> Dict[str, Any]:
+        """The x-style-elements declaration from a schema ({} if none)."""
+        from src.element_style import get_style_elements
+        return get_style_elements(schema)
+
+    def _expand_style_elements(self, schema: Dict[str, Any]) -> Dict[str, Any]:
+        """Expand x-style-elements declarations (no-op without any).
+
+        Never raises; on any failure the original schema is returned so a
+        malformed declaration can't take a plugin down.
+        """
+        try:
+            from src.element_style import expand_style_elements
+            return expand_style_elements(schema)
+        except Exception as e:
+            self.logger.error(f"x-style-elements expansion failed: {e}")
+            return schema
+
     def invalidate_cache(self, plugin_id: Optional[str] = None) -> None:
         """
         Invalidate schema cache for a plugin or all plugins.
-        
+
         Args:
             plugin_id: Plugin identifier to invalidate, or None to clear all
         """

@@ -179,31 +179,67 @@ class TestUserForced:
 # ---------------------------------------------------------------------------
 
 class TestColor:
-    def test_absent_returns_classic_color(self):
-        style = ElementStyleResolver({}).style(
+    """Color provenance mirrors fonts: the web form ALWAYS posts the RGB
+    inputs, so a saved config carries the schema-default color whether or
+    not the user touched it. Only a value differing from the schema default
+    is an override; otherwise the plugin's classic color survives — critical
+    for state-dependent colors (a score that turns gold on a touchdown)."""
+
+    COLOR_DEFAULTS = {"customization": {"score_text": {
+        "font": PRESS_START, "font_size": 10, "text_color": [255, 255, 255]}}}
+
+    def _color_style(self, config, defaults=None, classic_color=(255, 215, 0)):
+        return ElementStyleResolver(config, defaults or self.COLOR_DEFAULTS).style(
             "score_text", classic_font=PRESS_START, classic_size=10,
-            classic_color=(255, 215, 0))
+            classic_color=classic_color)
+
+    def test_absent_returns_classic_color(self):
+        style = self._color_style({})
         assert style.color == (255, 215, 0)
+        assert not style.user_forced_color
 
     def test_absent_with_no_classic_is_none(self):
         assert _style({}).color is None
 
-    def test_list_becomes_tuple(self):
+    def test_schema_default_present_keeps_classic_color(self):
+        """A saved config always contains the default — it must not clobber
+        the plugin's (possibly semantic) classic color."""
+        config = {"customization": {"score_text": {"text_color": [255, 255, 255]}}}
+        style = self._color_style(config)
+        assert style.color == (255, 215, 0)
+        assert not style.user_forced_color
+
+    def test_changed_color_is_an_override(self):
         config = {"customization": {"score_text": {"text_color": [0, 128, 255]}}}
-        assert _style(config).color == (0, 128, 255)
+        style = self._color_style(config)
+        assert style.color == (0, 128, 255)
+        assert style.user_forced_color
+
+    def test_present_without_schema_default_is_an_override(self):
+        """Hand-written schemas without a text_color default: presence is
+        intent (there is nothing to compare against)."""
+        config = {"customization": {"score_text": {"text_color": [0, 128, 255]}}}
+        style = self._color_style(config, defaults=SCHEMA_DEFAULTS)
+        assert style.color == (0, 128, 255)
+        assert style.user_forced_color
 
     def test_values_clamped(self):
         config = {"customization": {"score_text": {"text_color": [300, -5, 128]}}}
-        assert _style(config).color == (255, 0, 128)
+        assert self._color_style(config).color == (255, 0, 128)
+
+    def test_color_never_affects_user_forced_sizing(self):
+        config = {"customization": {"score_text": {"text_color": [0, 128, 255]}}}
+        style = self._color_style(config)
+        assert style.user_forced_color
+        assert not style.user_forced
 
     @pytest.mark.parametrize("bad", [[1, 2], [1, 2, 3, 4], "red",
                                      ["a", "b", "c"], 255, None])
     def test_malformed_falls_back_to_classic(self, bad):
         config = {"customization": {"score_text": {"text_color": bad}}}
-        style = ElementStyleResolver(config).style(
-            "score_text", classic_font=PRESS_START, classic_size=10,
-            classic_color=(1, 2, 3))
+        style = self._color_style(config, classic_color=(1, 2, 3))
         assert style.color == (1, 2, 3)
+        assert not style.user_forced_color
 
 
 # ---------------------------------------------------------------------------

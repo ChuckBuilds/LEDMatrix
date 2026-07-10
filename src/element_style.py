@@ -97,17 +97,212 @@ def defaults_from_schema_file(schema_path: str) -> Dict[str, Any]:
     Plugins that hand a resolver to standalone helper classes should build
     it with this, pointed at their own schema file — it works identically
     in production, the test harness, and the dev server, unlike the plugin
-    manager's schema manager (absent under mocks). Returns {} on any error.
+    manager's schema manager (absent under mocks). x-style-elements
+    declarations are expanded first, so declared elements' defaults are
+    included exactly as the web UI's schema manager sees them. Returns {}
+    on any error.
     """
     try:
         with open(schema_path, "r", encoding="utf-8") as f:
             schema = json.load(f)
         if isinstance(schema, dict):
-            return extract_schema_defaults(schema)
+            return extract_schema_defaults(expand_style_elements(schema))
     except Exception as e:
         logger.debug("Could not load schema defaults from %s: %s",
                      schema_path, e)
     return {}
+
+
+# ---------------------------------------------------------------------------
+# x-style-elements schema expansion
+# ---------------------------------------------------------------------------
+#
+# A plugin declares its styleable display elements ONCE, compactly, on its
+# customization object instead of hand-copying ~50-line property blocks:
+#
+#     "customization": {
+#         "type": "object",
+#         "x-style-elements": {
+#             "score_text": {
+#                 "title": "Game Score",
+#                 "font": {"default": "PressStart2P-Regular.ttf"},
+#                 "size": {"default": 10, "min": 4, "max": 16},
+#                 "color": true,                  # or {"default": [r,g,b]}
+#                 "offsets": true
+#             }
+#         }
+#     }
+#
+# expand_style_elements() turns each declaration into full font/font_size/
+# text_color/layout-offset property blocks (marked "x-style-managed": true)
+# using widgets the web config form already renders. The declaration stays
+# in the schema — it doubles as the element registry for tooling. Expansion
+# is idempotent, and a hand-written property block for the same element
+# always wins over the generated one.
+#
+# SchemaManager.load_schema() applies this at serve time (so the web form,
+# save path, validation, and defaults generation all see the expanded
+# shape), and defaults_from_schema_file() applies it when plugins read
+# their own schema — one implementation, no drift.
+
+def get_style_elements(schema: Dict[str, Any]) -> Dict[str, Any]:
+    """The x-style-elements declaration from a schema ({} if none)."""
+    try:
+        decl = schema.get("properties", {}).get("customization", {}).get("x-style-elements")
+        return decl if isinstance(decl, dict) else {}
+    except AttributeError:
+        return {}
+
+
+def expand_style_elements(schema: Dict[str, Any]) -> Dict[str, Any]:
+    """Expand x-style-elements into full customization property blocks.
+
+    Returns the schema unchanged (same object) when there is nothing to
+    expand; otherwise returns an expanded DEEP COPY, leaving the input
+    untouched. Never raises — on any error the original schema is returned
+    so a malformed declaration can't take a plugin down.
+    """
+    import copy
+
+    try:
+        declarations = get_style_elements(schema)
+        if not declarations:
+            return schema
+
+        schema = copy.deepcopy(schema)
+        customization = schema["properties"]["customization"]
+        properties = customization.setdefault("properties", {})
+        order = customization.get("x-propertyOrder")
+
+        offset_elements = []
+        for element_key, declaration in declarations.items():
+            if not isinstance(declaration, dict):
+                continue
+            if declaration.get("offsets") is True:
+                offset_elements.append((element_key, declaration))
+            if element_key in properties:
+                # Hand-written (or previously expanded) block wins.
+                continue
+            properties[element_key] = _style_element_block(element_key, declaration)
+            if isinstance(order, list) and element_key not in order:
+                # Keep generated elements ahead of the layout section.
+                insert_at = order.index("layout") if "layout" in order else len(order)
+                order.insert(insert_at, element_key)
+
+        if offset_elements:
+            _expand_offset_blocks(properties, order, offset_elements)
+
+        return schema
+    except Exception as e:
+        logger.error("x-style-elements expansion failed: %s", e)
+        return schema
+
+
+def _style_element_block(element_key: str, declaration: Dict[str, Any]) -> Dict[str, Any]:
+    """One generated customization.<element> property block."""
+    title = declaration.get("title") or element_key.replace("_", " ").title()
+    font_decl = declaration.get("font") if isinstance(declaration.get("font"), dict) else {}
+    size_decl = declaration.get("size") if isinstance(declaration.get("size"), dict) else {}
+
+    block_properties: Dict[str, Any] = {
+        "font": {
+            "type": "string",
+            "title": "Font Family",
+            "description": "Select the font to use",
+            "x-widget": "font-selector",
+            "default": font_decl.get("default", DEFAULT_FALLBACK_FONT),
+        },
+        "font_size": {
+            "type": "integer",
+            "title": "Font Size",
+            "description": ("Font size in pixels (BDF fonts are fixed-size "
+                            "and ignore this)"),
+            "minimum": size_decl.get("min", 4),
+            "maximum": size_decl.get("max", 32),
+            "default": size_decl.get("default", 8),
+        },
+    }
+    block_order = ["font", "font_size"]
+
+    color_decl = declaration.get("color")
+    if color_decl:
+        default_color = [255, 255, 255]
+        if isinstance(color_decl, dict) and isinstance(color_decl.get("default"), list):
+            default_color = color_decl["default"]
+        # The default doubles as the "untouched" sentinel: the resolver only
+        # honors a color that DIFFERS from it, so untouched saves (the web
+        # form always posts the RGB inputs) can't clobber a plugin's
+        # semantic/state-dependent colors.
+        block_properties["text_color"] = {
+            "type": "array",
+            "title": "Text Color",
+            "description": "RGB color as [red, green, blue] (0-255 each)",
+            "items": {"type": "integer", "minimum": 0, "maximum": 255},
+            "minItems": 3,
+            "maxItems": 3,
+            "x-widget": "color-picker",
+            "default": default_color,
+        }
+        block_order.append("text_color")
+
+    return {
+        "type": "object",
+        "title": title,
+        "description": f"Style settings for {title}",
+        "x-style-managed": True,
+        "properties": block_properties,
+        "x-propertyOrder": block_order,
+        "additionalProperties": False,
+    }
+
+
+def _expand_offset_blocks(properties: Dict[str, Any], order,
+                          offset_elements) -> None:
+    """Generate customization.layout.<element> x/y offset blocks."""
+    layout = properties.get("layout")
+    if not isinstance(layout, dict):
+        layout = {
+            "type": "object",
+            "title": "Layout Positioning",
+            "description": ("Adjust X,Y coordinate offsets for elements. "
+                            "Values are relative to default positions; "
+                            "negative moves left/up, positive right/down."),
+            "x-style-managed": True,
+            "properties": {},
+            "additionalProperties": False,
+        }
+        properties["layout"] = layout
+        if isinstance(order, list) and "layout" not in order:
+            order.append("layout")
+
+    layout_properties = layout.setdefault("properties", {})
+    layout_order = layout.get("x-propertyOrder")
+    for element_key, declaration in offset_elements:
+        if element_key in layout_properties:
+            continue  # hand-written layout entry wins
+        title = declaration.get("title") or element_key.replace("_", " ").title()
+        layout_properties[element_key] = {
+            "type": "object",
+            "title": title,
+            "x-style-managed": True,
+            "properties": {
+                "x_offset": {
+                    "type": "integer",
+                    "title": "X Offset",
+                    "description": "Horizontal offset in pixels (default: 0)",
+                    "default": 0,
+                },
+                "y_offset": {
+                    "type": "integer",
+                    "title": "Y Offset",
+                    "description": "Vertical offset in pixels (default: 0)",
+                    "default": 0,
+                },
+            },
+            "additionalProperties": False,
+        }
+        if isinstance(layout_order, list) and element_key not in layout_order:
+            layout_order.append(element_key)
 
 
 def load_font(font_name: str, size: int, *,
@@ -163,7 +358,10 @@ class ElementStyle:
     font: PILFont
     font_name: str
     font_size: int
-    #: None means "not customized" — keep the plugin's hardcoded color.
+    #: The user's color when they genuinely changed it, else the plugin's
+    #: classic color (which may be state-dependent — e.g. a score that turns
+    #: gold on a touchdown — so an untouched schema default must never
+    #: clobber it; the web form always posts the color inputs).
     color: Optional[Tuple[int, int, int]]
     #: Additive (dx, dy) translation from customization.layout offsets.
     offset: Tuple[int, int]
@@ -171,11 +369,13 @@ class ElementStyle:
     #: default (NOT merely present — saved configs always contain defaults).
     user_forced_font: bool
     user_forced_size: bool
+    user_forced_color: bool = False
 
     @property
     def user_forced(self) -> bool:
         """True when the user pinned this element's font or size; adaptive
-        layouts must use the font as-is instead of ladder-fitting."""
+        layouts must use the font as-is instead of ladder-fitting. (Color is
+        deliberately excluded — it never affects sizing.)"""
         return self.user_forced_font or self.user_forced_size
 
 
@@ -278,14 +478,28 @@ class ElementStyleResolver:
         font = load_font(font_name, font_size, fonts_dir=self._fonts_dir,
                          fallback_font=self._fallback_font)
 
-        color = _as_color(element_cfg.get("text_color"))
-        if color is None:
-            color = classic_color
+        # Color follows the same provenance rule as fonts: the web form
+        # always posts the RGB inputs, so a saved config carries the schema
+        # default whether or not the user touched it — only a value that
+        # DIFFERS from the schema default is a real override. Otherwise keep
+        # classic_color, which may be state-dependent (semantic colors like
+        # a gold touchdown score) and must not be clobbered by a default.
+        configured_color = _as_color(element_cfg.get("text_color"))
+        default_color = _as_color(element_defaults.get("text_color"))
+        if configured_color is None:
+            user_forced_color = False
+        elif default_color is None:
+            # no schema default to compare against — presence is intent
+            user_forced_color = True
+        else:
+            user_forced_color = configured_color != default_color
+        color = configured_color if user_forced_color else classic_color
 
         resolved = ElementStyle(
             font=font, font_name=font_name, font_size=font_size,
             color=color, offset=self.offset(element_key),
             user_forced_font=user_forced_font, user_forced_size=user_forced_size,
+            user_forced_color=user_forced_color,
         )
         self._cache[cache_key] = resolved
         return resolved
