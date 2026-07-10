@@ -8,6 +8,7 @@ files that need to be accessible by both root service and web user.
 
 import os
 import logging
+import re
 import shutil as _shutil
 import subprocess
 import sys
@@ -15,6 +16,25 @@ from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# Matches the credentials portion of a "scheme://user:pass@host" URL, so pip's
+# own error output can be logged/displayed without echoing back a private
+# index URL's embedded basic-auth secret verbatim (e.g. from a
+# requirements.txt --index-url line or the PIP_INDEX_URL env var).
+_URL_CREDENTIALS_RE = re.compile(r'://[^/\s@:]+:[^/\s@]+@')
+
+
+def _redact_url_credentials(text: Optional[str]) -> str:
+    """Replace embedded user:pass@ URL credentials in text with a placeholder.
+
+    Safe to call on any subprocess output destined for logs: it only ever
+    shortens/replaces the credential substring, never changes the presence
+    or absence of the specific fixed phrases callers check for
+    (e.g. "a password is required"), so it can't affect control flow.
+    """
+    if not text:
+        return text or ""
+    return _URL_CREDENTIALS_RE.sub('://***:***@', text)
 
 # System directories that should never have their permissions modified
 # These directories have special system-level permissions that must be preserved
@@ -338,6 +358,13 @@ def install_requirements_file(req_file: Path, timeout: int = 300) -> subprocess.
                 ["sudo", "-n", bash_path, str(wrapper), str(req_file)],
                 capture_output=True, text=True, timeout=timeout, cwd=str(project_root)
             )
+            # Redact immediately: pip can echo a private index URL's embedded
+            # basic-auth credentials back in its own error/progress output
+            # (e.g. from a requirements.txt --index-url line). Doesn't affect
+            # the fixed-phrase "denied" check below -- those phrases never
+            # overlap with URL syntax.
+            result.stderr = _redact_url_credentials(result.stderr)
+            result.stdout = _redact_url_credentials(result.stdout)
             if result.returncode == 0:
                 return result
             # Distinguish "sudo rejected this exact command line" (worth
@@ -386,6 +413,7 @@ def install_requirements_file(req_file: Path, timeout: int = 300) -> subprocess.
         [sys.executable, "-m", "pip", "install", "--break-system-packages", "--ignore-installed", "-r", str(req_file)],
         capture_output=True, text=True, timeout=timeout, cwd=str(project_root)
     )
-    result.stdout = note + (result.stdout or "")
+    result.stderr = _redact_url_credentials(result.stderr)
+    result.stdout = note + _redact_url_credentials(result.stdout)
     return result
 
