@@ -148,9 +148,12 @@ Pre-carved Region arrangements for the layouts plugins keep rebuilding:
 from src.adaptive_layout import scoreboard_regions, media_row
 
 regs = scoreboard_regions(self.layout.bounds, ctx=self.layout)
-# regs.away_slot / home_slot   — logo slots (logo_slot = min(H, W // 2))
+# regs.away_slot / home_slot   — logo slots (logo_slot = min(H, W // 2),
+#                                 capped so a center reserve always exists —
+#                                 see below)
 # regs.status_band             — top band (replaces the magic y = 1)
-# regs.score_area              — center region (replaces y = H//2 - 3)
+# regs.score_area              — center gap, plus a controlled bleed into
+#                                 each logo slot (replaces y = H//2 - 3)
 # regs.detail_band             — bottom band (replaces y = H - 7)
 # regs.bottom_left / bottom_right — record/timeout corners
 
@@ -159,6 +162,22 @@ row = media_row(self.layout.bounds, ctx=self.layout)   # art left, text right
 
 Both work on the full panel or on a scroll-mode card Region. They return
 Regions and never draw — compose them with `draw_fit`/`draw_image`.
+
+**`scoreboard_regions`'s center reserve.** The raw `logo_slot = min(H, W//2)`
+formula has a blind spot: at exactly 2:1 aspect ratio (width = 2×height —
+two, four, or more square modules stacked into a taller panel, e.g.
+96x48, 128x64, 256x128) the two logo slots mathematically claim the
+*entire* width, leaving zero pixels for a center column no matter how
+big the panel gets. Wide panels (the 128x32 design baseline, 192x48,
+256x32) never hit this, since height is already the tighter constraint
+there. Two parameters fix it without any plugin-side code:
+`min_center_fraction`/`min_center_design_px` guarantee a real minimum
+center reserve at any aspect ratio, and `score_bleed_fraction` lets the
+score's *fit box* extend a controlled amount into each logo slot — the
+same way a real broadcast scoreboard's numbers cross slightly into the
+team marks flanking them — so a short score string never has to truncate
+even on the tightest aspect ratios. All three have sane defaults; override
+them per call if a plugin's card proportions genuinely differ.
 
 ## Preserving user customization
 
