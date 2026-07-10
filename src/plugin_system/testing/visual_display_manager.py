@@ -454,6 +454,18 @@ class VisualTestDisplayManager:
         """Check if display is currently scrolling."""
         return self._scrolling_state['is_scrolling']
 
+    def process_deferred_updates(self):
+        """Process any deferred updates (no-op for testing).
+
+        Several ticker-style plugins (news, odds-ticker, leaderboard,
+        stock-news, stocks) call this unconditionally between
+        set_scrolling_state() and their scroll-position update, mirroring the
+        real display_manager's deferred-update queue. This double has no such
+        queue, so there is nothing to process — the no-op just lets those
+        plugins render under the harness instead of raising AttributeError.
+        """
+        pass
+
     # ------------------------------------------------------------------
     # Utility methods
     # ------------------------------------------------------------------
