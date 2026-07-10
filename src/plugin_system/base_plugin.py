@@ -270,6 +270,64 @@ class BasePlugin(ABC):
                 return (int(width), int(height))
         return DEFAULT_DESIGN_SIZE
 
+    # -------------------------------------------------------------------------
+    # Element style resolution (per-element user customization)
+    # -------------------------------------------------------------------------
+    @property
+    def style_resolver(self) -> Any:
+        """
+        ElementStyleResolver for this plugin's customization config.
+
+        Lazily built with the schema defaults from this plugin's own
+        config_schema.json (via the plugin manager's schema manager), so
+        "did the user override this font?" is answered correctly even though
+        saved configs always contain the schema defaults. Rebuilt when the
+        config changes (see on_config_change). Pass it into standalone helper
+        classes (game renderers etc.) instead of letting them build their own.
+
+        See src/element_style.py.
+        """
+        from src.element_style import ElementStyleResolver
+
+        cached = getattr(self, "_style_resolver", None)
+        if cached is not None:
+            return cached
+
+        schema_defaults: Dict[str, Any] = {}
+        schema_manager = getattr(self.plugin_manager, "schema_manager", None)
+        if schema_manager is not None:
+            try:
+                schema = schema_manager.load_schema(self.plugin_id)
+                if schema:
+                    schema_defaults = schema_manager.extract_defaults_from_schema(schema)
+            except Exception as e:
+                self.logger.debug("Schema defaults unavailable for %s: %s",
+                                  self.plugin_id, e)
+
+        resolver = ElementStyleResolver(self.config, schema_defaults)
+        self._style_resolver = resolver
+        return resolver
+
+    def element_style(self, element_key: str, *, classic_font: str,
+                      classic_size: int,
+                      classic_color: Optional[tuple] = None) -> Any:
+        """
+        Resolved font/color/offset for one display element, honoring the
+        user's customization.<element> config. classic_* are this plugin's
+        hardcoded defaults for the element.
+
+        Example:
+            style = self.element_style('title_text',
+                                       classic_font='PressStart2P-Regular.ttf',
+                                       classic_size=8)
+            draw.text((x + style.offset[0], y + style.offset[1]),
+                      title, font=style.font,
+                      fill=style.color or (255, 255, 255))
+        """
+        return self.style_resolver.style(element_key, classic_font=classic_font,
+                                         classic_size=classic_size,
+                                         classic_color=classic_color)
+
     def get_display_duration(self) -> float:
         """
         Get the display duration for this plugin instance.
@@ -731,6 +789,9 @@ class BasePlugin(ABC):
 
         # Update simple flags
         self.enabled = self.config.get("enabled", self.enabled)
+
+        # Invalidate the cached style resolver — it captured the old config
+        self._style_resolver = None
 
     def get_info(self) -> Dict[str, Any]:
         """
