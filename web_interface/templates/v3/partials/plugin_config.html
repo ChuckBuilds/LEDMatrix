@@ -994,8 +994,47 @@
                     <p class="text-xs text-amber-600">Plugin is disabled, but on-demand will temporarily enable it.</p>
                     {% endif %}
                 </div>
+
+                {# Live Preview — renders the plugin headlessly with the CURRENT
+                   (unsaved) form values, at the real panel size or a chosen one #}
+                <div class="mt-4 pt-4 border-t border-gray-200 space-y-3">
+                    <div class="flex items-center gap-2">
+                        <i class="fas fa-eye text-blue-500"></i>
+                        <span class="text-sm font-semibold text-gray-900">Live Preview</span>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <select id="preview-size-{{ plugin.id }}"
+                                aria-label="Preview panel size"
+                                class="text-sm rounded-md border-gray-300 py-1.5"
+                                onchange="document.getElementById('preview-btn-{{ plugin.id }}').setAttribute('hx-post', '/api/v3/plugins/preview?plugin_id={{ plugin.id }}' + (this.value ? '&' + this.value : ''))">
+                            <option value="">My panel size</option>
+                            <option value="width=64&height=32">64 &times; 32</option>
+                            <option value="width=128&height=32">128 &times; 32</option>
+                            <option value="width=128&height=64">128 &times; 64</option>
+                            <option value="width=192&height=48">192 &times; 48</option>
+                            <option value="width=256&height=128">256 &times; 128</option>
+                        </select>
+                        <button type="button"
+                                id="preview-btn-{{ plugin.id }}"
+                                hx-post="/api/v3/plugins/preview?plugin_id={{ plugin.id }}"
+                                hx-include="closest form"
+                                hx-target="#plugin-preview-{{ plugin.id }}"
+                                hx-swap="innerHTML"
+                                hx-indicator="#preview-indicator-{{ plugin.id }}"
+                                class="px-3 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-md flex items-center gap-2 transition-colors">
+                            <i class="fas fa-tv"></i>
+                            <span>Preview</span>
+                        </button>
+                        <span id="preview-indicator-{{ plugin.id }}" class="htmx-indicator text-xs text-gray-500">
+                            <i class="fas fa-spinner fa-spin"></i> rendering&hellip;
+                        </span>
+                    </div>
+                    <div id="plugin-preview-{{ plugin.id }}">
+                        <p class="text-xs text-gray-400">Renders this plugin with the current (unsaved) settings &mdash; try it before you save.</p>
+                    </div>
+                </div>
             </div>
-            
+
             {# Configuration Form Panel #}
             <div class="bg-gray-50 rounded-lg p-4">
                 <h3 class="text-md font-medium text-gray-900 mb-3">Configuration</h3>
