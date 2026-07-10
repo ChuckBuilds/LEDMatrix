@@ -93,6 +93,27 @@ def requirements_are_satisfied(requirements_file: str) -> bool:
     return True
 
 
+def find_trusted_subdir(trusted_dir: str, name: str) -> Optional[str]:
+    """Return `name` if it names an actual subdirectory of trusted_dir, else None.
+
+    Used as a containment check for a directory name derived from untrusted
+    input (a manifest-declared plugin id, an externally-supplied plugin
+    path): the returned value always comes from enumerating trusted_dir
+    itself via os.scandir(), so a caller that builds a path by joining
+    trusted_dir with this return value is joining against a name the
+    filesystem produced under a trusted root -- not the caller's original
+    string, which could otherwise smuggle a traversal sequence through.
+    """
+    try:
+        with os.scandir(trusted_dir) as entries:
+            for entry in entries:
+                if entry.name == name and entry.is_dir():
+                    return entry.name
+    except OSError:
+        pass
+    return None
+
+
 class PluginLoader:
     """Handles plugin module loading and class instantiation."""
 
@@ -200,9 +221,9 @@ class PluginLoader:
                 except (json.JSONDecodeError, Exception) as e:
                     self.logger.debug("Skipping %s due to manifest error: %s", item.name, e)
                     continue
-        
+
         return None
-    
+
     def install_dependencies(
         self,
         plugin_dir: Path,
@@ -233,25 +254,24 @@ class PluginLoader:
 
         # Resolve to a canonical absolute path (normalises .. and symlinks)
         plugin_dir_real = os.path.realpath(str(plugin_dir))
-
-        # Reconstruct the plugin path from a trusted base + a sanitised
-        # directory name.  os.path.basename() is CodeQL's recognised
-        # py/path-injection sanitiser: it strips all directory components
-        # so the result cannot contain traversal sequences.  Joining it
-        # with the resolved, trusted plugins_dir produces a path that
-        # CodeQL considers untainted.
         plugins_dir_real = os.path.realpath(str(plugins_dir))
-        safe_dir_name = os.path.basename(plugin_dir_real)
-        if not safe_dir_name:
-            self.logger.error("Could not determine plugin directory name for %s", plugin_id)
-            return False
-        safe_plugin_dir = os.path.join(plugins_dir_real, safe_dir_name)
-        if not os.path.isdir(safe_plugin_dir):
+        requested_name = os.path.basename(plugin_dir_real)
+
+        # Match the requested directory against an entry actually enumerated
+        # from the trusted plugins_dir, and build the path from that entry --
+        # not from requested_name. A name that came out of os.scandir() on a
+        # trusted root carries no taint regardless of what the caller asked
+        # for, so this is a real containment guarantee (an allowlist check
+        # against a trusted source), not a string-sanitisation of untrusted
+        # input that a static analyzer has to trust blindly.
+        matched_name = find_trusted_subdir(plugins_dir_real, requested_name)
+        if matched_name is None:
             self.logger.error(
                 "Plugin directory for %s not found inside plugins dir", plugin_id
             )
             return False
 
+        safe_plugin_dir = os.path.join(plugins_dir_real, matched_name)
         requirements_file = os.path.join(safe_plugin_dir, "requirements.txt")
 
         if not os.path.isfile(requirements_file):

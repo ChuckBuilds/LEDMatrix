@@ -25,7 +25,9 @@ import logging
 from urllib.parse import urlparse
 
 from src.common.permission_utils import sudo_remove_directory, install_requirements_file
-from src.plugin_system.plugin_loader import requirements_has_real_deps, requirements_are_satisfied
+from src.plugin_system.plugin_loader import (
+    requirements_has_real_deps, requirements_are_satisfied, find_trusted_subdir
+)
 
 try:
     from jsonschema import Draft7Validator, ValidationError
@@ -1908,24 +1910,22 @@ class PluginStoreManager:
             True if successful or no requirements file
         """
         # Reconstruct the plugin path from the trusted self.plugins_dir base +
-        # a sanitised directory name rather than trusting plugin_path directly
-        # -- callers ultimately derive it from a plugin-supplied manifest "id"
-        # field (see install_plugin_from_url), so without this a malicious
-        # manifest could point requirements_file outside plugins_dir.
-        # os.path.basename() is CodeQL's recognised py/path-injection
-        # sanitiser: it strips all directory components so the result cannot
-        # contain traversal sequences, matching the pattern already used in
-        # PluginLoader.install_dependencies().
+        # an entry actually enumerated from it, rather than trusting
+        # plugin_path directly -- callers ultimately derive it from a
+        # plugin-supplied manifest "id" field (see install_plugin_from_url),
+        # so without this a malicious manifest could point requirements_file
+        # outside plugins_dir. find_trusted_subdir()'s return value always
+        # comes from os.scandir() on the trusted root, so building the path
+        # from it (not from the caller's string) is a real containment
+        # guarantee, matching the pattern in PluginLoader.install_dependencies().
         plugin_dir_real = os.path.realpath(str(plugin_path))
         plugins_dir_real = os.path.realpath(str(self.plugins_dir))
-        safe_dir_name = os.path.basename(plugin_dir_real)
-        if not safe_dir_name:
-            self.logger.error("Could not determine plugin directory name for dependency install")
+        requested_name = os.path.basename(plugin_dir_real)
+        matched_name = find_trusted_subdir(plugins_dir_real, requested_name)
+        if matched_name is None:
+            self.logger.error("Plugin directory not found inside plugins dir for dependency install")
             return False
-        safe_plugin_path = Path(os.path.join(plugins_dir_real, safe_dir_name))
-        if not safe_plugin_path.is_dir():
-            self.logger.error("Plugin directory not found inside plugins dir: %s", safe_plugin_path)
-            return False
+        safe_plugin_path = Path(os.path.join(plugins_dir_real, matched_name))
 
         requirements_file = safe_plugin_path / "requirements.txt"
 
