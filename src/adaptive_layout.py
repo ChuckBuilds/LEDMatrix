@@ -273,6 +273,38 @@ def font_line_height(font: Any) -> int:
     return ascent + descent
 
 
+def measure_font_crispness(font: Any, sample_text: str = "Ay0",
+                           canvas_size: Tuple[int, int] = (250, 60)) -> float:
+    """Fraction of the rendered sample's ink-bbox pixels that are neither
+    pure black nor pure white — i.e. antialiased.
+
+    BDF (freetype.Face) glyphs are true bitmaps and always render at 0.0.
+    "Pixel-style" TTFs (PressStart2P, and similar fonts bundled for
+    plugins that draw through ImageDraw.text() and so can't take a BDF
+    face) are NOT automatically crisp at arbitrary sizes — PIL antialiases
+    TTF outlines by default, and a pixel-grid font only lands on whole
+    pixels at specific sizes (for PressStart2P: exact multiples of 8).
+    Requesting an unverified size silently produces soft/blurry glyphs on
+    an LED panel, which reads as fuzzy compared to a true BDF rung.
+
+    Use this to vet any custom FontLadder rung that mixes TTF fonts before
+    shipping it — see test_adaptive_layout.py::test_ladder_is_crisp for the
+    pattern. A rung should score 0.0 (or very close, to allow for the odd
+    diagonal stroke) before it belongs in a "crisp" ladder.
+    """
+    if isinstance(font, freetype.Face):
+        return 0.0
+    from PIL import Image, ImageDraw
+    img = Image.new("L", canvas_size, 0)
+    ImageDraw.Draw(img).text((2, 2), sample_text, font=font, fill=255)
+    bbox = img.getbbox()
+    if bbox is None:
+        return 0.0
+    pixels = img.crop(bbox).tobytes()
+    pure = sum(1 for p in pixels if p == 0 or p == 255)
+    return (len(pixels) - pure) / len(pixels)
+
+
 class LayoutContext:
     """Per-render-size layout facts and fit-text queries for one panel size.
 
@@ -542,10 +574,13 @@ def scoreboard_regions(bounds: Region, *, ctx: Optional["LayoutContext"] = None,
     Encodes the invariant duplicated across the sports plugins:
     ``logo_slot = min(height, width // 2)`` (capped at half the card so the
     home slot never collapses), away logo centered in the left slot, home in
-    the right, score/status/detail stacked in the middle column. Band
-    heights default to the classic 128x32 values, scaled by the context's
-    geometry factor when one is provided. Works on a full panel or on a
-    scroll-mode card Region.
+    the right. The text bands (status/score/detail) span the FULL card width
+    and overlay the logo slots — exactly like the classic layouts, where
+    outlined text is drawn over the logos; on square-ish panels the column
+    between the slots can be zero-wide, so full-width bands are the only
+    correct home for text. Band heights default to the classic 128x32
+    values, scaled by the context's geometry factor when one is provided.
+    Works on a full panel or on a scroll-mode card Region.
     """
     if status_h is None:
         status_h = ctx.px(9, minimum=7) if ctx else 9
@@ -557,9 +592,9 @@ def scoreboard_regions(bounds: Region, *, ctx: Optional["LayoutContext"] = None,
     home_slot = bounds.right_col(logo_slot)
     center_col = Region(bounds.x + logo_slot, bounds.y,
                         bounds.w - 2 * logo_slot, bounds.h)
-    status_band = center_col.top_band(status_h)
-    detail_band = center_col.bottom_band(detail_h)
-    score_area = center_col.middle(status_band.h, detail_band.h)
+    status_band = bounds.top_band(status_h)
+    detail_band = bounds.bottom_band(detail_h)
+    score_area = bounds.middle(status_band.h, detail_band.h)
     bottom = bounds.bottom_band(detail_h)
     return ScoreboardRegions(
         bounds=bounds, logo_slot=logo_slot,

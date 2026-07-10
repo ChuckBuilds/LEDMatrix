@@ -9,6 +9,7 @@ from src.adaptive_layout import (
     LayoutContext,
     Region,
     draw_fitted_text,
+    measure_font_crispness,
     measure_ink,
     media_row,
     scoreboard_regions,
@@ -181,6 +182,27 @@ class TestFontFitting:
                 heights.append(measure_ink("Ay0", font)[1])
             assert heights == sorted(heights, reverse=True), (
                 f"ladder not monotonically shrinking: {heights}")
+
+    def test_ladder_grid_is_crisp(self, font_manager):
+        """LADDER_GRID's BDF fonts are real bitmaps — always 0% antialiased."""
+        for step in LADDER_GRID:
+            font = font_manager.get_font(step.family, step.size_px)
+            assert measure_font_crispness(font, "Ay0") == 0.0
+
+    def test_ladder_arcade_is_crisp(self, font_manager):
+        """PressStart2P only rasterizes without antialiasing at exact
+        multiples of its 8px design grid — every LADDER_ARCADE rung must
+        land on one."""
+        for step in LADDER_ARCADE:
+            assert step.size_px % 8 == 0, f"{step} is not a multiple of 8"
+            font = font_manager.get_font(step.family, step.size_px)
+            assert measure_font_crispness(font, "17-21") == 0.0
+
+    def test_crispness_catches_a_bad_size(self, font_manager):
+        """Sanity check the measurement itself: a known-bad size for a
+        pixel-grid font must NOT read as crisp."""
+        font = font_manager.get_font("press_start", 10)  # not a multiple of 8
+        assert measure_font_crispness(font, "17-21") > 0.1
 
     def test_fit_text_grows_on_taller_panel(self, font_manager):
         small = LayoutContext(64, 32, font_manager)
