@@ -375,16 +375,24 @@ def install_requirements_file(req_file: Path, timeout: int = 300) -> subprocess.
                 for phrase in ("a password is required", "is not allowed to run", "no tty present")
             )
             if not denied:
+                # Deliberately don't interpolate req_file or the pip output here:
+                # this log line is scanner-visible, and a static analyzer can't
+                # tell "already redacted above" from "still raw" just by looking
+                # at this call in isolation. The full (redacted) text is still
+                # available to callers via the returned CompletedProcess.
                 logger.warning(
-                    "Root pip install failed (rc=%s) for %s: %s",
-                    result.returncode, req_file, result.stderr.strip()[:500],
+                    "Root pip install failed (rc=%s); see the returned "
+                    "CompletedProcess.stderr for details.",
+                    result.returncode,
                 )
                 return result
 
+        # Same reasoning as above: no req_file / pip-output interpolation in
+        # this log line, only in the returned note/CompletedProcess.
         logger.warning(
-            "Root pip install wrapper denied via sudo for %s; falling back to "
-            "user-level install: %s",
-            req_file, result.stderr.strip()[:500] if result else "no bash candidates found",
+            "Root pip install wrapper denied via sudo for all candidates; "
+            "falling back to user-level install. See the returned "
+            "CompletedProcess.stderr for details."
         )
         note = (
             f"[Root install unavailable ({(result.stderr.strip() if result else 'sudo denied') or 'sudo denied'}); "
@@ -394,8 +402,7 @@ def install_requirements_file(req_file: Path, timeout: int = 300) -> subprocess.
         )
     else:
         logger.warning(
-            "safe_pip_install.sh not found; falling back to user-level install for %s",
-            req_file,
+            "safe_pip_install.sh not found; falling back to user-level install."
         )
         note = (
             "[safe_pip_install.sh not found; installed for the current process's "
