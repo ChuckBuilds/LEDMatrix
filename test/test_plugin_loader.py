@@ -216,20 +216,23 @@ class TestPluginLoader:
         plugin_dir.mkdir()
         requirements_file = plugin_dir / "requirements.txt"
         requirements_file.write_text("package1==1.0.0\n")
-        
+
         mock_subprocess.return_value = MagicMock(returncode=1)
 
         result = plugin_loader.install_dependencies(plugin_dir, "test_plugin")
 
         assert result is False
 
+    @patch('src.plugin_system.plugin_loader.requirements_are_satisfied', return_value=False)
     @patch('subprocess.run')
     def test_install_dependencies_retries_with_ignore_installed_on_apt_conflict(
-        self, mock_subprocess, plugin_loader, tmp_plugins_dir
+        self, mock_subprocess, mock_satisfied, plugin_loader, tmp_plugins_dir
     ):
         """An apt-managed package with no pip RECORD file triggers a retry with
         --ignore-installed rather than silently assuming the old version satisfies
-        the requirement."""
+        the requirement. requirements_are_satisfied() is mocked False here because
+        this scenario is exactly the case where the installed (apt) version does
+        NOT satisfy the pin — that's why pip attempts a reinstall in the first place."""
         plugin_dir = tmp_plugins_dir / "test_plugin"
         plugin_dir.mkdir()
         requirements_file = plugin_dir / "requirements.txt"
@@ -249,9 +252,10 @@ class TestPluginLoader:
         retry_cmd = mock_subprocess.call_args_list[1][0][0]
         assert "--ignore-installed" in retry_cmd
 
+    @patch('src.plugin_system.plugin_loader.requirements_are_satisfied', return_value=False)
     @patch('subprocess.run')
     def test_install_dependencies_apt_conflict_retry_also_fails(
-        self, mock_subprocess, plugin_loader, tmp_plugins_dir
+        self, mock_subprocess, mock_satisfied, plugin_loader, tmp_plugins_dir
     ):
         """Still tolerates the failure (returns True) if the --ignore-installed
         retry itself fails, matching the prior soft-fallback behavior."""
@@ -272,9 +276,10 @@ class TestPluginLoader:
         assert result is True
         assert mock_subprocess.call_count == 2
 
+    @patch('src.plugin_system.plugin_loader.requirements_are_satisfied', return_value=False)
     @patch('subprocess.run')
     def test_install_dependencies_apt_conflict_retry_times_out(
-        self, mock_subprocess, plugin_loader, tmp_plugins_dir
+        self, mock_subprocess, mock_satisfied, plugin_loader, tmp_plugins_dir
     ):
         """A retry timeout must be tolerated the same way as a retry failure
         (return True), not propagate to the outer TimeoutExpired handler and
@@ -297,3 +302,16 @@ class TestPluginLoader:
 
         assert result is True
         assert mock_subprocess.call_count == 2
+
+    @patch('subprocess.run')
+    def test_install_dependencies_already_satisfied_skips_pip(self, mock_subprocess, plugin_loader, tmp_plugins_dir):
+        """A requirement already satisfied in the current environment shouldn't invoke pip."""
+        plugin_dir = tmp_plugins_dir / "test_plugin"
+        plugin_dir.mkdir()
+        requirements_file = plugin_dir / "requirements.txt"
+        requirements_file.write_text("pytest>=1.0\n")
+
+        result = plugin_loader.install_dependencies(plugin_dir, "test_plugin")
+
+        assert result is True
+        mock_subprocess.assert_not_called()

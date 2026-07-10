@@ -84,8 +84,9 @@ class TestPluginLoader:
     
     def test_dependency_check(self):
         """Test dependency checking logic."""
-        # This would test _check_dependencies_installed and _install_plugin_dependencies
-        # which requires mocking subprocess calls and file operations
+        # Covered by test_plugin_loader.py's install_dependencies tests,
+        # which exercise requirements_has_real_deps/requirements_are_satisfied
+        # and the pip subprocess fallback.
 
 
 class TestPluginExecutor:

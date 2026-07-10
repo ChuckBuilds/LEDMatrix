@@ -5,10 +5,10 @@ Handles plugin module imports, dependency installation, and class instantiation.
 Extracted from PluginManager to improve separation of concerns.
 """
 
-import hashlib
-import json
 import importlib
+import importlib.metadata
 import importlib.util
+import json
 import os
 import sys
 import subprocess
@@ -17,12 +17,80 @@ from pathlib import Path
 from typing import Dict, Any, Optional, Tuple, Type
 import logging
 
+from packaging.requirements import InvalidRequirement, Requirement
+
 from src.exceptions import PluginError
 from src.logging_config import get_logger
-from src.common.permission_utils import (
-    ensure_file_permissions,
-    get_plugin_file_mode
-)
+
+
+def requirements_has_real_deps(requirements_file: str) -> bool:
+    """
+    Check whether a requirements.txt actually specifies anything to install.
+
+    Plugins that ship all their dependencies with LEDMatrix core often keep a
+    requirements.txt where every line is commented out, for documentation
+    purposes only. Running pip against such a file still pays the full
+    subprocess/resolver cost for zero effect, so callers should skip the
+    install step entirely when this returns False.
+    """
+    try:
+        with open(requirements_file, 'r', encoding='utf-8') as fh:
+            for line in fh:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    return True
+    except OSError:
+        # Let the caller's own file handling report the error.
+        return True
+    return False
+
+
+def requirements_are_satisfied(requirements_file: str) -> bool:
+    """
+    Check whether every real requirement line in requirements.txt is already
+    satisfied by packages installed in the current interpreter.
+
+    This replaces marker-file tracking with a direct fact check, so it's
+    immune to stale/missing/corrupted markers: it looks at what's actually
+    importable right now rather than trusting a hash comparison from a
+    previous run. Anything ambiguous (pip options, unparseable lines,
+    extras, unresolvable versions) conservatively returns False so the
+    caller falls through to running pip — this check only ever saves work,
+    never masks a real install.
+    """
+    try:
+        with open(requirements_file, 'r', encoding='utf-8') as fh:
+            lines = fh.readlines()
+    except OSError:
+        return False
+
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line or line.startswith('#'):
+            continue
+        if line.startswith('-'):
+            return False  # pip option (-r, --index-url, ...), can't verify
+
+        try:
+            req = Requirement(line)
+        except InvalidRequirement:
+            return False
+
+        if req.extras:
+            return False  # verifying extras' sub-dependencies isn't worth it here
+
+        if req.marker is not None and not req.marker.evaluate():
+            continue  # not applicable on this platform/interpreter
+
+        try:
+            installed_version = importlib.metadata.version(req.name)
+        except importlib.metadata.PackageNotFoundError:
+            return False
+
+        if req.specifier and not req.specifier.contains(installed_version, prereleases=True):
+            return False
+
+    return True
 
 
 class PluginLoader:
@@ -186,33 +254,23 @@ class PluginLoader:
                 return False
 
         requirements_file = os.path.join(safe_plugin_dir, "requirements.txt")
-        marker_file = os.path.join(safe_plugin_dir, ".dependencies_installed")
 
         if not os.path.isfile(requirements_file):
             return True  # No dependencies needed
 
-        try:
-            with open(requirements_file, 'rb') as fh:
-                current_hash = hashlib.sha256(fh.read()).hexdigest()
-        except OSError as e:
-            self.logger.error("Failed to read requirements.txt for %s: %s", plugin_id, e)
-            return False
+        if not requirements_has_real_deps(requirements_file):
+            self.logger.debug(
+                "requirements.txt for %s has no real dependencies (comments/blank only), skipping pip",
+                plugin_id
+            )
+            return True
 
-        # Skip if requirements.txt hasn't changed since last install
-        if os.path.isfile(marker_file):
-            try:
-                with open(marker_file, 'r', encoding='utf-8') as fh:
-                    stored_hash = fh.read().strip()
-            except OSError as e:
-                self.logger.warning(
-                    "Could not read dependency marker for %s (%s), will reinstall dependencies",
-                    plugin_id, e
-                )
-            else:
-                if stored_hash == current_hash:
-                    self.logger.debug("Dependencies already installed for %s (requirements unchanged)", plugin_id)
-                    return True
-                self.logger.info("Requirements changed for %s, reinstalling dependencies", plugin_id)
+        if requirements_are_satisfied(requirements_file):
+            self.logger.debug(
+                "Dependencies for %s already satisfied in current environment, skipping pip",
+                plugin_id
+            )
+            return True
 
         try:
             self.logger.info("Installing dependencies for plugin %s...", plugin_id)
@@ -225,12 +283,6 @@ class PluginLoader:
             )
 
             if result.returncode == 0:
-                try:
-                    with open(marker_file, 'w', encoding='utf-8') as fh:
-                        fh.write(current_hash)
-                    ensure_file_permissions(Path(marker_file), get_plugin_file_mode())
-                except OSError as marker_err:
-                    self.logger.debug("Could not write dependency marker for %s: %s", plugin_id, marker_err)
                 self.logger.info("Dependencies installed successfully for %s", plugin_id)
                 return True
             else:
@@ -242,8 +294,7 @@ class PluginLoader:
                 # the system copy instead of trying to replace it — matching the
                 # retry already used by install_dependencies_apt.py / safe_pip_install.sh.
                 # Without this retry, the plugin would silently keep running against
-                # whatever version the system happened to ship, even though the
-                # marker below claims the requirement is satisfied.
+                # whatever version the system happened to ship.
                 if "uninstall-no-record-file" in stderr:
                     self.logger.warning(
                         "Dependencies for %s conflict with a system-managed package "
@@ -280,12 +331,6 @@ class PluginLoader:
                             "system-managed version satisfies the requirement",
                             plugin_id
                         )
-                    try:
-                        with open(marker_file, 'w', encoding='utf-8') as fh:
-                            fh.write(current_hash)
-                        ensure_file_permissions(Path(marker_file), get_plugin_file_mode())
-                    except OSError as marker_err:
-                        self.logger.debug("Could not write dependency marker for %s: %s", plugin_id, marker_err)
                     return True
                 self.logger.warning(
                     "Dependency installation returned non-zero exit code for %s: %s",
