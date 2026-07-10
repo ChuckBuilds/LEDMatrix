@@ -193,7 +193,7 @@ class TestPluginLoader:
         
         mock_subprocess.return_value = MagicMock(returncode=0)
         
-        result = plugin_loader.install_dependencies(plugin_dir, "test_plugin")
+        result = plugin_loader.install_dependencies(plugin_dir, "test_plugin", plugins_dir=tmp_plugins_dir)
         
         assert result is True
         mock_subprocess.assert_called_once()
@@ -204,7 +204,7 @@ class TestPluginLoader:
         plugin_dir = tmp_plugins_dir / "test_plugin"
         plugin_dir.mkdir()
         
-        result = plugin_loader.install_dependencies(plugin_dir, "test_plugin")
+        result = plugin_loader.install_dependencies(plugin_dir, "test_plugin", plugins_dir=tmp_plugins_dir)
         
         assert result is True
         mock_subprocess.assert_not_called()
@@ -219,7 +219,7 @@ class TestPluginLoader:
 
         mock_subprocess.return_value = MagicMock(returncode=1)
 
-        result = plugin_loader.install_dependencies(plugin_dir, "test_plugin")
+        result = plugin_loader.install_dependencies(plugin_dir, "test_plugin", plugins_dir=tmp_plugins_dir)
 
         assert result is False
 
@@ -245,7 +245,7 @@ class TestPluginLoader:
         retry_attempt = MagicMock(returncode=0, stderr="")
         mock_subprocess.side_effect = [first_attempt, retry_attempt]
 
-        result = plugin_loader.install_dependencies(plugin_dir, "test_plugin")
+        result = plugin_loader.install_dependencies(plugin_dir, "test_plugin", plugins_dir=tmp_plugins_dir)
 
         assert result is True
         assert mock_subprocess.call_count == 2
@@ -271,7 +271,7 @@ class TestPluginLoader:
         retry_attempt = MagicMock(returncode=1, stderr="some other pip error")
         mock_subprocess.side_effect = [first_attempt, retry_attempt]
 
-        result = plugin_loader.install_dependencies(plugin_dir, "test_plugin")
+        result = plugin_loader.install_dependencies(plugin_dir, "test_plugin", plugins_dir=tmp_plugins_dir)
 
         assert result is True
         assert mock_subprocess.call_count == 2
@@ -298,7 +298,7 @@ class TestPluginLoader:
             subprocess.TimeoutExpired(cmd="pip", timeout=300),
         ]
 
-        result = plugin_loader.install_dependencies(plugin_dir, "test_plugin")
+        result = plugin_loader.install_dependencies(plugin_dir, "test_plugin", plugins_dir=tmp_plugins_dir)
 
         assert result is True
         assert mock_subprocess.call_count == 2
@@ -311,7 +311,34 @@ class TestPluginLoader:
         requirements_file = plugin_dir / "requirements.txt"
         requirements_file.write_text("pytest>=1.0\n")
 
-        result = plugin_loader.install_dependencies(plugin_dir, "test_plugin")
+        result = plugin_loader.install_dependencies(plugin_dir, "test_plugin", plugins_dir=tmp_plugins_dir)
 
         assert result is True
+        mock_subprocess.assert_not_called()
+
+    def test_install_dependencies_requires_plugins_dir(self, plugin_loader, tmp_plugins_dir):
+        """plugins_dir is a required argument, not an optional trust-me flag --
+        calling without it must fail loudly (TypeError) rather than silently
+        falling back to trusting plugin_dir unchecked."""
+        plugin_dir = tmp_plugins_dir / "test_plugin"
+        plugin_dir.mkdir()
+
+        with pytest.raises(TypeError):
+            plugin_loader.install_dependencies(plugin_dir, "test_plugin")
+
+    @patch('subprocess.run')
+    def test_install_dependencies_rejects_path_outside_plugins_dir(
+        self, mock_subprocess, plugin_loader, tmp_path, tmp_plugins_dir
+    ):
+        """A plugin_dir that doesn't actually live inside plugins_dir (e.g. a
+        manifest-derived id crafted to traverse elsewhere) must be rejected
+        rather than read from -- this is the path-injection containment
+        check CodeQL flagged as missing."""
+        outside_dir = tmp_path / "outside"
+        outside_dir.mkdir()
+        (outside_dir / "requirements.txt").write_text("requests>=2.0\n")
+
+        result = plugin_loader.install_dependencies(outside_dir, "evil_plugin", plugins_dir=tmp_plugins_dir)
+
+        assert result is False
         mock_subprocess.assert_not_called()

@@ -207,7 +207,7 @@ class PluginLoader:
         self,
         plugin_dir: Path,
         plugin_id: str,
-        plugins_dir: Optional[Path] = None,
+        plugins_dir: Path,
         timeout: int = 300
     ) -> bool:
         """
@@ -216,7 +216,12 @@ class PluginLoader:
         Args:
             plugin_dir: Plugin directory path
             plugin_id: Plugin identifier
-            plugins_dir: Trusted base plugins directory for path containment check
+            plugins_dir: Trusted base plugins directory for path containment check.
+                Required (not optional) so every caller reconstructs the plugin
+                path through the sanitiser below rather than trusting plugin_dir
+                directly -- CodeQL's path-injection query (and a malicious
+                manifest/plugin_id in practice) can't tell a legitimate
+                plugin_dir from one crafted to traverse outside plugins_dir.
             timeout: Installation timeout in seconds
 
         Returns:
@@ -229,29 +234,23 @@ class PluginLoader:
         # Resolve to a canonical absolute path (normalises .. and symlinks)
         plugin_dir_real = os.path.realpath(str(plugin_dir))
 
-        if plugins_dir is not None:
-            # Reconstruct the plugin path from a trusted base + a sanitised
-            # directory name.  os.path.basename() is CodeQL's recognised
-            # py/path-injection sanitiser: it strips all directory components
-            # so the result cannot contain traversal sequences.  Joining it
-            # with the resolved, trusted plugins_dir produces a path that
-            # CodeQL considers untainted.
-            plugins_dir_real = os.path.realpath(str(plugins_dir))
-            safe_dir_name = os.path.basename(plugin_dir_real)
-            if not safe_dir_name:
-                self.logger.error("Could not determine plugin directory name for %s", plugin_id)
-                return False
-            safe_plugin_dir = os.path.join(plugins_dir_real, safe_dir_name)
-            if not os.path.isdir(safe_plugin_dir):
-                self.logger.error(
-                    "Plugin directory for %s not found inside plugins dir", plugin_id
-                )
-                return False
-        else:
-            safe_plugin_dir = plugin_dir_real
-            if not os.path.isdir(safe_plugin_dir):
-                self.logger.error("Plugin directory does not exist: %s", plugin_dir)
-                return False
+        # Reconstruct the plugin path from a trusted base + a sanitised
+        # directory name.  os.path.basename() is CodeQL's recognised
+        # py/path-injection sanitiser: it strips all directory components
+        # so the result cannot contain traversal sequences.  Joining it
+        # with the resolved, trusted plugins_dir produces a path that
+        # CodeQL considers untainted.
+        plugins_dir_real = os.path.realpath(str(plugins_dir))
+        safe_dir_name = os.path.basename(plugin_dir_real)
+        if not safe_dir_name:
+            self.logger.error("Could not determine plugin directory name for %s", plugin_id)
+            return False
+        safe_plugin_dir = os.path.join(plugins_dir_real, safe_dir_name)
+        if not os.path.isdir(safe_plugin_dir):
+            self.logger.error(
+                "Plugin directory for %s not found inside plugins dir", plugin_id
+            )
+            return False
 
         requirements_file = os.path.join(safe_plugin_dir, "requirements.txt")
 
@@ -698,6 +697,14 @@ class PluginLoader:
         """
         # Install dependencies if needed
         if install_deps:
+            if plugins_dir is None:
+                raise PluginError(
+                    f"plugins_dir is required to install dependencies for plugin {plugin_id} "
+                    "(needed for path containment; pass install_deps=False if the caller "
+                    "doesn't have a trusted plugins directory to supply)",
+                    plugin_id=plugin_id,
+                    context={'plugin_dir': str(plugin_dir)},
+                )
             if not self.install_dependencies(plugin_dir, plugin_id, plugins_dir=plugins_dir):
                 raise PluginError(
                     f"Dependency installation failed for plugin {plugin_id} in {plugin_dir}",

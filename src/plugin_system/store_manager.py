@@ -1900,15 +1900,35 @@ class PluginStoreManager:
     def _install_dependencies(self, plugin_path: Path) -> bool:
         """
         Install Python dependencies from requirements.txt.
-        
+
         Args:
             plugin_path: Path to plugin directory
-            
+
         Returns:
             True if successful or no requirements file
         """
-        requirements_file = plugin_path / "requirements.txt"
-        
+        # Reconstruct the plugin path from the trusted self.plugins_dir base +
+        # a sanitised directory name rather than trusting plugin_path directly
+        # -- callers ultimately derive it from a plugin-supplied manifest "id"
+        # field (see install_plugin_from_url), so without this a malicious
+        # manifest could point requirements_file outside plugins_dir.
+        # os.path.basename() is CodeQL's recognised py/path-injection
+        # sanitiser: it strips all directory components so the result cannot
+        # contain traversal sequences, matching the pattern already used in
+        # PluginLoader.install_dependencies().
+        plugin_dir_real = os.path.realpath(str(plugin_path))
+        plugins_dir_real = os.path.realpath(str(self.plugins_dir))
+        safe_dir_name = os.path.basename(plugin_dir_real)
+        if not safe_dir_name:
+            self.logger.error("Could not determine plugin directory name for dependency install")
+            return False
+        safe_plugin_path = Path(os.path.join(plugins_dir_real, safe_dir_name))
+        if not safe_plugin_path.is_dir():
+            self.logger.error("Plugin directory not found inside plugins dir: %s", safe_plugin_path)
+            return False
+
+        requirements_file = safe_plugin_path / "requirements.txt"
+
         if not requirements_file.exists():
             self.logger.debug(f"No requirements.txt found in {plugin_path.name}")
             return True
