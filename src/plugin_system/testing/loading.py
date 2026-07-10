@@ -56,7 +56,15 @@ def load_harness_spec(plugin_dir: Union[str, Path]) -> Dict[str, Any]:
           "config":     {...},            # config overrides
           "mock_data":  "fixtures/mock.json",  # path (relative to plugin dir) to cache fixtures
           "freeze_time": "2025-08-01 15:25:00",
-          "skip_update": false
+          "skip_update": false,
+          "fill_check": "warn",           # or "strict": underfilled big panels FAIL
+          "variants": [                   # extra runs with config overlays and
+            {                             # their own golden dirs — e.g. an
+              "name": "adaptive",         # opt-in adaptive mode tested beside
+              "config": {"layout_mode": "adaptive"},   # the classic default
+              "golden_dir": "test/golden-adaptive"
+            }
+          ]
         }
     Returns {} when no harness.json exists.
     """
