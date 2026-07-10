@@ -96,6 +96,71 @@ Built per (width, height); exposes facts and fit queries:
 `display_manager.draw_text(font=...)`), the possibly-ellipsized `text`,
 ink `width`/`height`, `baseline`, `y_offset`, `line_height`, and `fits`.
 
+## Adaptive images
+
+`src/adaptive_images.py` is the image counterpart to `fit_text`, exposed as
+`self.layout.fit_image(...)` (cached per panel size) and the one-liner
+`self.draw_image(...)`:
+
+```python
+# Team logo: trim its transparent padding, fill the slot height (the
+# football/hockey pattern), cached across frames by a stable key
+self.draw_image(logo, regs.away_slot, mode="fill_height",
+                crop_to_ink=True, cache_key=f"logo:{abbr}")
+
+# Album art: cover-crop a square, faces kept by the top anchor
+self.draw_image(art, row.art, mode="cover", anchor="top")
+
+# Pixel flags / sprite icons: NEAREST keeps hard edges
+from src.adaptive_images import RESAMPLE_NEAREST
+self.draw_image(flag, box, resample=RESAMPLE_NEAREST)
+```
+
+Modes: `contain` (letterbox, default), `cover` (crop-to-fill),
+`fill_height` (logo-style), `stretch`. Unlike PIL's `thumbnail()`
+(downscale-only — why imagery stays tiny on big panels) fitting **upscales
+by default**; pass `upscale=False` for the legacy behavior. Results are
+cached per (image, box size, options) with a bounded LRU — always pass a
+stable `cache_key` (e.g. `"logo:KC"`) for images you reload. The module
+also exports the Pillow-compat `RESAMPLE_LANCZOS`/`RESAMPLE_NEAREST`
+constants so plugins can drop their local shims.
+
+## Composite layouts
+
+Pre-carved Region arrangements for the layouts plugins keep rebuilding:
+
+```python
+from src.adaptive_layout import scoreboard_regions, media_row
+
+regs = scoreboard_regions(self.layout.bounds, ctx=self.layout)
+# regs.away_slot / home_slot   — logo slots (logo_slot = min(H, W // 2))
+# regs.status_band             — top band (replaces the magic y = 1)
+# regs.score_area              — center region (replaces y = H//2 - 3)
+# regs.detail_band             — bottom band (replaces y = H - 7)
+# regs.bottom_left / bottom_right — record/timeout corners
+
+row = media_row(self.layout.bounds, ctx=self.layout)   # art left, text right
+```
+
+Both work on the full panel or on a scroll-mode card Region. They return
+Regions and never draw — compose them with `draw_fit`/`draw_image`.
+
+## Preserving user customization
+
+Adaptive layout supplies *defaults*; explicit user configuration wins:
+
+- **User-set fonts win.** If the plugin's config has an explicit
+  `font`/`font_size` for an element, load it as before and skip the ladder —
+  fit only when the user hasn't overridden (see the football-scoreboard
+  `_resolve_element_fit` pattern).
+- **Offsets apply on top.** `customization.layout.<element>.{x_offset,y_offset}`
+  style knobs translate the *computed* region as a final step:
+  `region.offset(user_dx, user_dy)`. `draw_image(..., offset=(dx, dy))`
+  does the same for images.
+- **Colors pass through.** `draw_fit`/`draw_fitted_text` take explicit
+  `color=` params; adaptive mode never repaints semantic or user-chosen
+  colors.
+
 ## Manifest declaration
 
 Declare the size your layout was authored against so `ctx.scale` means

@@ -6,6 +6,12 @@ Tools for rapid plugin development without deploying to the RPi.
 
 Interactive web UI for tweaking plugin configs and seeing the rendered display in real time.
 
+The size inputs have a preset dropdown with the harness's standard panel
+sizes, and the **All Sizes** button renders the current config at every
+harness size in a side-by-side gallery (`POST /api/render-matrix`) — the
+quickest way to eyeball adaptive-layout behavior across panels
+(see [ADAPTIVE_LAYOUT.md](ADAPTIVE_LAYOUT.md)).
+
 ### Quick Start
 
 ```bash

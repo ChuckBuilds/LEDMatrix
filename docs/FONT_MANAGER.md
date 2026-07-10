@@ -1,5 +1,10 @@
 # FontManager Usage Guide
 
+> **Picking a size automatically:** if you want the *largest font that fits
+> a given area* rather than a fixed size, use the adaptive layout system's
+> font ladders (`self.layout.fit_text(...)`) which resolve through this
+> FontManager — see [ADAPTIVE_LAYOUT.md](ADAPTIVE_LAYOUT.md).
+
 ## Overview
 
 The enhanced FontManager provides comprehensive font management for the LEDMatrix application with support for:

@@ -683,6 +683,55 @@ class PluginLoader:
             self.logger.error(error_msg, exc_info=True)
             raise PluginError(error_msg, plugin_id=plugin_id) from e
     
+    @staticmethod
+    def _parse_semver(value: Any) -> Optional[Tuple[int, int, int]]:
+        """Parse 'X.Y.Z' (extra parts/suffixes ignored) into a comparable
+        3-tuple, or None when unparseable."""
+        if not isinstance(value, str):
+            return None
+        parts = value.strip().lstrip('v').split('.')
+        try:
+            nums = [int(''.join(ch for ch in p if ch.isdigit()) or 0) for p in parts[:3]]
+        except ValueError:
+            return None
+        while len(nums) < 3:
+            nums.append(0)
+        return tuple(nums)  # type: ignore[return-value]
+
+    def _warn_if_incompatible(self, plugin_id: str, manifest: Dict[str, Any]) -> None:
+        """Log one warning when a plugin declares a minimum LEDMatrix version
+        newer than the running core. Advisory only — never raises — so a
+        plugin that guards optional features with try/except keeps working.
+        """
+        declared = (
+            manifest.get('min_ledmatrix_version')
+            or manifest.get('requires', {}).get('min_ledmatrix_version')
+        )
+        if not declared:
+            versions = manifest.get('versions') or []
+            if versions and isinstance(versions[0], dict):
+                declared = (versions[0].get('ledmatrix_min_version')
+                            or versions[0].get('ledmatrix_min'))
+        needed = self._parse_semver(declared)
+        if needed is None:
+            return
+
+        from src import __version__ as core_version
+        current = self._parse_semver(core_version)
+        # Anti-spam guard: if the core's own version number is stale (below
+        # the ecosystem floor every shipped plugin declares), comparing would
+        # warn on nearly everything — skip with a debug note instead.
+        if current is None or current < (2, 0, 0):
+            self.logger.debug(
+                "Skipping version compatibility check for %s: core __version__ "
+                "(%s) is below the ecosystem floor", plugin_id, core_version)
+            return
+        if needed > current:
+            self.logger.warning(
+                "Plugin %s declares min LEDMatrix version %s but this core is %s — "
+                "features it relies on may be missing; update the core or expect "
+                "degraded fallbacks", plugin_id, declared, core_version)
+
     def load_plugin(
         self,
         plugin_id: str,
@@ -715,6 +764,8 @@ class PluginLoader:
         Raises:
             PluginError: If loading fails
         """
+        self._warn_if_incompatible(plugin_id, manifest)
+
         # Install dependencies if needed
         if install_deps:
             if plugins_dir is None:
