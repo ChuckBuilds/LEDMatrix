@@ -233,6 +233,47 @@ class TestFontFitting:
         ctx.clear_cache()
         assert ctx.fit_text("CACHED", ctx.bounds) is not first
 
+    def test_fit_text_proportional_tracks_design_scale(self, font_manager):
+        # design size 128x32, base_size_px=10 (a typical classic score size):
+        # at 2x scale the target is 20px -> nearest LADDER_ARCADE rung <= 20
+        # is 16px, not the largest that merely fits the box (32).
+        ctx = LayoutContext(256, 64, font_manager)  # scale = min(2,2) = 2
+        fit = ctx.fit_text_proportional("17-21", ctx.bounds, base_size_px=10,
+                                        ladder=LADDER_ARCADE)
+        assert fit.size_px == 16
+
+    def test_fit_text_proportional_does_not_exceed_max_fit(self, ctx):
+        # at scale=1 (128x32, the design size itself) the target equals
+        # base_size_px, so proportional should never pick something LARGER
+        # than plain fit_text would for the same box.
+        prop = ctx.fit_text_proportional("17-21", ctx.bounds, base_size_px=10,
+                                         ladder=LADDER_ARCADE)
+        maxed = ctx.fit_text("17-21", ctx.bounds, ladder=LADDER_ARCADE)
+        assert prop.size_px <= maxed.size_px
+
+    def test_fit_text_proportional_floors_at_smallest_rung(self, font_manager):
+        # scale so small the target is below every rung -> use the smallest
+        # rung as a floor rather than refusing to render anything.
+        ctx = LayoutContext(32, 8, font_manager)  # scale = min(32/128, 8/32) = 0.25
+        fit = ctx.fit_text_proportional("HI", ctx.bounds, base_size_px=10,
+                                        ladder=LADDER_ARCADE)
+        assert fit.size_px == min(s.size_px for s in LADDER_ARCADE)
+
+    def test_fit_text_proportional_falls_through_when_target_rung_overflows(self, font_manager):
+        # a long string at the target rung might not fit a narrow box even
+        # though the target size is "correct" -- must fall through to a
+        # smaller rung exactly like fit_text does, not just refuse to fit.
+        ctx = LayoutContext(256, 64, font_manager)
+        narrow_box = Region(0, 0, 40, 64)
+        fit = ctx.fit_text_proportional("A REALLY LONG STRING HERE", narrow_box,
+                                        base_size_px=10, ladder=LADDER_ARCADE)
+        assert fit.fits or fit.text.endswith("…")
+
+    def test_fit_text_proportional_cached(self, ctx):
+        first = ctx.fit_text_proportional("X", ctx.bounds, base_size_px=10)
+        second = ctx.fit_text_proportional("X", ctx.bounds, base_size_px=10)
+        assert first is second
+
     def test_fit_lines_stacks_within_height(self, ctx):
         box = ctx.bounds
         lines = ["LINE ONE", "LINE TWO", "LINE THREE"]

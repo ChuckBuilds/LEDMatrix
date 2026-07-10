@@ -376,7 +376,51 @@ class LayoutContext:
         cached = self._fit_cache.get(key)
         if cached is not None:
             return cached
+        result = self._walk_ladder(text, ladder, box_w, box_h, ellipsis)
+        self._fit_cache[key] = result
+        return result
 
+    def fit_text_proportional(self, text: str, box: Union[Region, Tuple[int, int]],
+                              base_size_px: int, ladder: FontLadder = LADDER_DEFAULT,
+                              ellipsis: bool = True) -> FitResult:
+        """Ladder rung closest to (but not exceeding) ``base_size_px * self.scale``
+        that still fits the box — proportional sizing instead of ``fit_text``'s
+        "always maximize" behavior.
+
+        Use this when several independently-fitted elements need to stay
+        visually harmonious as the panel grows (e.g. a scoreboard's score,
+        status, and detail text) — ``fit_text`` maximizes each one within
+        its own region, which can make one element balloon out of
+        proportion to its neighbors (a huge score overlapping logos it fit
+        fine at the design size) even though every individual pick is
+        independently "correct". ``base_size_px`` is the size that element
+        renders at on the design size (``design_size``, typically 128x32)
+        — commonly a plugin's existing classic/fixed font size for that
+        element, so proportional sizing tracks the same geometry scale as
+        everything else in ``px()``.
+
+        Falls back to the smallest rung when even that exceeds the target
+        (a tiny scale factor), and to fit_text's ordinary smaller-rung
+        fallback when the closest-to-target rung doesn't actually fit the
+        box.
+        """
+        box_w, box_h = _box_dims(box)
+        key = ("text_prop", text, box_w, box_h, ladder, base_size_px, ellipsis)
+        cached = self._fit_cache.get(key)
+        if cached is not None:
+            return cached
+        target = base_size_px * self.scale
+        eligible = [step for step in ladder if step.size_px <= target]
+        candidates = eligible if eligible else (min(ladder, key=lambda s: s.size_px),)
+        result = self._walk_ladder(text, candidates, box_w, box_h, ellipsis)
+        self._fit_cache[key] = result
+        return result
+
+    def _walk_ladder(self, text: str, ladder: Sequence[FontStep],
+                     box_w: int, box_h: int, ellipsis: bool) -> FitResult:
+        """Shared by fit_text/fit_text_proportional: first ladder entry (in
+        the order given) whose rendered text fits, ellipsizing the last one
+        tried if none do."""
         result = None
         for step in ladder:
             font = self.font_manager.get_font(step.family, step.size_px)
@@ -395,8 +439,6 @@ class LayoutContext:
                                short, width, height, baseline, y_offset,
                                fits=(width <= box_w and height <= box_h),
                                line_height=result.line_height)
-
-        self._fit_cache[key] = result
         return result
 
     def fit_lines(self, lines: Sequence[str], box: Union[Region, Tuple[int, int]],

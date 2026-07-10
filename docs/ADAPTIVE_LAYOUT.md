@@ -87,6 +87,16 @@ Built per (width, height); exposes facts and fit queries:
   at-or-below the panel's tier.
 - `fit_text(text, box, ladder, ellipsis=True)` → `FitResult` — largest rung
   that fits; ellipsizes as a last resort. Cached per (text, box, ladder).
+- `fit_text_proportional(text, box, base_size_px, ladder, ellipsis=True)` —
+  rung closest to (not exceeding) `base_size_px * scale`, still capped to
+  what fits the box. Use this instead of `fit_text` when several
+  independently-fitted elements need to stay visually harmonious as the
+  panel grows — `fit_text` maximizes *each one* within its own region,
+  which can make one element (e.g. a score with a generous box) balloon
+  out of proportion to a neighbor that scales by geometry (e.g. logos
+  sized via `px()`), even though each individual pick is "correct" in
+  isolation. `base_size_px` is normally the element's existing classic/
+  fixed font size, so it scales in step with everything else.
 - `fit_lines(lines, box, ladder, spacing)` — every line fits the width and
   the stack fits the height (measures the actual strings).
 - `font_for_rows(rows, box_h, ladder)` — largest rung whose line height
