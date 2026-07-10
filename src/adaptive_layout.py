@@ -382,8 +382,9 @@ class LayoutContext:
 
     def fit_text_proportional(self, text: str, box: Union[Region, Tuple[int, int]],
                               base_size_px: int, ladder: FontLadder = LADDER_DEFAULT,
-                              ellipsis: bool = True) -> FitResult:
-        """Ladder rung closest to (but not exceeding) ``base_size_px * self.scale``
+                              ellipsis: bool = True,
+                              scale: Optional[float] = None) -> FitResult:
+        """Ladder rung closest to (but not exceeding) ``base_size_px * scale``
         that still fits the box — proportional sizing instead of ``fit_text``'s
         "always maximize" behavior.
 
@@ -396,8 +397,16 @@ class LayoutContext:
         independently "correct". ``base_size_px`` is the size that element
         renders at on the design size (``design_size``, typically 128x32)
         — commonly a plugin's existing classic/fixed font size for that
-        element, so proportional sizing tracks the same geometry scale as
-        everything else in ``px()``.
+        element.
+
+        ``scale`` defaults to ``self.scale`` (the same conservative
+        min(width_ratio, height_ratio) factor ``px()`` uses — safe for
+        content whose aspect ratio matters). Pass an explicit axis-specific
+        value when the surrounding composition already scales that way —
+        e.g. a scoreboard whose logos scale with height alone
+        (``logo_slot = min(height, width // 2)``) should size its score
+        text by ``height / design_height`` too, or its text will look
+        under-scaled next to bigger logos on a panel that only grew taller.
 
         Falls back to the smallest rung when even that exceeds the target
         (a tiny scale factor), and to fit_text's ordinary smaller-rung
@@ -405,11 +414,12 @@ class LayoutContext:
         box.
         """
         box_w, box_h = _box_dims(box)
-        key = ("text_prop", text, box_w, box_h, ladder, base_size_px, ellipsis)
+        effective_scale = self.scale if scale is None else scale
+        key = ("text_prop", text, box_w, box_h, ladder, base_size_px, ellipsis, effective_scale)
         cached = self._fit_cache.get(key)
         if cached is not None:
             return cached
-        target = base_size_px * self.scale
+        target = base_size_px * effective_scale
         eligible = [step for step in ladder if step.size_px <= target]
         candidates = eligible if eligible else (min(ladder, key=lambda s: s.size_px),)
         result = self._walk_ladder(text, candidates, box_w, box_h, ellipsis)

@@ -274,6 +274,20 @@ class TestFontFitting:
         second = ctx.fit_text_proportional("X", ctx.bounds, base_size_px=10)
         assert first is second
 
+    def test_fit_text_proportional_scale_override(self, font_manager):
+        # 128x64 vs design 128x32: self.scale (min of both axes) is 1.0
+        # since width didn't grow, but a caller whose composition scales by
+        # HEIGHT alone (e.g. logo_slot = min(h, w//2)) should be able to
+        # override the reference scale so text grows with it too.
+        ctx = LayoutContext(128, 64, font_manager)
+        assert ctx.scale == 1.0
+        default_fit = ctx.fit_text_proportional("17-21", ctx.bounds, base_size_px=10,
+                                                 ladder=LADDER_ARCADE)
+        height_scale = 64 / 32  # matches design height
+        scaled_fit = ctx.fit_text_proportional("17-21", ctx.bounds, base_size_px=10,
+                                                ladder=LADDER_ARCADE, scale=height_scale)
+        assert scaled_fit.size_px > default_fit.size_px
+
     def test_fit_lines_stacks_within_height(self, ctx):
         box = ctx.bounds
         lines = ["LINE ONE", "LINE TWO", "LINE THREE"]
