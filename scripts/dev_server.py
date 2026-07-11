@@ -16,6 +16,7 @@ Opens at http://localhost:5001
 import sys
 import os
 import json
+import re
 import time
 import argparse
 import logging
@@ -43,6 +44,10 @@ MAX_WIDTH = 512
 MAX_HEIGHT = 512
 MIN_WIDTH = 1
 MIN_HEIGHT = 1
+
+# plugin_id arrives in request input and is used to build filesystem paths —
+# allowlist it (same pattern the web UI's pages_v3 uses)
+_SAFE_PLUGIN_ID_RE = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
 
 
 # --------------------------------------------------------------------------
@@ -106,7 +111,13 @@ def discover_plugins() -> List[Dict[str, Any]]:
 
 
 def find_plugin_dir(plugin_id: str) -> Optional[Path]:
-    """Find a plugin directory by ID."""
+    """Find a plugin directory by ID.
+
+    plugin_id comes from request input; the allowlist match keeps it from
+    ever naming a path outside the plugin search dirs.
+    """
+    if not isinstance(plugin_id, str) or not _SAFE_PLUGIN_ID_RE.match(plugin_id):
+        return None
     from src.plugin_system.plugin_loader import PluginLoader
     loader = PluginLoader()
     for search_dir in get_search_dirs():
