@@ -113,8 +113,10 @@ def discover_plugins() -> List[Dict[str, Any]]:
 def find_plugin_dir(plugin_id: str) -> Optional[Path]:
     """Find a plugin directory by ID.
 
-    plugin_id comes from request input; the allowlist match keeps it from
-    ever naming a path outside the plugin search dirs.
+    plugin_id comes from request input: it must pass an allowlist match,
+    and the resulting directory is normalized and required to live inside
+    one of the plugin search dirs, so a crafted id can never name a path
+    outside them.
     """
     if not isinstance(plugin_id, str) or not _SAFE_PLUGIN_ID_RE.match(plugin_id):
         return None
@@ -124,8 +126,15 @@ def find_plugin_dir(plugin_id: str) -> Optional[Path]:
         if not search_dir.exists():
             continue
         result = loader.find_plugin_directory(plugin_id, search_dir)
-        if result:
-            return Path(result)
+        if not result:
+            continue
+        # Normalize WITHOUT following symlinks (dev plugins are often
+        # symlinked into plugins/) and require lexical containment in the
+        # search dir, so no id can ever name a path outside it.
+        result_abs = os.path.abspath(str(result))
+        root_abs = os.path.abspath(str(search_dir))
+        if os.path.commonpath([result_abs, root_abs]) == root_abs:
+            return Path(result_abs)
     return None
 
 
