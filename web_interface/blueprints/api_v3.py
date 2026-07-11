@@ -5380,6 +5380,17 @@ def preview_plugin_render():
         hardware = main_config.get('display', {}).get('hardware', {})
         default_width = int(hardware.get('cols', 64)) * int(hardware.get('chain_length', 2))
         default_height = int(hardware.get('rows', 32)) * int(hardware.get('parallel', 1))
+        # The UI's size selector posts "__preview_size=WxH" via the button's
+        # hx-vals (evaluated at request time — htmx caches hx-post's path at
+        # process time, so a dynamically updated query string doesn't work).
+        # Explicit query args still take precedence for API callers.
+        preview_size = request.values.get('__preview_size', '')
+        if preview_size and 'x' in preview_size and 'width' not in request.args:
+            size_w, _, size_h = preview_size.partition('x')
+            try:
+                default_width, default_height = int(size_w), int(size_h)
+            except (TypeError, ValueError):
+                pass  # malformed selector value — fall back to panel size
         try:
             width = int(request.args.get('width', default_width))
             height = int(request.args.get('height', default_height))
@@ -5405,7 +5416,11 @@ def preview_plugin_render():
             plugin_config = existing_config
             plugin_config.update(data.get('config', {}))
         else:
-            plugin_config = parse_plugin_config_form(request.form, schema,
+            # Strip the preview-only control field so it never lands in the
+            # candidate config the plugin sees
+            form = request.form.copy()
+            form.poplist('__preview_size')
+            plugin_config = parse_plugin_config_form(form, schema,
                                                      existing_config)
 
         if schema:

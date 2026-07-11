@@ -160,6 +160,31 @@ class TestPreviewEndpoint:
         assert resp.status_code == 200
         assert resp.get_json()["data"]["errors"] == []
 
+    def test_preview_size_form_field(self, client):
+        """The UI size selector posts __preview_size=WxH via hx-vals (htmx
+        caches hx-post's path, so it can't ride the query string). It must
+        set the render size and must NOT leak into the candidate config."""
+        resp = client.post(f"/api/v3/plugins/preview?plugin_id={PLUGIN_ID}",
+                           data={"message": "hi", "__preview_size": "64x64"})
+        assert resp.status_code == 200
+        data = resp.get_json()["data"]
+        img = _decode_image(data["image"])
+        assert img.size == (64, 64)
+        assert data["errors"] == []
+
+    def test_query_args_beat_preview_size_field(self, client):
+        resp = client.post(
+            f"/api/v3/plugins/preview?plugin_id={PLUGIN_ID}&width=128&height=32",
+            data={"message": "hi", "__preview_size": "64x64"})
+        img = _decode_image(resp.get_json()["data"]["image"])
+        assert img.size == (128, 32)
+
+    def test_malformed_preview_size_falls_back_to_panel(self, client):
+        resp = client.post(f"/api/v3/plugins/preview?plugin_id={PLUGIN_ID}",
+                           data={"message": "hi", "__preview_size": "bogus x"})
+        img = _decode_image(resp.get_json()["data"]["image"])
+        assert img.size == (128, 32)  # cols*chain x rows*parallel
+
     def test_htmx_gets_html_fragment(self, client):
         resp = client.post(
             f"/api/v3/plugins/preview?plugin_id={PLUGIN_ID}&width=64&height=32",

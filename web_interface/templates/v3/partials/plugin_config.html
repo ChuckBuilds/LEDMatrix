@@ -1003,21 +1003,25 @@
                         <span class="text-sm font-semibold text-gray-900">Live Preview</span>
                     </div>
                     <div class="flex flex-wrap items-center gap-2">
+                        {# No name attribute: must not be submitted with the config
+                           save. The size travels via the button's hx-vals (read at
+                           request time — htmx caches hx-post's path at process
+                           time, so mutating the attribute onchange doesn't work). #}
                         <select id="preview-size-{{ plugin.id }}"
                                 aria-label="Preview panel size"
-                                class="text-sm rounded-md border-gray-300 py-1.5"
-                                onchange="document.getElementById('preview-btn-{{ plugin.id }}').setAttribute('hx-post', '/api/v3/plugins/preview?plugin_id={{ plugin.id }}' + (this.value ? '&' + this.value : ''))">
+                                class="text-sm rounded-md border-gray-300 py-1.5">
                             <option value="">My panel size</option>
-                            <option value="width=64&height=32">64 &times; 32</option>
-                            <option value="width=128&height=32">128 &times; 32</option>
-                            <option value="width=128&height=64">128 &times; 64</option>
-                            <option value="width=192&height=48">192 &times; 48</option>
-                            <option value="width=256&height=128">256 &times; 128</option>
+                            <option value="64x32">64 &times; 32</option>
+                            <option value="128x32">128 &times; 32</option>
+                            <option value="128x64">128 &times; 64</option>
+                            <option value="192x48">192 &times; 48</option>
+                            <option value="256x128">256 &times; 128</option>
                         </select>
                         <button type="button"
                                 id="preview-btn-{{ plugin.id }}"
                                 hx-post="/api/v3/plugins/preview?plugin_id={{ plugin.id }}"
                                 hx-include="closest form"
+                                hx-vals='js:{"__preview_size": document.getElementById("preview-size-{{ plugin.id }}").value}'
                                 hx-target="#plugin-preview-{{ plugin.id }}"
                                 hx-swap="innerHTML"
                                 hx-indicator="#preview-indicator-{{ plugin.id }}"
