@@ -5307,9 +5307,17 @@ def get_plugin_schema():
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
 
 
+# plugin_id arrives in request input and is used to build filesystem paths —
+# allowlist it (same pattern pages_v3 uses)
+_SAFE_PREVIEW_PLUGIN_ID_RE = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
+
+
 def _find_plugin_dir_for_preview(plugin_id: str) -> 'Path | None':
     """Locate an installed plugin's directory (store dir, then dev dirs) —
-    same search order the schema manager uses."""
+    same search order the schema manager uses. Rejects any id that could
+    name a path outside the plugin directories."""
+    if not isinstance(plugin_id, str) or not _SAFE_PREVIEW_PLUGIN_ID_RE.match(plugin_id):
+        return None
     candidates = []
     active_pm = getattr(api_v3, 'plugin_manager', None)
     if active_pm and getattr(active_pm, 'plugins_dir', None):
