@@ -12,6 +12,7 @@ import sys
 import subprocess
 import time
 import threading
+import types
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 import logging
@@ -828,8 +829,18 @@ class PluginManager:
                         # If resource monitor exists, wrap the call
                         def monitored_update():
                             self.resource_monitor.monitor_call(plugin_id, plugin_instance.update)
+                        # SimpleNamespace stores `update` as an *instance*
+                        # attribute, so attribute lookup returns the plain
+                        # function object as-is. A dynamically-built class
+                        # (`type(..., {'update': monitored_update})`) instead
+                        # stores it as a *class* attribute, which the
+                        # descriptor protocol turns into a bound method on
+                        # access -- silently prepending the instance as an
+                        # implicit first argument to a function that takes
+                        # none, raising "monitored_update() takes 0
+                        # positional arguments but 1 was given" on every call.
                         success = self.plugin_executor.execute_update(
-                            type('obj', (object,), {'update': monitored_update})(),
+                            types.SimpleNamespace(update=monitored_update),
                             plugin_id
                         )
                     else:
