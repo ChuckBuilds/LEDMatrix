@@ -13,35 +13,11 @@ across calls, which is fine for previewing but worth knowing.
 
 import json
 import logging
-import re
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
-
-# Matches an absolute filesystem path so it can be collapsed to just its
-# basename before an exception message reaches a client -- see
-# _safe_exc_message().
-_ABS_PATH_RE = re.compile(r'(?:/[\w.\-]+)+/[\w.\-]+')
-
-
-def _safe_exc_message(exc: Exception, max_len: int = 200) -> str:
-    """Render an exception's message for a client-facing preview response.
-
-    update()/display() exceptions are the plugin author's own code, so
-    showing *something* here is the point of this endpoint -- but the
-    message is otherwise unbounded and could echo back the server's own
-    directory layout (e.g. a FileNotFoundError embeds the full path it
-    tried). Collapse absolute paths to their basename and cap the length
-    so this stays a useful debugging hint without doubling as directory
-    disclosure. The full exception (with traceback) is still logged
-    server-side by the caller.
-    """
-    msg = _ABS_PATH_RE.sub(lambda m: Path(m.group(0)).name, str(exc))
-    if len(msg) > max_len:
-        msg = msg[:max_len] + '...'
-    return msg
 
 
 def render_plugin_once(plugin_id: str, plugin_dir: Path,
@@ -104,14 +80,23 @@ def render_plugin_once(plugin_id: str, plugin_dir: Path,
         try:
             plugin_instance.update()
         except Exception as e:
+            # Deliberately don't interpolate the exception's own message here:
+            # it's the plugin author's code, so its text is arbitrary and
+            # could echo back server-side details (a FileNotFoundError embeds
+            # a full path, etc.) that a static scanner can't tell apart from
+            # "already sanitised" just by looking at this line in isolation.
+            # The exception CLASS name is a fixed, bounded string (a Python
+            # builtin/stdlib name), never derived from the exception's own
+            # content, so it carries no such risk. Full details (with
+            # traceback) are still logged server-side below.
             logger.warning("Plugin %s update() raised during preview render", plugin_id, exc_info=True)
-            warnings.append(f"update() raised {type(e).__name__}: {_safe_exc_message(e)}")
+            warnings.append(f"update() raised {type(e).__name__} -- see server logs for details")
 
     try:
         plugin_instance.display(force_clear=True)
     except Exception as e:
         logger.warning("Plugin %s display() raised during preview render", plugin_id, exc_info=True)
-        errors.append(f"display() raised {type(e).__name__}: {_safe_exc_message(e)}")
+        errors.append(f"display() raised {type(e).__name__} -- see server logs for details")
 
     render_time_ms = round((time.time() - start_time) * 1000, 1)
 

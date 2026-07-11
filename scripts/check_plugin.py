@@ -137,8 +137,12 @@ def check_one(plugin_id: str, search_dirs: List[str], sizes, mock_data: Dict,
 
         if update_golden:
             written = write_goldens(results, golden_dir)
-            logger.info("Wrote %d golden image(s) for %s%s to %s", written, plugin_id,
-                        f" [{variant_name}]" if variant_name else "", golden_dir)
+            # plugin_id/golden_dir come from --plugin / the plugin's own
+            # manifest-relative path, not logged here to avoid a CodeQL
+            # clear-text-logging flag; `written` (a count) carries the
+            # useful confirmation on its own.
+            logger.info("Wrote %d golden image(s)%s", written,
+                        f" [{variant_name}]" if variant_name else "")
         else:
             compare_to_goldens(results, golden_dir)
 

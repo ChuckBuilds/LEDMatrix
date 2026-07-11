@@ -239,9 +239,12 @@ def api_render():
         result = _render_once(data['plugin_id'], plugin_dir, manifest, config,
                               mock_data, width, height, skip_update)
     except Exception as e:
+        # Full detail (with traceback) goes to the server log; the response
+        # only ever carries the exception's class name, not its message --
+        # see render_service.py's matching update()/display() handling for
+        # why the message itself isn't safe to echo back.
         logger.warning("Failed to load plugin %s for preview", data['plugin_id'], exc_info=True)
-        from src.plugin_system.testing.render_service import _safe_exc_message
-        return jsonify({'error': f'Failed to load plugin: {type(e).__name__}: {_safe_exc_message(e)}'}), 500
+        return jsonify({'error': f'Failed to load plugin ({type(e).__name__}) -- see server logs for details'}), 500
     return jsonify(result)
 
 
@@ -282,8 +285,6 @@ def api_render_matrix():
     except LookupError as e:
         return jsonify({'error': str(e)}), 404
 
-    from src.plugin_system.testing.render_service import _safe_exc_message
-
     results = []
     for w, h in parsed_sizes:
         try:
@@ -293,7 +294,7 @@ def api_render_matrix():
             logger.warning("Failed to load plugin %s for preview at %dx%d", data['plugin_id'], w, h, exc_info=True)
             results.append({'image': None, 'width': w, 'height': h,
                             'render_time_ms': 0,
-                            'errors': [f'Failed to load plugin: {type(e).__name__}: {_safe_exc_message(e)}'],
+                            'errors': [f'Failed to load plugin ({type(e).__name__}) -- see server logs for details'],
                             'warnings': []})
     return jsonify({'results': results})
 

@@ -77,7 +77,7 @@ def main() -> int:
         logger.error("Plugin '%s' not found in: %s", args.plugin, search_dirs)
         return 1
 
-    logger.info("Found plugin at: %s", plugin_dir)
+    logger.info("Found plugin directory")
 
     # Load manifest
     manifest = load_manifest(Path(plugin_dir))
