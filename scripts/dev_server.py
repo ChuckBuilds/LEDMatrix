@@ -239,7 +239,9 @@ def api_render():
         result = _render_once(data['plugin_id'], plugin_dir, manifest, config,
                               mock_data, width, height, skip_update)
     except Exception as e:
-        return jsonify({'error': f'Failed to load plugin: {e}'}), 500
+        logger.warning("Failed to load plugin %s for preview", data['plugin_id'], exc_info=True)
+        from src.plugin_system.testing.render_service import _safe_exc_message
+        return jsonify({'error': f'Failed to load plugin: {type(e).__name__}: {_safe_exc_message(e)}'}), 500
     return jsonify(result)
 
 
@@ -280,15 +282,18 @@ def api_render_matrix():
     except LookupError as e:
         return jsonify({'error': str(e)}), 404
 
+    from src.plugin_system.testing.render_service import _safe_exc_message
+
     results = []
     for w, h in parsed_sizes:
         try:
             results.append(_render_once(data['plugin_id'], plugin_dir, manifest,
                                         config, mock_data, w, h, skip_update))
         except Exception as e:
+            logger.warning("Failed to load plugin %s for preview at %dx%d", data['plugin_id'], w, h, exc_info=True)
             results.append({'image': None, 'width': w, 'height': h,
                             'render_time_ms': 0,
-                            'errors': [f'Failed to load plugin: {e}'],
+                            'errors': [f'Failed to load plugin: {type(e).__name__}: {_safe_exc_message(e)}'],
                             'warnings': []})
     return jsonify({'results': results})
 

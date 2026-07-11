@@ -159,7 +159,8 @@ class PluginLoader:
         Returns:
             Path to plugin directory or None if not found
         """
-        # Sanitize plugin_id — os.path.basename is a CodeQL-recognized path sanitizer
+        # Sanitize plugin_id (strip any directory components before it's
+        # used to build a path or as a dict key below).
         plugin_id = os.path.basename(plugin_id or '')
         if not plugin_id:
             return None
@@ -170,17 +171,20 @@ class PluginLoader:
             if plugin_dir.exists():
                 self.logger.debug("Using plugin directory from discovery mapping: %s", plugin_dir)
                 return plugin_dir
-        
-        # Strategy 2: Direct paths — resolve and validate they stay within plugins_dir
-        plugins_dir_resolved = plugins_dir.resolve()
+
+        # Strategy 2: Direct paths — match against an entry actually
+        # enumerated from the trusted plugins_dir, not a path string built
+        # from plugin_id. find_trusted_subdir()'s return value always comes
+        # from scandir() on plugins_dir itself, so building a path from it
+        # is a real containment guarantee regardless of what the caller
+        # asked for -- unlike checking containment after the fact (e.g.
+        # resolve() + relative_to()), which some static analyzers don't
+        # recognize as clearing taint on the constructed path.
+        plugins_dir_resolved = str(plugins_dir.resolve())
         for _candidate_name in (plugin_id, f"ledmatrix-{plugin_id}"):
-            _candidate = (plugins_dir_resolved / _candidate_name).resolve()
-            try:
-                _candidate.relative_to(plugins_dir_resolved)
-            except ValueError:
-                continue
-            if _candidate.exists():
-                return _candidate
+            matched_name = find_trusted_subdir(plugins_dir_resolved, _candidate_name)
+            if matched_name is not None:
+                return Path(plugins_dir_resolved) / matched_name
         
         # Strategy 3: Case-insensitive search
         normalized_id = plugin_id.lower()
