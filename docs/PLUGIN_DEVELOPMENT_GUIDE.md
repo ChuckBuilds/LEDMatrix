@@ -2,6 +2,11 @@
 
 This guide explains how to set up a development workflow for plugins that are maintained in separate Git repositories while still being able to test them within the LEDMatrix project.
 
+> **Rendering guidance:** plugins are expected to read the display size
+> dynamically and lay themselves out for any panel. The adaptive layout
+> system ([ADAPTIVE_LAYOUT.md](ADAPTIVE_LAYOUT.md)) provides the shared
+> helpers for that — fonts, images, and composite layouts that scale.
+
 ## Overview
 
 When developing plugins in separate repositories, you need a way to:

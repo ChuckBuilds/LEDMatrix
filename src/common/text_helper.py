@@ -11,6 +11,9 @@ from typing import Dict, List, Optional, Tuple, Union
 
 from PIL import Image, ImageDraw, ImageFont
 
+# Shared throwaway draw surface for measuring text without a target canvas.
+_measure_draw = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+
 
 class TextHelper:
     """
@@ -112,10 +115,10 @@ class TextHelper:
             Width in pixels
         """
         try:
-            return draw.textlength(text, font=font)
+            return int(_measure_draw.textlength(text, font=font))
         except AttributeError:
             # Fallback for older PIL versions
-            bbox = draw.textbbox((0, 0), text, font=font)
+            bbox = _measure_draw.textbbox((0, 0), text, font=font)
             return bbox[2] - bbox[0]
     
     def get_text_height(self, text: str, font: ImageFont.ImageFont) -> int:
@@ -129,13 +132,8 @@ class TextHelper:
         Returns:
             Height in pixels
         """
-        try:
-            bbox = draw.textbbox((0, 0), text, font=font)
-            return bbox[3] - bbox[1]
-        except AttributeError:
-            # Fallback for older PIL versions
-            bbox = draw.textbbox((0, 0), text, font=font)
-            return bbox[3] - bbox[1]
+        bbox = _measure_draw.textbbox((0, 0), text, font=font)
+        return bbox[3] - bbox[1]
     
     def get_text_dimensions(self, text: str, font: ImageFont.ImageFont) -> Tuple[int, int]:
         """

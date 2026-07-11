@@ -706,6 +706,12 @@ def _load_plugin_config_partial(plugin_id):
             try:
                 with open(schema_path, 'r', encoding='utf-8') as f:
                     schema = json.load(f)
+                # Expand x-style-elements declarations into full property
+                # blocks — the same expansion SchemaManager.load_schema
+                # applies on the API paths. The form must render the exact
+                # shape the save path parses and validates against.
+                from src.element_style import expand_style_elements
+                schema = expand_style_elements(schema)
             except Exception as e:
                 logger.warning("Could not load schema for plugin: %s", e)
 

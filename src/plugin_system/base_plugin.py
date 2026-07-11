@@ -15,6 +15,19 @@ import logging
 from src.logging_config import get_logger
 
 
+_shared_fallback_font_manager: Optional[Any] = None
+
+
+def _fallback_font_manager() -> Any:
+    """Shared FontManager for environments (unit tests, mocks) where the
+    plugin manager doesn't carry one. Scans assets/fonts like the real one."""
+    global _shared_fallback_font_manager
+    if _shared_fallback_font_manager is None:
+        from src.font_manager import FontManager
+        _shared_fallback_font_manager = FontManager({})
+    return _shared_fallback_font_manager
+
+
 class VegasDisplayMode(Enum):
     """
     Display mode for Vegas scroll integration.
@@ -129,6 +142,191 @@ class BasePlugin(ABC):
                 self.display_manager.update_display()
         """
         raise NotImplementedError("Plugins must implement display()")
+
+    # -------------------------------------------------------------------------
+    # Adaptive layout support (opt-in)
+    # -------------------------------------------------------------------------
+    @property
+    def layout(self) -> Any:
+        """
+        LayoutContext for the current logical display size.
+
+        Lazily built and rebuilt automatically when the display size changes
+        (e.g. Vegas segment widths, double-sided logical screens). Provides
+        Region carving (self.layout.bounds), breakpoint tiers, a geometry
+        scale factor vs. the manifest's display.design_size, and fit-text
+        queries against font ladders. See src/adaptive_layout.py.
+
+        Example:
+            rows = self.layout.bounds.inset(1).split_v(3, 1, gap=1)
+            self.draw_fit(big_text, rows[0], ladder=LADDER_ARCADE)
+            self.draw_fit(small_text, rows[1])
+        """
+        from src.adaptive_layout import LayoutContext
+
+        width = getattr(self.display_manager, "width", None)
+        height = getattr(self.display_manager, "height", None)
+        if not width or not height:
+            matrix = getattr(self.display_manager, "matrix", None)
+            width = getattr(matrix, "width", 128)
+            height = getattr(matrix, "height", 32)
+
+        font_manager = self._get_font_manager()
+        generation = getattr(font_manager, "cache_generation", 0)
+        cached = getattr(self, "_layout_context", None)
+        if (cached is not None
+                and (cached.width, cached.height) == (width, height)
+                and getattr(self, "_layout_font_generation", None) == generation):
+            return cached
+
+        context = LayoutContext(
+            width, height, font_manager,
+            design_size=self._get_design_size(),
+        )
+        self._layout_context = context
+        self._layout_font_generation = generation
+        return context
+
+    def draw_fit(self, text: str, box: Any,
+                 color: tuple = (255, 255, 255),
+                 ladder: Optional[Any] = None,
+                 align: str = "center", valign: str = "center") -> Any:
+        """
+        Fit text to a Region with the largest crisp font that fits, then draw
+        it aligned within that region via the display manager.
+
+        Args:
+            text: Text to display (ellipsized if even the smallest rung is too wide)
+            box: Region (or (w, h) tuple anchored at 0,0) to fit and align within
+            color: RGB color tuple
+            ladder: FontLadder to walk (default LADDER_GRID; use LADDER_ARCADE
+                    for headline text like clocks and scores)
+            align/valign: alignment of the text ink within the box
+
+        Returns:
+            FitResult (font, family, size_px, text, ink metrics, fits flag)
+        """
+        from src.adaptive_layout import LADDER_DEFAULT, draw_fitted_text
+
+        fit = self.layout.fit_text(text, box, ladder=ladder or LADDER_DEFAULT)
+        draw_fitted_text(self.display_manager, fit, box,
+                         color=color, align=align, valign=valign)
+        return fit
+
+    def draw_image(self, img: Any, box: Any, *,
+                   mode: str = "contain", align: str = "center",
+                   valign: str = "center", crop_to_ink: bool = False,
+                   anchor: str = "center", resample: Optional[Any] = None,
+                   cache_key: Optional[Any] = None,
+                   offset: tuple = (0, 0)) -> Any:
+        """
+        Fit an image into a Region and paste it aligned within that region
+        onto the display canvas — the image counterpart to draw_fit().
+
+        Args:
+            img: Source PIL image (logos, art, icons)
+            box: Region (or (w, h) tuple) to fit and align within
+            mode: "contain" (letterbox), "cover" (crop-to-fill),
+                  "fill_height" (logo-style), "stretch"
+            crop_to_ink: Trim transparent padding before fitting
+            anchor: "center" or "top" for cover crops
+            resample: PIL filter; default LANCZOS. Use RESAMPLE_NEAREST
+                  (from src.adaptive_images) for pixel art/flags
+            cache_key: Stable identity (e.g. "logo:KC") for cross-reload
+                  caching; defaults to the image object's identity
+            offset: Final (dx, dy) translation — the hook for user
+                  x/y-offset customization
+
+        Returns:
+            ImageFitResult (processed image + dimensions + scale)
+        """
+        from src.adaptive_images import draw_fitted_image
+
+        ifit = self.layout.fit_image(img, box, mode=mode,
+                                     crop_to_ink=crop_to_ink, anchor=anchor,
+                                     resample=resample, cache_key=cache_key)
+        draw_fitted_image(self.display_manager, ifit, box,
+                          align=align, valign=valign, offset=offset)
+        return ifit
+
+    def _get_font_manager(self) -> Any:
+        """The shared FontManager, or a module-level fallback when running
+        under mocks/harnesses that don't provide one."""
+        font_manager = getattr(self.plugin_manager, "font_manager", None)
+        if font_manager is not None and hasattr(font_manager, "get_font"):
+            return font_manager
+        return _fallback_font_manager()
+
+    def _get_design_size(self) -> tuple:
+        """Panel size this plugin's layout was authored against, from the
+        manifest's optional display.design_size (defaults to 128x32)."""
+        from src.adaptive_layout import DEFAULT_DESIGN_SIZE
+
+        if self.plugin_manager and hasattr(self.plugin_manager, "plugin_manifests"):
+            manifest = self.plugin_manager.plugin_manifests.get(self.plugin_id, {})
+            declared = manifest.get("display", {}).get("design_size", {})
+            width, height = declared.get("width"), declared.get("height")
+            if width and height:
+                return (int(width), int(height))
+        return DEFAULT_DESIGN_SIZE
+
+    # -------------------------------------------------------------------------
+    # Element style resolution (per-element user customization)
+    # -------------------------------------------------------------------------
+    @property
+    def style_resolver(self) -> Any:
+        """
+        ElementStyleResolver for this plugin's customization config.
+
+        Lazily built with the schema defaults from this plugin's own
+        config_schema.json (via the plugin manager's schema manager), so
+        "did the user override this font?" is answered correctly even though
+        saved configs always contain the schema defaults. Rebuilt when the
+        config changes (see on_config_change). Pass it into standalone helper
+        classes (game renderers etc.) instead of letting them build their own.
+
+        See src/element_style.py.
+        """
+        from src.element_style import ElementStyleResolver
+
+        cached = getattr(self, "_style_resolver", None)
+        if cached is not None:
+            return cached
+
+        schema_defaults: Dict[str, Any] = {}
+        schema_manager = getattr(self.plugin_manager, "schema_manager", None)
+        if schema_manager is not None:
+            try:
+                schema = schema_manager.load_schema(self.plugin_id)
+                if schema:
+                    schema_defaults = schema_manager.extract_defaults_from_schema(schema)
+            except Exception as e:
+                self.logger.debug("Schema defaults unavailable for %s: %s",
+                                  self.plugin_id, e)
+
+        resolver = ElementStyleResolver(self.config, schema_defaults)
+        self._style_resolver = resolver
+        return resolver
+
+    def element_style(self, element_key: str, *, classic_font: str,
+                      classic_size: int,
+                      classic_color: Optional[tuple] = None) -> Any:
+        """
+        Resolved font/color/offset for one display element, honoring the
+        user's customization.<element> config. classic_* are this plugin's
+        hardcoded defaults for the element.
+
+        Example:
+            style = self.element_style('title_text',
+                                       classic_font='PressStart2P-Regular.ttf',
+                                       classic_size=8)
+            draw.text((x + style.offset[0], y + style.offset[1]),
+                      title, font=style.font,
+                      fill=style.color or (255, 255, 255))
+        """
+        return self.style_resolver.style(element_key, classic_font=classic_font,
+                                         classic_size=classic_size,
+                                         classic_color=classic_color)
 
     def get_display_duration(self) -> float:
         """
@@ -591,6 +789,9 @@ class BasePlugin(ABC):
 
         # Update simple flags
         self.enabled = self.config.get("enabled", self.enabled)
+
+        # Invalidate the cached style resolver — it captured the old config
+        self._style_resolver = None
 
     def get_info(self) -> Dict[str, Any]:
         """

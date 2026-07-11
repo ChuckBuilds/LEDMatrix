@@ -2,6 +2,28 @@
 
 This directory contains reusable utilities and helpers for LEDMatrix plugins and core modules.
 
+## Adaptive Layout & Images (`src/adaptive_layout.py`, `src/adaptive_images.py`)
+
+The recommended way to lay out plugins that render legibly on **any** panel
+size (64x32 through 256x128+) without hand-tuned coordinates. Re-exported
+from `src.common` for convenience; canonical import paths are
+`src.adaptive_layout` / `src.adaptive_images`.
+
+```python
+# Every BasePlugin already has self.layout and the draw helpers:
+regs = scoreboard_regions(self.layout.bounds, ctx=self.layout)
+self.draw_image(away_logo, regs.away_slot, mode="fill_height",
+                crop_to_ink=True, cache_key=f"logo:{abbr}")
+self.draw_fit(score_text, regs.score_area)     # largest crisp font that fits
+self.draw_fit(status, regs.status_band)
+```
+
+Key pieces: `Region` (rect algebra: bands/columns/splits/offset),
+font ladders (`LADDER_GRID`, `LADDER_ARCADE` — discrete crisp sizes, never
+fractional scaling), `LayoutContext` (`fit_text`, `fit_image`, `by_tier`,
+`px`), and composite carvers `scoreboard_regions()` / `media_row()`.
+Full guide: [docs/ADAPTIVE_LAYOUT.md](../../docs/ADAPTIVE_LAYOUT.md).
+
 ## Error Handling (`error_handler.py`)
 
 Common error handling patterns and utilities:

@@ -28,6 +28,7 @@ DEFAULT_TEST_SIZES: List[Tuple[int, int]] = [
     (64, 32),    # 1x1 — single panel, the tightest common rectangle
     (128, 32),   # 2x1 — the baseline most plugins are tuned for
     (64, 64),    # 1x2 — stacked, exercises tall-narrow centering
+    (96, 48),    # non-64x32-module panel (e.g. Waveshare), off-grid dims
     (128, 64),   # 2x2 — block, icon scaling / vertical centering
     (256, 32),   # 4x1 — long strip, wide horizontal layout
     (128, 96),   # 2x3 — tall, exercises vertical overflow
