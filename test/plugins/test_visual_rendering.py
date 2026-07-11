@@ -172,6 +172,16 @@ class TestVisualDisplayManager:
         vdm.set_scrolling_state(False)
         assert vdm.is_currently_scrolling() is False
 
+    def test_process_deferred_updates_is_noop(self):
+        # Ticker-style plugins (news, odds-ticker, leaderboard, stock-news,
+        # stocks) call this unconditionally alongside set_scrolling_state();
+        # it must exist and be harmless so those plugins render under the
+        # harness instead of raising AttributeError.
+        vdm = VisualTestDisplayManager(width=128, height=32)
+        vdm.set_scrolling_state(True)
+        vdm.process_deferred_updates()  # should not raise
+        assert vdm.is_currently_scrolling() is True
+
     def test_format_date_with_ordinal(self):
         from datetime import datetime
         vdm = VisualTestDisplayManager(width=128, height=32)
