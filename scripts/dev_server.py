@@ -264,6 +264,16 @@ def _parse_render_request(data):
     if not plugin_dir:
         raise LookupError(f'Plugin not found: {plugin_id}')
 
+    # Path-injection barrier: normalize (no symlink resolution — dev plugins
+    # are commonly symlinked into plugins/) and require the directory to sit
+    # inside one of the plugin search dirs before any file access.
+    normalized = os.path.normpath(str(plugin_dir))
+    allowed_roots = [os.path.normpath(str(d)) for d in get_search_dirs()]
+    if not any(normalized == root or normalized.startswith(root + os.sep)
+               for root in allowed_roots):
+        raise LookupError(f'Plugin not found: {plugin_id}')
+    plugin_dir = Path(normalized)
+
     manifest_path = plugin_dir / 'manifest.json'
     with open(manifest_path, 'r') as f:
         manifest = json.load(f)
