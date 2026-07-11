@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 from pathlib import Path
 from src.plugin_system.plugin_manager import PluginManager
 from src.plugin_system.plugin_state import PluginState
+from src.plugin_system.resource_monitor import PluginResourceMonitor
 
 class TestPluginManager:
     """Test PluginManager functionality."""
@@ -74,9 +75,57 @@ class TestPluginManager:
             
             # No manifest in pm.plugin_manifests
             result = pm.load_plugin("non_existent_plugin")
-            
+
             assert result is False
             assert pm.state_manager.get_state("non_existent_plugin") == PluginState.ERROR
+
+    def test_run_scheduled_updates_calls_update_with_resource_monitor(
+        self, mock_config_manager, mock_display_manager, mock_cache_manager
+    ):
+        """Regression test: run_scheduled_updates() must actually call a
+        plugin's update() when self.resource_monitor is set (as it is in
+        every real deployment -- display_controller.py and web_interface/
+        app.py both assign a real PluginResourceMonitor after construction).
+
+        Previously, the resource_monitor branch wrapped the call in a
+        function stored as a *class* attribute on a dynamically-built type
+        (`type('obj', (object,), {'update': monitored_update})()`), which
+        the descriptor protocol turns into a bound method on access --
+        silently passing the synthetic instance as an implicit first
+        argument to monitored_update(), which takes none. Every plugin's
+        scheduled update failed with "monitored_update() takes 0 positional
+        arguments but 1 was given" and was silently swallowed into a
+        circuit-breaker retry loop that never succeeded, so plugin data
+        (scores, odds, etc.) never refreshed.
+        """
+        with patch('src.plugin_system.plugin_manager.ensure_directory_permissions'):
+            pm = PluginManager(
+                plugins_dir="plugins",
+                config_manager=mock_config_manager,
+                display_manager=mock_display_manager,
+                cache_manager=mock_cache_manager
+            )
+
+            plugin_instance = MagicMock()
+            plugin_instance.enabled = True
+            plugin_instance.update = MagicMock()
+
+            pm.plugins["test_plugin"] = plugin_instance
+            pm.plugin_manifests["test_plugin"] = {"update_interval": 10}
+            pm.state_manager.set_state("test_plugin", PluginState.ENABLED)
+            # Plain MagicMock, not the mock_cache_manager fixture: this test
+            # is about run_scheduled_updates() actually invoking update()
+            # through the resource-monitor wrapper, not about
+            # PluginResourceMonitor's own cache-backed metrics persistence
+            # (which calls cache_manager.get(..., memory_ttl=...) --
+            # a kwarg the fixture's mock_get() doesn't accept).
+            pm.resource_monitor = PluginResourceMonitor(MagicMock())
+
+            pm.run_scheduled_updates(current_time=time.time())
+
+            plugin_instance.update.assert_called_once()
+            assert "test_plugin" in pm.plugin_last_update
+            assert pm.state_manager.get_state("test_plugin") == PluginState.ENABLED
 
 
 class TestPluginLoader:
