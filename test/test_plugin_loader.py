@@ -193,7 +193,7 @@ class TestPluginLoader:
         
         mock_subprocess.return_value = MagicMock(returncode=0)
         
-        result = plugin_loader.install_dependencies(plugin_dir, "test_plugin")
+        result = plugin_loader.install_dependencies(plugin_dir, "test_plugin", plugins_dir=tmp_plugins_dir)
         
         assert result is True
         mock_subprocess.assert_called_once()
@@ -204,7 +204,7 @@ class TestPluginLoader:
         plugin_dir = tmp_plugins_dir / "test_plugin"
         plugin_dir.mkdir()
         
-        result = plugin_loader.install_dependencies(plugin_dir, "test_plugin")
+        result = plugin_loader.install_dependencies(plugin_dir, "test_plugin", plugins_dir=tmp_plugins_dir)
         
         assert result is True
         mock_subprocess.assert_not_called()
@@ -216,20 +216,23 @@ class TestPluginLoader:
         plugin_dir.mkdir()
         requirements_file = plugin_dir / "requirements.txt"
         requirements_file.write_text("package1==1.0.0\n")
-        
+
         mock_subprocess.return_value = MagicMock(returncode=1)
 
-        result = plugin_loader.install_dependencies(plugin_dir, "test_plugin")
+        result = plugin_loader.install_dependencies(plugin_dir, "test_plugin", plugins_dir=tmp_plugins_dir)
 
         assert result is False
 
+    @patch('src.plugin_system.plugin_loader.requirements_are_satisfied', return_value=False)
     @patch('subprocess.run')
     def test_install_dependencies_retries_with_ignore_installed_on_apt_conflict(
-        self, mock_subprocess, plugin_loader, tmp_plugins_dir
+        self, mock_subprocess, mock_satisfied, plugin_loader, tmp_plugins_dir
     ):
         """An apt-managed package with no pip RECORD file triggers a retry with
         --ignore-installed rather than silently assuming the old version satisfies
-        the requirement."""
+        the requirement. requirements_are_satisfied() is mocked False here because
+        this scenario is exactly the case where the installed (apt) version does
+        NOT satisfy the pin — that's why pip attempts a reinstall in the first place."""
         plugin_dir = tmp_plugins_dir / "test_plugin"
         plugin_dir.mkdir()
         requirements_file = plugin_dir / "requirements.txt"
@@ -242,16 +245,17 @@ class TestPluginLoader:
         retry_attempt = MagicMock(returncode=0, stderr="")
         mock_subprocess.side_effect = [first_attempt, retry_attempt]
 
-        result = plugin_loader.install_dependencies(plugin_dir, "test_plugin")
+        result = plugin_loader.install_dependencies(plugin_dir, "test_plugin", plugins_dir=tmp_plugins_dir)
 
         assert result is True
         assert mock_subprocess.call_count == 2
         retry_cmd = mock_subprocess.call_args_list[1][0][0]
         assert "--ignore-installed" in retry_cmd
 
+    @patch('src.plugin_system.plugin_loader.requirements_are_satisfied', return_value=False)
     @patch('subprocess.run')
     def test_install_dependencies_apt_conflict_retry_also_fails(
-        self, mock_subprocess, plugin_loader, tmp_plugins_dir
+        self, mock_subprocess, mock_satisfied, plugin_loader, tmp_plugins_dir
     ):
         """Still tolerates the failure (returns True) if the --ignore-installed
         retry itself fails, matching the prior soft-fallback behavior."""
@@ -267,14 +271,15 @@ class TestPluginLoader:
         retry_attempt = MagicMock(returncode=1, stderr="some other pip error")
         mock_subprocess.side_effect = [first_attempt, retry_attempt]
 
-        result = plugin_loader.install_dependencies(plugin_dir, "test_plugin")
+        result = plugin_loader.install_dependencies(plugin_dir, "test_plugin", plugins_dir=tmp_plugins_dir)
 
         assert result is True
         assert mock_subprocess.call_count == 2
 
+    @patch('src.plugin_system.plugin_loader.requirements_are_satisfied', return_value=False)
     @patch('subprocess.run')
     def test_install_dependencies_apt_conflict_retry_times_out(
-        self, mock_subprocess, plugin_loader, tmp_plugins_dir
+        self, mock_subprocess, mock_satisfied, plugin_loader, tmp_plugins_dir
     ):
         """A retry timeout must be tolerated the same way as a retry failure
         (return True), not propagate to the outer TimeoutExpired handler and
@@ -293,7 +298,47 @@ class TestPluginLoader:
             subprocess.TimeoutExpired(cmd="pip", timeout=300),
         ]
 
-        result = plugin_loader.install_dependencies(plugin_dir, "test_plugin")
+        result = plugin_loader.install_dependencies(plugin_dir, "test_plugin", plugins_dir=tmp_plugins_dir)
 
         assert result is True
         assert mock_subprocess.call_count == 2
+
+    @patch('subprocess.run')
+    def test_install_dependencies_already_satisfied_skips_pip(self, mock_subprocess, plugin_loader, tmp_plugins_dir):
+        """A requirement already satisfied in the current environment shouldn't invoke pip."""
+        plugin_dir = tmp_plugins_dir / "test_plugin"
+        plugin_dir.mkdir()
+        requirements_file = plugin_dir / "requirements.txt"
+        requirements_file.write_text("pytest>=1.0\n")
+
+        result = plugin_loader.install_dependencies(plugin_dir, "test_plugin", plugins_dir=tmp_plugins_dir)
+
+        assert result is True
+        mock_subprocess.assert_not_called()
+
+    def test_install_dependencies_requires_plugins_dir(self, plugin_loader, tmp_plugins_dir):
+        """plugins_dir is a required argument, not an optional trust-me flag --
+        calling without it must fail loudly (TypeError) rather than silently
+        falling back to trusting plugin_dir unchecked."""
+        plugin_dir = tmp_plugins_dir / "test_plugin"
+        plugin_dir.mkdir()
+
+        with pytest.raises(TypeError):
+            plugin_loader.install_dependencies(plugin_dir, "test_plugin")
+
+    @patch('subprocess.run')
+    def test_install_dependencies_rejects_path_outside_plugins_dir(
+        self, mock_subprocess, plugin_loader, tmp_path, tmp_plugins_dir
+    ):
+        """A plugin_dir that doesn't actually live inside plugins_dir (e.g. a
+        manifest-derived id crafted to traverse elsewhere) must be rejected
+        rather than read from -- this is the path-injection containment
+        check CodeQL flagged as missing."""
+        outside_dir = tmp_path / "outside"
+        outside_dir.mkdir()
+        (outside_dir / "requirements.txt").write_text("requests>=2.0\n")
+
+        result = plugin_loader.install_dependencies(outside_dir, "evil_plugin", plugins_dir=tmp_plugins_dir)
+
+        assert result is False
+        mock_subprocess.assert_not_called()

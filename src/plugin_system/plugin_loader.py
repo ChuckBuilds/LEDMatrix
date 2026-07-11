@@ -5,10 +5,10 @@ Handles plugin module imports, dependency installation, and class instantiation.
 Extracted from PluginManager to improve separation of concerns.
 """
 
-import hashlib
-import json
 import importlib
+import importlib.metadata
 import importlib.util
+import json
 import os
 import sys
 import subprocess
@@ -17,12 +17,101 @@ from pathlib import Path
 from typing import Dict, Any, Optional, Tuple, Type
 import logging
 
+from packaging.requirements import InvalidRequirement, Requirement
+
 from src.exceptions import PluginError
 from src.logging_config import get_logger
-from src.common.permission_utils import (
-    ensure_file_permissions,
-    get_plugin_file_mode
-)
+
+
+def requirements_has_real_deps(requirements_file: str) -> bool:
+    """
+    Check whether a requirements.txt actually specifies anything to install.
+
+    Plugins that ship all their dependencies with LEDMatrix core often keep a
+    requirements.txt where every line is commented out, for documentation
+    purposes only. Running pip against such a file still pays the full
+    subprocess/resolver cost for zero effect, so callers should skip the
+    install step entirely when this returns False.
+    """
+    try:
+        with open(requirements_file, 'r', encoding='utf-8') as fh:
+            for line in fh:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    return True
+    except OSError:
+        # Let the caller's own file handling report the error.
+        return True
+    return False
+
+
+def requirements_are_satisfied(requirements_file: str) -> bool:
+    """
+    Check whether every real requirement line in requirements.txt is already
+    satisfied by packages installed in the current interpreter.
+
+    This replaces marker-file tracking with a direct fact check, so it's
+    immune to stale/missing/corrupted markers: it looks at what's actually
+    importable right now rather than trusting a hash comparison from a
+    previous run. Anything ambiguous (pip options, unparseable lines,
+    extras, unresolvable versions) conservatively returns False so the
+    caller falls through to running pip — this check only ever saves work,
+    never masks a real install.
+    """
+    try:
+        with open(requirements_file, 'r', encoding='utf-8') as fh:
+            lines = fh.readlines()
+    except OSError:
+        return False
+
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line or line.startswith('#'):
+            continue
+        if line.startswith('-'):
+            return False  # pip option (-r, --index-url, ...), can't verify
+
+        try:
+            req = Requirement(line)
+        except InvalidRequirement:
+            return False
+
+        if req.extras:
+            return False  # verifying extras' sub-dependencies isn't worth it here
+
+        if req.marker is not None and not req.marker.evaluate():
+            continue  # not applicable on this platform/interpreter
+
+        try:
+            installed_version = importlib.metadata.version(req.name)
+        except importlib.metadata.PackageNotFoundError:
+            return False
+
+        if req.specifier and not req.specifier.contains(installed_version, prereleases=True):
+            return False
+
+    return True
+
+
+def find_trusted_subdir(trusted_dir: str, name: str) -> Optional[str]:
+    """Return `name` if it names an actual subdirectory of trusted_dir, else None.
+
+    Used as a containment check for a directory name derived from untrusted
+    input (a manifest-declared plugin id, an externally-supplied plugin
+    path): the returned value always comes from enumerating trusted_dir
+    itself via os.scandir(), so a caller that builds a path by joining
+    trusted_dir with this return value is joining against a name the
+    filesystem produced under a trusted root -- not the caller's original
+    string, which could otherwise smuggle a traversal sequence through.
+    """
+    try:
+        with os.scandir(trusted_dir) as entries:
+            for entry in entries:
+                if entry.name == name and entry.is_dir():
+                    return entry.name
+    except OSError:
+        pass
+    return None
 
 
 class PluginLoader:
@@ -132,14 +221,14 @@ class PluginLoader:
                 except (json.JSONDecodeError, Exception) as e:
                     self.logger.debug("Skipping %s due to manifest error: %s", item.name, e)
                     continue
-        
+
         return None
-    
+
     def install_dependencies(
         self,
         plugin_dir: Path,
         plugin_id: str,
-        plugins_dir: Optional[Path] = None,
+        plugins_dir: Path,
         timeout: int = 300
     ) -> bool:
         """
@@ -148,7 +237,12 @@ class PluginLoader:
         Args:
             plugin_dir: Plugin directory path
             plugin_id: Plugin identifier
-            plugins_dir: Trusted base plugins directory for path containment check
+            plugins_dir: Trusted base plugins directory for path containment check.
+                Required (not optional) so every caller reconstructs the plugin
+                path through the sanitiser below rather than trusting plugin_dir
+                directly -- CodeQL's path-injection query (and a malicious
+                manifest/plugin_id in practice) can't tell a legitimate
+                plugin_dir from one crafted to traverse outside plugins_dir.
             timeout: Installation timeout in seconds
 
         Returns:
@@ -160,59 +254,42 @@ class PluginLoader:
 
         # Resolve to a canonical absolute path (normalises .. and symlinks)
         plugin_dir_real = os.path.realpath(str(plugin_dir))
+        plugins_dir_real = os.path.realpath(str(plugins_dir))
+        requested_name = os.path.basename(plugin_dir_real)
 
-        if plugins_dir is not None:
-            # Reconstruct the plugin path from a trusted base + a sanitised
-            # directory name.  os.path.basename() is CodeQL's recognised
-            # py/path-injection sanitiser: it strips all directory components
-            # so the result cannot contain traversal sequences.  Joining it
-            # with the resolved, trusted plugins_dir produces a path that
-            # CodeQL considers untainted.
-            plugins_dir_real = os.path.realpath(str(plugins_dir))
-            safe_dir_name = os.path.basename(plugin_dir_real)
-            if not safe_dir_name:
-                self.logger.error("Could not determine plugin directory name for %s", plugin_id)
-                return False
-            safe_plugin_dir = os.path.join(plugins_dir_real, safe_dir_name)
-            if not os.path.isdir(safe_plugin_dir):
-                self.logger.error(
-                    "Plugin directory for %s not found inside plugins dir", plugin_id
-                )
-                return False
-        else:
-            safe_plugin_dir = plugin_dir_real
-            if not os.path.isdir(safe_plugin_dir):
-                self.logger.error("Plugin directory does not exist: %s", plugin_dir)
-                return False
+        # Match the requested directory against an entry actually enumerated
+        # from the trusted plugins_dir, and build the path from that entry --
+        # not from requested_name. A name that came out of os.scandir() on a
+        # trusted root carries no taint regardless of what the caller asked
+        # for, so this is a real containment guarantee (an allowlist check
+        # against a trusted source), not a string-sanitisation of untrusted
+        # input that a static analyzer has to trust blindly.
+        matched_name = find_trusted_subdir(plugins_dir_real, requested_name)
+        if matched_name is None:
+            self.logger.error(
+                "Plugin directory for %s not found inside plugins dir", plugin_id
+            )
+            return False
 
+        safe_plugin_dir = os.path.join(plugins_dir_real, matched_name)
         requirements_file = os.path.join(safe_plugin_dir, "requirements.txt")
-        marker_file = os.path.join(safe_plugin_dir, ".dependencies_installed")
 
         if not os.path.isfile(requirements_file):
             return True  # No dependencies needed
 
-        try:
-            with open(requirements_file, 'rb') as fh:
-                current_hash = hashlib.sha256(fh.read()).hexdigest()
-        except OSError as e:
-            self.logger.error("Failed to read requirements.txt for %s: %s", plugin_id, e)
-            return False
+        if not requirements_has_real_deps(requirements_file):
+            self.logger.debug(
+                "requirements.txt for %s has no real dependencies (comments/blank only), skipping pip",
+                plugin_id
+            )
+            return True
 
-        # Skip if requirements.txt hasn't changed since last install
-        if os.path.isfile(marker_file):
-            try:
-                with open(marker_file, 'r', encoding='utf-8') as fh:
-                    stored_hash = fh.read().strip()
-            except OSError as e:
-                self.logger.warning(
-                    "Could not read dependency marker for %s (%s), will reinstall dependencies",
-                    plugin_id, e
-                )
-            else:
-                if stored_hash == current_hash:
-                    self.logger.debug("Dependencies already installed for %s (requirements unchanged)", plugin_id)
-                    return True
-                self.logger.info("Requirements changed for %s, reinstalling dependencies", plugin_id)
+        if requirements_are_satisfied(requirements_file):
+            self.logger.debug(
+                "Dependencies for %s already satisfied in current environment, skipping pip",
+                plugin_id
+            )
+            return True
 
         try:
             self.logger.info("Installing dependencies for plugin %s...", plugin_id)
@@ -225,12 +302,6 @@ class PluginLoader:
             )
 
             if result.returncode == 0:
-                try:
-                    with open(marker_file, 'w', encoding='utf-8') as fh:
-                        fh.write(current_hash)
-                    ensure_file_permissions(Path(marker_file), get_plugin_file_mode())
-                except OSError as marker_err:
-                    self.logger.debug("Could not write dependency marker for %s: %s", plugin_id, marker_err)
                 self.logger.info("Dependencies installed successfully for %s", plugin_id)
                 return True
             else:
@@ -242,8 +313,7 @@ class PluginLoader:
                 # the system copy instead of trying to replace it — matching the
                 # retry already used by install_dependencies_apt.py / safe_pip_install.sh.
                 # Without this retry, the plugin would silently keep running against
-                # whatever version the system happened to ship, even though the
-                # marker below claims the requirement is satisfied.
+                # whatever version the system happened to ship.
                 if "uninstall-no-record-file" in stderr:
                     self.logger.warning(
                         "Dependencies for %s conflict with a system-managed package "
@@ -280,12 +350,6 @@ class PluginLoader:
                             "system-managed version satisfies the requirement",
                             plugin_id
                         )
-                    try:
-                        with open(marker_file, 'w', encoding='utf-8') as fh:
-                            fh.write(current_hash)
-                        ensure_file_permissions(Path(marker_file), get_plugin_file_mode())
-                    except OSError as marker_err:
-                        self.logger.debug("Could not write dependency marker for %s: %s", plugin_id, marker_err)
                     return True
                 self.logger.warning(
                     "Dependency installation returned non-zero exit code for %s: %s",
@@ -653,6 +717,14 @@ class PluginLoader:
         """
         # Install dependencies if needed
         if install_deps:
+            if plugins_dir is None:
+                raise PluginError(
+                    f"plugins_dir is required to install dependencies for plugin {plugin_id} "
+                    "(needed for path containment; pass install_deps=False if the caller "
+                    "doesn't have a trusted plugins directory to supply)",
+                    plugin_id=plugin_id,
+                    context={'plugin_dir': str(plugin_dir)},
+                )
             if not self.install_dependencies(plugin_dir, plugin_id, plugins_dir=plugins_dir):
                 raise PluginError(
                     f"Dependency installation failed for plugin {plugin_id} in {plugin_dir}",

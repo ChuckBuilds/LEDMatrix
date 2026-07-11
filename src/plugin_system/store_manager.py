@@ -5,7 +5,6 @@ Handles plugin discovery, installation, updates, and uninstallation
 from both the official registry and custom GitHub repositories.
 """
 
-import hashlib
 import os
 import re
 import json
@@ -26,6 +25,9 @@ import logging
 from urllib.parse import urlparse
 
 from src.common.permission_utils import sudo_remove_directory, install_requirements_file
+from src.plugin_system.plugin_loader import (
+    requirements_has_real_deps, requirements_are_satisfied, find_trusted_subdir
+)
 
 try:
     from jsonschema import Draft7Validator, ValidationError
@@ -1900,19 +1902,45 @@ class PluginStoreManager:
     def _install_dependencies(self, plugin_path: Path) -> bool:
         """
         Install Python dependencies from requirements.txt.
-        
+
         Args:
             plugin_path: Path to plugin directory
-            
+
         Returns:
             True if successful or no requirements file
         """
-        requirements_file = plugin_path / "requirements.txt"
-        
+        # Reconstruct the plugin path from the trusted self.plugins_dir base +
+        # an entry actually enumerated from it, rather than trusting
+        # plugin_path directly -- callers ultimately derive it from a
+        # plugin-supplied manifest "id" field (see install_plugin_from_url),
+        # so without this a malicious manifest could point requirements_file
+        # outside plugins_dir. find_trusted_subdir()'s return value always
+        # comes from os.scandir() on the trusted root, so building the path
+        # from it (not from the caller's string) is a real containment
+        # guarantee, matching the pattern in PluginLoader.install_dependencies().
+        plugin_dir_real = os.path.realpath(str(plugin_path))
+        plugins_dir_real = os.path.realpath(str(self.plugins_dir))
+        requested_name = os.path.basename(plugin_dir_real)
+        matched_name = find_trusted_subdir(plugins_dir_real, requested_name)
+        if matched_name is None:
+            self.logger.error("Plugin directory not found inside plugins dir for dependency install")
+            return False
+        safe_plugin_path = Path(os.path.join(plugins_dir_real, matched_name))
+
+        requirements_file = safe_plugin_path / "requirements.txt"
+
         if not requirements_file.exists():
             self.logger.debug(f"No requirements.txt found in {plugin_path.name}")
             return True
-        
+
+        if not requirements_has_real_deps(str(requirements_file)):
+            self.logger.debug(f"requirements.txt for {plugin_path.name} has no real dependencies, skipping pip")
+            return True
+
+        if requirements_are_satisfied(str(requirements_file)):
+            self.logger.debug(f"Dependencies for {plugin_path.name} already satisfied, skipping pip")
+            return True
+
         try:
             self.logger.info(f"Installing dependencies for {plugin_path.name}")
             # Routed through the shared root-visible installer (same one the
@@ -1929,12 +1957,6 @@ class PluginStoreManager:
                 )
                 return False
             self.logger.info(f"Dependencies installed successfully for {plugin_path.name}")
-            # Write hash marker so plugin_loader skips redundant pip run on next startup
-            try:
-                current_hash = hashlib.sha256(requirements_file.read_bytes()).hexdigest()
-                (plugin_path / ".dependencies_installed").write_text(current_hash, encoding='utf-8')
-            except OSError as marker_err:
-                self.logger.debug("Could not write dependency marker for %s: %s", plugin_path.name, marker_err)
             return True
 
         except subprocess.TimeoutExpired:
@@ -2432,19 +2454,6 @@ class PluginStoreManager:
                                     file_path = line[3:].strip()
                                     untracked_files.append(file_path)
                         
-                        # Remove marker files that are safe to delete (they'll be regenerated)
-                        safe_to_remove = ['.dependencies_installed']
-                        removed_files = []
-                        for file_name in safe_to_remove:
-                            file_path = plugin_path / file_name
-                            if file_path.exists() and file_name in untracked_files:
-                                try:
-                                    file_path.unlink()
-                                    removed_files.append(file_name)
-                                    self.logger.info(f"Removed marker file {file_name} from {plugin_id} before update")
-                                except Exception as e:
-                                    self.logger.warning(f"Could not remove {file_name} from {plugin_id}: {e}")
-                        
                         # Check for tracked file changes
                         status_result = subprocess.run(
                             ['git', '-C', str(plugin_path), 'status', '--porcelain', '--untracked-files=no'],
@@ -2455,10 +2464,9 @@ class PluginStoreManager:
                         )
                         has_changes = bool(status_result.stdout.strip())
                         
-                        # If there are remaining untracked files (not safe to remove), stash them
-                        remaining_untracked = [f for f in untracked_files if f not in removed_files]
-                        if remaining_untracked:
-                            self.logger.info(f"Found {len(remaining_untracked)} untracked files in {plugin_id}, will stash them")
+                        # If there are untracked files, stash them
+                        if untracked_files:
+                            self.logger.info(f"Found {len(untracked_files)} untracked files in {plugin_id}, will stash them")
                             has_changes = True
                     except subprocess.TimeoutExpired:
                         # If status check times out, assume there might be changes and proceed
