@@ -276,14 +276,20 @@ def api_render():
 
     try:
         plugin_dir, manifest, config, mock_data, skip_update = _parse_render_request(data)
-    except LookupError as e:
-        return jsonify({'error': str(e)}), 404
+    except LookupError:
+        return jsonify({'error': f"Plugin not found: {data['plugin_id']}"}), 404
+    except Exception:
+        # Bad manifest.json / schema / fixture — details go to the dev's
+        # console, not the HTTP response
+        app.logger.exception('render request preparation failed')
+        return jsonify({'error': 'Could not prepare render request; see server log'}), 400
 
     try:
         result = _render_once(data['plugin_id'], plugin_dir, manifest, config,
                               mock_data, width, height, skip_update)
-    except Exception as e:
-        return jsonify({'error': f'Failed to load plugin: {e}'}), 500
+    except Exception:
+        app.logger.exception('plugin load failed during render')
+        return jsonify({'error': 'Failed to load plugin; see server log'}), 500
     return jsonify(result)
 
 
@@ -321,18 +327,22 @@ def api_render_matrix():
 
     try:
         plugin_dir, manifest, config, mock_data, skip_update = _parse_render_request(data)
-    except LookupError as e:
-        return jsonify({'error': str(e)}), 404
+    except LookupError:
+        return jsonify({'error': f"Plugin not found: {data['plugin_id']}"}), 404
+    except Exception:
+        app.logger.exception('render request preparation failed')
+        return jsonify({'error': 'Could not prepare render request; see server log'}), 400
 
     results = []
     for w, h in parsed_sizes:
         try:
             results.append(_render_once(data['plugin_id'], plugin_dir, manifest,
                                         config, mock_data, w, h, skip_update))
-        except Exception as e:
+        except Exception:
+            app.logger.exception('plugin load failed during %dx%d render', w, h)
             results.append({'image': None, 'width': w, 'height': h,
                             'render_time_ms': 0,
-                            'errors': [f'Failed to load plugin: {e}'],
+                            'errors': ['Failed to load plugin; see server log'],
                             'warnings': []})
     return jsonify({'results': results})
 

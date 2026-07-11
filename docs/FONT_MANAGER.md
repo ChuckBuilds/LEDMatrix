@@ -2,8 +2,10 @@
 
 > **Picking a size automatically:** if you want the *largest font that fits
 > a given area* rather than a fixed size, use the adaptive layout system's
-> font ladders (`self.layout.fit_text(...)`) which resolve through this
-> FontManager — see [ADAPTIVE_LAYOUT.md](ADAPTIVE_LAYOUT.md).
+> font ladders, which resolve through this FontManager. `BasePlugin`
+> subclasses get this as `self.layout.fit_text(...)`; other code can build
+> a `LayoutContext(width, height, font_manager)` directly — see
+> [ADAPTIVE_LAYOUT.md](ADAPTIVE_LAYOUT.md).
 
 ## Overview
 
