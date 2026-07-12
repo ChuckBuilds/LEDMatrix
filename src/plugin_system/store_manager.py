@@ -2263,6 +2263,59 @@ class PluginStoreManager:
             self.logger.error(f"Error uninstalling plugin {plugin_id}: {e}")
             return False
     
+    def _reinstall_with_rollback(self, plugin_id: str, plugin_path: Path) -> bool:
+        """Replace an installed plugin with a fresh install, atomically.
+
+        The old install is renamed aside (not deleted) until the new install
+        succeeds, then removed; on ANY install failure the old directory is
+        restored. This is the difference between a failed update and a
+        destroyed plugin: the previous delete-then-install flow permanently
+        removed plugins whenever the download failed mid-update (seen in the
+        field during the monorepo migration on a Pi with broken DNS — every
+        old-remote plugin was deleted and none could be re-downloaded).
+
+        The aside name embeds '.standalone-backup-' so plugin discovery
+        (plugin_manager._scan_directory_for_plugins) ignores it even though
+        it still contains a manifest.json.
+        """
+        backup_path = plugin_path.with_name(
+            f"{plugin_path.name}.standalone-backup-migrating")
+        # A stale aside from a previous crash would block the rename
+        if backup_path.exists():
+            self._safe_remove_directory(backup_path)
+        try:
+            plugin_path.rename(backup_path)
+        except OSError as e:
+            self.logger.error(
+                f"Could not set aside old plugin directory for {plugin_id}: {e}")
+            return False
+
+        try:
+            installed = self.install_plugin(plugin_id)
+        except Exception as e:
+            self.logger.error(f"Reinstall of {plugin_id} raised: {e}")
+            installed = False
+
+        if installed:
+            self._safe_remove_directory(backup_path)
+            return True
+
+        # Install failed (bad network, registry error...) — put the old
+        # version back so the user still has a working plugin.
+        self.logger.error(
+            f"Reinstall of {plugin_id} failed; restoring previous version")
+        try:
+            if plugin_path.exists():
+                # partial download debris from the failed install
+                self._safe_remove_directory(plugin_path)
+            backup_path.rename(plugin_path)
+            self.logger.info(f"Restored previous install of {plugin_id}")
+        except OSError as e:
+            self.logger.error(
+                f"CRITICAL: could not restore {plugin_id} from {backup_path}: {e}. "
+                f"The previous install is preserved there — rename it back manually.")
+        return False
+
     def update_plugin(self, plugin_id: str) -> bool:
         """
         Update a plugin to the latest commit on its upstream branch.
@@ -2325,10 +2378,7 @@ class PluginStoreManager:
                             f"Plugin {resolved_id} git remote ({local_remote}) differs from registry ({registry_repo}). "
                             f"Reinstalling from registry to migrate to new source."
                         )
-                        if not self._safe_remove_directory(plugin_path):
-                            self.logger.error(f"Failed to remove old plugin directory for {resolved_id}")
-                            return False
-                        return self.install_plugin(resolved_id)
+                        return self._reinstall_with_rollback(resolved_id, plugin_path)
 
                     # Check if already up to date
                     if remote_sha and local_sha and remote_sha.startswith(local_sha):
@@ -2632,11 +2682,11 @@ class PluginStoreManager:
             # Plugin is not a git repo but is in registry and has a newer version - reinstall
             self.logger.info(f"Plugin {plugin_id} not installed via git; re-installing latest archive (registry id: {registry_id})")
 
-            # Remove directory and reinstall fresh
-            if not self._safe_remove_directory(plugin_path):
-                self.logger.error(f"Failed to remove old plugin directory for {plugin_id}")
-                return False
-            return self.install_plugin(registry_id)
+            # Reinstall with the old version kept aside until the new
+            # download succeeds — this is the path every routine store
+            # update takes, and a mid-update network failure must not
+            # destroy the user's plugin.
+            return self._reinstall_with_rollback(registry_id, plugin_path)
 
         except Exception as e:
             import traceback
