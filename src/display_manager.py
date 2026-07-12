@@ -36,6 +36,7 @@ import time
 from typing import Dict, Any, List, Optional
 import logging
 import math
+import zlib
 import freetype
 
 # Get logger without configuring
@@ -188,6 +189,12 @@ class DisplayManager:
         self._snapshot_path = "/tmp/led_matrix_preview.png"  # nosec B108 - fixed path intentional; web UI reads same path
         self._snapshot_min_interval_sec = 0.2  # max ~5 fps
         self._last_snapshot_ts = 0.0
+        # Dirty tracking: (image digest, brightness) of the last frame pushed
+        # to the panel; update_display() skips identical pushes. Kill switch:
+        # display.dirty_tracking: false.
+        self._dirty_tracking_enabled = bool(
+            self.config.get('display', {}).get('dirty_tracking', True))
+        self._last_pushed_digest = None
         
         # Scrolling state tracking for graceful updates
         self._scrolling_state = {
@@ -418,6 +425,10 @@ class DisplayManager:
         try:
             # RGBMatrix accepts brightness as a property
             self.matrix.brightness = brightness
+            # Brightness applies on the next swap — force a re-push even if
+            # the image itself is unchanged (belt-and-braces: brightness is
+            # also part of the dirty-tracking digest when readable).
+            self._last_pushed_digest = None
             logger.info(f"[BRIGHTNESS] Display brightness set to {brightness}%")
             return True
         except AttributeError as e:
@@ -509,7 +520,20 @@ class DisplayManager:
         return phys
 
     def update_display(self):
-        """Update the display using double buffering with proper sync."""
+        """Update the display using double buffering with proper sync.
+
+        Skips the panel push entirely when the frame is byte-identical to
+        the last pushed one (same image digest AND same brightness) — static
+        content re-rendered every second, and 125 fps loops between actual
+        scroll steps, otherwise re-walk the full framebuffer for nothing.
+        The panel keeps refreshing the current frame from its own thread,
+        so skipping a swap never blanks or freezes the hardware.
+
+        Correctness hinges on invalidation: clear() resets the digest (it
+        writes to the matrix directly), and brightness is PART of the digest
+        so a dim-schedule change is never skipped. Disable via config
+        ``display.dirty_tracking: false`` if a redraw issue is ever suspected.
+        """
         try:
             if self.matrix is None:
                 # Fallback mode - no actual hardware to update
@@ -521,6 +545,19 @@ class DisplayManager:
             if self._capture_mode_active:
                 return  # Skip hardware write — content is being captured off-screen
 
+            digest = None
+            if self._dirty_tracking_enabled:
+                try:
+                    brightness = getattr(self.matrix, 'brightness', None)
+                except Exception:
+                    brightness = None
+                digest = (zlib.adler32(self.image.tobytes()), brightness)
+                if digest == self._last_pushed_digest:
+                    # Nothing changed since the last push — the panel is
+                    # already showing exactly this frame.
+                    self._write_snapshot_if_due()
+                    return
+
             # Copy the current image to the offscreen canvas. In double-sided
             # mode the logical screen is first tiled across the full chain.
             if self._double_sided is not None:
@@ -530,9 +567,11 @@ class DisplayManager:
 
             # Swap buffers immediately
             self.matrix.SwapOnVSync(self.offscreen_canvas)
-            
+
             # Swap our canvas references
             self.offscreen_canvas, self.current_canvas = self.current_canvas, self.offscreen_canvas
+
+            self._last_pushed_digest = digest
 
             # Write a snapshot for the web preview (throttled)
             self._write_snapshot_if_due()
@@ -569,6 +608,9 @@ class DisplayManager:
                 # Clear both canvases and the underlying matrix to ensure no artifacts.
                 # Failures are non-fatal — the image buffer is already black above, so
                 # the next update_display() call will push clean content regardless.
+                # The matrix content no longer matches the last pushed digest,
+                # so dirty tracking must not skip the next push.
+                self._last_pushed_digest = None
                 try:
                     self.offscreen_canvas.Clear()
                 except (RuntimeError, OSError) as e:
