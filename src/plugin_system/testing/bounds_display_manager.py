@@ -10,8 +10,11 @@ that don't scale down to a smaller panel.
 
 Limitations (documented on purpose):
 - Overflow past the LEFT or TOP edge (negative coordinates) is still clipped by
-  PIL and not detected here. The dominant real-world breakage is content that is
-  too wide/tall for a smaller panel, which this catches.
+  PIL and not detected pixel-wise here. The dominant real-world breakage is
+  content that is too wide/tall for a smaller panel, which this catches.
+  As a partial net, draw_text/draw_image calls made with negative coordinates
+  through this manager are recorded in `negative_coordinate_calls` — but draws
+  made directly on the raw PIL canvas remain uncovered.
 - BDF text is clipped to the declared bounds by the parent's bitmap drawer, so
   BDF overflow is not flagged. Golden-image regression covers those plugins.
 - If a plugin replaces the canvas with its own image (display_manager.image = ...),
@@ -56,6 +59,21 @@ class BoundsCheckingDisplayManager(VisualTestDisplayManager):
         super().__init__(self._canvas_width, self._canvas_height)
         # Plugins must see the DECLARED size, not the padded canvas size.
         self.matrix = _MatrixProxy(self._declared_width, self._declared_height)
+        # (text-or-'image', x, y) for every mediated draw call given a
+        # negative coordinate — PIL clips these silently, so record them.
+        self.negative_coordinate_calls: list = []
+
+    # -- negative-coordinate (left/top overflow) recording --
+
+    def draw_text(self, text, x=None, y=None, *args, **kwargs):
+        if (x is not None and x < 0) or (y is not None and y < 0):
+            self.negative_coordinate_calls.append((text, x, y))
+        return super().draw_text(text, x, y, *args, **kwargs)
+
+    def draw_image(self, image, x, y, *args, **kwargs):
+        if x < 0 or y < 0:
+            self.negative_coordinate_calls.append(('image', x, y))
+        return super().draw_image(image, x, y, *args, **kwargs)
 
     # -- declared dimensions (override parent's image-derived properties) --
 

@@ -161,6 +161,13 @@ class MockPluginManager:
         self.plugin_manifests: Dict[str, Dict] = {}
         self.get_plugin_calls = []
         self.get_all_plugins_calls = []
+        # Real FontManager so BasePlugin.layout / draw_fit behave identically
+        # under the harness (it only needs assets/fonts on disk).
+        try:
+            from src.font_manager import FontManager
+            self.font_manager: Optional[Any] = FontManager({})
+        except Exception:
+            self.font_manager = None
     
     def get_plugin(self, plugin_id: str) -> Optional[Any]:
         """Get a plugin instance."""
