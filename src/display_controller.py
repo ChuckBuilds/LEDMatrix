@@ -621,18 +621,28 @@ class DisplayController:
 
         current_day = current_time.strftime('%A').lower()  # e.g. 'monday'
         current_time_only = current_time.time()
-        
+
         # Check if per-day schedule is configured
         days_config = schedule_config.get('days')
-        
-        # Determine which schedule to use
+
+        # Determine which schedule to use. Respect an explicit 'mode' field
+        # (like the dim schedule does) so a stray/legacy 'days' dict left over
+        # from config migration or a prior per-day setup can't silently
+        # override a user's Global schedule selection.
+        mode = schedule_config.get('mode')
+        mode_normalized = mode.replace('_', '-') if mode else None
+
         use_per_day = False
-        if days_config:
-            # Check if days dict is not empty and contains current day
-            if days_config and current_day in days_config:
+        if mode_normalized == 'global':
+            use_per_day = False
+        elif mode_normalized == 'per-day':
+            use_per_day = bool(days_config and current_day in days_config)
+        elif days_config:
+            # No explicit mode recorded (legacy config) - fall back to
+            # inferring from presence of a 'days' dict for the current day.
+            if current_day in days_config:
                 use_per_day = True
-            elif days_config:
-                # Days dict exists but doesn't have current day - fall back to global
+            else:
                 logger.debug("Per-day schedule exists but %s not configured, using global schedule", current_day)
         
         if use_per_day:
