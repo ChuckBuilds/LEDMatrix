@@ -5338,6 +5338,7 @@ def _find_plugin_dir_for_preview(plugin_id: str) -> 'Path | None':
 
 
 PREVIEW_MIN_SIZE, PREVIEW_MAX_W, PREVIEW_MAX_H = 8, 1024, 512
+PREVIEW_RENDER_TIMEOUT_SEC = 15
 
 
 @api_v3.route('/plugins/preview', methods=['POST'])
@@ -5420,9 +5421,24 @@ def preview_plugin_render():
 
         content_type = request.content_type or ''
         if 'application/json' in content_type:
+            import copy
             data = request.get_json(silent=True) or {}
-            plugin_config = existing_config
-            plugin_config.update(data.get('config', {}))
+
+            # Deep-merge the candidate onto the saved config, matching how
+            # the form path (and save) treat partial updates — a shallow
+            # update() would silently drop the user's saved values in any
+            # nested section the candidate touches (e.g. posting one
+            # element's color would discard the saved font of its sibling).
+            def _deep_merge(base, overlay):
+                for key, value in overlay.items():
+                    if (isinstance(value, dict)
+                            and isinstance(base.get(key), dict)):
+                        _deep_merge(base[key], value)
+                    else:
+                        base[key] = value
+
+            plugin_config = copy.deepcopy(existing_config)
+            _deep_merge(plugin_config, data.get('config', {}))
         else:
             # Strip the preview-only control field so it never lands in the
             # candidate config the plugin sees
@@ -5455,11 +5471,39 @@ def preview_plugin_render():
 
         skip_update = request.args.get('skip_update', '1') not in ('0', 'false')
 
+        # Bounded render: a plugin whose update()/display() hangs must not
+        # pin a web worker forever. The runaway thread can't be killed, but
+        # the request returns and the thread is daemonized so it can't block
+        # shutdown either.
         from src.plugin_system.testing.render_service import render_plugin_once
-        result = render_plugin_once(
-            plugin_id, plugin_dir, config=plugin_config,
-            mock_data=mock_data, width=width, height=height,
-            skip_update=skip_update)
+        import threading
+        render_out: dict = {}
+
+        def _do_render():
+            try:
+                render_out['result'] = render_plugin_once(
+                    plugin_id, plugin_dir, config=plugin_config,
+                    mock_data=mock_data, width=width, height=height,
+                    skip_update=skip_update)
+            except Exception as e:  # surfaced below
+                render_out['error'] = e
+
+        render_thread = threading.Thread(target=_do_render, daemon=True,
+                                         name=f'preview-{plugin_id}')
+        render_thread.start()
+        render_thread.join(timeout=PREVIEW_RENDER_TIMEOUT_SEC)
+        if render_thread.is_alive():
+            logger.warning('preview render timed out for %s after %ss',
+                           plugin_id, PREVIEW_RENDER_TIMEOUT_SEC)
+            if request.headers.get('HX-Request'):
+                return Response('<p class="text-xs text-red-600">Preview timed '
+                                'out &mdash; the plugin took too long to render.</p>',
+                                mimetype='text/html')
+            return error_response(ErrorCode.SYSTEM_ERROR,
+                                  'Preview render timed out', status_code=504)
+        if 'error' in render_out:
+            raise render_out['error']
+        result = render_out['result']
 
         # HTMX callers get a ready-to-swap fragment; API callers get JSON
         if request.headers.get('HX-Request'):

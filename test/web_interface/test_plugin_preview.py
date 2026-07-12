@@ -185,6 +185,44 @@ class TestPreviewEndpoint:
         img = _decode_image(resp.get_json()["data"]["image"])
         assert img.size == (128, 32)  # cols*chain x rows*parallel
 
+    def test_json_candidate_deep_merges_onto_saved_config(self, client):
+        """A partial JSON candidate must not wipe saved sibling values in
+        the same nested section (form path and save both deep-merge)."""
+        # Saved config has message "saved"; posting an unrelated nested key
+        # must not discard it — render must still differ from a candidate
+        # that explicitly changes message.
+        keep_saved = client.post(
+            f"/api/v3/plugins/preview?plugin_id={PLUGIN_ID}&width=128&height=32",
+            json={"config": {}})
+        explicit = client.post(
+            f"/api/v3/plugins/preview?plugin_id={PLUGIN_ID}&width=128&height=32",
+            json={"config": {"message": "saved"}})
+        a = _decode_image(keep_saved.get_json()["data"]["image"])
+        b = _decode_image(explicit.get_json()["data"]["image"])
+        assert list(a.getdata()) == list(b.getdata())
+
+    def test_hanging_plugin_times_out(self, client, plugin_dir, monkeypatch):
+        """A plugin whose display() hangs must not pin the web worker.
+
+        Uses its own plugin id: the loader caches the module per id, so
+        reusing PLUGIN_ID would run the already-imported (non-hanging) code
+        when this test follows others in the suite.
+        """
+        from web_interface.blueprints import api_v3 as api_v3_module
+        monkeypatch.setattr(api_v3_module, "PREVIEW_RENDER_TIMEOUT_SEC", 1)
+        hang_id = "preview-hang-plugin"
+        hang_dir = plugin_dir.parent / hang_id
+        hang_dir.mkdir()
+        (hang_dir / "manager.py").write_text(MANAGER_PY.replace(
+            "self.display_manager.update_display()",
+            "import time; time.sleep(10); self.display_manager.update_display()"))
+        manifest = dict(MANIFEST, id=hang_id, name="Hang Plugin")
+        (hang_dir / "manifest.json").write_text(json.dumps(manifest))
+        (hang_dir / "config_schema.json").write_text(json.dumps(SCHEMA))
+        resp = client.post(f"/api/v3/plugins/preview?plugin_id={hang_id}",
+                           json={"config": {}})
+        assert resp.status_code == 504
+
     def test_htmx_gets_html_fragment(self, client):
         resp = client.post(
             f"/api/v3/plugins/preview?plugin_id={PLUGIN_ID}&width=64&height=32",

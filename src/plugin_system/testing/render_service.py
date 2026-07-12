@@ -73,21 +73,33 @@ def render_plugin_once(plugin_id: str, plugin_dir: Path,
 
     start_time = time.time()
 
-    if not skip_update:
-        try:
-            plugin_instance.update()
-        except Exception as e:
-            warnings.append(f"update() raised: {e}")
-
     try:
-        plugin_instance.display(force_clear=True)
-    except Exception as e:
-        errors.append(f"display() raised: {e}")
+        if not skip_update:
+            try:
+                plugin_instance.update()
+            except Exception as e:
+                warnings.append(f"update() raised: {e}")
 
-    render_time_ms = round((time.time() - start_time) * 1000, 1)
+        try:
+            plugin_instance.display(force_clear=True)
+        except Exception as e:
+            errors.append(f"display() raised: {e}")
+
+        render_time_ms = round((time.time() - start_time) * 1000, 1)
+        # Capture BEFORE cleanup — a plugin's cleanup may clear the canvas
+        image_b64 = display_manager.get_image_base64()
+    finally:
+        # The instance is throwaway, but its __init__ may have opened
+        # sessions or started threads (music's clients, sports API
+        # sessions). In a long-running web process, previews without
+        # cleanup would leak those per request.
+        try:
+            plugin_instance.cleanup()
+        except Exception as e:
+            warnings.append(f"cleanup() raised: {e}")
 
     return {
-        'image': f'data:image/png;base64,{display_manager.get_image_base64()}',
+        'image': f'data:image/png;base64,{image_b64}',
         'width': width,
         'height': height,
         'render_time_ms': render_time_ms,

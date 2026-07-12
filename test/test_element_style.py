@@ -356,6 +356,13 @@ class TestSchemaDefaults:
                 },
                 "opaque_with_default": {"type": "object", "default": {},
                                         "properties": {"x": {"default": 1}}},
+                # array shapes the schema manager special-cases — parity
+                # must hold for these too (found divergent in review)
+                "plain_array": {"type": "array", "items": {"type": "string"}},
+                "obj_array": {"type": "array", "items": {
+                    "type": "object", "properties": {"x": {"default": 1}}}},
+                "item_default_array": {"type": "array",
+                                       "items": {"type": "string", "default": "a"}},
             },
         }
         pure = extract_schema_defaults(schema)
@@ -364,6 +371,9 @@ class TestSchemaDefaults:
         assert pure["customization"]["score_text"]["font"] == PRESS_START
         # object-level default short-circuits recursion (both must agree)
         assert pure["opaque_with_default"] == {}
+        assert pure["plain_array"] == []
+        assert pure["obj_array"] == []
+        assert pure["item_default_array"] == ["a"]
 
     def test_defaults_from_schema_file(self, tmp_path):
         schema_path = tmp_path / "config_schema.json"

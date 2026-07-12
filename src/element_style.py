@@ -73,10 +73,13 @@ def resolve_font_name(font_name: str) -> str:
 def extract_schema_defaults(schema: Dict[str, Any]) -> Dict[str, Any]:
     """Nested defaults dict from a JSON Schema (mirrors
     SchemaManager.extract_defaults_from_schema, kept here so this module
-    stays importable without the plugin system).
+    stays importable without the plugin system — the parity test in
+    test_element_style.py guards against drift).
 
     An object property carrying its own ``default`` short-circuits recursion,
-    matching the schema manager's behavior.
+    and array-typed properties without one default to ``[]`` (or a
+    single-item list when the items schema declares a default), matching
+    the schema manager's behavior exactly.
     """
     defaults: Dict[str, Any] = {}
     for key, prop in (schema.get("properties") or {}).items():
@@ -88,6 +91,13 @@ def extract_schema_defaults(schema: Dict[str, Any]) -> Dict[str, Any]:
             nested = extract_schema_defaults(prop)
             if nested:
                 defaults[key] = nested
+        elif prop.get("type") == "array" and "items" in prop:
+            items = prop.get("items")
+            if isinstance(items, dict) and "default" in items and \
+                    not (items.get("type") == "object" and "properties" in items):
+                defaults[key] = [items["default"]]
+            else:
+                defaults[key] = []
     return defaults
 
 
@@ -528,6 +538,15 @@ class ElementStyleResolver:
         """(dx, dy) additive translation for an element; (0, 0) when unset."""
         return (self.offset_value(element_key, "x_offset"),
                 self.offset_value(element_key, "y_offset"))
+
+    def is_for(self, config: Optional[Dict[str, Any]]) -> bool:
+        """True when this resolver was built over exactly this config object.
+
+        Callers that cache a resolver (plugins whose config dict gets
+        REPLACED on config change) use this to decide when to rebuild —
+        preferred over reaching into the private ``_config``.
+        """
+        return self._config is config
 
     def clear_cache(self) -> None:
         self._cache.clear()
