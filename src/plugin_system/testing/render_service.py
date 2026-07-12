@@ -12,9 +12,12 @@ across calls, which is fine for previewing but worth knowing.
 """
 
 import json
+import logging
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+logger = logging.getLogger(__name__)
 
 
 def render_plugin_once(plugin_id: str, plugin_dir: Path,
@@ -73,17 +76,25 @@ def render_plugin_once(plugin_id: str, plugin_dir: Path,
 
     start_time = time.time()
 
+    # Exception detail policy (matches the dev server's convention): full
+    # tracebacks go to the server log; clients get only the exception class
+    # name — CodeQL flags raw exception text in responses as stack-trace
+    # exposure, and the log is where developers look anyway.
     try:
         if not skip_update:
             try:
                 plugin_instance.update()
             except Exception as e:
-                warnings.append(f"update() raised: {e}")
+                logger.warning("update() raised for plugin %s", plugin_id,
+                               exc_info=True)
+                warnings.append(f"update() raised: {type(e).__name__} — see server log")
 
         try:
             plugin_instance.display(force_clear=True)
         except Exception as e:
-            errors.append(f"display() raised: {e}")
+            logger.warning("display() raised for plugin %s", plugin_id,
+                           exc_info=True)
+            errors.append(f"display() raised: {type(e).__name__} — see server log")
 
         render_time_ms = round((time.time() - start_time) * 1000, 1)
         # Capture BEFORE cleanup — a plugin's cleanup may clear the canvas
@@ -96,7 +107,9 @@ def render_plugin_once(plugin_id: str, plugin_dir: Path,
         try:
             plugin_instance.cleanup()
         except Exception as e:
-            warnings.append(f"cleanup() raised: {e}")
+            logger.warning("cleanup() raised for plugin %s", plugin_id,
+                           exc_info=True)
+            warnings.append(f"cleanup() raised: {type(e).__name__} — see server log")
 
     return {
         'image': f'data:image/png;base64,{image_b64}',
