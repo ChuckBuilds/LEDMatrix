@@ -287,22 +287,25 @@ def _parse_render_request(data):
     """Shared /api/render* request prep. Returns (plugin_dir, manifest, config,
     mock_data, skip_update) or raises ValueError with a client message."""
     plugin_id = data['plugin_id']
-    plugin_dir = find_plugin_dir(plugin_id)
-    if plugin_dir:
-        plugin_dir = _trusted_plugin_dir(plugin_dir)
-    if not plugin_dir:
+    candidate_dir = find_plugin_dir(plugin_id)
+    # Never reuse `candidate_dir` past this point: it's built from
+    # request-derived input, and a variable reassigned only on some paths
+    # isn't a barrier CodeQL's flow analysis honors. `trusted_dir` is the
+    # sole name used below, always the scandir-sourced result.
+    trusted_dir = _trusted_plugin_dir(candidate_dir) if candidate_dir else None
+    if not trusted_dir:
         raise LookupError(f'Plugin not found: {plugin_id}')
 
-    manifest_path = plugin_dir / 'manifest.json'
+    manifest_path = trusted_dir / 'manifest.json'
     with open(manifest_path, 'r') as f:
         manifest = json.load(f)
 
     # Build config: schema defaults + user overrides
     config = {'enabled': True}
-    config.update(load_config_defaults(plugin_dir))
+    config.update(load_config_defaults(trusted_dir))
     config.update(data.get('config', {}))
 
-    return plugin_dir, manifest, config, data.get('mock_data', {}), data.get('skip_update', False)
+    return trusted_dir, manifest, config, data.get('mock_data', {}), data.get('skip_update', False)
 
 
 @app.route('/api/render', methods=['POST'])
