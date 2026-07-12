@@ -194,3 +194,15 @@ class TestBasePluginDrawImage:
         assert ifit.height == 32
         # pasted onto the mock's canvas
         assert plugin.display_manager.image.getpixel((16, 16)) != (0, 0, 0)
+
+
+class TestResultIndependence:
+    def test_same_size_fit_never_aliases_the_source(self):
+        """LayoutContext caches ImageFitResults — an aliased image would let
+        later mutations of the source corrupt cached fits (or vice versa)."""
+        from PIL import ImageDraw
+        src = Image.new("RGBA", (20, 20), (255, 0, 0, 255))
+        fit = fit_image(src, (20, 20))
+        assert fit.image is not src
+        ImageDraw.Draw(src).rectangle([0, 0, 19, 19], fill=(0, 255, 0, 255))
+        assert fit.image.getpixel((5, 5)) == (255, 0, 0, 255)

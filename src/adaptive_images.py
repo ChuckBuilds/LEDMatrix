@@ -136,7 +136,15 @@ def fit_image(img: Image.Image, box: Any, *, mode: str = "contain",
         scale = min(scale, 1.0)
     out_w = max(1, round(src_w * scale))
     out_h = max(1, round(src_h * scale))
-    out = work if (out_w, out_h) == (src_w, src_h) else work.resize((out_w, out_h), resample)
+    if (out_w, out_h) == (src_w, src_h):
+        # No resize needed — but `work` may still BE the caller's original
+        # image (RGBA source, no ink crop). The result must always be an
+        # independent copy: LayoutContext caches ImageFitResults, and an
+        # aliased image would let later mutations of the source corrupt
+        # cached fits (or vice versa).
+        out = work.copy() if work is img else work
+    else:
+        out = work.resize((out_w, out_h), resample)
     return ImageFitResult(out, out_w, out_h, scale, mode, (src_w, src_h))
 
 

@@ -328,13 +328,28 @@ class LayoutContext:
         # fonts, which step between crisp ladder rungs instead.
         self.scale = min(self.width / max(1, design_w),
                          self.height / max(1, design_h))
-        self._fit_cache: Dict[Any, FitResult] = {}
-        # LRU-bounded (images are big, unlike text fits). Entries hold a
-        # strong reference to the source image when keyed by id() so the id
-        # can't be recycled out from under the cache.
+        # LRU-bounded: entries are small, but keys embed the fitted TEXT —
+        # a plugin fitting changing text (a live game clock, a ticker) on a
+        # 24/7 service would otherwise grow this without bound.
+        self._fit_cache: "OrderedDict[Any, FitResult]" = OrderedDict()
+        # LRU-bounded (images are big). Entries hold a strong reference to
+        # the source image when keyed by id() so the id can't be recycled
+        # out from under the cache.
         self._image_cache: "OrderedDict[Any, Tuple[Any, Any]]" = OrderedDict()
 
     _IMAGE_CACHE_MAX = 64
+    _FIT_CACHE_MAX = 512
+
+    def _fit_cache_get(self, key: Any) -> Optional["FitResult"]:
+        cached = self._fit_cache.get(key)
+        if cached is not None:
+            self._fit_cache.move_to_end(key)
+        return cached
+
+    def _fit_cache_put(self, key: Any, result: "FitResult") -> None:
+        self._fit_cache[key] = result
+        while len(self._fit_cache) > self._FIT_CACHE_MAX:
+            self._fit_cache.popitem(last=False)
 
     # ---- the three adaptation patterns --------------------------------
 
@@ -373,11 +388,11 @@ class LayoutContext:
         acceptable rendering exists."""
         box_w, box_h = _box_dims(box)
         key = ("text", text, box_w, box_h, ladder, ellipsis)
-        cached = self._fit_cache.get(key)
+        cached = self._fit_cache_get(key)
         if cached is not None:
             return cached
         result = self._walk_ladder(text, ladder, box_w, box_h, ellipsis)
-        self._fit_cache[key] = result
+        self._fit_cache_put(key, result)
         return result
 
     def fit_text_proportional(self, text: str, box: Union[Region, Tuple[int, int]],
@@ -416,14 +431,14 @@ class LayoutContext:
         box_w, box_h = _box_dims(box)
         effective_scale = self.scale if scale is None else scale
         key = ("text_prop", text, box_w, box_h, ladder, base_size_px, ellipsis, effective_scale)
-        cached = self._fit_cache.get(key)
+        cached = self._fit_cache_get(key)
         if cached is not None:
             return cached
         target = base_size_px * effective_scale
         eligible = [step for step in ladder if step.size_px <= target]
         candidates = eligible if eligible else (min(ladder, key=lambda s: s.size_px),)
         result = self._walk_ladder(text, candidates, box_w, box_h, ellipsis)
-        self._fit_cache[key] = result
+        self._fit_cache_put(key, result)
         return result
 
     def _walk_ladder(self, text: str, ladder: Sequence[FontStep],
@@ -460,7 +475,7 @@ class LayoutContext:
         one wouldn't (baseball's multiline pattern). Text is the widest line."""
         box_w, box_h = _box_dims(box)
         key = ("lines", tuple(lines), box_w, box_h, ladder, spacing)
-        cached = self._fit_cache.get(key)
+        cached = self._fit_cache_get(key)
         if cached is not None:
             return cached
 
@@ -482,7 +497,7 @@ class LayoutContext:
             if result.fits:
                 break
 
-        self._fit_cache[key] = result
+        self._fit_cache_put(key, result)
         return result
 
     def font_for_rows(self, rows: int, box_h: int,
@@ -491,7 +506,7 @@ class LayoutContext:
         (baseball's traditional-scoreboard pattern). Measures a digit/cap
         sample rather than specific strings."""
         key = ("rows", rows, box_h, ladder)
-        cached = self._fit_cache.get(key)
+        cached = self._fit_cache_get(key)
         if cached is not None:
             return cached
 
@@ -508,7 +523,7 @@ class LayoutContext:
             if result.fits:
                 break
 
-        self._fit_cache[key] = result
+        self._fit_cache_put(key, result)
         return result
 
     # ---- images ---------------------------------------------------------

@@ -436,3 +436,19 @@ class TestBasePluginIntegration:
                          MockCacheManager(), pm)
         assert plugin.layout.design_size == (64, 32)
         assert plugin.layout.scale == 2.0
+
+
+class TestFitCacheBound:
+    def test_fit_cache_is_lru_bounded(self, ctx):
+        """A plugin fitting changing text (live game clock, ticker) on a
+        24/7 service must not grow the fit cache without bound."""
+        for i in range(ctx._FIT_CACHE_MAX + 100):
+            ctx.fit_text(f"tick {i}", Region(0, 0, 100, 20))
+        assert len(ctx._fit_cache) <= ctx._FIT_CACHE_MAX
+
+    def test_lru_keeps_recent_entries_hot(self, ctx):
+        hot = ctx.fit_text("stay hot", Region(0, 0, 100, 20))
+        for i in range(ctx._FIT_CACHE_MAX - 1):
+            ctx.fit_text(f"cold {i}", Region(0, 0, 100, 20))
+            ctx.fit_text("stay hot", Region(0, 0, 100, 20))  # keep touching it
+        assert ctx.fit_text("stay hot", Region(0, 0, 100, 20)) is hot
