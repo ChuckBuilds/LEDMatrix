@@ -297,6 +297,8 @@ class RenderPipeline:
         Returns True when:
         - Cycle is complete and we should start fresh
         - Staging buffer has new content
+        - A plugin currently visible in the scroll has pending updated data
+          (e.g. a live score changed) — standalone (non-sync) mode only
         """
         if self._cycle_complete:
             return True
@@ -312,6 +314,12 @@ class RenderPipeline:
         # Check if we need more content in the buffer
         buffer_status = self.stream_manager.get_buffer_status()
         if buffer_status['staging_count'] > 0:
+            return True
+
+        # Trigger recompose when pending updates affect visible segments, so
+        # live score/status changes reach the display within a few seconds
+        # instead of waiting for the next full cycle.
+        if self.stream_manager.has_pending_updates_for_visible_segments():
             return True
 
         return False

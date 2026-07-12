@@ -502,7 +502,10 @@ class DisplayController:
 
             # Run plugin updates inside the Vegas loop so the inter-iteration
             # gap is <1 ms (nothing left for _tick_plugin_updates() to do).
-            self.vegas_coordinator.set_update_callback(self._tick_plugin_updates)
+            # Use the Vegas-aware variant so plugins that got fresh data are
+            # hot-swapped into the scroll promptly instead of waiting for the
+            # next full cycle.
+            self.vegas_coordinator.set_update_callback(self._tick_plugin_updates_for_vegas)
 
             # Wire multi-display sync into Vegas render pipeline
             follower_pos = self.config.get("sync", {}).get("follower_position", "left")
@@ -827,6 +830,42 @@ class DisplayController:
                     # Record failure
                     if hasattr(self.plugin_manager, 'health_tracker') and self.plugin_manager.health_tracker:
                         self.plugin_manager.health_tracker.record_failure(plugin_id, exc)
+
+    def _tick_plugin_updates_for_vegas(self):
+        """Run scheduled plugin updates and tell Vegas mode which plugins
+        actually got fresh data, so it can hot-swap them into the scroll
+        without waiting for a full cycle to complete.
+
+        Used as the Vegas coordinator's update callback instead of the plain
+        _tick_plugin_updates() so that a live score change is reflected in
+        the ticker within a few seconds rather than at the next cycle
+        boundary (which, depending on min/max_cycle_duration, can be
+        minutes away). Restores wiring that PR #299 added and PR #330's
+        sync-mode refactor inadvertently dropped: coordinator.mark_plugin_updated()
+        has been unreachable dead code since.
+        """
+        if not self.plugin_manager or not hasattr(self.plugin_manager, "plugin_last_update"):
+            self._tick_plugin_updates()
+            return
+
+        old_times = dict(self.plugin_manager.plugin_last_update)
+        self._tick_plugin_updates()
+
+        vc = getattr(self, "vegas_coordinator", None)
+        if vc is None:
+            return
+
+        updated = [
+            plugin_id for plugin_id, new_time in self.plugin_manager.plugin_last_update.items()
+            if new_time > old_times.get(plugin_id, 0.0)
+        ]
+        if updated:
+            logger.info("Vegas update tick: %d plugin(s) updated: %s", len(updated), updated)
+            for plugin_id in updated:
+                try:
+                    vc.mark_plugin_updated(plugin_id)
+                except Exception:  # pylint: disable=broad-except
+                    logger.exception("Error marking plugin %s updated for Vegas", plugin_id)
 
     def _tick_plugin_updates(self):
         """Run scheduled plugin updates if the plugin manager supports them."""
