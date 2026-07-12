@@ -8,12 +8,13 @@ API Version: 1.0.0
 """
 
 import json
+import queue
 import sys
 import time
 import threading
 import types
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 import logging
 from src.exceptions import PluginError, ConfigError
 from src.logging_config import get_logger
@@ -91,6 +92,32 @@ class PluginManager:
         # Health tracking (optional, set by display_controller if available)
         self.health_tracker = None
         self.resource_monitor = None
+
+        # --- Asynchronous plugin updates -------------------------------
+        # update() used to run inline in the render loop (execute_update's
+        # internal thread.join(timeout=30) blocked it), so one slow plugin
+        # HTTP fetch froze scrolling for the whole fetch. Scheduling still
+        # happens on the render thread (run_scheduled_updates), but
+        # execution moves to this single background worker. Per-plugin
+        # locks keep a plugin's update() and display() mutually exclusive —
+        # today's implicit guarantee, now explicit (and, unlike today,
+        # also held across the post-timeout window).
+        # Kill switch: plugin_system.synchronous_updates: true restores the
+        # inline path.
+        self._update_queue: "queue.Queue[Optional[Tuple[str, float]]]" = queue.Queue()
+        self._pending_updates: set = set()
+        self._pending_lock = threading.Lock()
+        self._plugin_locks: Dict[str, threading.Lock] = {}
+        self._plugin_locks_guard = threading.Lock()
+        self._update_worker: Optional[threading.Thread] = None
+        self._synchronous_updates = False
+        try:
+            if self.config_manager is not None:
+                cfg = self.config_manager.get_config() or {}
+                self._synchronous_updates = bool(
+                    cfg.get('plugin_system', {}).get('synchronous_updates', False))
+        except Exception:
+            self._synchronous_updates = False
         
         # Ensure plugins directory exists with proper permissions
         try:
@@ -734,46 +761,127 @@ class PluginManager:
             last_update = self.plugin_last_update.get(plugin_id, 0.0)
 
             if last_update == 0.0 or (current_time - last_update) >= interval:
-                # Update state to RUNNING
-                self.state_manager.set_state(plugin_id, PluginState.RUNNING)
-                
-                try:
-                    # Use PluginExecutor for safe execution
-                    success = False
-                    if self.resource_monitor:
-                        # If resource monitor exists, wrap the call
-                        def monitored_update():
-                            self.resource_monitor.monitor_call(plugin_id, plugin_instance.update)
-                        # SimpleNamespace stores `update` as an *instance*
-                        # attribute, so attribute lookup returns the plain
-                        # function object as-is. A dynamically-built class
-                        # (`type(..., {'update': monitored_update})`) instead
-                        # stores it as a *class* attribute, which the
-                        # descriptor protocol turns into a bound method on
-                        # access -- silently prepending the instance as an
-                        # implicit first argument to a function that takes
-                        # none, raising "monitored_update() takes 0
-                        # positional arguments but 1 was given" on every call.
-                        success = self.plugin_executor.execute_update(
-                            types.SimpleNamespace(update=monitored_update),
-                            plugin_id
-                        )
-                    else:
-                        success = self.plugin_executor.execute_update(plugin_instance, plugin_id)
-                    
-                    if success:
-                        self.plugin_last_update[plugin_id] = current_time
-                        self.state_manager.record_update(plugin_id)
-                        # Update state back to ENABLED
-                        self.state_manager.set_state(plugin_id, PluginState.ENABLED)
-                        # Record success
-                        if self.health_tracker:
-                            self.health_tracker.record_success(plugin_id)
-                    else:
-                        self._record_update_failure(plugin_id)
-                except Exception as exc:  # pylint: disable=broad-except
-                    self.logger.exception("Error updating plugin %s: %s", plugin_id, exc)
-                    self._record_update_failure(plugin_id, exc=exc)
+                if self._synchronous_updates:
+                    # Kill-switch path: the original inline execution
+                    # (blocks the caller until update() completes/times out)
+                    self.state_manager.set_state(plugin_id, PluginState.RUNNING)
+                    self._execute_update_now(plugin_id, plugin_instance, current_time)
+                else:
+                    self._enqueue_update(plugin_id, current_time)
+
+    def get_plugin_lock(self, plugin_id: str) -> threading.Lock:
+        """Per-plugin lock keeping update() and display() mutually exclusive.
+
+        The update worker holds it for the duration of a plugin's update();
+        the display side acquires it non-blocking and skips that frame's
+        display() call when the plugin is mid-update.
+        """
+        with self._plugin_locks_guard:
+            lock = self._plugin_locks.get(plugin_id)
+            if lock is None:
+                lock = threading.Lock()
+                self._plugin_locks[plugin_id] = lock
+            return lock
+
+    def _enqueue_update(self, plugin_id: str, scheduled_time: float) -> None:
+        """Queue a due update for the background worker (dedup while pending)."""
+        with self._pending_lock:
+            if plugin_id in self._pending_updates:
+                return
+            self._pending_updates.add(plugin_id)
+        # RUNNING is set at enqueue time so can_execute() blocks re-entry and
+        # the web UI shows the truthful state while the item waits its turn.
+        self.state_manager.set_state(plugin_id, PluginState.RUNNING)
+        self._ensure_update_worker()
+        self._update_queue.put((plugin_id, scheduled_time))
+
+    def _ensure_update_worker(self) -> None:
+        if self._update_worker is not None and self._update_worker.is_alive():
+            return
+        self._update_worker = threading.Thread(
+            target=self._update_worker_loop, name='plugin-update-worker',
+            daemon=True)
+        self._update_worker.start()
+
+    def _update_worker_loop(self) -> None:
+        """Single worker: serializes all plugin updates (matching the old
+        inline behavior — no thundering herd of concurrent fetches), off the
+        render thread."""
+        while True:
+            item = self._update_queue.get()
+            if item is None:  # shutdown sentinel
+                return
+            plugin_id, scheduled_time = item
+            try:
+                plugin_instance = self.plugins.get(plugin_id)
+                if plugin_instance is None:  # unloaded while queued
+                    self.state_manager.set_state(plugin_id, PluginState.ENABLED)
+                    continue
+                lock = self.get_plugin_lock(plugin_id)
+                with lock:
+                    self._execute_update_now(plugin_id, plugin_instance,
+                                             scheduled_time)
+            except Exception:  # pylint: disable=broad-except
+                self.logger.exception("update worker: unexpected error for %s",
+                                      plugin_id)
+            finally:
+                with self._pending_lock:
+                    self._pending_updates.discard(plugin_id)
+
+    def stop_update_worker(self, timeout: float = 5.0) -> None:
+        """Signal the worker to exit (used by cleanup; thread is a daemon)."""
+        if self._update_worker is not None and self._update_worker.is_alive():
+            self._update_queue.put(None)
+            self._update_worker.join(timeout=timeout)
+
+    def _execute_update_now(self, plugin_id: str, plugin_instance: Any,
+                            scheduled_time: float) -> None:
+        """The (unchanged) update execution block: executor + bookkeeping.
+
+        Caller is responsible for having set RUNNING state and, on the async
+        path, for holding the plugin's lock. plugin_executor's internal
+        thread.join(timeout) blocks only the calling thread; on timeout the
+        lingering daemon update-thread keeps running unkillable — exactly the
+        pre-async behavior, documented here so nobody "fixes" it into a
+        thread leak hunt.
+        """
+        try:
+            # Use PluginExecutor for safe execution
+            success = False
+            if self.resource_monitor:
+                # If resource monitor exists, wrap the call
+                def monitored_update():
+                    self.resource_monitor.monitor_call(plugin_id, plugin_instance.update)
+                # SimpleNamespace stores `update` as an *instance*
+                # attribute, so attribute lookup returns the plain
+                # function object as-is. A dynamically-built class
+                # (`type(..., {'update': monitored_update})`) instead
+                # stores it as a *class* attribute, which the
+                # descriptor protocol turns into a bound method on
+                # access -- silently prepending the instance as an
+                # implicit first argument to a function that takes
+                # none, raising "monitored_update() takes 0
+                # positional arguments but 1 was given" on every call.
+                success = self.plugin_executor.execute_update(
+                    types.SimpleNamespace(update=monitored_update),
+                    plugin_id
+                )
+            else:
+                success = self.plugin_executor.execute_update(plugin_instance, plugin_id)
+
+            if success:
+                self.plugin_last_update[plugin_id] = scheduled_time
+                self.state_manager.record_update(plugin_id)
+                # Update state back to ENABLED
+                self.state_manager.set_state(plugin_id, PluginState.ENABLED)
+                # Record success
+                if self.health_tracker:
+                    self.health_tracker.record_success(plugin_id)
+            else:
+                self._record_update_failure(plugin_id)
+        except Exception as exc:  # pylint: disable=broad-except
+            self.logger.exception("Error updating plugin %s: %s", plugin_id, exc)
+            self._record_update_failure(plugin_id, exc=exc)
 
     def update_all_plugins(self) -> None:
         """

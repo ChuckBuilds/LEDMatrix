@@ -23,6 +23,7 @@ Entry point: :func:`main` — instantiates :class:`DisplayController` and calls
 import time
 import os
 import json
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Callable
 from datetime import datetime
@@ -838,6 +839,30 @@ class DisplayController:
                 self.plugin_manager.run_scheduled_updates()
             except Exception:  # pylint: disable=broad-except
                 logger.exception("Error running scheduled plugin updates")
+
+    @contextmanager
+    def _display_lock_or_skip(self, plugin_id):
+        """Try-lock guard keeping a plugin's display() off its in-flight update().
+
+        Yields True when display may run (lock held, released on exit) or
+        when no lock support exists (older plugin manager). Yields False when
+        the plugin's update() is currently executing on the background
+        worker — the caller should treat the frame as displayed (the panel
+        holds the last pushed frame) rather than as a plugin failure, so a
+        mid-update skip never advances the rotation.
+        """
+        pm = self.plugin_manager
+        if not pm or not hasattr(pm, 'get_plugin_lock') or not plugin_id:
+            yield True
+            return
+        lock = pm.get_plugin_lock(plugin_id)
+        if not lock.acquire(blocking=False):
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            lock.release()
 
     _FOLLOWER_SEND_INTERVAL = 1.0 / 90  # raw bytes are cheap; 90fps > follower render rate
 
@@ -1836,25 +1861,30 @@ class DisplayController:
                                 )
                             _accepts_display_mode = self._plugin_accepts_display_mode[_cache_key]
 
-                            # Use PluginExecutor for safe execution with timeout
-                            if self.plugin_manager and hasattr(self.plugin_manager, 'plugin_executor'):
-                                result = self.plugin_manager.plugin_executor.execute_display(
-                                    manager_to_display,
-                                    plugin_id,
-                                    force_clear=self.force_change,
-                                    display_mode=active_mode if _accepts_display_mode else None
-                                )
-                                # execute_display returns bool, convert to expected format
-                                if result:
-                                    result = True  # Success
+                            with self._display_lock_or_skip(plugin_id) as can_display:
+                                if not can_display:
+                                    # update() in flight on the worker — hold
+                                    # the last frame; not a plugin failure
+                                    result = True
+                                elif self.plugin_manager and hasattr(self.plugin_manager, 'plugin_executor'):
+                                    # Use PluginExecutor for safe execution with timeout
+                                    result = self.plugin_manager.plugin_executor.execute_display(
+                                        manager_to_display,
+                                        plugin_id,
+                                        force_clear=self.force_change,
+                                        display_mode=active_mode if _accepts_display_mode else None
+                                    )
+                                    # execute_display returns bool, convert to expected format
+                                    if result:
+                                        result = True  # Success
+                                    else:
+                                        result = False  # Failed
                                 else:
-                                    result = False  # Failed
-                            else:
-                                # Fallback to direct call if executor not available
-                                if _accepts_display_mode:
-                                    result = manager_to_display.display(display_mode=active_mode, force_clear=self.force_change)
-                                else:
-                                    result = manager_to_display.display(force_clear=self.force_change)
+                                    # Fallback to direct call if executor not available
+                                    if _accepts_display_mode:
+                                        result = manager_to_display.display(display_mode=active_mode, force_clear=self.force_change)
+                                    else:
+                                        result = manager_to_display.display(force_clear=self.force_change)
                             
                             logger.debug(f"display() returned: {result} (type: {type(result)})")
                             # Check if display() returned a boolean (new behavior)
@@ -2139,11 +2169,16 @@ class DisplayController:
 
                             while True:
                                 try:
-                                    # Pass display_mode to maintain sticky manager state
-                                    if _accepts_display_mode:
-                                        result = manager_to_display.display(display_mode=active_mode, force_clear=False)
-                                    else:
-                                        result = manager_to_display.display(force_clear=False)
+                                    with self._display_lock_or_skip(plugin_id) as can_display:
+                                        if can_display:
+                                            # Pass display_mode to maintain sticky manager state
+                                            if _accepts_display_mode:
+                                                result = manager_to_display.display(display_mode=active_mode, force_clear=False)
+                                            else:
+                                                result = manager_to_display.display(force_clear=False)
+                                        else:
+                                            # update() in flight — hold the last frame
+                                            result = True
                                     if isinstance(result, bool) and not result:
                                         logger.debug("Display returned False, breaking early")
                                         break
@@ -2203,11 +2238,16 @@ class DisplayController:
                                     break
 
                                 try:
-                                    # Pass display_mode to maintain sticky manager state
-                                    if _accepts_display_mode:
-                                        result = manager_to_display.display(display_mode=active_mode, force_clear=False)
-                                    else:
-                                        result = manager_to_display.display(force_clear=False)
+                                    with self._display_lock_or_skip(plugin_id) as can_display:
+                                        if can_display:
+                                            # Pass display_mode to maintain sticky manager state
+                                            if _accepts_display_mode:
+                                                result = manager_to_display.display(display_mode=active_mode, force_clear=False)
+                                            else:
+                                                result = manager_to_display.display(force_clear=False)
+                                        else:
+                                            # update() in flight — hold the last frame
+                                            result = True
                                     if isinstance(result, bool) and not result:
                                         # For dynamic duration plugins, don't exit on False - keep looping
                                         # until cycle is complete or max duration is reached
