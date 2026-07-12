@@ -608,9 +608,23 @@ def display_preview_generator():
     import base64
     from PIL import Image
     import io
-    
+
     snapshot_path = "/tmp/led_matrix_preview.png"  # nosec B108 - fixed path matches display_manager; only read here
+    # Viewer marker: this generator only runs while the broadcaster has
+    # subscribers (it exits with no clients), so touching the marker each
+    # loop tells the DISPLAY service a browser is actually watching — it
+    # only pays for full-rate PNG snapshot encodes while this stays fresh
+    # (see src/common/snapshot_policy.py).
+    viewer_marker_path = "/tmp/led_matrix_preview_viewer"  # nosec B108 - fixed path matches display_manager
     last_modified = None
+
+    def _touch_viewer_marker():
+        try:
+            with open(viewer_marker_path, 'a'):
+                pass
+            os.utime(viewer_marker_path, None)
+        except OSError:
+            pass  # display side treats a missing marker as "no viewer"
     
     # Get display dimensions from config
     try:
@@ -627,6 +641,7 @@ def display_preview_generator():
     
     while True:
         try:
+            _touch_viewer_marker()
             # Check if snapshot file exists and has been modified
             if os.path.exists(snapshot_path):
                 current_modified = os.path.getmtime(snapshot_path)

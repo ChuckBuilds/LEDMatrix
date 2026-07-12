@@ -31,12 +31,22 @@ if os.getenv("EMULATOR", "false") == "true":
 else:
     from rgbmatrix import RGBMatrix, RGBMatrixOptions
 from contextlib import contextmanager
+from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 import time
 from typing import Dict, Any, List, Optional
 import logging
 import math
+import zlib
 import freetype
+
+from src.common import snapshot_policy
+from src.common.permission_utils import (
+    ensure_directory_permissions,
+    ensure_file_permissions,
+    get_assets_dir_mode,
+    get_assets_file_mode,
+)
 
 # Get logger without configuring
 logger = logging.getLogger(__name__)
@@ -184,10 +194,19 @@ class DisplayManager:
         # Avoids re-measuring the same string+font on every display() call.
         # Cleared on _load_fonts() so stale entries don't survive a font reload.
         self._text_width_cache: Dict[tuple, int] = {}
-        # Snapshot settings for web preview integration (service writes, web reads)
+        # Snapshot mirror for web preview + health check (service writes, web
+        # reads). Cadence/skip decisions live in src/common/snapshot_policy.py:
+        # full rate only while the web SSE broadcaster keeps the viewer marker
+        # fresh; unchanged frames are never re-encoded, only mtime-touched.
         self._snapshot_path = "/tmp/led_matrix_preview.png"  # nosec B108 - fixed path intentional; web UI reads same path
-        self._snapshot_min_interval_sec = 0.2  # max ~5 fps
+        self._viewer_marker_path = "/tmp/led_matrix_preview_viewer"  # nosec B108 - touched by web SSE broadcaster
         self._last_snapshot_ts = 0.0
+        self._last_snapshot_touch_ts = 0.0
+        self._last_snapshot_digest: Optional[int] = None
+        self._snapshot_dir_prepared = False
+        self._viewer_check_ts = 0.0
+        self._viewer_fresh = False
+        self._viewer_was_fresh = False
         
         # Scrolling state tracking for graceful updates
         self._scrolling_state = {
@@ -1128,27 +1147,56 @@ class DisplayManager:
             'deferred_update_ttl': self._scrolling_state['deferred_update_ttl']
         }
 
+    def _viewer_is_fresh(self, now: float) -> bool:
+        """True when a browser preview is watching (marker file touched by
+        the web SSE broadcaster). The marker is stat'd at most once per
+        second — at 125 fps loops a per-call stat would be pure overhead."""
+        if (now - self._viewer_check_ts) >= 1.0:
+            self._viewer_check_ts = now
+            try:
+                marker_age = now - os.stat(self._viewer_marker_path).st_mtime
+                self._viewer_fresh = marker_age < snapshot_policy.VIEWER_MARKER_FRESH_SEC
+            except OSError:
+                self._viewer_fresh = False
+        return self._viewer_fresh
+
     def _write_snapshot_if_due(self) -> None:
-        """Write the current image to a PNG snapshot file at a limited frequency."""
+        """Mirror the current frame to the preview snapshot when the policy
+        says it's worth it — see src/common/snapshot_policy.py. Unchanged
+        frames are never re-encoded; without viewers the cadence drops to
+        the idle keepalive."""
         try:
             now = time.time()
-            if (now - self._last_snapshot_ts) < self._snapshot_min_interval_sec:
+            viewer_fresh = self._viewer_is_fresh(now)
+            if viewer_fresh and not self._viewer_was_fresh:
+                # A preview just opened: let the next changed frame through
+                # immediately instead of waiting out the idle interval.
+                self._last_snapshot_ts = 0.0
+            self._viewer_was_fresh = viewer_fresh
+
+            digest = zlib.adler32(self.image.tobytes())
+            action = snapshot_policy.decide(
+                now, self._last_snapshot_ts, self._last_snapshot_touch_ts,
+                viewer_fresh, digest != self._last_snapshot_digest)
+            if action is snapshot_policy.SnapshotAction.SKIP:
                 return
-            # Ensure directory exists with proper permissions
-            from pathlib import Path
-            from src.common.permission_utils import (
-                ensure_directory_permissions,
-                ensure_file_permissions,
-                get_assets_dir_mode,
-                get_assets_file_mode
-            )
+            if action is snapshot_policy.SnapshotAction.TOUCH:
+                # mtime bump only: keeps the health check (snapshot age)
+                # green without paying for a PNG encode of an unchanged frame
+                os.utime(self._snapshot_path, None)
+                self._last_snapshot_touch_ts = now
+                return
+
+            # WRITE: ensure directory permissions once, not per frame
             snapshot_path_obj = Path(self._snapshot_path)
-            # Only ensure permissions on non-system directories
-            # Never modify /tmp permissions - it has special system permissions (1777)
-            # that must not be changed or it breaks apt and other system tools
-            parent_dir = snapshot_path_obj.parent
-            if parent_dir and str(parent_dir) != '/tmp':  # nosec B108 - guard to skip /tmp for permission ops
-                ensure_directory_permissions(parent_dir, get_assets_dir_mode())
+            if not self._snapshot_dir_prepared:
+                # Never modify /tmp permissions - it has special system
+                # permissions (1777) that must not be changed or it breaks
+                # apt and other system tools
+                parent_dir = snapshot_path_obj.parent
+                if parent_dir and str(parent_dir) != '/tmp':  # nosec B108 - guard to skip /tmp for permission ops
+                    ensure_directory_permissions(parent_dir, get_assets_dir_mode())
+                self._snapshot_dir_prepared = True
             # Write atomically: temp then replace
             tmp_path = f"{self._snapshot_path}.tmp"
             self.image.save(tmp_path, format='PNG')
@@ -1163,6 +1211,8 @@ class DisplayManager:
             except Exception:
                 pass
             self._last_snapshot_ts = now
+            self._last_snapshot_touch_ts = now
+            self._last_snapshot_digest = digest
         except Exception as e:
             # Snapshot failures should never break display; log at debug to avoid noise
             logger.debug(f"Snapshot write skipped: {e}")
