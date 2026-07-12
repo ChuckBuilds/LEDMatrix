@@ -329,6 +329,7 @@ def save_schedule_config():
         }
 
         mode = data.get('mode', 'global')
+        schedule_config['mode'] = mode
 
         if mode == 'global':
             # Simple global schedule
