@@ -200,62 +200,16 @@ def _render_once(plugin_id, plugin_dir, manifest, config, mock_data, width, heig
                  skip_update):
     """Render one plugin at one size. Returns the /api/render response dict.
 
-    A fresh plugin instance per call, mirroring the safety harness, so sizes
-    never share state.
+    Thin wrapper over the shared render service (also used by the web UI's
+    config-page preview); a fresh plugin instance per call, mirroring the
+    safety harness, so sizes never share state.
     """
-    from src.plugin_system.testing import VisualTestDisplayManager, MockCacheManager, MockPluginManager
-    from src.plugin_system.plugin_loader import PluginLoader
+    from src.plugin_system.testing.render_service import render_plugin_once
 
-    display_manager = VisualTestDisplayManager(width=width, height=height)
-    cache_manager = MockCacheManager()
-    plugin_manager = MockPluginManager()
-
-    # Pre-populate cache with mock data
-    for key, value in mock_data.items():
-        cache_manager.set(key, value)
-
-    loader = PluginLoader()
-    errors = []
-    warnings = []
-
-    plugin_instance, _module = loader.load_plugin(
-        plugin_id=plugin_id,
-        manifest=manifest,
-        plugin_dir=plugin_dir,
-        config=config,
-        display_manager=display_manager,
-        cache_manager=cache_manager,
-        plugin_manager=plugin_manager,
-        install_deps=False,
-    )
-
-    start_time = time.time()
-
-    # Run update()
-    if not skip_update:
-        try:
-            plugin_instance.update()
-        except Exception as e:
-            logger.warning("update() raised for plugin %s", plugin_id, exc_info=True)
-            warnings.append(f"update() raised: {type(e).__name__} — see server log")
-
-    # Run display()
-    try:
-        plugin_instance.display(force_clear=True)
-    except Exception as e:
-        logger.warning("display() raised for plugin %s", plugin_id, exc_info=True)
-        errors.append(f"display() raised: {type(e).__name__} — see server log")
-
-    render_time_ms = round((time.time() - start_time) * 1000, 1)
-
-    return {
-        'image': f'data:image/png;base64,{display_manager.get_image_base64()}',
-        'width': width,
-        'height': height,
-        'render_time_ms': render_time_ms,
-        'errors': errors,
-        'warnings': warnings,
-    }
+    return render_plugin_once(
+        plugin_id, plugin_dir, manifest=manifest, config=config,
+        mock_data=mock_data, width=width, height=height,
+        skip_update=skip_update)
 
 
 def _trusted_plugin_dir(plugin_dir: Path) -> Optional[Path]:

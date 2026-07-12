@@ -4282,6 +4282,373 @@ def _filter_config_by_schema(config, schema, prefix=''):
     return filtered
 
 
+def parse_plugin_config_form(form, schema, existing_config):
+    """Convert an HTMX config-form submission into a nested plugin config.
+
+    form is the werkzeug form MultiDict; existing_config is the saved
+    config to merge updates onto (mutated and returned). Handles dotted
+    field names, bracket/indexed array fields (color pickers), schema-
+    driven type coercion, and unchecked-checkbox fixup.
+
+    Shared by save_plugin_config and the plugin preview endpoint so the
+    two interpretations of the form can never drift apart."""
+    plugin_config = existing_config
+    # Convert form data to config dict
+    # Form fields can use dot notation for nested values (e.g., "transition.type")
+    form_data = form.to_dict()
+
+    # First pass: handle bracket notation array fields (e.g., "field_name[]" from checkbox-group)
+    # These fields use getlist() to preserve all values, then replace in form_data
+    # Sentinel empty value ("") allows clearing array to [] when all checkboxes unchecked
+    bracket_array_fields = {}  # Maps base field path to list of values
+    for key in form.keys():
+        # Check if key ends with "[]" (bracket notation for array fields)
+        if key.endswith('[]'):
+            base_path = key[:-2]  # Remove "[]" suffix
+            values = form.getlist(key)
+            # Filter out sentinel empty string - if only sentinel present, array should be []
+            # If sentinel + values present, use the actual values
+            filtered_values = [v for v in values if v and v.strip()]
+            # If no non-empty values but key exists, it means all checkboxes unchecked (empty array)
+            bracket_array_fields[base_path] = filtered_values
+            # Remove the bracket notation key from form_data if present
+            if key in form_data:
+                del form_data[key]
+    
+    # Process bracket notation fields and set directly in plugin_config
+    # Use JSON encoding instead of comma-join to handle values containing commas
+    import json
+    for base_path, values in bracket_array_fields.items():
+        # Get schema property to verify it's an array
+        base_prop = _get_schema_property(schema, base_path)
+        if base_prop and base_prop.get('type') == 'array':
+            # Filter out empty values and sentinel empty strings
+            filtered_values = [v for v in values if v and v.strip()]
+            # Set directly in plugin_config (values are already strings, no need to parse)
+            # Empty array (all unchecked) is represented as []
+            _set_nested_value(plugin_config, base_path, filtered_values)
+            logger.debug(f"Processed bracket notation array field {base_path}: {values} -> {filtered_values}")
+            # Remove from form_data to avoid double processing
+            if base_path in form_data:
+                del form_data[base_path]
+
+    # Second pass: detect and combine array index fields (e.g., "text_color.0", "text_color.1" -> "text_color" as array)
+    # This handles cases where forms send array fields as indexed inputs
+    array_fields = {}  # Maps base field path to list of (index, value) tuples
+    processed_keys = set()
+    indexed_base_paths = set()  # Track which base paths have indexed fields
+
+    for key, value in form_data.items():
+        # Check if this looks like an array index field (ends with .0, .1, .2, etc.)
+        if '.' in key:
+            parts = key.rsplit('.', 1)  # Split on last dot
+            if len(parts) == 2:
+                base_path, last_part = parts
+                # Check if last part is a numeric string (array index)
+                if last_part.isdigit():
+                    # Get schema property for the base path to verify it's an array
+                    base_prop = _get_schema_property(schema, base_path)
+                    if base_prop and base_prop.get('type') == 'array':
+                        # This is an array index field
+                        index = int(last_part)
+                        if base_path not in array_fields:
+                            array_fields[base_path] = []
+                        array_fields[base_path].append((index, value))
+                        processed_keys.add(key)
+                        indexed_base_paths.add(base_path)
+                        continue
+
+    # Process combined array fields
+    for base_path, index_values in array_fields.items():
+        # Sort by index and extract values
+        index_values.sort(key=lambda x: x[0])
+        values = [v for _, v in index_values]
+        # Combine values into comma-separated string for parsing
+        combined_value = ', '.join(str(v) for v in values)
+        # Parse as array using schema
+        parsed_value = _parse_form_value_with_schema(combined_value, base_path, schema)
+        # Debug logging
+        logger.debug(f"Combined indexed array field {base_path}: {values} -> {combined_value} -> {parsed_value}")
+        # Only set if not skipped
+        if parsed_value is not _SKIP_FIELD:
+            _set_nested_value(plugin_config, base_path, parsed_value)
+    
+    # Process remaining (non-indexed) fields
+    # Skip any base paths that were processed as indexed arrays
+    for key, value in form_data.items():
+        if key not in processed_keys:
+            # Skip if this key is a base path that was processed as indexed array
+            # (to avoid overwriting the combined array with a single value)
+            if key not in indexed_base_paths:
+                # Parse value using schema to determine correct type
+                parsed_value = _parse_form_value_with_schema(value, key, schema)
+                # Debug logging for array fields
+                if schema:
+                    prop = _get_schema_property(schema, key)
+                    if prop and prop.get('type') == 'array':
+                        logger.debug(f"Array field {key}: form value='{value}' -> parsed={parsed_value}")
+                # Use helper to set nested values correctly (skips if _SKIP_FIELD)
+                if parsed_value is not _SKIP_FIELD:
+                    _set_nested_value(plugin_config, key, parsed_value)
+    
+    # Post-process: Fix array fields that might have been incorrectly structured
+    # This handles cases where array fields are stored as dicts (e.g., from indexed form fields)
+    def fix_array_structures(config_dict, schema_props, prefix=''):
+        """Recursively fix array structures (convert dicts with numeric keys to arrays, fix length issues)"""
+        for prop_key, prop_schema in schema_props.items():
+            prop_type = prop_schema.get('type')
+
+            if prop_type == 'array':
+                # Navigate to the field location
+                if prefix:
+                    parent_parts = prefix.split('.')
+                    parent = config_dict
+                    for part in parent_parts:
+                        if isinstance(parent, dict) and part in parent:
+                            parent = parent[part]
+                        else:
+                            parent = None
+                            break
+
+                    if parent is not None and isinstance(parent, dict) and prop_key in parent:
+                        current_value = parent[prop_key]
+                        # If it's a dict with numeric string keys, convert to array
+                        if isinstance(current_value, dict) and not isinstance(current_value, list):
+                            try:
+                                # Check if all keys are numeric strings (array indices)
+                                keys = [k for k in current_value.keys()]
+                                if all(k.isdigit() for k in keys):
+                                    # Convert to sorted array by index
+                                    sorted_keys = sorted(keys, key=int)
+                                    array_value = [current_value[k] for k in sorted_keys]
+                                    # Convert array elements to correct types based on schema
+                                    items_schema = prop_schema.get('items', {})
+                                    item_type = items_schema.get('type')
+                                    if item_type in ('number', 'integer'):
+                                        converted_array = []
+                                        for v in array_value:
+                                            if isinstance(v, str):
+                                                try:
+                                                    if item_type == 'integer':
+                                                        converted_array.append(int(v))
+                                                    else:
+                                                        converted_array.append(float(v))
+                                                except (ValueError, TypeError):
+                                                    converted_array.append(v)
+                                            else:
+                                                converted_array.append(v)
+                                        array_value = converted_array
+                                    parent[prop_key] = array_value
+                                    current_value = array_value  # Update for length check below
+                            except (ValueError, KeyError, TypeError):
+                                # Conversion failed, check if we should use default
+                                pass
+
+                        # If it's an array, ensure correct types and check minItems
+                        if isinstance(current_value, list):
+                            # First, ensure array elements are correct types
+                            items_schema = prop_schema.get('items', {})
+                            item_type = items_schema.get('type')
+                            if item_type in ('number', 'integer'):
+                                converted_array = []
+                                for v in current_value:
+                                    if isinstance(v, str):
+                                        try:
+                                            if item_type == 'integer':
+                                                converted_array.append(int(v))
+                                            else:
+                                                converted_array.append(float(v))
+                                        except (ValueError, TypeError):
+                                            converted_array.append(v)
+                                    else:
+                                        converted_array.append(v)
+                                parent[prop_key] = converted_array
+                                current_value = converted_array
+
+                            # Then check minItems
+                            min_items = prop_schema.get('minItems')
+                            if min_items is not None and len(current_value) < min_items:
+                                # Use default if available, otherwise keep as-is (validation will catch it)
+                                default = prop_schema.get('default')
+                                if default and isinstance(default, list) and len(default) >= min_items:
+                                    parent[prop_key] = default
+                else:
+                    # Top-level field
+                    if prop_key in config_dict:
+                        current_value = config_dict[prop_key]
+                        # If it's a dict with numeric string keys, convert to array
+                        if isinstance(current_value, dict) and not isinstance(current_value, list):
+                            try:
+                                keys = list(current_value.keys())
+                                if keys and all(str(k).isdigit() for k in keys):
+                                    sorted_keys = sorted(keys, key=lambda x: int(str(x)))
+                                    array_value = [current_value[k] for k in sorted_keys]
+                                    # Convert array elements to correct types based on schema
+                                    items_schema = prop_schema.get('items', {})
+                                    item_type = items_schema.get('type')
+                                    if item_type in ('number', 'integer'):
+                                        converted_array = []
+                                        for v in array_value:
+                                            if isinstance(v, str):
+                                                try:
+                                                    if item_type == 'integer':
+                                                        converted_array.append(int(v))
+                                                    else:
+                                                        converted_array.append(float(v))
+                                                except (ValueError, TypeError):
+                                                    converted_array.append(v)
+                                            else:
+                                                converted_array.append(v)
+                                        array_value = converted_array
+                                    config_dict[prop_key] = array_value
+                                    current_value = array_value  # Update for length check below
+                            except (ValueError, KeyError, TypeError) as e:
+                                logger.debug(f"Failed to convert {prop_key} to array: {e}")
+
+                        # If it's an array, ensure correct types and check minItems
+                        if isinstance(current_value, list):
+                            # First, ensure array elements are correct types
+                            items_schema = prop_schema.get('items', {})
+                            item_type = items_schema.get('type')
+                            if item_type in ('number', 'integer'):
+                                converted_array = []
+                                for v in current_value:
+                                    if isinstance(v, str):
+                                        try:
+                                            if item_type == 'integer':
+                                                converted_array.append(int(v))
+                                            else:
+                                                converted_array.append(float(v))
+                                        except (ValueError, TypeError):
+                                            converted_array.append(v)
+                                    else:
+                                        converted_array.append(v)
+                                config_dict[prop_key] = converted_array
+                                current_value = converted_array
+
+                            # Then check minItems
+                            min_items = prop_schema.get('minItems')
+                            if min_items is not None and len(current_value) < min_items:
+                                default = prop_schema.get('default')
+                                if default and isinstance(default, list) and len(default) >= min_items:
+                                    config_dict[prop_key] = default
+
+            # Recurse into nested objects
+            elif prop_type == 'object' and 'properties' in prop_schema:
+                nested_prefix = f"{prefix}.{prop_key}" if prefix else prop_key
+                if prefix:
+                    parent_parts = prefix.split('.')
+                    parent = config_dict
+                    for part in parent_parts:
+                        if isinstance(parent, dict) and part in parent:
+                            parent = parent[part]
+                        else:
+                            parent = None
+                            break
+                    nested_dict = parent.get(prop_key) if parent is not None and isinstance(parent, dict) else None
+                else:
+                    nested_dict = config_dict.get(prop_key)
+
+                if isinstance(nested_dict, dict):
+                    # Pass no prefix: config_dict is already the navigated sub-dict,
+                    # so path segments from the parent would mis-navigate it.
+                    fix_array_structures(nested_dict, prop_schema['properties'])
+
+    # Also ensure array fields that are None get converted to empty arrays
+    def ensure_array_defaults(config_dict, schema_props, prefix=''):
+        """Recursively ensure array fields have defaults if None"""
+        for prop_key, prop_schema in schema_props.items():
+            prop_type = prop_schema.get('type')
+
+            if prop_type == 'array':
+                if prefix:
+                    parent_parts = prefix.split('.')
+                    parent = config_dict
+                    for part in parent_parts:
+                        if isinstance(parent, dict) and part in parent:
+                            parent = parent[part]
+                        else:
+                            parent = None
+                            break
+
+                    if parent is not None and isinstance(parent, dict):
+                        if prop_key not in parent or parent[prop_key] is None:
+                            default = prop_schema.get('default', [])
+                            parent[prop_key] = default if default else []
+                else:
+                    if prop_key not in config_dict or config_dict[prop_key] is None:
+                        default = prop_schema.get('default', [])
+                        config_dict[prop_key] = default if default else []
+
+            elif prop_type == 'object' and 'properties' in prop_schema:
+                nested_prefix = f"{prefix}.{prop_key}" if prefix else prop_key
+                if prefix:
+                    parent_parts = prefix.split('.')
+                    parent = config_dict
+                    for part in parent_parts:
+                        if isinstance(parent, dict) and part in parent:
+                            parent = parent[part]
+                        else:
+                            parent = None
+                            break
+                    nested_dict = parent.get(prop_key) if parent is not None and isinstance(parent, dict) else None
+                else:
+                    nested_dict = config_dict.get(prop_key)
+
+                if nested_dict is None:
+                    if prefix:
+                        parent_parts = prefix.split('.')
+                        parent = config_dict
+                        for part in parent_parts:
+                            if part not in parent:
+                                parent[part] = {}
+                            parent = parent[part]
+                        if prop_key not in parent:
+                            parent[prop_key] = {}
+                        nested_dict = parent[prop_key]
+                    else:
+                        if prop_key not in config_dict:
+                            config_dict[prop_key] = {}
+                        nested_dict = config_dict[prop_key]
+
+                if isinstance(nested_dict, dict):
+                    # Pass no prefix: config_dict is already navigated.
+                    ensure_array_defaults(nested_dict, prop_schema['properties'])
+
+    if schema and 'properties' in schema:
+        # First, fix any dict structures that should be arrays
+        # This must be called BEFORE validation to convert dicts with numeric keys to arrays
+        fix_array_structures(plugin_config, schema['properties'])
+        # Then, ensure None arrays get defaults
+        ensure_array_defaults(plugin_config, schema['properties'])
+        
+        # Debug: Log the structure after fixing
+        if 'feeds' in plugin_config and 'custom_feeds' in plugin_config.get('feeds', {}):
+            custom_feeds = plugin_config['feeds']['custom_feeds']
+            logger.debug(f"After fix_array_structures: custom_feeds type={type(custom_feeds)}, value={custom_feeds}")
+        
+        # Force fix for feeds.custom_feeds if it's still a dict (fallback)
+        if 'feeds' in plugin_config:
+            feeds_config = plugin_config.get('feeds') or {}
+            if feeds_config and 'custom_feeds' in feeds_config and isinstance(feeds_config['custom_feeds'], dict):
+                custom_feeds_dict = feeds_config['custom_feeds']
+                # Check if all keys are numeric
+                keys = list(custom_feeds_dict.keys())
+                if keys and all(str(k).isdigit() for k in keys):
+                    # Convert to array
+                    sorted_keys = sorted(keys, key=lambda x: int(str(x)))
+                    feeds_config['custom_feeds'] = [custom_feeds_dict[k] for k in sorted_keys]
+                    logger.info(f"Force-converted feeds.custom_feeds from dict to array: {len(feeds_config['custom_feeds'])} items")
+
+    # Fix unchecked boolean checkboxes: HTML checkboxes don't submit values
+    # when unchecked, so the existing config value (potentially True) persists.
+    # Walk the schema and set any boolean fields missing from form data to False.
+    if schema and 'properties' in schema:
+        form_keys = set(form.keys())
+        _set_missing_booleans_to_false(plugin_config, schema['properties'], form_keys)
+    return plugin_config
+
+
 @api_v3.route('/plugins/config', methods=['POST'])
 def save_plugin_config():
     """Save plugin configuration, separating secrets from regular config"""
@@ -4335,359 +4702,9 @@ def save_plugin_config():
             # Start with existing config and apply form updates
             plugin_config = existing_config
 
-            # Convert form data to config dict
-            # Form fields can use dot notation for nested values (e.g., "transition.type")
-            form_data = request.form.to_dict()
-
-            # First pass: handle bracket notation array fields (e.g., "field_name[]" from checkbox-group)
-            # These fields use getlist() to preserve all values, then replace in form_data
-            # Sentinel empty value ("") allows clearing array to [] when all checkboxes unchecked
-            bracket_array_fields = {}  # Maps base field path to list of values
-            for key in request.form.keys():
-                # Check if key ends with "[]" (bracket notation for array fields)
-                if key.endswith('[]'):
-                    base_path = key[:-2]  # Remove "[]" suffix
-                    values = request.form.getlist(key)
-                    # Filter out sentinel empty string - if only sentinel present, array should be []
-                    # If sentinel + values present, use the actual values
-                    filtered_values = [v for v in values if v and v.strip()]
-                    # If no non-empty values but key exists, it means all checkboxes unchecked (empty array)
-                    bracket_array_fields[base_path] = filtered_values
-                    # Remove the bracket notation key from form_data if present
-                    if key in form_data:
-                        del form_data[key]
-            
-            # Process bracket notation fields and set directly in plugin_config
-            # Use JSON encoding instead of comma-join to handle values containing commas
-            import json
-            for base_path, values in bracket_array_fields.items():
-                # Get schema property to verify it's an array
-                base_prop = _get_schema_property(schema, base_path)
-                if base_prop and base_prop.get('type') == 'array':
-                    # Filter out empty values and sentinel empty strings
-                    filtered_values = [v for v in values if v and v.strip()]
-                    # Set directly in plugin_config (values are already strings, no need to parse)
-                    # Empty array (all unchecked) is represented as []
-                    _set_nested_value(plugin_config, base_path, filtered_values)
-                    logger.debug(f"Processed bracket notation array field {base_path}: {values} -> {filtered_values}")
-                    # Remove from form_data to avoid double processing
-                    if base_path in form_data:
-                        del form_data[base_path]
-
-            # Second pass: detect and combine array index fields (e.g., "text_color.0", "text_color.1" -> "text_color" as array)
-            # This handles cases where forms send array fields as indexed inputs
-            array_fields = {}  # Maps base field path to list of (index, value) tuples
-            processed_keys = set()
-            indexed_base_paths = set()  # Track which base paths have indexed fields
-
-            for key, value in form_data.items():
-                # Check if this looks like an array index field (ends with .0, .1, .2, etc.)
-                if '.' in key:
-                    parts = key.rsplit('.', 1)  # Split on last dot
-                    if len(parts) == 2:
-                        base_path, last_part = parts
-                        # Check if last part is a numeric string (array index)
-                        if last_part.isdigit():
-                            # Get schema property for the base path to verify it's an array
-                            base_prop = _get_schema_property(schema, base_path)
-                            if base_prop and base_prop.get('type') == 'array':
-                                # This is an array index field
-                                index = int(last_part)
-                                if base_path not in array_fields:
-                                    array_fields[base_path] = []
-                                array_fields[base_path].append((index, value))
-                                processed_keys.add(key)
-                                indexed_base_paths.add(base_path)
-                                continue
-
-            # Process combined array fields
-            for base_path, index_values in array_fields.items():
-                # Sort by index and extract values
-                index_values.sort(key=lambda x: x[0])
-                values = [v for _, v in index_values]
-                # Combine values into comma-separated string for parsing
-                combined_value = ', '.join(str(v) for v in values)
-                # Parse as array using schema
-                parsed_value = _parse_form_value_with_schema(combined_value, base_path, schema)
-                # Debug logging
-                logger.debug(f"Combined indexed array field {base_path}: {values} -> {combined_value} -> {parsed_value}")
-                # Only set if not skipped
-                if parsed_value is not _SKIP_FIELD:
-                    _set_nested_value(plugin_config, base_path, parsed_value)
-            
-            # Process remaining (non-indexed) fields
-            # Skip any base paths that were processed as indexed arrays
-            for key, value in form_data.items():
-                if key not in processed_keys:
-                    # Skip if this key is a base path that was processed as indexed array
-                    # (to avoid overwriting the combined array with a single value)
-                    if key not in indexed_base_paths:
-                        # Parse value using schema to determine correct type
-                        parsed_value = _parse_form_value_with_schema(value, key, schema)
-                        # Debug logging for array fields
-                        if schema:
-                            prop = _get_schema_property(schema, key)
-                            if prop and prop.get('type') == 'array':
-                                logger.debug(f"Array field {key}: form value='{value}' -> parsed={parsed_value}")
-                        # Use helper to set nested values correctly (skips if _SKIP_FIELD)
-                        if parsed_value is not _SKIP_FIELD:
-                            _set_nested_value(plugin_config, key, parsed_value)
-            
-            # Post-process: Fix array fields that might have been incorrectly structured
-            # This handles cases where array fields are stored as dicts (e.g., from indexed form fields)
-            def fix_array_structures(config_dict, schema_props, prefix=''):
-                """Recursively fix array structures (convert dicts with numeric keys to arrays, fix length issues)"""
-                for prop_key, prop_schema in schema_props.items():
-                    prop_type = prop_schema.get('type')
-
-                    if prop_type == 'array':
-                        # Navigate to the field location
-                        if prefix:
-                            parent_parts = prefix.split('.')
-                            parent = config_dict
-                            for part in parent_parts:
-                                if isinstance(parent, dict) and part in parent:
-                                    parent = parent[part]
-                                else:
-                                    parent = None
-                                    break
-
-                            if parent is not None and isinstance(parent, dict) and prop_key in parent:
-                                current_value = parent[prop_key]
-                                # If it's a dict with numeric string keys, convert to array
-                                if isinstance(current_value, dict) and not isinstance(current_value, list):
-                                    try:
-                                        # Check if all keys are numeric strings (array indices)
-                                        keys = [k for k in current_value.keys()]
-                                        if all(k.isdigit() for k in keys):
-                                            # Convert to sorted array by index
-                                            sorted_keys = sorted(keys, key=int)
-                                            array_value = [current_value[k] for k in sorted_keys]
-                                            # Convert array elements to correct types based on schema
-                                            items_schema = prop_schema.get('items', {})
-                                            item_type = items_schema.get('type')
-                                            if item_type in ('number', 'integer'):
-                                                converted_array = []
-                                                for v in array_value:
-                                                    if isinstance(v, str):
-                                                        try:
-                                                            if item_type == 'integer':
-                                                                converted_array.append(int(v))
-                                                            else:
-                                                                converted_array.append(float(v))
-                                                        except (ValueError, TypeError):
-                                                            converted_array.append(v)
-                                                    else:
-                                                        converted_array.append(v)
-                                                array_value = converted_array
-                                            parent[prop_key] = array_value
-                                            current_value = array_value  # Update for length check below
-                                    except (ValueError, KeyError, TypeError):
-                                        # Conversion failed, check if we should use default
-                                        pass
-
-                                # If it's an array, ensure correct types and check minItems
-                                if isinstance(current_value, list):
-                                    # First, ensure array elements are correct types
-                                    items_schema = prop_schema.get('items', {})
-                                    item_type = items_schema.get('type')
-                                    if item_type in ('number', 'integer'):
-                                        converted_array = []
-                                        for v in current_value:
-                                            if isinstance(v, str):
-                                                try:
-                                                    if item_type == 'integer':
-                                                        converted_array.append(int(v))
-                                                    else:
-                                                        converted_array.append(float(v))
-                                                except (ValueError, TypeError):
-                                                    converted_array.append(v)
-                                            else:
-                                                converted_array.append(v)
-                                        parent[prop_key] = converted_array
-                                        current_value = converted_array
-
-                                    # Then check minItems
-                                    min_items = prop_schema.get('minItems')
-                                    if min_items is not None and len(current_value) < min_items:
-                                        # Use default if available, otherwise keep as-is (validation will catch it)
-                                        default = prop_schema.get('default')
-                                        if default and isinstance(default, list) and len(default) >= min_items:
-                                            parent[prop_key] = default
-                        else:
-                            # Top-level field
-                            if prop_key in config_dict:
-                                current_value = config_dict[prop_key]
-                                # If it's a dict with numeric string keys, convert to array
-                                if isinstance(current_value, dict) and not isinstance(current_value, list):
-                                    try:
-                                        keys = list(current_value.keys())
-                                        if keys and all(str(k).isdigit() for k in keys):
-                                            sorted_keys = sorted(keys, key=lambda x: int(str(x)))
-                                            array_value = [current_value[k] for k in sorted_keys]
-                                            # Convert array elements to correct types based on schema
-                                            items_schema = prop_schema.get('items', {})
-                                            item_type = items_schema.get('type')
-                                            if item_type in ('number', 'integer'):
-                                                converted_array = []
-                                                for v in array_value:
-                                                    if isinstance(v, str):
-                                                        try:
-                                                            if item_type == 'integer':
-                                                                converted_array.append(int(v))
-                                                            else:
-                                                                converted_array.append(float(v))
-                                                        except (ValueError, TypeError):
-                                                            converted_array.append(v)
-                                                    else:
-                                                        converted_array.append(v)
-                                                array_value = converted_array
-                                            config_dict[prop_key] = array_value
-                                            current_value = array_value  # Update for length check below
-                                    except (ValueError, KeyError, TypeError) as e:
-                                        logger.debug(f"Failed to convert {prop_key} to array: {e}")
-
-                                # If it's an array, ensure correct types and check minItems
-                                if isinstance(current_value, list):
-                                    # First, ensure array elements are correct types
-                                    items_schema = prop_schema.get('items', {})
-                                    item_type = items_schema.get('type')
-                                    if item_type in ('number', 'integer'):
-                                        converted_array = []
-                                        for v in current_value:
-                                            if isinstance(v, str):
-                                                try:
-                                                    if item_type == 'integer':
-                                                        converted_array.append(int(v))
-                                                    else:
-                                                        converted_array.append(float(v))
-                                                except (ValueError, TypeError):
-                                                    converted_array.append(v)
-                                            else:
-                                                converted_array.append(v)
-                                        config_dict[prop_key] = converted_array
-                                        current_value = converted_array
-
-                                    # Then check minItems
-                                    min_items = prop_schema.get('minItems')
-                                    if min_items is not None and len(current_value) < min_items:
-                                        default = prop_schema.get('default')
-                                        if default and isinstance(default, list) and len(default) >= min_items:
-                                            config_dict[prop_key] = default
-
-                    # Recurse into nested objects
-                    elif prop_type == 'object' and 'properties' in prop_schema:
-                        nested_prefix = f"{prefix}.{prop_key}" if prefix else prop_key
-                        if prefix:
-                            parent_parts = prefix.split('.')
-                            parent = config_dict
-                            for part in parent_parts:
-                                if isinstance(parent, dict) and part in parent:
-                                    parent = parent[part]
-                                else:
-                                    parent = None
-                                    break
-                            nested_dict = parent.get(prop_key) if parent is not None and isinstance(parent, dict) else None
-                        else:
-                            nested_dict = config_dict.get(prop_key)
-
-                        if isinstance(nested_dict, dict):
-                            # Pass no prefix: config_dict is already the navigated sub-dict,
-                            # so path segments from the parent would mis-navigate it.
-                            fix_array_structures(nested_dict, prop_schema['properties'])
-
-            # Also ensure array fields that are None get converted to empty arrays
-            def ensure_array_defaults(config_dict, schema_props, prefix=''):
-                """Recursively ensure array fields have defaults if None"""
-                for prop_key, prop_schema in schema_props.items():
-                    prop_type = prop_schema.get('type')
-
-                    if prop_type == 'array':
-                        if prefix:
-                            parent_parts = prefix.split('.')
-                            parent = config_dict
-                            for part in parent_parts:
-                                if isinstance(parent, dict) and part in parent:
-                                    parent = parent[part]
-                                else:
-                                    parent = None
-                                    break
-
-                            if parent is not None and isinstance(parent, dict):
-                                if prop_key not in parent or parent[prop_key] is None:
-                                    default = prop_schema.get('default', [])
-                                    parent[prop_key] = default if default else []
-                        else:
-                            if prop_key not in config_dict or config_dict[prop_key] is None:
-                                default = prop_schema.get('default', [])
-                                config_dict[prop_key] = default if default else []
-
-                    elif prop_type == 'object' and 'properties' in prop_schema:
-                        nested_prefix = f"{prefix}.{prop_key}" if prefix else prop_key
-                        if prefix:
-                            parent_parts = prefix.split('.')
-                            parent = config_dict
-                            for part in parent_parts:
-                                if isinstance(parent, dict) and part in parent:
-                                    parent = parent[part]
-                                else:
-                                    parent = None
-                                    break
-                            nested_dict = parent.get(prop_key) if parent is not None and isinstance(parent, dict) else None
-                        else:
-                            nested_dict = config_dict.get(prop_key)
-
-                        if nested_dict is None:
-                            if prefix:
-                                parent_parts = prefix.split('.')
-                                parent = config_dict
-                                for part in parent_parts:
-                                    if part not in parent:
-                                        parent[part] = {}
-                                    parent = parent[part]
-                                if prop_key not in parent:
-                                    parent[prop_key] = {}
-                                nested_dict = parent[prop_key]
-                            else:
-                                if prop_key not in config_dict:
-                                    config_dict[prop_key] = {}
-                                nested_dict = config_dict[prop_key]
-
-                        if isinstance(nested_dict, dict):
-                            # Pass no prefix: config_dict is already navigated.
-                            ensure_array_defaults(nested_dict, prop_schema['properties'])
-
-            if schema and 'properties' in schema:
-                # First, fix any dict structures that should be arrays
-                # This must be called BEFORE validation to convert dicts with numeric keys to arrays
-                fix_array_structures(plugin_config, schema['properties'])
-                # Then, ensure None arrays get defaults
-                ensure_array_defaults(plugin_config, schema['properties'])
-                
-                # Debug: Log the structure after fixing
-                if 'feeds' in plugin_config and 'custom_feeds' in plugin_config.get('feeds', {}):
-                    custom_feeds = plugin_config['feeds']['custom_feeds']
-                    logger.debug(f"After fix_array_structures: custom_feeds type={type(custom_feeds)}, value={custom_feeds}")
-                
-                # Force fix for feeds.custom_feeds if it's still a dict (fallback)
-                if 'feeds' in plugin_config:
-                    feeds_config = plugin_config.get('feeds') or {}
-                    if feeds_config and 'custom_feeds' in feeds_config and isinstance(feeds_config['custom_feeds'], dict):
-                        custom_feeds_dict = feeds_config['custom_feeds']
-                        # Check if all keys are numeric
-                        keys = list(custom_feeds_dict.keys())
-                        if keys and all(str(k).isdigit() for k in keys):
-                            # Convert to array
-                            sorted_keys = sorted(keys, key=lambda x: int(str(x)))
-                            feeds_config['custom_feeds'] = [custom_feeds_dict[k] for k in sorted_keys]
-                            logger.info(f"Force-converted feeds.custom_feeds from dict to array: {len(feeds_config['custom_feeds'])} items")
-
-            # Fix unchecked boolean checkboxes: HTML checkboxes don't submit values
-            # when unchecked, so the existing config value (potentially True) persists.
-            # Walk the schema and set any boolean fields missing from form data to False.
-            if schema and 'properties' in schema:
-                form_keys = set(request.form.keys())
-                _set_missing_booleans_to_false(plugin_config, schema['properties'], form_keys)
+            # Convert form data to config dict (shared with the preview
+            # endpoint — see parse_plugin_config_form)
+            plugin_config = parse_plugin_config_form(request.form, schema, plugin_config)
 
         # Get schema manager instance (for JSON requests)
         schema_mgr = api_v3.schema_manager
@@ -5288,6 +5305,233 @@ def get_plugin_schema():
     except Exception as e:
         logger.error('Error in get_plugin_schema', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+
+
+# plugin_id arrives in request input and is used to build filesystem paths —
+# allowlist it (same pattern pages_v3 uses)
+_SAFE_PREVIEW_PLUGIN_ID_RE = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
+
+
+def _find_plugin_dir_for_preview(plugin_id: str) -> 'Path | None':
+    """Locate an installed plugin's directory (store dir, then dev dirs) —
+    same search order the schema manager uses. Rejects any id that could
+    name a path outside the plugin directories."""
+    if not isinstance(plugin_id, str) or not _SAFE_PREVIEW_PLUGIN_ID_RE.match(plugin_id):
+        return None
+    candidates = []
+    active_pm = getattr(api_v3, 'plugin_manager', None)
+    if active_pm and getattr(active_pm, 'plugins_dir', None):
+        candidates.append(Path(active_pm.plugins_dir))
+    else:
+        _cm = getattr(api_v3, 'config_manager', None)
+        _cfg = _cm.load_config() if _cm else {}
+        _dir_name = _cfg.get('plugin_system', {}).get('plugins_directory', 'plugin-repos')
+        candidates.append(Path(_dir_name) if os.path.isabs(_dir_name)
+                          else PROJECT_ROOT / _dir_name)
+    candidates.append(PROJECT_ROOT / 'plugins')
+    candidates.append(PROJECT_ROOT / 'plugin-repos')
+    for base in candidates:
+        plugin_dir = base / plugin_id
+        if (plugin_dir / 'manifest.json').exists():
+            return plugin_dir
+    return None
+
+
+PREVIEW_MIN_SIZE, PREVIEW_MAX_W, PREVIEW_MAX_H = 8, 1024, 512
+PREVIEW_RENDER_TIMEOUT_SEC = 15
+
+
+@api_v3.route('/plugins/preview', methods=['POST'])
+def preview_plugin_render():
+    """Render a plugin headlessly with a CANDIDATE (unsaved) config.
+
+    Powers the config page's live preview: the browser posts the current
+    form state (same encoding as save — parsed by the same
+    parse_plugin_config_form, so preview and save can never disagree) or a
+    JSON body {"config": {...}}, and gets back a base64 PNG of what the
+    panel would show.
+
+    Entirely hardware-free: renders through VisualTestDisplayManager (pure
+    PIL) with install_deps=False. update() is skipped by default so the
+    request never blocks on live APIs — plugins with a test/harness.json
+    get their mock-data fixture primed into the cache instead, and
+    ?skip_update=0 opts into a real update() for plugins that need it.
+
+    Query params: plugin_id (required); width/height (defaults: the real
+    panel size from display.hardware); skip_update (default 1).
+    """
+    try:
+        plugin_id = request.args.get('plugin_id')
+        if not plugin_id:
+            return error_response(ErrorCode.INVALID_INPUT,
+                                  'plugin_id required in query string',
+                                  status_code=400)
+
+        plugin_dir = _find_plugin_dir_for_preview(plugin_id)
+        if not plugin_dir:
+            return error_response(ErrorCode.PLUGIN_NOT_FOUND,
+                                  f'Plugin not found: {plugin_id}',
+                                  status_code=404)
+
+        schema_mgr = api_v3.schema_manager
+        if not schema_mgr:
+            return error_response(ErrorCode.SYSTEM_ERROR,
+                                  'Schema manager not initialized',
+                                  status_code=500)
+
+        # ---- panel size: explicit query args, else the real panel ----
+        main_config = {}
+        if api_v3.config_manager:
+            try:
+                main_config = api_v3.config_manager.load_config() or {}
+            except Exception:
+                main_config = {}
+        hardware = main_config.get('display', {}).get('hardware', {})
+        default_width = int(hardware.get('cols', 64)) * int(hardware.get('chain_length', 2))
+        default_height = int(hardware.get('rows', 32)) * int(hardware.get('parallel', 1))
+        # The UI's size selector posts "__preview_size=WxH" via the button's
+        # hx-vals (evaluated at request time — htmx caches hx-post's path at
+        # process time, so a dynamically updated query string doesn't work).
+        # Explicit query args still take precedence for API callers.
+        preview_size = request.values.get('__preview_size', '')
+        if preview_size and 'x' in preview_size and 'width' not in request.args:
+            size_w, _, size_h = preview_size.partition('x')
+            try:
+                default_width, default_height = int(size_w), int(size_h)
+            except (TypeError, ValueError):
+                pass  # malformed selector value — fall back to panel size
+        try:
+            width = int(request.args.get('width', default_width))
+            height = int(request.args.get('height', default_height))
+        except (TypeError, ValueError):
+            return error_response(ErrorCode.INVALID_INPUT,
+                                  'width and height must be integers',
+                                  status_code=400)
+        if not (PREVIEW_MIN_SIZE <= width <= PREVIEW_MAX_W
+                and PREVIEW_MIN_SIZE <= height <= PREVIEW_MAX_H):
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                f'size must be within {PREVIEW_MIN_SIZE}x{PREVIEW_MIN_SIZE} '
+                f'and {PREVIEW_MAX_W}x{PREVIEW_MAX_H}',
+                status_code=400)
+
+        # ---- candidate config: saved config + submitted changes + defaults ----
+        schema = schema_mgr.load_schema(plugin_id, use_cache=False)
+        existing_config = (main_config.get(plugin_id) or {}).copy()
+
+        content_type = request.content_type or ''
+        if 'application/json' in content_type:
+            import copy
+            data = request.get_json(silent=True) or {}
+
+            # Deep-merge the candidate onto the saved config, matching how
+            # the form path (and save) treat partial updates — a shallow
+            # update() would silently drop the user's saved values in any
+            # nested section the candidate touches (e.g. posting one
+            # element's color would discard the saved font of its sibling).
+            def _deep_merge(base, overlay):
+                for key, value in overlay.items():
+                    if (isinstance(value, dict)
+                            and isinstance(base.get(key), dict)):
+                        _deep_merge(base[key], value)
+                    else:
+                        base[key] = value
+
+            plugin_config = copy.deepcopy(existing_config)
+            _deep_merge(plugin_config, data.get('config', {}))
+        else:
+            # Strip the preview-only control field so it never lands in the
+            # candidate config the plugin sees
+            form = request.form.copy()
+            form.poplist('__preview_size')
+            plugin_config = parse_plugin_config_form(form, schema,
+                                                     existing_config)
+
+        if schema:
+            defaults = schema_mgr.generate_default_config(plugin_id, use_cache=True)
+            plugin_config = schema_mgr.merge_with_defaults(plugin_config, defaults)
+        # Preview regardless of the enabled toggle
+        plugin_config['enabled'] = True
+
+        # ---- deterministic data: the plugin's own harness fixture ----
+        mock_data = {}
+        try:
+            from src.plugin_system.testing.loading import load_harness_spec
+            spec = load_harness_spec(plugin_dir)
+            mock_data = spec.get('mock_data_contents', {}) or {}
+            harness_config = spec.get('config') or {}
+            if harness_config:
+                # harness settings under the candidate config: user's
+                # in-form values always win
+                merged = dict(harness_config)
+                merged.update(plugin_config)
+                plugin_config = merged
+        except Exception as e:
+            logger.debug(f'No usable harness spec for {plugin_id}: {e}')
+
+        skip_update = request.args.get('skip_update', '1') not in ('0', 'false')
+
+        # Bounded render: a plugin whose update()/display() hangs must not
+        # pin a web worker forever. The runaway thread can't be killed, but
+        # the request returns and the thread is daemonized so it can't block
+        # shutdown either.
+        from src.plugin_system.testing.render_service import render_plugin_once
+        import threading
+        render_out: dict = {}
+
+        def _do_render():
+            try:
+                render_out['result'] = render_plugin_once(
+                    plugin_id, plugin_dir, config=plugin_config,
+                    mock_data=mock_data, width=width, height=height,
+                    skip_update=skip_update)
+            except Exception as e:  # surfaced below
+                render_out['error'] = e
+
+        render_thread = threading.Thread(target=_do_render, daemon=True,
+                                         name=f'preview-{plugin_id}')
+        render_thread.start()
+        render_thread.join(timeout=PREVIEW_RENDER_TIMEOUT_SEC)
+        if render_thread.is_alive():
+            logger.warning('preview render timed out for %s after %ss',
+                           plugin_id, PREVIEW_RENDER_TIMEOUT_SEC)
+            if request.headers.get('HX-Request'):
+                return Response('<p class="text-xs text-red-600">Preview timed '
+                                'out &mdash; the plugin took too long to render.</p>',
+                                mimetype='text/html')
+            return error_response(ErrorCode.SYSTEM_ERROR,
+                                  'Preview render timed out', status_code=504)
+        if 'error' in render_out:
+            raise render_out['error']
+        result = render_out['result']
+
+        # HTMX callers get a ready-to-swap fragment; API callers get JSON
+        if request.headers.get('HX-Request'):
+            import html as _html
+            meta = f"{result['width']}&times;{result['height']} &middot; {result['render_time_ms']} ms"
+            errors_html = ''
+            if result['errors'] or result['warnings']:
+                notes = _html.escape('; '.join(result['errors'] + result['warnings']))
+                errors_html = (f'<p class="text-xs text-red-600 mt-1">'
+                               f'{notes}</p>')
+            return Response(
+                f'<img src="{result["image"]}" alt="Plugin preview" '
+                f'class="preview-pixelated" '
+                f'style="image-rendering: pixelated; width: 100%; max-width: '
+                f'{result["width"] * 4}px; border: 1px solid #333; '
+                f'border-radius: 4px; background: #000;">'
+                f'<p class="text-xs text-gray-500 mt-1">{meta}</p>'
+                f'{errors_html}',
+                mimetype='text/html')
+        return jsonify({'status': 'success', 'data': result})
+    except Exception:
+        logger.error('Error in preview_plugin_render', exc_info=True)
+        if request.headers.get('HX-Request'):
+            return Response('<p class="text-xs text-red-600">Preview failed — '
+                            'see logs for details.</p>', mimetype='text/html')
+        return error_response(ErrorCode.SYSTEM_ERROR,
+                              'Preview failed; see logs for details',
+                              status_code=500)
 
 @api_v3.route('/plugins/config/reset', methods=['POST'])
 def reset_plugin_config():
