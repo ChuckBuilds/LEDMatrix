@@ -236,13 +236,15 @@ def _render_once(plugin_id, plugin_dir, manifest, config, mock_data, width, heig
         try:
             plugin_instance.update()
         except Exception as e:
-            warnings.append(f"update() raised: {e}")
+            logger.warning("update() raised for plugin %s", plugin_id, exc_info=True)
+            warnings.append(f"update() raised: {type(e).__name__} — see server log")
 
     # Run display()
     try:
         plugin_instance.display(force_clear=True)
     except Exception as e:
-        errors.append(f"display() raised: {e}")
+        logger.warning("display() raised for plugin %s", plugin_id, exc_info=True)
+        errors.append(f"display() raised: {type(e).__name__} — see server log")
 
     render_time_ms = round((time.time() - start_time) * 1000, 1)
 
@@ -259,20 +261,25 @@ def _render_once(plugin_id, plugin_dir, manifest, config, mock_data, width, heig
 def _trusted_plugin_dir(plugin_dir: Path) -> Optional[Path]:
     """Re-derive a plugin directory from the search dirs' own listings.
 
-    Path-injection barrier: the returned Path is constructed purely from
-    trusted directory enumeration (``iterdir``) — request-derived strings
+    Path-injection barrier: unlike ``Path.iterdir()`` (which CodeQL doesn't
+    recognize as a taint-clearing enumeration), ``os.scandir()`` is. The
+    returned Path is built from a trusted root plus a name the filesystem
+    itself produced under that root via scandir — request-derived strings
     never enter its construction — so a crafted plugin id can never make
     downstream file access leave the plugin search dirs. Comparison is by
-    path equality, deliberately without symlink resolution (dev plugins
-    are commonly symlinked into plugins/).
+    name, deliberately without symlink resolution (dev plugins are
+    commonly symlinked into plugins/).
     """
-    wanted = Path(os.path.normpath(str(plugin_dir)))
+    wanted_name = Path(os.path.normpath(str(plugin_dir))).name
     for search_dir in get_search_dirs():
-        if not search_dir.is_dir():
+        search_dir_str = str(search_dir)
+        try:
+            with os.scandir(search_dir_str) as entries:
+                for entry in entries:
+                    if entry.name == wanted_name and entry.is_dir():
+                        return Path(search_dir_str) / entry.name
+        except OSError:
             continue
-        for entry in search_dir.iterdir():
-            if entry.is_dir() and entry == wanted:
-                return entry
     return None
 
 

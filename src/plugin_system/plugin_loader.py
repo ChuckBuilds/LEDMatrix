@@ -437,8 +437,7 @@ class PluginLoader:
                 if not Path(existing_file).resolve().is_relative_to(resolved_dir):
                     evicted[mod_name] = sys.modules.pop(mod_name)
                     self.logger.debug(
-                        "Evicted stale module '%s' (from %s) before loading plugin in %s",
-                        mod_name, existing_file, plugin_dir,
+                        "Evicted stale bare-name module '%s' before loading plugin", mod_name,
                     )
             except (ValueError, TypeError):
                 continue
@@ -551,7 +550,7 @@ class PluginLoader:
             plugin_dir_str = str(plugin_dir)
             if plugin_dir_str not in sys.path:
                 sys.path.insert(0, plugin_dir_str)
-                self.logger.debug("Added plugin directory to sys.path: %s", plugin_dir_str)
+                self.logger.debug("Added plugin %s's directory to sys.path", plugin_id)
 
             # Import the plugin module
             module_name = f"plugin_{plugin_id.replace('-', '_')}"
@@ -563,8 +562,8 @@ class PluginLoader:
 
             spec = importlib.util.spec_from_file_location(module_name, entry_file)
             if spec is None or spec.loader is None:
+                self.logger.error("Could not create module spec for plugin %s", plugin_id)
                 error_msg = f"Could not create module spec for {entry_file}"
-                self.logger.error(error_msg)
                 raise PluginError(error_msg, plugin_id=plugin_id, context={'entry_file': str(entry_file)})
 
             module = importlib.util.module_from_spec(spec)
