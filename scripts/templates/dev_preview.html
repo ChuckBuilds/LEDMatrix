@@ -209,6 +209,11 @@
                            onchange="onConfigChange()">
                     <span class="text-xs ml-2" style="color: var(--text-secondary);">px</span>
                 </div>
+                <select id="sizePreset" onchange="applySizePreset()"
+                        class="w-full mt-2 px-2 py-1.5 rounded text-xs"
+                        style="background: var(--bg-primary); color: var(--text-secondary); border: 1px solid var(--border-color);">
+                    <option value="">Preset sizes…</option>
+                </select>
             </div>
 
             <!-- Config form -->
@@ -242,12 +247,17 @@
                 </div>
             </details>
 
-            <!-- Render button -->
+            <!-- Render buttons -->
             <div class="flex gap-2">
                 <button onclick="renderPlugin()" id="renderBtn"
                         class="flex-1 px-4 py-2.5 rounded-lg text-sm font-medium text-white"
                         style="background: var(--accent);">
                     Render
+                </button>
+                <button onclick="renderAllSizes()" id="renderAllBtn" title="Render at every harness test size"
+                        class="px-4 py-2.5 rounded-lg text-sm font-medium"
+                        style="background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-color);">
+                    All Sizes
                 </button>
             </div>
         </div>
@@ -311,6 +321,15 @@
             <div id="messagesPanel" class="panel p-3 hidden">
                 <div id="messagesList" class="text-xs font-mono space-y-1"></div>
             </div>
+
+            <!-- Multi-size gallery -->
+            <div id="galleryPanel" class="panel p-4 hidden">
+                <div class="flex items-center justify-between mb-3">
+                    <span class="text-xs font-medium" style="color: var(--text-secondary);">All Sizes</span>
+                    <span class="text-xs" style="color: var(--text-secondary);" id="galleryStatus"></span>
+                </div>
+                <div id="galleryGrid" class="flex flex-wrap gap-4 items-start"></div>
+            </div>
         </div>
     </div>
 
@@ -340,7 +359,29 @@
                 opt.textContent = `${p.name} (${p.id})`;
                 select.appendChild(opt);
             });
+
+            // Load harness size presets
+            try {
+                const sizesRes = await fetch('/api/sizes');
+                const sizesData = await sizesRes.json();
+                const preset = document.getElementById('sizePreset');
+                (sizesData.sizes || []).forEach(([w, h]) => {
+                    const opt = document.createElement('option');
+                    opt.value = `${w}x${h}`;
+                    opt.textContent = `${w} x ${h}`;
+                    preset.appendChild(opt);
+                });
+            } catch (e) { /* presets are a convenience; ignore */ }
         });
+
+        function applySizePreset() {
+            const value = document.getElementById('sizePreset').value;
+            if (!value) return;
+            const [w, h] = value.split('x');
+            document.getElementById('displayWidth').value = w;
+            document.getElementById('displayHeight').value = h;
+            onConfigChange();
+        }
 
         // ---------- Plugin selection ----------
         async function onPluginChange() {
@@ -482,6 +523,89 @@
             } finally {
                 btn.disabled = false;
                 btn.textContent = 'Render';
+            }
+        }
+
+        // ---------- Multi-size gallery ----------
+        async function renderAllSizes() {
+            if (!currentPluginId) return;
+
+            const btn = document.getElementById('renderAllBtn');
+            const panel = document.getElementById('galleryPanel');
+            const grid = document.getElementById('galleryGrid');
+            const status = document.getElementById('galleryStatus');
+            btn.disabled = true;
+            btn.textContent = 'Rendering…';
+            panel.classList.remove('hidden');
+            grid.innerHTML = '';
+            status.textContent = 'Rendering at all harness sizes…';
+
+            const config = jsonEditor ? jsonEditor.getValue() : {};
+            config.enabled = true;
+            let mockData = {};
+            const mockInput = document.getElementById('mockDataInput').value.trim();
+            if (mockInput) {
+                try { mockData = JSON.parse(mockInput); }
+                catch (e) { showMessages([], [`Mock data JSON error: ${e.message}`]); }
+            }
+
+            try {
+                const res = await fetch('/api/render-matrix', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        plugin_id: currentPluginId,
+                        config: config,
+                        mock_data: mockData,
+                    }),
+                });
+                const data = await res.json();
+                if (data.error) {
+                    status.textContent = data.error;
+                    return;
+                }
+
+                let failures = 0;
+                (data.results || []).forEach(r => {
+                    const cell = document.createElement('div');
+                    cell.style.cssText = 'display:flex;flex-direction:column;gap:4px;';
+                    const failed = (r.errors || []).length > 0 || !r.image;
+                    if (failed) failures++;
+
+                    const label = document.createElement('span');
+                    label.className = 'text-xs font-mono';
+                    label.style.color = failed ? '#f87171' : 'var(--text-secondary)';
+                    label.textContent = `${r.width}x${r.height} · ${r.render_time_ms}ms`;
+                    cell.appendChild(label);
+
+                    if (r.image) {
+                        const img = document.createElement('img');
+                        img.src = r.image;
+                        // Small panels get 2x zoom so they stay legible in the grid
+                        const zoom = r.height >= 128 ? 1 : 2;
+                        img.style.cssText =
+                            `image-rendering: pixelated; width:${r.width * zoom}px; ` +
+                            `height:${r.height * zoom}px; ` +
+                            `border:1px solid ${failed ? '#f87171' : 'var(--border-color)'};`;
+                        cell.appendChild(img);
+                    }
+                    if (failed) {
+                        const err = document.createElement('span');
+                        err.className = 'text-xs font-mono';
+                        err.style.color = '#f87171';
+                        err.textContent = (r.errors || ['render failed']).join('; ');
+                        cell.appendChild(err);
+                    }
+                    grid.appendChild(cell);
+                });
+                status.textContent = failures
+                    ? `${failures} size(s) failed`
+                    : `${(data.results || []).length} sizes rendered`;
+            } catch (e) {
+                status.textContent = `Network error: ${e.message}`;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'All Sizes';
             }
         }
 
