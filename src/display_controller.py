@@ -831,7 +831,7 @@ class DisplayController:
                     if hasattr(self.plugin_manager, 'health_tracker') and self.plugin_manager.health_tracker:
                         self.plugin_manager.health_tracker.record_failure(plugin_id, exc)
 
-    def _tick_plugin_updates_for_vegas(self):
+    def _tick_plugin_updates_for_vegas(self) -> None:
         """Run scheduled plugin updates and tell Vegas mode which plugins
         actually got fresh data, so it can hot-swap them into the scroll
         without waiting for a full cycle to complete.
@@ -843,22 +843,22 @@ class DisplayController:
         minutes away). Restores wiring that PR #299 added and PR #330's
         sync-mode refactor inadvertently dropped: coordinator.mark_plugin_updated()
         has been unreachable dead code since.
+
+        Delegates the before/after plugin_last_update snapshot to
+        PluginManager.run_scheduled_updates_with_changes() so the snapshot,
+        update pass, and diff are lock-protected against this callback's own
+        background update-tick thread racing the main render loop.
         """
-        if not self.plugin_manager or not hasattr(self.plugin_manager, "plugin_last_update"):
+        if not self.plugin_manager or not hasattr(self.plugin_manager, "run_scheduled_updates_with_changes"):
             self._tick_plugin_updates()
             return
 
-        old_times = dict(self.plugin_manager.plugin_last_update)
-        self._tick_plugin_updates()
+        updated = self.plugin_manager.run_scheduled_updates_with_changes()
 
         vc = getattr(self, "vegas_coordinator", None)
         if vc is None:
             return
 
-        updated = [
-            plugin_id for plugin_id, new_time in self.plugin_manager.plugin_last_update.items()
-            if new_time > old_times.get(plugin_id, 0.0)
-        ]
         if updated:
             logger.info("Vegas update tick: %d plugin(s) updated: %s", len(updated), updated)
             for plugin_id in updated:
