@@ -25,7 +25,7 @@ uncached primitives.
 """
 
 from dataclasses import dataclass
-from typing import Any, Optional, Tuple, Union
+from typing import Any, Optional, Tuple
 
 from PIL import Image
 

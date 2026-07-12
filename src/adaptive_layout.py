@@ -29,7 +29,7 @@ freetype.Face, so it drops straight into DisplayManager.draw_text().
 
 import logging
 from collections import OrderedDict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import freetype
