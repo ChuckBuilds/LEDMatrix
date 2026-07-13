@@ -199,6 +199,10 @@ class DisplayController:
         self.wifi_status_file = WIFI_STATUS_FILE
         self.wifi_status_active = False
         self.wifi_status_expires_at: Optional[float] = None
+        # _check_wifi_status_message throttle state (checked at frame rate,
+        # stat'd at most once per second)
+        self._wifi_status_check_ts = 0.0
+        self._wifi_status_last_result: Optional[Dict[str, Any]] = None
 
         # Plugin display() signature cache — must be initialised before the plugin
         # loading loop below so the .pop() invalidation at load time is always safe.
@@ -1684,7 +1688,7 @@ class DisplayController:
                     self._sleep_with_plugin_updates(60)
                     continue
                 
-                logger.info(f"Display active, processing mode: {self.current_display_mode}")
+                logger.debug("Display active, processing mode: %s", self.current_display_mode)
                 
                 # Plugins update on their own schedules - no forced sync updates needed
                 # Each plugin has its own update_interval and background services
@@ -1852,7 +1856,7 @@ class DisplayController:
                         if self.plugin_manager and hasattr(self.plugin_manager, 'health_tracker') and self.plugin_manager.health_tracker:
                             should_skip = self.plugin_manager.health_tracker.should_skip_plugin(plugin_id)
                             if should_skip:
-                                logger.info(f"Skipping plugin {plugin_id} due to circuit breaker (mode: {active_mode})")
+                                logger.info("Skipping plugin %s due to circuit breaker (mode: %s)", plugin_id, active_mode)
                                 display_result = False
                                 # Skip to next mode - let existing logic handle it
                                 manager_to_display = None
@@ -1910,7 +1914,7 @@ class DisplayController:
                             if isinstance(result, bool):
                                 display_result = result
                                 if not display_result:
-                                    logger.info(f"Plugin {plugin_id} display() returned False for mode {active_mode}")
+                                    logger.info("Plugin %s display() returned False for mode %s", plugin_id, active_mode)
                         
                         # Record success if display completed without exception
                         if self.plugin_manager and hasattr(self.plugin_manager, 'health_tracker') and self.plugin_manager.health_tracker:
@@ -2403,6 +2407,16 @@ class DisplayController:
             Returns None on any error or if message is expired/invalid.
         """
         try:
+            # Throttle the existence stat to ~1 Hz: this runs on every render
+            # iteration (60+ fps), and the file usually doesn't exist — the
+            # status message's lifetime is measured in seconds anyway.
+            # Both attributes are initialised in __init__.
+            now = time.time()
+            if (now - self._wifi_status_check_ts) < 1.0:
+                return self._wifi_status_last_result
+            self._wifi_status_check_ts = now
+            self._wifi_status_last_result = None
+
             # Check if file exists
             if not self.wifi_status_file or not self.wifi_status_file.exists():
                 return None
@@ -2453,13 +2467,14 @@ class DisplayController:
                     pass
                 return None
             
-            # Message is valid and not expired
-            return {
+            # Message is valid and not expired — cache for the throttle window
+            self._wifi_status_last_result = {
                 'message': message,
                 'timestamp': timestamp,
                 'duration': duration,
                 'expires_at': expires_at
             }
+            return self._wifi_status_last_result
             
         except Exception as e:
             # Catch-all for any unexpected errors - log but don't break the display
