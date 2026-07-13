@@ -1,0 +1,138 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "March Madness Plugin Configuration",
+  "type": "object",
+  "properties": {
+    "enabled": {
+      "type": "boolean",
+      "default": false,
+      "description": "Enable the March Madness tournament display"
+    },
+    "leagues": {
+      "type": "object",
+      "title": "Tournament Leagues",
+      "description": "Which NCAA tournaments to display",
+      "properties": {
+        "ncaam": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show NCAA Men's Tournament games"
+        },
+        "ncaaw": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show NCAA Women's Tournament games"
+        }
+      },
+      "additionalProperties": false
+    },
+    "favorite_teams": {
+      "type": "array",
+      "title": "Favorite Teams",
+      "description": "Team abbreviations to highlight (e.g., DUKE, UNC). Leave empty to show all teams equally.",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true,
+      "default": []
+    },
+    "display_options": {
+      "type": "object",
+      "title": "Display Options",
+      "x-collapsed": true,
+      "properties": {
+        "show_seeds": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show tournament seeds (1-16) next to team names"
+        },
+        "show_round_logos": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show round logo separators between game groups"
+        },
+        "highlight_upsets": {
+          "type": "boolean",
+          "default": true,
+          "description": "Highlight upset winners (higher seed beating lower seed) in gold"
+        },
+        "show_bracket_progress": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show which teams are still alive in each region"
+        },
+        "scroll_speed": {
+          "type": "number",
+          "default": 1.0,
+          "minimum": 0.5,
+          "maximum": 5.0,
+          "description": "Scroll speed (pixels per frame)"
+        },
+        "scroll_delay": {
+          "type": "number",
+          "default": 0.02,
+          "minimum": 0.001,
+          "maximum": 0.1,
+          "description": "Delay between scroll frames (seconds)"
+        },
+        "target_fps": {
+          "type": "integer",
+          "default": 120,
+          "minimum": 30,
+          "maximum": 200,
+          "description": "Target frames per second"
+        },
+        "loop": {
+          "type": "boolean",
+          "default": true,
+          "description": "Loop the scroll continuously"
+        },
+        "dynamic_duration": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically adjust display duration based on content width"
+        },
+        "min_duration": {
+          "type": "integer",
+          "default": 30,
+          "minimum": 10,
+          "maximum": 300,
+          "description": "Minimum display duration in seconds"
+        },
+        "max_duration": {
+          "type": "integer",
+          "default": 300,
+          "minimum": 30,
+          "maximum": 600,
+          "description": "Maximum display duration in seconds"
+        }
+      },
+      "additionalProperties": false
+    },
+    "data_settings": {
+      "type": "object",
+      "title": "Data Settings",
+      "x-collapsed": true,
+      "properties": {
+        "update_interval": {
+          "type": "integer",
+          "default": 300,
+          "minimum": 60,
+          "maximum": 3600,
+          "description": "How often to refresh tournament data (seconds). Automatically shortens to 60s when live games are detected."
+        },
+        "request_timeout": {
+          "type": "integer",
+          "default": 30,
+          "minimum": 5,
+          "maximum": 60,
+          "description": "API request timeout in seconds"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "required": ["enabled"],
+  "additionalProperties": false,
+  "x-propertyOrder": ["enabled", "leagues", "favorite_teams", "display_options", "data_settings"]
+}

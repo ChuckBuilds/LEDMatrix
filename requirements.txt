@@ -8,16 +8,11 @@ numpy>=1.24.0  # For fast array operations in ScrollHelper (compatible with 2.x)
 
 # Timezone handling
 pytz>=2024.2,<2025.0  # Updated for latest timezone data
-timezonefinder>=6.5.0,<7.0.0  # Updated for better performance and accuracy
-geopy>=2.4.1,<3.0.0
 
 # HTTP requests
 requests>=2.33.0,<3.0.0
 
 # Google API integration
-google-auth-oauthlib>=1.2.0,<2.0.0
-google-auth-httplib2>=0.2.0,<1.0.0
-google-api-python-client>=2.147.0,<3.0.0
 
 # Font rendering
 freetype-py>=2.5.1,<3.0.0
@@ -29,10 +24,8 @@ spotipy>=2.25.2,<3.0.0
 Flask>=3.1.3,<4.0.0
 
 # Text processing
-unidecode>=1.3.8,<2.0.0
 
 # Calendar integration
-icalevents>=0.1.27,<1.0.0
 
 # WebSocket support
 python-socketio>=5.14.0,<6.0.0

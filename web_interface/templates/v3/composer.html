@@ -1,0 +1,1852 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Plugin Composer — LEDMatrix</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @font-face {
+      font-family: 'PressStart2P';
+      src: url('/composer/api/fonts/PressStart2P-Regular.ttf') format('truetype');
+      font-display: swap;
+    }
+    html, body { height: 100%; margin: 0; overflow: hidden; }
+    #app { height: 100vh; display: flex; flex-direction: column; }
+    #led-canvas { image-rendering: pixelated; image-rendering: crisp-edges; display: block; }
+
+    .panel-scroll { overflow-y: auto; }
+    .panel-scroll::-webkit-scrollbar { width: 4px; }
+    .panel-scroll::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 2px; }
+
+    .layer-list::-webkit-scrollbar { width: 4px; }
+    .layer-list::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 2px; }
+
+    .prop-label { font-size: 0.62rem; font-weight: 700; color: #6b7280; text-transform: uppercase; letter-spacing: 0.06em; display: block; margin-bottom: 2px; }
+    .prop-input { width: 100%; padding: 0.25rem 0.375rem; font-size: 0.75rem; border: 1px solid #d1d5db; border-radius: 4px; background: white; color: #111; }
+    .prop-input:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 1px #3b82f6; }
+    .prop-input-sm { width: 100%; padding: 0.18rem 0.3rem; font-size: 0.7rem; border: 1px solid #d1d5db; border-radius: 4px; color: #111; }
+
+    .btn-primary   { padding: 0.35rem 0.7rem; font-size: 0.75rem; font-weight: 600; background: #2563eb; color: white; border-radius: 6px; border: none; cursor: pointer; display: inline-flex; align-items: center; gap: 0.3rem; }
+    .btn-primary:hover   { background: #1d4ed8; }
+    .btn-primary:disabled { background: #93c5fd; cursor: not-allowed; }
+    .btn-secondary { padding: 0.35rem 0.7rem; font-size: 0.75rem; font-weight: 500; background: white; color: #374151; border-radius: 6px; border: 1px solid #d1d5db; cursor: pointer; display: inline-flex; align-items: center; gap: 0.3rem; }
+    .btn-secondary:hover   { background: #f9fafb; }
+    .btn-secondary:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-icon { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; background: white; border: 1px solid #e5e7eb; border-radius: 5px; cursor: pointer; color: #6b7280; font-size: 0.7rem; }
+    .btn-icon:hover   { background: #f3f4f6; color: #111; }
+    .btn-icon:disabled { opacity: 0.35; cursor: not-allowed; }
+    .btn-danger { padding: 0.2rem 0.4rem; font-size: 0.65rem; color: #ef4444; background: transparent; border: none; cursor: pointer; }
+    .btn-danger:hover { color: #b91c1c; }
+
+    .element-btn { width: 100%; display: flex; align-items: center; gap: 0.4rem; padding: 0.3rem 0.5rem; font-size: 0.7rem; color: #374151; background: white; border: 1px solid #e5e7eb; border-radius: 5px; cursor: pointer; transition: all 0.1s; }
+    .element-btn:hover { background: #eff6ff; border-color: #bfdbfe; color: #1d4ed8; }
+
+    .layer-row { display: flex; align-items: center; gap: 0.2rem; padding: 0.18rem 0.4rem; border-radius: 4px; cursor: pointer; border: 1px solid transparent; transition: background 0.1s; }
+    .layer-row:hover { background: #f1f5f9; }
+    .layer-row.selected { background: #eff6ff; border-color: #bfdbfe; }
+
+    .color-input { width: 26px; height: 20px; padding: 0; border: 1px solid #d1d5db; border-radius: 3px; cursor: pointer; }
+
+    .nudge-btn { width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 3px; font-size: 0.5rem; cursor: pointer; color: #6b7280; }
+    .nudge-btn:hover { background: #eff6ff; border-color: #bfdbfe; color: #1d4ed8; }
+
+    .premade-pill { display: inline-flex; align-items: center; gap: 0.2rem; padding: 0.12rem 0.35rem; font-size: 0.58rem; background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 999px; cursor: pointer; color: #374151; transition: all 0.1s; margin: 0.08rem; }
+    .premade-pill:hover { background: #dbeafe; border-color: #93c5fd; color: #1d4ed8; }
+    .premade-pill.added { background: #dcfce7; border-color: #86efac; color: #166534; cursor: default; }
+
+    .align-btn { width: 26px; height: 22px; display: flex; align-items: center; justify-content: center; background: white; border: 1px solid #e5e7eb; border-radius: 3px; cursor: pointer; color: #6b7280; font-size: 0.6rem; }
+    .align-btn:hover { background: #eff6ff; color: #1d4ed8; }
+
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.45); display: flex; align-items: center; justify-content: center; z-index: 50; }
+    .modal-box { background: white; border-radius: 10px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); overflow: hidden; }
+
+    pre.code-block { font-family: 'Courier New', monospace; font-size: 0.68rem; line-height: 1.5; white-space: pre; overflow: auto; background: #0f172a; color: #e2e8f0; padding: 1rem; border-radius: 6px; max-height: 65vh; tab-size: 4; }
+
+    .tmpl-card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 0.75rem; cursor: pointer; transition: all 0.15s; text-align: left; }
+    .tmpl-card:hover { border-color: #93c5fd; background: #eff6ff; }
+
+    [x-cloak] { display: none !important; }
+  </style>
+</head>
+<body class="bg-gray-100">
+
+<div id="app" x-data="composerApp()" x-init="init()" x-cloak>
+
+  <!-- ── Header ─────────────────────────────────────────────────────── -->
+  <header class="bg-white border-b border-gray-200 px-3 py-0 flex items-center gap-2 flex-shrink-0" style="height:44px">
+    <a href="/v3" class="flex items-center gap-1 text-gray-400 hover:text-gray-700 text-sm mr-1">
+      <i class="fas fa-arrow-left text-xs"></i>
+    </a>
+    <div class="w-px h-5 bg-gray-200"></div>
+    <h1 class="text-sm font-bold text-gray-800 flex items-center gap-1.5">
+      <i class="fas fa-magic text-blue-500 text-xs"></i>
+      Plugin Composer
+      <span class="text-xs font-normal text-gray-400 bg-gray-100 px-1 py-0.5 rounded">Beta</span>
+    </h1>
+
+    <!-- Undo / Redo -->
+    <div class="flex items-center gap-1 ml-2">
+      <button class="btn-icon" @click="undo()" :disabled="!canUndo" title="Undo (Ctrl+Z)">
+        <i class="fas fa-undo"></i>
+      </button>
+      <button class="btn-icon" @click="redo()" :disabled="!canRedo" title="Redo (Ctrl+Y)">
+        <i class="fas fa-redo"></i>
+      </button>
+    </div>
+
+    <div class="flex-1"></div>
+
+    <!-- Templates -->
+    <button class="btn-secondary text-xs" @click="showTemplateModal = true" title="Start from a template">
+      <i class="fas fa-th-large"></i>
+      <span class="hidden md:inline">Templates</span>
+    </button>
+
+    <!-- Open existing -->
+    <button class="btn-secondary text-xs" @click="openPluginModal()" title="Open installed plugin">
+      <i class="fas fa-folder-open"></i>
+      <span class="hidden md:inline">Open</span>
+    </button>
+
+    <!-- Preview code -->
+    <button class="btn-secondary text-xs" @click="showPreview()" title="Preview generated code">
+      <i class="fas fa-code"></i>
+      <span class="hidden md:inline">Preview</span>
+    </button>
+
+    <div class="w-px h-5 bg-gray-200"></div>
+
+    <!-- PNG export -->
+    <button class="btn-icon text-xs" @click="downloadPng()" title="Download canvas as PNG">
+      <i class="fas fa-image" style="font-size:0.65rem"></i>
+    </button>
+    <!-- Design JSON export/import -->
+    <button class="btn-icon text-xs" @click="exportDesign()" title="Export design as JSON">
+      <i class="fas fa-file-export" style="font-size:0.65rem"></i>
+    </button>
+    <button class="btn-icon text-xs" @click="importDesign()" title="Import design from JSON">
+      <i class="fas fa-file-import" style="font-size:0.65rem"></i>
+    </button>
+
+    <!-- ZIP + Install -->
+    <button class="btn-secondary text-xs"
+            @click="generateZip()" :disabled="generateStatus === 'working'"
+            title="Download ZIP">
+      <i class="fas" :class="generateStatus === 'working' ? 'fa-spinner fa-spin' : 'fa-download'"></i>
+      <span class="hidden md:inline">ZIP</span>
+    </button>
+    <button class="btn-primary text-xs"
+            @click="installLocally()" :disabled="installStatus === 'working'"
+            title="Install on this device">
+      <i class="fas" :class="installStatus === 'working' ? 'fa-spinner fa-spin' : 'fa-bolt'"></i>
+      <span class="hidden md:inline">Install</span>
+    </button>
+  </header>
+
+  <!-- ── Three-column body ──────────────────────────────────────────── -->
+  <div class="flex flex-1 overflow-hidden">
+
+    <!-- ══ LEFT PANEL ════════════════════════════════════════════════ -->
+    <div class="w-48 flex-shrink-0 bg-white border-r border-gray-200 flex flex-col">
+      <div class="panel-scroll flex-1 p-2.5 space-y-3.5">
+
+        <!-- Plugin metadata -->
+        <section>
+          <span class="prop-label">Plugin Info</span>
+          <div class="space-y-1.5">
+            <div>
+              <span class="prop-label">Name *</span>
+              <input type="text" class="prop-input" placeholder="My Plugin"
+                     x-model="metadata.name" @input="onNameInput()">
+            </div>
+            <div>
+              <span class="prop-label flex items-center gap-1">
+                ID *
+                <i class="fas fa-exclamation-circle text-red-400 text-xs" x-show="metadata.id && !isIdValid()"></i>
+                <i class="fas fa-check-circle text-green-400 text-xs" x-show="metadata.id && isIdValid()"></i>
+              </span>
+              <input type="text" class="prop-input font-mono" placeholder="my-plugin" style="font-size:0.62rem"
+                     x-model="metadata.id" @input="onIdInput()">
+            </div>
+            <div>
+              <span class="prop-label">Author *</span>
+              <input type="text" class="prop-input" placeholder="Your Name"
+                     x-model="metadata.author">
+            </div>
+            <div class="grid grid-cols-2 gap-1">
+              <div>
+                <span class="prop-label">Duration s</span>
+                <input type="number" class="prop-input" min="1" max="600"
+                       x-model.number="metadata.display_duration">
+              </div>
+              <div>
+                <span class="prop-label">Version</span>
+                <input type="text" class="prop-input" x-model="metadata.version">
+              </div>
+            </div>
+            <div>
+              <span class="prop-label">Background</span>
+              <div class="flex items-center gap-2 mt-0.5">
+                <input type="color" class="color-input"
+                       :value="rgbToHex(metadata.bgColor.r, metadata.bgColor.g, metadata.bgColor.b)"
+                       @input="onBgColorChange($event.target.value); isDirty=true">
+                <span class="text-xs text-gray-400 font-mono"
+                      x-text="`${metadata.bgColor.r},${metadata.bgColor.g},${metadata.bgColor.b}`"></span>
+                <button x-show="metadata.bgColor.r||metadata.bgColor.g||metadata.bgColor.b"
+                        class="text-xs text-gray-400 hover:text-red-400"
+                        @click="metadata.bgColor={r:0,g:0,b:0}; render()"
+                        title="Reset to black">×</button>
+              </div>
+            </div>
+            <div>
+              <span class="prop-label">Category</span>
+              <select class="prop-input" x-model="metadata.category">
+                <option value="custom">Custom</option>
+                <option value="clock">Clock</option>
+                <option value="weather">Weather</option>
+                <option value="sports">Sports</option>
+                <option value="system">System</option>
+                <option value="crypto">Crypto / Finance</option>
+                <option value="news">News</option>
+                <option value="social">Social</option>
+                <option value="smart_home">Smart Home</option>
+                <option value="entertainment">Entertainment</option>
+              </select>
+            </div>
+            <div>
+              <span class="prop-label">Description</span>
+              <textarea class="prop-input" rows="2" placeholder="What does this plugin display?"
+                        x-model="metadata.description"
+                        style="resize:vertical;min-height:40px;font-size:0.68rem"></textarea>
+            </div>
+          </div>
+        </section>
+
+        <!-- Add Elements palette -->
+        <section>
+          <span class="prop-label">Add Elements</span>
+          <div class="space-y-0.5">
+            <template x-for="et in elementTypes" :key="et.id">
+              <button class="element-btn" @click="addElement(et.id)">
+                <i :class="et.icon + ' w-3 text-center text-gray-400'"></i>
+                <span x-text="et.label"></span>
+              </button>
+            </template>
+          </div>
+        </section>
+
+        <!-- Color Themes -->
+        <section>
+          <span class="prop-label">Color Themes</span>
+          <div class="flex flex-wrap gap-1 mt-0.5">
+            <template x-for="theme in COLOR_THEMES" :key="theme.label">
+              <button class="flex items-center gap-1 px-1.5 py-0.5 text-xs rounded border border-gray-200 hover:border-blue-300 hover:bg-blue-50 transition-colors"
+                      @click="applyColorTheme(theme)" :title="'Apply ' + theme.label + ' theme'">
+                <span class="flex gap-0.5">
+                  <template x-for="c in theme.colors" :key="c.r + ',' + c.g + ',' + c.b">
+                    <span class="w-2.5 h-2.5 rounded-full inline-block"
+                          :style="'background:rgb('+c.r+','+c.g+','+c.b+')'"></span>
+                  </template>
+                </span>
+                <span x-text="theme.label" class="text-gray-600"></span>
+              </button>
+            </template>
+          </div>
+        </section>
+
+        <!-- Config Variables -->
+        <section>
+          <div class="flex items-center justify-between">
+            <span class="prop-label">Config Variables</span>
+            <button class="text-blue-500 hover:text-blue-700 text-xs" @click="showConfigVarModal = true">
+              <i class="fas fa-plus"></i>
+            </button>
+          </div>
+          <div class="space-y-0.5 mt-1">
+            <template x-for="cv in dataModel.configVars" :key="cv.key">
+              <div class="px-1.5 py-1 rounded bg-gray-50 border border-gray-100">
+                <div class="flex items-center gap-1">
+                  <div class="flex-1 min-w-0">
+                    <span class="text-xs font-mono text-gray-700 block truncate" x-text="cv.key"></span>
+                    <span class="text-xs text-gray-400" x-text="cv.type"></span>
+                    <span x-show="_isBound(cv.key)" class="text-xs text-blue-400 ml-1">●</span>
+                  </div>
+                  <button class="btn-danger p-0" @click="removeConfigVar(cv.key)"><i class="fas fa-times text-xs"></i></button>
+                </div>
+                <div class="flex items-center gap-1 mt-0.5">
+                  <span class="text-gray-300" style="font-size:0.55rem">preview:</span>
+                  <template x-if="cv.type === 'number'">
+                    <div class="flex items-center gap-1 flex-1">
+                      <input type="range" min="0" max="100" class="flex-1" style="height:10px"
+                             x-model.number="_previewValues[cv.key]" @input="render()">
+                      <span class="font-mono text-gray-500" style="font-size:0.58rem;min-width:22px"
+                            x-text="_previewValues[cv.key] ?? 0"></span>
+                    </div>
+                  </template>
+                  <template x-if="cv.type !== 'number'">
+                    <input type="text" class="flex-1 text-xs border border-gray-200 rounded px-1 py-0" style="height:16px;font-size:0.6rem"
+                           placeholder="sample value…"
+                           x-model="_previewValues[cv.key]" @input="render()">
+                  </template>
+                </div>
+              </div>
+            </template>
+            <p x-show="dataModel.configVars.length === 0" class="text-xs text-gray-400 italic">No variables</p>
+          </div>
+        </section>
+
+        <!-- Quick-Add Variable library -->
+        <section x-data="{ openCat: null }">
+          <span class="prop-label">Quick-Add Vars</span>
+          <template x-for="(cat, ci) in preMadeVarCategories" :key="cat.label">
+            <div class="mb-0.5">
+              <button class="w-full text-left flex items-center justify-between px-1 py-1 rounded hover:bg-gray-50 text-xs text-gray-600"
+                      @click="openCat = openCat === ci ? null : ci">
+                <span x-text="cat.label"></span>
+                <i class="fas text-gray-300" :class="openCat === ci ? 'fa-chevron-up' : 'fa-chevron-down'" style="font-size:0.5rem"></i>
+              </button>
+              <div x-show="openCat === ci" class="flex flex-wrap px-0.5 pb-1">
+                <template x-for="v in cat.vars" :key="v.key">
+                  <button class="premade-pill"
+                          :class="{ added: dataModel.configVars.some(c => c.key === v.key) }"
+                          @click="addPreMadeVar(v)" :title="v.description">
+                    <i class="fas fa-plus" style="font-size:0.45rem"
+                       x-show="!dataModel.configVars.some(c => c.key === v.key)"></i>
+                    <i class="fas fa-check" style="font-size:0.45rem"
+                       x-show="dataModel.configVars.some(c => c.key === v.key)"></i>
+                    <span x-text="v.key"></span>
+                  </button>
+                </template>
+              </div>
+            </div>
+          </template>
+        </section>
+
+      </div>
+
+      <div class="p-2 border-t border-gray-100 flex gap-1.5">
+        <button class="flex-1 text-xs text-gray-400 hover:text-red-500 py-0.5" @click="clearAll()">
+          <i class="fas fa-trash text-xs mr-1"></i>Clear
+        </button>
+      </div>
+    </div><!-- /LEFT -->
+
+    <!-- ══ CENTER ════════════════════════════════════════════════════ -->
+    <div class="flex-1 flex flex-col items-center bg-gray-50 overflow-auto p-3 gap-2.5">
+
+      <!-- Canvas toolbar -->
+      <div class="flex items-center gap-2.5 self-stretch flex-wrap">
+        <div class="flex items-center gap-1.5">
+          <span class="prop-label mb-0">Display</span>
+          <select class="prop-input-sm w-auto" style="padding: 0.18rem 0.4rem"
+                  x-model="currentPreset" @change="changePreset($event.target.value)">
+            <option value="64×32">64×32</option>
+            <option value="128×32">128×32</option>
+            <option value="128×64">128×64</option>
+            <option value="256×32">256×32</option>
+            <option value="256×64">256×64</option>
+            <template x-if="!['64×32','128×32','128×64','256×32','256×64'].includes(currentPreset)">
+              <option :value="currentPreset" x-text="currentPreset" selected></option>
+            </template>
+          </select>
+          <button class="btn-icon w-5 h-5" @click="setCustomSize()" title="Custom size…">
+            <i class="fas fa-pencil-alt" style="font-size:0.45rem"></i>
+          </button>
+        </div>
+        <span class="text-xs text-gray-400 font-mono">
+          <span x-text="MATRIX_W"></span>×<span x-text="MATRIX_H"></span>
+          · <span x-text="SCALE"></span>×
+        </span>
+        <label class="flex items-center gap-1 text-xs text-gray-500 cursor-pointer select-none">
+          <input type="checkbox" x-model="showGridOverlay" @change="toggleGrid()" class="w-3 h-3">
+          Grid
+        </label>
+        <label class="flex items-center gap-1 text-xs text-gray-500 cursor-pointer select-none">
+          <input type="checkbox" x-model="showGuides" @change="toggleGuides()" class="w-3 h-3">
+          Guides
+        </label>
+        <button class="flex items-center gap-1 text-xs px-1.5 py-0.5 rounded select-none"
+                :class="blinkAnimating ? 'bg-blue-100 text-blue-600' : 'text-gray-500 hover:bg-gray-100'"
+                @click="toggleBlinkPreview()" title="Animate blink elements in preview">
+          <i class="fas fa-play-circle" style="font-size:0.6rem"></i>
+          <span>Blink</span>
+        </button>
+        <label class="flex items-center gap-1 text-xs text-gray-500 cursor-pointer select-none">
+          <input type="checkbox" x-model="showRuler" @change="toggleRuler()" class="w-3 h-3">
+          Ruler
+        </label>
+        <!-- Snap to grid -->
+        <div class="flex items-center gap-1">
+          <label class="flex items-center gap-1 text-xs text-gray-500 cursor-pointer select-none">
+            <input type="checkbox" x-model="snapToGrid" class="w-3 h-3">
+            Snap
+          </label>
+          <select x-show="snapToGrid" class="prop-input-sm" style="padding:0.1rem 0.25rem;width:42px;font-size:0.6rem"
+                  x-model.number="snapSize">
+            <option value="2">2</option>
+            <option value="4">4</option>
+            <option value="8">8</option>
+          </select>
+        </div>
+        <!-- Zoom buttons -->
+        <div class="flex items-center gap-0.5">
+          <button class="btn-icon w-6 h-6" @click="zoomOut()" :disabled="SCALE <= 1" title="Zoom out">
+            <i class="fas fa-search-minus" style="font-size:0.55rem"></i>
+          </button>
+          <span class="text-xs text-gray-400 w-5 text-center font-mono" x-text="SCALE + '×'"></span>
+          <button class="btn-icon w-6 h-6" @click="zoomIn()" :disabled="SCALE >= 8" title="Zoom in">
+            <i class="fas fa-search-plus" style="font-size:0.55rem"></i>
+          </button>
+          <button class="btn-icon w-6 h-6" @click="zoomFit()" title="Zoom to fit">
+            <i class="fas fa-expand-arrows-alt" style="font-size:0.55rem"></i>
+          </button>
+        </div>
+        <span class="text-xs text-gray-300 font-mono" x-text="hoverInfo"></span>
+        <div class="flex-1"></div>
+        <span class="text-xs text-gray-400 hidden lg:block">
+          <kbd class="font-mono text-gray-300">↑↓←→</kbd> nudge
+          &nbsp;·&nbsp;
+          <kbd class="font-mono text-gray-300">Ctrl+Z</kbd> undo
+          &nbsp;·&nbsp;
+          <kbd class="font-mono text-gray-300">Ctrl+C/V</kbd> copy/paste
+          &nbsp;·&nbsp;
+          <kbd class="font-mono text-gray-300">Ctrl+D</kbd> dupe
+        </span>
+      </div>
+
+      <!-- Canvas bezel -->
+      <div class="flex-shrink-0" style="border: 2px solid #374151; border-radius: 4px; padding: 2px; background: #111; display: inline-block;">
+        <canvas id="led-canvas" width="512" height="128"
+                @mousedown="onCanvasMouseDown($event)"
+                @mousemove="onCanvasMouseMove($event)"
+                @mouseup="onCanvasMouseUp()"
+                @mouseleave="onCanvasMouseLeave()">
+        </canvas>
+      </div>
+
+      <!-- Layer list -->
+      <div class="self-stretch bg-white rounded border border-gray-200 overflow-hidden" style="max-height: 180px">
+        <div class="px-2.5 py-1 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+          <span class="text-xs font-semibold text-gray-500">Layers</span>
+          <span class="text-xs text-gray-300">top ↑</span>
+        </div>
+        <div class="layer-list overflow-y-auto" style="max-height: 140px">
+          <template x-if="elements.length === 0">
+            <p class="text-xs text-gray-400 italic text-center py-3">
+              No elements — add from palette or load a template
+            </p>
+          </template>
+          <template x-for="el in [...elements].reverse()" :key="el.id">
+            <div class="layer-row"
+                 :class="{
+                   'selected': selectedId === el.id,
+                   'bg-gray-50 border-t border-b border-gray-100 !cursor-default': el.type === 'section',
+                 }"
+                 @click="selectedId = el.id; render()">
+              <i class="w-3 text-center text-gray-300 flex-shrink-0"
+                 style="font-size:0.55rem"
+                 :class="{
+                   'fas fa-font':            el.type === 'text' || el.type === 'dynamic_text' || el.type === 'clock',
+                   'fas fa-square':          el.type === 'rectangle' || el.type === 'rounded_rectangle' || el.type === 'ellipse',
+                   'fas fa-circle-notch':    el.type === 'arc',
+                   'fas fa-dot-circle':      el.type === 'pixel',
+                   'fas fa-minus':           el.type === 'line',
+                   'fas fa-grip-lines':      el.type === 'divider',
+                   'fas fa-tasks':           el.type === 'progress_bar',
+                   'fas fa-hourglass-half':  el.type === 'countdown',
+                   'fas fa-arrows-alt-h':    el.type === 'marquee',
+                   'fas fa-tachometer-alt':  el.type === 'gauge',
+                   'fas fa-chart-bar':       el.type === 'sparkline',
+                   'fas fa-star-half-alt':   el.type === 'pips',
+                   'fas fa-tag':             el.type === 'section',
+                 }"></i>
+              <span class="flex-1 truncate text-gray-600" style="font-size:0.62rem">
+                <span x-text="el.label || el.type.replace(/_/g,' ')"></span>
+                <template x-if="el.type === 'text' && el.text">
+                  <span class="text-gray-300 ml-1" x-text="'· ' + el.text.substring(0,10)"></span>
+                </template>
+                <template x-if="el.minWidth > 0">
+                  <span class="text-yellow-400 ml-1" style="font-size:0.55rem" x-text="'≥' + el.minWidth"></span>
+                </template>
+                <template x-if="el.locked">
+                  <i class="fas fa-lock text-amber-400 ml-1" style="font-size:0.5rem"></i>
+                </template>
+              </span>
+              <div class="flex gap-0.5 flex-shrink-0">
+                <button class="btn-danger p-0.5"
+                        @click.stop="el.visible = (el.visible === false ? true : false); _snapshot(); render()"
+                        :class="el.visible === false ? 'text-gray-300' : 'text-gray-500'"
+                        :title="el.visible === false ? 'Show' : 'Hide'">
+                  <i class="fas" :class="el.visible === false ? 'fa-eye-slash' : 'fa-eye'" style="font-size:0.5rem"></i>
+                </button>
+                <button class="btn-danger p-0.5"
+                        @click.stop="el.locked = !el.locked; _snapshot()"
+                        :class="el.locked ? 'text-amber-400' : ''"
+                        :title="el.locked ? 'Unlock' : 'Lock'">
+                  <i class="fas" :class="el.locked ? 'fa-lock' : 'fa-unlock'" style="font-size:0.5rem"></i>
+                </button>
+                <button class="btn-danger p-0.5" @click.stop="duplicateElement(el.id)" title="Duplicate (Ctrl+D)">
+                  <i class="fas fa-copy" style="font-size:0.5rem"></i>
+                </button>
+                <button class="btn-danger p-0.5" @click.stop="moveElementUp(el.id)" title="Layer up">
+                  <i class="fas fa-chevron-up" style="font-size:0.5rem"></i>
+                </button>
+                <button class="btn-danger p-0.5" @click.stop="moveElementDown(el.id)" title="Layer down">
+                  <i class="fas fa-chevron-down" style="font-size:0.5rem"></i>
+                </button>
+                <button class="btn-danger p-0.5" @click.stop="removeElement(el.id)" title="Delete">
+                  <i class="fas fa-times" style="font-size:0.5rem"></i>
+                </button>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+
+    </div><!-- /CENTER -->
+
+    <!-- ══ RIGHT PANEL ═══════════════════════════════════════════════ -->
+    <div class="w-60 flex-shrink-0 bg-white border-l border-gray-200 flex flex-col">
+      <div class="panel-scroll flex-1 p-2.5">
+
+        <template x-if="!selectedElement">
+          <div class="text-xs text-gray-400 text-center py-10">
+            <i class="fas fa-mouse-pointer text-3xl text-gray-100 block mb-2"></i>
+            Select an element to edit its properties
+          </div>
+        </template>
+
+        <template x-if="selectedElement">
+          <div class="space-y-2.5" x-key="selectedId">
+
+            <!-- Header row -->
+            <div class="flex items-center justify-between">
+              <div>
+                <span class="text-xs font-bold text-gray-700 capitalize"
+                      x-text="selectedElement.type.replace(/_/g,' ')"></span>
+                <span class="text-xs text-gray-300 ml-1">· <span x-text="selectedElement.id"></span></span>
+              </div>
+              <div class="flex items-center gap-1">
+                <button class="btn-icon w-6 h-6" @click="sendToBack(selectedId)" title="Send to back">
+                  <i class="fas fa-angle-double-down" style="font-size:0.55rem"></i>
+                </button>
+                <button class="btn-icon w-6 h-6" @click="bringToFront(selectedId)" title="Bring to front">
+                  <i class="fas fa-angle-double-up" style="font-size:0.55rem"></i>
+                </button>
+                <button class="btn-icon w-6 h-6" @click="duplicateElement(selectedId)" title="Duplicate (Ctrl+D)">
+                  <i class="fas fa-copy" style="font-size:0.6rem"></i>
+                </button>
+                <button class="btn-icon w-6 h-6" @click="copyStyle()" title="Copy style (Ctrl+Shift+C)"
+                        x-show="selectedElement.type !== 'section'">
+                  <i class="fas fa-eye-dropper" style="font-size:0.55rem"></i>
+                </button>
+                <button class="btn-icon w-6 h-6" @click="pasteStyle()" title="Paste style (Ctrl+Shift+V)"
+                        :disabled="!_styleClipboard" x-show="selectedElement.type !== 'section'">
+                  <i class="fas fa-paint-roller" style="font-size:0.55rem"></i>
+                </button>
+                <button class="btn-danger" @click="removeElement(selectedId)" title="Delete">
+                  <i class="fas fa-trash-alt text-xs"></i>
+                </button>
+              </div>
+            </div>
+
+            <!-- Layer label -->
+            <div>
+              <span class="prop-label">Layer label</span>
+              <input type="text" class="prop-input" placeholder="My element"
+                     x-model="selectedElement.label" @input="isDirty=true">
+            </div>
+
+            <!-- Alignment tools -->
+            <div x-show="selectedElement.type !== 'section' && selectedElement.type !== 'divider' && selectedElement.type !== 'pixel'">
+              <span class="prop-label">Align to canvas</span>
+              <div class="flex gap-0.5 mt-0.5">
+                <button class="btn-icon w-6 h-6" @click="alignLeft()" title="Align left edge">
+                  <i class="fas fa-align-left" style="font-size:0.55rem"></i>
+                </button>
+                <button class="btn-icon w-6 h-6" @click="alignHCenter()" title="Center horizontally">
+                  <i class="fas fa-align-center" style="font-size:0.55rem"></i>
+                </button>
+                <button class="btn-icon w-6 h-6" @click="alignRight()" title="Align right edge">
+                  <i class="fas fa-align-right" style="font-size:0.55rem"></i>
+                </button>
+                <span class="w-2"></span>
+                <button class="btn-icon w-6 h-6" @click="alignTop()" title="Align top edge">
+                  <i class="fas fa-arrow-up" style="font-size:0.55rem"></i>
+                </button>
+                <button class="btn-icon w-6 h-6" @click="alignVCenter()" title="Center vertically">
+                  <i class="fas fa-arrows-alt-v" style="font-size:0.55rem"></i>
+                </button>
+                <button class="btn-icon w-6 h-6" @click="alignBottom()" title="Align bottom edge">
+                  <i class="fas fa-arrow-down" style="font-size:0.55rem"></i>
+                </button>
+              </div>
+            </div>
+
+            <!-- LED color palette -->
+            <div>
+              <span class="prop-label">Quick colors</span>
+              <div class="flex flex-wrap gap-0.5 mt-0.5">
+                <template x-for="sw in palette" :key="sw.hex">
+                  <button class="rounded"
+                          style="width:16px;height:16px;padding:0;border:1px solid rgba(0,0,0,0.25)"
+                          :style="{ background: sw.hex }"
+                          :title="sw.label"
+                          @click="applyPaletteColor(selectedElement, '', sw)">
+                  </button>
+                </template>
+              </div>
+              <template x-if="_recentColors.length > 0">
+                <div class="flex flex-wrap gap-0.5 mt-1">
+                  <span class="text-gray-300 mr-0.5" style="font-size:0.55rem;line-height:16px">recent:</span>
+                  <template x-for="(sw, i) in _recentColors" :key="i">
+                    <button class="rounded"
+                            style="width:14px;height:14px;padding:0;border:1px solid rgba(0,0,0,0.3)"
+                            :style="{ background: rgbToHex(sw.r,sw.g,sw.b) }"
+                            :title="`rgb(${sw.r},${sw.g},${sw.b})`"
+                            @click="applyPaletteColor(selectedElement, '', sw)">
+                    </button>
+                  </template>
+                </div>
+              </template>
+            </div>
+
+            <!-- Position -->
+            <template x-if="selectedElement.type !== 'line'">
+              <div>
+                <span class="prop-label">Position</span>
+                <div class="grid grid-cols-2 gap-1">
+                  <div>
+                    <span class="prop-label">X</span>
+                    <input type="number" class="prop-input-sm"
+                           x-model.number="selectedElement.x" @input="isDirty=true; render()">
+                  </div>
+                  <div>
+                    <span class="prop-label">Y</span>
+                    <input type="number" class="prop-input-sm"
+                           x-model.number="selectedElement.y" @input="isDirty=true; render()">
+                  </div>
+                </div>
+              </div>
+            </template>
+
+            <!-- Nudge -->
+            <div>
+              <span class="prop-label">Nudge</span>
+              <div class="flex items-center gap-3 mt-0.5">
+                <!-- 1px -->
+                <div class="grid gap-0.5" style="grid-template-columns:repeat(3,22px);grid-template-rows:repeat(3,22px)">
+                  <div></div>
+                  <button class="nudge-btn" @click="nudge(0,-1)"><i class="fas fa-chevron-up"></i></button>
+                  <div></div>
+                  <button class="nudge-btn" @click="nudge(-1,0)"><i class="fas fa-chevron-left"></i></button>
+                  <div class="nudge-btn text-gray-300 cursor-default" style="font-size:0.4rem">1px</div>
+                  <button class="nudge-btn" @click="nudge(1,0)"><i class="fas fa-chevron-right"></i></button>
+                  <div></div>
+                  <button class="nudge-btn" @click="nudge(0,1)"><i class="fas fa-chevron-down"></i></button>
+                  <div></div>
+                </div>
+                <!-- 5px -->
+                <div class="grid gap-0.5" style="grid-template-columns:repeat(3,22px);grid-template-rows:repeat(3,22px)">
+                  <div></div>
+                  <button class="nudge-btn" @click="nudge(0,-5)"><i class="fas fa-angle-double-up"></i></button>
+                  <div></div>
+                  <button class="nudge-btn" @click="nudge(-5,0)"><i class="fas fa-angle-double-left"></i></button>
+                  <div class="nudge-btn text-gray-300 cursor-default" style="font-size:0.4rem">5px</div>
+                  <button class="nudge-btn" @click="nudge(5,0)"><i class="fas fa-angle-double-right"></i></button>
+                  <div></div>
+                  <button class="nudge-btn" @click="nudge(0,5)"><i class="fas fa-angle-double-down"></i></button>
+                  <div></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Alignment -->
+            <div>
+              <span class="prop-label">Align to Canvas</span>
+              <div class="flex gap-0.5 mt-0.5 flex-wrap">
+                <button class="align-btn" @click="alignElement('left')"   title="Align left">  <i class="fas fa-align-left"></i></button>
+                <button class="align-btn" @click="alignElement('center')" title="Center horiz"><i class="fas fa-align-center"></i></button>
+                <button class="align-btn" @click="alignElement('right')"  title="Align right"> <i class="fas fa-align-right"></i></button>
+                <div class="w-px h-5 bg-gray-200 mx-0.5"></div>
+                <button class="align-btn" @click="alignElement('top')"    title="Align top">   <i class="fas fa-arrow-up"></i></button>
+                <button class="align-btn" @click="alignElement('middle')" title="Center vert"> <i class="fas fa-arrows-alt-v"></i></button>
+                <button class="align-btn" @click="alignElement('bottom')" title="Align bottom"><i class="fas fa-arrow-down"></i></button>
+              </div>
+            </div>
+
+            <!-- Anchor -->
+            <div>
+              <span class="prop-label">Anchor (scales to display)</span>
+              <div class="grid grid-cols-2 gap-1 mt-0.5">
+                <div>
+                  <span class="prop-label">X</span>
+                  <select class="prop-input-sm" x-model="selectedElement.xAnchor" @change="isDirty=true; render()">
+                    <option value="">Left (fixed)</option>
+                    <option value="center">Center ±</option>
+                    <option value="right">Right edge</option>
+                  </select>
+                </div>
+                <div>
+                  <span class="prop-label">Y</span>
+                  <select class="prop-input-sm" x-model="selectedElement.yAnchor" @change="isDirty=true; render()">
+                    <option value="">Top (fixed)</option>
+                    <option value="middle">Middle ±</option>
+                    <option value="bottom">Bottom</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <!-- Min Width breakpoint -->
+            <div>
+              <span class="prop-label">Min. display width</span>
+              <select class="prop-input mt-0.5" x-model.number="selectedElement.minWidth"
+                      @change="isDirty=true; render()">
+                <option value="0">Always show</option>
+                <option value="64">≥ 64px wide</option>
+                <option value="128">≥ 128px wide</option>
+                <option value="192">≥ 192px wide</option>
+                <option value="256">≥ 256px wide</option>
+              </select>
+              <p x-show="selectedElement.minWidth > 0 && MATRIX_W < selectedElement.minWidth"
+                 class="text-xs text-yellow-600 mt-0.5">
+                <i class="fas fa-eye-slash text-xs"></i> Hidden at current size
+              </p>
+            </div>
+
+            <!-- Blink toggle — common to all element types -->
+            <div class="flex items-center justify-between">
+              <div>
+                <span class="prop-label">Blink</span>
+                <p class="text-xs text-gray-400 leading-tight">Flashes at ~2 Hz in generated code</p>
+              </div>
+              <input type="checkbox" x-model="selectedElement.blink"
+                     @change="isDirty=true; _snapshot(); render()"
+                     class="w-4 h-4 cursor-pointer">
+            </div>
+
+            <hr class="border-gray-100">
+
+            <!-- ── TEXT ──────────────────────────────────────────────── -->
+            <template x-if="selectedElement.type === 'text'">
+              <div class="space-y-2">
+                <div>
+                  <span class="prop-label">Text content</span>
+                  <input type="text" class="prop-input" id="text-content-input"
+                         x-model="selectedElement.text" @input="isDirty=true; render()">
+                  <!-- Config var insert buttons -->
+                  <template x-if="dataModel.configVars.length > 0">
+                    <div class="flex flex-wrap gap-0.5 mt-0.5">
+                      <span class="text-gray-400 mr-0.5" style="font-size:0.55rem;line-height:18px">insert:</span>
+                      <template x-for="cv in dataModel.configVars" :key="cv.key">
+                        <button class="px-1 py-0.5 rounded text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200"
+                                style="font-size:0.55rem;font-family:monospace"
+                                :title="'Insert {' + cv.key + '}'"
+                                @click="selectedElement.text += '{' + cv.key + '}'; isDirty=true; render()">
+                          <span x-text="'{' + cv.key + '}'"></span>
+                        </button>
+                      </template>
+                    </div>
+                  </template>
+                  <p class="text-gray-400 mt-0.5" style="font-size:0.58rem">
+                    Use <code class="bg-gray-100 px-0.5 rounded">{variable_key}</code> to embed config var values
+                  </p>
+                </div>
+                <div>
+                  <span class="prop-label">Font</span>
+                  <select class="prop-input" x-model="selectedElement.font" @change="isDirty=true; render()">
+                    <option value="press_start">PressStart2P (8px)</option>
+                    <option value="four_by_six">4×6 (6px)</option>
+                    <option value="five_by_seven">5×7 (7px)</option>
+                  </select>
+                </div>
+                <div>
+                  <span class="prop-label">Alignment</span>
+                  <div class="flex gap-1 mt-0.5">
+                    <button class="flex-1 py-0.5 text-xs rounded border"
+                            :class="selectedElement.textAlign === 'left' ? 'bg-blue-100 border-blue-400 text-blue-700' : 'border-gray-200 text-gray-500'"
+                            @click="selectedElement.textAlign = 'left'; isDirty=true; render()">
+                      <i class="fas fa-align-left"></i>
+                    </button>
+                    <button class="flex-1 py-0.5 text-xs rounded border"
+                            :class="selectedElement.textAlign === 'center' ? 'bg-blue-100 border-blue-400 text-blue-700' : 'border-gray-200 text-gray-500'"
+                            @click="selectedElement.textAlign = 'center'; isDirty=true; render()">
+                      <i class="fas fa-align-center"></i>
+                    </button>
+                    <button class="flex-1 py-0.5 text-xs rounded border"
+                            :class="selectedElement.textAlign === 'right' ? 'bg-blue-100 border-blue-400 text-blue-700' : 'border-gray-200 text-gray-500'"
+                            @click="selectedElement.textAlign = 'right'; isDirty=true; render()">
+                      <i class="fas fa-align-right"></i>
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <span class="prop-label">2nd line (optional)</span>
+                  <input type="text" class="prop-input" placeholder="Subtitle text…"
+                         x-model="selectedElement.text2" @input="isDirty=true; render()">
+                </div>
+                <div x-show="selectedElement.text2">
+                  <span class="prop-label">Line spacing (px)</span>
+                  <input type="number" class="prop-input" min="0" max="16"
+                         x-model.number="selectedElement.lineSpacing" @input="isDirty=true; render()">
+                </div>
+                <div>
+                  <span class="prop-label">Color</span>
+                  <div class="flex items-center gap-2 mt-0.5">
+                    <input type="color" class="color-input"
+                           :value="rgbToHex(selectedElement.r,selectedElement.g,selectedElement.b)"
+                           @input="onColorChange(selectedElement,'', $event.target.value); isDirty=true">
+                    <span class="text-xs text-gray-500 font-mono"
+                          x-text="`${selectedElement.r},${selectedElement.g},${selectedElement.b}`"></span>
+                  </div>
+                </div>
+              </div>
+            </template>
+
+            <!-- ── DYNAMIC TEXT ─────────────────────────────────────── -->
+            <template x-if="selectedElement.type === 'dynamic_text'">
+              <div class="space-y-2">
+                <div>
+                  <span class="prop-label">Bound variable</span>
+                  <select class="prop-input" x-model="selectedElement.binding.key"
+                          @change="isDirty=true; render()">
+                    <option value="">— select —</option>
+                    <template x-for="cv in dataModel.configVars" :key="cv.key">
+                      <option :value="cv.key" x-text="cv.key + ' (' + cv.type + ')'"></option>
+                    </template>
+                  </select>
+                  <p x-show="dataModel.configVars.length === 0"
+                     class="text-xs text-yellow-600 mt-0.5">
+                    <i class="fas fa-exclamation-triangle"></i> Add a Config Variable first
+                  </p>
+                </div>
+                <div>
+                  <span class="prop-label">Font</span>
+                  <select class="prop-input" x-model="selectedElement.font" @change="isDirty=true; render()">
+                    <option value="press_start">PressStart2P (8px)</option>
+                    <option value="four_by_six">4×6 (6px)</option>
+                    <option value="five_by_seven">5×7 (7px)</option>
+                  </select>
+                </div>
+                <div>
+                  <span class="prop-label">Alignment</span>
+                  <div class="flex gap-1 mt-0.5">
+                    <button class="flex-1 py-0.5 text-xs rounded border"
+                            :class="selectedElement.textAlign === 'left' ? 'bg-blue-100 border-blue-400 text-blue-700' : 'border-gray-200 text-gray-500'"
+                            @click="selectedElement.textAlign = 'left'; isDirty=true; render()">
+                      <i class="fas fa-align-left"></i>
+                    </button>
+                    <button class="flex-1 py-0.5 text-xs rounded border"
+                            :class="selectedElement.textAlign === 'center' ? 'bg-blue-100 border-blue-400 text-blue-700' : 'border-gray-200 text-gray-500'"
+                            @click="selectedElement.textAlign = 'center'; isDirty=true; render()">
+                      <i class="fas fa-align-center"></i>
+                    </button>
+                    <button class="flex-1 py-0.5 text-xs rounded border"
+                            :class="selectedElement.textAlign === 'right' ? 'bg-blue-100 border-blue-400 text-blue-700' : 'border-gray-200 text-gray-500'"
+                            @click="selectedElement.textAlign = 'right'; isDirty=true; render()">
+                      <i class="fas fa-align-right"></i>
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <span class="prop-label">Color</span>
+                  <div class="flex items-center gap-2 mt-0.5">
+                    <input type="color" class="color-input"
+                           :value="rgbToHex(selectedElement.r,selectedElement.g,selectedElement.b)"
+                           @input="onColorChange(selectedElement,'', $event.target.value); isDirty=true">
+                  </div>
+                </div>
+              </div>
+            </template>
+
+            <!-- ── CLOCK ──────────────────────────────────────────────── -->
+            <template x-if="selectedElement.type === 'clock'">
+              <div class="space-y-2">
+                <div>
+                  <span class="prop-label">Format (line 1)</span>
+                  <input type="text" class="prop-input font-mono" placeholder="%H:%M"
+                         x-model="selectedElement.format" @input="isDirty=true; render()">
+                  <p class="text-xs text-gray-400 mt-0.5">%H:%M, %I:%M %p, %b %d, %A</p>
+                </div>
+                <div>
+                  <span class="prop-label">Format (line 2, optional)</span>
+                  <input type="text" class="prop-input font-mono" placeholder="%A  %b %d"
+                         x-model="selectedElement.format2" @input="isDirty=true; render()">
+                </div>
+                <div x-show="selectedElement.format2">
+                  <span class="prop-label">Line spacing (px)</span>
+                  <input type="number" class="prop-input" min="0" max="16"
+                         x-model.number="selectedElement.lineSpacing" @input="isDirty=true; render()">
+                </div>
+                <div>
+                  <span class="prop-label">Font</span>
+                  <select class="prop-input" x-model="selectedElement.font" @change="isDirty=true; render()">
+                    <option value="press_start">PressStart2P (8px)</option>
+                    <option value="four_by_six">4×6 (6px)</option>
+                    <option value="five_by_seven">5×7 (7px)</option>
+                  </select>
+                </div>
+                <div>
+                  <span class="prop-label">Alignment</span>
+                  <div class="flex gap-1 mt-0.5">
+                    <button class="flex-1 py-0.5 text-xs rounded border"
+                            :class="selectedElement.textAlign === 'left' ? 'bg-blue-100 border-blue-400 text-blue-700' : 'border-gray-200 text-gray-500'"
+                            @click="selectedElement.textAlign = 'left'; isDirty=true; render()">
+                      <i class="fas fa-align-left"></i>
+                    </button>
+                    <button class="flex-1 py-0.5 text-xs rounded border"
+                            :class="selectedElement.textAlign === 'center' ? 'bg-blue-100 border-blue-400 text-blue-700' : 'border-gray-200 text-gray-500'"
+                            @click="selectedElement.textAlign = 'center'; isDirty=true; render()">
+                      <i class="fas fa-align-center"></i>
+                    </button>
+                    <button class="flex-1 py-0.5 text-xs rounded border"
+                            :class="selectedElement.textAlign === 'right' ? 'bg-blue-100 border-blue-400 text-blue-700' : 'border-gray-200 text-gray-500'"
+                            @click="selectedElement.textAlign = 'right'; isDirty=true; render()">
+                      <i class="fas fa-align-right"></i>
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <span class="prop-label">Color</span>
+                  <div class="flex items-center gap-2 mt-0.5">
+                    <input type="color" class="color-input"
+                           :value="rgbToHex(selectedElement.r,selectedElement.g,selectedElement.b)"
+                           @input="onColorChange(selectedElement,'', $event.target.value); isDirty=true">
+                  </div>
+                </div>
+              </div>
+            </template>
+
+            <!-- ── RECTANGLE ──────────────────────────────────────────── -->
+            <template x-if="selectedElement.type === 'rectangle'">
+              <div class="space-y-2">
+                <div class="grid grid-cols-2 gap-1">
+                  <div>
+                    <span class="prop-label">Width</span>
+                    <input type="number" class="prop-input-sm" min="1"
+                           x-model.number="selectedElement.width" @input="isDirty=true; render()">
+                  </div>
+                  <div>
+                    <span class="prop-label">Height</span>
+                    <input type="number" class="prop-input-sm" min="1"
+                           x-model.number="selectedElement.height" @input="isDirty=true; render()">
+                  </div>
+                </div>
+                <div>
+                  <div class="flex items-center justify-between mb-0.5">
+                    <span class="prop-label">Fill</span>
+                    <input type="checkbox" x-model="selectedElement.hasFill" @change="isDirty=true; render()">
+                  </div>
+                  <div x-show="selectedElement.hasFill" class="flex items-center gap-2">
+                    <input type="color" class="color-input"
+                           :value="rgbToHex(selectedElement.fillR,selectedElement.fillG,selectedElement.fillB)"
+                           @input="onColorChange(selectedElement,'fill', $event.target.value); isDirty=true">
+                    <span class="text-xs text-gray-500 font-mono"
+                          x-text="`${selectedElement.fillR},${selectedElement.fillG},${selectedElement.fillB}`"></span>
+                  </div>
+                </div>
+                <div>
+                  <div class="flex items-center justify-between mb-0.5">
+                    <span class="prop-label">Outline</span>
+                    <input type="checkbox" x-model="selectedElement.hasOutline" @change="isDirty=true; render()">
+                  </div>
+                  <div x-show="selectedElement.hasOutline" class="flex items-center gap-2">
+                    <input type="color" class="color-input"
+                           :value="rgbToHex(selectedElement.outR,selectedElement.outG,selectedElement.outB)"
+                           @input="onColorChange(selectedElement,'out', $event.target.value); isDirty=true">
+                  </div>
+                </div>
+                <p class="text-xs text-gray-400">
+                  <i class="fas fa-arrows-alt text-xs"></i> Drag corners on canvas to resize
+                </p>
+              </div>
+            </template>
+
+            <!-- ── ELLIPSE ────────────────────────────────────────────── -->
+            <template x-if="selectedElement.type === 'ellipse'">
+              <div class="space-y-2">
+                <div class="grid grid-cols-2 gap-1">
+                  <div>
+                    <span class="prop-label">Width</span>
+                    <input type="number" class="prop-input-sm" min="2" :max="MATRIX_W"
+                           x-model.number="selectedElement.width" @input="isDirty=true; render()">
+                  </div>
+                  <div>
+                    <span class="prop-label">Height</span>
+                    <input type="number" class="prop-input-sm" min="2" :max="MATRIX_H"
+                           x-model.number="selectedElement.height" @input="isDirty=true; render()">
+                  </div>
+                </div>
+                <div>
+                  <div class="flex items-center justify-between mb-0.5">
+                    <span class="prop-label">Fill</span>
+                    <input type="checkbox" x-model="selectedElement.hasFill" @change="isDirty=true; render()">
+                  </div>
+                  <div x-show="selectedElement.hasFill" class="flex items-center gap-2">
+                    <input type="color" class="color-input"
+                           :value="rgbToHex(selectedElement.fillR,selectedElement.fillG,selectedElement.fillB)"
+                           @input="onColorChange(selectedElement,'fill', $event.target.value); isDirty=true">
+                    <span class="text-xs text-gray-500 font-mono"
+                          x-text="`${selectedElement.fillR},${selectedElement.fillG},${selectedElement.fillB}`"></span>
+                  </div>
+                </div>
+                <div>
+                  <div class="flex items-center justify-between mb-0.5">
+                    <span class="prop-label">Outline</span>
+                    <input type="checkbox" x-model="selectedElement.hasOutline" @change="isDirty=true; render()">
+                  </div>
+                  <div x-show="selectedElement.hasOutline" class="flex items-center gap-2">
+                    <input type="color" class="color-input"
+                           :value="rgbToHex(selectedElement.outR,selectedElement.outG,selectedElement.outB)"
+                           @input="onColorChange(selectedElement,'out', $event.target.value); isDirty=true">
+                  </div>
+                </div>
+                <p class="text-xs text-gray-400">
+                  <i class="fas fa-arrows-alt text-xs"></i> Drag corners on canvas to resize
+                </p>
+              </div>
+            </template>
+
+            <!-- ── ARC ───────────────────────────────────────────────── -->
+            <template x-if="selectedElement.type === 'arc'">
+              <div class="space-y-2">
+                <div class="grid grid-cols-2 gap-1">
+                  <div>
+                    <span class="prop-label">Width</span>
+                    <input type="number" class="prop-input-sm" min="4" :max="MATRIX_W"
+                           x-model.number="selectedElement.width" @input="isDirty=true; render()">
+                  </div>
+                  <div>
+                    <span class="prop-label">Height</span>
+                    <input type="number" class="prop-input-sm" min="4" :max="MATRIX_H"
+                           x-model.number="selectedElement.height" @input="isDirty=true; render()">
+                  </div>
+                </div>
+                <div class="grid grid-cols-2 gap-1">
+                  <div>
+                    <span class="prop-label">Start° (0=right)</span>
+                    <input type="number" class="prop-input-sm" min="0" max="360"
+                           x-model.number="selectedElement.startAngle" @input="isDirty=true; render()">
+                  </div>
+                  <div>
+                    <span class="prop-label">End°</span>
+                    <input type="number" class="prop-input-sm" min="0" max="360"
+                           x-model.number="selectedElement.endAngle" @input="isDirty=true; render()">
+                  </div>
+                </div>
+                <div>
+                  <span class="prop-label">Line width (px)</span>
+                  <input type="number" class="prop-input" min="1" max="6"
+                         x-model.number="selectedElement.lineWidth" @input="isDirty=true; render()">
+                </div>
+                <div>
+                  <span class="prop-label">Color</span>
+                  <div class="flex items-center gap-2 mt-0.5">
+                    <input type="color" class="color-input"
+                           :value="rgbToHex(selectedElement.r,selectedElement.g,selectedElement.b)"
+                           @input="onColorChange(selectedElement,'', $event.target.value); isDirty=true">
+                    <span class="text-xs text-gray-500 font-mono"
+                          x-text="`${selectedElement.r},${selectedElement.g},${selectedElement.b}`"></span>
+                  </div>
+                </div>
+                <p class="text-xs text-gray-400">Angles: 0=right, 90=down, 180=left, 270=up</p>
+                <p class="text-xs text-gray-400">
+                  <i class="fas fa-arrows-alt text-xs"></i> Drag corners on canvas to resize
+                </p>
+              </div>
+            </template>
+
+            <!-- ── PIXEL ──────────────────────────────────────────────── -->
+            <template x-if="selectedElement.type === 'pixel'">
+              <div class="space-y-2">
+                <p class="text-xs text-gray-400">Single pixel at x,y. Place with precision using Position inputs above.</p>
+                <div>
+                  <span class="prop-label">Color</span>
+                  <div class="flex items-center gap-2 mt-0.5">
+                    <input type="color" class="color-input"
+                           :value="rgbToHex(selectedElement.r,selectedElement.g,selectedElement.b)"
+                           @input="onColorChange(selectedElement,'', $event.target.value); isDirty=true">
+                    <span class="text-xs text-gray-500 font-mono"
+                          x-text="`${selectedElement.r},${selectedElement.g},${selectedElement.b}`"></span>
+                  </div>
+                </div>
+              </div>
+            </template>
+
+            <!-- ── ROUNDED RECTANGLE ─────────────────────────────────── -->
+            <template x-if="selectedElement.type === 'rounded_rectangle'">
+              <div class="space-y-2">
+                <div class="grid grid-cols-2 gap-1">
+                  <div>
+                    <span class="prop-label">Width</span>
+                    <input type="number" class="prop-input-sm" min="4" :max="MATRIX_W"
+                           x-model.number="selectedElement.width" @input="isDirty=true; render()">
+                  </div>
+                  <div>
+                    <span class="prop-label">Height</span>
+                    <input type="number" class="prop-input-sm" min="4" :max="MATRIX_H"
+                           x-model.number="selectedElement.height" @input="isDirty=true; render()">
+                  </div>
+                </div>
+                <div>
+                  <span class="prop-label">Corner radius (px)</span>
+                  <input type="number" class="prop-input" min="1" max="20"
+                         x-model.number="selectedElement.borderRadius" @input="isDirty=true; render()">
+                </div>
+                <div>
+                  <div class="flex items-center justify-between mb-0.5">
+                    <span class="prop-label">Fill</span>
+                    <input type="checkbox" x-model="selectedElement.hasFill" @change="isDirty=true; render()">
+                  </div>
+                  <div x-show="selectedElement.hasFill" class="flex items-center gap-2">
+                    <input type="color" class="color-input"
+                           :value="rgbToHex(selectedElement.fillR,selectedElement.fillG,selectedElement.fillB)"
+                           @input="onColorChange(selectedElement,'fill', $event.target.value); isDirty=true">
+                    <span class="text-xs text-gray-500 font-mono"
+                          x-text="`${selectedElement.fillR},${selectedElement.fillG},${selectedElement.fillB}`"></span>
+                  </div>
+                </div>
+                <div>
+                  <div class="flex items-center justify-between mb-0.5">
+                    <span class="prop-label">Outline</span>
+                    <input type="checkbox" x-model="selectedElement.hasOutline" @change="isDirty=true; render()">
+                  </div>
+                  <div x-show="selectedElement.hasOutline" class="flex items-center gap-2">
+                    <input type="color" class="color-input"
+                           :value="rgbToHex(selectedElement.outR,selectedElement.outG,selectedElement.outB)"
+                           @input="onColorChange(selectedElement,'out', $event.target.value); isDirty=true">
+                  </div>
+                </div>
+                <p class="text-xs text-gray-400">
+                  <i class="fas fa-arrows-alt text-xs"></i> Drag corners on canvas to resize
+                </p>
+              </div>
+            </template>
+
+            <!-- ── LINE ──────────────────────────────────────────────── -->
+            <template x-if="selectedElement.type === 'line'">
+              <div class="space-y-2">
+                <div>
+                  <span class="prop-label">Endpoints</span>
+                  <div class="grid grid-cols-2 gap-1 mt-0.5">
+                    <div><span class="prop-label">X0</span><input type="number" class="prop-input-sm" x-model.number="selectedElement.x0" @input="isDirty=true; render()"></div>
+                    <div><span class="prop-label">Y0</span><input type="number" class="prop-input-sm" x-model.number="selectedElement.y0" @input="isDirty=true; render()"></div>
+                    <div><span class="prop-label">X1</span><input type="number" class="prop-input-sm" x-model.number="selectedElement.x1" @input="isDirty=true; render()"></div>
+                    <div><span class="prop-label">Y1</span><input type="number" class="prop-input-sm" x-model.number="selectedElement.y1" @input="isDirty=true; render()"></div>
+                  </div>
+                </div>
+                <div>
+                  <span class="prop-label">Stroke width</span>
+                  <input type="number" class="prop-input" min="1" max="4"
+                         x-model.number="selectedElement.lineWidth" @input="isDirty=true; render()">
+                </div>
+                <div>
+                  <span class="prop-label">Color</span>
+                  <input type="color" class="color-input mt-0.5"
+                         :value="rgbToHex(selectedElement.r,selectedElement.g,selectedElement.b)"
+                         @input="onColorChange(selectedElement,'', $event.target.value); isDirty=true">
+                </div>
+              </div>
+            </template>
+
+            <!-- ── DIVIDER ────────────────────────────────────────────── -->
+            <template x-if="selectedElement.type === 'divider'">
+              <div class="space-y-2">
+                <div>
+                  <span class="prop-label">Orientation</span>
+                  <select class="prop-input" x-model="selectedElement.orientation" @change="isDirty=true; render()">
+                    <option value="horizontal">Horizontal (full width)</option>
+                    <option value="vertical">Vertical (full height)</option>
+                  </select>
+                </div>
+                <div>
+                  <span class="prop-label" x-text="selectedElement.orientation==='horizontal' ? 'Y position' : 'X position'"></span>
+                  <input x-show="selectedElement.orientation==='horizontal'" type="number" class="prop-input"
+                         min="0" :max="MATRIX_H-1"
+                         x-model.number="selectedElement.y"
+                         @input="isDirty=true; render()">
+                  <input x-show="selectedElement.orientation==='vertical'" type="number" class="prop-input"
+                         min="0" :max="MATRIX_W-1"
+                         x-model.number="selectedElement.x"
+                         @input="isDirty=true; render()">
+                </div>
+                <div>
+                  <span class="prop-label">Color</span>
+                  <input type="color" class="color-input mt-0.5"
+                         :value="rgbToHex(selectedElement.r,selectedElement.g,selectedElement.b)"
+                         @input="onColorChange(selectedElement,'', $event.target.value); isDirty=true">
+                </div>
+              </div>
+            </template>
+
+            <!-- ── PROGRESS BAR ─────────────────────────────────────── -->
+            <template x-if="selectedElement.type === 'progress_bar'">
+              <div class="space-y-2">
+                <div>
+                  <span class="prop-label">Bound variable (0–100%)</span>
+                  <select class="prop-input" x-model="selectedElement.binding.key" @change="isDirty=true">
+                    <option value="">— select —</option>
+                    <template x-for="cv in dataModel.configVars" :key="cv.key">
+                      <option :value="cv.key" x-text="cv.key + ' (' + cv.type + ')'"></option>
+                    </template>
+                  </select>
+                  <p x-show="dataModel.configVars.length === 0" class="text-xs text-yellow-600 mt-0.5">
+                    <i class="fas fa-exclamation-triangle"></i> Add a Config Variable first
+                  </p>
+                </div>
+                <div class="grid grid-cols-2 gap-1">
+                  <div>
+                    <span class="prop-label">Bar width</span>
+                    <input type="number" class="prop-input-sm" min="4" :max="MATRIX_W"
+                           x-model.number="selectedElement.barWidth" @input="isDirty=true; render()">
+                  </div>
+                  <div>
+                    <span class="prop-label">Height</span>
+                    <input type="number" class="prop-input-sm" min="1" :max="MATRIX_H"
+                           x-model.number="selectedElement.barHeight" @input="isDirty=true; render()">
+                  </div>
+                </div>
+                <div>
+                  <span class="prop-label">Preview % (canvas only)</span>
+                  <div class="flex items-center gap-2">
+                    <input type="range" min="0" max="100" class="flex-1"
+                           x-model.number="selectedElement.previewPct" @input="render()">
+                    <span class="text-xs font-mono text-gray-500 w-8" x-text="selectedElement.previewPct + '%'"></span>
+                  </div>
+                </div>
+                <div>
+                  <span class="prop-label">Fill color</span>
+                  <input type="color" class="color-input mt-0.5"
+                         :value="rgbToHex(selectedElement.r,selectedElement.g,selectedElement.b)"
+                         @input="onColorChange(selectedElement,'', $event.target.value); isDirty=true">
+                </div>
+                <div>
+                  <div class="flex items-center justify-between mb-0.5">
+                    <span class="prop-label">Track background</span>
+                    <input type="checkbox" x-model="selectedElement.hasBg" @change="isDirty=true; render()">
+                  </div>
+                  <div x-show="selectedElement.hasBg" class="flex items-center gap-2">
+                    <input type="color" class="color-input"
+                           :value="rgbToHex(selectedElement.bgR,selectedElement.bgG,selectedElement.bgB)"
+                           @input="onColorChange(selectedElement,'bg', $event.target.value); isDirty=true">
+                  </div>
+                </div>
+                <div>
+                  <div class="flex items-center justify-between mb-0.5">
+                    <span class="prop-label">Border</span>
+                    <input type="checkbox" x-model="selectedElement.hasOutline" @change="isDirty=true; render()">
+                  </div>
+                  <div x-show="selectedElement.hasOutline" class="flex items-center gap-2">
+                    <input type="color" class="color-input"
+                           :value="rgbToHex(selectedElement.outR,selectedElement.outG,selectedElement.outB)"
+                           @input="onColorChange(selectedElement,'out', $event.target.value); isDirty=true">
+                  </div>
+                </div>
+              </div>
+            </template>
+
+            <!-- ── COUNTDOWN ─────────────────────────────────────────── -->
+            <template x-if="selectedElement.type === 'countdown'">
+              <div class="space-y-2">
+                <div>
+                  <span class="prop-label">Target timestamp variable</span>
+                  <select class="prop-input" x-model="selectedElement.binding.key"
+                          @change="isDirty=true; render()">
+                    <option value="">— select —</option>
+                    <template x-for="cv in dataModel.configVars" :key="cv.key">
+                      <option :value="cv.key" x-text="cv.key + ' (' + cv.type + ')'"></option>
+                    </template>
+                  </select>
+                  <p class="text-xs text-gray-400 mt-0.5">Variable holds a Unix timestamp (seconds)</p>
+                </div>
+                <div>
+                  <span class="prop-label">Format</span>
+                  <select class="prop-input" x-model="selectedElement.countdownFormat" @change="isDirty=true; render()">
+                    <option value="dh">Days + hours (42d 3h)</option>
+                    <option value="dhm">Days + hours + mins (42d 03h 15m)</option>
+                    <option value="hms">Hours + min:sec (103h 45:22)</option>
+                    <option value="dhms">Full (42d 03:15:22)</option>
+                  </select>
+                </div>
+                <div>
+                  <span class="prop-label">Preview text (canvas only)</span>
+                  <input type="text" class="prop-input font-mono" placeholder="42d 3h"
+                         x-model="selectedElement.previewText" @input="isDirty=true; render()">
+                </div>
+                <div>
+                  <span class="prop-label">Font</span>
+                  <select class="prop-input" x-model="selectedElement.font" @change="isDirty=true; render()">
+                    <option value="press_start">PressStart2P (8px)</option>
+                    <option value="four_by_six">4×6 (6px)</option>
+                    <option value="five_by_seven">5×7 (7px)</option>
+                  </select>
+                </div>
+                <div>
+                  <span class="prop-label">Alignment</span>
+                  <div class="flex gap-1 mt-0.5">
+                    <button class="flex-1 py-0.5 text-xs rounded border"
+                            :class="selectedElement.textAlign === 'left' ? 'bg-blue-100 border-blue-400 text-blue-700' : 'border-gray-200 text-gray-500'"
+                            @click="selectedElement.textAlign = 'left'; isDirty=true; render()">
+                      <i class="fas fa-align-left"></i>
+                    </button>
+                    <button class="flex-1 py-0.5 text-xs rounded border"
+                            :class="selectedElement.textAlign === 'center' ? 'bg-blue-100 border-blue-400 text-blue-700' : 'border-gray-200 text-gray-500'"
+                            @click="selectedElement.textAlign = 'center'; isDirty=true; render()">
+                      <i class="fas fa-align-center"></i>
+                    </button>
+                    <button class="flex-1 py-0.5 text-xs rounded border"
+                            :class="selectedElement.textAlign === 'right' ? 'bg-blue-100 border-blue-400 text-blue-700' : 'border-gray-200 text-gray-500'"
+                            @click="selectedElement.textAlign = 'right'; isDirty=true; render()">
+                      <i class="fas fa-align-right"></i>
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <span class="prop-label">Color</span>
+                  <div class="flex items-center gap-2 mt-0.5">
+                    <input type="color" class="color-input"
+                           :value="rgbToHex(selectedElement.r,selectedElement.g,selectedElement.b)"
+                           @input="onColorChange(selectedElement,'', $event.target.value); isDirty=true">
+                    <span class="text-xs text-gray-500 font-mono"
+                          x-text="`${selectedElement.r},${selectedElement.g},${selectedElement.b}`"></span>
+                  </div>
+                </div>
+              </div>
+            </template>
+
+            <!-- ── MARQUEE ──────────────────────────────────────────── -->
+            <template x-if="selectedElement.type === 'marquee'">
+              <div class="space-y-2">
+                <div>
+                  <span class="prop-label">Text</span>
+                  <input type="text" class="prop-input" placeholder="Scrolling text"
+                         x-model="selectedElement.text" @input="isDirty=true; render()">
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                  <div>
+                    <span class="prop-label">Speed (px/tick)</span>
+                    <input type="number" class="prop-input" min="1" max="10"
+                           x-model.number="selectedElement.scrollSpeed" @input="isDirty=true; render()">
+                  </div>
+                  <div>
+                    <span class="prop-label">Gap (px)</span>
+                    <input type="number" class="prop-input" min="0" max="128"
+                           x-model.number="selectedElement.gap" @input="isDirty=true; render()">
+                  </div>
+                </div>
+                <div>
+                  <span class="prop-label">Direction</span>
+                  <div class="flex gap-1 mt-0.5">
+                    <button class="flex-1 py-0.5 text-xs rounded border"
+                            :class="selectedElement.direction === 'left' ? 'bg-blue-100 border-blue-400 text-blue-700' : 'border-gray-200 text-gray-500'"
+                            @click="selectedElement.direction = 'left'; isDirty=true; render()">
+                      <i class="fas fa-arrow-left"></i> Left
+                    </button>
+                    <button class="flex-1 py-0.5 text-xs rounded border"
+                            :class="selectedElement.direction === 'right' ? 'bg-blue-100 border-blue-400 text-blue-700' : 'border-gray-200 text-gray-500'"
+                            @click="selectedElement.direction = 'right'; isDirty=true; render()">
+                      <i class="fas fa-arrow-right"></i> Right
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <span class="prop-label">Font</span>
+                  <select class="prop-input" x-model="selectedElement.font" @change="isDirty=true; render()">
+                    <option value="press_start">PressStart2P (8px)</option>
+                    <option value="four_by_six">4×6 (6px)</option>
+                    <option value="five_by_seven">5×7 (7px)</option>
+                  </select>
+                </div>
+                <div>
+                  <span class="prop-label">Color</span>
+                  <div class="flex items-center gap-2 mt-0.5">
+                    <input type="color" class="color-input"
+                           :value="rgbToHex(selectedElement.r,selectedElement.g,selectedElement.b)"
+                           @input="onColorChange(selectedElement,'', $event.target.value); isDirty=true">
+                    <span class="text-xs text-gray-500 font-mono"
+                          x-text="`${selectedElement.r},${selectedElement.g},${selectedElement.b}`"></span>
+                  </div>
+                </div>
+                <p class="text-xs text-gray-400 italic">
+                  <i class="fas fa-info-circle mr-1"></i>Enable blink animate to preview scrolling.
+                </p>
+              </div>
+            </template>
+
+            <!-- ── GAUGE ─────────────────────────────────────────────── -->
+            <template x-if="selectedElement.type === 'gauge'">
+              <div class="space-y-2">
+                <div>
+                  <span class="prop-label">Bound variable (%)</span>
+                  <select class="prop-input" x-model="selectedElement.binding.key"
+                          @change="isDirty=true; render()">
+                    <option value="">— select —</option>
+                    <template x-for="cv in dataModel.configVars" :key="cv.key">
+                      <option :value="cv.key" x-text="cv.key + ' (' + cv.type + ')'"></option>
+                    </template>
+                  </select>
+                </div>
+                <div>
+                  <span class="prop-label">Angle presets</span>
+                  <div class="flex gap-1 flex-wrap mt-0.5">
+                    <button class="text-xs px-1.5 py-0.5 rounded border border-gray-200 hover:bg-blue-50 hover:border-blue-300"
+                            @click="selectedElement.startAngle=135; selectedElement.endAngle=45; isDirty=true; render()">¾ arc</button>
+                    <button class="text-xs px-1.5 py-0.5 rounded border border-gray-200 hover:bg-blue-50 hover:border-blue-300"
+                            @click="selectedElement.startAngle=180; selectedElement.endAngle=0; isDirty=true; render()">Top ½</button>
+                    <button class="text-xs px-1.5 py-0.5 rounded border border-gray-200 hover:bg-blue-50 hover:border-blue-300"
+                            @click="selectedElement.startAngle=0; selectedElement.endAngle=180; isDirty=true; render()">Bot ½</button>
+                    <button class="text-xs px-1.5 py-0.5 rounded border border-gray-200 hover:bg-blue-50 hover:border-blue-300"
+                            @click="selectedElement.startAngle=270; selectedElement.endAngle=90; isDirty=true; render()">Left ½</button>
+                    <button class="text-xs px-1.5 py-0.5 rounded border border-gray-200 hover:bg-blue-50 hover:border-blue-300"
+                            @click="selectedElement.startAngle=0; selectedElement.endAngle=360; isDirty=true; render()">Full ●</button>
+                  </div>
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                  <div>
+                    <span class="prop-label">Start angle°</span>
+                    <input type="number" class="prop-input" min="0" max="360"
+                           x-model.number="selectedElement.startAngle" @input="isDirty=true; render()">
+                  </div>
+                  <div>
+                    <span class="prop-label">End angle°</span>
+                    <input type="number" class="prop-input" min="0" max="360"
+                           x-model.number="selectedElement.endAngle" @input="isDirty=true; render()">
+                  </div>
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                  <div>
+                    <span class="prop-label">W × H (px)</span>
+                    <div class="flex gap-1">
+                      <input type="number" class="prop-input" min="4" max="128"
+                             x-model.number="selectedElement.width" @input="isDirty=true; render()">
+                      <input type="number" class="prop-input" min="4" max="128"
+                             x-model.number="selectedElement.height" @input="isDirty=true; render()">
+                    </div>
+                  </div>
+                  <div>
+                    <span class="prop-label">Line width</span>
+                    <input type="number" class="prop-input" min="1" max="12"
+                           x-model.number="selectedElement.lineWidth" @input="isDirty=true; render()">
+                  </div>
+                </div>
+                <div>
+                  <span class="prop-label">Fill color</span>
+                  <div class="flex items-center gap-2 mt-0.5">
+                    <input type="color" class="color-input"
+                           :value="rgbToHex(selectedElement.r,selectedElement.g,selectedElement.b)"
+                           @input="onColorChange(selectedElement,'', $event.target.value); isDirty=true">
+                    <span class="text-xs text-gray-400 font-mono"
+                          x-text="`${selectedElement.r},${selectedElement.g},${selectedElement.b}`"></span>
+                  </div>
+                </div>
+                <div class="flex items-center gap-2">
+                  <label class="flex items-center gap-1 text-xs text-gray-600 cursor-pointer">
+                    <input type="checkbox" x-model="selectedElement.hasTrack" @change="isDirty=true; render()" class="w-3 h-3">
+                    Track ring
+                  </label>
+                  <div x-show="selectedElement.hasTrack" class="flex items-center gap-1 ml-2">
+                    <input type="color" class="color-input"
+                           :value="rgbToHex(selectedElement.trackR??40,selectedElement.trackG??40,selectedElement.trackB??40)"
+                           @input="onColorChange(selectedElement,'track', $event.target.value); isDirty=true">
+                  </div>
+                </div>
+                <div class="flex items-center gap-2">
+                  <label class="flex items-center gap-1 text-xs text-gray-600 cursor-pointer">
+                    <input type="checkbox" x-model="selectedElement.showLabel" @change="isDirty=true; render()" class="w-3 h-3">
+                    Centre % label
+                  </label>
+                </div>
+                <div>
+                  <span class="prop-label">Preview %</span>
+                  <div class="flex items-center gap-2">
+                    <input type="range" class="flex-1" min="0" max="100"
+                           x-model.number="selectedElement.previewPct" @input="isDirty=true; render()">
+                    <span class="text-xs font-mono text-gray-500 w-8" x-text="selectedElement.previewPct + '%'"></span>
+                  </div>
+                </div>
+              </div>
+            </template>
+
+            <!-- ── SPARKLINE ──────────────────────────────────────────── -->
+            <template x-if="selectedElement.type === 'sparkline'">
+              <div class="space-y-2">
+                <div>
+                  <span class="prop-label">Bound variable (comma-sep values)</span>
+                  <select class="prop-input" x-model="selectedElement.binding.key"
+                          @change="isDirty=true; render()">
+                    <option value="">— select —</option>
+                    <template x-for="cv in dataModel.configVars" :key="cv.key">
+                      <option :value="cv.key" x-text="cv.key + ' (' + cv.type + ')'"></option>
+                    </template>
+                  </select>
+                  <p class="text-xs text-gray-400 mt-0.5">Variable should hold comma-separated numbers e.g. "0.3,0.7,0.5"</p>
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                  <div>
+                    <span class="prop-label">Width (px)</span>
+                    <input type="number" class="prop-input" min="4" max="256"
+                           x-model.number="selectedElement.width" @input="isDirty=true; render()">
+                  </div>
+                  <div>
+                    <span class="prop-label">Height (px)</span>
+                    <input type="number" class="prop-input" min="2" max="64"
+                           x-model.number="selectedElement.height" @input="isDirty=true; render()">
+                  </div>
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                  <div>
+                    <span class="prop-label">Bar count</span>
+                    <input type="number" class="prop-input" min="1" max="64"
+                           x-model.number="selectedElement.barCount" @input="isDirty=true; render()">
+                  </div>
+                  <div>
+                    <span class="prop-label">Bar spacing</span>
+                    <input type="number" class="prop-input" min="0" max="4"
+                           x-model.number="selectedElement.barSpacing" @input="isDirty=true; render()">
+                  </div>
+                </div>
+                <div>
+                  <span class="prop-label">Bar color</span>
+                  <div class="flex items-center gap-2 mt-0.5">
+                    <input type="color" class="color-input"
+                           :value="rgbToHex(selectedElement.r,selectedElement.g,selectedElement.b)"
+                           @input="onColorChange(selectedElement,'', $event.target.value); isDirty=true">
+                    <span class="text-xs text-gray-400 font-mono"
+                          x-text="`${selectedElement.r},${selectedElement.g},${selectedElement.b}`"></span>
+                  </div>
+                </div>
+                <div class="flex items-center gap-2">
+                  <label class="flex items-center gap-1 text-xs text-gray-600 cursor-pointer">
+                    <input type="checkbox" x-model="selectedElement.hasBg" @change="isDirty=true; render()" class="w-3 h-3">
+                    Background
+                  </label>
+                  <div x-show="selectedElement.hasBg" class="flex items-center gap-1 ml-2">
+                    <input type="color" class="color-input"
+                           :value="rgbToHex(selectedElement.bgR??30,selectedElement.bgG??30,selectedElement.bgB??30)"
+                           @input="onColorChange(selectedElement,'bg', $event.target.value); isDirty=true">
+                  </div>
+                </div>
+                <div>
+                  <span class="prop-label">Preview data (comma-sep)</span>
+                  <input type="text" class="prop-input font-mono" placeholder="0.3,0.6,0.4,0.8,0.5"
+                         x-model="selectedElement.previewData" @input="isDirty=true; render()">
+                </div>
+              </div>
+            </template>
+
+            <!-- ── PIPS / RATING ──────────────────────────────────────── -->
+            <template x-if="selectedElement.type === 'pips'">
+              <div class="space-y-2">
+                <div>
+                  <span class="prop-label">Bound variable (0–count)</span>
+                  <select class="prop-input" x-model="selectedElement.binding.key"
+                          @change="isDirty=true; render()">
+                    <option value="">— select —</option>
+                    <template x-for="cv in dataModel.configVars" :key="cv.key">
+                      <option :value="cv.key" x-text="cv.key + ' (' + cv.type + ')'"></option>
+                    </template>
+                  </select>
+                </div>
+                <div class="grid grid-cols-3 gap-2">
+                  <div>
+                    <span class="prop-label">Count</span>
+                    <input type="number" class="prop-input" min="1" max="20"
+                           x-model.number="selectedElement.count" @input="isDirty=true; render()">
+                  </div>
+                  <div>
+                    <span class="prop-label">Size (px)</span>
+                    <input type="number" class="prop-input" min="1" max="16"
+                           x-model.number="selectedElement.pipSize" @input="isDirty=true; render()">
+                  </div>
+                  <div>
+                    <span class="prop-label">Gap (px)</span>
+                    <input type="number" class="prop-input" min="0" max="8"
+                           x-model.number="selectedElement.pipSpacing" @input="isDirty=true; render()">
+                  </div>
+                </div>
+                <div>
+                  <span class="prop-label">Filled color</span>
+                  <div class="flex items-center gap-2 mt-0.5">
+                    <input type="color" class="color-input"
+                           :value="rgbToHex(selectedElement.r,selectedElement.g,selectedElement.b)"
+                           @input="onColorChange(selectedElement,'', $event.target.value); isDirty=true">
+                    <span class="text-xs text-gray-400 font-mono"
+                          x-text="`${selectedElement.r},${selectedElement.g},${selectedElement.b}`"></span>
+                  </div>
+                </div>
+                <div class="flex items-center gap-2">
+                  <label class="flex items-center gap-1 text-xs text-gray-600 cursor-pointer">
+                    <input type="checkbox" x-model="selectedElement.showEmpty" @change="isDirty=true; render()" class="w-3 h-3">
+                    Show empty pips
+                  </label>
+                  <div x-show="selectedElement.showEmpty" class="flex items-center gap-1 ml-2">
+                    <input type="color" class="color-input"
+                           :value="rgbToHex(selectedElement.emptyR??50,selectedElement.emptyG??50,selectedElement.emptyB??50)"
+                           @input="onColorChange(selectedElement,'empty', $event.target.value); isDirty=true">
+                  </div>
+                </div>
+                <div>
+                  <span class="prop-label">Preview filled count</span>
+                  <div class="flex items-center gap-2">
+                    <input type="range" class="flex-1" :min="0" :max="selectedElement.count ?? 5"
+                           x-model.number="selectedElement.filled" @input="isDirty=true; render()">
+                    <span class="text-xs font-mono text-gray-500 w-6" x-text="selectedElement.filled"></span>
+                  </div>
+                </div>
+              </div>
+            </template>
+
+            <!-- ── SECTION LABEL ──────────────────────────────────────── -->
+            <template x-if="selectedElement.type === 'section'">
+              <div class="space-y-2">
+                <p class="text-xs text-gray-500">
+                  <i class="fas fa-tag mr-1 text-gray-400"></i>
+                  Section labels organize your layer list. They produce no canvas output.
+                </p>
+                <div>
+                  <span class="prop-label">Label text</span>
+                  <input type="text" class="prop-input" placeholder="e.g. Background, Foreground…"
+                         x-model="selectedElement.label" @input="isDirty=true">
+                </div>
+              </div>
+            </template>
+
+          </div>
+        </template>
+
+      </div>
+    </div><!-- /RIGHT -->
+
+  </div><!-- /body -->
+
+  <!-- ── Status bar ──────────────────────────────────────────────────── -->
+  <div class="bg-white border-t border-gray-100 px-3 py-1 flex items-center gap-3 flex-shrink-0" style="height:28px">
+    <span class="text-xs" :class="statusClass()" x-text="statusMsg || 'Ready'"></span>
+    <span x-show="isDirty" class="text-xs text-amber-400">
+      <i class="fas fa-circle text-xs"></i> unsaved
+    </span>
+    <span x-show="selectedElement" class="text-xs text-gray-400 font-mono"
+          x-text="selectedElement ? (selectedElement.type + ' @ ' + (selectedElement.x ?? selectedElement.x0 ?? 0) + ',' + (selectedElement.y ?? selectedElement.y0 ?? 0)) : ''"></span>
+    <div class="flex-1"></div>
+    <!-- Snap indicator -->
+    <span x-show="snapToGrid"
+          class="text-xs px-1 rounded font-mono"
+          style="background:#dbeafe;color:#1d4ed8;font-size:0.58rem"
+          :title="'Snap: ' + snapSize + 'px grid (G to toggle)'">
+      SNAP <span x-text="snapSize + 'px'"></span>
+    </span>
+    <span class="text-xs text-gray-400">
+      <span x-text="elements.length"></span> el · <span x-text="currentPreset"></span>
+    </span>
+    <button class="btn-icon w-5 h-5" @click="showHelpModal=true" title="Keyboard shortcuts (?)">
+      <i class="fas fa-keyboard" style="font-size:0.5rem"></i>
+    </button>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       MODALS
+  ═══════════════════════════════════════════════════════════════ -->
+
+  <!-- Config Variable modal -->
+  <div x-show="showConfigVarModal" class="modal-overlay"
+       @keydown.escape.window="showConfigVarModal=false" @click.self="showConfigVarModal=false">
+    <div class="modal-box p-5 w-80">
+      <h3 class="text-sm font-semibold text-gray-800 mb-4">Add Config Variable</h3>
+      <div class="space-y-2.5">
+        <div><span class="prop-label">Python key *</span>
+          <input type="text" class="prop-input font-mono" placeholder="my_variable"
+                 x-model="newConfigVar.key" @keydown.enter="addConfigVar()"></div>
+        <div><span class="prop-label">Display label</span>
+          <input type="text" class="prop-input" placeholder="My Variable"
+                 x-model="newConfigVar.label"></div>
+        <div><span class="prop-label">Type</span>
+          <select class="prop-input" x-model="newConfigVar.type">
+            <option value="string">String</option>
+            <option value="number">Number</option>
+            <option value="boolean">Boolean</option>
+            <option value="color">Color (RGB)</option>
+          </select></div>
+        <div><span class="prop-label">Default value</span>
+          <input type="text" class="prop-input font-mono" x-model="newConfigVar.default"></div>
+        <div><span class="prop-label">Description</span>
+          <input type="text" class="prop-input" x-model="newConfigVar.description"></div>
+      </div>
+      <div class="flex justify-end gap-2 mt-4">
+        <button class="btn-secondary" @click="showConfigVarModal=false">Cancel</button>
+        <button class="btn-primary" @click="addConfigVar()"><i class="fas fa-plus"></i> Add</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Template gallery modal -->
+  <div x-show="showTemplateModal" class="modal-overlay"
+       @keydown.escape.window="showTemplateModal=false" @click.self="showTemplateModal=false">
+    <div class="modal-box w-[680px] max-h-[85vh] flex flex-col">
+      <div class="px-5 py-3.5 border-b border-gray-100 flex items-center justify-between">
+        <h3 class="text-sm font-semibold text-gray-800">Start from a Template</h3>
+        <button class="text-gray-400 hover:text-gray-600" @click="showTemplateModal=false"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="p-5 overflow-y-auto">
+        <div class="grid grid-cols-3 gap-3">
+          <template x-for="tmpl in templates" :key="tmpl.id">
+            <button class="tmpl-card" @click="loadTemplate(tmpl)">
+              <div class="flex items-center gap-2 mb-1.5">
+                <i :class="tmpl.icon + ' text-blue-400 text-sm w-5'"></i>
+                <span class="text-sm font-semibold text-gray-700" x-text="tmpl.label"></span>
+              </div>
+              <p class="text-xs text-gray-500 leading-tight" x-text="tmpl.description"></p>
+              <div class="flex items-center gap-2 mt-2">
+                <span class="text-xs text-gray-300 font-mono" x-text="tmpl.preset"></span>
+                <span x-show="tmpl.dataModel.configVars.length > 0"
+                      class="text-xs text-blue-400"
+                      x-text="tmpl.dataModel.configVars.length + ' vars'"></span>
+              </div>
+            </button>
+          </template>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Open Plugin modal -->
+  <div x-show="showOpenModal" class="modal-overlay"
+       @keydown.escape.window="showOpenModal=false" @click.self="showOpenModal=false">
+    <div class="modal-box w-96 max-h-[80vh] flex flex-col">
+      <div class="px-5 py-3.5 border-b border-gray-100 flex items-center justify-between">
+        <h3 class="text-sm font-semibold text-gray-800">Open Installed Plugin</h3>
+        <button class="text-gray-400 hover:text-gray-600" @click="showOpenModal=false"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="p-4 overflow-y-auto flex-1">
+        <div x-show="loadPluginsStatus === 'loading'" class="text-center py-6 text-gray-400 text-sm">
+          <i class="fas fa-spinner fa-spin mr-2"></i>Loading…
+        </div>
+        <div x-show="loadPluginsStatus === 'error'" class="text-center py-6 text-red-500 text-sm">
+          Failed to load plugin list
+        </div>
+        <div x-show="loadPluginsStatus === 'done' && installedPlugins.length === 0"
+             class="text-center py-6 text-gray-400 text-sm">
+          No installed plugins found
+        </div>
+        <div x-show="loadPluginsStatus === 'done' && installedPlugins.length > 0" class="space-y-1">
+          <p class="text-xs text-gray-400 mb-2">Click a plugin to load it:</p>
+          <template x-for="p in installedPlugins" :key="p.id">
+            <button class="w-full text-left flex items-center gap-3 px-3 py-2 rounded border border-gray-100 hover:bg-blue-50 hover:border-blue-200 transition-colors"
+                    @click="loadPlugin(p.id)">
+              <div class="flex-1 min-w-0">
+                <div class="text-sm font-medium text-gray-700 truncate" x-text="p.name || p.id"></div>
+                <div class="text-xs text-gray-400 font-mono" x-text="p.id"></div>
+              </div>
+              <span x-show="p.has_composer_state"
+                    class="text-xs px-1.5 py-0.5 bg-blue-100 text-blue-600 rounded flex-shrink-0">
+                <i class="fas fa-magic text-xs"></i> Full
+              </span>
+              <span x-show="!p.has_composer_state"
+                    class="text-xs px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded flex-shrink-0">
+                Config only
+              </span>
+            </button>
+          </template>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Code Preview modal -->
+  <div x-show="showCodeModal" class="modal-overlay"
+       @keydown.escape.window="showCodeModal=false" @click.self="showCodeModal=false">
+    <div class="modal-box w-[760px] max-h-[85vh] flex flex-col">
+      <div class="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+        <h3 class="text-sm font-semibold text-gray-800">Generated Code Preview</h3>
+        <div class="flex items-center gap-3">
+          <div class="flex rounded overflow-hidden border border-gray-200">
+            <template x-for="tab in ['manager.py','manifest.json','config_schema.json']" :key="tab">
+              <button class="px-2.5 py-1 text-xs transition-colors"
+                      :class="codeTab === tab ? 'bg-blue-600 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'"
+                      @click="codeTab = tab"
+                      x-show="codeFiles[tab] !== undefined"
+                      x-text="tab"></button>
+            </template>
+          </div>
+          <button class="text-gray-400 hover:text-gray-600" @click="showCodeModal=false"><i class="fas fa-times"></i></button>
+        </div>
+      </div>
+      <div class="flex-1 overflow-hidden p-4">
+        <div x-show="loadingCode" class="flex items-center justify-center h-32 text-gray-400">
+          <i class="fas fa-spinner fa-spin mr-2"></i> Generating…
+        </div>
+        <template x-if="!loadingCode && codeFiles[codeTab]">
+          <pre class="code-block" x-text="codeFiles[codeTab]"></pre>
+        </template>
+      </div>
+      <div class="px-5 py-3 border-t border-gray-100 flex justify-between items-center">
+        <span class="text-xs text-gray-400">
+          <i class="fas fa-info-circle"></i>
+          This is the exact code that will be exported. Edit your layout, then re-open to refresh.
+        </span>
+        <div class="flex gap-2">
+          <button class="btn-secondary text-xs" @click="generateZip()">
+            <i class="fas fa-download"></i> Download ZIP
+          </button>
+          <button class="btn-primary text-xs" @click="installLocally()">
+            <i class="fas fa-bolt"></i> Install
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Keyboard shortcuts modal -->
+  <div x-show="showHelpModal" class="modal-overlay"
+       @keydown.escape.window="showHelpModal=false" @click.self="showHelpModal=false">
+    <div class="modal-box p-6 w-96">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-sm font-semibold text-gray-800">
+          <i class="fas fa-keyboard text-blue-400 mr-2"></i>Keyboard Shortcuts
+        </h3>
+        <button class="text-gray-400 hover:text-gray-600" @click="showHelpModal=false">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs">
+        <span class="text-gray-400">Select element</span><span class="font-mono text-gray-700">Click canvas</span>
+        <span class="text-gray-400">Deselect</span><span class="font-mono text-gray-700">Esc</span>
+        <span class="text-gray-400">Cycle elements</span><span class="font-mono text-gray-700">Tab / Shift+Tab</span>
+        <span class="text-gray-400">Nudge (snap-aware)</span><span class="font-mono text-gray-700">↑ ↓ ← →</span>
+        <span class="text-gray-400">Nudge 5px (override)</span><span class="font-mono text-gray-700">Shift + arrow</span>
+        <span class="text-gray-400">Delete selected</span><span class="font-mono text-gray-700">Del / Backspace</span>
+        <span class="text-gray-400">Undo / Redo</span><span class="font-mono text-gray-700">Ctrl+Z / Ctrl+Y</span>
+        <span class="text-gray-400">Copy / Paste element</span><span class="font-mono text-gray-700">Ctrl+C / Ctrl+V</span>
+        <span class="text-gray-400">Copy / Paste style</span><span class="font-mono text-gray-700">Ctrl+Shift+C / V</span>
+        <span class="text-gray-400">Duplicate</span><span class="font-mono text-gray-700">Ctrl+D</span>
+        <span class="text-gray-400">Select first element</span><span class="font-mono text-gray-700">Ctrl+A</span>
+        <span class="text-gray-400">Toggle snap-to-grid</span><span class="font-mono text-gray-700">G</span>
+        <span class="text-gray-400">Bring to front / back</span><span class="font-mono text-gray-700">] / [</span>
+        <span class="text-gray-400">This dialog</span><span class="font-mono text-gray-700">?</span>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /#app -->
+
+<script src="/static/v3/js/composer/composer-canvas.js?v=15"></script>
+<script src="/static/v3/js/composer/composer-app.js?v=15"></script>
+<script defer src="/static/v3/js/alpinejs.min.js"></script>
+<script>
+// Alpine CDN fallback
+document.addEventListener('DOMContentLoaded', function() {
+  setTimeout(function() {
+    if (typeof window.Alpine === 'undefined') {
+      console.warn('[Composer] Alpine local failed, using CDN');
+      var s = document.createElement('script');
+      s.defer = true;
+      s.src = 'https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js';
+      document.head.appendChild(s);
+    }
+  }, 300);
+});
+</script>
+</body>
+</html>

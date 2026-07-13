@@ -1,0 +1,37 @@
+{
+  "id": "march-madness",
+  "name": "March Madness",
+  "version": "1.0.0",
+  "description": "NCAA March Madness tournament bracket tracker with round branding, seeded matchups, live scores, and upset highlighting",
+  "author": "ChuckBuilds",
+  "category": "sports",
+  "tags": [
+    "ncaa",
+    "basketball",
+    "march-madness",
+    "tournament",
+    "bracket",
+    "scrolling"
+  ],
+  "repo": "https://github.com/ChuckBuilds/ledmatrix-plugins",
+  "branch": "main",
+  "plugin_path": "plugins/march-madness",
+  "versions": [
+    {
+      "version": "1.0.0",
+      "ledmatrix_min": "2.0.0",
+      "released": "2026-02-16"
+    }
+  ],
+  "stars": 0,
+  "downloads": 0,
+  "last_updated": "2026-02-16",
+  "verified": true,
+  "screenshot": "",
+  "display_modes": [
+    "march_madness"
+  ],
+  "dependencies": {},
+  "entry_point": "manager.py",
+  "class_name": "MarchMadnessPlugin"
+}
