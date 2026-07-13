@@ -253,3 +253,61 @@ class TestCheckPluginHonorsHarnessJson:
         )
         assert captured["freeze_time"] == "2030-01-01 00:00:00"
         assert captured["config"]["timezone"] == "America/New_York"
+
+
+class TestBuildFullConfigForcesEnabled:
+    """Regression: a plugin's own config_schema.json may reasonably default
+    enabled to False (e.g. a seasonal or opt-in plugin) -- march-madness and
+    14 other real plugins do. The harness must still test it as enabled
+    unless a caller explicitly asks otherwise, or every render silently
+    becomes a same-shaped "disabled, do nothing" no-op."""
+
+    def _make_plugin_with_disabled_default(self, tmp_path):
+        pdir = tmp_path / "plugins" / "demo-seasonal"
+        pdir.mkdir(parents=True)
+        (pdir / "manifest.json").write_text(json.dumps({
+            "id": "demo-seasonal", "name": "Demo Seasonal", "version": "1.0.0",
+            "author": "test", "entry_point": "manager.py",
+            "class_name": "DemoSeasonal", "display_modes": ["demo-seasonal"],
+            "compatible_versions": ["*"],
+        }))
+        (pdir / "config_schema.json").write_text(json.dumps({
+            "type": "object",
+            "properties": {"enabled": {"type": "boolean", "default": False}},
+        }))
+        return pdir
+
+    def test_schema_disabled_default_does_not_win(self, tmp_path):
+        from src.plugin_system.testing.loading import build_full_config
+        plugin_dir = self._make_plugin_with_disabled_default(tmp_path)
+        config = build_full_config(plugin_dir)
+        assert config["enabled"] is True
+
+    def test_harness_json_config_can_still_disable(self, tmp_path):
+        from src.plugin_system.testing.loading import build_full_config
+        plugin_dir = self._make_plugin_with_disabled_default(tmp_path)
+        config = build_full_config(plugin_dir, spec={"config": {"enabled": False}})
+        assert config["enabled"] is False
+
+    def test_explicit_cli_config_can_still_disable(self, tmp_path):
+        from src.plugin_system.testing.loading import build_full_config
+        plugin_dir = self._make_plugin_with_disabled_default(tmp_path)
+        config = build_full_config(plugin_dir, cli_config={"enabled": False})
+        assert config["enabled"] is False
+
+    def test_check_one_renders_a_schema_disabled_plugin_as_enabled(self, tmp_path, monkeypatch):
+        """End-to-end: check_plugin.py's check_one() must not blank-render a
+        plugin just because its own schema defaults enabled to False."""
+        mod = _load_check_plugin_cli()
+        plugin_dir = self._make_plugin_with_disabled_default(tmp_path)
+        captured = {}
+        monkeypatch.setattr(mod, "render_plugin_matrix",
+                            lambda **kw: captured.update(kw) or [])
+        monkeypatch.setattr(mod, "compare_to_goldens", lambda *a, **k: [])
+        mod.check_one(
+            plugin_id="demo-seasonal", search_dirs=[str(tmp_path / "plugins")],
+            sizes=None, mock_data={}, config={}, run_update=True,
+            out_dir=None, update_golden=False, golden_dir_override=None,
+            freeze_time=None,
+        )
+        assert captured["config"]["enabled"] is True

@@ -28,7 +28,7 @@ os.environ['EMULATOR'] = 'true'
 # Import logger after path setup so src.logging_config is importable
 from src.logging_config import get_logger  # noqa: E402
 from src.plugin_system.testing.loading import (  # noqa: E402
-    find_plugin_dir, load_manifest, load_config_defaults,
+    build_full_config, find_plugin_dir, load_manifest,
 )
 logger = get_logger("[Render Plugin]")
 
@@ -83,16 +83,13 @@ def main() -> int:
     manifest = load_manifest(Path(plugin_dir))
 
     # Parse config: start with schema defaults, then apply overrides
-    config_defaults = load_config_defaults(Path(plugin_dir))
     try:
         user_config = json.loads(args.config)
     except json.JSONDecodeError as e:
         logger.error("Invalid JSON config: %s", e)
         return 1
 
-    config = {'enabled': True}
-    config.update(config_defaults)
-    config.update(user_config)
+    config = build_full_config(Path(plugin_dir), cli_config=user_config)
 
     # Load mock data if provided
     mock_data = {}
