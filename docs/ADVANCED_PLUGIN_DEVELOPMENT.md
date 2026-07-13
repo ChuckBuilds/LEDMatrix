@@ -2,6 +2,12 @@
 
 Advanced patterns, examples, and best practices for developing LEDMatrix plugins.
 
+> **Adaptive layout:** for plugins that should render legibly on any panel
+> size (fonts that grow on big panels, layouts that degrade gracefully on
+> small ones), use the adaptive layout system — `self.layout`, `draw_fit`,
+> `draw_image`, `scoreboard_regions` — documented in
+> [ADAPTIVE_LAYOUT.md](ADAPTIVE_LAYOUT.md).
+
 ## Table of Contents
 
 - [Using Weather Icons](#using-weather-icons)

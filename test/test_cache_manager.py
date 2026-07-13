@@ -400,3 +400,61 @@ class TestDiskCache:
         assert stats['fetch_count'] == 3
         assert stats['total_fetch_time'] == 1.8
         assert stats['average_fetch_time'] == pytest.approx(0.6, abs=0.01)
+
+
+class TestDiskCacheWriteEconomy:
+    """SD-card wear guards: identical payloads skip the disk, files are
+    compact, and TTL semantics survive the skip (see PR: fix/diskcache-sd-wear)."""
+
+    def test_identical_set_skips_rewrite(self, tmp_path):
+        import os
+        cache = DiskCache(cache_dir=str(tmp_path))
+        cache.set("k", {"data": "v"})
+        path = cache.get_cache_path("k")
+        first = os.stat(path)
+        os.utime(path, (first.st_atime - 100, first.st_mtime - 100))  # age it
+        aged_mtime = os.stat(path).st_mtime
+        ino_before = os.stat(path).st_ino
+        cache.set("k", {"data": "v"})  # identical payload
+        after = os.stat(path)
+        # mtime refreshed (TTL for mtime-based records preserved)...
+        assert after.st_mtime > aged_mtime
+        # ...but the file was NOT rewritten (same inode: no replace happened)
+        assert after.st_ino == ino_before
+
+    def test_changed_data_rewrites(self, tmp_path):
+        import os
+        cache = DiskCache(cache_dir=str(tmp_path))
+        cache.set("k", {"data": "v1"})
+        cache.set("k", {"data": "v2"})
+        assert cache.get("k") == {"data": "v2"}
+
+    def test_clear_resets_digest(self, tmp_path):
+        import os
+        cache = DiskCache(cache_dir=str(tmp_path))
+        cache.set("k", {"data": "v"})
+        cache.clear("k")
+        assert cache.get("k") is None
+        cache.set("k", {"data": "v"})  # same payload after clear must WRITE
+        assert cache.get("k") == {"data": "v"}
+
+    def test_skip_self_heals_when_file_deleted_externally(self, tmp_path):
+        import os
+        cache = DiskCache(cache_dir=str(tmp_path))
+        cache.set("k", {"data": "v"})
+        os.remove(cache.get_cache_path("k"))  # e.g. expiry cleanup
+        cache.set("k", {"data": "v"})  # digest matches but file is gone
+        assert cache.get("k") == {"data": "v"}
+
+    def test_files_are_compact_json(self, tmp_path):
+        cache = DiskCache(cache_dir=str(tmp_path))
+        cache.set("k", {"a": 1, "b": [1, 2, 3]})
+        raw = open(cache.get_cache_path("k")).read()
+        assert "\n" not in raw.strip()  # no indent
+        assert cache.get("k") == {"a": 1, "b": [1, 2, 3]}
+
+    def test_datetime_round_trip_still_works(self, tmp_path):
+        from datetime import datetime
+        cache = DiskCache(cache_dir=str(tmp_path))
+        cache.set("k", {"when": datetime(2026, 7, 12, 10, 30)})
+        assert cache.get("k") == {"when": "2026-07-12T10:30:00"}

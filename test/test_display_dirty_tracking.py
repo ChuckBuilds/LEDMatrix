@@ -14,6 +14,7 @@ The invariants:
 
 import os
 import sys
+import time
 
 os.environ["EMULATOR"] = "true"
 
@@ -96,22 +97,32 @@ class TestDirtyTracking:
         dm.set_brightness(90)
 
     def test_snapshot_still_written_on_skip(self, dm, tmp_path):
-        """The web preview path must keep working through skipped pushes."""
+        """The web preview mirror must keep working through skipped panel
+        pushes: _write_snapshot_if_due() still runs on the dirty-tracking
+        skip path and applies its own write/touch policy rather than being
+        bypassed entirely (see src/common/snapshot_policy.py — an unchanged
+        frame is touched, not re-encoded, once TOUCH_INTERVAL elapses)."""
         dm._snapshot_path = str(tmp_path / "snap.png")
         dm._last_snapshot_ts = 0.0
+        dm._last_snapshot_touch_ts = 0.0
+        dm._last_snapshot_digest = None
         dm.draw.rectangle([0, 0, 30, 8], fill=(255, 255, 0))
-        dm.update_display()   # push + snapshot
+        dm.update_display()   # push + snapshot write (first frame)
         assert os.path.exists(dm._snapshot_path)
+        first_mtime = os.path.getmtime(dm._snapshot_path)
 
-        # Re-open the snapshot's own throttle and remove the file, then push
-        # the identical frame again: dirty tracking must skip the panel
-        # write but the snapshot must still be (re-)written on that path.
-        os.remove(dm._snapshot_path)
-        dm._last_snapshot_ts = 0.0
+        # Age the write/touch bookkeeping past TOUCH_INTERVAL so the next
+        # identical frame is due for a touch, then push it again: dirty
+        # tracking must skip the panel write, but the snapshot mirror must
+        # still get its mtime bumped so the health check doesn't go stale.
+        from src.common import snapshot_policy
+        stale_ts = time.time() - snapshot_policy.TOUCH_INTERVAL - 1.0
+        dm._last_snapshot_ts = stale_ts
+        dm._last_snapshot_touch_ts = stale_ts
         with _SwapSpy(dm.matrix) as spy:
             dm.update_display()  # identical frame -> panel push skipped
         assert spy.count == 0
-        assert os.path.exists(dm._snapshot_path)
+        assert os.path.getmtime(dm._snapshot_path) > first_mtime
 
 
 class TestKillSwitch:

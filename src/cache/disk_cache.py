@@ -10,6 +10,7 @@ import time
 import tempfile
 import logging
 import threading
+import zlib
 from typing import Dict, Any, Optional, Protocol
 from datetime import datetime
 
@@ -53,6 +54,11 @@ class DiskCache:
         self.cache_dir = cache_dir
         self.logger = logger or logging.getLogger(__name__)
         self._lock = threading.Lock()
+        # key -> adler32 of the last payload successfully written to the
+        # primary cache path; lets set() skip rewriting identical data
+        # (per-process only — worst case another process rewrites, never
+        # a missed write). Guarded by _lock.
+        self._write_digests: Dict[str, int] = {}
     
     def get_cache_path(self, key: str) -> Optional[str]:
         """
@@ -155,10 +161,35 @@ class DiskCache:
         cache_path = self.get_cache_path(key)
         if not cache_path:
             return
-        
+
+        # Serialize once, compact (no indent): the payload is reused by every
+        # write path below, and cache files are machine-read only — indenting
+        # them just multiplied the bytes written to the SD card.
+        try:
+            payload = json.dumps(data, cls=DateTimeEncoder)
+        except (TypeError, ValueError) as e:
+            self.logger.warning("Cache data for key '%s' not serializable: %s", key, e)
+            return
+
+        digest = zlib.adler32(payload.encode('utf-8'))
+
         try:
             # Atomic write to avoid partial/corrupt files
             with self._lock:
+                # Skip the disk entirely when this exact payload was already
+                # written for this key (plugins re-save unchanged API data
+                # every update cycle — each write is real SD-card wear).
+                # Refresh the file mtime so records that rely on it for TTL
+                # (no embedded 'timestamp') don't expire early; a metadata
+                # touch is journal-cheap compared to rewriting the data.
+                if self._write_digests.get(key) == digest:
+                    try:
+                        os.utime(cache_path, None)
+                        return
+                    except OSError:
+                        # File vanished or perms changed — fall through and write
+                        self._write_digests.pop(key, None)
+
                 tmp_dir = os.path.dirname(cache_path)
                 # Try to create temp file in cache directory first
                 # If that fails due to permissions, fall back to direct write
@@ -181,13 +212,17 @@ class DiskCache:
                         fd = None
                     
                     if tmp_path and fd is not None:
-                        # Use atomic write with temp file
+                        # Atomic write with temp file. No fsync: os.replace
+                        # already guarantees readers never see a torn file,
+                        # and cache data is re-fetchable — forcing a disk
+                        # flush per write was the single biggest SD-card
+                        # wear source (dozens of fsyncs/min on API-heavy
+                        # installs) for data that can be re-downloaded.
                         try:
                             with os.fdopen(fd, 'w', encoding='utf-8') as tmp_file:
-                                json.dump(data, tmp_file, indent=4, cls=DateTimeEncoder)
-                                tmp_file.flush()
-                                os.fsync(tmp_file.fileno())
+                                tmp_file.write(payload)
                             os.replace(tmp_path, cache_path)
+                            self._write_digests[key] = digest
                             # Set proper permissions: 660 (rw-rw----) for group-readable cache files
                             try:
                                 os.chmod(cache_path, 0o660)  # nosec B103 - intentional; web UI and service share a group
@@ -203,9 +238,8 @@ class DiskCache:
                         # Fallback: direct write (not atomic, but better than failing)
                         try:
                             with open(cache_path, 'w', encoding='utf-8') as cache_file:
-                                json.dump(data, cache_file, indent=4, cls=DateTimeEncoder)
-                                cache_file.flush()
-                                os.fsync(cache_file.fileno())
+                                cache_file.write(payload)
+                            self._write_digests[key] = digest
                             # Set proper permissions: 660 (rw-rw----) for group-readable cache files
                             try:
                                 os.chmod(cache_path, 0o660)  # nosec B103 - intentional; web UI and service share a group
@@ -229,9 +263,12 @@ class DiskCache:
                             pass
                         
                         if os.path.isdir(fallback_dir) and os.access(fallback_dir, os.W_OK):
+                            # NOTE: no digest record here — the fallback file
+                            # is a different path, so future sets must keep
+                            # retrying the primary location.
                             fallback_path = os.path.join(fallback_dir, os.path.basename(cache_path))
                             with open(fallback_path, 'w', encoding='utf-8') as tmp_file:
-                                json.dump(data, tmp_file, indent=4, cls=DateTimeEncoder)
+                                tmp_file.write(payload)
                             # Set proper permissions: 660 (rw-rw----) for group-readable cache files
                             try:
                                 os.chmod(fallback_path, 0o660)  # nosec B103 - intentional; web UI and service share a group
@@ -272,6 +309,7 @@ class DiskCache:
         
         with self._lock:
             if key:
+                self._write_digests.pop(key, None)
                 cache_path = self.get_cache_path(key)
                 if cache_path and os.path.exists(cache_path):
                     try:
@@ -280,6 +318,7 @@ class DiskCache:
                         self.logger.warning("Could not remove cache file %s: %s", cache_path, e)
             else:
                 # Clear all cache files
+                self._write_digests.clear()
                 if os.path.exists(self.cache_dir):
                     for filename in os.listdir(self.cache_dir):
                         if filename.endswith('.json'):

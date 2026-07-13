@@ -31,14 +31,24 @@ if os.getenv("EMULATOR", "false") == "true":
 else:
     from rgbmatrix import RGBMatrix, RGBMatrixOptions
 from contextlib import contextmanager
+from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 import threading
 import time
-from typing import Dict, Any, List, Optional
+from collections import OrderedDict
+from typing import Dict, Any, List, Optional, Tuple
 import logging
 import math
 import zlib
 import freetype
+
+from src.common import snapshot_policy
+from src.common.permission_utils import (
+    ensure_directory_permissions,
+    ensure_file_permissions,
+    get_assets_dir_mode,
+    get_assets_file_mode,
+)
 
 # Get logger without configuring
 logger = logging.getLogger(__name__)
@@ -182,14 +192,34 @@ class DisplayManager:
         # the logical image is blitted to the matrix unchanged.
         self._double_sided = None  # dict {copies, axis, logical_width, logical_height} or None
         self._physical_image = None  # full-chain buffer reused each frame when tiling
-        # Text-width measurement cache: (text, id(font)) -> pixel_width
+        # Text-width measurement cache: (text, id(font)) -> (width, font_ref)
         # Avoids re-measuring the same string+font on every display() call.
+        # LRU-bounded: keys embed the TEXT, so changing strings (a clock, a
+        # live score) would otherwise grow it forever on a 24/7 service.
+        # Entries hold a strong reference to the font so its id() can't be
+        # recycled by a different font object — an id-keyed cache without
+        # the reference can return the WRONG width after garbage collection.
         # Cleared on _load_fonts() so stale entries don't survive a font reload.
-        self._text_width_cache: Dict[tuple, int] = {}
-        # Snapshot settings for web preview integration (service writes, web reads)
+        self._text_width_cache: "OrderedDict[tuple, Tuple[int, Any]]" = OrderedDict()
+        self._TEXT_WIDTH_CACHE_MAX = 1024
+        # Snapshot mirror for web preview + health check (service writes, web
+        # reads). Cadence/skip decisions live in src/common/snapshot_policy.py:
+        # full rate only while the web SSE broadcaster keeps the viewer marker
+        # fresh; unchanged frames are never re-encoded, only mtime-touched.
         self._snapshot_path = "/tmp/led_matrix_preview.png"  # nosec B108 - fixed path intentional; web UI reads same path
-        self._snapshot_min_interval_sec = 0.2  # max ~5 fps
+        self._viewer_marker_path = "/tmp/led_matrix_preview_viewer"  # nosec B108 - touched by web SSE broadcaster
         self._last_snapshot_ts = 0.0
+        self._last_snapshot_touch_ts = 0.0
+        self._last_snapshot_digest: Optional[int] = None
+        self._snapshot_dir_prepared = False
+        self._viewer_check_ts = 0.0
+        self._viewer_fresh = False
+        self._viewer_was_fresh = False
+        # Snapshot failures are logged as warnings, rate-limited so a
+        # persistent failure (e.g. an unwritable file) can't spam the log —
+        # but is never silent: the snapshot's mtime doubles as the web UI's
+        # hardware-liveness signal, so a quiet failure makes health checks lie.
+        self._snapshot_fail_log_ts = 0.0
         # Dirty tracking: (image digest, brightness) of the last frame pushed
         # to the panel; update_display() skips identical pushes. Kill switch:
         # display.dirty_tracking: false.
@@ -756,12 +786,15 @@ class DisplayManager:
 
         Results are cached by (text, font identity) so plugins that measure
         the same string every frame (e.g. to centre a score) pay only one
-        measurement per unique (text, font) pair.
+        measurement per unique (text, font) pair. The entry keeps the font
+        alive so its id() can't be recycled, and the cache is LRU-bounded so
+        ever-changing text (clocks, tickers) can't grow it without limit.
         """
         cache_key = (text, id(font))
         cached = self._text_width_cache.get(cache_key)
         if cached is not None:
-            return cached
+            self._text_width_cache.move_to_end(cache_key)
+            return cached[0]
 
         try:
             if isinstance(font, freetype.Face):
@@ -776,7 +809,9 @@ class DisplayManager:
             logger.error("Error getting text width: %s", e)
             return 0
 
-        self._text_width_cache[cache_key] = width
+        self._text_width_cache[cache_key] = (width, font)
+        while len(self._text_width_cache) > self._TEXT_WIDTH_CACHE_MAX:
+            self._text_width_cache.popitem(last=False)
         return width
 
     def get_font_height(self, font):
@@ -1185,27 +1220,56 @@ class DisplayManager:
             'deferred_update_ttl': self._scrolling_state['deferred_update_ttl']
         }
 
+    def _viewer_is_fresh(self, now: float) -> bool:
+        """True when a browser preview is watching (marker file touched by
+        the web SSE broadcaster). The marker is stat'd at most once per
+        second — at 125 fps loops a per-call stat would be pure overhead."""
+        if (now - self._viewer_check_ts) >= 1.0:
+            self._viewer_check_ts = now
+            try:
+                marker_age = now - os.stat(self._viewer_marker_path).st_mtime
+                self._viewer_fresh = marker_age < snapshot_policy.VIEWER_MARKER_FRESH_SEC
+            except OSError:
+                self._viewer_fresh = False
+        return self._viewer_fresh
+
     def _write_snapshot_if_due(self) -> None:
-        """Write the current image to a PNG snapshot file at a limited frequency."""
+        """Mirror the current frame to the preview snapshot when the policy
+        says it's worth it — see src/common/snapshot_policy.py. Unchanged
+        frames are never re-encoded; without viewers the cadence drops to
+        the idle keepalive."""
         try:
             now = time.time()
-            if (now - self._last_snapshot_ts) < self._snapshot_min_interval_sec:
+            viewer_fresh = self._viewer_is_fresh(now)
+            if viewer_fresh and not self._viewer_was_fresh:
+                # A preview just opened: let the next changed frame through
+                # immediately instead of waiting out the idle interval.
+                self._last_snapshot_ts = 0.0
+            self._viewer_was_fresh = viewer_fresh
+
+            digest = zlib.adler32(self.image.tobytes())
+            action = snapshot_policy.decide(
+                now, self._last_snapshot_ts, self._last_snapshot_touch_ts,
+                viewer_fresh, digest != self._last_snapshot_digest)
+            if action is snapshot_policy.SnapshotAction.SKIP:
                 return
-            # Ensure directory exists with proper permissions
-            from pathlib import Path
-            from src.common.permission_utils import (
-                ensure_directory_permissions,
-                ensure_file_permissions,
-                get_assets_dir_mode,
-                get_assets_file_mode
-            )
+            if action is snapshot_policy.SnapshotAction.TOUCH:
+                # mtime bump only: keeps the health check (snapshot age)
+                # green without paying for a PNG encode of an unchanged frame
+                os.utime(self._snapshot_path, None)
+                self._last_snapshot_touch_ts = now
+                return
+
+            # WRITE: ensure directory permissions once, not per frame
             snapshot_path_obj = Path(self._snapshot_path)
-            # Only ensure permissions on non-system directories
-            # Never modify /tmp permissions - it has special system permissions (1777)
-            # that must not be changed or it breaks apt and other system tools
-            parent_dir = snapshot_path_obj.parent
-            if parent_dir and str(parent_dir) != '/tmp':  # nosec B108 - guard to skip /tmp for permission ops
-                ensure_directory_permissions(parent_dir, get_assets_dir_mode())
+            if not self._snapshot_dir_prepared:
+                # Never modify /tmp permissions - it has special system
+                # permissions (1777) that must not be changed or it breaks
+                # apt and other system tools
+                parent_dir = snapshot_path_obj.parent
+                if parent_dir and str(parent_dir) != '/tmp':  # nosec B108 - guard to skip /tmp for permission ops
+                    ensure_directory_permissions(parent_dir, get_assets_dir_mode())
+                self._snapshot_dir_prepared = True
             # Write atomically: temp then replace
             tmp_path = f"{self._snapshot_path}.tmp"
             self.image.save(tmp_path, format='PNG')
@@ -1220,6 +1284,18 @@ class DisplayManager:
             except Exception:
                 pass
             self._last_snapshot_ts = now
+            self._last_snapshot_touch_ts = now
+            self._last_snapshot_digest = digest
         except Exception as e:
-            # Snapshot failures should never break display; log at debug to avoid noise
-            logger.debug(f"Snapshot write skipped: {e}")
+            # Snapshot failures must never break display — but they must not
+            # be silent either: the snapshot's mtime is the web UI's display
+            # mirror AND its hardware-liveness proxy, so a quietly failing
+            # write freezes the mirror and makes health checks lie (seen in
+            # the field: a stale root-owned /tmp file froze it for a day).
+            # Warn at most once per 5 minutes to avoid log spam.
+            if (now - self._snapshot_fail_log_ts) > 300:
+                self._snapshot_fail_log_ts = now
+                logger.warning("Snapshot write failing (web preview/health "
+                               "mirror is stale): %s", e)
+            else:
+                logger.debug(f"Snapshot write skipped: {e}")
