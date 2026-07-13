@@ -48,6 +48,12 @@ display_manager.draw_text("Centered", centered=True)  # Auto-center
 width = display_manager.get_text_width("Text", font)
 height = display_manager.get_font_height(font)
 
+# Adaptive layout (recommended for multi-size support — text and images
+# that scale to any panel; see docs/ADAPTIVE_LAYOUT.md)
+rows = self.layout.bounds.inset(1).split_v(3, 1, gap=1)
+self.draw_fit("12:34", rows[0])                 # largest crisp font that fits
+self.draw_image(logo, rows[1], mode="fill_height", crop_to_ink=True)
+
 # Weather icons
 display_manager.draw_weather_icon("rain", x=10, y=10, size=16)
 

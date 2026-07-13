@@ -73,6 +73,10 @@ class RenderResult:
     golden_ok: Optional[bool] = None
     golden_diff_pixels: int = 0
     golden_max_delta: int = 0
+    # fill / scale-up check (populated only for sizes >= 2x the design size)
+    fill_checked: bool = False
+    fill_ok: Optional[bool] = None       # False only in strict mode
+    fill_extent: Optional[Tuple[float, float]] = None  # (extent_x, extent_y)
 
     @property
     def size_label(self) -> str:
@@ -85,6 +89,8 @@ class RenderResult:
         if self.error is not None or self.overflow is not None:
             return False
         if self.golden_checked and self.golden_ok is False:
+            return False
+        if self.fill_ok is False:
             return False
         return True
 
@@ -298,6 +304,74 @@ def compare_to_goldens(results: List[RenderResult], golden_dir: Path,
         r.golden_ok = ok
         r.golden_diff_pixels = diff_pixels
         r.golden_max_delta = observed_max
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Fill / scale-up check
+# ---------------------------------------------------------------------------
+#
+# Overflow catches content that is too BIG for a panel; nothing catches
+# content that stays tiny on a panel much larger than the plugin's design
+# size (e.g. 128x32 content in the corner of a 256x128 renders "green").
+# These helpers measure how much of the panel the lit content spans so the
+# harness can flag plugins that don't scale up.
+
+# A pixel counts as "lit" above this luminance — low enough to catch dim
+# content, high enough to ignore near-black noise.
+_LIT_THRESHOLD = 16
+# Content must span at least this fraction of an axis that is >= 2x the
+# design size. Lenient on purpose: margins are fine, a tiny corner is not.
+_MIN_FILL_EXTENT = 0.5
+
+
+def fill_metrics(image: Image.Image) -> Tuple[float, float, float]:
+    """Measure lit-content coverage: (extent_x, extent_y, ink_ratio).
+
+    extent_* are the lit bounding box's spans as fractions of the panel;
+    ink_ratio is the fraction of pixels lit (reporting only — sparse pixel
+    fonts legitimately have low ink ratios)."""
+    lit = image.convert("L").point(lambda p: 255 if p > _LIT_THRESHOLD else 0)
+    bbox = lit.getbbox()
+    if bbox is None:
+        return (0.0, 0.0, 0.0)
+    extent_x = (bbox[2] - bbox[0]) / image.width
+    extent_y = (bbox[3] - bbox[1]) / image.height
+    ink = sum(1 for p in lit.getdata() if p) / (image.width * image.height)
+    return (extent_x, extent_y, ink)
+
+
+def check_scale_up(results: List[RenderResult],
+                   design_size: Tuple[int, int] = (128, 32),
+                   min_extent: float = _MIN_FILL_EXTENT,
+                   strict: bool = False) -> List[RenderResult]:
+    """Flag renders that leave a big panel mostly empty.
+
+    For each result whose panel is at least 2x the design size on an axis,
+    require the lit content to span >= min_extent of that axis. Mutates the
+    results' fill_* fields. In the default warn-only mode fill_ok is left
+    None (reported, never failing); strict=True sets fill_ok=False, which
+    fails RenderResult.ok — opt in per plugin via harness.json
+    {"fill_check": "strict"} once its adaptive layout is in place.
+    """
+    design_w, design_h = design_size
+    for r in results:
+        if r.image is None or r.error is not None:
+            continue
+        check_x = r.width >= 2 * design_w
+        check_y = r.height >= 2 * design_h
+        if not (check_x or check_y):
+            continue
+        extent_x, extent_y, _ink = fill_metrics(r.image)
+        r.fill_checked = True
+        r.fill_extent = (round(extent_x, 3), round(extent_y, 3))
+        underfilled = ((check_x and extent_x < min_extent)
+                       or (check_y and extent_y < min_extent))
+        if underfilled and strict:
+            r.fill_ok = False
+        elif not underfilled:
+            r.fill_ok = True
+        # warn-only underfill: fill_ok stays None; fill_extent tells the story
     return results
 
 

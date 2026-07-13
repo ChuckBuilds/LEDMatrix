@@ -16,6 +16,7 @@ Opens at http://localhost:5001
 import sys
 import os
 import json
+import re
 import time
 import argparse
 import logging
@@ -43,6 +44,10 @@ MAX_WIDTH = 512
 MAX_HEIGHT = 512
 MIN_WIDTH = 1
 MIN_HEIGHT = 1
+
+# plugin_id arrives in request input and is used to build filesystem paths —
+# allowlist it (same pattern the web UI's pages_v3 uses)
+_SAFE_PLUGIN_ID_RE = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
 
 
 # --------------------------------------------------------------------------
@@ -106,15 +111,30 @@ def discover_plugins() -> List[Dict[str, Any]]:
 
 
 def find_plugin_dir(plugin_id: str) -> Optional[Path]:
-    """Find a plugin directory by ID."""
+    """Find a plugin directory by ID.
+
+    plugin_id comes from request input: it must pass an allowlist match,
+    and the resulting directory is normalized and required to live inside
+    one of the plugin search dirs, so a crafted id can never name a path
+    outside them.
+    """
+    if not isinstance(plugin_id, str) or not _SAFE_PLUGIN_ID_RE.match(plugin_id):
+        return None
     from src.plugin_system.plugin_loader import PluginLoader
     loader = PluginLoader()
     for search_dir in get_search_dirs():
         if not search_dir.exists():
             continue
         result = loader.find_plugin_directory(plugin_id, search_dir)
-        if result:
-            return Path(result)
+        if not result:
+            continue
+        # Normalize WITHOUT following symlinks (dev plugins are often
+        # symlinked into plugins/) and require lexical containment in the
+        # search dir, so no id can ever name a path outside it.
+        result_abs = os.path.abspath(str(result))
+        root_abs = os.path.abspath(str(search_dir))
+        if os.path.commonpath([result_abs, root_abs]) == root_abs:
+            return Path(result_abs)
     return None
 
 
@@ -176,17 +196,124 @@ def api_plugin_defaults(plugin_id):
     return jsonify({'defaults': defaults})
 
 
+def _render_once(plugin_id, plugin_dir, manifest, config, mock_data, width, height,
+                 skip_update):
+    """Render one plugin at one size. Returns the /api/render response dict.
+
+    A fresh plugin instance per call, mirroring the safety harness, so sizes
+    never share state.
+    """
+    from src.plugin_system.testing import VisualTestDisplayManager, MockCacheManager, MockPluginManager
+    from src.plugin_system.plugin_loader import PluginLoader
+
+    display_manager = VisualTestDisplayManager(width=width, height=height)
+    cache_manager = MockCacheManager()
+    plugin_manager = MockPluginManager()
+
+    # Pre-populate cache with mock data
+    for key, value in mock_data.items():
+        cache_manager.set(key, value)
+
+    loader = PluginLoader()
+    errors = []
+    warnings = []
+
+    plugin_instance, _module = loader.load_plugin(
+        plugin_id=plugin_id,
+        manifest=manifest,
+        plugin_dir=plugin_dir,
+        config=config,
+        display_manager=display_manager,
+        cache_manager=cache_manager,
+        plugin_manager=plugin_manager,
+        install_deps=False,
+    )
+
+    start_time = time.time()
+
+    # Run update()
+    if not skip_update:
+        try:
+            plugin_instance.update()
+        except Exception as e:
+            logger.warning("update() raised for plugin %s", plugin_id, exc_info=True)
+            warnings.append(f"update() raised: {type(e).__name__} — see server log")
+
+    # Run display()
+    try:
+        plugin_instance.display(force_clear=True)
+    except Exception as e:
+        logger.warning("display() raised for plugin %s", plugin_id, exc_info=True)
+        errors.append(f"display() raised: {type(e).__name__} — see server log")
+
+    render_time_ms = round((time.time() - start_time) * 1000, 1)
+
+    return {
+        'image': f'data:image/png;base64,{display_manager.get_image_base64()}',
+        'width': width,
+        'height': height,
+        'render_time_ms': render_time_ms,
+        'errors': errors,
+        'warnings': warnings,
+    }
+
+
+def _trusted_plugin_dir(plugin_dir: Path) -> Optional[Path]:
+    """Re-derive a plugin directory from the search dirs' own listings.
+
+    Path-injection barrier: unlike ``Path.iterdir()`` (which CodeQL doesn't
+    recognize as a taint-clearing enumeration), ``os.scandir()`` is. The
+    returned Path is built from a trusted root plus a name the filesystem
+    itself produced under that root via scandir — request-derived strings
+    never enter its construction — so a crafted plugin id can never make
+    downstream file access leave the plugin search dirs. Comparison is by
+    name, deliberately without symlink resolution (dev plugins are
+    commonly symlinked into plugins/).
+    """
+    wanted_name = Path(os.path.normpath(str(plugin_dir))).name
+    for search_dir in get_search_dirs():
+        search_dir_str = str(search_dir)
+        try:
+            with os.scandir(search_dir_str) as entries:
+                for entry in entries:
+                    if entry.name == wanted_name and entry.is_dir():
+                        return Path(search_dir_str) / entry.name
+        except OSError:
+            continue
+    return None
+
+
+def _parse_render_request(data):
+    """Shared /api/render* request prep. Returns (plugin_dir, manifest, config,
+    mock_data, skip_update) or raises ValueError with a client message."""
+    plugin_id = data['plugin_id']
+    candidate_dir = find_plugin_dir(plugin_id)
+    # Never reuse `candidate_dir` past this point: it's built from
+    # request-derived input, and a variable reassigned only on some paths
+    # isn't a barrier CodeQL's flow analysis honors. `trusted_dir` is the
+    # sole name used below, always the scandir-sourced result.
+    trusted_dir = _trusted_plugin_dir(candidate_dir) if candidate_dir else None
+    if not trusted_dir:
+        raise LookupError(f'Plugin not found: {plugin_id}')
+
+    manifest_path = trusted_dir / 'manifest.json'
+    with open(manifest_path, 'r') as f:
+        manifest = json.load(f)
+
+    # Build config: schema defaults + user overrides
+    config = {'enabled': True}
+    config.update(load_config_defaults(trusted_dir))
+    config.update(data.get('config', {}))
+
+    return trusted_dir, manifest, config, data.get('mock_data', {}), data.get('skip_update', False)
+
+
 @app.route('/api/render', methods=['POST'])
 def api_render():
     """Render a plugin and return the display as base64 PNG."""
     data = request.get_json()
     if not data or 'plugin_id' not in data:
         return jsonify({'error': 'plugin_id is required'}), 400
-
-    plugin_id = data['plugin_id']
-    user_config = data.get('config', {})
-    mock_data = data.get('mock_data', {})
-    skip_update = data.get('skip_update', False)
 
     try:
         width = int(data.get('width', 128))
@@ -199,78 +326,77 @@ def api_render():
     if not (MIN_HEIGHT <= height <= MAX_HEIGHT):
         return jsonify({'error': f'height must be between {MIN_HEIGHT} and {MAX_HEIGHT}'}), 400
 
-    # Find plugin
-    plugin_dir = find_plugin_dir(plugin_id)
-    if not plugin_dir:
-        return jsonify({'error': f'Plugin not found: {plugin_id}'}), 404
-
-    # Load manifest
-    manifest_path = plugin_dir / 'manifest.json'
-    with open(manifest_path, 'r') as f:
-        manifest = json.load(f)
-
-    # Build config: schema defaults + user overrides
-    config_defaults = load_config_defaults(plugin_dir)
-    config = {'enabled': True}
-    config.update(config_defaults)
-    config.update(user_config)
-
-    # Create display manager and mocks
-    from src.plugin_system.testing import VisualTestDisplayManager, MockCacheManager, MockPluginManager
-    from src.plugin_system.plugin_loader import PluginLoader
-
-    display_manager = VisualTestDisplayManager(width=width, height=height)
-    cache_manager = MockCacheManager()
-    plugin_manager = MockPluginManager()
-
-    # Pre-populate cache with mock data
-    for key, value in mock_data.items():
-        cache_manager.set(key, value)
-
-    # Load plugin
-    loader = PluginLoader()
-    errors = []
-    warnings = []
+    try:
+        plugin_dir, manifest, config, mock_data, skip_update = _parse_render_request(data)
+    except LookupError:
+        return jsonify({'error': f"Plugin not found: {data['plugin_id']}"}), 404
+    except Exception:
+        # Bad manifest.json / schema / fixture — details go to the dev's
+        # console, not the HTTP response
+        app.logger.exception('render request preparation failed')
+        return jsonify({'error': 'Could not prepare render request; see server log'}), 400
 
     try:
-        plugin_instance, module = loader.load_plugin(
-            plugin_id=plugin_id,
-            manifest=manifest,
-            plugin_dir=plugin_dir,
-            config=config,
-            display_manager=display_manager,
-            cache_manager=cache_manager,
-            plugin_manager=plugin_manager,
-            install_deps=False,
-        )
-    except Exception as e:
-        return jsonify({'error': f'Failed to load plugin: {e}'}), 500
+        result = _render_once(data['plugin_id'], plugin_dir, manifest, config,
+                              mock_data, width, height, skip_update)
+    except Exception:
+        app.logger.exception('plugin load failed during render')
+        return jsonify({'error': 'Failed to load plugin; see server log'}), 500
+    return jsonify(result)
 
-    start_time = time.time()
 
-    # Run update()
-    if not skip_update:
+@app.route('/api/sizes')
+def api_sizes():
+    """The representative panel-size sample the safety harness renders at."""
+    from src.plugin_system.testing.sizes import DEFAULT_TEST_SIZES
+    return jsonify({'sizes': [list(s) for s in DEFAULT_TEST_SIZES]})
+
+
+MAX_MATRIX_SIZES = 12
+
+
+@app.route('/api/render-matrix', methods=['POST'])
+def api_render_matrix():
+    """Render a plugin at a list of sizes (default: the harness sample) so the
+    UI can show a side-by-side multi-resolution gallery."""
+    data = request.get_json()
+    if not data or 'plugin_id' not in data:
+        return jsonify({'error': 'plugin_id is required'}), 400
+
+    from src.plugin_system.testing.sizes import DEFAULT_TEST_SIZES
+    sizes = data.get('sizes') or [list(s) for s in DEFAULT_TEST_SIZES]
+    if len(sizes) > MAX_MATRIX_SIZES:
+        return jsonify({'error': f'at most {MAX_MATRIX_SIZES} sizes per request'}), 400
+    parsed_sizes = []
+    for pair in sizes:
         try:
-            plugin_instance.update()
-        except Exception as e:
-            warnings.append(f"update() raised: {e}")
+            w, h = int(pair[0]), int(pair[1])
+        except (TypeError, ValueError, IndexError):
+            return jsonify({'error': f'invalid size entry {pair!r} (expected [w, h])'}), 400
+        if not (MIN_WIDTH <= w <= MAX_WIDTH and MIN_HEIGHT <= h <= MAX_HEIGHT):
+            return jsonify({'error': f'size {w}x{h} out of bounds'}), 400
+        parsed_sizes.append((w, h))
 
-    # Run display()
     try:
-        plugin_instance.display(force_clear=True)
-    except Exception as e:
-        errors.append(f"display() raised: {e}")
+        plugin_dir, manifest, config, mock_data, skip_update = _parse_render_request(data)
+    except LookupError:
+        return jsonify({'error': f"Plugin not found: {data['plugin_id']}"}), 404
+    except Exception:
+        app.logger.exception('render request preparation failed')
+        return jsonify({'error': 'Could not prepare render request; see server log'}), 400
 
-    render_time_ms = round((time.time() - start_time) * 1000, 1)
-
-    return jsonify({
-        'image': f'data:image/png;base64,{display_manager.get_image_base64()}',
-        'width': width,
-        'height': height,
-        'render_time_ms': render_time_ms,
-        'errors': errors,
-        'warnings': warnings,
-    })
+    results = []
+    for w, h in parsed_sizes:
+        try:
+            results.append(_render_once(data['plugin_id'], plugin_dir, manifest,
+                                        config, mock_data, w, h, skip_update))
+        except Exception:
+            app.logger.exception('plugin load failed during %dx%d render', w, h)
+            results.append({'image': None, 'width': w, 'height': h,
+                            'render_time_ms': 0,
+                            'errors': ['Failed to load plugin; see server log'],
+                            'warnings': []})
+    return jsonify({'results': results})
 
 
 # --------------------------------------------------------------------------

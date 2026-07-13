@@ -2,6 +2,11 @@
 
 Complete API reference for plugin developers. This document describes all methods and properties available to plugins through the Display Manager, Cache Manager, and Plugin Manager.
 
+> **Adaptive layout:** every `BasePlugin` also exposes `self.layout`,
+> `self.draw_fit(text, region)` and `self.draw_image(img, region, ...)` —
+> the recommended way to render text and images that scale to any panel
+> size. See [ADAPTIVE_LAYOUT.md](ADAPTIVE_LAYOUT.md).
+
 ## Table of Contents
 
 - [BasePlugin](#baseplugin)

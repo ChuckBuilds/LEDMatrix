@@ -72,9 +72,20 @@ class LogoHelper:
             
         Returns:
             PIL Image object or None if loading fails
+
+        Note: for new adaptive-layout code prefer ``BasePlugin.draw_image``
+        / ``LayoutContext.fit_image`` (src/adaptive_images.py) for the
+        fitting step — LogoHelper remains useful for its download and
+        placeholder logic.
         """
-        # Check cache first
-        cache_key = f"{team_abbr}_{logo_path}"
+        # Resolve the effective target size BEFORE the cache lookup so the
+        # key is size-qualified — a panel-size change must not return a
+        # logo resized for the old dimensions.
+        if max_width is None:
+            max_width = int(self.display_width * 1.5)
+        if max_height is None:
+            max_height = int(self.display_height * 1.5)
+        cache_key = f"{team_abbr}_{logo_path}_{max_width}x{max_height}"
         if cache_key in self._logo_cache:
             self.logger.debug(f"Using cached logo for {team_abbr}")
             # Update LRU order (move to end)

@@ -35,6 +35,7 @@ import urllib.request
 import zipfile
 import tempfile
 import time
+from collections import OrderedDict
 from pathlib import Path
 from PIL import ImageFont
 from typing import Dict, Tuple, Optional, Union, Any, List
@@ -58,7 +59,13 @@ class FontManager:
         # Font discovery and catalog
         self.font_catalog: Dict[str, str] = {}  # family_name -> file_path
         self.font_cache: Dict[str, Union[ImageFont.FreeTypeFont, freetype.Face]] = {}  # (family, size) -> font
-        self.metrics_cache: Dict[str, Tuple[int, int, int]] = {}  # (text, font_id) -> (width, height, baseline)
+        # (text, id(font)) -> ((width, height, baseline), font_ref).
+        # LRU-bounded — keys embed the measured TEXT, so changing strings
+        # (clocks, live scores) would otherwise grow it forever. Entries
+        # keep the font alive so its id() can't be recycled by a different
+        # font object (which would silently return wrong metrics).
+        self.metrics_cache: "OrderedDict[Any, Tuple[Tuple[int, int, int], Any]]" = OrderedDict()
+        self._METRICS_CACHE_MAX = 1024
 
         # Plugin font management
         self.plugin_fonts: Dict[str, Dict[str, Any]] = {}  # plugin_id -> font_manifest
@@ -103,6 +110,10 @@ class FontManager:
         # Font overrides storage (for manual overrides)
         self.font_overrides_file = "config/font_overrides.json"
         self.font_overrides: Dict[str, Dict[str, Any]] = {}
+
+        # Bumped whenever cached font objects are invalidated, so holders of
+        # derived caches (e.g. adaptive-layout fit results) know to rebuild.
+        self.cache_generation = 0
         
         self._initialize_fonts()
     
@@ -112,6 +123,7 @@ class FontManager:
         self.fonts_config = new_config.get("fonts", {})
         self.font_cache.clear()  # Clear cache to force reload
         self.metrics_cache.clear()  # Clear metrics cache
+        self.cache_generation += 1
         self._initialize_fonts()
         logger.info("FontManager configuration reloaded successfully")
 
@@ -482,6 +494,14 @@ class FontManager:
     def _load_bdf_font(self, font_path: str, size_px: int) -> freetype.Face:
         """Load a BDF font using FreeType."""
         try:
+            native_size = self._read_bdf_native_size(font_path)
+            if native_size is not None and native_size != size_px:
+                # BDF is a fixed-strike bitmap format: FreeType renders the
+                # native size no matter what set_char_size asks for.
+                logger.debug(
+                    "BDF font %s requested at %spx but renders at its native "
+                    "%spx", font_path, size_px, native_size
+                )
             face = freetype.Face(font_path)
             # Set character size (width, height) in 1/64th of points
             face.set_char_size(size_px * 64, size_px * 64, 72, 72)
@@ -489,6 +509,41 @@ class FontManager:
         except Exception as e:
             logger.error(f"Error loading BDF font {font_path}: {e}")
             raise
+
+    def get_native_bdf_size(self, family: str) -> Optional[int]:
+        """The one true pixel size of a BDF family in the catalog, or None
+        for scalable (TTF) families / unknown families."""
+        font_path = self.font_catalog.get(family)
+        if not font_path or not font_path.endswith('.bdf'):
+            return None
+        return self._read_bdf_native_size(font_path)
+
+    @staticmethod
+    def _read_bdf_native_size(bdf_path: str) -> Optional[int]:
+        """Read a BDF file's own header to find its one true pixel size.
+        Prefers the PIXEL_SIZE property, which states the real pixel height
+        directly; falls back to the SIZE line's point-size only if PIXEL_SIZE
+        is absent, since point-size only equals pixel height at exactly
+        100dpi — several bundled fonts (e.g. 6x13.bdf, 5x8.bdf) are defined
+        at 75dpi, where the two values genuinely differ."""
+        size_line_value = None
+        try:
+            with open(bdf_path, "r", encoding="ascii", errors="ignore") as f:
+                for line in f:
+                    if line.startswith("PIXEL_SIZE"):
+                        parts = line.split()
+                        if len(parts) >= 2:
+                            return int(float(parts[1]))
+                    elif line.startswith("SIZE") and size_line_value is None:
+                        # Format: "SIZE <point_size> <xres> <yres>"
+                        parts = line.split()
+                        if len(parts) >= 2:
+                            size_line_value = int(float(parts[1]))
+                    elif line.startswith("STARTCHAR"):
+                        break
+        except (OSError, ValueError):
+            return None
+        return size_line_value
 
     def _get_fallback_font(self) -> ImageFont.ImageFont:
         """Get a fallback font when loading fails."""
@@ -507,10 +562,14 @@ class FontManager:
         Returns:
             Tuple of (width, height, baseline_offset)
         """
-        cache_key = f"{hash(text)}_{id(font)}"
+        # Key on the text itself (hash(text) could collide) + font identity;
+        # the entry below keeps the font referenced so the id stays valid.
+        cache_key = (text, id(font))
 
-        if cache_key in self.metrics_cache:
-            return self.metrics_cache[cache_key]
+        cached = self.metrics_cache.get(cache_key)
+        if cached is not None:
+            self.metrics_cache.move_to_end(cache_key)
+            return cached[0]
 
         try:
             if isinstance(font, freetype.Face):
@@ -547,7 +606,9 @@ class FontManager:
             baseline = 10
 
         result = (width, height, baseline)
-        self.metrics_cache[cache_key] = result
+        self.metrics_cache[cache_key] = (result, font)
+        while len(self.metrics_cache) > self._METRICS_CACHE_MAX:
+            self.metrics_cache.popitem(last=False)
         return result
 
     def get_font_height(self, font: Union[ImageFont.FreeTypeFont, freetype.Face]) -> int:
