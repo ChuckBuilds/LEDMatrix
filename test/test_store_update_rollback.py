@@ -10,6 +10,8 @@ plugins from one update pass.
 import json
 import os
 import sys
+import threading
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -95,10 +97,62 @@ class TestReinstallWithRollback:
         stale = plugin_dir.parent / f"{PLUGIN_ID}.standalone-backup-migrating"
         stale.mkdir()
         (stale / "old.txt").write_text("stale")
-        with patch.object(mgr, "install_plugin", return_value=False):
+        with patch.object(mgr, "install_plugin", return_value=False) as mock_install:
             ok = mgr._reinstall_with_rollback(PLUGIN_ID, plugin_dir)
+        # The reinstall itself still fails (mocked) and the old install is
+        # restored, but the stale aside must not have survived — otherwise
+        # it would have blocked this run's own rename (or a future one).
+        assert not stale.exists()
+        mock_install.assert_called_once_with(PLUGIN_ID)
         assert ok is False
         assert plugin_dir.exists()
+        assert "old version marker" in (plugin_dir / "manager.py").read_text()
+
+    def test_concurrent_updates_for_same_plugin_are_serialized(self, store):
+        """Two overlapping requests for the same plugin_id (double-click,
+        two browser tabs — the web UI runs Flask with threaded=True) must
+        not interleave: the loser must wait for the winner to finish
+        rather than renaming the winner's in-progress install aside and
+        stealing its rollback safety net."""
+        mgr, plugin_dir = store
+
+        active = 0
+        max_active = 0
+        guard = threading.Lock()
+
+        def fake_install(plugin_id):
+            nonlocal active, max_active
+            with guard:
+                active += 1
+                max_active = max(max_active, active)
+            time.sleep(0.05)
+            plugin_dir.mkdir(exist_ok=True)
+            (plugin_dir / "manager.py").write_text("# new version\n")
+            (plugin_dir / "manifest.json").write_text(json.dumps(
+                {"id": PLUGIN_ID, "name": "Rollback Test", "version": "2.0.0"}))
+            with guard:
+                active -= 1
+            return True
+
+        results = []
+
+        def worker():
+            results.append(mgr._reinstall_with_rollback(PLUGIN_ID, plugin_dir))
+
+        with patch.object(mgr, "install_plugin", side_effect=fake_install):
+            threads = [threading.Thread(target=worker) for _ in range(2)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=5)
+
+        assert max_active == 1, "install_plugin ran concurrently for the same plugin_id"
+        assert results == [True, True]
+        assert plugin_dir.exists()
+        assert "new version" in (plugin_dir / "manager.py").read_text()
+        leftovers = [p for p in plugin_dir.parent.iterdir()
+                     if "standalone-backup" in p.name]
+        assert leftovers == []
 
     def test_aside_name_is_invisible_to_discovery(self, store, tmp_path):
         """The aside still contains a manifest.json — discovery must skip it
