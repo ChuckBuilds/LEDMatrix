@@ -35,6 +35,7 @@ import urllib.request
 import zipfile
 import tempfile
 import time
+from collections import OrderedDict
 from pathlib import Path
 from PIL import ImageFont
 from typing import Dict, Tuple, Optional, Union, Any, List
@@ -58,7 +59,13 @@ class FontManager:
         # Font discovery and catalog
         self.font_catalog: Dict[str, str] = {}  # family_name -> file_path
         self.font_cache: Dict[str, Union[ImageFont.FreeTypeFont, freetype.Face]] = {}  # (family, size) -> font
-        self.metrics_cache: Dict[str, Tuple[int, int, int]] = {}  # (text, font_id) -> (width, height, baseline)
+        # (text, id(font)) -> ((width, height, baseline), font_ref).
+        # LRU-bounded — keys embed the measured TEXT, so changing strings
+        # (clocks, live scores) would otherwise grow it forever. Entries
+        # keep the font alive so its id() can't be recycled by a different
+        # font object (which would silently return wrong metrics).
+        self.metrics_cache: "OrderedDict[Any, Tuple[Tuple[int, int, int], Any]]" = OrderedDict()
+        self._METRICS_CACHE_MAX = 1024
 
         # Plugin font management
         self.plugin_fonts: Dict[str, Dict[str, Any]] = {}  # plugin_id -> font_manifest
@@ -555,10 +562,14 @@ class FontManager:
         Returns:
             Tuple of (width, height, baseline_offset)
         """
-        cache_key = f"{hash(text)}_{id(font)}"
+        # Key on the text itself (hash(text) could collide) + font identity;
+        # the entry below keeps the font referenced so the id stays valid.
+        cache_key = (text, id(font))
 
-        if cache_key in self.metrics_cache:
-            return self.metrics_cache[cache_key]
+        cached = self.metrics_cache.get(cache_key)
+        if cached is not None:
+            self.metrics_cache.move_to_end(cache_key)
+            return cached[0]
 
         try:
             if isinstance(font, freetype.Face):
@@ -595,7 +606,9 @@ class FontManager:
             baseline = 10
 
         result = (width, height, baseline)
-        self.metrics_cache[cache_key] = result
+        self.metrics_cache[cache_key] = (result, font)
+        while len(self.metrics_cache) > self._METRICS_CACHE_MAX:
+            self.metrics_cache.popitem(last=False)
         return result
 
     def get_font_height(self, font: Union[ImageFont.FreeTypeFont, freetype.Face]) -> int:
