@@ -199,6 +199,10 @@ class DisplayController:
         self.wifi_status_file = WIFI_STATUS_FILE
         self.wifi_status_active = False
         self.wifi_status_expires_at: Optional[float] = None
+        # _check_wifi_status_message throttle state (checked at frame rate,
+        # stat'd at most once per second)
+        self._wifi_status_check_ts = 0.0
+        self._wifi_status_last_result: Optional[Dict[str, Any]] = None
 
         # Plugin display() signature cache — must be initialised before the plugin
         # loading loop below so the .pop() invalidation at load time is always safe.
@@ -2357,8 +2361,9 @@ class DisplayController:
             # Throttle the existence stat to ~1 Hz: this runs on every render
             # iteration (60+ fps), and the file usually doesn't exist — the
             # status message's lifetime is measured in seconds anyway.
+            # Both attributes are initialised in __init__.
             now = time.time()
-            if (now - getattr(self, '_wifi_status_check_ts', 0.0)) < 1.0:
+            if (now - self._wifi_status_check_ts) < 1.0:
                 return self._wifi_status_last_result
             self._wifi_status_check_ts = now
             self._wifi_status_last_result = None
