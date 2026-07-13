@@ -2564,11 +2564,35 @@ address=/detectportal.firefox.com/192.168.4.1
         Returns:
             True if AP mode state changed, False otherwise
         """
+        changed, _status, _ethernet, _ap = self.check_and_manage_ap_mode_with_state()
+        return changed
+
+    def check_and_manage_ap_mode_with_state(self):
+        """Like check_and_manage_ap_mode, but also returns the state it
+        observed, so callers (the wifi monitor daemon) don't have to re-run
+        the same nmcli subprocess battery before AND after the check —
+        each status fetch is several process forks.
+
+        Returns:
+            (state_changed, WiFiStatus, ethernet_connected, ap_active_after)
+        """
         try:
             # Get status with retry for more reliable detection
             status = self._get_wifi_status_with_retry()
             ethernet_connected = self._is_ethernet_connected()
             ap_active = self._is_ap_mode_active()
+            changed = self._manage_ap_mode(status, ethernet_connected, ap_active)
+            # State only ever changes via one enable or one disable, so the
+            # post-state is the inverse of the pre-state when changed.
+            ap_after = (not ap_active) if changed else ap_active
+            return changed, status, ethernet_connected, ap_after
+        except Exception as e:
+            logger.error(f"Error checking AP mode: {e}", exc_info=True)
+            return False, WiFiStatus(connected=False), False, False
+
+    def _manage_ap_mode(self, status, ethernet_connected, ap_active) -> bool:
+        """AP-mode decision logic against an already-fetched state snapshot."""
+        try:
             auto_enable = self.config.get("auto_enable_ap_mode", True)  # Default: True (safe due to grace period)
             
             # Log current state for debugging
