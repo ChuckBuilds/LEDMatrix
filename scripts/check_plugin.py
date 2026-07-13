@@ -37,10 +37,11 @@ os.environ['EMULATOR'] = 'true'
 
 from src.logging_config import get_logger  # noqa: E402
 from src.plugin_system.testing.loading import (  # noqa: E402
-    find_plugin_dir, load_config_defaults, load_harness_spec,
+    find_plugin_dir, load_config_defaults, load_harness_spec, load_manifest,
 )
 from src.plugin_system.testing.harness import (  # noqa: E402
     RenderResult, render_plugin_matrix, compare_to_goldens, write_goldens,
+    check_scale_up,
 )
 from src.plugin_system.testing.sizes import (  # noqa: E402
     parse_size_token, resolve_test_sizes, safe_mode_filename, size_label,
@@ -110,28 +111,55 @@ def check_one(plugin_id: str, search_dirs: List[str], sizes, mock_data: Dict,
     effective_freeze = freeze_time or spec.get("freeze_time")
     effective_run_update = run_update and not spec.get("skip_update", False)
 
-    results = render_plugin_matrix(
-        plugin_id=plugin_id, plugin_dir=plugin_dir, config=full_config,
-        mock_data=effective_mock_data, sizes=effective_sizes,
-        run_update=effective_run_update, freeze_time=effective_freeze,
-    )
+    # The plugin's declared design size drives the scale-up fill check
+    # (panels >= 2x the design size must not be left mostly empty).
+    declared = load_manifest(plugin_dir).get("display", {}).get("design_size", {})
+    design_size = (int(declared.get("width", 128)), int(declared.get("height", 32)))
+    fill_strict = spec.get("fill_check") == "strict"
 
-    golden_dir = golden_dir_override or (plugin_dir / 'test' / 'golden')
-    if update_golden:
-        written = write_goldens(results, golden_dir)
-        logger.info("Wrote %d golden image(s) for %s to %s", written, plugin_id, golden_dir)
-    else:
-        compare_to_goldens(results, golden_dir)
+    # Every run: the base config, plus one per harness.json "variant" —
+    # a config overlay with its own golden dir (e.g. adaptive layout mode
+    # tested alongside the classic default).
+    runs = [(None, {}, golden_dir_override or (plugin_dir / 'test' / 'golden'))]
+    for variant in spec.get("variants", []):
+        name = variant.get("name") or "variant"
+        vdir = plugin_dir / variant.get("golden_dir", f"test/golden-{name}")
+        runs.append((name, variant.get("config", {}), vdir))
 
-    if out_dir:
-        for r in results:
-            if r.image is None:
-                continue
-            dest = out_dir / plugin_id / size_label(r.width, r.height)
-            dest.mkdir(parents=True, exist_ok=True)
-            r.image.save(dest / f"{safe_mode_filename(r.mode)}.png", format="PNG")
+    all_run_results: List[RenderResult] = []
+    for variant_name, overlay, golden_dir in runs:
+        run_config = {**full_config, **overlay}
+        results = render_plugin_matrix(
+            plugin_id=plugin_id, plugin_dir=plugin_dir, config=run_config,
+            mock_data=effective_mock_data, sizes=effective_sizes,
+            run_update=effective_run_update, freeze_time=effective_freeze,
+        )
 
-    return results
+        if update_golden:
+            written = write_goldens(results, golden_dir)
+            logger.info("Wrote %d golden image(s) for %s%s to %s", written, plugin_id,
+                        f" [{variant_name}]" if variant_name else "", golden_dir)
+        else:
+            compare_to_goldens(results, golden_dir)
+
+        check_scale_up(results, design_size=design_size, strict=fill_strict)
+
+        # Tag variant runs so the report and PNG dumps stay distinguishable.
+        if variant_name:
+            for r in results:
+                r.mode = f"{r.mode}@{variant_name}"
+
+        if out_dir:
+            for r in results:
+                if r.image is None:
+                    continue
+                dest = out_dir / plugin_id / size_label(r.width, r.height)
+                dest.mkdir(parents=True, exist_ok=True)
+                r.image.save(dest / f"{safe_mode_filename(r.mode)}.png", format="PNG")
+
+        all_run_results.extend(results)
+
+    return all_run_results
 
 
 def print_report(all_results: Dict[str, List[RenderResult]]) -> bool:
@@ -147,6 +175,10 @@ def print_report(all_results: Dict[str, List[RenderResult]]) -> bool:
                     detail = " (golden ✓)"
                 if r.update_error is not None:
                     detail += f" (update warn: {r.update_error})"
+                if r.fill_checked and r.fill_ok is None and r.fill_extent:
+                    # warn-only underfill: big panel left mostly empty
+                    ex, ey = r.fill_extent
+                    detail += f" (fill warn: extent {ex:.0%}x{ey:.0%})"
             else:
                 everything_ok = False
                 if r.error is not None:
@@ -156,6 +188,10 @@ def print_report(all_results: Dict[str, List[RenderResult]]) -> bool:
                 elif r.golden_ok is False:
                     status = "FAIL"
                     detail = f" golden drift: {r.golden_diff_pixels}px (max Δ={r.golden_max_delta})"
+                elif r.fill_ok is False:
+                    ex, ey = r.fill_extent or (0.0, 0.0)
+                    status = "FAIL"
+                    detail = f" fill: extent {ex:.0%}x{ey:.0%} below required coverage"
                 else:
                     status, detail = "FAIL", ""
             print(f"  [{status}] {r.size_label:>7}  {r.mode}{detail}")

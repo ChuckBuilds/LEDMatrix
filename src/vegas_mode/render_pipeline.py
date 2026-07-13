@@ -66,6 +66,10 @@ class RenderPipeline:
             else display_manager.height
         )
 
+        # Reusable blank frame for cycle-end pushes (allocated lazily,
+        # re-blacked before each reuse)
+        self._blank_frame = None
+
         # ScrollHelper for optimized scrolling
         self.scroll_helper = ScrollHelper(
             self.display_width,
@@ -234,11 +238,19 @@ class RenderPipeline:
                     )
                     # Push blank immediately so the hardware never shows any
                     # post-wrap content while the coordinator recomposes the
-                    # next cycle (~100 ms).
+                    # next cycle (~100 ms). The blank is allocated once and
+                    # reused across cycle wraps (fresh paste each time in case
+                    # a consumer drew on the previous one).
                     try:
-                        from PIL import Image as _Image
-                        blank = _Image.new('RGB', (self.display_width, self.display_height))
-                        self.display_manager.image = blank
+                        if self._blank_frame is None or self._blank_frame.size != (
+                                self.display_width, self.display_height):
+                            self._blank_frame = Image.new(
+                                'RGB', (self.display_width, self.display_height))
+                        else:
+                            self._blank_frame.paste(
+                                (0, 0, 0),
+                                (0, 0, self.display_width, self.display_height))
+                        self.display_manager.image = self._blank_frame
                         self.display_manager.update_display()
                     except Exception:
                         logger.exception("Failed to write blank frame to display at cycle end")
@@ -297,6 +309,8 @@ class RenderPipeline:
         Returns True when:
         - Cycle is complete and we should start fresh
         - Staging buffer has new content
+        - A plugin currently visible in the scroll has pending updated data
+          (e.g. a live score changed) — standalone (non-sync) mode only
         """
         if self._cycle_complete:
             return True
@@ -312,6 +326,12 @@ class RenderPipeline:
         # Check if we need more content in the buffer
         buffer_status = self.stream_manager.get_buffer_status()
         if buffer_status['staging_count'] > 0:
+            return True
+
+        # Trigger recompose when pending updates affect visible segments, so
+        # live score/status changes reach the display within a few seconds
+        # instead of waiting for the next full cycle.
+        if self.stream_manager.has_pending_updates_for_visible_segments():
             return True
 
         return False

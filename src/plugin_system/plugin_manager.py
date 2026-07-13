@@ -77,6 +77,12 @@ class PluginManager:
         # concurrent mutation (background reconciliation) and reads (requests).
         self._discovery_lock = threading.RLock()
 
+        # Lock protecting plugin_last_update from concurrent mutation/iteration.
+        # It's written from run_scheduled_updates()/update_all_plugins() (main
+        # loop) and read/diffed by run_scheduled_updates_with_changes(), which
+        # Vegas mode calls from its own background update-tick thread.
+        self._plugin_last_update_lock = threading.RLock()
+
         # Active plugins
         self.plugins: Dict[str, Any] = {}
         self.plugin_manifests: Dict[str, Dict[str, Any]] = {}
@@ -362,7 +368,8 @@ class PluginManager:
 
             # Store plugin instance
             self.plugins[plugin_id] = plugin_instance
-            self.plugin_last_update[plugin_id] = 0.0
+            with self._plugin_last_update_lock:
+                self.plugin_last_update[plugin_id] = 0.0
             # Invalidate cached interval so next tick re-derives it for this plugin
             self._update_interval_cache.pop(plugin_id, None)
             
@@ -474,7 +481,8 @@ class PluginManager:
             
             # Remove from active plugins
             del self.plugins[plugin_id]
-            self.plugin_last_update.pop(plugin_id, None)
+            with self._plugin_last_update_lock:
+                self.plugin_last_update.pop(plugin_id, None)
             self._update_interval_cache.pop(plugin_id, None)
             
             # Remove main module from sys.modules if present
@@ -743,7 +751,8 @@ class PluginManager:
             'recoverable': True,
         }
         self.logger.warning("Plugin %s update() failed; will retry after interval", plugin_id)
-        self.plugin_last_update[plugin_id] = failure_time
+        with self._plugin_last_update_lock:
+            self.plugin_last_update[plugin_id] = failure_time
         self.state_manager.set_state_with_error(plugin_id, PluginState.ENABLED, error_info, error=err)
         if self.health_tracker:
             self.health_tracker.record_failure(plugin_id, err)
@@ -776,7 +785,8 @@ class PluginManager:
             if interval is None:
                 continue
 
-            last_update = self.plugin_last_update.get(plugin_id, 0.0)
+            with self._plugin_last_update_lock:
+                last_update = self.plugin_last_update.get(plugin_id, 0.0)
 
             if last_update == 0.0 or (current_time - last_update) >= interval:
                 if self._synchronous_updates:
@@ -897,7 +907,8 @@ class PluginManager:
                 finished['done'] = True
             try:
                 if success:
-                    self.plugin_last_update[plugin_id] = scheduled_time
+                    with self._plugin_last_update_lock:
+                        self.plugin_last_update[plugin_id] = scheduled_time
                     self.state_manager.record_update(plugin_id)
                     self.state_manager.set_state(plugin_id, PluginState.ENABLED)
                     if self.health_tracker:
@@ -962,6 +973,31 @@ class PluginManager:
             self.logger.exception("Unexpected error dispatching update for %s: %s", plugin_id, exc)
             _finish(False, exc=exc)
 
+    def run_scheduled_updates_with_changes(self, current_time: Optional[float] = None) -> List[str]:
+        """
+        Like run_scheduled_updates(), but also returns the plugin_ids whose
+        plugin_last_update timestamp actually advanced during this call.
+
+        The before/after snapshots and the update pass itself are each
+        individually lock-protected against concurrent plugin_last_update
+        mutation (Vegas mode calls this from its own background
+        update-tick thread, racing the main render loop's plugin updates),
+        so callers get an atomic "who got fresh data" answer without
+        reaching into plugin_last_update themselves. The lock is not held
+        across the update pass so slow/blocking plugin update() calls don't
+        serialize against other plugin_last_update readers.
+        """
+        with self._plugin_last_update_lock:
+            old_times = dict(self.plugin_last_update)
+
+        self.run_scheduled_updates(current_time)
+
+        with self._plugin_last_update_lock:
+            return [
+                plugin_id for plugin_id, new_time in self.plugin_last_update.items()
+                if new_time > old_times.get(plugin_id, 0.0)
+            ]
+
     def update_all_plugins(self) -> None:
         """
         Update all enabled plugins.
@@ -984,7 +1020,8 @@ class PluginManager:
             try:
                 success = self.plugin_executor.execute_update(plugin_instance, plugin_id)
                 if success:
-                    self.plugin_last_update[plugin_id] = time.time()
+                    with self._plugin_last_update_lock:
+                        self.plugin_last_update[plugin_id] = time.time()
                     self.state_manager.record_update(plugin_id)
                     self.state_manager.set_state(plugin_id, PluginState.ENABLED)
                 else:

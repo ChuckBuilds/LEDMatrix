@@ -38,7 +38,11 @@ def mock_cache_manager():
     mock._memory_cache_timestamps = {}
     mock.cache_dir = "/tmp/test_cache"
     
-    def mock_get(key: str, max_age: int = 300) -> Optional[Dict]:
+    def mock_get(key: str, max_age: Optional[int] = 300,
+                 memory_ttl: Optional[int] = None) -> Optional[Dict]:
+        # Signature mirrors CacheManager.get — keep in sync or callers
+        # passing keyword args (health tracker, resource monitor) break
+        # only in tests, hiding real-API compatibility.
         return mock._memory_cache.get(key)
     
     def mock_set(key: str, data: Dict, ttl: Optional[int] = None) -> None:

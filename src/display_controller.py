@@ -202,6 +202,10 @@ class DisplayController:
         self.wifi_status_file = WIFI_STATUS_FILE
         self.wifi_status_active = False
         self.wifi_status_expires_at: Optional[float] = None
+        # _check_wifi_status_message throttle state (checked at frame rate,
+        # stat'd at most once per second)
+        self._wifi_status_check_ts = 0.0
+        self._wifi_status_last_result: Optional[Dict[str, Any]] = None
 
         # Plugin display() signature cache — must be initialised before the plugin
         # loading loop below so the .pop() invalidation at load time is always safe.
@@ -505,7 +509,10 @@ class DisplayController:
 
             # Run plugin updates inside the Vegas loop so the inter-iteration
             # gap is <1 ms (nothing left for _tick_plugin_updates() to do).
-            self.vegas_coordinator.set_update_callback(self._tick_plugin_updates)
+            # Use the Vegas-aware variant so plugins that got fresh data are
+            # hot-swapped into the scroll promptly instead of waiting for the
+            # next full cycle.
+            self.vegas_coordinator.set_update_callback(self._tick_plugin_updates_for_vegas)
 
             # Wire multi-display sync into Vegas render pipeline
             follower_pos = self.config.get("sync", {}).get("follower_position", "left")
@@ -624,18 +631,28 @@ class DisplayController:
 
         current_day = current_time.strftime('%A').lower()  # e.g. 'monday'
         current_time_only = current_time.time()
-        
+
         # Check if per-day schedule is configured
         days_config = schedule_config.get('days')
-        
-        # Determine which schedule to use
+
+        # Determine which schedule to use. Respect an explicit 'mode' field
+        # (like the dim schedule does) so a stray/legacy 'days' dict left over
+        # from config migration or a prior per-day setup can't silently
+        # override a user's Global schedule selection.
+        mode = schedule_config.get('mode')
+        mode_normalized = mode.replace('_', '-') if mode else None
+
         use_per_day = False
-        if days_config:
-            # Check if days dict is not empty and contains current day
-            if days_config and current_day in days_config:
+        if mode_normalized == 'global':
+            use_per_day = False
+        elif mode_normalized == 'per-day':
+            use_per_day = bool(days_config and current_day in days_config)
+        elif days_config:
+            # No explicit mode recorded (legacy config) - fall back to
+            # inferring from presence of a 'days' dict for the current day.
+            if current_day in days_config:
                 use_per_day = True
-            elif days_config:
-                # Days dict exists but doesn't have current day - fall back to global
+            else:
                 logger.debug("Per-day schedule exists but %s not configured, using global schedule", current_day)
         
         if use_per_day:
@@ -830,6 +847,42 @@ class DisplayController:
                     # Record failure
                     if hasattr(self.plugin_manager, 'health_tracker') and self.plugin_manager.health_tracker:
                         self.plugin_manager.health_tracker.record_failure(plugin_id, exc)
+
+    def _tick_plugin_updates_for_vegas(self) -> None:
+        """Run scheduled plugin updates and tell Vegas mode which plugins
+        actually got fresh data, so it can hot-swap them into the scroll
+        without waiting for a full cycle to complete.
+
+        Used as the Vegas coordinator's update callback instead of the plain
+        _tick_plugin_updates() so that a live score change is reflected in
+        the ticker within a few seconds rather than at the next cycle
+        boundary (which, depending on min/max_cycle_duration, can be
+        minutes away). Restores wiring that PR #299 added and PR #330's
+        sync-mode refactor inadvertently dropped: coordinator.mark_plugin_updated()
+        has been unreachable dead code since.
+
+        Delegates the before/after plugin_last_update snapshot to
+        PluginManager.run_scheduled_updates_with_changes() so the snapshot,
+        update pass, and diff are lock-protected against this callback's own
+        background update-tick thread racing the main render loop.
+        """
+        if not self.plugin_manager or not hasattr(self.plugin_manager, "run_scheduled_updates_with_changes"):
+            self._tick_plugin_updates()
+            return
+
+        updated = self.plugin_manager.run_scheduled_updates_with_changes()
+
+        vc = getattr(self, "vegas_coordinator", None)
+        if vc is None:
+            return
+
+        if updated:
+            logger.info("Vegas update tick: %d plugin(s) updated: %s", len(updated), updated)
+            for plugin_id in updated:
+                try:
+                    vc.mark_plugin_updated(plugin_id)
+                except Exception:  # pylint: disable=broad-except
+                    logger.exception("Error marking plugin %s updated for Vegas", plugin_id)
 
     def _tick_plugin_updates(self):
         """Run scheduled plugin updates if the plugin manager supports them."""
@@ -1662,7 +1715,7 @@ class DisplayController:
                     self._sleep_with_plugin_updates(60)
                     continue
                 
-                logger.info(f"Display active, processing mode: {self.current_display_mode}")
+                logger.debug("Display active, processing mode: %s", self.current_display_mode)
                 
                 # Plugins update on their own schedules - no forced sync updates needed
                 # Each plugin has its own update_interval and background services
@@ -1830,7 +1883,7 @@ class DisplayController:
                         if self.plugin_manager and hasattr(self.plugin_manager, 'health_tracker') and self.plugin_manager.health_tracker:
                             should_skip = self.plugin_manager.health_tracker.should_skip_plugin(plugin_id)
                             if should_skip:
-                                logger.info(f"Skipping plugin {plugin_id} due to circuit breaker (mode: {active_mode})")
+                                logger.info("Skipping plugin %s due to circuit breaker (mode: %s)", plugin_id, active_mode)
                                 display_result = False
                                 # Skip to next mode - let existing logic handle it
                                 manager_to_display = None
@@ -1943,7 +1996,7 @@ class DisplayController:
                             if isinstance(result, bool):
                                 display_result = result
                                 if not display_result:
-                                    logger.info(f"Plugin {plugin_id} display() returned False for mode {active_mode}")
+                                    logger.info("Plugin %s display() returned False for mode %s", plugin_id, active_mode)
                         
                         # Record success only when display() actually ran this
                         # frame -- a skipped frame (lock busy) held the last
@@ -2158,10 +2211,23 @@ class DisplayController:
 
                     # For plugins, call display multiple times to allow game rotation
                     if manager_to_display and hasattr(manager_to_display, 'display'):
-                        # Check if plugin needs high FPS (like stock ticker)
-                        # Always enable high-FPS for static-image plugin (for GIF animation support)
+                        # High-FPS decision, in precedence order:
+                        # 1. A plugin that declares needs_high_fps knows best
+                        #    (e.g. static-image sets it False for still PNGs,
+                        #    True for animated GIFs).
+                        # 2. Back-compat: older static-image versions without
+                        #    the attribute keep the historical forced high-FPS
+                        #    (GIF support).
+                        # 3. Otherwise scrolling plugins get high FPS.
                         plugin_id = getattr(manager_to_display, 'plugin_id', None)
-                        if plugin_id == 'static-image':
+                        declared = getattr(manager_to_display, 'needs_high_fps', None)
+                        if declared is not None:
+                            needs_high_fps = bool(declared)
+                            logger.debug(
+                                "[DisplayController] FPS check for %s (plugin=%s) - "
+                                "plugin declares needs_high_fps=%s",
+                                active_mode, plugin_id, needs_high_fps)
+                        elif plugin_id == 'static-image':
                             needs_high_fps = True
                             logger.debug("FPS check - static-image plugin: forcing high-FPS mode for GIF support")
                         else:
@@ -2450,6 +2516,16 @@ class DisplayController:
             Returns None on any error or if message is expired/invalid.
         """
         try:
+            # Throttle the existence stat to ~1 Hz: this runs on every render
+            # iteration (60+ fps), and the file usually doesn't exist — the
+            # status message's lifetime is measured in seconds anyway.
+            # Both attributes are initialised in __init__.
+            now = time.time()
+            if (now - self._wifi_status_check_ts) < 1.0:
+                return self._wifi_status_last_result
+            self._wifi_status_check_ts = now
+            self._wifi_status_last_result = None
+
             # Check if file exists
             if not self.wifi_status_file or not self.wifi_status_file.exists():
                 return None
@@ -2500,13 +2576,14 @@ class DisplayController:
                     pass
                 return None
             
-            # Message is valid and not expired
-            return {
+            # Message is valid and not expired — cache for the throttle window
+            self._wifi_status_last_result = {
                 'message': message,
                 'timestamp': timestamp,
                 'duration': duration,
                 'expires_at': expires_at
             }
+            return self._wifi_status_last_result
             
         except Exception as e:
             # Catch-all for any unexpected errors - log but don't break the display
