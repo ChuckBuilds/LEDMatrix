@@ -56,6 +56,13 @@ class ConfigManager:
         self.secrets_path: str = secrets_path or "config/config_secrets.json"
         self.template_path: str = "config/config.template.json"
         self.config: Dict[str, Any] = {}
+        # (mtime_ns, size) signature of (config, secrets, template) at the
+        # last successful load. load_config() skips the full re-read (3 file
+        # parses + recursive template migration) when nothing changed —
+        # ~30 web request handlers call it, some 2-3x per request. Cross-
+        # process freshness is preserved: another process's save bumps the
+        # mtime, so the next load here re-reads.
+        self._loaded_sig: Optional[tuple] = None
         self.logger: logging.Logger = get_logger(__name__)
         
         # Initialize atomic config manager
@@ -122,6 +129,14 @@ class ConfigManager:
         # Update in-memory config if save was successful
         if result.status == SaveResultStatus.SUCCESS:
             self.config = new_config_data
+            # In-memory config now matches what was just written; refresh
+            # the load signature so the fast path stays valid. NOTE: the
+            # in-memory copy includes merged secrets; the on-disk file has
+            # them stripped — the fast path returning self.config preserves
+            # exactly the pre-cache behavior (load-after-save also returned
+            # the secret-merged self.config only after re-reading secrets;
+            # here secrets file is unchanged, so contents are equivalent).
+            self._loaded_sig = self._files_signature()
             self.logger.info(f"Configuration successfully saved atomically to {os.path.abspath(self.config_path)}")
         elif result.status == SaveResultStatus.ROLLED_BACK:
             # Reload config from file after rollback
@@ -179,13 +194,36 @@ class ConfigManager:
         atomic_mgr = self._get_atomic_manager()
         return atomic_mgr.validate_config_file(config_path)
 
+    def _files_signature(self) -> tuple:
+        """(mtime_ns, size) of config/secrets/template, None for missing —
+        cheap staleness probe (3 stats) for the load_config fast path."""
+        sig = []
+        for path in (self.config_path, self.secrets_path, self.template_path):
+            try:
+                st = os.stat(path)
+                sig.append((st.st_mtime_ns, st.st_size))
+            except OSError:
+                sig.append(None)
+        return tuple(sig)
+
     def load_config(self) -> Dict[str, Any]:
-        """Load configuration from JSON files."""
+        """Load configuration from JSON files.
+
+        Fast path: when config.json, config_secrets.json and the template
+        are all unchanged since the last successful load (mtime_ns + size),
+        the already-parsed self.config is returned without touching the
+        files — same aliasing semantics as the full path, which also
+        returns self.config.
+        """
         try:
+            current_sig = self._files_signature()
+            if self.config and self._loaded_sig == current_sig:
+                return self.config
+
             # Check if config file exists, if not create from template
             if not os.path.exists(self.config_path):
                 self._create_config_from_template()
-            
+
             # Load main config
             self.logger.info(f"Attempting to load config from: {os.path.abspath(self.config_path)}")
             with open(self.config_path, 'r') as f:
@@ -205,7 +243,10 @@ class ConfigManager:
                     self.logger.warning(f"Secrets file not readable ({self.secrets_path}): {e}. Continuing without secrets.")
                 except (json.JSONDecodeError, OSError) as e:
                     self.logger.warning(f"Error reading secrets file ({self.secrets_path}): {e}. Continuing without secrets.")
-            
+
+            # Signature taken AFTER load + migration (migration may write the
+            # config back), so it reflects exactly what was read/written.
+            self._loaded_sig = self._files_signature()
             return self.config
             
         except FileNotFoundError as e:
@@ -264,7 +305,8 @@ class ConfigManager:
                 json.dump(config_to_write, f, indent=4)
             
             # Update the in-memory config to the new state (which includes secrets for runtime)
-            self.config = new_config_data 
+            self.config = new_config_data
+            self._loaded_sig = self._files_signature()
             self.logger.info(f"Configuration successfully saved to {os.path.abspath(self.config_path)}")
             if secrets_content:
                  self.logger.info("Secret values were preserved in memory and not written to the main config file.")
