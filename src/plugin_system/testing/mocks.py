@@ -71,6 +71,7 @@ class MockCacheManager:
         self.get_calls = []
         self.set_calls = []
         self.delete_calls = []
+        self.get_cached_data_with_strategy_calls = []
         # Real temp dir for plugins that write/read files under cache_dir.
         # Registered for cleanup so each mock instance doesn't leak a tmp dir.
         self.cache_dir = tempfile.mkdtemp(prefix="ledmatrix-mock-cache-")
@@ -108,6 +109,24 @@ class MockCacheManager:
         self.delete_calls.append(key)
         if key in self._cache:
             del self._cache[key]
+
+    def get_cached_data_with_strategy(self, key: str, data_type: str = 'default') -> Optional[Any]:
+        """Mock of CacheManager.get_cached_data_with_strategy (src/cache_manager.py).
+
+        The real method picks a max_age/memory_ttl strategy per data_type
+        (and extends it during market-closed hours for market data) before
+        delegating to get_cached_data(). None of that timing nuance matters
+        for a mock -- plugins under test just need the method to exist and
+        return whatever was cached, so this delegates straight to get().
+        """
+        self.get_cached_data_with_strategy_calls.append({'key': key, 'data_type': data_type})
+        return self.get(key)
+
+    def save_cache(self, key: str, data: Any) -> None:
+        """Mock of CacheManager.save_cache (src/cache_manager.py) -- the
+        write-side counterpart to get_cached_data_with_strategy, used by the
+        same real-CacheManager-oriented plugins. Delegates to set()."""
+        self.set(key, data)
         if key in self._cache_timestamps:
             del self._cache_timestamps[key]
     
