@@ -2125,10 +2125,23 @@ class DisplayController:
 
                     # For plugins, call display multiple times to allow game rotation
                     if manager_to_display and hasattr(manager_to_display, 'display'):
-                        # Check if plugin needs high FPS (like stock ticker)
-                        # Always enable high-FPS for static-image plugin (for GIF animation support)
+                        # High-FPS decision, in precedence order:
+                        # 1. A plugin that declares needs_high_fps knows best
+                        #    (e.g. static-image sets it False for still PNGs,
+                        #    True for animated GIFs).
+                        # 2. Back-compat: older static-image versions without
+                        #    the attribute keep the historical forced high-FPS
+                        #    (GIF support).
+                        # 3. Otherwise scrolling plugins get high FPS.
                         plugin_id = getattr(manager_to_display, 'plugin_id', None)
-                        if plugin_id == 'static-image':
+                        declared = getattr(manager_to_display, 'needs_high_fps', None)
+                        if declared is not None:
+                            needs_high_fps = bool(declared)
+                            logger.debug(
+                                "[DisplayController] FPS check for %s (plugin=%s) - "
+                                "plugin declares needs_high_fps=%s",
+                                active_mode, plugin_id, needs_high_fps)
+                        elif plugin_id == 'static-image':
                             needs_high_fps = True
                             logger.debug("FPS check - static-image plugin: forcing high-FPS mode for GIF support")
                         else:
