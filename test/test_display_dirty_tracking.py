@@ -36,6 +36,8 @@ def dm():
         },
     }, suppress_test_pattern=True)
     yield manager
+    DisplayManager._instance = None
+    DisplayManager._initialized = False
 
 
 class _SwapSpy:
@@ -101,6 +103,16 @@ class TestDirtyTracking:
         dm.update_display()   # push + snapshot
         assert os.path.exists(dm._snapshot_path)
 
+        # Re-open the snapshot's own throttle and remove the file, then push
+        # the identical frame again: dirty tracking must skip the panel
+        # write but the snapshot must still be (re-)written on that path.
+        os.remove(dm._snapshot_path)
+        dm._last_snapshot_ts = 0.0
+        with _SwapSpy(dm.matrix) as spy:
+            dm.update_display()  # identical frame -> panel push skipped
+        assert spy.count == 0
+        assert os.path.exists(dm._snapshot_path)
+
 
 class TestKillSwitch:
     def test_dirty_tracking_can_be_disabled(self, dm):
@@ -120,15 +132,19 @@ class TestKillSwitch:
         from src.display_manager import DisplayManager
         DisplayManager._instance = None
         DisplayManager._initialized = False
-        manager = DisplayManager({
-            "display": {
-                "hardware": {"rows": 32, "cols": 64, "chain_length": 1,
-                             "parallel": 1},
-                "runtime": {"gpio_slowdown": 0},
-                "dirty_tracking": False,
-            },
-        }, suppress_test_pattern=True)
-        assert manager._dirty_tracking_enabled is False
+        try:
+            manager = DisplayManager({
+                "display": {
+                    "hardware": {"rows": 32, "cols": 64, "chain_length": 1,
+                                 "parallel": 1},
+                    "runtime": {"gpio_slowdown": 0},
+                    "dirty_tracking": False,
+                },
+            }, suppress_test_pattern=True)
+            assert manager._dirty_tracking_enabled is False
+        finally:
+            DisplayManager._instance = None
+            DisplayManager._initialized = False
 
 
 if __name__ == "__main__":

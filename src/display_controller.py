@@ -2084,8 +2084,10 @@ class DisplayController:
                         declared = getattr(manager_to_display, 'needs_high_fps', None)
                         if declared is not None:
                             needs_high_fps = bool(declared)
-                            logger.debug("FPS check for %s - plugin declares needs_high_fps=%s",
-                                         active_mode, needs_high_fps)
+                            logger.debug(
+                                "[DisplayController] FPS check for %s (plugin=%s) - "
+                                "plugin declares needs_high_fps=%s",
+                                active_mode, plugin_id, needs_high_fps)
                         elif plugin_id == 'static-image':
                             needs_high_fps = True
                             logger.debug("FPS check - static-image plugin: forcing high-FPS mode for GIF support")

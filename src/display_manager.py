@@ -32,6 +32,7 @@ else:
     from rgbmatrix import RGBMatrix, RGBMatrixOptions
 from contextlib import contextmanager
 from PIL import Image, ImageDraw, ImageFont
+import threading
 import time
 from typing import Dict, Any, List, Optional
 import logging
@@ -195,6 +196,11 @@ class DisplayManager:
         self._dirty_tracking_enabled = bool(
             self.config.get('display', {}).get('dirty_tracking', True))
         self._last_pushed_digest = None
+        # Serializes update_display(): plugins can call it directly from
+        # background threads (see docstring on update_display), not just the
+        # render loop. RLock in case a caller within the critical section
+        # ever re-enters (e.g. via a nested draw callback).
+        self._update_lock = threading.RLock()
         
         # Scrolling state tracking for graceful updates
         self._scrolling_state = {
@@ -533,48 +539,57 @@ class DisplayManager:
         writes to the matrix directly), and brightness is PART of the digest
         so a dim-schedule change is never skipped. Disable via config
         ``display.dirty_tracking: false`` if a redraw issue is ever suspected.
+
+        Serialized via ``_update_lock``: plugins can call this directly from
+        background threads (e.g. sports base classes push an immediate
+        "live" refresh from inside update()), so without a lock two callers
+        could both pass the digest check before either writes it back,
+        double-pushing a frame, or interleave the offscreen/current canvas
+        swap below. The lock is scoped to this method, so callers never
+        need to know about it.
         """
         try:
-            if self.matrix is None:
-                # Fallback mode - no actual hardware to update
-                logger.debug("Update display called in fallback mode (no hardware)")
-                # Still write a snapshot so the web UI can preview
-                self._write_snapshot_if_due()
-                return
-
-            if self._capture_mode_active:
-                return  # Skip hardware write — content is being captured off-screen
-
-            digest = None
-            if self._dirty_tracking_enabled:
-                try:
-                    brightness = getattr(self.matrix, 'brightness', None)
-                except Exception:
-                    brightness = None
-                digest = (zlib.adler32(self.image.tobytes()), brightness)
-                if digest == self._last_pushed_digest:
-                    # Nothing changed since the last push — the panel is
-                    # already showing exactly this frame.
+            with self._update_lock:
+                if self.matrix is None:
+                    # Fallback mode - no actual hardware to update
+                    logger.debug("Update display called in fallback mode (no hardware)")
+                    # Still write a snapshot so the web UI can preview
                     self._write_snapshot_if_due()
                     return
 
-            # Copy the current image to the offscreen canvas. In double-sided
-            # mode the logical screen is first tiled across the full chain.
-            if self._double_sided is not None:
-                self.offscreen_canvas.SetImage(self._composite_double_sided())
-            else:
-                self.offscreen_canvas.SetImage(self.image)
+                if self._capture_mode_active:
+                    return  # Skip hardware write — content is being captured off-screen
 
-            # Swap buffers immediately
-            self.matrix.SwapOnVSync(self.offscreen_canvas)
+                digest = None
+                if self._dirty_tracking_enabled:
+                    try:
+                        brightness = getattr(self.matrix, 'brightness', None)
+                    except AttributeError:
+                        brightness = None
+                    digest = (zlib.adler32(self.image.tobytes()), brightness)
+                    if digest == self._last_pushed_digest:
+                        # Nothing changed since the last push — the panel is
+                        # already showing exactly this frame.
+                        self._write_snapshot_if_due()
+                        return
 
-            # Swap our canvas references
-            self.offscreen_canvas, self.current_canvas = self.current_canvas, self.offscreen_canvas
+                # Copy the current image to the offscreen canvas. In double-sided
+                # mode the logical screen is first tiled across the full chain.
+                if self._double_sided is not None:
+                    self.offscreen_canvas.SetImage(self._composite_double_sided())
+                else:
+                    self.offscreen_canvas.SetImage(self.image)
 
-            self._last_pushed_digest = digest
+                # Swap buffers immediately
+                self.matrix.SwapOnVSync(self.offscreen_canvas)
 
-            # Write a snapshot for the web preview (throttled)
-            self._write_snapshot_if_due()
+                # Swap our canvas references
+                self.offscreen_canvas, self.current_canvas = self.current_canvas, self.offscreen_canvas
+
+                self._last_pushed_digest = digest
+
+                # Write a snapshot for the web preview (throttled)
+                self._write_snapshot_if_due()
         except Exception as e:
             logger.error(f"Error updating display: {e}")
 
