@@ -37,3 +37,9 @@ class TestMockCacheManagerStrategyMethod:
         cm = MockCacheManager()
         cm.save_cache("standings_nfl", {"teams": ["KC", "BUF"]})
         assert cm.get_cached_data_with_strategy("standings_nfl") == {"teams": ["KC", "BUF"]}
+
+    def test_reset_clears_strategy_call_tracking(self):
+        cm = MockCacheManager()
+        cm.get_cached_data_with_strategy("k", "sports_live")
+        cm.reset()
+        assert cm.get_cached_data_with_strategy_calls == []

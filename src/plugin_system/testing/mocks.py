@@ -137,6 +137,7 @@ class MockCacheManager:
         self.get_calls = []
         self.set_calls = []
         self.delete_calls = []
+        self.get_cached_data_with_strategy_calls = []
 
 
 class MockConfigManager:
