@@ -647,6 +647,13 @@ def install_locally():
         return jsonify({'status': 'error', 'message': str(exc)}), 422
 
     plugin_id = data.get('metadata', {}).get('id', '')
+    # _generate_plugin_files() above already validates metadata.id via this
+    # same regex before it will return, but that guarantee lives in a
+    # different function -- re-check here, at the point the path is actually
+    # built, so this route stays safe on its own if that call is ever
+    # reordered or changed.
+    if not _PLUGIN_ID_RE.match(plugin_id):
+        return jsonify({'status': 'error', 'message': 'Invalid plugin ID'}), 400
     target = Path(composer_bp.plugins_dir) / plugin_id
     force = bool(data.get('_force', False))
 
@@ -665,7 +672,8 @@ def install_locally():
             (target / filename).write_text(content, encoding='utf-8')
         _save_composer_state(target, data)
     except OSError as exc:
-        return jsonify({'status': 'error', 'message': f'Failed to write plugin files: {exc}'}), 500
+        logger.error('Failed to write plugin files for %s: %s', plugin_id, exc)
+        return jsonify({'status': 'error', 'message': 'Failed to write plugin files'}), 500
 
     # Trigger plugin discovery so it shows up in the Plugin Manager immediately
     if composer_bp.plugin_manager:
@@ -778,7 +786,8 @@ def load_plugin(plugin_id):
             state = json.loads(state_path.read_text())
             return jsonify({'status': 'ok', 'source': 'composer', 'state': state})
         except Exception as exc:
-            return jsonify({'status': 'error', 'message': f'Failed to read state: {exc}'}), 500
+            logger.error('Failed to read composer state for %s: %s', plugin_id, exc)
+            return jsonify({'status': 'error', 'message': 'Failed to read state'}), 500
 
     # Partial import from config_schema.json
     schema_path = plugin_dir / 'config_schema.json'
