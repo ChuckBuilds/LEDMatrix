@@ -123,6 +123,14 @@ class TestPluginManager:
 
             pm.run_scheduled_updates(current_time=time.time())
 
+            # Updates now execute on the background worker (the scheduler
+            # returns immediately) — wait for completion before asserting.
+            deadline = time.time() + 5
+            while (plugin_instance.update.call_count == 0
+                   and time.time() < deadline):
+                time.sleep(0.02)
+            pm.stop_update_worker()
+
             plugin_instance.update.assert_called_once()
             assert "test_plugin" in pm.plugin_last_update
             assert pm.state_manager.get_state("test_plugin") == PluginState.ENABLED
