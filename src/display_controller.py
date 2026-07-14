@@ -23,6 +23,9 @@ Entry point: :func:`main` — instantiates :class:`DisplayController` and calls
 import time
 import os
 import json
+import threading
+import types
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Callable
 from datetime import datetime
@@ -891,6 +894,30 @@ class DisplayController:
                 self.plugin_manager.run_scheduled_updates()
             except Exception:  # pylint: disable=broad-except
                 logger.exception("Error running scheduled plugin updates")
+
+    @contextmanager
+    def _display_lock_or_skip(self, plugin_id):
+        """Try-lock guard keeping a plugin's display() off its in-flight update().
+
+        Yields True when display may run (lock held, released on exit) or
+        when no lock support exists (older plugin manager). Yields False when
+        the plugin's update() is currently executing on the background
+        worker — the caller should treat the frame as displayed (the panel
+        holds the last pushed frame) rather than as a plugin failure, so a
+        mid-update skip never advances the rotation.
+        """
+        pm = self.plugin_manager
+        if not pm or not hasattr(pm, 'get_plugin_lock') or not plugin_id:
+            yield True
+            return
+        lock = pm.get_plugin_lock(plugin_id)
+        if not lock.acquire(blocking=False):
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            lock.release()
 
     _FOLLOWER_SEND_INTERVAL = 1.0 / 90  # raw bytes are cheap; 90fps > follower render rate
 
@@ -1879,6 +1906,7 @@ class DisplayController:
                     plugin_id = getattr(manager_to_display, 'plugin_id', active_mode)
                     try:
                         logger.debug(f"Calling display() for {active_mode} with force_clear={self.force_change}")
+                        can_display = False
                         if hasattr(manager_to_display, 'display'):
                             # Opt #1: look up (or compute once) whether display() accepts display_mode
                             _cache_key = plugin_id
@@ -1889,14 +1917,64 @@ class DisplayController:
                                 )
                             _accepts_display_mode = self._plugin_accepts_display_mode[_cache_key]
 
-                            # Use PluginExecutor for safe execution with timeout
-                            if self.plugin_manager and hasattr(self.plugin_manager, 'plugin_executor'):
-                                result = self.plugin_manager.plugin_executor.execute_display(
-                                    manager_to_display,
-                                    plugin_id,
-                                    force_clear=self.force_change,
-                                    display_mode=active_mode if _accepts_display_mode else None
-                                )
+                            pm = self.plugin_manager
+                            display_lock = None
+                            can_display = True
+                            if pm and hasattr(pm, 'get_plugin_lock'):
+                                display_lock = pm.get_plugin_lock(plugin_id)
+                                can_display = display_lock.acquire(blocking=False)
+
+                            if not can_display:
+                                # update() in flight on the worker — hold
+                                # the last frame; not a plugin failure
+                                result = True
+                            elif pm and hasattr(pm, 'plugin_executor'):
+                                # PluginExecutor's own thread.join(timeout) can
+                                # return before the real display() call
+                                # finishes (a lingering daemon thread keeps
+                                # running it) -- so the lock is released from
+                                # inside the wrapped call itself, whichever
+                                # thread actually finishes it, rather than
+                                # here when this dispatch merely returns.
+                                release_guard = threading.Lock()
+                                released = {'done': False}
+
+                                def _release_display_lock():
+                                    with release_guard:
+                                        if released['done']:
+                                            return
+                                        released['done'] = True
+                                    if display_lock is not None:
+                                        display_lock.release()
+
+                                if _accepts_display_mode:
+                                    def _display_target(display_mode=None, force_clear=False):
+                                        try:
+                                            return manager_to_display.display(
+                                                display_mode=display_mode, force_clear=force_clear)
+                                        finally:
+                                            _release_display_lock()
+                                else:
+                                    def _display_target(force_clear=False):
+                                        try:
+                                            return manager_to_display.display(force_clear=force_clear)
+                                        finally:
+                                            _release_display_lock()
+
+                                try:
+                                    result = self.plugin_manager.plugin_executor.execute_display(
+                                        types.SimpleNamespace(display=_display_target),
+                                        plugin_id,
+                                        force_clear=self.force_change,
+                                        display_mode=active_mode if _accepts_display_mode else None
+                                    )
+                                except Exception:  # pragma: no cover - defensive;
+                                    # execute_display catches everything
+                                    # internally, but guarantee the lock is
+                                    # never leaked if something unexpected
+                                    # slips through.
+                                    _release_display_lock()
+                                    raise
                                 # execute_display returns bool, convert to expected format
                                 if result:
                                     result = True  # Success
@@ -1904,10 +1982,14 @@ class DisplayController:
                                     result = False  # Failed
                             else:
                                 # Fallback to direct call if executor not available
-                                if _accepts_display_mode:
-                                    result = manager_to_display.display(display_mode=active_mode, force_clear=self.force_change)
-                                else:
-                                    result = manager_to_display.display(force_clear=self.force_change)
+                                try:
+                                    if _accepts_display_mode:
+                                        result = manager_to_display.display(display_mode=active_mode, force_clear=self.force_change)
+                                    else:
+                                        result = manager_to_display.display(force_clear=self.force_change)
+                                finally:
+                                    if display_lock is not None:
+                                        display_lock.release()
                             
                             logger.debug(f"display() returned: {result} (type: {type(result)})")
                             # Check if display() returned a boolean (new behavior)
@@ -1916,11 +1998,15 @@ class DisplayController:
                                 if not display_result:
                                     logger.info("Plugin %s display() returned False for mode %s", plugin_id, active_mode)
                         
-                        # Record success if display completed without exception
-                        if self.plugin_manager and hasattr(self.plugin_manager, 'health_tracker') and self.plugin_manager.health_tracker:
-                            self.plugin_manager.health_tracker.record_success(plugin_id)
-                        
-                        self.force_change = False
+                        # Record success only when display() actually ran this
+                        # frame -- a skipped frame (lock busy) held the last
+                        # frame, not a real success, and must not clear
+                        # force_change or the pending mode-switch clear will
+                        # be lost when display() finally does run.
+                        if can_display:
+                            if self.plugin_manager and hasattr(self.plugin_manager, 'health_tracker') and self.plugin_manager.health_tracker:
+                                self.plugin_manager.health_tracker.record_success(plugin_id)
+                            self.force_change = False
                     except Exception as exc:  # pylint: disable=broad-except
                         logger.exception("Error displaying %s", self.current_display_mode)
                         # Record failure
@@ -2205,11 +2291,16 @@ class DisplayController:
 
                             while True:
                                 try:
-                                    # Pass display_mode to maintain sticky manager state
-                                    if _accepts_display_mode:
-                                        result = manager_to_display.display(display_mode=active_mode, force_clear=False)
-                                    else:
-                                        result = manager_to_display.display(force_clear=False)
+                                    with self._display_lock_or_skip(plugin_id) as can_display:
+                                        if can_display:
+                                            # Pass display_mode to maintain sticky manager state
+                                            if _accepts_display_mode:
+                                                result = manager_to_display.display(display_mode=active_mode, force_clear=False)
+                                            else:
+                                                result = manager_to_display.display(force_clear=False)
+                                        else:
+                                            # update() in flight — hold the last frame
+                                            result = True
                                     if isinstance(result, bool) and not result:
                                         logger.debug("Display returned False, breaking early")
                                         break
@@ -2269,11 +2360,16 @@ class DisplayController:
                                     break
 
                                 try:
-                                    # Pass display_mode to maintain sticky manager state
-                                    if _accepts_display_mode:
-                                        result = manager_to_display.display(display_mode=active_mode, force_clear=False)
-                                    else:
-                                        result = manager_to_display.display(force_clear=False)
+                                    with self._display_lock_or_skip(plugin_id) as can_display:
+                                        if can_display:
+                                            # Pass display_mode to maintain sticky manager state
+                                            if _accepts_display_mode:
+                                                result = manager_to_display.display(display_mode=active_mode, force_clear=False)
+                                            else:
+                                                result = manager_to_display.display(force_clear=False)
+                                        else:
+                                            # update() in flight — hold the last frame
+                                            result = True
                                     if isinstance(result, bool) and not result:
                                         # For dynamic duration plugins, don't exit on False - keep looping
                                         # until cycle is complete or max duration is reached
@@ -2791,6 +2887,14 @@ class DisplayController:
 
     def cleanup(self):
         """Clean up resources."""
+        # Stop the async update worker first so no in-flight update() call
+        # is still touching display/cache-backed resources while they're
+        # torn down below.
+        if self.plugin_manager and hasattr(self.plugin_manager, 'stop_update_worker'):
+            try:
+                self.plugin_manager.stop_update_worker()
+            except Exception as e:
+                logger.warning("Error stopping plugin update worker: %s", e)
         # Shutdown config service if it exists
         if hasattr(self, 'config_service'):
             try:
