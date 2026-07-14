@@ -61,7 +61,7 @@ class TestWithState:
     def test_ap_after_inverts_on_disable(self, wm):
         """WiFi reconnects while AP is up -> auto-disable -> ap_after False."""
         _wire(wm, connected=True, ethernet=False, ap_active=True)
-        changed, status, ethernet, ap_after = wm.check_and_manage_ap_mode_with_state()
+        changed, _status, _ethernet, ap_after = wm.check_and_manage_ap_mode_with_state()
         assert changed is True
         assert ap_after is False
         wm.disable_ap_mode.assert_called_once()
@@ -70,7 +70,7 @@ class TestWithState:
         """Grace period exhausted with nothing connected -> enable -> True."""
         _wire(wm, connected=False, ethernet=False, ap_active=False)
         wm._disconnected_checks = 2  # this call is the 3rd
-        changed, status, ethernet, ap_after = wm.check_and_manage_ap_mode_with_state()
+        changed, _status, _ethernet, ap_after = wm.check_and_manage_ap_mode_with_state()
         assert changed is True
         assert ap_after is True
         wm.enable_ap_mode.assert_called_once()
@@ -83,7 +83,7 @@ class TestWithState:
 
     def test_exception_path_never_raises(self, wm):
         wm._get_wifi_status_with_retry = MagicMock(side_effect=RuntimeError("nmcli gone"))
-        changed, status, ethernet, ap_after = wm.check_and_manage_ap_mode_with_state()
+        changed, status, _ethernet, _ap_after = wm.check_and_manage_ap_mode_with_state()
         assert changed is False
         assert status.connected is False
 
