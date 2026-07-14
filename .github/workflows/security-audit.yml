@@ -1,0 +1,277 @@
+name: Security Audit
+
+on:
+  push:
+    branches:
+      - main
+      - 'feat/**'
+  pull_request:
+    branches:
+      - main
+  schedule:
+    # Weekly full scan — catches new CVEs in existing deps
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+  security-events: write
+
+jobs:
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # SAST — Static Application Security Testing
+  # ─────────────────────────────────────────────────────────────────────────
+  sast:
+    name: Static Analysis (bandit + semgrep)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install SAST tools
+        run: pip install bandit==1.8.3 semgrep
+
+      # Bandit — Python-specific security linter
+      # --exit-zero: findings are warnings, not CI blockers.
+      # The security-report job interprets severity.
+      - name: Run bandit
+        run: |
+          bandit -r src/ web_interface/ \
+            -c bandit.yaml \
+            -f json \
+            -o bandit-results.json \
+            --exit-zero
+
+      # Semgrep — broader pattern-based analysis
+      # || true: prevents network/rate-limit errors from blocking the workflow
+      - name: Run semgrep
+        run: |
+          semgrep --config "p/python" \
+            --config "p/flask" \
+            --json \
+            --output semgrep-results.json \
+            src/ web_interface/ \
+            || true
+
+      - name: Upload SAST artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sast-results
+          path: |
+            bandit-results.json
+            semgrep-results.json
+          retention-days: 30
+
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Dependency Vulnerability Scanning
+  # ─────────────────────────────────────────────────────────────────────────
+  dependency-audit:
+    name: Dependency Audit (pip-audit + safety)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install audit tools
+        run: pip install pip-audit safety
+
+      # Install project deps. Hardware-specific packages (rgbmatrix) will fail
+      # to build on Ubuntu runners — || true handles this gracefully.
+      # pip-audit operates on installed packages; partial install is acceptable.
+      - name: Install project dependencies
+        run: |
+          pip install -r requirements.txt || true
+          pip install -r web_interface/requirements.txt || true
+          pip install -r requirements-emulator.txt || true
+
+      - name: Run pip-audit
+        run: |
+          pip-audit --format json --output pip-audit-results.json || true
+
+      - name: Run safety check
+        run: |
+          safety check --output json > safety-results.json 2>&1 || true
+
+      - name: Upload dependency audit artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dependency-audit-results
+          path: |
+            pip-audit-results.json
+            safety-results.json
+          retention-days: 30
+
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Secrets Detection
+  # ─────────────────────────────────────────────────────────────────────────
+  secrets-scan:
+    name: Secrets Scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for scanning all commits
+
+      # continue-on-error: config/config_secrets.template.json contains
+      # placeholder strings (YOUR_*) that may trigger gitleaks rules.
+      # The generate_report.py script suppresses these false positives.
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload secrets scan artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: secrets-scan-results
+          path: results.sarif
+          retention-days: 30
+
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # LEDMatrix-Specific Security Proofs
+  # ─────────────────────────────────────────────────────────────────────────
+  ledmatrix-security-proofs:
+    name: LEDMatrix Security Proofs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt || true
+
+      # Script exits 1 only on CRITICAL findings.
+      # Warnings are reported but do not block the workflow.
+      - name: Run security proofs
+        run: |
+          python scripts/prove_security.py \
+            --output security-proofs-results.json \
+            --verbose
+
+      - name: Upload proofs artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-proofs-results
+          path: security-proofs-results.json
+          retention-days: 30
+
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Plugin Security Audit
+  # ─────────────────────────────────────────────────────────────────────────
+  plugin-audit:
+    name: Plugin Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Script exits 1 only on CRITICAL findings (eval/exec in plugins).
+      # Missing manifest.json etc are warnings.
+      - name: Run plugin audit
+        run: |
+          python scripts/audit_plugins.py \
+            --output plugin-audit-results.json \
+            --verbose
+
+      - name: Upload plugin audit artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: plugin-audit-results
+          path: plugin-audit-results.json
+          retention-days: 30
+
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Aggregate Report
+  # ─────────────────────────────────────────────────────────────────────────
+  security-report:
+    name: Security Report
+    runs-on: ubuntu-latest
+    needs:
+      - sast
+      - dependency-audit
+      - secrets-scan
+      - ledmatrix-security-proofs
+      - plugin-audit
+    if: always()  # Run even if upstream jobs fail or are skipped
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: audit-artifacts/
+
+      - name: Generate consolidated report
+        run: |
+          python scripts/generate_report.py \
+            --artifact-dir audit-artifacts/ \
+            --output security-report.md \
+            --verbose
+
+      - name: Upload consolidated report
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-report
+          path: security-report.md
+          retention-days: 90
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('security-report.md', 'utf8');
+            // Use sticky comment — update existing comment rather than adding a new one each run
+            const { data: comments } = await github.rest.issues.listComments({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+            const botComment = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes('🔒 Security Audit')
+            );
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                comment_id: botComment.id,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: report,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: report,
+              });
+            }
