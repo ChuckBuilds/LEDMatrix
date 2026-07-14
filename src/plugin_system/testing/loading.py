@@ -88,3 +88,27 @@ def load_harness_spec(plugin_dir: Union[str, Path]) -> Dict[str, Any]:
         with open(mock_path, 'r') as mf:
             spec['mock_data_contents'] = json.load(mf)
     return spec
+
+
+def build_full_config(
+    plugin_dir: Union[str, Path],
+    spec: Optional[Dict[str, Any]] = None,
+    cli_config: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Build the config a plugin sees under test.
+
+    Merge order: config_schema.json defaults, then a forced ``enabled: True``,
+    then harness.json's config overlay, then the caller's explicit config --
+    most specific wins. `enabled` is re-asserted *after* the schema defaults
+    so a plugin that reasonably ships `enabled: false` (e.g. a seasonal or
+    opt-in plugin) can't silently make every harness run test "disabled, do
+    nothing" by accident -- callers that genuinely want to test the disabled
+    path can still do so via `cli_config={"enabled": False}`.
+    """
+    spec = spec or {}
+    config: Dict[str, Any] = {}
+    config.update(load_config_defaults(plugin_dir))
+    config["enabled"] = True
+    config.update(spec.get("config", {}))
+    config.update(cli_config or {})
+    return config

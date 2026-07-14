@@ -37,7 +37,7 @@ os.environ['EMULATOR'] = 'true'
 
 from src.logging_config import get_logger  # noqa: E402
 from src.plugin_system.testing.loading import (  # noqa: E402
-    find_plugin_dir, load_config_defaults, load_harness_spec, load_manifest,
+    build_full_config, find_plugin_dir, load_harness_spec, load_manifest,
 )
 from src.plugin_system.testing.harness import (  # noqa: E402
     RenderResult, render_plugin_matrix, compare_to_goldens, write_goldens,
@@ -97,12 +97,11 @@ def check_one(plugin_id: str, search_dirs: List[str], sizes, mock_data: Dict,
     # matrix path does; explicit CLI flags still override the file.
     spec = load_harness_spec(plugin_dir)
 
-    # config_schema defaults (real-install behavior), then harness.json config,
-    # then CLI --config — most specific wins.
-    full_config = {"enabled": True}
-    full_config.update(load_config_defaults(plugin_dir))
-    full_config.update(spec.get("config", {}))
-    full_config.update(config)
+    # config_schema defaults (real-install behavior, with enabled forced True
+    # so a plugin's own enabled:false default can't accidentally disable
+    # testing), then harness.json config, then CLI --config — most specific
+    # wins.
+    full_config = build_full_config(plugin_dir, spec, config)
 
     # Precedence: CLI flag > LEDMATRIX_TEST_SIZES env > harness.json > default.
     effective_sizes = sizes if sizes else resolve_test_sizes(spec.get("sizes"))

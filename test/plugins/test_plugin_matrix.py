@@ -22,7 +22,7 @@ import pytest
 from src.plugin_system.testing.harness import (
     render_plugin_matrix, compare_to_goldens,
 )
-from src.plugin_system.testing.loading import load_config_defaults, load_harness_spec
+from src.plugin_system.testing.loading import build_full_config, load_harness_spec
 from src.plugin_system.testing.sizes import resolve_test_sizes
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -81,9 +81,7 @@ def test_plugin_renders_across_sizes_and_screens(plugin_id: str) -> None:
     plugin_dir = _PLUGINS[plugin_id]
     spec = load_harness_spec(plugin_dir)
 
-    config = {"enabled": True}
-    config.update(load_config_defaults(plugin_dir))
-    config.update(spec.get("config", {}))
+    config = build_full_config(plugin_dir, spec)
 
     # Sizes: LEDMATRIX_TEST_SIZES env (test on real hardware) wins, then the
     # plugin's own harness.json "sizes", else the default representative sample.
