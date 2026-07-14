@@ -78,21 +78,17 @@ class WiFiMonitorDaemon:
         
         while self.running:
             try:
-                # Get current status before checking
-                status = self.wifi_manager.get_wifi_status()
-                ethernet_connected = self.wifi_manager._is_ethernet_connected()
-                
-                # Check WiFi status and manage AP mode
-                state_changed = self.wifi_manager.check_and_manage_ap_mode()
-                
-                # Get updated status after check
-                updated_status = self.wifi_manager.get_wifi_status()
-                updated_ethernet = self.wifi_manager._is_ethernet_connected()
-                
+                # One combined check that also returns the state it observed —
+                # the previous flow fetched status before AND after the check
+                # on top of the check's own internal fetch, each one several
+                # nmcli subprocess forks, every 30s, forever.
+                (state_changed, updated_status, updated_ethernet,
+                 ap_active) = self.wifi_manager.check_and_manage_ap_mode_with_state()
+
                 current_state = {
                     'connected': updated_status.connected,
                     'ethernet_connected': updated_ethernet,
-                    'ap_active': updated_status.ap_mode_active,
+                    'ap_active': ap_active,
                     'ssid': updated_status.ssid
                 }
                 
@@ -109,7 +105,7 @@ class WiFiMonitorDaemon:
                     else:
                         logger.debug("Ethernet not connected")
                     
-                    if updated_status.ap_mode_active:
+                    if ap_active:
                         logger.info(f"AP mode ACTIVE - SSID: {ap_ssid} (IP: 192.168.4.1)")
                     else:
                         logger.debug("AP mode inactive")
@@ -123,16 +119,16 @@ class WiFiMonitorDaemon:
                     # Log periodic status (less verbose)
                     if updated_status.connected:
                         logger.debug(f"Status check: WiFi={updated_status.ssid} ({updated_status.signal}%), "
-                                   f"Ethernet={updated_ethernet}, AP={updated_status.ap_mode_active}")
+                                   f"Ethernet={updated_ethernet}, AP={ap_active}")
                     else:
-                        logger.debug(f"Status check: WiFi=disconnected, Ethernet={updated_ethernet}, AP={updated_status.ap_mode_active}")
+                        logger.debug(f"Status check: WiFi=disconnected, Ethernet={updated_ethernet}, AP={ap_active}")
                 
                 # Escalating recovery: if nmcli reports connected but actual internet
                 # is unreachable for several consecutive checks, restart NetworkManager.
                 # This is done HERE (not inside check_and_manage_ap_mode) to keep the
                 # AP-enable trigger clean and avoid false-positive AP enables from
                 # transient packet loss on otherwise working WiFi.
-                if updated_status.connected and not updated_status.ap_mode_active:
+                if updated_status.connected and not ap_active:
                     if not self.wifi_manager.check_internet_connectivity():
                         self._consecutive_internet_failures += 1
                         logger.warning(
