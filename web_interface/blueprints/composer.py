@@ -509,7 +509,7 @@ def _generate_plugin_files(data: dict) -> dict:
         'name': plugin_name,
         'version': version,
         'author': author,
-        'description': metadata.get('description', f'Custom plugin created with LEDMatrix Plugin Composer'),
+        'description': metadata.get('description', 'Custom plugin created with LEDMatrix Plugin Composer'),
         'category': metadata.get('category', 'custom'),
         'tags': ['composer', 'custom'],
         'entry_point': 'manager.py',
@@ -721,7 +721,8 @@ def list_plugins():
             continue
         try:
             manifest = json.loads(manifest_path.read_text())
-        except Exception:
+        except Exception as e:
+            logger.warning("Skipping %s: unreadable manifest.json (%s)", entry.name, e)
             continue
         has_state = (entry / '_composer_state.json').exists()
         results.append({
@@ -808,8 +809,8 @@ def load_plugin(plugin_id):
                     'default': prop.get('default', ''),
                     'description': prop.get('description', ''),
                 })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to parse config_schema.json for %s: %s", plugin_id, e)
 
     manifest = {}
     if manifest_path.exists():
