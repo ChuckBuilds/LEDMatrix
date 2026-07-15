@@ -248,7 +248,6 @@ test/
 ├── test_config_service.py               # Config service tests
 ├── test_config_validation_edge_cases.py # Config edge cases
 ├── test_font_manager.py                 # Font manager tests
-├── test_layout_manager.py               # Layout manager tests
 ├── test_text_helper.py                  # Text helper tests
 ├── test_error_handling.py               # Error handling tests
 ├── test_error_aggregator.py             # Error aggregation tests
