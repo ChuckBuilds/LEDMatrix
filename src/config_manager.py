@@ -38,6 +38,7 @@ from src.config_manager_atomic import (
 from src.common.permission_utils import (
     ensure_directory_permissions,
     ensure_file_permissions,
+    ensure_shared_group_ownership,
     get_config_file_mode,
     get_config_dir_mode
 )
@@ -234,6 +235,11 @@ class ConfigManager:
 
             # Load and merge secrets if they exist (be permissive on errors)
             if os.path.exists(self.secrets_path):
+                # Self-heal stale group ownership (e.g. the root-run display
+                # service wrote this file before the web user was granted
+                # group access) before every load attempt; no-op unless
+                # running as root and the group is already wrong.
+                ensure_shared_group_ownership(Path(self.secrets_path))
                 try:
                     with open(self.secrets_path, 'r') as f:
                         secrets = json.load(f)
@@ -363,6 +369,7 @@ class ConfigManager:
         # Set proper file permissions after creation
         config_path_obj = Path(self.config_path)
         ensure_file_permissions(config_path_obj, get_config_file_mode(config_path_obj))
+        ensure_shared_group_ownership(config_path_obj)
         
         self.logger.info(f"Created config.json from template at {os.path.abspath(self.config_path)}")
 
@@ -475,6 +482,11 @@ class ConfigManager:
             self.logger.error(error_msg)
             raise ConfigError(error_msg, config_path=path_to_load)
 
+        if file_type == "secrets":
+            # Best-effort self-heal: no-op unless running as root and the
+            # group is stale (see load_config for why this can happen).
+            ensure_shared_group_ownership(Path(path_to_load))
+
         try:
             with open(path_to_load, 'r') as f:
                 return json.load(f)
@@ -482,7 +494,18 @@ class ConfigManager:
             error_msg = f"Error parsing {file_type} configuration file: {path_to_load}"
             self.logger.error(error_msg, exc_info=True)
             raise ConfigError(error_msg, config_path=path_to_load) from e
-        except (IOError, OSError, PermissionError) as e:
+        except PermissionError as e:
+            if file_type == "secrets":
+                # Match load_config()'s tolerance: a secrets file the web
+                # process can't read (e.g. written 0640 by the root-run
+                # display service before the group was fixed up) shouldn't
+                # 500 the settings page — degrade to "no secrets" instead.
+                self.logger.warning(f"Secrets file not readable ({path_to_load}): {e}. Returning empty secrets.")
+                return {}
+            error_msg = f"Error loading {file_type} configuration file {path_to_load}: {str(e)}"
+            self.logger.error(error_msg, exc_info=True)
+            raise ConfigError(error_msg, config_path=path_to_load) from e
+        except (IOError, OSError) as e:
             error_msg = f"Error loading {file_type} configuration file {path_to_load}: {str(e)}"
             self.logger.error(error_msg, exc_info=True)
             raise ConfigError(error_msg, config_path=path_to_load) from e
@@ -539,6 +562,7 @@ class ConfigManager:
                 # Ensure final file has correct permissions
                 try:
                     ensure_file_permissions(path_obj, file_mode)
+                    ensure_shared_group_ownership(path_obj)
                 except OSError as perm_error:
                     # If we can't set permissions but file was written, log warning but don't fail
                     self.logger.warning(
