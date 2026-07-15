@@ -33,13 +33,20 @@ from datetime import datetime, timezone
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-# Gitleaks matches containing these strings are template placeholders, not real secrets
-_GITLEAKS_SUPPRESS = [
-    "YOUR_",
-    "PLACEHOLDER",
-    "_HERE",
-    "example.com",
-    "config_secrets.template",
+# Gitleaks matches exactly equal to one of these (not a substring match -- a
+# real secret that merely contains one of these words as part of its actual
+# value must still be reported) are known template placeholders.
+_GITLEAKS_SUPPRESS_EXACT_VALUES = {
+    "YOUR_YOUTUBE_API_KEY",
+    "YOUR_YOUTUBE_CHANNEL_ID",
+    "YOUR_GITHUB_PERSONAL_ACCESS_TOKEN",
+}
+
+# Findings in these files are suppressed regardless of value -- they are
+# template/example files that are expected to only ever contain placeholders.
+_GITLEAKS_SUPPRESS_PATHS = [
+    "config_secrets.template.json",
+    "config.template.json",
 ]
 
 
@@ -47,27 +54,50 @@ _GITLEAKS_SUPPRESS = [
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _load(path: Path) -> dict | list | None:
-    """Load JSON file, returning None on any error."""
+def _load(path: Path) -> tuple[dict | list | None, str | None]:
+    """Load a JSON artifact file.
+
+    Returns (data, error): error is None on success (data is whatever was
+    parsed, which may legitimately be an empty list/dict for a clean scan);
+    otherwise error is a human-readable reason the artifact is unavailable,
+    distinguishing "missing/malformed artifact" from "valid empty result" so
+    callers don't silently treat a broken CI job as a clean pass.
+    """
+    if not path.exists():
+        return None, f"artifact not found: {path}"
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, FileNotFoundError, OSError):
-        return None
+        return json.loads(path.read_text(encoding="utf-8")), None
+    except (json.JSONDecodeError, OSError) as exc:
+        return None, f"could not read/parse {path}: {exc}"
+
+
+def _md_sanitize_cell(value) -> str:
+    """Escape/normalize a value so scanner-controlled content (a matched
+    secret, a bandit issue_text, a file path) can't alter the Markdown
+    table's structure: pipes would add bogus columns, newlines would break
+    out of the row (or forge a fake header/separator line)."""
+    text = str(value)
+    text = text.replace("\\", "\\\\").replace("|", "\\|")
+    text = text.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
+    return text
 
 
 def _md_table_row(*cells: str) -> str:
-    return "| " + " | ".join(str(c) for c in cells) + " |"
+    return "| " + " | ".join(_md_sanitize_cell(c) for c in cells) + " |"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Per-tool summarizers
-# Returns: (markdown_lines: list[str], critical_count: int)
+# Returns: (markdown_lines: list[str], critical_count: int, available: bool)
+# `available=False` means the artifact was missing or malformed -- distinct
+# from a valid scan that simply found nothing -- so the caller can report
+# INCOMPLETE instead of silently counting it as a clean pass.
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _summarize_bandit(artifact_dir: Path) -> tuple[list[str], int]:
-    data = _load(artifact_dir / "sast-results" / "bandit-results.json")
-    if data is None:
-        return ["_bandit results not available_"], 0
+def _summarize_bandit(artifact_dir: Path) -> tuple[list[str], int, bool]:
+    data, error = _load(artifact_dir / "sast-results" / "bandit-results.json")
+    if error:
+        return [f"_bandit results unavailable: {error}_"], 0, False
 
     results = data.get("results", [])
     high = [r for r in results if r.get("issue_severity") == "HIGH"]
@@ -94,13 +124,13 @@ def _summarize_bandit(artifact_dir: Path) -> tuple[list[str], int]:
         if len(high) > 10:
             lines.append(f"_… and {len(high) - 10} more HIGH findings_")
 
-    return lines, len(high)
+    return lines, len(high), True
 
 
-def _summarize_pip_audit(artifact_dir: Path) -> tuple[list[str], int]:
-    data = _load(artifact_dir / "dependency-audit-results" / "pip-audit-results.json")
-    if data is None:
-        return ["_pip-audit results not available_"], 0
+def _summarize_pip_audit(artifact_dir: Path) -> tuple[list[str], int, bool]:
+    data, error = _load(artifact_dir / "dependency-audit-results" / "pip-audit-results.json")
+    if error:
+        return [f"_pip-audit results unavailable: {error}_"], 0, False
 
     # pip-audit JSON format: {"dependencies": [{"name": ..., "vulns": [...]}]}
     vulns: list[dict] = []
@@ -122,13 +152,13 @@ def _summarize_pip_audit(artifact_dir: Path) -> tuple[list[str], int]:
             ))
 
     # Treat known vulnerabilities as warnings, not critical (they may be unavoidable)
-    return lines, 0
+    return lines, 0, True
 
 
-def _summarize_gitleaks(artifact_dir: Path) -> tuple[list[str], int]:
-    data = _load(artifact_dir / "secrets-scan-results" / "gitleaks-results.json")
-    if data is None:
-        return ["_gitleaks results not available_"], 0
+def _summarize_gitleaks(artifact_dir: Path) -> tuple[list[str], int, bool]:
+    data, error = _load(artifact_dir / "secrets-scan-results" / "gitleaks-results.json")
+    if error:
+        return [f"_gitleaks results unavailable: {error}_"], 0, False
 
     if not isinstance(data, list):
         data = []
@@ -137,7 +167,9 @@ def _summarize_gitleaks(artifact_dir: Path) -> tuple[list[str], int]:
     suppressed = 0
     for finding in data:
         secret_val = str(finding.get("Secret", "") or finding.get("Match", ""))
-        if any(p in secret_val for p in _GITLEAKS_SUPPRESS):
+        file_name = Path(finding.get("File", "")).name
+        if (secret_val in _GITLEAKS_SUPPRESS_EXACT_VALUES
+                or file_name in _GITLEAKS_SUPPRESS_PATHS):
             suppressed += 1
         else:
             real_findings.append(finding)
@@ -159,13 +191,13 @@ def _summarize_gitleaks(artifact_dir: Path) -> tuple[list[str], int]:
             ))
 
     critical = len(real_findings)  # any real secret is critical
-    return lines, critical
+    return lines, critical, True
 
 
-def _summarize_security_proofs(artifact_dir: Path) -> tuple[list[str], int]:
-    data = _load(artifact_dir / "security-proofs-results" / "security-proofs-results.json")
-    if data is None:
-        return ["_security proofs results not available_"], 0
+def _summarize_security_proofs(artifact_dir: Path) -> tuple[list[str], int, bool]:
+    data, error = _load(artifact_dir / "security-proofs-results" / "security-proofs-results.json")
+    if error:
+        return [f"_security proofs results unavailable: {error}_"], 0, False
 
     if not isinstance(data, list):
         data = []
@@ -182,7 +214,7 @@ def _summarize_security_proofs(artifact_dir: Path) -> tuple[list[str], int]:
         "",
     ]
 
-    _icon = {"PASS": "✅", "INFO": "ℹ️", "WARNING": "⚠️",
+    _icon = {"PASS": "✅", "INFO": "ℹ️", "WARNING": "⚠️",  # nosec B105 - severity labels, not credentials
              "CRITICAL": "🚨", "SKIP": "⏭️"}
     for r in data:
         icon = _icon.get(r.get("severity", ""), "❓")
@@ -192,13 +224,13 @@ def _summarize_security_proofs(artifact_dir: Path) -> tuple[list[str], int]:
         if r.get("details") and r.get("severity") in ("CRITICAL", "WARNING"):
             lines.append(f"  - _{r['details']}_")
 
-    return lines, len(critical)
+    return lines, len(critical), True
 
 
-def _summarize_plugin_audit(artifact_dir: Path) -> tuple[list[str], int]:
-    data = _load(artifact_dir / "plugin-audit-results" / "plugin-audit-results.json")
-    if data is None:
-        return ["_plugin audit results not available_"], 0
+def _summarize_plugin_audit(artifact_dir: Path) -> tuple[list[str], int, bool]:
+    data, error = _load(artifact_dir / "plugin-audit-results" / "plugin-audit-results.json")
+    if error:
+        return [f"_plugin audit results unavailable: {error}_"], 0, False
 
     summary = data.get("summary", {})
     findings = data.get("findings", [])
@@ -226,7 +258,7 @@ def _summarize_plugin_audit(artifact_dir: Path) -> tuple[list[str], int]:
     if warning_findings and not critical_findings:
         lines.append(f"\n_{len(warning_findings)} warning(s) found — see artifact for details_")
 
-    return lines, summary.get("critical", 0)
+    return lines, summary.get("critical", 0), True
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -248,22 +280,44 @@ def main() -> int:
     artifact_dir = Path(args.artifact_dir)
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
-    bandit_lines, bandit_crit = _summarize_bandit(artifact_dir)
-    pip_audit_lines, pip_audit_crit = _summarize_pip_audit(artifact_dir)
-    gitleaks_lines, gitleaks_crit = _summarize_gitleaks(artifact_dir)
-    proofs_lines, proofs_crit = _summarize_security_proofs(artifact_dir)
-    plugins_lines, plugins_crit = _summarize_plugin_audit(artifact_dir)
+    bandit_lines, bandit_crit, bandit_ok = _summarize_bandit(artifact_dir)
+    pip_audit_lines, pip_audit_crit, pip_audit_ok = _summarize_pip_audit(artifact_dir)
+    gitleaks_lines, gitleaks_crit, gitleaks_ok = _summarize_gitleaks(artifact_dir)
+    proofs_lines, proofs_crit, proofs_ok = _summarize_security_proofs(artifact_dir)
+    plugins_lines, plugins_crit, plugins_ok = _summarize_plugin_audit(artifact_dir)
+
+    unavailable_tools = [
+        name for name, ok in [
+            ("bandit", bandit_ok), ("pip-audit", pip_audit_ok),
+            ("gitleaks", gitleaks_ok), ("security-proofs", proofs_ok),
+            ("plugin-audit", plugins_ok),
+        ] if not ok
+    ]
 
     total_critical = bandit_crit + pip_audit_crit + gitleaks_crit + proofs_crit + plugins_crit
-    overall = "ACTION REQUIRED 🚨" if total_critical > 0 else "PASSED ✅"
+    if unavailable_tools:
+        # A missing/malformed artifact means that tool's checks never
+        # actually ran -- this must not be reported as a clean PASS just
+        # because the *artifacts that did load* found nothing.
+        overall = "INCOMPLETE ⚠️"
+    elif total_critical > 0:
+        overall = "ACTION REQUIRED 🚨"
+    else:
+        overall = "PASSED ✅"
 
     def section(title: str, lines: list[str]) -> str:
         return f"### {title}\n\n" + "\n".join(lines) + "\n"
 
+    incomplete_note = (
+        f"\n_⚠️ Incomplete: results unavailable for {', '.join(unavailable_tools)} "
+        f"— see the corresponding section(s) below for details_\n"
+        if unavailable_tools else ""
+    )
+
     report = f"""## 🔒 Security Audit — {overall}
 
 _Generated: {timestamp}_
-
+{incomplete_note}
 | Critical | High/Warn | Overall |
 | :---: | :---: | :---: |
 | {'🚨 ' + str(total_critical) if total_critical else '✅ 0'} | ⚠️ see below | {overall} |
@@ -289,6 +343,11 @@ _Total critical findings: **{total_critical}**_
         print(f"  Critical findings: {total_critical}")
         print(f"    bandit={bandit_crit}  pip-audit={pip_audit_crit}  "
               f"gitleaks={gitleaks_crit}  proofs={proofs_crit}  plugins={plugins_crit}")
+        if unavailable_tools:
+            print(f"  Unavailable: {', '.join(unavailable_tools)}")
+
+    if unavailable_tools:
+        return 1
 
     return 0
 

@@ -56,6 +56,10 @@ class _PluginVisitor(ast.NodeVisitor):
         self.filepath = filepath
         self.plugin_id = plugin_id
         self.findings: list[Finding] = []
+        # Local name -> real dotted path, so aliased imports and from-imports
+        # of dangerous APIs (import subprocess as sp; from builtins import
+        # eval as e) are still recognized in visit_Call below.
+        self._aliases: dict[str, str] = {}
 
     def _add(self, node: ast.AST, severity: str, rule: str, message: str) -> None:
         self.findings.append(Finding(
@@ -67,24 +71,34 @@ class _PluginVisitor(ast.NodeVisitor):
             message=message,
         ))
 
+    def _resolve(self, local_name: str) -> str:
+        """Resolve a local name through recorded import aliases to its real
+        dotted path (e.g. "sp" -> "subprocess"); unresolved names pass through
+        unchanged."""
+        return self._aliases.get(local_name, local_name)
+
     def visit_Call(self, node: ast.Call) -> None:
-        # eval() / exec() — arbitrary code execution
+        # eval() / exec() / compile() — arbitrary code execution, including
+        # aliased or from-imported forms (from builtins import eval as e; e(...))
         if isinstance(node.func, ast.Name):
-            if node.func.id == "eval":
+            target = self._resolve(node.func.id).rsplit(".", 1)[-1]
+            if target == "eval":
                 self._add(node, "CRITICAL", "PLUGIN-001",
                           "eval() call — arbitrary code execution risk")
-            elif node.func.id == "exec":
+            elif target == "exec":
                 self._add(node, "CRITICAL", "PLUGIN-002",
                           "exec() call — arbitrary code execution risk")
-            elif node.func.id == "compile":
+            elif target == "compile":
                 self._add(node, "WARNING", "PLUGIN-003",
                           "compile() call — dynamic code compilation")
 
-        # subprocess.*(shell=True)
-        if isinstance(node.func, ast.Attribute):
+        # subprocess.*(shell=True) / os.system(), including aliased imports
+        # (import subprocess as sp; import os as o)
+        if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
+            base = self._resolve(node.func.value.id)
+
             is_subprocess = (
-                isinstance(node.func.value, ast.Name) and
-                node.func.value.id == "subprocess" and
+                base == "subprocess" and
                 node.func.attr in ("run", "call", "Popen", "check_call", "check_output")
             )
             if is_subprocess:
@@ -97,11 +111,7 @@ class _PluginVisitor(ast.NodeVisitor):
                                   f"shell injection risk if args include user input")
 
             # os.system() — shell execution
-            is_os_system = (
-                isinstance(node.func.value, ast.Name) and
-                node.func.value.id == "os" and
-                node.func.attr == "system"
-            )
+            is_os_system = base == "os" and node.func.attr == "system"
             if is_os_system:
                 self._add(node, "WARNING", "PLUGIN-005",
                           "os.system() call — prefer subprocess with list args")
@@ -110,11 +120,20 @@ class _PluginVisitor(ast.NodeVisitor):
 
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
+            if alias.asname:
+                local, real = alias.asname, alias.name
+            else:
+                # `import os.path` binds the top-level name `os`, not `os.path`
+                local = real = alias.name.split(".")[0]
+            self._aliases[local] = real
             self._check_import(node, alias.name)
         self.generic_visit(node)
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         if node.module:
+            for alias in node.names:
+                local = alias.asname or alias.name
+                self._aliases[local] = f"{node.module}.{alias.name}"
             self._check_import(node, node.module)
         self.generic_visit(node)
 
@@ -167,20 +186,24 @@ def audit_plugin(plugin_dir: Path) -> list[Finding]:
             visitor.visit(tree)
             findings.extend(visitor.findings)
         except SyntaxError as exc:
+            # A file the visitor can't even parse is a file we can't verify
+            # is safe -- this must block the audit, not just warn.
             findings.append(Finding(
                 plugin_id=plugin_id,
                 file=str(py_file.relative_to(PROJECT_ROOT)),
                 line=getattr(exc, "lineno", 0) or 0,
-                severity="WARNING",
+                severity="CRITICAL",
                 rule="PLUGIN-030",
                 message=f"Python syntax error — cannot be parsed: {exc}",
             ))
         except OSError as exc:
+            # Same reasoning as SyntaxError: an unreadable file was never
+            # actually scanned, so it must block rather than pass silently.
             findings.append(Finding(
                 plugin_id=plugin_id,
                 file=str(py_file.relative_to(PROJECT_ROOT)),
                 line=0,
-                severity="INFO",
+                severity="CRITICAL",
                 rule="PLUGIN-031",
                 message=f"Could not read file: {exc}",
             ))
@@ -212,6 +235,7 @@ def main() -> int:
 
     all_findings: list[Finding] = []
     plugins_scanned = 0
+    plugin_found = args.plugin is None
 
     for base_dir in PLUGIN_BASE_DIRS:
         if not base_dir.exists():
@@ -229,6 +253,8 @@ def main() -> int:
                 continue
             if args.plugin and plugin_dir.name != args.plugin:
                 continue
+            if args.plugin:
+                plugin_found = True
 
             findings = audit_plugin(plugin_dir)
             all_findings.extend(findings)
@@ -253,6 +279,12 @@ def main() -> int:
                         f.severity, "  "
                     )
                     print(f"           {severity_icon} {f.rule} {f.file}:{f.line} — {f.message}")
+
+    if args.plugin and not plugin_found:
+        print(f"\n  🚨 Plugin '{args.plugin}' not found in any of "
+              f"{[str(d.relative_to(PROJECT_ROOT)) for d in PLUGIN_BASE_DIRS]} — "
+              f"nothing was audited")
+        return 1
 
     # Summary
     critical_findings = [f for f in all_findings if f.severity == "CRITICAL"]

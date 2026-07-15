@@ -17,6 +17,7 @@ but do not block CI.
 
 import ast
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -43,7 +44,7 @@ class TestResult:
     @property
     def icon(self) -> str:
         return {
-            "PASS": "✅",
+            "PASS": "✅",  # nosec B105 - severity label, not a credential
             "INFO": "ℹ️ ",
             "WARNING": "⚠️ ",
             "CRITICAL": "🚨",
@@ -57,11 +58,17 @@ class TestResult:
 
 def test_t1a_zip_slip_protection() -> TestResult:
     """
-    Verify that zip-slip protection exists in store_manager.py.
+    Verify that zip-slip protection actually guards zip extraction in
+    store_manager.py.
 
-    The protection lives at src/plugin_system/store_manager.py and uses
-    Path.is_relative_to() to validate each zip member before extraction.
-    This test confirms the guard is present — it should always pass green.
+    A whole-file substring check for "is_relative_to"/"Zip-slip detected"
+    would pass even if the guard existed somewhere unrelated, or covered
+    only one of several extract()/extractall() call sites. Instead, this
+    walks the AST: for every extract()/extractall() call, it confirms an
+    is_relative_to() check (and the "Zip-slip detected" log) appears
+    earlier in that same enclosing function -- validate-then-bulk-extract
+    (validate every member, then call extractall() only after all passed)
+    counts as protecting the call, since it covers the same member list.
     """
     store_manager = PROJECT_ROOT / "src" / "plugin_system" / "store_manager.py"
     if not store_manager.exists():
@@ -70,23 +77,65 @@ def test_t1a_zip_slip_protection() -> TestResult:
                           f"Expected at {store_manager}")
 
     content = store_manager.read_text(encoding="utf-8")
-
-    has_relative_to = "is_relative_to" in content
-    has_log_message = "Zip-slip detected" in content
-
-    if not has_relative_to:
+    try:
+        tree = ast.parse(content, filename=str(store_manager))
+    except SyntaxError as exc:
         return TestResult("T1a", "CRITICAL",
-                          "Zip-slip protection (is_relative_to) NOT FOUND in store_manager.py",
-                          "The is_relative_to() guard must be present before zipfile.extractall()")
+                          "store_manager.py could not be parsed",
+                          str(exc))
 
-    if not has_log_message:
+    extraction_sites = 0
+    unprotected: list[str] = []
+
+    for func in ast.walk(tree):
+        if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+
+        extract_calls = [
+            node for node in ast.walk(func)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and node.func.attr in ("extract", "extractall")
+        ]
+        if not extract_calls:
+            continue
+        extraction_sites += len(extract_calls)
+
+        guard_lines = [
+            n.lineno for n in ast.walk(func)
+            if isinstance(n, ast.Attribute) and n.attr == "is_relative_to"
+        ]
+        has_zip_slip_log = any(
+            isinstance(n, ast.Constant) and isinstance(n.value, str)
+            and "Zip-slip detected" in n.value
+            for n in ast.walk(func)
+        )
+
+        for call in extract_calls:
+            guarded = has_zip_slip_log and any(g < call.lineno for g in guard_lines)
+            if not guarded:
+                unprotected.append(
+                    f"{func.name}() line {call.lineno}: {call.func.attr}() call not "
+                    f"clearly preceded by an is_relative_to() guard + Zip-slip log "
+                    f"in the same function"
+                )
+
+    if extraction_sites == 0:
         return TestResult("T1a", "WARNING",
-                          "is_relative_to() found but 'Zip-slip detected' log message missing",
-                          "Verify the protection block is still active and the log was not removed")
+                          "No zipfile extract()/extractall() calls found in store_manager.py",
+                          "Verify plugin installation no longer extracts zip archives, "
+                          "or that this check still targets the right file")
+
+    if unprotected:
+        return TestResult("T1a", "CRITICAL",
+                          f"{len(unprotected)} of {extraction_sites} zip extraction "
+                          f"call(s) not clearly guarded",
+                          "; ".join(unprotected))
 
     return TestResult("T1a", "PASS",
                       "Zip-slip protection verified",
-                      "is_relative_to() guard + 'Zip-slip detected' log present in store_manager.py")
+                      f"All {extraction_sites} extract()/extractall() call(s) in "
+                      f"store_manager.py are preceded by an is_relative_to() guard "
+                      f"with a Zip-slip log in the same function")
 
 
 def test_t1b_dangerous_plugin_calls() -> list[TestResult]:
@@ -102,6 +151,8 @@ def test_t1b_dangerous_plugin_calls() -> list[TestResult]:
 
     violations: list[str] = []
     files_scanned = 0
+
+    scan_errors: list[str] = []
 
     for base in plugin_dirs:
         if not base.exists():
@@ -120,8 +171,19 @@ def test_t1b_dangerous_plugin_calls() -> list[TestResult]:
                                 rel = py_file.relative_to(PROJECT_ROOT)
                                 violations.append(
                                     f"{rel}:{node.lineno} — {node.func.id}() call")
-                except (SyntaxError, OSError):
-                    pass
+                except (SyntaxError, OSError) as exc:
+                    # A file we couldn't parse/read was never actually
+                    # scanned for eval()/exec() -- that must block this
+                    # test, not silently pass as if it were clean.
+                    rel = py_file.relative_to(PROJECT_ROOT)
+                    scan_errors.append(f"{rel} — {type(exc).__name__}: {exc}")
+
+    if scan_errors:
+        results.append(TestResult(
+            "T1b", "CRITICAL",
+            f"{len(scan_errors)} plugin file(s) could not be scanned for eval()/exec()",
+            "; ".join(scan_errors[:10])
+        ))
 
     if violations:
         results.append(TestResult(
@@ -129,7 +191,7 @@ def test_t1b_dangerous_plugin_calls() -> list[TestResult]:
             f"Dangerous function calls found in plugins ({len(violations)} instance(s))",
             "; ".join(violations[:10])
         ))
-    else:
+    elif not scan_errors:
         results.append(TestResult(
             "T1b", "PASS",
             "No eval()/exec() calls found in plugins",
@@ -182,7 +244,19 @@ def test_t2a_api_surface_inventory() -> TestResult:
             "the app is now internet-facing"
         )
 
-    return TestResult("T2a", "INFO", "API surface documented", summary)
+    # There is currently no config mechanism that actually enforces the
+    # local-only boundary the design-intent comment describes -- app.py
+    # hardcodes host='0.0.0.0' unconditionally, so nothing here can confirm
+    # this deployment is in fact LAN-only. Reporting this as mere INFO
+    # understates that: an unauthenticated, CSRF-disabled API surface is a
+    # real risk the moment this ever runs somewhere other than a home LAN,
+    # documented rationale or not.
+    return TestResult(
+        "T2a", "WARNING",
+        "API surface has no auth and CSRF disabled; enforcement of the "
+        "documented local-only boundary cannot be confirmed",
+        summary
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -191,13 +265,13 @@ def test_t2a_api_surface_inventory() -> TestResult:
 
 # Patterns that suggest real credentials (must be >8 chars, not placeholders)
 _SECRET_PATTERNS = [
-    (r'(?i)password\s*=\s*["\'](?!none|empty|placeholder|example|test|default|""|'')[^"\']{8,}["\']', "WARNING"),
-    (r'(?i)api[_-]?key\s*=\s*["\'](?!none|empty|placeholder|YOUR_|example|test)[^"\']{16,}["\']', "WARNING"),
-    (r'(?i)secret\s*=\s*["\'](?!none|empty|placeholder|YOUR_|example|test)[^"\']{16,}["\']', "WARNING"),
+    (r'(?i)password\s*=\s*["\'](?!none|empty|placeholder|example|test|default|""|'')[^"\']{8,}["\']', "WARNING", "password"),
+    (r'(?i)api[_-]?key\s*=\s*["\'](?!none|empty|placeholder|YOUR_|example|test)[^"\']{16,}["\']', "WARNING", "api_key"),
+    (r'(?i)secret\s*=\s*["\'](?!none|empty|placeholder|YOUR_|example|test)[^"\']{16,}["\']', "WARNING", "secret"),
     # Real GitHub token pattern
-    (r'ghp_[a-zA-Z0-9]{36}', "CRITICAL"),
+    (r'ghp_[a-zA-Z0-9]{36}', "CRITICAL", "github_token"),
     # Generic long bearer tokens
-    (r'Bearer\s+[a-zA-Z0-9\-_\.]{32,}', "WARNING"),
+    (r'Bearer\s+[a-zA-Z0-9\-_\.]{32,}', "WARNING", "bearer_token"),
 ]
 
 _TEMPLATE_SKIP_STRINGS = [
@@ -225,16 +299,25 @@ def test_t3a_hardcoded_secrets() -> TestResult:
             except OSError:
                 continue
 
-            for pattern, severity in _SECRET_PATTERNS:
+            for pattern, severity, pattern_type in _SECRET_PATTERNS:
                 for match in re.finditer(pattern, content):
                     line_content = match.group(0)
-                    # Skip lines containing template placeholder strings
+                    # Skip lines containing template placeholder strings.
+                    # line_content is only used for this in-memory check --
+                    # it must never be stored or included in output below.
                     if any(skip in line_content for skip in _TEMPLATE_SKIP_STRINGS):
                         continue
                     rel = py_file.relative_to(PROJECT_ROOT)
                     line_no = content[: match.start()].count("\n") + 1
+                    # Redacted fingerprint lets the same finding be recognized
+                    # across scans without ever reporting the matched
+                    # credential itself (which would otherwise get published
+                    # into CI logs, JSON artifacts, and PR comments -- wider
+                    # exposure than the original leak).
+                    fingerprint = hashlib.sha256(line_content.encode()).hexdigest()[:12]
                     violations.append(
-                        f"[{severity}] {rel}:{line_no} — {line_content[:60]}"
+                        f"[{severity}] {rel}:{line_no} — {pattern_type} "
+                        f"(fingerprint {fingerprint})"
                     )
 
     critical_violations = [v for v in violations if "[CRITICAL]" in v]
@@ -414,14 +497,16 @@ def test_t6_docker_hardening() -> TestResult:
     if not user_lines or user_lines[-1].strip() == "USER root":
         issues.append("Container runs as root — use USER directive to drop privileges")
 
-    # Check for pinned base image tags
+    # Check for pinned base image tags. A tag (even a specific version, not
+    # just :latest) is mutable -- the same tag can point to a different
+    # image later. Only a @sha256 digest is truly immutable/reproducible.
     from_lines = [l for l in content.splitlines() if l.strip().startswith("FROM")]
     for from_line in from_lines:
         parts = from_line.split()
         if len(parts) >= 2:
             image = parts[1]
-            if ":" not in image or image.endswith(":latest"):
-                issues.append(f"Unpinned base image: {image}")
+            if "@sha256:" not in image:
+                issues.append(f"Base image not pinned to a digest: {image}")
 
     if issues:
         return TestResult("T6", "WARNING",

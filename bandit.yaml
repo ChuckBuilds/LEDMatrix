@@ -27,7 +27,3 @@ exclude_dirs:
   - venv
   - .venv
   - rpi-rgb-led-matrix-master
-  # prove_security.py intentionally contains detection patterns as string literals
-  # (e.g. "eval(", "exec(") to search for in other files — bandit would flag
-  # these as false positives.
-  - scripts/prove_security.py
