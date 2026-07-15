@@ -500,11 +500,15 @@ def test_t6_docker_hardening() -> TestResult:
     # Check for pinned base image tags. A tag (even a specific version, not
     # just :latest) is mutable -- the same tag can point to a different
     # image later. Only a @sha256 digest is truly immutable/reproducible.
-    from_lines = [l for l in content.splitlines() if l.strip().startswith("FROM")]
+    from_lines = [line for line in content.splitlines() if line.strip().startswith("FROM")]
     for from_line in from_lines:
         parts = from_line.split()
-        if len(parts) >= 2:
-            image = parts[1]
+        # FROM [--platform=<platform>] <image> [AS <name>] -- skip an
+        # optional --platform= flag so it's never mistaken for the image
+        # token itself (which would falsely report it as unpinned).
+        image_parts = [p for p in parts[1:] if not p.startswith("--platform=")]
+        if image_parts:
+            image = image_parts[0]
             if "@sha256:" not in image:
                 issues.append(f"Base image not pinned to a digest: {image}")
 

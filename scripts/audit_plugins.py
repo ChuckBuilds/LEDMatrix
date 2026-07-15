@@ -77,44 +77,60 @@ class _PluginVisitor(ast.NodeVisitor):
         unchanged."""
         return self._aliases.get(local_name, local_name)
 
+    def _resolve_call_target(self, func: ast.expr) -> str | None:
+        """Resolve a Call's func node to a fully-qualified dotted target,
+        covering a direct name (bare builtin, aliased import, or
+        from-import: from builtins import eval as e; from subprocess
+        import run; from os import system as s) and module-attribute
+        access (subprocess.run, sp.run, os.system, o.system) uniformly.
+        Returns None for call shapes this doesn't attempt to resolve."""
+        if isinstance(func, ast.Name):
+            return self._resolve(func.id)
+        if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+            base = self._resolve(func.value.id)
+            return f"{base}.{func.attr}"
+        return None
+
     def visit_Call(self, node: ast.Call) -> None:
-        # eval() / exec() / compile() — arbitrary code execution, including
-        # aliased or from-imported forms (from builtins import eval as e; e(...))
-        if isinstance(node.func, ast.Name):
-            target = self._resolve(node.func.id).rsplit(".", 1)[-1]
-            if target == "eval":
-                self._add(node, "CRITICAL", "PLUGIN-001",
-                          "eval() call — arbitrary code execution risk")
-            elif target == "exec":
-                self._add(node, "CRITICAL", "PLUGIN-002",
-                          "exec() call — arbitrary code execution risk")
-            elif target == "compile":
-                self._add(node, "WARNING", "PLUGIN-003",
-                          "compile() call — dynamic code compilation")
+        target = self._resolve_call_target(node.func)
+        if target is None:
+            self.generic_visit(node)
+            return
 
-        # subprocess.*(shell=True) / os.system(), including aliased imports
-        # (import subprocess as sp; import os as o)
-        if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
-            base = self._resolve(node.func.value.id)
+        leaf = target.rsplit(".", 1)[-1]
 
-            is_subprocess = (
-                base == "subprocess" and
-                node.func.attr in ("run", "call", "Popen", "check_call", "check_output")
-            )
-            if is_subprocess:
-                for kw in node.keywords:
-                    if (kw.arg == "shell" and
-                            isinstance(kw.value, ast.Constant) and
-                            kw.value.value is True):
-                        self._add(node, "WARNING", "PLUGIN-004",
-                                  f"subprocess.{node.func.attr}(shell=True) — "
-                                  f"shell injection risk if args include user input")
+        # eval() / exec() / compile() — arbitrary code execution, whether a
+        # bare call, an aliased import, or a from-import
+        # (from builtins import eval as e; e(...))
+        if leaf == "eval":
+            self._add(node, "CRITICAL", "PLUGIN-001",
+                      "eval() call — arbitrary code execution risk")
+        elif leaf == "exec":
+            self._add(node, "CRITICAL", "PLUGIN-002",
+                      "exec() call — arbitrary code execution risk")
+        elif leaf == "compile":
+            self._add(node, "WARNING", "PLUGIN-003",
+                      "compile() call — dynamic code compilation")
 
-            # os.system() — shell execution
-            is_os_system = base == "os" and node.func.attr == "system"
-            if is_os_system:
-                self._add(node, "WARNING", "PLUGIN-005",
-                          "os.system() call — prefer subprocess with list args")
+        # subprocess.*(shell=True), whether subprocess.run(...), sp.run(...),
+        # or a from-import (from subprocess import run; run(..., shell=True))
+        if target in {
+            "subprocess.run", "subprocess.call", "subprocess.Popen",
+            "subprocess.check_call", "subprocess.check_output",
+        }:
+            for kw in node.keywords:
+                if (kw.arg == "shell" and
+                        isinstance(kw.value, ast.Constant) and
+                        kw.value.value is True):
+                    self._add(node, "WARNING", "PLUGIN-004",
+                              f"subprocess.{leaf}(shell=True) — "
+                              f"shell injection risk if args include user input")
+
+        # os.system(), whether os.system(...), o.system(...), or a
+        # from-import (from os import system as s; s(...))
+        if target == "os.system":
+            self._add(node, "WARNING", "PLUGIN-005",
+                      "os.system() call — prefer subprocess with list args")
 
         self.generic_visit(node)
 

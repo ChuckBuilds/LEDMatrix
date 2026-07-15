@@ -71,7 +71,7 @@ def _load(path: Path) -> tuple[dict | list | None, str | None]:
         return None, f"could not read/parse {path}: {exc}"
 
 
-def _md_sanitize_cell(value) -> str:
+def _md_sanitize_cell(value: object) -> str:
     """Escape/normalize a value so scanner-controlled content (a matched
     secret, a bandit issue_text, a file path) can't alter the Markdown
     table's structure: pipes would add bogus columns, newlines would break
