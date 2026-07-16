@@ -59,8 +59,9 @@
     // Track active notifications
     let activeNotifications = [];
     // onAction callbacks for notifications with an inline action button,
-    // keyed by notification id (cleaned up on dismiss).
-    const actionCallbacks = {};
+    // keyed by notification id (cleaned up on dismiss). A Map rather than a
+    // plain object so ids can never collide with prototype properties.
+    const actionCallbacks = new Map();
     let notificationCounter = 0;
 
     /**
@@ -116,7 +117,7 @@
 
         // Remove from tracking array
         activeNotifications = activeNotifications.filter(id => id !== notificationId);
-        delete actionCallbacks[notificationId];
+        actionCallbacks.delete(notificationId);
     }
 
     /**
@@ -166,7 +167,7 @@
         // The callback is stored by id and invoked via triggerAction, which
         // also dismisses the notification.
         if (options.actionLabel && typeof options.onAction === 'function') {
-            actionCallbacks[notificationId] = options.onAction;
+            actionCallbacks.set(notificationId, options.onAction);
             html += `
                 <button type="button"
                         onclick="window.LEDMatrixWidgets.get('notification').triggerAction('${notificationId}')"
@@ -251,9 +252,9 @@
          * @param {string} notificationId - Notification ID whose action to run
          */
         triggerAction: function(notificationId) {
-            const cb = actionCallbacks[notificationId];
+            const cb = actionCallbacks.get(notificationId);
             removeNotification(notificationId);
-            if (cb) cb();
+            if (typeof cb === 'function') cb();
         },
 
         /**

@@ -133,7 +133,7 @@
                         // For form submissions, log the form data
                         if (target && target.tagName === 'FORM') {
                             const formData = new FormData(target);
-                            const formPayload = {};
+                            const formPayload = Object.create(null);
                             for (const [key, value] of formData.entries()) {
                                 formPayload[key] = value;
                             }
@@ -149,7 +149,7 @@
                                         validation_errors: errorData.validation_errors,
                                         context: errorData.context
                                     });
-                                } catch (e) {
+                                } catch {
                                     console.error('Error response (non-JSON):', xhr.responseText.substring(0, 500));
                                 }
                             }
@@ -167,11 +167,11 @@
                                 const scripts = event.detail.target.querySelectorAll('script');
                                 scripts.forEach(function(oldScript) {
                                     try {
-                                        if (oldScript.innerHTML.trim() || oldScript.src) {
+                                        if (oldScript.textContent.trim() || oldScript.src) {
                                             const newScript = document.createElement('script');
                                             if (oldScript.src) newScript.src = oldScript.src;
                                             if (oldScript.type) newScript.type = oldScript.type;
-                                            if (oldScript.innerHTML) newScript.textContent = oldScript.innerHTML;
+                                            if (oldScript.textContent) newScript.textContent = oldScript.textContent;
                                             if (oldScript.parentNode) {
                                                 oldScript.parentNode.insertBefore(newScript, oldScript);
                                                 oldScript.parentNode.removeChild(oldScript);
@@ -195,8 +195,8 @@
                     // containers only) so modals and plugin config panels can still reload.
                     document.body.addEventListener('htmx:afterSettle', function(event) {
                         if (event.detail && event.detail.target) {
-                            var target = event.detail.target;
-                            var trigger = target.getAttribute('hx-trigger') || '';
+                            const target = event.detail.target;
+                            const trigger = target.getAttribute('hx-trigger') || '';
                             if (trigger.includes('loadtab')) {
                                 target.setAttribute('data-loaded', 'true');
                             }

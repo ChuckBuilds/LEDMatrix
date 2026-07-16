@@ -21,21 +21,11 @@
 (function() {
     'use strict';
 
-    function escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text == null ? '' : String(text);
-        return div.innerHTML;
-    }
-
-    function escapeAttr(text) {
-        return escapeHtml(text).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-    }
-
-    const MODE_LABELS = {
-        'scroll': { label: 'Scroll', icon: 'fa-scroll', color: 'text-blue-600' },
-        'fixed':  { label: 'Fixed',  icon: 'fa-square', color: 'text-green-600' },
-        'static': { label: 'Static', icon: 'fa-pause',  color: 'text-orange-600' }
-    };
+    const MODE_LABELS = new Map([
+        ['scroll', { label: 'Scroll', icon: 'fa-scroll', color: 'text-blue-600' }],
+        ['fixed',  { label: 'Fixed',  icon: 'fa-square', color: 'text-green-600' }],
+        ['static', { label: 'Static', icon: 'fa-pause',  color: 'text-orange-600' }]
+    ]);
 
     function init(options) {
         const container = document.getElementById(options.containerId);
@@ -109,7 +99,11 @@
                 const allPlugins = (data.data && data.data.plugins) || data.plugins || [];
                 const plugins = allPlugins.filter(p => p.enabled);
                 if (plugins.length === 0) {
-                    container.innerHTML = '<p class="text-sm text-gray-500 italic">No enabled plugins</p>';
+                    const empty = document.createElement('p');
+                    empty.className = 'text-sm text-gray-500 italic';
+                    empty.textContent = 'No enabled plugins';
+                    container.textContent = '';
+                    container.appendChild(empty);
                     return;
                 }
 
@@ -132,40 +126,55 @@
                     if (!orderedPlugins.find(p => p.id === plugin.id)) orderedPlugins.push(plugin);
                 });
 
-                let html = '';
+                // Rows are built with DOM APIs rather than innerHTML — plugin
+                // ids/names come from installed manifests (semi-trusted).
+                container.textContent = '';
                 orderedPlugins.forEach(plugin => {
-                    const safePluginId = escapeAttr(plugin.id);
-                    const safePluginName = escapeHtml(plugin.name || plugin.id);
-                    let rowInner;
+                    const row = document.createElement('div');
+                    row.className = 'flex items-center p-2 bg-gray-50 rounded border border-gray-200 cursor-move plugin-order-item';
+                    row.dataset.pluginId = plugin.id;
+                    row.draggable = true;
+
+                    const grip = document.createElement('i');
+                    grip.className = 'fas fa-grip-vertical text-gray-400 mr-3';
+                    row.appendChild(grip);
+
                     if (excludedInput) {
                         const isExcluded = excluded.includes(plugin.id);
-                        rowInner = `
-                            <label class="flex items-center flex-1">
-                                <input type="checkbox"
-                                       class="plugin-order-include h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded mr-2"
-                                       ${!isExcluded ? 'checked' : ''}>
-                                <span class="text-sm font-medium text-gray-700">${safePluginName}</span>
-                            </label>`;
+                        const label = document.createElement('label');
+                        label.className = 'flex items-center flex-1';
+                        const checkbox = document.createElement('input');
+                        checkbox.type = 'checkbox';
+                        checkbox.className = 'plugin-order-include h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded mr-2';
+                        checkbox.checked = !isExcluded;
+                        const name = document.createElement('span');
+                        name.className = 'text-sm font-medium text-gray-700';
+                        name.textContent = plugin.name || plugin.id;
+                        label.appendChild(checkbox);
+                        label.appendChild(name);
+                        row.appendChild(label);
                     } else {
-                        rowInner = `<span class="text-sm font-medium text-gray-700 flex-1">${safePluginName}</span>`;
+                        const name = document.createElement('span');
+                        name.className = 'text-sm font-medium text-gray-700 flex-1';
+                        name.textContent = plugin.name || plugin.id;
+                        row.appendChild(name);
                     }
-                    let badge = '';
+
                     if (options.showVegasModeBadge) {
                         const vegasMode = plugin.vegas_mode || plugin.vegas_content_type || 'fixed';
-                        const modeInfo = MODE_LABELS[vegasMode] || MODE_LABELS['fixed'];
-                        badge = `
-                            <span class="text-xs ${modeInfo.color} ml-2" title="Vegas display mode: ${modeInfo.label}">
-                                <i class="fas ${modeInfo.icon} mr-1"></i>${modeInfo.label}
-                            </span>`;
+                        const modeInfo = MODE_LABELS.get(vegasMode) || MODE_LABELS.get('fixed');
+                        const badge = document.createElement('span');
+                        badge.className = `text-xs ${modeInfo.color} ml-2`;
+                        badge.title = `Vegas display mode: ${modeInfo.label}`;
+                        const badgeIcon = document.createElement('i');
+                        badgeIcon.className = `fas ${modeInfo.icon} mr-1`;
+                        badge.appendChild(badgeIcon);
+                        badge.appendChild(document.createTextNode(modeInfo.label));
+                        row.appendChild(badge);
                     }
-                    html += `
-                        <div class="flex items-center p-2 bg-gray-50 rounded border border-gray-200 cursor-move plugin-order-item"
-                             data-plugin-id="${safePluginId}" draggable="true">
-                            <i class="fas fa-grip-vertical text-gray-400 mr-3"></i>
-                            ${rowInner}${badge}
-                        </div>`;
+
+                    container.appendChild(row);
                 });
-                container.innerHTML = html;
 
                 setupDragAndDrop();
                 container.querySelectorAll('.plugin-order-include').forEach(checkbox => {
@@ -175,7 +184,11 @@
             })
             .catch(error => {
                 console.error('Error fetching plugins:', error);
-                container.innerHTML = '<p class="text-sm text-red-500">Error loading plugins</p>';
+                const err = document.createElement('p');
+                err.className = 'text-sm text-red-500';
+                err.textContent = 'Error loading plugins';
+                container.textContent = '';
+                container.appendChild(err);
             });
     }
 

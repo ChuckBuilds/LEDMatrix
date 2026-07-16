@@ -1005,8 +1005,9 @@
     <!-- Legacy plugins_manager.js (for backward compatibility during migration) -->
     <script src="{{ url_for('static', filename='v3/plugins_manager.js') }}?v=20260307" defer></script>
     
-    <!-- Custom feeds table helper functions -->
-    <script src="{{ url_for('static', filename='v3/js/custom-feeds-helpers.js') }}"></script>
+    <!-- Custom feeds table helpers live in js/widgets/custom-feeds.js (the
+         deferred widget's window assignments always shadowed the inline
+         copies that used to sit here, so the duplicates were removed) -->
     
     <!-- On-Demand Modal (moved here from plugins.html so it's always available) -->
     <div id="on-demand-modal" class="fixed inset-0 modal-backdrop flex items-center justify-center z-50" style="display: none;">

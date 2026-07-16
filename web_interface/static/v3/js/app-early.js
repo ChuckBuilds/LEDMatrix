@@ -51,7 +51,7 @@
             if (pluginTabsRow && pluginTabsNav && plugins.length > 0) {
                 // Clear existing plugin tabs (except Plugin Manager)
                 const existingTabs = pluginTabsNav.querySelectorAll('.plugin-tab');
-                existingTabs.forEach(tab => tab.remove());
+                existingTabs.forEach(tab => { tab.remove(); });
                 
                 // Add tabs for each installed plugin
                 plugins.forEach(plugin => {
@@ -72,8 +72,14 @@
                             }
                         }
                     };
-                    const iconClass = (plugin.icon || 'fas fa-puzzle-piece').replace(/"/g, '&quot;');
-                    tabButton.innerHTML = `<i class="${iconClass}"></i>${(plugin.name || plugin.id).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}`;
+                    // Built with DOM APIs (no innerHTML): the icon class and
+                    // name come from plugin manifests, which are only
+                    // semi-trusted input.
+                    const tabIcon = document.createElement('i');
+                    tabIcon.className = plugin.icon || 'fas fa-puzzle-piece';
+                    tabButton.textContent = '';
+                    tabButton.appendChild(tabIcon);
+                    tabButton.appendChild(document.createTextNode(plugin.name || plugin.id));
                     pluginTabsNav.appendChild(tabButton);
                 });
                 debugLog('[GLOBAL] Updated plugin tabs directly:', plugins.length, 'tabs added');
@@ -331,10 +337,13 @@
                                         this.updatePluginTabStates();
                                     }
                                 };
-                                const div = document.createElement('div');
-                                div.textContent = plugin.name || plugin.id;
-                                const iconClass = (plugin.icon || 'fas fa-puzzle-piece').replace(/"/g, '&quot;');
-                                tabButton.innerHTML = `<i class="${iconClass}"></i>${div.innerHTML}`;
+                                // DOM APIs instead of innerHTML: manifest
+                                // icon/name are semi-trusted input.
+                                const tabIcon = document.createElement('i');
+                                tabIcon.className = plugin.icon || 'fas fa-puzzle-piece';
+                                tabButton.textContent = '';
+                                tabButton.appendChild(tabIcon);
+                                tabButton.appendChild(document.createTextNode(plugin.name || plugin.id));
                                 pluginTabsNav.appendChild(tabButton);
                             });
                             debugLog('[STUB] updatePluginTabs: Added', this.installedPlugins.length, 'plugin tabs');
