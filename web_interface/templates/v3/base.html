@@ -5,6 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LED Matrix Control Panel</title>
 
+    <!-- Installable web app (Add to Home Screen) -->
+    <link rel="manifest" href="{{ url_for('static', filename='v3/manifest.json') }}">
+    <meta name="theme-color" content="#111827">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='v3/icons/apple-touch-icon.png') }}">
+    <link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static', filename='v3/icons/icon-192.png') }}">
+
     <!-- Debug logging gate: verbose console output is suppressed unless
          localStorage.pluginDebug === 'true' (the same switch the plugin
          scripts already use). console.error/warn are never gated. -->
@@ -389,6 +395,36 @@
                     <button type="button" onclick="dismissUpdateBanner()"
                             class="update-banner-dismiss rounded p-1 transition-colors duration-150"
                             title="Dismiss" aria-label="Dismiss update">
+                        <i class="fas fa-times text-sm"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Restart-pending banner: shown after a main-config save (display
+         hardware, rotation order, durations, general settings) — those only
+         take effect after the display service restarts. Plugin config saves
+         apply live and don't trigger this. Wired in app.js. -->
+    <div id="restart-pending-banner" style="display:none"
+         class="update-banner border-b transition-all duration-300 ease-in-out">
+        <div class="mx-auto px-4 sm:px-6 lg:px-8 xl:px-12 2xl:px-16 py-2" style="max-width:100%">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-3">
+                    <i class="fas fa-rotate text-lg"></i>
+                    <span class="text-sm font-medium" aria-live="polite">
+                        Configuration saved &mdash; restart the display to apply the changes
+                    </span>
+                </div>
+                <div class="flex items-center space-x-3">
+                    <button onclick="window.restartPendingNow()" id="restart-pending-btn"
+                            class="inline-flex items-center px-3 py-1 text-xs font-semibold rounded-md
+                                   update-banner-action transition-colors duration-150">
+                        <i class="fas fa-power-off mr-1"></i> Restart Now
+                    </button>
+                    <button type="button" onclick="window.dismissRestartPending()"
+                            class="update-banner-dismiss rounded p-1 transition-colors duration-150"
+                            title="Dismiss" aria-label="Dismiss restart reminder">
                         <i class="fas fa-times text-sm"></i>
                     </button>
                 </div>

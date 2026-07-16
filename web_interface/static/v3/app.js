@@ -49,6 +49,111 @@ document.body.addEventListener('htmx:afterRequest', function(event) {
             // Not JSON, ignore
         }
     }
+
+    // Main-config saves (display hardware, rotation/durations, general) only
+    // take effect after a display-service restart — surface the reminder
+    // banner. Plugin config saves apply live and are deliberately excluded.
+    try {
+        const cfg = event.detail.requestConfig;
+        if (cfg && cfg.verb === 'post' &&
+            (cfg.path || '').includes('/api/v3/config/main') &&
+            response && response.status >= 200 && response.status < 300) {
+            window.showRestartPending();
+        }
+    } catch { /* banner is best-effort */ }
+});
+
+// ===== Unsaved-changes guard =====
+// Plugin config panels are Alpine x-if templates: navigating away DESTROYS
+// the panel and revisiting re-fetches it, silently discarding any edits.
+// (System tabs use x-show + data-loaded and persist, so they're exempt.)
+// Track dirty forms and confirm before a lossy navigation.
+(function() {
+    function markDirty(e) {
+        const form = e.target && e.target.closest ? e.target.closest('form') : null;
+        if (form) form.setAttribute('data-dirty', '');
+    }
+    document.body.addEventListener('input', markDirty);
+    document.body.addEventListener('change', markDirty);
+
+    // A successful submit makes the form clean again
+    document.body.addEventListener('htmx:afterRequest', function(event) {
+        const xhr = event.detail.xhr;
+        const form = event.detail.elt && event.detail.elt.closest ? event.detail.elt.closest('form') : null;
+        if (form && xhr && xhr.status >= 200 && xhr.status < 300) {
+            form.removeAttribute('data-dirty');
+        }
+    });
+
+    // Capture phase so this runs before Alpine's bubbling @click switches tabs
+    document.addEventListener('click', function(e) {
+        const tabBtn = e.target && e.target.closest ? e.target.closest('.nav-tab') : null;
+        if (!tabBtn) return;
+        const lossy = Array.prototype.filter.call(
+            document.querySelectorAll('.plugin-config-tab form[data-dirty]'),
+            function(f) { return f.offsetParent !== null; }
+        );
+        if (lossy.length === 0) return;
+        if (!window.confirm('You have unsaved plugin settings — leaving this page will discard them. Leave anyway?')) {
+            e.stopPropagation();
+            e.preventDefault();
+        }
+    }, true);
+
+    // Full page unload loses every panel's edits
+    window.addEventListener('beforeunload', function(e) {
+        const dirty = Array.prototype.some.call(
+            document.querySelectorAll('form[data-dirty]'),
+            function(f) { return f.offsetParent !== null; }
+        );
+        if (dirty) {
+            e.preventDefault();
+            e.returnValue = '';
+        }
+    });
+})();
+
+// ===== Restart-pending banner =====
+// Shown after restart-requiring saves; persists across tab switches (and
+// reloads, via sessionStorage) until the display restarts or it's dismissed.
+window.showRestartPending = function() {
+    try { sessionStorage.setItem('ledmatrix-restart-pending', '1'); } catch { /* private browsing */ }
+    const banner = document.getElementById('restart-pending-banner');
+    if (banner) banner.style.display = 'block';
+};
+
+window.dismissRestartPending = function() {
+    try { sessionStorage.removeItem('ledmatrix-restart-pending'); } catch { /* no-op */ }
+    const banner = document.getElementById('restart-pending-banner');
+    if (banner) banner.style.display = 'none';
+};
+
+window.restartPendingNow = function() {
+    const btn = document.getElementById('restart-pending-btn');
+    if (btn) btn.disabled = true;
+    fetch('/api/v3/system/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'restart_display_service' })
+    })
+    .then(r => r.json())
+    .then(data => {
+        showNotification(data.message || 'Display restarting…', data.status || 'success');
+        window.dismissRestartPending();
+    })
+    .catch(err => {
+        showNotification('Error restarting display: ' + err.message, 'error');
+    })
+    .finally(() => { if (btn) btn.disabled = false; });
+};
+
+document.addEventListener('DOMContentLoaded', function() {
+    try {
+        if (sessionStorage.getItem('ledmatrix-restart-pending') === '1') {
+            const banner = document.getElementById('restart-pending-banner');
+            if (banner) banner.style.display = 'block';
+        }
+    } catch { /* no-op */ }
 });
 
 // SSE reconnection helper — closes and reopens both SSE streams,
