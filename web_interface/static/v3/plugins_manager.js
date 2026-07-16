@@ -3888,6 +3888,19 @@ window.installPlugin = function(pluginId, branch = null) {
     .then(data => {
         showNotification(data.message, data.status);
         if (data.status === 'success') {
+            // Enable immediately so install -> enable is one step, then nudge
+            // for the display restart that's needed before it shows on the
+            // matrix (persistent toast; duration 0 = stays until dismissed).
+            window.togglePlugin(pluginId, true);
+            showNotification(
+                `${pluginId} installed and enabled — restart the display to show it`,
+                {
+                    type: 'success',
+                    duration: 0,
+                    actionLabel: 'Restart Now',
+                    onAction: () => restartDisplay()
+                }
+            );
             // Refresh installed plugins list, then re-render store to update badges
             loadInstalledPlugins();
             setTimeout(() => applyStoreFiltersAndSort(true), 500);
