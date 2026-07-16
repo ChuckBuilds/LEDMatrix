@@ -59,6 +59,16 @@ except ImportError:
     # flask-limiter not installed, rate limiting disabled
     limiter = None
 
+# Enable gzip/brotli response compression (Flask-Compress skips streaming
+# responses, so the SSE endpoints are unaffected). Optional, like limiter:
+# missing package just means uncompressed responses.
+try:
+    from flask_compress import Compress
+
+    Compress(app)
+except ImportError:
+    pass
+
 # Import cache functions from separate module to avoid circular imports
 
 # Initialize plugin managers - read plugins directory from config
