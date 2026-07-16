@@ -139,23 +139,41 @@ def setup_logging(
             sys.stderr.write(f"Warning: Could not set up file logging to {log_file}: {e}\n")
 
 
-def get_logger(name: str, plugin_id: Optional[str] = None) -> logging.Logger:
+class PluginLoggerAdapter(logging.LoggerAdapter):
+    """LoggerAdapter that stamps every record with its plugin_id.
+
+    A plain `logging.Logger` attribute (the old approach) is never copied
+    onto individual `LogRecord`s, so `ContextualFormatter`/`StructuredFormatter`
+    only ever saw `plugin_id` on calls that explicitly passed
+    `extra={'plugin_id': ...}` (i.e. `log_with_context`). This adapter injects
+    it into `extra` on every call, so `self.logger.info(...)` in plugin code
+    is tagged automatically.
+    """
+
+    def process(self, msg, kwargs):
+        extra = dict(kwargs.get('extra') or {})
+        extra.setdefault('plugin_id', self.extra.get('plugin_id'))
+        kwargs['extra'] = extra
+        return msg, kwargs
+
+
+def get_logger(name: str, plugin_id: Optional[str] = None):
     """
     Get a logger with consistent configuration.
-    
+
     Args:
         name: Logger name (typically __name__)
         plugin_id: Optional plugin ID for automatic context
-        
+
     Returns:
-        Configured logger instance
+        Configured logger instance (or a PluginLoggerAdapter when plugin_id
+        is given, which supports the same .debug/.info/.warning/.error API)
     """
     logger = logging.getLogger(name)
-    
-    # Add plugin_id as attribute for formatters
+
     if plugin_id:
-        logger.plugin_id = plugin_id
-    
+        return PluginLoggerAdapter(logger, {'plugin_id': plugin_id})
+
     return logger
 
 

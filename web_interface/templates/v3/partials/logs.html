@@ -4,6 +4,17 @@
         <p class="mt-1 text-sm text-gray-600">View real-time logs from the LED matrix service for troubleshooting.</p>
     </div>
 
+    <!-- Currently displayed plugin -->
+    <div id="current-plugin-banner" class="hidden mb-4 flex items-center gap-2 text-sm bg-blue-50 border border-blue-200 text-blue-800 rounded-lg px-3 py-2">
+        <i class="fas fa-tv"></i>
+        <span>Now showing: <strong id="current-plugin-mode">-</strong>
+            <span id="current-plugin-id-wrap" class="hidden">(plugin: <code id="current-plugin-id" class="bg-blue-100 px-1 rounded"></code>)</span>
+        </span>
+        <button id="current-plugin-filter-btn" class="hidden ml-auto btn bg-blue-600 hover:bg-blue-700 text-white px-2 py-0.5 rounded text-xs">
+            Filter to this plugin
+        </button>
+    </div>
+
     <!-- Controls -->
     <div class="flex flex-wrap items-center justify-between gap-4 mb-6">
         <div class="flex items-center space-x-4">
@@ -25,6 +36,11 @@
                 <option value="ERROR">Errors Only</option>
                 <option value="WARNING">Warnings & Errors</option>
                 <option value="INFO">Info & Above</option>
+            </select>
+
+            <!-- Plugin Filter -->
+            <select id="log-plugin-filter" class="form-control text-sm">
+                <option value="">All Plugins</option>
             </select>
 
             <!-- Search -->
@@ -139,6 +155,7 @@ window._filteredLogs = [];
     const realtimeToggle = document.getElementById('log-realtime-toggle');
     const refreshBtn = document.getElementById('refresh-logs-btn');
     const levelFilter = document.getElementById('log-level-filter');
+    const pluginFilter = document.getElementById('log-plugin-filter');
     const searchInput = document.getElementById('log-search');
     const autoscrollToggle = document.getElementById('log-autoscroll');
     const clearBtn = document.getElementById('clear-logs-btn');
@@ -158,6 +175,11 @@ window._filteredLogs = [];
     if (levelFilter) {
         const newFilter = levelFilter.cloneNode(true);
         levelFilter.parentNode.replaceChild(newFilter, levelFilter);
+        newFilter.addEventListener('change', filterLogs);
+    }
+    if (pluginFilter) {
+        const newFilter = pluginFilter.cloneNode(true);
+        pluginFilter.parentNode.replaceChild(newFilter, pluginFilter);
         newFilter.addEventListener('change', filterLogs);
     }
     if (searchInput) {
@@ -180,6 +202,24 @@ window._filteredLogs = [];
         downloadBtn.parentNode.replaceChild(newBtn, downloadBtn);
         newBtn.addEventListener('click', downloadLogs);
     }
+    const currentPluginFilterBtn = document.getElementById('current-plugin-filter-btn');
+    if (currentPluginFilterBtn) {
+        const newBtn = currentPluginFilterBtn.cloneNode(true);
+        currentPluginFilterBtn.parentNode.replaceChild(newBtn, currentPluginFilterBtn);
+        newBtn.addEventListener('click', function() {
+            const pluginFilterEl = document.getElementById('log-plugin-filter');
+            if (pluginFilterEl && window._currentPluginId) {
+                pluginFilterEl.value = window._currentPluginId;
+                filterLogs();
+            }
+        });
+    }
+
+    refreshCurrentPluginStatus();
+    if (window._currentPluginPollTimer) {
+        clearInterval(window._currentPluginPollTimer);
+    }
+    window._currentPluginPollTimer = setInterval(refreshCurrentPluginStatus, 5000);
 
     // Handle window resize for responsive height
     window.addEventListener('resize', function() {
@@ -284,37 +324,25 @@ function processLogs(logsText, append = false) {
         // Skip empty lines
         if (!line.trim()) return;
 
-        // Try to parse journalctl format: "MMM DD HH:MM:SS hostname service[pid]: message"
-        // Example: "Oct 13 14:23:45 raspberrypi ledmatrix[1234]: INFO: Starting display"
-        
+        // journalctl (--output=short-iso) emits: "YYYY-MM-DDTHH:MM:SS+ZZZZ hostname service[pid]: message"
+        // Example: "2024-01-15T10:23:45+0000 raspberrypi ledmatrix[1234]: INFO - plugin.nhl_scoreboard - [Plugin: nhl_scoreboard] Updated scores"
+        // Also accept the older syslog-style "MMM DD HH:MM:SS" timestamp for compatibility.
+
         let timestamp = '';
         let level = 'INFO';
         let message = line;
-        
-        // Extract timestamp (first part before hostname)
-        const timestampMatch = line.match(/^([A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})/);
-        if (timestampMatch) {
-            timestamp = timestampMatch[1];
-            
-            // Find the message part (after service name and pid)
-            const messageMatch = line.match(/:\s*(.+)$/);
-            if (messageMatch) {
-                message = messageMatch[1];
-                
-                // Detect log level from message
-                if (message.match(/\b(ERROR|CRITICAL|FATAL)\b/i)) {
-                    level = 'ERROR';
-                } else if (message.match(/\b(WARNING|WARN)\b/i)) {
-                    level = 'WARNING';
-                } else if (message.match(/\bDEBUG\b/i)) {
-                    level = 'DEBUG';
-                } else if (message.match(/\bINFO\b/i)) {
-                    level = 'INFO';
-                }
-                
-                // Clean up level prefix from message if it exists
-                message = message.replace(/^(ERROR|WARNING|WARN|INFO|DEBUG):\s*/i, '');
-            }
+        let plugin = '';
+        let rest = null;
+
+        const isoMatch = line.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[+-]\d{2}:?\d{2}|Z))\s+(.*)$/);
+        const syslogMatch = !isoMatch && line.match(/^([A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})\s+(.*)$/);
+
+        if (isoMatch) {
+            timestamp = isoMatch[1];
+            rest = isoMatch[2];
+        } else if (syslogMatch) {
+            timestamp = syslogMatch[1];
+            rest = syslogMatch[2];
         } else {
             // If no timestamp, use current time
             timestamp = new Date().toLocaleString('en-US', {
@@ -327,14 +355,58 @@ function processLogs(logsText, append = false) {
             });
         }
 
+        if (rest !== null) {
+            // Find the message part (after hostname + service name/pid)
+            const messageMatch = rest.match(/:\s*(.+)$/);
+            if (messageMatch) {
+                message = messageMatch[1];
+
+                // Detect log level from message
+                if (message.match(/\b(ERROR|CRITICAL|FATAL)\b/i)) {
+                    level = 'ERROR';
+                } else if (message.match(/\b(WARNING|WARN)\b/i)) {
+                    level = 'WARNING';
+                } else if (message.match(/\bDEBUG\b/i)) {
+                    level = 'DEBUG';
+                } else if (message.match(/\bINFO\b/i)) {
+                    level = 'INFO';
+                }
+
+                // Clean up level prefix from message if it exists
+                message = message.replace(/^(ERROR|WARNING|WARN|INFO|DEBUG)\s*[-:]\s*/i, '');
+
+                // journalctl already carries its own timestamp; strip the app's
+                // internal "YYYY-MM-DD HH:MM:SS.mmm - LEVEL - logger.name - "
+                // prefix (see ContextualFormatter in src/logging_config.py) so
+                // it isn't duplicated in the displayed message.
+                message = message.replace(
+                    /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?\s*-\s*(ERROR|WARNING|WARN|INFO|DEBUG|CRITICAL)\s*-\s*[\w.]+\s*-\s*/i,
+                    ''
+                );
+
+                // Extract the "[Plugin: <id>]" context tag emitted by
+                // ContextualFormatter for every plugin logger (see
+                // src/logging_config.py PluginLoggerAdapter), and pull it out
+                // of the displayed message into its own field.
+                const pluginMatch = message.match(/^\[Plugin:\s*([^\]]+)\]\s*/);
+                if (pluginMatch) {
+                    plugin = pluginMatch[1].trim();
+                    message = message.replace(pluginMatch[0], '');
+                }
+            } else {
+                message = rest;
+            }
+        }
+
         const logEntry = {
             timestamp: timestamp,
             level: level,
+            plugin: plugin,
             message: message,
             raw: line,
             id: Date.now() + Math.random()
         };
-        
+
         // Don't add duplicate entries when appending
         if (!append || !window._allLogs.find(log => log.raw === line)) {
             window._allLogs.push(logEntry);
@@ -346,7 +418,24 @@ function processLogs(logsText, append = false) {
         window._allLogs = window._allLogs.slice(-window._MAX_LOGS);
     }
 
+    updatePluginFilterOptions();
     filterLogs();
+}
+
+function updatePluginFilterOptions() {
+    const pluginFilterEl = document.getElementById('log-plugin-filter');
+    if (!pluginFilterEl) return;
+
+    const previousValue = pluginFilterEl.value;
+    const plugins = Array.from(new Set(window._allLogs.map(log => log.plugin).filter(Boolean))).sort();
+
+    pluginFilterEl.innerHTML = '<option value="">All Plugins</option>' +
+        plugins.map(p => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join('');
+
+    // Restore previous selection if it's still a valid option
+    if (previousValue && plugins.includes(previousValue)) {
+        pluginFilterEl.value = previousValue;
+    }
 }
 
 function renderLogs() {
@@ -364,10 +453,14 @@ function renderLogs() {
     window._filteredLogs.forEach(log => {
         const logElement = document.createElement('div');
         logElement.className = `log-entry py-1 px-2 hover:bg-gray-800 rounded transition-colors duration-150 ${getLogLevelClass(log.level)}`;
+        const pluginBadge = log.plugin
+            ? `<span class="log-plugin flex-shrink-0 px-2 py-0.5 rounded text-xs font-semibold bg-purple-700 text-white" title="Plugin: ${escapeHtml(log.plugin)}">${escapeHtml(log.plugin)}</span>`
+            : '';
         logElement.innerHTML = `
             <div class="flex items-start gap-3 text-xs font-mono">
                 <span class="log-timestamp text-gray-400 flex-shrink-0 w-32">${escapeHtml(log.timestamp)}</span>
                 <span class="log-level flex-shrink-0 px-2 py-0.5 rounded text-xs font-semibold ${getLogLevelBadgeClass(log.level)}">${log.level}</span>
+                ${pluginBadge}
                 <span class="log-message flex-1 ${getLogLevelTextClass(log.level)} break-words">${escapeHtml(log.message)}</span>
             </div>
         `;
@@ -410,10 +503,12 @@ function getLogLevelTextClass(level) {
 
 function filterLogs() {
     const levelFilterEl = document.getElementById('log-level-filter');
+    const pluginFilterEl = document.getElementById('log-plugin-filter');
     const searchEl = document.getElementById('log-search');
     if (!levelFilterEl || !searchEl) return;
-    
+
     const levelFilter = levelFilterEl.value;
+    const pluginFilter = pluginFilterEl ? pluginFilterEl.value : '';
     const searchTerm = searchEl.value.toLowerCase();
 
     window._filteredLogs = window._allLogs.filter(log => {
@@ -430,8 +525,14 @@ function filterLogs() {
             }
         }
 
+        // Plugin filter
+        if (pluginFilter && log.plugin !== pluginFilter) {
+            return false;
+        }
+
         // Search filter
-        if (searchTerm && !log.message.toLowerCase().includes(searchTerm)) {
+        if (searchTerm && !log.message.toLowerCase().includes(searchTerm) &&
+            !(log.plugin && log.plugin.toLowerCase().includes(searchTerm))) {
             return false;
         }
 
@@ -617,10 +718,45 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+function refreshCurrentPluginStatus() {
+    fetch('/api/v3/display/current-status')
+        .then(response => response.json())
+        .then(data => {
+            if (data.status !== 'success' || !data.data) return;
+            const state = data.data;
+            const banner = document.getElementById('current-plugin-banner');
+            const modeEl = document.getElementById('current-plugin-mode');
+            const idWrap = document.getElementById('current-plugin-id-wrap');
+            const idEl = document.getElementById('current-plugin-id');
+            const filterBtn = document.getElementById('current-plugin-filter-btn');
+            if (!banner || !modeEl) return;
+
+            window._currentPluginId = state.plugin_id || null;
+
+            modeEl.textContent = state.mode || 'unknown';
+            if (state.plugin_id) {
+                idEl.textContent = state.plugin_id;
+                idWrap.classList.remove('hidden');
+                if (filterBtn) filterBtn.classList.remove('hidden');
+            } else {
+                idWrap.classList.add('hidden');
+                if (filterBtn) filterBtn.classList.add('hidden');
+            }
+            banner.classList.remove('hidden');
+        })
+        .catch(() => {
+            // Silently ignore - banner just stays hidden/stale
+        });
+}
+
 // Cleanup on page unload
 window.addEventListener('beforeunload', function() {
     if (window._logsEventSource) {
         window._logsEventSource.close();
+    }
+    if (window._currentPluginPollTimer) {
+        clearInterval(window._currentPluginPollTimer);
+        window._currentPluginPollTimer = null;
     }
 });
 </script>
