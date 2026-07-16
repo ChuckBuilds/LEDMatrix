@@ -563,13 +563,20 @@
         <div id="floating-preview" class="floating-preview" style="display:none">
             <div class="flex items-center justify-between px-2 py-1">
                 <span class="text-xs text-gray-300"><i class="fas fa-tv mr-1"></i>Live Preview</span>
-                <button type="button" onclick="window.toggleFloatingPreview(false)"
-                        class="text-gray-400 hover:text-white ml-2" aria-label="Close live preview">
-                    <i class="fas fa-times text-xs"></i>
-                </button>
+                <span class="flex items-center">
+                    <button type="button" onclick="window.cycleFloatingPreviewSize()"
+                            class="text-gray-400 hover:text-white ml-2" aria-label="Cycle preview size"
+                            title="Cycle preview size (drag the corner to resize on desktop)">
+                        <i class="fas fa-up-right-and-down-left-from-center text-xs"></i>
+                    </button>
+                    <button type="button" onclick="window.toggleFloatingPreview(false)"
+                            class="text-gray-400 hover:text-white ml-2" aria-label="Close live preview">
+                        <i class="fas fa-times text-xs"></i>
+                    </button>
+                </span>
             </div>
             <img id="floating-preview-img" alt="Live display preview"
-                 style="image-rendering: pixelated; display: block; width: 256px; height: auto;">
+                 style="image-rendering: pixelated; display: block; width: 100%; height: auto;">
         </div>
         <button id="floating-preview-toggle" type="button" onclick="window.toggleFloatingPreview(true)"
                 class="floating-preview-toggle" style="display:none"

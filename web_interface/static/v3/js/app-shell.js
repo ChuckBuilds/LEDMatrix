@@ -1878,6 +1878,13 @@
             const ledCanvas = document.getElementById('ledCanvas');
             const placeholder = document.getElementById('displayPlaceholder');
 
+            // Always cache the latest frame so the floating preview can show
+            // something the moment it's opened — SSE only sends frames when
+            // the display CHANGES, so a late subscriber would otherwise stare
+            // at an empty panel until the next change.
+            if (data.image) {
+                window._lastPreviewFrame = data.image;
+            }
             // Feed the floating mini preview (lives in base.html, present on
             // every tab) before the overview-only guard below.
             const floatImg = document.getElementById('floating-preview-img');

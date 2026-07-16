@@ -389,6 +389,29 @@ window.toggleFloatingPreview = function(open) {
     window.updateFloatingPreviewVisibility();
 };
 
+// Preset widths the size button cycles through (px). Desktop users can also
+// drag the panel's native resize handle (CSS resize: both).
+const FLOATING_PREVIEW_SIZES = [192, 256, 384, 512];
+
+window.applyFloatingPreviewSize = function() {
+    const panel = document.getElementById('floating-preview');
+    if (!panel) return;
+    let size = 256;
+    try { size = parseInt(localStorage.getItem('ledmatrix-floating-preview-size'), 10) || 256; } catch { /* no-op */ }
+    panel.style.width = size + 'px';
+    // Clear any manual drag-resize height so the image's aspect ratio rules
+    panel.style.height = '';
+};
+
+window.cycleFloatingPreviewSize = function() {
+    let size = 256;
+    try { size = parseInt(localStorage.getItem('ledmatrix-floating-preview-size'), 10) || 256; } catch { /* no-op */ }
+    const idx = FLOATING_PREVIEW_SIZES.indexOf(size);
+    const next = FLOATING_PREVIEW_SIZES[(idx + 1) % FLOATING_PREVIEW_SIZES.length];
+    try { localStorage.setItem('ledmatrix-floating-preview-size', String(next)); } catch { /* no-op */ }
+    window.applyFloatingPreviewSize();
+};
+
 window.updateFloatingPreviewVisibility = function(tab) {
     const panel = document.getElementById('floating-preview');
     const toggle = document.getElementById('floating-preview-toggle');
@@ -402,8 +425,19 @@ window.updateFloatingPreviewVisibility = function(tab) {
     const onOverview = active === 'overview';
     let open = false;
     try { open = localStorage.getItem('ledmatrix-floating-preview') === '1'; } catch { /* no-op */ }
-    panel.style.display = (!onOverview && open) ? 'block' : 'none';
+    const showPanel = !onOverview && open;
+    panel.style.display = showPanel ? 'block' : 'none';
     toggle.style.display = (!onOverview && !open) ? 'flex' : 'none';
+    if (showPanel) {
+        window.applyFloatingPreviewSize();
+        // Show the last cached frame immediately — SSE only pushes on
+        // display changes, so a freshly opened panel would otherwise stay
+        // empty until the next change.
+        const img = document.getElementById('floating-preview-img');
+        if (img && !img.src && window._lastPreviewFrame) {
+            img.src = 'data:image/png;base64,' + window._lastPreviewFrame;
+        }
+    }
 };
 
 document.addEventListener('DOMContentLoaded', function() {

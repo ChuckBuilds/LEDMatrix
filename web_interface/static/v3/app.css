@@ -1368,6 +1368,11 @@ button.bg-white {
     border-radius: 0.5rem;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
     overflow: hidden;
+    /* Desktop: draggable resize handle (bottom-left visually, since the
+       panel is anchored to the right). Touch devices use the size button. */
+    resize: both;
+    min-width: 160px;
+    max-width: 90vw;
 }
 .floating-preview img {
     background-color: #000;
@@ -1387,7 +1392,8 @@ button.bg-white {
     justify-content: center;
 }
 @media (max-width: 640px) {
-    .floating-preview img {
-        width: 192px !important;
+    /* Whatever size is chosen, never wider than the phone viewport */
+    .floating-preview {
+        max-width: calc(100vw - 2rem);
     }
 }
