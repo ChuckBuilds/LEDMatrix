@@ -16,6 +16,20 @@
           novalidate
           onsubmit="fixInvalidNumberInputs(this); return true;">
 
+        <!-- Primary rotation order: drag to reorder which plugin shows first,
+             second, ... in the normal display rotation. Saved as
+             display.plugin_rotation_order and applied by the display
+             controller on startup and live plugin enable/disable. -->
+        <div class="bg-gray-50 rounded-lg p-4">
+            <h3 class="text-md font-medium text-gray-900 mb-1">Rotation Order</h3>
+            <p class="text-sm text-gray-600 mb-3">Drag plugins to set the order they rotate on the display. Each plugin's screens keep their own order within its turn. Takes effect after saving and restarting the display.</p>
+            <div id="rotation_plugin_order" class="space-y-2 bg-white rounded-lg p-3 border border-gray-200">
+                <p class="text-sm text-gray-500 italic">Loading plugins…</p>
+            </div>
+            <input type="hidden" id="rotation_plugin_order_value" name="plugin_rotation_order"
+                   value='{{ main_config.display.get("plugin_rotation_order", [])|tojson }}'>
+        </div>
+
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {% for key, value in main_config.display.display_durations.items() %}
             <div class="form-group" id="setting-durations-{{ key }}" data-setting-key="display.display_durations.{{ key }}">
@@ -43,3 +57,26 @@
         </div>
     </form>
 </div>
+
+<script>
+(function () {
+    // Shared drag-and-drop plugin list (static/v3/js/widgets/plugin-order-list.js,
+    // same module the Vegas Scroll section uses).
+    function initRotationOrderList() {
+        if (!document.getElementById('rotation_plugin_order')) return;
+        if (!window.PluginOrderList) {
+            setTimeout(initRotationOrderList, 100);
+            return;
+        }
+        window.PluginOrderList.init({
+            containerId: 'rotation_plugin_order',
+            orderInputId: 'rotation_plugin_order_value'
+        });
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initRotationOrderList);
+    } else {
+        initRotationOrderList();
+    }
+}());
+</script>

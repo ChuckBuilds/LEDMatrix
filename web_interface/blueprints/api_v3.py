@@ -961,6 +961,22 @@ def save_main_config():
                     return jsonify({"status": "error", "message": "sync_follower_position must be left or right"}), 400
                 current_config["sync"]["follower_position"] = pos_val
 
+        # Handle primary rotation order (JSON array of plugin ids; same
+        # parse/validate pattern as vegas_plugin_order above)
+        if 'plugin_rotation_order' in data:
+            try:
+                if isinstance(data['plugin_rotation_order'], str):
+                    parsed = json.loads(data['plugin_rotation_order'])
+                else:
+                    parsed = data['plugin_rotation_order']
+                if 'display' not in current_config:
+                    current_config['display'] = {}
+                current_config['display']['plugin_rotation_order'] = (
+                    list(parsed) if isinstance(parsed, (list, tuple)) else []
+                )
+            except (json.JSONDecodeError, TypeError, ValueError):
+                logger.warning("Malformed plugin_rotation_order ignored")
+
         # Handle display durations
         duration_fields = [k for k in data.keys() if k.endswith('_duration') or k in ['default_duration', 'transition_duration']]
         if duration_fields:

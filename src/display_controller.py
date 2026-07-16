@@ -381,6 +381,10 @@ class DisplayController:
                 logger.debug("%d plugin(s) disabled in config", disabled_count)
 
             logger.info("Plugin system initialized in %.3f seconds", time.time() - plugin_time)
+            # Parallel loading appends modes in load-completion order, which
+            # varies between restarts; apply the user's configured rotation
+            # order (no-op when not configured).
+            self._apply_plugin_rotation_order()
             logger.info("Total available modes: %d", len(self.available_modes))
             logger.info("Available modes: %s", self.available_modes)
             
@@ -2843,10 +2847,43 @@ class DisplayController:
             except Exception as e:
                 logger.error("Plugin reconcile: error enabling %s: %s", plugin_id, e, exc_info=True)
 
+        # Newly enabled plugins were appended at the end; put them in the
+        # configured rotation slot before resyncing the index.
+        self._apply_plugin_rotation_order()
         self._resync_mode_index_after_change(previous_mode)
         logger.info("Plugin reconcile complete: +%s -%s (%d modes)",
                     sorted(to_add), sorted(to_remove), len(self.available_modes))
         return True
+
+    def _apply_plugin_rotation_order(self) -> None:
+        """Reorder available_modes to follow display.plugin_rotation_order.
+
+        The configured value is a list of plugin ids; their modes rotate in
+        that order (each plugin's own modes keep their declared order), with
+        any enabled-but-unlisted plugins appended afterwards in their current
+        relative order. An empty/missing list leaves available_modes exactly
+        as built (today's behavior). Mirrors vegas_mode/config.py's
+        get_ordered_plugins() semantics for the primary rotation.
+        """
+        configured = (self.config.get("display", {}) or {}).get("plugin_rotation_order", []) or []
+        if not configured or not self.available_modes:
+            return
+
+        ordered_ids = [p for p in configured if p in self.plugin_display_modes]
+        new_modes: List[str] = []
+        for plugin_id in ordered_ids:
+            for mode in self.plugin_display_modes[plugin_id]:
+                if mode in self.available_modes and mode not in new_modes:
+                    new_modes.append(mode)
+        # Unlisted plugins' modes (and any mode not attributable to a plugin)
+        # follow in their existing relative order.
+        for mode in self.available_modes:
+            if mode not in new_modes:
+                new_modes.append(mode)
+        if new_modes != self.available_modes:
+            self.available_modes = new_modes
+            logger.info("Applied plugin rotation order %s -> modes: %s",
+                        configured, self.available_modes)
 
     def _resync_mode_index_after_change(self, previous_mode: Optional[str]) -> None:
         """Clamp rotation state after available_modes changed. Stays on the

@@ -121,6 +121,7 @@
             "axis": "horizontal"
         },
         "display_durations": {},
+        "plugin_rotation_order": [],
         "use_short_date_format": true,
         "vegas_scroll": {
             "enabled": false,
