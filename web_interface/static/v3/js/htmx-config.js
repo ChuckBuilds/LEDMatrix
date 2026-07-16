@@ -182,11 +182,11 @@
                                                 (document.head || document.body).appendChild(newScript);
                                             }
                                         }
-                                    } catch (e) {
+                                    } catch {
                                         // Silently ignore script execution errors
                                     }
                                 });
-                            } catch (e) {
+                            } catch {
                                 // Silently ignore errors in script processing
                             }
                         }

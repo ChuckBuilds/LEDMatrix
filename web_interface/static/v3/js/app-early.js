@@ -322,7 +322,7 @@
                             }
                             
                             // Clear existing plugin tabs (except Plugin Manager)
-                            existingTabs.forEach(tab => tab.remove());
+                            existingTabs.forEach(tab => { tab.remove(); });
                             debugLog('[STUB] updatePluginTabs: Cleared', existingTabs.length, 'existing tabs');
                             
                             // Add tabs for each installed plugin
