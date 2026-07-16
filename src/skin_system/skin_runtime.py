@@ -33,8 +33,8 @@ _REQUIRED_MANIFEST_FIELDS = ("id", "name", "version", "skin_api_version", "class
 _DEFAULT_ENTRY_POINT = "skin.py"
 
 _lock = threading.RLock()
-# skins_dir -> (dir mtime, {skin_id: manifest+path})
-_discovery_cache: Dict[str, Tuple[float, Dict[str, Dict[str, Any]]]] = {}
+# skins_dir -> (fingerprint, {skin_id: manifest+path})
+_discovery_cache: Dict[str, Tuple[Tuple, Dict[str, Dict[str, Any]]]] = {}
 
 _shared_layout_font_manager: Optional[Any] = None
 
@@ -87,23 +87,35 @@ def _read_manifest(skin_dir: Path) -> Optional[Dict[str, Any]]:
     return manifest
 
 
+def _discovery_fingerprint(skins_dir: Path) -> Optional[Tuple]:
+    """Cache key for a skins directory: its mtime plus every skin.json's
+    (path, mtime). The directory mtime alone misses in-place manifest edits
+    (a skin updated without adding/removing entries)."""
+    try:
+        parts = [skins_dir.stat().st_mtime]
+        for manifest_path in sorted(skins_dir.glob("*/skin.json")):
+            parts.append((str(manifest_path), manifest_path.stat().st_mtime))
+        return tuple(parts)
+    except OSError:
+        return None
+
+
 def discover_skins(skins_dir: Optional[Path] = None,
                    force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
     """Return {skin_id: manifest} for every valid skin package installed.
 
-    Cached per directory and invalidated when the directory mtime changes
-    (a new skin added / removed); pass force_refresh to bypass.
+    Cached per directory and invalidated when the directory or any
+    skin.json changes; pass force_refresh to bypass.
     """
     skins_dir = Path(skins_dir) if skins_dir else get_skins_directory()
     cache_key = str(skins_dir)
-    try:
-        dir_mtime = skins_dir.stat().st_mtime
-    except OSError:
+    fingerprint = _discovery_fingerprint(skins_dir)
+    if fingerprint is None:
         return {}
 
     with _lock:
         cached = _discovery_cache.get(cache_key)
-        if cached and not force_refresh and cached[0] == dir_mtime:
+        if cached and not force_refresh and cached[0] == fingerprint:
             return dict(cached[1])
 
         skins: Dict[str, Dict[str, Any]] = {}
@@ -113,7 +125,7 @@ def discover_skins(skins_dir: Optional[Path] = None,
             manifest = _read_manifest(entry)
             if manifest:
                 skins[manifest["id"]] = manifest
-        _discovery_cache[cache_key] = (dir_mtime, skins)
+        _discovery_cache[cache_key] = (fingerprint, skins)
         return dict(skins)
 
 
@@ -163,61 +175,77 @@ def skins_for_plugin(plugin_id: str,
 
 def _load_skin_module(skin_id: str, skin_dir: Path, entry_point: str) -> Optional[Any]:
     """Import the skin's entry module under a namespaced sys.modules key,
-    and pre-namespace its sibling .py files — same collision-avoidance
-    scheme plugins use (plugin_loader._namespace_plugin_modules), so two
-    skins can both ship a helpers.py."""
+    namespacing its sibling .py files the same way — the collision-
+    avoidance scheme plugins use (plugin_loader._namespace_plugin_modules),
+    so two skins can both ship a helpers.py.
+
+    The entry module is cached: the live/recent/upcoming hosts all load
+    the same skin, and only the first load executes any code. (A skin
+    whose *code* changed on disk needs a service restart to take effect —
+    Python modules can't be safely hot-swapped.)
+    """
     entry_path = skin_dir / entry_point
     if not entry_path.is_file():
         logger.error("Skin '%s' entry point not found: %s", skin_id, entry_path)
         return None
 
+    module_name = f"_skin_{skin_id}_{Path(entry_point).stem}"
     with _lock:
-        for sibling in skin_dir.glob("*.py"):
-            if sibling.name == entry_point:
-                continue
-            alias = f"_skin_{skin_id}_{sibling.stem}"
-            if alias in sys.modules:
-                continue
-            spec = importlib.util.spec_from_file_location(alias, sibling)
-            if spec and spec.loader:
-                module = importlib.util.module_from_spec(spec)
-                sys.modules[alias] = module
-                # Also expose under the bare name during entry import so
-                # `import helpers` inside the skin resolves; the bare name
-                # is what could collide, so it points at this skin's copy
-                # only transiently (entry import happens under this lock).
-                sys.modules[sibling.stem] = module
-                try:
-                    spec.loader.exec_module(module)
-                except Exception as e:
-                    logger.error("Skin '%s' sibling module %s failed to import: %s",
-                                 skin_id, sibling.name, e, exc_info=True)
-                    sys.modules.pop(alias, None)
-                    sys.modules.pop(sibling.stem, None)
-                    return None
+        cached_entry = sys.modules.get(module_name)
+        if cached_entry is not None:
+            return cached_entry
 
-        module_name = f"_skin_{skin_id}_{Path(entry_point).stem}"
+        # Import siblings under their namespaced alias, and *bind* the bare
+        # name (cached or fresh) so `import helpers` inside the entry module
+        # resolves to this skin's copy. The bare bindings are transient —
+        # restored below so another skin's identically-named sibling can't
+        # be shadowed by ours.
+        replaced_bare: Dict[str, Any] = {}
         try:
-            spec = importlib.util.spec_from_file_location(module_name, entry_path)
-            if not spec or not spec.loader:
-                logger.error("Skin '%s': could not create import spec for %s",
-                             skin_id, entry_path)
-                return None
-            module = importlib.util.module_from_spec(spec)
-            sys.modules[module_name] = module
-            spec.loader.exec_module(module)
-            return module
-        except Exception as e:
-            sys.modules.pop(module_name, None)
-            logger.error("Skin '%s' failed to import: %s", skin_id, e, exc_info=True)
-            return None
-        finally:
-            # Drop the transient bare-name aliases so the next skin's
-            # identically-named siblings can't be shadowed by ours.
             for sibling in skin_dir.glob("*.py"):
-                if sibling.name != entry_point and \
-                        sys.modules.get(sibling.stem) is sys.modules.get(f"_skin_{skin_id}_{sibling.stem}"):
-                    sys.modules.pop(sibling.stem, None)
+                if sibling.name == entry_point:
+                    continue
+                alias = f"_skin_{skin_id}_{sibling.stem}"
+                module = sys.modules.get(alias)
+                if module is None:
+                    spec = importlib.util.spec_from_file_location(alias, sibling)
+                    if not spec or not spec.loader:
+                        continue
+                    module = importlib.util.module_from_spec(spec)
+                    sys.modules[alias] = module
+                    replaced_bare.setdefault(sibling.stem, sys.modules.get(sibling.stem))
+                    sys.modules[sibling.stem] = module
+                    try:
+                        spec.loader.exec_module(module)
+                    except Exception as e:
+                        logger.error("Skin '%s' sibling module %s failed to import: %s",
+                                     skin_id, sibling.name, e, exc_info=True)
+                        sys.modules.pop(alias, None)
+                        return None
+                else:
+                    replaced_bare.setdefault(sibling.stem, sys.modules.get(sibling.stem))
+                    sys.modules[sibling.stem] = module
+
+            try:
+                spec = importlib.util.spec_from_file_location(module_name, entry_path)
+                if not spec or not spec.loader:
+                    logger.error("Skin '%s': could not create import spec for %s",
+                                 skin_id, entry_path)
+                    return None
+                module = importlib.util.module_from_spec(spec)
+                sys.modules[module_name] = module
+                spec.loader.exec_module(module)
+                return module
+            except Exception as e:
+                sys.modules.pop(module_name, None)
+                logger.error("Skin '%s' failed to import: %s", skin_id, e, exc_info=True)
+                return None
+        finally:
+            for bare_name, previous in replaced_bare.items():
+                if previous is None:
+                    sys.modules.pop(bare_name, None)
+                else:
+                    sys.modules[bare_name] = previous
 
 
 def load_skin(skin_id: str, sport: Optional[str] = None,

@@ -299,8 +299,14 @@ class SportsCore(ABC):
             render = getattr(skin, f"render_{self.SKIN_MODE}")
             if render(ctx, dict(game)):
                 return ctx.canvas
-        except Exception as e:
-            self.logger.warning(f"Skin '{self._resolve_skin_id()}' card render failed: {e}")
+        except Exception:
+            # Card failures count toward the same 3-strike session disable
+            # as display failures — a skin broken for vegas shouldn't get
+            # to throw on every scroll tick forever.
+            self._skin_failures += 1
+            self.logger.error(
+                f"Skin '{self._resolve_skin_id()}' card render failed "
+                f"({self._skin_failures}/3)", exc_info=True)
         return None
 
     def display(self, force_clear: bool = False) -> bool:

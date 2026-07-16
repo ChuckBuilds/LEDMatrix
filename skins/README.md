@@ -3,7 +3,7 @@
 User-installable **visual skins** for the sports scoreboards. Each
 subdirectory is one skin:
 
-```
+```text
 skins/<skin-id>/
   skin.json     # manifest
   skin.py       # renderer (a ScoreboardSkin subclass)

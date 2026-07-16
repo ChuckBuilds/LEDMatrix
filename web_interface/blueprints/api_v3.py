@@ -5315,7 +5315,9 @@ def list_skins():
         if plugin_id:
             skins = skin_runtime.skins_for_plugin(plugin_id)
         else:
-            skins = skin_runtime.discover_skins(force_refresh=True)
+            # The discovery cache self-invalidates on directory/manifest
+            # mtime changes, so no force_refresh — keeps Pi disk I/O down.
+            skins = skin_runtime.discover_skins()
 
         payload = []
         for skin_id, manifest in sorted(skins.items()):

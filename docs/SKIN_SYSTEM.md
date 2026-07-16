@@ -21,7 +21,7 @@ the store; the skin is ~100 lines of pure rendering code that receives the
 plugin's already-fetched data each frame. Uninstalling the skin (or the skin
 crashing) simply restores the built-in look.
 
-```
+```text
               (unchanged)                        (the skin seam)
  ESPN API ──► update() ──► game view model ──► _render_game() ──► display
               fetching        (a dict)          │         │
@@ -97,7 +97,7 @@ major version and falls back to the built-in renderer with a clear
 
 ## Package layout and lifecycle
 
-```
+```text
 skins/<skin-id>/
   skin.json      # manifest (required)
   skin.py        # ScoreboardSkin subclass (required)

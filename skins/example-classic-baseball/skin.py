@@ -17,14 +17,31 @@ manifest fields, and run:
 from src.adaptive_layout import LADDER_GRID, scoreboard_regions
 from src.skin_system.skin_base import ScoreboardSkin, SkinContext
 
+DEFAULT_ACCENT = (255, 200, 0)
+
 
 class ClassicBaseballSkin(ScoreboardSkin):
+    """Reference baseball skin: classic scorebug with bases/outs/count."""
+
+    def __init__(self, manifest: dict, options: dict):
+        super().__init__(manifest, options)
+        # Validate user options once at load time (fail fast, fall back
+        # gracefully) rather than surprising every render.
+        accent = self.options.get("accent_color", DEFAULT_ACCENT)
+        if (isinstance(accent, (list, tuple)) and len(accent) == 3
+                and all(isinstance(c, int) and 0 <= c <= 255 for c in accent)):
+            self._accent_color = tuple(accent)
+        else:
+            import logging
+            logging.getLogger(__name__).error(
+                "accent_color must be three 0-255 integers, got %r; using default", accent)
+            self._accent_color = DEFAULT_ACCENT
 
     # -- shared pieces ----------------------------------------------------
 
-    def _accent(self, ctx: SkinContext):
+    def _accent(self, ctx: SkinContext) -> tuple:
         """Users can recolor the skin from config via skin_options."""
-        return tuple(ctx.options.get("accent_color", (255, 200, 0)))
+        return self._accent_color
 
     def _draw_card(self, ctx: SkinContext, game: dict, status: str,
                    center_lines: list, detail: str) -> None:

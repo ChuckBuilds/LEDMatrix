@@ -2259,6 +2259,27 @@ class PluginStoreManager:
         
         return None
     
+    _SKIN_ID_PATTERN = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$')
+
+    def _resolve_skin_target(self, skin_id: str) -> Optional[Path]:
+        """Validate an externally-supplied skin id and resolve it to a path
+        strictly inside the skins directory. Returns None (after logging)
+        for ids that are malformed or would escape the directory — registry
+        entries and manifests are external input and must not be able to
+        write or delete outside skins/."""
+        from src.skin_system import skin_runtime
+
+        if not isinstance(skin_id, str) or not self._SKIN_ID_PATTERN.match(skin_id) \
+                or '..' in skin_id:
+            self.logger.error(f"Rejecting unsafe skin id: {skin_id!r}")
+            return None
+        skins_dir = skin_runtime.get_skins_directory().resolve()
+        target = (skins_dir / skin_id).resolve()
+        if target.parent != skins_dir:
+            self.logger.error(f"Skin id {skin_id!r} escapes the skins directory; rejecting")
+            return None
+        return target
+
     def _install_skin_from_info(self, skin_id: str, skin_info: Dict,
                                 branch: Optional[str] = None) -> bool:
         """Install a registry entry of type "skin" into skins/<id>/.
@@ -2267,6 +2288,10 @@ class PluginStoreManager:
         but validates skin.json instead of manifest.json and never installs
         dependencies — skins are render-only (stdlib + PIL + the provided
         SkinContext), which is also what keeps them safe to iterate on.
+
+        Downloads into a staging directory and validates there; the
+        existing installation is only replaced after the new one passes,
+        so a failed download or bad manifest can't destroy a working skin.
         """
         from src.skin_system import skin_runtime
         from src.skin_system.skin_base import SKIN_API_VERSION
@@ -2276,13 +2301,15 @@ class PluginStoreManager:
             self.logger.error(f"Skin {skin_id} missing repository URL")
             return False
 
-        skins_dir = skin_runtime.get_skins_directory()
+        target = self._resolve_skin_target(skin_id)
+        if target is None:
+            return False
+        skins_dir = target.parent
         skins_dir.mkdir(parents=True, exist_ok=True)
-        target = skins_dir / skin_id
-        if target.exists():
-            self.logger.warning(f"Skin directory already exists: {skin_id}. Removing before reinstall.")
-            if not self._safe_remove_directory(target):
-                return False
+        # Leading "_" keeps staging invisible to skin discovery
+        staging = skins_dir / f"_staging-{skin_id}"
+        if staging.exists() and not self._safe_remove_directory(staging):
+            return False
 
         subpath = skin_info.get('plugin_path')
         branch_candidates = self._distinct_sequence([
@@ -2294,74 +2321,81 @@ class PluginStoreManager:
             'master'
         ])
 
-        branch_used = None
-        if subpath:
-            for candidate in branch_candidates:
-                download_url = f"{repo_url}/archive/refs/heads/{candidate}.zip"
-                if self._install_from_monorepo(download_url, subpath, target):
-                    branch_used = candidate
-                    break
-        else:
-            branch_used = self._install_via_git(repo_url, target, branch_candidates)
-            if branch_used is None and not target.exists():
+        try:
+            branch_used = None
+            if subpath:
                 for candidate in branch_candidates:
                     download_url = f"{repo_url}/archive/refs/heads/{candidate}.zip"
-                    if self._install_via_download(download_url, target):
+                    if self._install_from_monorepo(download_url, subpath, staging):
                         branch_used = candidate
                         break
+            else:
+                branch_used = self._install_via_git(repo_url, staging, branch_candidates)
+                if branch_used is None and not staging.exists():
+                    for candidate in branch_candidates:
+                        download_url = f"{repo_url}/archive/refs/heads/{candidate}.zip"
+                        if self._install_via_download(download_url, staging):
+                            branch_used = candidate
+                            break
 
-        if branch_used is None and not target.exists():
-            self.logger.error(f"Failed to install skin {skin_id} via git or archive download")
-            return False
-
-        manifest_path = target / 'skin.json'
-        try:
-            with open(manifest_path, 'r', encoding='utf-8') as f:
-                manifest = json.load(f)
-        except (OSError, json.JSONDecodeError) as e:
-            self.logger.error(f"Skin {skin_id} has no valid skin.json: {e}")
-            self._safe_remove_directory(target)
-            return False
-
-        missing = [k for k in ('id', 'name', 'version', 'skin_api_version', 'class_name')
-                   if not manifest.get(k)]
-        if missing:
-            self.logger.error(f"Skin {skin_id} manifest missing fields: {missing}")
-            self._safe_remove_directory(target)
-            return False
-
-        def _api_major(v):
-            try:
-                return int(str(v).split('.')[0])
-            except (ValueError, IndexError):
-                return None
-
-        if _api_major(manifest['skin_api_version']) != _api_major(SKIN_API_VERSION):
-            self.logger.error(
-                f"Skin {skin_id} targets skin API {manifest['skin_api_version']} but this "
-                f"LEDMatrix provides {SKIN_API_VERSION}; not installing")
-            self._safe_remove_directory(target)
-            return False
-
-        # Directory name must match manifest id (same rule as plugins)
-        if manifest['id'] != skin_id:
-            correct = skins_dir / manifest['id']
-            self.logger.warning(
-                f"Skin manifest id '{manifest['id']}' doesn't match registry id '{skin_id}'; renaming")
-            if correct.exists() and not self._safe_remove_directory(correct):
+            if branch_used is None and not staging.exists():
+                self.logger.error(f"Failed to install skin {skin_id} via git or archive download")
                 return False
-            shutil.move(str(target), str(correct))
 
-        skin_runtime.discover_skins(force_refresh=True)
-        self.logger.info(f"Successfully installed skin: {skin_id} (branch: {branch_used})")
-        return True
+            try:
+                with open(staging / 'skin.json', 'r', encoding='utf-8') as f:
+                    manifest = json.load(f)
+            except (OSError, json.JSONDecodeError) as e:
+                self.logger.error(f"Skin {skin_id} has no valid skin.json: {e}")
+                return False
+
+            missing = [k for k in ('id', 'name', 'version', 'skin_api_version', 'class_name')
+                       if not manifest.get(k)]
+            if missing:
+                self.logger.error(f"Skin {skin_id} manifest missing fields: {missing}")
+                return False
+
+            # Unlike plugins, a mismatched id is rejected rather than
+            # renamed: the manifest id is external input, and the registry
+            # id is what the user asked to install.
+            if manifest['id'] != skin_id:
+                self.logger.error(
+                    f"Skin manifest id {manifest['id']!r} doesn't match registry id "
+                    f"{skin_id!r}; not installing")
+                return False
+
+            def _api_major(v):
+                try:
+                    return int(str(v).split('.')[0])
+                except (ValueError, IndexError):
+                    return None
+
+            if _api_major(manifest['skin_api_version']) != _api_major(SKIN_API_VERSION):
+                self.logger.error(
+                    f"Skin {skin_id} targets skin API {manifest['skin_api_version']} but this "
+                    f"LEDMatrix provides {SKIN_API_VERSION}; not installing")
+                return False
+
+            # Validated — swap into place
+            if target.exists() and not self._safe_remove_directory(target):
+                self.logger.error(f"Could not replace existing skin directory: {target}")
+                return False
+            shutil.move(str(staging), str(target))
+            skin_runtime.discover_skins(force_refresh=True)
+            self.logger.info(f"Successfully installed skin: {skin_id} (branch: {branch_used})")
+            return True
+        finally:
+            if staging.exists():
+                self._safe_remove_directory(staging)
 
     def uninstall_skin(self, skin_id: str) -> bool:
         """Remove an installed skin. Plugin configs referencing it keep
         validating; rendering falls back to the built-in layout."""
         from src.skin_system import skin_runtime
 
-        target = skin_runtime.get_skins_directory() / skin_id
+        target = self._resolve_skin_target(skin_id)
+        if target is None:
+            return False
         if not target.exists():
             self.logger.info(f"Skin {skin_id} not found (already uninstalled)")
             return True
@@ -2386,8 +2420,9 @@ class PluginStoreManager:
         if plugin_path is None or not plugin_path.exists():
             # A skin id passed to the plugin uninstall path (the store UI
             # uses one uninstall flow) removes the skin instead
-            from src.skin_system import skin_runtime
-            if (skin_runtime.get_skins_directory() / plugin_id).exists():
+            skin_target = self._resolve_skin_target(plugin_id) \
+                if self._SKIN_ID_PATTERN.match(str(plugin_id)) else None
+            if skin_target is not None and skin_target.exists():
                 return self.uninstall_skin(plugin_id)
             self.logger.info(f"Plugin {plugin_id} not found (already uninstalled)")
             return True  # Already uninstalled, consider this success

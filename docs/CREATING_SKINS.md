@@ -36,16 +36,16 @@ matching skin is installed). `"skin"` also accepts a per-mode mapping:
 
 ```json
 {
-  "id": "my-skin",                      // must equal the directory name
+  "id": "my-skin",
   "name": "My Skin",
   "version": "1.0.0",
   "author": "you",
   "description": "What it looks like",
-  "skin_api_version": "1.0.0",          // major must match the host's SKIN_API_VERSION
+  "skin_api_version": "1.0.0",
   "targets": {
-    "sports": ["baseball"],             // sport families you support
-    "sport_keys": ["mlb", "milb"],      // and/or exact sport keys
-    "plugins": []                       // and/or exact plugin ids
+    "sports": ["baseball"],
+    "sport_keys": ["mlb", "milb"],
+    "plugins": []
   },
   "entry_point": "skin.py",
   "class_name": "MySkin",
@@ -53,6 +53,11 @@ matching skin is installed). `"skin"` also accepts a per-mode mapping:
   "preview": "preview.png"
 }
 ```
+
+Field notes: `id` must equal the directory name; `skin_api_version`'s major
+version must match the host's `SKIN_API_VERSION` or the skin is refused at
+load; `targets` takes sport families (`sports`), exact sport keys
+(`sport_keys`), and/or exact plugin ids (`plugins`) — any match applies.
 
 ## The renderer (`skin.py`)
 
@@ -101,11 +106,19 @@ A skin that raises 3 renders in a row is disabled until the service restarts
 | `ctx.draw_fit(fit, box, color, align, valign)` | Draw a `fit_text` result aligned in a `Region` (handles BDF fonts) |
 | `ctx.draw_text(text, x, y, color, font)` | Positioned text (handles BDF fonts) |
 | `ctx.draw_image(img, box, mode, align, valign, cache_key)` | Fit + paste an image with alpha; no-ops on `None` |
-| `ctx.load_logo("home" \| "away")` | Team logo as RGBA, cached, auto-downloaded — or `None` (always handle `None`) |
+| `ctx.load_logo("home" \| "away")` | Team logo as RGBA, or `None` (always handle `None`). Cached after first use; see note below |
 | `ctx.draw_text_outlined(text, (x, y), font, fill, outline_color)` | The classic scorebug outlined text (TTF fonts only) |
 | `ctx.fonts` | The host's font dict — keys `score`, `time`, `team`, `status`, `detail`, `rank` |
 | `ctx.options` | Your user's `skin_options` from config |
 | `ctx.sport`, `ctx.view_model_version`, `ctx.logger` | Context metadata + logger |
+
+**A note on `ctx.load_logo` vs the no-I/O rule:** `load_logo` is the one
+sanctioned exception. It goes through the host's logo cache — after the
+first call per team it's a pure in-memory lookup. If a logo file is missing
+on disk, the *first* call may download it, exactly like the built-in
+renderer does for the same game (a skin is never worse than built-in here).
+Always pass a stable `cache_key` when drawing it, never load image files
+yourself in a render path, and always handle `None`.
 
 The default layout idiom — carve regions, then fit text into them:
 

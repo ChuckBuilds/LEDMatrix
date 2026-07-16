@@ -378,6 +378,13 @@ class SchemaManager:
         included in the enum for the same reason: the dropdown must be able
         to display a selection whose skin was removed.
         """
+        # A per-mode mapping ({"live": ..., "recent": ...}) can't be edited
+        # through a string dropdown — injecting one would let the form save
+        # a string over the mapping. Leave the schema alone; per-mode users
+        # edit via the raw JSON config editor.
+        if isinstance(current_value, dict):
+            return schema
+
         try:
             from src.skin_system import skin_runtime
             matching = skin_runtime.skins_for_plugin(plugin_id)
@@ -401,8 +408,8 @@ class SchemaManager:
                 "title": "Visual Skin",
                 "description": "Replace this scoreboard's look with an installed skin "
                                "(data, scheduling, and vegas mode are unaffected)",
-                "enum": ["built-in"] + choices,
-                "enumNames": ["Built-in"] + [names[sid] for sid in choices],
+                "enum": ["built-in", *choices],
+                "enumNames": ["Built-in", *(names[sid] for sid in choices)],
                 "default": "built-in"
             }
         return enhanced

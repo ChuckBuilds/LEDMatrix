@@ -147,6 +147,27 @@ class TestLoadSkin:
         assert skin_a.helper_value == "A"
         assert skin_b.helper_value == "B"
 
+    def test_same_skin_loads_repeatedly_with_siblings(self, tmp_path):
+        """The live/recent/upcoming hosts each load the same skin — the
+        2nd and 3rd loads must still resolve sibling modules (regression:
+        cached siblings used to be skipped without rebinding)."""
+        body = (
+            "import reload_helpers\n"
+            "from src.skin_system.skin_base import ScoreboardSkin\n"
+            "class TestSkin(ScoreboardSkin):\n"
+            "    def render_live(self, ctx, game):\n"
+            "        self.helper_value = reload_helpers.VALUE\n"
+            "        return False\n"
+        )
+        write_skin(tmp_path, "reload-skin", body=body,
+                   extra_files={"reload_helpers.py": "VALUE = 'R'\n"})
+        ctx = _make_context()
+        for _ in range(3):
+            skin = skin_runtime.load_skin("reload-skin", skins_dir=tmp_path)
+            assert skin is not None
+            skin.render_live(ctx, {})
+            assert skin.helper_value == "R"
+
 
 def _make_host(fonts=None):
     host = MagicMock()
@@ -326,10 +347,36 @@ class TestViewModelContract:
     def test_extractor_produces_guaranteed_keys(self):
         """The real extractor's output must be a superset of the documented
         contract — this is the test that catches accidental renames."""
-        import inspect
+        import pytz
         from src.base_classes.sports import SportsCore
-        source = inspect.getsource(SportsCore._extract_game_details_common)
-        missing = [k for k in GUARANTEED_KEYS if f'"{k}"' not in source]
+
+        event = {
+            "id": "401570001",
+            "date": "2026-07-16T23:05:00Z",
+            "competitions": [{
+                "status": {"type": {"name": "STATUS_IN_PROGRESS", "state": "in",
+                                    "shortDetail": "Bot 7th"}},
+                "competitors": [
+                    {"homeAway": "home", "id": "19",
+                     "team": {"abbreviation": "LAD"}, "score": "5",
+                     "records": [{"summary": "58-33"}]},
+                    {"homeAway": "away", "id": "26",
+                     "team": {"abbreviation": "SF"}, "score": "3",
+                     "records": [{"summary": "49-42"}]},
+                ],
+            }],
+        }
+        probe = MagicMock()
+        probe.logger = logging.getLogger("test_skin_system")
+        probe.favorite_teams = []
+        probe.config = {}
+        probe.logo_dir = Path("assets/logos")
+        probe._get_timezone.return_value = pytz.utc
+        probe.display_manager.format_date_with_ordinal.return_value = "Jul 16th"
+
+        details, _, _, _, _ = SportsCore._extract_game_details_common(probe, event)
+        assert details is not None
+        missing = [k for k in GUARANTEED_KEYS if k not in details]
         assert not missing, (
             f"_extract_game_details_common no longer emits {missing}. "
             "These keys are part of the frozen skin view-model contract "

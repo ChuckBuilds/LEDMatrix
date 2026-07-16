@@ -37,7 +37,7 @@ class FixtureHost:
     """Stands in for a SportsCore instance: fonts, logger, logo loading,
     outlined text — everything build_context needs, no network."""
 
-    def __init__(self, sport: str, skin_options: dict):
+    def __init__(self, sport: str, skin_options: dict) -> None:
         self.sport = sport
         self.sport_key = sport
         self.skin_options = skin_options
@@ -46,7 +46,8 @@ class FixtureHost:
         self._logo_cache = {}
         self.display_manager = None  # build_context is always given a size
 
-    def _load_fonts(self):
+    def _load_fonts(self) -> dict:
+        """Load the SportsCore font set (TTF, with PIL default fallback)."""
         fonts = {}
         try:
             press = str(PROJECT_ROOT / "assets/fonts/PressStart2P-Regular.ttf")
@@ -63,7 +64,9 @@ class FixtureHost:
                 fonts[key] = default
         return fonts
 
-    def _load_and_resize_logo(self, team_id, team_abbrev, logo_path, logo_url):
+    def _load_and_resize_logo(self, team_id: str, team_abbrev: str,
+                              logo_path, logo_url) -> "Image.Image | None":
+        """Load a fixture logo from disk (no downloads), cached per team."""
         if team_abbrev in self._logo_cache:
             return self._logo_cache[team_abbrev]
         path = Path(logo_path)
@@ -75,8 +78,11 @@ class FixtureHost:
         self._logo_cache[team_abbrev] = logo
         return logo
 
-    def _draw_text_with_outline(self, draw, text, position, font,
-                                fill=(255, 255, 255), outline_color=(0, 0, 0)):
+    def _draw_text_with_outline(self, draw: "ImageDraw.ImageDraw", text: str,
+                                position: tuple, font,
+                                fill: tuple = (255, 255, 255),
+                                outline_color: tuple = (0, 0, 0)) -> None:
+        """Classic outlined scorebug text, same as SportsCore's helper."""
         x, y = position
         for dx, dy in [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1),
                        (1, -1), (1, 0), (1, 1)]:
@@ -94,12 +100,34 @@ def load_fixture(sport: str, mode: str) -> dict:
     return game
 
 
-def parse_size(value: str):
+def parse_size(value: str) -> "tuple[int, int]":
     try:
-        w, h = value.lower().split("x")
-        return int(w), int(h)
+        w_text, h_text = value.lower().split("x")
+        w, h = int(w_text), int(h_text)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"size must look like 128x32, got {value!r}") from exc
+    if w <= 0 or h <= 0:
+        raise argparse.ArgumentTypeError(f"size dimensions must be positive, got {value!r}")
+    return w, h
+
+
+def parse_options(value: str) -> dict:
+    try:
+        options = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise argparse.ArgumentTypeError(f"options must be valid JSON: {exc.msg}") from exc
+    if not isinstance(options, dict):
+        raise argparse.ArgumentTypeError("options must be a JSON object")
+    return options
+
+
+def display_path(path: Path) -> str:
+    """Repo-relative when inside the repo, absolute otherwise (--output-dir
+    may point anywhere, e.g. /tmp/skin_renders)."""
+    try:
+        return str(path.relative_to(PROJECT_ROOT))
     except ValueError:
-        raise argparse.ArgumentTypeError(f"size must look like 128x32, got {value!r}")
+        return str(path)
 
 
 def main() -> int:
@@ -113,7 +141,7 @@ def main() -> int:
     parser.add_argument("--output-dir", type=Path,
                         default=PROJECT_ROOT / "skin_renders",
                         help="where rendered PNGs are written")
-    parser.add_argument("--options", type=json.loads, default={},
+    parser.add_argument("--options", type=parse_options, default={},
                         help="skin_options JSON to pass the skin")
     args = parser.parse_args()
     sizes = args.sizes or [(128, 32), (64, 32)]
@@ -192,7 +220,7 @@ def main() -> int:
             ctx.canvas.save(out)
             preview = ctx.canvas.resize((width * 4, height * 4), Image.NEAREST)
             preview.save(out.with_name(out.stem + "_x4.png"))
-            print(f"ok   {label}: {elapsed * 1000:.0f}ms -> {out.relative_to(PROJECT_ROOT)}")
+            print(f"ok   {label}: {elapsed * 1000:.0f}ms -> {display_path(out)}")
             rendered += 1
 
         # Vegas card, once per mode at the first size (optional API)
@@ -203,7 +231,7 @@ def main() -> int:
             if card is not None:
                 out = args.output_dir / f"{args.skin}_{sport}_{mode}_vegas.png"
                 card.save(out)
-                print(f"ok   {mode} vegas card -> {out.relative_to(PROJECT_ROOT)}")
+                print(f"ok   {mode} vegas card -> {display_path(out)}")
         except Exception as e:
             print(f"FAIL {mode} vegas card: {type(e).__name__}: {e}")
             failures += 1
