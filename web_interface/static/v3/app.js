@@ -379,6 +379,104 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 });
 
+// ===== Floating live preview =====
+// A mini preview of the display, available on every tab except Overview
+// (which has the full-size one). Open/closed state persists per browser;
+// frames arrive via the existing SSE stream (updateDisplayPreview in
+// app-shell.js feeds #floating-preview-img).
+window.toggleFloatingPreview = function(open) {
+    try { localStorage.setItem('ledmatrix-floating-preview', open ? '1' : '0'); } catch { /* no-op */ }
+    window.updateFloatingPreviewVisibility();
+};
+
+window.updateFloatingPreviewVisibility = function(tab) {
+    const panel = document.getElementById('floating-preview');
+    const toggle = document.getElementById('floating-preview-toggle');
+    if (!panel || !toggle) return;
+    let active = tab;
+    if (!active) {
+        const el = document.querySelector('[x-data]');
+        const data = el && el._x_dataStack && el._x_dataStack[0];
+        active = data && data.activeTab;
+    }
+    const onOverview = active === 'overview';
+    let open = false;
+    try { open = localStorage.getItem('ledmatrix-floating-preview') === '1'; } catch { /* no-op */ }
+    panel.style.display = (!onOverview && open) ? 'block' : 'none';
+    toggle.style.display = (!onOverview && !open) ? 'flex' : 'none';
+};
+
+document.addEventListener('DOMContentLoaded', function() {
+    window.updateFloatingPreviewVisibility();
+});
+
+// Run a plugin on the real display for 60s via the existing on-demand API
+// and open the floating preview so the effect is visible while configuring.
+window.previewPluginNow = function(pluginId) {
+    fetch('/api/v3/display/on-demand/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plugin_id: pluginId, duration: 60 })
+    })
+    .then(r => r.json())
+    .then(data => {
+        showNotification(data.message || ('Previewing ' + pluginId + ' for 60 seconds'),
+                         data.status || 'success');
+        if (data.status === 'success') window.toggleFloatingPreview(true);
+    })
+    .catch(err => {
+        showNotification('Preview failed: ' + err.message, 'error');
+    });
+};
+
+// ===== Nav accessibility =====
+// aria-current tracks the active tab. Buttons are matched by their Alpine
+// @click expression ("activeTab = '<tab>'"), which works for both the static
+// system tabs and the dynamically injected plugin tabs.
+window.updateNavAriaCurrent = function(tab) {
+    document.querySelectorAll('.nav-tab').forEach(function(btn) {
+        const expr = btn.getAttribute('@click') || btn.getAttribute('x-on:click') || '';
+        const isCurrent = expr.indexOf("activeTab = '" + tab + "'") !== -1;
+        if (isCurrent) {
+            btn.setAttribute('aria-current', 'page');
+        } else {
+            btn.removeAttribute('aria-current');
+        }
+    });
+};
+
+// Escape closes the mobile nav drawer and returns focus to the hamburger;
+// opening the drawer moves focus to its first tab.
+(function() {
+    function appData() {
+        const el = document.querySelector('[x-data]');
+        return el && el._x_dataStack && el._x_dataStack[0];
+    }
+    document.addEventListener('keydown', function(e) {
+        if (e.key !== 'Escape') return;
+        const data = appData();
+        if (data && data.mobileNavOpen) {
+            data.mobileNavOpen = false;
+            const burger = document.querySelector('[aria-controls="site-nav"]');
+            if (burger) burger.focus();
+        }
+    });
+    document.addEventListener('click', function(e) {
+        const burger = e.target && e.target.closest
+            ? e.target.closest('[aria-controls="site-nav"]') : null;
+        if (!burger) return;
+        // The click handler toggles mobileNavOpen; focus the first tab once
+        // the drawer has slid in (matches the CSS transition timing).
+        setTimeout(function() {
+            const data = appData();
+            if (data && data.mobileNavOpen) {
+                const first = document.querySelector('#site-nav .nav-tab');
+                if (first) first.focus();
+            }
+        }, 120);
+    });
+})();
+
 // ===== Mobile nav: header-widget relocation =====
 // Below the md breakpoint the settings-search box and system-stats block are
 // MOVED (same DOM nodes, listeners intact) from the header into the nav

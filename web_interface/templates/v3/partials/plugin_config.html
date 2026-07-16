@@ -893,6 +893,12 @@
                 <p class="mt-1 text-sm text-gray-600">{{ plugin.description or 'Plugin configuration' }}</p>
             </div>
             <div class="flex items-center space-x-4">
+                <button type="button"
+                        onclick="window.previewPluginNow('{{ plugin.id }}')"
+                        class="btn bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 text-sm rounded-md"
+                        title="Run this plugin on the display for 60 seconds and open the live preview">
+                    <i class="fas fa-play mr-1"></i>Preview on display
+                </button>
                 <label class="flex items-center cursor-pointer">
                     <input type="checkbox"
                            id="plugin-enabled-{{ plugin.id }}"

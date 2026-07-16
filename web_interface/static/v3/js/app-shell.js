@@ -312,15 +312,29 @@
                         if (typeof this.updatePluginTabStates === 'function') {
                             this.updatePluginTabStates();
                         }
+                        // Screen readers announce the current tab (covers every
+                        // path that changes tabs: clicks, search deep links,
+                        // the getting-started checklist)
+                        if (typeof window.updateNavAriaCurrent === 'function') {
+                            window.updateNavAriaCurrent(newTab);
+                        }
+                        // Floating preview hides on Overview (full preview
+                        // there), reappears per its saved state elsewhere
+                        if (typeof window.updateFloatingPreviewVisibility === 'function') {
+                            window.updateFloatingPreviewVisibility(newTab);
+                        }
                         // Trigger content load when tab changes
                         this.$nextTick(() => {
                             this.loadTabContent(newTab);
                         });
                     });
-                    
+
                     // Load initial tab content
                     this.$nextTick(() => {
                         this.loadTabContent(this.activeTab);
+                        if (typeof window.updateNavAriaCurrent === 'function') {
+                            window.updateNavAriaCurrent(this.activeTab);
+                        }
                     });
 
                     // Listen for plugin updates from pluginManager
@@ -1860,7 +1874,15 @@
             const canvas = document.getElementById('gridOverlay');
             const ledCanvas = document.getElementById('ledCanvas');
             const placeholder = document.getElementById('displayPlaceholder');
-            
+
+            // Feed the floating mini preview (lives in base.html, present on
+            // every tab) before the overview-only guard below.
+            const floatImg = document.getElementById('floating-preview-img');
+            const floatPanel = document.getElementById('floating-preview');
+            if (floatImg && floatPanel && floatPanel.style.display !== 'none' && data.image) {
+                floatImg.src = `data:image/png;base64,${data.image}`;
+            }
+
             if (!stage || !img || !placeholder) return; // Not on overview page
 
             if (data.image) {
