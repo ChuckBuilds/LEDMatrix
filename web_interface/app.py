@@ -67,7 +67,11 @@ try:
 
     Compress(app)
 except ImportError:
-    pass
+    logging.getLogger(__name__).warning(
+        "flask-compress not installed - responses will be served uncompressed. "
+        "Install it with the Tools tab's 'Install Base Requirements' button or "
+        "'pip install flask-compress'."
+    )
 
 # Import cache functions from separate module to avoid circular imports
 
@@ -682,8 +686,10 @@ def display_preview_generator():
                         }
                         last_modified = current_modified
                         yield preview_data
-                    except Exception:  # nosec B110 - transient read error (e.g. file rotated away); skip this update
-                        pass
+                    except OSError:
+                        # Transient filesystem race (file rotated/replaced
+                        # between mtime check and read); skip this update.
+                        app.logger.debug("Preview snapshot read failed; skipping frame", exc_info=True)
             else:
                 # No snapshot available
                 yield {

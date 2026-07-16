@@ -361,12 +361,15 @@
                                 const newPlugins = value || [];
                                 const oldIds = (_installedPluginsValue || []).map(p => p.id).sort().join(',');
                                 const newIds = newPlugins.map(p => p.id).sort().join(',');
-                                
-                                // Only update if plugin list actually changed
+
+                                // Always take the new list — same-ID updates
+                                // still carry changed metadata/enabled state.
+                                _installedPluginsValue = newPlugins;
+                                this.installedPlugins = newPlugins;
+                                // Only rebuild the tab row when the ID set
+                                // actually changed.
                                 if (oldIds !== newIds) {
                                     debugLog('window.installedPlugins changed:', newPlugins.length, 'plugins');
-                                    _installedPluginsValue = newPlugins;
-                                    this.installedPlugins = newPlugins;
                                     this.updatePluginTabs();
                                 }
                             },
@@ -1983,12 +1986,23 @@
             ctx.fillStyle = 'rgb(0, 0, 0)';
             ctx.fillRect(0, 0, ledCanvas.width, ledCanvas.height);
 
+            // Read the whole frame once instead of one getImageData call per
+            // pixel (a 192x48 panel would otherwise issue ~9,200 calls per
+            // frame — noticeably heavy on phones).
+            let frame;
+            try {
+                frame = offCtx.getImageData(0, 0, logicalWidth, logicalHeight).data;
+            } catch (e) {
+                console.error('Failed to read offscreen canvas pixels:', e);
+                return;
+            }
+
             // Draw circular dots for each LED pixel
             let drawn = 0;
             for (let y = 0; y < logicalHeight; y++) {
                 for (let x = 0; x < logicalWidth; x++) {
-                    const pixel = offCtx.getImageData(x, y, 1, 1).data;
-                    const r = pixel[0], g = pixel[1], b = pixel[2], a = pixel[3];
+                    const i = (y * logicalWidth + x) * 4;
+                    const r = frame[i], g = frame[i + 1], b = frame[i + 2], a = frame[i + 3];
 
                     // Skip fully transparent or black pixels to reduce overdraw
                     if (a === 0 || (r|g|b) === 0) continue;

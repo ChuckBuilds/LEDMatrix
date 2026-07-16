@@ -2866,6 +2866,14 @@ class DisplayController:
         get_ordered_plugins() semantics for the primary rotation.
         """
         configured = (self.config.get("display", {}) or {}).get("plugin_rotation_order", []) or []
+        # Defensive: hand-edited or migrated configs may hold a non-list or
+        # non-string entries; keep the existing rotation rather than applying
+        # a garbage order.
+        if not isinstance(configured, list):
+            logger.warning("[DisplayController] Ignoring invalid plugin_rotation_order (not a list): %r",
+                           type(configured).__name__)
+            return
+        configured = [p for p in configured if isinstance(p, str)]
         if not configured or not self.available_modes:
             return
 
@@ -2882,7 +2890,7 @@ class DisplayController:
                 new_modes.append(mode)
         if new_modes != self.available_modes:
             self.available_modes = new_modes
-            logger.info("Applied plugin rotation order %s -> modes: %s",
+            logger.info("[DisplayController] Applied plugin rotation order %s -> modes: %s",
                         configured, self.available_modes)
 
     def _resync_mode_index_after_change(self, previous_mode: Optional[str]) -> None:

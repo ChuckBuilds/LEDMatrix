@@ -961,21 +961,22 @@ def save_main_config():
                     return jsonify({"status": "error", "message": "sync_follower_position must be left or right"}), 400
                 current_config["sync"]["follower_position"] = pos_val
 
-        # Handle primary rotation order (JSON array of plugin ids; same
-        # parse/validate pattern as vegas_plugin_order above)
+        # Handle primary rotation order: must be a JSON array of plugin-id
+        # strings. Reject anything else with a 400 rather than silently
+        # coercing, so a buggy client can't clear or corrupt the saved order.
         if 'plugin_rotation_order' in data:
+            raw_order = data.pop('plugin_rotation_order')
             try:
-                if isinstance(data['plugin_rotation_order'], str):
-                    parsed = json.loads(data['plugin_rotation_order'])
-                else:
-                    parsed = data['plugin_rotation_order']
-                if 'display' not in current_config:
-                    current_config['display'] = {}
-                current_config['display']['plugin_rotation_order'] = (
-                    list(parsed) if isinstance(parsed, (list, tuple)) else []
-                )
+                parsed = json.loads(raw_order) if isinstance(raw_order, str) else raw_order
             except (json.JSONDecodeError, TypeError, ValueError):
-                logger.warning("Malformed plugin_rotation_order ignored")
+                return jsonify({'status': 'error',
+                                'message': 'plugin_rotation_order must be valid JSON'}), 400
+            if not isinstance(parsed, list) or not all(isinstance(p, str) for p in parsed):
+                return jsonify({'status': 'error',
+                                'message': 'plugin_rotation_order must be a list of plugin-id strings'}), 400
+            if 'display' not in current_config:
+                current_config['display'] = {}
+            current_config['display']['plugin_rotation_order'] = parsed
 
         # Handle display durations
         duration_fields = [k for k in data.keys() if k.endswith('_duration') or k in ['default_duration', 'transition_duration']]

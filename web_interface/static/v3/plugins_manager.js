@@ -317,7 +317,7 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
         showNotification(`${action.charAt(0).toUpperCase() + action.slice(1)} ${pluginName}...`, 'info');
     }
 
-    fetch('/api/v3/plugins/toggle', {
+    return fetch('/api/v3/plugins/toggle', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ plugin_id: pluginId, enabled: enabled })
@@ -361,6 +361,9 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
         if (wrapperDiv) {
             wrapperDiv.classList.remove('opacity-50', 'pointer-events-none');
         }
+        // Resolve the outcome so callers (e.g. the install flow) can chain
+        // on whether enabling actually succeeded.
+        return data;
     })
     .catch(error => {
         // Verify this error is for the latest request (prevent race conditions)
@@ -3889,19 +3892,27 @@ window.installPlugin = function(pluginId, branch = null) {
     .then(data => {
         showNotification(data.message, data.status);
         if (data.status === 'success') {
-            // Enable immediately so install -> enable is one step, then nudge
-            // for the display restart that's needed before it shows on the
-            // matrix (persistent toast; duration 0 = stays until dismissed).
-            window.togglePlugin(pluginId, true);
-            showNotification(
-                `${pluginId} installed and enabled — restart the display to show it`,
-                {
-                    type: 'success',
-                    duration: 0,
-                    actionLabel: 'Restart Now',
-                    onAction: () => restartDisplay()
+            // Enable immediately so install -> enable is one step; only nudge
+            // for a restart once enablement actually succeeded (persistent
+            // toast; duration 0 = stays until dismissed).
+            Promise.resolve(window.togglePlugin(pluginId, true)).then(toggleResult => {
+                if (toggleResult && toggleResult.status === 'success') {
+                    showNotification(
+                        `${pluginId} installed and enabled — restart the display to show it`,
+                        {
+                            type: 'success',
+                            duration: 0,
+                            actionLabel: 'Restart Now',
+                            onAction: () => restartDisplay()
+                        }
+                    );
+                } else {
+                    showNotification(
+                        `${pluginId} installed, but enabling it failed — use its toggle in the plugin list`,
+                        'warning'
+                    );
                 }
-            );
+            });
             // Refresh installed plugins list, then re-render store to update badges
             loadInstalledPlugins();
             setTimeout(() => applyStoreFiltersAndSort(true), 500);

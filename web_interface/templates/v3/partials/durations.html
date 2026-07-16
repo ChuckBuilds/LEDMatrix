@@ -79,10 +79,18 @@
 (function () {
     // Shared drag-and-drop plugin list (static/v3/js/widgets/plugin-order-list.js,
     // same module the Vegas Scroll section uses).
-    function initRotationOrderList() {
-        if (!document.getElementById('rotation_plugin_order')) return;
+    function initRotationOrderList(attempt) {
+        const container = document.getElementById('rotation_plugin_order');
+        if (!container) return;
         if (!window.PluginOrderList) {
-            setTimeout(initRotationOrderList, 100);
+            // Widget script is deferred; retry briefly, then surface a real
+            // error instead of showing "Loading…" forever.
+            if ((attempt || 0) < 50) {
+                setTimeout(function() { initRotationOrderList((attempt || 0) + 1); }, 100);
+            } else {
+                container.textContent = 'Could not load the reorder widget — reload the page to try again.';
+                container.className = 'text-sm text-red-500';
+            }
             return;
         }
         window.PluginOrderList.init({

@@ -130,14 +130,16 @@
                             responseText: xhr?.responseText
                         });
                         
-                        // For form submissions, log the form data
+                        // For form submissions, log field names only — values
+                        // may contain API keys, passwords, or other secrets
+                        // that must never reach the console.
                         if (target && target.tagName === 'FORM') {
                             const formData = new FormData(target);
-                            const formPayload = Object.create(null);
-                            for (const [key, value] of formData.entries()) {
-                                formPayload[key] = value;
+                            const fieldNames = [];
+                            for (const [key] of formData.entries()) {
+                                fieldNames.push(key);
                             }
-                            console.error('Form payload:', formPayload);
+                            console.error('Form fields (values redacted):', fieldNames);
                             
                             // Try to parse error response for validation details
                             if (xhr?.responseText) {
@@ -242,6 +244,13 @@
                     section.style.display = 'none';
                     icon.classList.remove('fa-chevron-down');
                     icon.classList.add('fa-chevron-right');
+                }
+
+                // Keep assistive tech in sync: any toggle button that declares
+                // aria-controls for this section mirrors the expanded state.
+                const controlBtn = document.querySelector(`[aria-controls="${sectionId}"]`);
+                if (controlBtn) {
+                    controlBtn.setAttribute('aria-expanded', String(isHidden));
                 }
             };
         })();

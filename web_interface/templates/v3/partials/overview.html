@@ -152,7 +152,7 @@
                 if (nowDone) maybeAutoHide();
                 return;
             }
-            var appEl = document.querySelector('[x-data]');
+            var appEl = document.querySelector('[x-data="app()"]') || document.querySelector('[x-data]');
             var data = appEl && appEl._x_dataStack && appEl._x_dataStack[0];
             if (data) {
                 data.activeTab = btn.dataset.tab;

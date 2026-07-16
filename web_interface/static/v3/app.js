@@ -395,7 +395,7 @@ window.updateFloatingPreviewVisibility = function(tab) {
     if (!panel || !toggle) return;
     let active = tab;
     if (!active) {
-        const el = document.querySelector('[x-data]');
+        const el = document.querySelector('[x-data="app()"]') || document.querySelector('[x-data]');
         const data = el && el._x_dataStack && el._x_dataStack[0];
         active = data && data.activeTab;
     }
@@ -449,7 +449,7 @@ window.updateNavAriaCurrent = function(tab) {
 // opening the drawer moves focus to its first tab.
 (function() {
     function appData() {
-        const el = document.querySelector('[x-data]');
+        const el = document.querySelector('[x-data="app()"]') || document.querySelector('[x-data]');
         return el && el._x_dataStack && el._x_dataStack[0];
     }
     document.addEventListener('keydown', function(e) {

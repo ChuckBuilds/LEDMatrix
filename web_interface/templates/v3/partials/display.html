@@ -137,6 +137,8 @@
             <div class="nested-section border border-gray-300 rounded-lg mt-4">
                 <button type="button"
                         class="w-full bg-gray-100 hover:bg-gray-200 px-4 py-3 flex items-center justify-between text-left transition-colors rounded-t-lg"
+                        aria-controls="display-section-advanced-hardware"
+                        aria-expanded="false"
                         onclick="toggleSection('display-section-advanced-hardware')">
                     <div class="flex-1">
                         <h4 class="font-semibold text-gray-900">
@@ -642,12 +644,18 @@ if (typeof window.fixInvalidNumberInputs !== 'function') {
     // Initialize plugin order list via the shared drag-and-drop module
     // (static/v3/js/widgets/plugin-order-list.js) — the same component the
     // Durations tab uses for the primary rotation order.
-    function initPluginOrderList() {
-        if (!document.getElementById('vegas_plugin_order')) return;
+    function initPluginOrderList(attempt) {
+        const container = document.getElementById('vegas_plugin_order');
+        if (!container) return;
         if (!window.PluginOrderList) {
-            // Widget script is deferred; retry briefly if this partial's
-            // inline script runs first.
-            setTimeout(initPluginOrderList, 100);
+            // Widget script is deferred; retry briefly, then surface a real
+            // error instead of waiting forever.
+            if ((attempt || 0) < 50) {
+                setTimeout(function() { initPluginOrderList((attempt || 0) + 1); }, 100);
+            } else {
+                container.textContent = 'Could not load the reorder widget — reload the page to try again.';
+                container.className = 'text-sm text-red-500';
+            }
             return;
         }
         window.PluginOrderList.init({

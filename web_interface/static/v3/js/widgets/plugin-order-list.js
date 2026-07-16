@@ -115,6 +115,10 @@
                 } catch (e) {
                     console.error('Error parsing saved plugin order:', e);
                 }
+                // JSON.parse can succeed and still return null/objects
+                // (e.g. a saved value of "null"); normalize to arrays.
+                if (!Array.isArray(currentOrder)) currentOrder = [];
+                if (!Array.isArray(excluded)) excluded = [];
 
                 // Saved order first, then any newly enabled plugins.
                 const orderedPlugins = [];
@@ -172,6 +176,31 @@
                         badge.appendChild(document.createTextNode(modeInfo.label));
                         row.appendChild(badge);
                     }
+
+                    // Up/down buttons: touch- and keyboard-accessible
+                    // reordering alongside native drag-and-drop (HTML5 drag
+                    // events don't fire on most mobile browsers).
+                    const pluginLabel = plugin.name || plugin.id;
+                    [['up', 'fa-chevron-up', `Move ${pluginLabel} up`],
+                     ['down', 'fa-chevron-down', `Move ${pluginLabel} down`]].forEach(([dir, iconCls, ariaLabel]) => {
+                        const moveBtn = document.createElement('button');
+                        moveBtn.type = 'button';
+                        moveBtn.className = 'plugin-order-move text-gray-400 hover:text-gray-700 px-2 py-1';
+                        moveBtn.setAttribute('aria-label', ariaLabel);
+                        const moveIcon = document.createElement('i');
+                        moveIcon.className = `fas ${iconCls} text-xs`;
+                        moveBtn.appendChild(moveIcon);
+                        moveBtn.addEventListener('click', function() {
+                            if (dir === 'up' && row.previousElementSibling) {
+                                container.insertBefore(row, row.previousElementSibling);
+                            } else if (dir === 'down' && row.nextElementSibling) {
+                                container.insertBefore(row.nextElementSibling, row);
+                            }
+                            syncInputs();
+                            moveBtn.focus();
+                        });
+                        row.appendChild(moveBtn);
+                    });
 
                     container.appendChild(row);
                 });
