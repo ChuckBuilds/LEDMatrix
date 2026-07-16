@@ -1870,29 +1870,35 @@
                 // Current scale from slider
                 const scale = parseInt(document.getElementById('scaleRange')?.value || '8');
 
-                // Update image and meta label
+                // Update image and meta label. Size everything from the PNG's
+                // OWN dimensions (naturalWidth/Height) once it has loaded —
+                // not from the server-reported config dimensions. If the
+                // config disagrees with what the display service actually
+                // renders (stale config, service not yet restarted), sizing
+                // from config stretches the image at a fractional ratio and
+                // the preview looks blurry until the scale slider forces a
+                // re-render. The slider path always used natural dimensions;
+                // now both paths do.
                 img.style.imageRendering = 'pixelated';
                 img.onload = () => {
+                    const nw = img.naturalWidth || data.width || 128;
+                    const nh = img.naturalHeight || data.height || 64;
+                    const width = nw * scale;
+                    const height = nh * scale;
+                    img.style.width = width + 'px';
+                    img.style.height = height + 'px';
+                    ledCanvas.width = width;
+                    ledCanvas.height = height;
+                    canvas.width = width;
+                    canvas.height = height;
+                    const meta = document.getElementById('previewMeta');
+                    if (meta) {
+                        meta.textContent = `${nw} x ${nh} @ ${scale}x`;
+                    }
+                    drawGrid(canvas, nw, nh, scale);
                     renderLedDots();
                 };
                 img.src = `data:image/png;base64,${data.image}`;
-                
-                const meta = document.getElementById('previewMeta');
-                if (meta) {
-                    meta.textContent = `${data.width || 128} x ${data.height || 64} @ ${scale}x`;
-                }
-
-                // Size the canvases to match
-                const width = (data.width || 128) * scale;
-                const height = (data.height || 64) * scale;
-                img.style.width = width + 'px';
-                img.style.height = height + 'px';
-                ledCanvas.width = width;
-                ledCanvas.height = height;
-                canvas.width = width;
-                canvas.height = height;
-                drawGrid(canvas, data.width || 128, data.height || 64, scale);
-                renderLedDots();
             } else {
                 stage.style.display = 'none';
                 placeholder.style.display = 'block';
