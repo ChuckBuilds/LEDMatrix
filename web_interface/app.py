@@ -176,7 +176,12 @@ except Exception as _hm_err:  # pragma: no cover - defensive startup guard
         "Could not enable plugin health/metrics for web UI: %s", _hm_err
     )
 
-app.register_blueprint(pages_v3, url_prefix='/v3')
+# Pages are served un-prefixed (the interface lives at /); the /v3 mount is a
+# legacy alias kept so existing bookmarks and the hardcoded /v3/partials/...
+# fetches in templates/JS keep working unchanged. url_for('pages_v3.*')
+# resolves against the primary (un-prefixed) registration.
+app.register_blueprint(pages_v3, url_prefix='')
+app.register_blueprint(pages_v3, url_prefix='/v3', name='pages_v3_legacy')
 app.register_blueprint(api_v3, url_prefix='/api/v3')
 
 # Route to serve plugin asset files (registered on main app, not blueprint, for /assets/... path)
@@ -407,7 +412,11 @@ def captive_portal_redirect():
     
     # List of paths that should NOT be redirected (allow normal operation)
     allowed_paths = [
-        '/v3',  # Main interface and all sub-paths (includes /v3/setup)
+        '/v3',  # Legacy-prefixed interface and all sub-paths
+        '/setup',  # Captive setup page itself (un-prefixed mount)
+        '/partials/',  # HTMX partials (un-prefixed mount)
+        '/settings/',  # Settings search index (un-prefixed mount)
+        '/plugin-ui/',  # Plugin-provided web UI assets (un-prefixed mount)
         '/api/v3/',  # All API endpoints
         '/static/',  # Static files (CSS, JS, images)
         '/hotspot-detect.html',  # iOS/macOS detection
@@ -799,11 +808,8 @@ if limiter:
     limiter.limit("200 per minute")(stream_display)
     limiter.limit("200 per minute")(stream_logs)
 
-# Main route - redirect to v3 interface as default
-@app.route('/')
-def index():
-    """Redirect to v3 interface"""
-    return redirect(url_for('pages_v3.index'))
+# The pages blueprint's index now serves '/' directly (see the un-prefixed
+# blueprint registration above), so no redirect route is needed here.
 
 @app.route('/favicon.ico')
 def favicon():
