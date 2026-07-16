@@ -97,26 +97,20 @@
     })();
     </script>
 
-    <!-- Resource hints for CDN resources -->
-    <link rel="preconnect" href="https://unpkg.com" crossorigin>
-    <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
-    <link rel="dns-prefetch" href="https://unpkg.com">
-    <link rel="dns-prefetch" href="https://cdnjs.cloudflare.com">
-
-    <!-- HTMX for dynamic content loading -->
-    <!-- Use local files when in AP mode (192.168.4.x) to avoid CDN dependency -->
+    <!-- HTMX for dynamic content loading.
+         Local (vendored) files are the primary source for every network —
+         LAN-speed loads, fully offline-capable; the pinned CDN copies remain
+         only as a last-ditch rescue if a local file somehow fails. -->
     <script>
         (function() {
-            // Detect AP mode by IP address
-            const isAPMode = window.location.hostname === '192.168.4.1' || 
-                           window.location.hostname.startsWith('192.168.4.');
-            
-            // In AP mode, use local files; otherwise use CDN
-            const htmxSrc = isAPMode ? '/static/v3/js/htmx.min.js' : 'https://unpkg.com/htmx.org@1.9.10';
-            const sseSrc = isAPMode ? '/static/v3/js/htmx-sse.js' : 'https://unpkg.com/htmx.org/dist/ext/sse.js';
-            const jsonEncSrc = isAPMode ? '/static/v3/js/htmx-json-enc.js' : 'https://unpkg.com/htmx.org/dist/ext/json-enc.js';
-            
-            // Load HTMX with fallback
+            const htmxSrc = '/static/v3/js/htmx.min.js';
+            const sseSrc = '/static/v3/js/htmx-sse.js';
+            const jsonEncSrc = '/static/v3/js/htmx-json-enc.js';
+            const htmxCdn = 'https://unpkg.com/htmx.org@1.9.10';
+            const sseCdn = 'https://unpkg.com/htmx.org@1.9.10/dist/ext/sse.js';
+            const jsonEncCdn = 'https://unpkg.com/htmx.org@1.9.10/dist/ext/json-enc.js';
+
+            // Load a script with an optional one-shot fallback source
             function loadScript(src, fallback, onLoad) {
                 const script = document.createElement('script');
                 script.src = src;
@@ -134,42 +128,37 @@
                 };
                 document.head.appendChild(script);
             }
-            
-            // Load HTMX core
-            loadScript(htmxSrc, isAPMode ? 'https://unpkg.com/htmx.org@1.9.10' : '/static/v3/js/htmx.min.js', function() {
+
+            function htmxReady() {
+                debugLog('HTMX loaded successfully');
+                window.dispatchEvent(new Event('htmx:ready'));
+                // Load extensions after core loads
+                loadScript(sseSrc, sseCdn);
+                loadScript(jsonEncSrc, jsonEncCdn);
+            }
+
+            // Load HTMX core (local first, CDN rescue), then the extensions
+            loadScript(htmxSrc, htmxCdn, function() {
                 // Wait a moment for HTMX to initialize, then verify
                 setTimeout(function() {
-                    // Verify HTMX loaded
-                    if (typeof htmx === 'undefined') {
-                        console.error('HTMX failed to load, trying fallback...');
-                        const fallbackSrc = isAPMode ? 'https://unpkg.com/htmx.org@1.9.10' : '/static/v3/js/htmx.min.js';
-                        if (fallbackSrc !== htmxSrc) {
-                            loadScript(fallbackSrc, null, function() {
-                                setTimeout(function() {
-                                    if (typeof htmx !== 'undefined') {
-                                        debugLog('HTMX loaded from fallback');
-                                        window.dispatchEvent(new Event('htmx:ready'));
-                                        // Load extensions after core loads
-                                        loadScript(sseSrc, isAPMode ? 'https://unpkg.com/htmx.org/dist/ext/sse.js' : '/static/v3/js/htmx-sse.js');
-                                        loadScript(jsonEncSrc, isAPMode ? 'https://unpkg.com/htmx.org/dist/ext/json-enc.js' : '/static/v3/js/htmx-json-enc.js');
-                                    } else {
-                                        console.error('HTMX failed to load from both primary and fallback sources');
-                                        // Trigger fallback content loading
-                                        window.dispatchEvent(new Event('htmx-load-failed'));
-                                    }
-                                }, 100);
-                            });
-                        } else {
-                            console.error('HTMX failed to load and no fallback available');
-                            window.dispatchEvent(new Event('htmx-load-failed'));
-                        }
-                    } else {
-                        debugLog('HTMX loaded successfully');
-                        window.dispatchEvent(new Event('htmx:ready'));
-                        // Load extensions after core loads
-                        loadScript(sseSrc, isAPMode ? 'https://unpkg.com/htmx.org/dist/ext/sse.js' : '/static/v3/js/htmx-sse.js');
-                        loadScript(jsonEncSrc, isAPMode ? 'https://unpkg.com/htmx.org/dist/ext/json-enc.js' : '/static/v3/js/htmx-json-enc.js');
+                    if (typeof htmx !== 'undefined') {
+                        htmxReady();
+                        return;
                     }
+                    // Loaded but not initialized (e.g. corrupt cached copy):
+                    // one CDN rescue attempt, mirroring the Alpine fallback.
+                    console.error('HTMX not initialized after load, trying CDN rescue...');
+                    loadScript(htmxCdn, null, function() {
+                        setTimeout(function() {
+                            if (typeof htmx !== 'undefined') {
+                                htmxReady();
+                            } else {
+                                console.error('HTMX failed to load from both local and CDN sources');
+                                // Trigger fallback content loading
+                                window.dispatchEvent(new Event('htmx-load-failed'));
+                            }
+                        }, 100);
+                    });
                 }, 100);
             });
         })();
@@ -840,10 +829,10 @@
     </script>
 
     <!-- CodeMirror for JSON editing - lazy loaded when needed -->
-    <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
-    <noscript><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.css"></noscript>
-    <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/theme/monokai.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
-    <noscript><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/theme/monokai.min.css"></noscript>
+    <link rel="preload" href="{{ url_for('static', filename='v3/vendor/codemirror/codemirror.min.css') }}" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link rel="stylesheet" href="{{ url_for('static', filename='v3/vendor/codemirror/codemirror.min.css') }}"></noscript>
+    <link rel="preload" href="{{ url_for('static', filename='v3/vendor/codemirror/theme/monokai.min.css') }}" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link rel="stylesheet" href="{{ url_for('static', filename='v3/vendor/codemirror/theme/monokai.min.css') }}"></noscript>
     <!-- CodeMirror scripts loaded on demand when JSON editor is opened -->
     <script>
         // Lazy load CodeMirror when needed
@@ -851,12 +840,15 @@
             if (window.CodeMirror) return Promise.resolve();
             
             return new Promise((resolve, reject) => {
+                // Vendored CodeMirror 5.65.2 (note: the previously listed CDN
+                // mode/json/json.min.js never existed — it 404'd on every
+                // editor open; JSON highlighting comes from the javascript
+                // mode, so it's simply dropped here)
                 const scripts = [
-                    'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.js',
-                    'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/javascript/javascript.min.js',
-                    'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/json/json.min.js',
-                    'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/edit/closebrackets.min.js',
-                    'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/edit/matchbrackets.min.js'
+                    '/static/v3/vendor/codemirror/codemirror.min.js',
+                    '/static/v3/vendor/codemirror/mode/javascript/javascript.min.js',
+                    '/static/v3/vendor/codemirror/addon/edit/closebrackets.min.js',
+                    '/static/v3/vendor/codemirror/addon/edit/matchbrackets.min.js'
                 ];
                 
                 let loaded = 0;
@@ -875,8 +867,9 @@
         };
     </script>
 
-    <!-- Font Awesome icons -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <!-- Font Awesome icons (vendored 6.0.0 — css/all.min.css references
+         ../webfonts/ relatively, so both live under v3/vendor/fontawesome/) -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='v3/vendor/fontawesome/css/all.min.css') }}">
 
     <!-- Custom v3 styles -->
     <link rel="stylesheet" href="{{ url_for('static', filename='v3/app.css') }}">
