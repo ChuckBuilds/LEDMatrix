@@ -61,6 +61,106 @@
 }());
 </script>
 
+<!-- Getting Started checklist: non-gating, dismissible (localStorage), items
+     auto-check from existing config/endpoints — no new persisted state.
+     Known heuristic limits (acceptable, disclosed): values left at legitimate
+     defaults (e.g. a user actually in Tampa) read as "not done". -->
+{% set _hw = main_config.display.hardware if main_config and main_config.display else {} %}
+{% set _hw_done = (_hw.rows or 0) > 0 and (_hw.cols or 0) > 0 and (_hw.chain_length or 0) > 0 %}
+{% set _loc = main_config.location if main_config and main_config.location else {} %}
+{% set _loc_done = (main_config.timezone and main_config.timezone != 'America/New_York')
+                   or (_loc.city and _loc.city != 'Tampa') %}
+<div id="getting-started-card" class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4" style="display:none" role="region" aria-label="Getting started checklist">
+    <div class="flex items-start justify-between">
+        <div class="flex-1">
+            <p class="text-sm font-semibold text-blue-900"><i class="fas fa-rocket mr-1"></i>Getting Started</p>
+            <p class="text-xs text-blue-700 mt-0.5 mb-2">A few steps to get your display up and running. Click any step to jump there.</p>
+            <ul class="space-y-1 text-sm" id="getting-started-items">
+                <li><button type="button" class="gs-item text-left w-full" data-done="{{ '1' if _hw_done else '0' }}" data-tab="display">
+                    <i class="far fa-square mr-2"></i>Set your panel size (Display tab)</button></li>
+                <li><button type="button" class="gs-item text-left w-full" data-done="{{ '1' if _loc_done else '0' }}" data-tab="general">
+                    <i class="far fa-square mr-2"></i>Set your timezone and location (General tab)</button></li>
+                <li><button type="button" class="gs-item text-left w-full" data-done="0" data-check="installed" data-tab="plugins">
+                    <i class="far fa-square mr-2"></i>Install a plugin from the Plugin Store</button></li>
+                <li><button type="button" class="gs-item text-left w-full" data-done="0" data-check="enabled" data-tab="plugins">
+                    <i class="far fa-square mr-2"></i>Enable a plugin</button></li>
+                <li><button type="button" class="gs-item text-left w-full" data-done="0" data-check="configured" data-tab="plugins">
+                    <i class="far fa-square mr-2"></i>Configure it (each plugin gets its own tab)</button></li>
+            </ul>
+        </div>
+        <button type="button" onclick="window.dismissGettingStarted()" class="ml-4 flex-shrink-0 text-blue-400 hover:text-blue-600" aria-label="Dismiss getting started checklist">
+            <i class="fas fa-times"></i>
+        </button>
+    </div>
+</div>
+<script>
+(function () {
+    var KEY = 'ledmatrix-getting-started-dismissed';
+    var card = document.getElementById('getting-started-card');
+    if (!card) return;
+    try { if (localStorage.getItem(KEY) === '1') return; } catch (e) {}
+    card.style.display = 'block';
+
+    function markDone(btn) {
+        btn.dataset.done = '1';
+        var icon = btn.querySelector('i');
+        if (icon) { icon.className = 'fas fa-check-square mr-2 text-green-600'; }
+        btn.classList.add('text-gray-500', 'line-through');
+    }
+
+    // Apply server-derived states, wire deep links (same app-data access
+    // pattern as settings-search.js).
+    Array.prototype.forEach.call(card.querySelectorAll('.gs-item'), function (btn) {
+        if (btn.dataset.done === '1') markDone(btn);
+        btn.addEventListener('click', function () {
+            var appEl = document.querySelector('[x-data]');
+            var data = appEl && appEl._x_dataStack && appEl._x_dataStack[0];
+            if (data) {
+                data.activeTab = btn.dataset.tab;
+                if ('mobileNavOpen' in data) data.mobileNavOpen = false;
+            }
+        });
+    });
+
+    // Plugin-derived states from the existing installed-plugins endpoint.
+    fetch('/api/v3/plugins/installed')
+        .then(function (r) { return r.json(); })
+        .then(function (resp) {
+            var plugins = (resp.data && resp.data.plugins) || [];
+            if (plugins.length > 0) markDone(card.querySelector('[data-check="installed"]'));
+            var enabled = plugins.filter(function (p) { return p.enabled; });
+            if (enabled.length > 0) {
+                markDone(card.querySelector('[data-check="enabled"]'));
+                // "Configured" heuristic: the first enabled plugin has at least
+                // one saved value that differs from its schema defaults.
+                var pid = enabled[0].id;
+                Promise.all([
+                    fetch('/api/v3/plugins/config?plugin_id=' + encodeURIComponent(pid)).then(function (r) { return r.json(); }),
+                    fetch('/api/v3/plugins/schema?plugin_id=' + encodeURIComponent(pid)).then(function (r) { return r.json(); })
+                ]).then(function (res) {
+                    // GET /plugins/config returns the config dict directly in .data
+                    var cfg = res[0].data || {};
+                    var props = (res[1].data && res[1].data.schema && res[1].data.schema.properties) || {};
+                    for (var k in cfg) {
+                        if (k === 'enabled' || !(k in props)) continue;
+                        if (props[k] && 'default' in props[k] &&
+                            JSON.stringify(cfg[k]) !== JSON.stringify(props[k]['default'])) {
+                            markDone(card.querySelector('[data-check="configured"]'));
+                            return;
+                        }
+                    }
+                }).catch(function () {});
+            }
+        })
+        .catch(function () {});
+
+    window.dismissGettingStarted = function () {
+        card.style.display = 'none';
+        try { localStorage.setItem(KEY, '1'); } catch (e) {}
+    };
+}());
+</script>
+
 <div class="bg-white rounded-lg shadow p-6">
     <div class="border-b border-gray-200 pb-4 mb-6">
         <h2 class="text-lg font-semibold text-gray-900">System Overview</h2>
