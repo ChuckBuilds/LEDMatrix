@@ -85,7 +85,14 @@
                 </div>
             </div>
 
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <!-- Live total-resolution readout: width = cols x chain_length, height = rows x parallel -->
+            <p id="display-resolution-readout" class="text-sm text-gray-600 mb-4" aria-live="polite">
+                <i class="fas fa-expand-arrows-alt mr-1 text-gray-400"></i>
+                Your display: <strong id="display-resolution-value">&mdash;</strong>
+                <span class="text-gray-400">(columns &times; chain length wide, rows &times; parallel tall)</span>
+            </p>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div class="form-group" id="setting-display-brightness" data-setting-key="display.hardware.brightness">
                     <label for="brightness" class="block text-sm font-medium text-gray-700">Brightness{{ ui.help_tip('Overall LED brightness (1–100%).\nLower is dimmer, higher is brighter. Recommended: 70–90 indoors, 90–100 in bright rooms.', 'Brightness') }}</label>
                     <div class="flex items-center space-x-2">
@@ -109,9 +116,7 @@
                         <option value="regular-pi1" {% if main_config.display.hardware.hardware_mapping == "regular-pi1" %}selected{% endif %}>Regular Pi1</option>
                     </select>
                 </div>
-            </div>
 
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div class="form-group" id="setting-display-led_rgb_sequence" data-setting-key="display.hardware.led_rgb_sequence">
                     <label for="led_rgb_sequence" class="block text-sm font-medium text-gray-700">LED RGB Sequence{{ ui.help_tip('Order the panel expects color channels in.\nChange this only if reds/greens/blues look swapped. Default: RGB.', 'LED RGB Sequence') }}</label>
                     <select id="led_rgb_sequence" name="led_rgb_sequence" class="form-control">
@@ -123,7 +128,27 @@
                         <option value="BGR" {% if main_config.display.hardware.get('led_rgb_sequence', 'RGB') == "BGR" %}selected{% endif %}>BGR</option>
                     </select>
                 </div>
+            </div>
 
+            <!-- Advanced hardware settings: niche-panel and deep tuning fields.
+                 Collapsed by default; reuses the same nested-section shell as
+                 plugin config forms, so toggleSection() and the settings
+                 search's auto-expand both work unchanged. -->
+            <div class="nested-section border border-gray-300 rounded-lg mt-4">
+                <button type="button"
+                        class="w-full bg-gray-100 hover:bg-gray-200 px-4 py-3 flex items-center justify-between text-left transition-colors rounded-t-lg"
+                        onclick="toggleSection('display-section-advanced-hardware')">
+                    <div class="flex-1">
+                        <h4 class="font-semibold text-gray-900">
+                            <i class="fas fa-sliders-h mr-1 text-gray-500"></i>Advanced Hardware Settings (10)
+                        </h4>
+                        <p class="text-sm text-gray-600 mt-1">Multiplexing, panel variants, and PWM tuning &mdash; the defaults work for standard HUB75 panels.</p>
+                    </div>
+                    <i id="display-section-advanced-hardware-icon" class="fas fa-chevron-right text-gray-500 transition-transform"></i>
+                </button>
+                <div id="display-section-advanced-hardware" class="nested-content bg-gray-50 px-4 py-4 space-y-4 hidden" style="display: none;">
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div class="form-group" id="setting-display-multiplexing" data-setting-key="display.hardware.multiplexing">
                     <label for="multiplexing" class="block text-sm font-medium text-gray-700">Multiplexing{{ ui.help_tip('Pixel-mapping scheme used by outdoor/specialty panels.\nLeave at 0 (Direct) for most indoor panels. Only change if the image is scrambled — try values until it looks right.', 'Multiplexing') }}</label>
                     <select id="multiplexing" name="multiplexing" class="form-control">
@@ -255,6 +280,36 @@
                            class="form-control">
                 </div>
             </div>
+
+                </div> <!-- /#display-section-advanced-hardware (nested-content) -->
+            </div> <!-- /advanced hardware nested-section -->
+
+            <script>
+                // Live "Your display: W x H" readout - width = cols x chain_length,
+                // height = rows x parallel (same math as the chain-length tooltip).
+                (function () {
+                    const ids = ['rows', 'cols', 'chain_length', 'parallel'];
+                    const out = document.getElementById('display-resolution-value');
+                    if (!out) return;
+                    function recompute() {
+                        const v = {};
+                        for (const id of ids) {
+                            const el = document.getElementById(id);
+                            v[id] = el ? parseInt(el.value, 10) : NaN;
+                        }
+                        if (Object.values(v).some(n => !Number.isFinite(n) || n <= 0)) {
+                            out.textContent = '—';
+                            return;
+                        }
+                        out.textContent = (v.cols * v.chain_length) + ' × ' + (v.rows * v.parallel) + ' pixels';
+                    }
+                    for (const id of ids) {
+                        const el = document.getElementById(id);
+                        if (el) el.addEventListener('input', recompute);
+                    }
+                    recompute();
+                })();
+            </script>
         </div>
 
         <!-- Double-Sided Display -->
