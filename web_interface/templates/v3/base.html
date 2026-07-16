@@ -552,6 +552,7 @@
             window.app = function() {
                 return {
                     activeTab: isAPMode ? 'wifi' : 'overview',
+                    mobileNavOpen: false,
                     installedPlugins: [],
                     
                     init() {
@@ -874,6 +875,16 @@
         <div class="mx-auto px-4 sm:px-6 lg:px-8 xl:px-12 2xl:px-16" style="max-width: 100%;">
             <div class="flex justify-between items-center h-16">
                 <div class="flex items-center">
+                    <!-- Mobile nav toggle (hamburger) — hidden at md and up -->
+                    <button type="button"
+                            class="theme-toggle-btn p-2 rounded-md mr-2 md:hidden"
+                            @click="mobileNavOpen = !mobileNavOpen"
+                            :aria-expanded="mobileNavOpen ? 'true' : 'false'"
+                            aria-controls="site-nav"
+                            aria-label="Open navigation menu"
+                            title="Menu">
+                        <i class="fas fa-bars" aria-hidden="true"></i>
+                    </button>
                     <h1 class="text-xl font-bold text-gray-900">
                         <i class="fas fa-tv text-blue-600 mr-2"></i>
                         LED Matrix Control - v3
@@ -881,7 +892,7 @@
                 </div>
 
                 <!-- Connection status and theme toggle -->
-                <div class="flex items-center space-x-4">
+                <div id="header-widgets" class="flex items-center space-x-4">
                     <!-- Global settings search -->
                     <div class="relative hidden sm:block" id="settings-search-wrap">
                         <input id="settings-search"
@@ -919,7 +930,7 @@
                     </div>
 
                     <!-- System stats (populated via SSE) -->
-                    <div class="hidden lg:flex items-center space-x-4 text-sm text-gray-600 xl:space-x-6 2xl:space-x-8">
+                    <div id="system-stats" class="hidden lg:flex items-center space-x-4 text-sm text-gray-600 xl:space-x-6 2xl:space-x-8">
                         <span id="cpu-stat" class="flex items-center space-x-1">
                             <i class="fas fa-microchip"></i>
                             <span>--%</span>
@@ -993,6 +1004,19 @@
 
     <!-- Main content -->
     <main class="mx-auto px-4 sm:px-6 lg:px-8 xl:px-12 2xl:px-16 py-8" style="max-width: 100%;">
+        <!-- Backdrop shown behind the mobile nav drawer (no-op at md and up) -->
+        <div class="nav-backdrop" x-show="mobileNavOpen" x-transition.opacity
+             @click="mobileNavOpen = false" aria-hidden="true" style="display: none;"></div>
+
+        <!-- Navigation: static tab rows at md and up; off-canvas drawer below md.
+             The drawer reuses the exact same tab buttons/handlers — CSS repositions
+             this container, nothing is duplicated. Clicking any tab closes the drawer. -->
+        <div id="site-nav" class="site-nav" :class="mobileNavOpen ? 'open' : ''"
+             @click="if ($event.target.closest('.nav-tab')) mobileNavOpen = false">
+            <!-- Below md, the header's settings-search and system-stats widgets are
+                 moved (not copied) into this slot by placeHeaderWidgets() in app.js -->
+            <div id="drawer-widgets"></div>
+
         <!-- Navigation tabs -->
         <nav class="mb-8">
             <!-- First row - System tabs -->
@@ -1073,6 +1097,8 @@
                 </nav>
             </div>
         </nav>
+        </div> <!-- /#site-nav -->
+
 
         <!-- Tab content -->
         <div id="tab-content" class="space-y-6">
@@ -1695,6 +1721,7 @@
                                    window.location.hostname.startsWith('192.168.4.');
                     return isAPMode ? 'wifi' : 'overview';
                 })(),
+                mobileNavOpen: false,
                 installedPlugins: [],
 
                 init() {

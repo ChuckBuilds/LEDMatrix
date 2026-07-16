@@ -273,3 +273,38 @@ document.addEventListener('DOMContentLoaded', function() {
         }, 100);
     });
 });
+
+// ===== Mobile nav: header-widget relocation =====
+// Below the md breakpoint the settings-search box and system-stats block are
+// MOVED (same DOM nodes, listeners intact) from the header into the nav
+// drawer's #drawer-widgets slot; at md and up they move back. Single-instance
+// constraint: settings-search.js and the SSE stats updater both look these
+// elements up by id, so they must never be duplicated.
+window.placeHeaderWidgets = function() {
+    const drawer = document.getElementById('drawer-widgets');
+    const header = document.getElementById('header-widgets');
+    const search = document.getElementById('settings-search-wrap');
+    const stats = document.getElementById('system-stats');
+    if (!drawer || !header) return;
+
+    const desktop = window.matchMedia('(min-width: 768px)').matches;
+    if (desktop) {
+        // Restore original header order: search before the theme toggle,
+        // stats as the last item.
+        const themeToggle = document.getElementById('theme-toggle');
+        if (search && search.parentElement !== header) {
+            header.insertBefore(search, themeToggle || null);
+        }
+        if (stats && stats.parentElement !== header) {
+            header.appendChild(stats);
+        }
+    } else {
+        if (search && search.parentElement !== drawer) drawer.appendChild(search);
+        if (stats && stats.parentElement !== drawer) drawer.appendChild(stats);
+    }
+};
+
+document.addEventListener('DOMContentLoaded', function() {
+    window.placeHeaderWidgets();
+    window.matchMedia('(min-width: 768px)').addEventListener('change', window.placeHeaderWidgets);
+});
