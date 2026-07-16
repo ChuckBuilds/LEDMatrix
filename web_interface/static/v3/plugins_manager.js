@@ -1,3 +1,4 @@
+/* global debugLog */
 // ─── LocalStorage Safety Wrappers ────────────────────────────────────────────
 // Handles environments where localStorage is unavailable or restricted (private browsing, etc.)
 const safeLocalStorage = {

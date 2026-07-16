@@ -1,3 +1,4 @@
+/* global debugLog */
 // Custom feeds table helper functions
 // Extracted from templates/v3/base.html so browsers cache it as a static asset.
         function addCustomFeedRow(fieldId, fullKey, maxItems, pluginId) {

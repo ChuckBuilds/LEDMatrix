@@ -1,3 +1,4 @@
+/* global debugLog */
 // HTMX swap/script-execution configuration and section toggle helpers
 // Extracted from templates/v3/base.html so browsers cache it as a static asset.
         // Configure HTMX to evaluate scripts in swapped content and fix insertBefore errors

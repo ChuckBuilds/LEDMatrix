@@ -1,3 +1,4 @@
+/* global debugLog */
 // Early helpers and the app() stub (must run before Alpine init)
 // Extracted from templates/v3/base.html so browsers cache it as a static asset.
         // Helper function to get installed plugins with fallback

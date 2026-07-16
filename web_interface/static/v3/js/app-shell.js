@@ -1,3 +1,4 @@
+/* global debugLog */
 // SSE wiring + full Alpine app() implementation and tab logic
 // Extracted from templates/v3/base.html so browsers cache it as a static asset.
         // Assign to window so reconnectSSE() in app.js can reach them.
@@ -1480,9 +1481,9 @@
                                             unescapedValue = value
                                                 .replace(/&quot;/g, '"')
                                                 .replace(/&#39;/g, "'")
-                                                .replace(/&amp;/g, '&')
                                                 .replace(/&lt;/g, '<')
-                                                .replace(/&gt;/g, '>');
+                                                .replace(/&gt;/g, '>')
+                                                .replace(/&amp;/g, '&');
                                         }
                                         
                                         // Try to parse as JSON
@@ -2253,9 +2254,9 @@
                                     unescapedValue = value
                                         .replace(/&quot;/g, '"')
                                         .replace(/&#39;/g, "'")
-                                        .replace(/&amp;/g, '&')
                                         .replace(/&lt;/g, '<')
-                                        .replace(/&gt;/g, '>');
+                                        .replace(/&gt;/g, '>')
+                                        .replace(/&amp;/g, '&');
                                 }
                                 
                                 try {
