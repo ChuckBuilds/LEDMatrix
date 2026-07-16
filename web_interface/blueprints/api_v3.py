@@ -1674,6 +1674,16 @@ def execute_system_action():
                 except subprocess.TimeoutExpired:
                     logger.warning("git stash timed out, proceeding with pull")
 
+            # Record HEAD before the pull so dependency changes can be detected
+            old_head = None
+            try:
+                _pre = subprocess.run(['git', 'rev-parse', 'HEAD'],
+                                      capture_output=True, text=True, timeout=10, cwd=project_dir)
+                if _pre.returncode == 0:
+                    old_head = _pre.stdout.strip()
+            except subprocess.TimeoutExpired:
+                logger.warning("git rev-parse timed out before pull")
+
             # Perform the git pull
             result = subprocess.run(
                 ['git', 'pull', '--rebase'],
@@ -1690,6 +1700,38 @@ def execute_system_action():
                     pull_message = f"Code updated successfully. Local changes were automatically stashed.{stash_info}"
                 if result.stdout and "Already up to date" not in result.stdout:
                     pull_message = f"Code updated successfully.{stash_info}"
+
+                # Keep Python dependencies in sync automatically: if the pull
+                # changed a requirements file, install it now — users updating
+                # from the web UI (most of them) never SSH in to pip install.
+                # Installs go through the same root-visible path as the
+                # Tools-tab buttons (_pip_install_requirements).
+                dep_notes = []
+                try:
+                    _post = subprocess.run(['git', 'rev-parse', 'HEAD'],
+                                           capture_output=True, text=True, timeout=10, cwd=project_dir)
+                    new_head = _post.stdout.strip() if _post.returncode == 0 else None
+                    if old_head and new_head and old_head != new_head:
+                        diff = subprocess.run(
+                            ['git', 'diff', '--name-only', f'{old_head}..{new_head}'],
+                            capture_output=True, text=True, timeout=15, cwd=project_dir)
+                        changed = set(diff.stdout.split()) if diff.returncode == 0 else set()
+                        for rel in ('requirements.txt', 'web_interface/requirements.txt'):
+                            req_path = PROJECT_ROOT / rel
+                            if rel in changed and req_path.exists():
+                                r = _pip_install_requirements(req_path, timeout=180)
+                                if r.returncode == 0:
+                                    dep_notes.append(f"Dependencies from {rel} updated.")
+                                else:
+                                    dep_notes.append(
+                                        f"Dependency install from {rel} failed — "
+                                        "run Install Base Requirements from the Tools tab.")
+                                    logger.warning("post-update pip install failed for %s: %s",
+                                                   rel, _truncate_output(r.stdout, r.stderr))
+                except subprocess.TimeoutExpired:
+                    logger.warning("post-update dependency sync timed out")
+                if dep_notes:
+                    pull_message += " " + " ".join(dep_notes)
                 # A `git pull` restores built-in plugins (committed under
                 # plugin-repos/) even if the user uninstalled them. Re-remove
                 # any the user previously uninstalled so the update doesn't
@@ -1720,14 +1762,24 @@ def execute_system_action():
             result = subprocess.run(['sudo', 'systemctl', 'restart', 'ledmatrix-web.service'],
                                  capture_output=True, text=True, timeout=10)
         elif action == 'install_base_requirements':
-            req_file = PROJECT_ROOT / 'requirements.txt'
-            if not req_file.exists():
+            # Base + web interface requirements: flask-compress and friends
+            # live in web_interface/requirements.txt, not the root file.
+            req_files = [f for f in (PROJECT_ROOT / 'requirements.txt',
+                                     PROJECT_ROOT / 'web_interface' / 'requirements.txt')
+                         if f.exists()]
+            if not req_files:
                 return jsonify({'status': 'error', 'message': 'No requirements.txt found at project root'})
-            result = _pip_install_requirements(req_file, timeout=120)
+            outputs = []
+            all_ok = True
+            for req_file in req_files:
+                result = _pip_install_requirements(req_file, timeout=120)
+                all_ok = all_ok and result.returncode == 0
+                outputs.append(f"== {req_file.relative_to(PROJECT_ROOT)} ==\n"
+                               + _truncate_output(result.stdout, result.stderr))
             return jsonify({
-                'status': 'success' if result.returncode == 0 else 'error',
-                'message': 'Base requirements installed successfully' if result.returncode == 0 else 'pip install failed',
-                'output': _truncate_output(result.stdout, result.stderr)
+                'status': 'success' if all_ok else 'error',
+                'message': 'Base requirements installed successfully' if all_ok else 'pip install failed',
+                'output': "\n".join(outputs)
             })
         elif action == 'install_plugin_requirements':
             active_pm = getattr(api_v3, 'plugin_manager', None)
