@@ -989,6 +989,25 @@ def save_main_config():
                 if field in data:
                     current_config['display']['display_durations'][field] = int(data[field])
 
+        # Per-mode durations from the Rotation & Durations page, posted as
+        # duration__<mode_key> (mode keys are arbitrary plugin mode names, so
+        # they can't use the suffix convention above)
+        mode_duration_fields = [k for k in data.keys() if k.startswith('duration__')]
+        if mode_duration_fields:
+            if 'display' not in current_config:
+                current_config['display'] = {}
+            if 'display_durations' not in current_config['display']:
+                current_config['display']['display_durations'] = {}
+
+            for field in mode_duration_fields:
+                mode_key = field[len('duration__'):]
+                if not mode_key:
+                    continue
+                try:
+                    current_config['display']['display_durations'][mode_key] = int(data[field])
+                except (ValueError, TypeError):
+                    logger.warning("Ignoring non-integer duration for %s", mode_key)
+
         # Handle plugin configurations dynamically
         # Any key that matches a plugin ID should be saved as plugin config
         # This includes proper secret field handling from schema

@@ -30,22 +30,39 @@
                    value='{{ main_config.display.get("plugin_rotation_order", [])|tojson }}'>
         </div>
 
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {% for key, value in main_config.display.display_durations.items() %}
-            <div class="form-group" id="setting-durations-{{ key }}" data-setting-key="display.display_durations.{{ key }}">
-                <label for="duration_{{ key }}" class="block text-sm font-medium text-gray-700">
-                    {{ key | replace('_', ' ') | title }}{{ ui.help_tip('How long the ' ~ (key | replace('_', ' ')) ~ ' screen stays on before rotating to the next one, in seconds.\nRange: 5–600. Currently ' ~ value ~ 's.', key | replace('_', ' ') | title) }}
-                </label>
-                <input type="number"
-                       id="duration_{{ key }}"
-                       name="{{ key }}"
-                       value="{{ value }}"
-                       min="5"
-                       max="600"
-                       class="form-control">
+        {% if duration_groups %}
+        <div class="bg-gray-50 rounded-lg p-4 space-y-5">
+            <div>
+                <h3 class="text-md font-medium text-gray-900 mb-1">Screen Durations</h3>
+                <p class="text-sm text-gray-600">How long each screen stays on before rotating to the next one, in seconds (5&ndash;600, default 30).</p>
+            </div>
+            {% for group in duration_groups %}
+            <div>
+                <h4 class="text-sm font-semibold text-gray-800 mb-2">{{ group.plugin_name }}</h4>
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {% for mode in group.modes %}
+                    <div class="form-group" id="setting-durations-{{ mode.key }}" data-setting-key="display.display_durations.{{ mode.key }}">
+                        <label for="duration__{{ mode.key }}" class="block text-sm font-medium text-gray-700">
+                            {{ mode.key | replace('_', ' ') | title }}{{ ui.help_tip('How long the ' ~ (mode.key | replace('_', ' ')) ~ ' screen stays on before rotating to the next one, in seconds.\nRange: 5–600. Currently ' ~ mode.value ~ 's.', mode.key | replace('_', ' ') | title) }}
+                        </label>
+                        <input type="number"
+                               id="duration__{{ mode.key }}"
+                               name="duration__{{ mode.key }}"
+                               value="{{ mode.value }}"
+                               min="5"
+                               max="600"
+                               class="form-control">
+                    </div>
+                    {% endfor %}
+                </div>
             </div>
             {% endfor %}
         </div>
+        {% else %}
+        <div class="bg-gray-50 rounded-lg p-4">
+            <p class="text-sm text-gray-500 italic">No enabled plugins found &mdash; enable a plugin in the Plugin Manager to set its screen durations here.</p>
+        </div>
+        {% endif %}
 
         <!-- Submit Button -->
         <div class="flex justify-end">
