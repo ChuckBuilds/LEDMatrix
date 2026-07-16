@@ -5,6 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LED Matrix Control Panel - v3</title>
 
+    <!-- Debug logging gate: verbose console output is suppressed unless
+         localStorage.pluginDebug === 'true' (the same switch the plugin
+         scripts already use). console.error/warn are never gated. -->
+    <script>
+    window.LEDMATRIX_DEBUG = (function() {
+        try { return localStorage.getItem('pluginDebug') === 'true'; } catch (e) { return false; }
+    })();
+    window.debugLog = function() {
+        if (window.LEDMATRIX_DEBUG) console.log.apply(console, arguments);
+    };
+    </script>
+
     <!-- Theme initialization (must run before CSS to prevent flash) -->
     <script>
     (function() {
@@ -135,7 +147,7 @@
                             loadScript(fallbackSrc, null, function() {
                                 setTimeout(function() {
                                     if (typeof htmx !== 'undefined') {
-                                        console.log('HTMX loaded from fallback');
+                                        debugLog('HTMX loaded from fallback');
                                         window.dispatchEvent(new Event('htmx:ready'));
                                         // Load extensions after core loads
                                         loadScript(sseSrc, isAPMode ? 'https://unpkg.com/htmx.org/dist/ext/sse.js' : '/static/v3/js/htmx-sse.js');
@@ -152,7 +164,7 @@
                             window.dispatchEvent(new Event('htmx-load-failed'));
                         }
                     } else {
-                        console.log('HTMX loaded successfully');
+                        debugLog('HTMX loaded successfully');
                         window.dispatchEvent(new Event('htmx:ready'));
                         // Load extensions after core loads
                         loadScript(sseSrc, isAPMode ? 'https://unpkg.com/htmx.org/dist/ext/sse.js' : '/static/v3/js/htmx-sse.js');
@@ -415,7 +427,7 @@
             const content = document.getElementById('plugins-content');
             if (content && !content.hasAttribute('data-loaded')) {
                 content.setAttribute('data-loaded', 'true');
-                console.log('Loading plugins directly via fetch (HTMX fallback)...');
+                debugLog('Loading plugins directly via fetch (HTMX fallback)...');
                 const controller = new AbortController();
                 const timeout = setTimeout(() => controller.abort(), 10000);
                 fetch('/v3/partials/plugins', { signal: controller.signal })
@@ -482,7 +494,7 @@
         // Global event listener for pluginsUpdated - works even if Alpine isn't ready yet
         // This ensures tabs update when plugins_manager.js loads plugins
         document.addEventListener('pluginsUpdated', function(event) {
-            console.log('[GLOBAL] Received pluginsUpdated event:', event.detail?.plugins?.length || 0, 'plugins');
+            debugLog('[GLOBAL] Received pluginsUpdated event:', event.detail?.plugins?.length || 0, 'plugins');
             const plugins = event.detail?.plugins || [];
             
             // Update window.installedPlugins
@@ -497,7 +509,7 @@
                     // Only call updatePluginTabs if it's the full implementation (has _doUpdatePluginTabs)
                     if (typeof appComponent.updatePluginTabs === 'function' && 
                         appComponent.updatePluginTabs.toString().includes('_doUpdatePluginTabs')) {
-                        console.log('[GLOBAL] Updating plugin tabs via Alpine component (full implementation)');
+                        debugLog('[GLOBAL] Updating plugin tabs via Alpine component (full implementation)');
                         appComponent.updatePluginTabs();
                         return; // Full implementation handles it, don't do direct update
                     }
@@ -535,7 +547,7 @@
                     tabButton.innerHTML = `<i class="${iconClass}"></i>${(plugin.name || plugin.id).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}`;
                     pluginTabsNav.appendChild(tabButton);
                 });
-                console.log('[GLOBAL] Updated plugin tabs directly:', plugins.length, 'tabs added');
+                debugLog('[GLOBAL] Updated plugin tabs directly:', plugins.length, 'tabs added');
             }
         });
 
@@ -594,7 +606,7 @@
                         // The full implementation will have its own listener, so we only need this for the stub
                         if (!this._pluginsUpdatedListenerSet) {
                             const handlePluginsUpdated = (event) => {
-                                console.log('[STUB] Received pluginsUpdated event:', event.detail?.plugins?.length || 0, 'plugins');
+                                debugLog('[STUB] Received pluginsUpdated event:', event.detail?.plugins?.length || 0, 'plugins');
                                 const plugins = event.detail?.plugins || [];
                                 // Only update if we're still in stub mode (not enhanced yet)
                                 if (typeof this.updatePluginTabs === 'function' && !this.updatePluginTabs.toString().includes('_doUpdatePluginTabs')) {
@@ -612,7 +624,7 @@
                             };
                             document.addEventListener('pluginsUpdated', handlePluginsUpdated);
                             this._pluginsUpdatedListenerSet = true;
-                            console.log('[STUB] init: Set up pluginsUpdated event listener');
+                            debugLog('[STUB] init: Set up pluginsUpdated event listener');
                         }
                         
                         // Try immediately - if full implementation is already loaded, use it right away
@@ -629,7 +641,7 @@
                                 if (retryCount >= maxRetries) {
                                     // Fallback: if plugins_manager.js hasn't loaded after 2 seconds, fetch directly
                                     if (!window.installedPlugins || window.installedPlugins.length === 0) {
-                                        console.log('[STUB] checkAndUpdateTabs: Fallback - fetching plugins directly after timeout');
+                                        debugLog('[STUB] checkAndUpdateTabs: Fallback - fetching plugins directly after timeout');
                                         this.loadInstalledPluginsDirectly();
                                     }
                                     return;
@@ -638,7 +650,7 @@
                                 // Check if plugins are available (either from window or component)
                                 const plugins = window.installedPlugins || this.installedPlugins || [];
                                 if (plugins.length > 0) {
-                                    console.log('[STUB] checkAndUpdateTabs: Found', plugins.length, 'plugins, updating tabs');
+                                    debugLog('[STUB] checkAndUpdateTabs: Found', plugins.length, 'plugins, updating tabs');
                                     this.installedPlugins = plugins;
                                     if (typeof this.updatePluginTabs === 'function') {
                                         this.updatePluginTabs();
@@ -654,7 +666,7 @@
                             // Full implementation loaded, but still set up fallback timer
                             setTimeout(() => {
                                 if (!window.installedPlugins || window.installedPlugins.length === 0) {
-                                    console.log('[STUB] init: Fallback timer - fetching plugins directly');
+                                    debugLog('[STUB] init: Fallback timer - fetching plugins directly');
                                     this.loadInstalledPluginsDirectly();
                                 }
                             }, 2000);
@@ -664,7 +676,7 @@
                     // Direct plugin loading for stub (before full implementation loads)
                     async loadInstalledPluginsDirectly() {
                         try {
-                            console.log('[STUB] loadInstalledPluginsDirectly: Starting...');
+                            debugLog('[STUB] loadInstalledPluginsDirectly: Starting...');
                             // Ensure DOM is ready
                             const ensureDOMReady = () => {
                                 return new Promise((resolve) => {
@@ -688,7 +700,7 @@
                             const data = await getInstalledPluginsSafe();
                             if (data.status === 'success') {
                                 const plugins = data.data.plugins || [];
-                                console.log('[STUB] loadInstalledPluginsDirectly: Loaded', plugins.length, 'plugins');
+                                debugLog('[STUB] loadInstalledPluginsDirectly: Loaded', plugins.length, 'plugins');
                                 
                                 // Update both component and window
                                 this.installedPlugins = plugins;
@@ -698,7 +710,7 @@
                                 document.dispatchEvent(new CustomEvent('pluginsUpdated', {
                                     detail: { plugins: plugins }
                                 }));
-                                console.log('[STUB] loadInstalledPluginsDirectly: Dispatched pluginsUpdated event');
+                                debugLog('[STUB] loadInstalledPluginsDirectly: Dispatched pluginsUpdated event');
                                 
                                 // Update tabs if we have the method - use $nextTick if available
                                 if (typeof this.updatePluginTabs === 'function') {
@@ -752,7 +764,7 @@
                         }
                         
                         this._updatePluginTabsTimeout = setTimeout(() => {
-                            console.log('[STUB] updatePluginTabs: Executing with', this.installedPlugins?.length || 0, 'plugins');
+                            debugLog('[STUB] updatePluginTabs: Executing with', this.installedPlugins?.length || 0, 'plugins');
                             const pluginTabsRow = document.getElementById('plugin-tabs-row');
                             const pluginTabsNav = pluginTabsRow?.querySelector('nav');
                             if (!pluginTabsRow || !pluginTabsNav) {
@@ -760,7 +772,7 @@
                                 return;
                             }
                             if (!this.installedPlugins || this.installedPlugins.length === 0) {
-                                console.log('[STUB] updatePluginTabs: No plugins to display');
+                                debugLog('[STUB] updatePluginTabs: No plugins to display');
                                 return;
                             }
                             
@@ -770,13 +782,13 @@
                             const currentIds = this.installedPlugins.map(p => p.id).sort().join(',');
                             
                             if (existingIds === currentIds && existingTabs.length === this.installedPlugins.length) {
-                                console.log('[STUB] updatePluginTabs: Tabs already match, skipping update');
+                                debugLog('[STUB] updatePluginTabs: Tabs already match, skipping update');
                                 return;
                             }
                             
                             // Clear existing plugin tabs (except Plugin Manager)
                             existingTabs.forEach(tab => tab.remove());
-                            console.log('[STUB] updatePluginTabs: Cleared', existingTabs.length, 'existing tabs');
+                            debugLog('[STUB] updatePluginTabs: Cleared', existingTabs.length, 'existing tabs');
                             
                             // Add tabs for each installed plugin
                             this.installedPlugins.forEach(plugin => {
@@ -796,7 +808,7 @@
                                 tabButton.innerHTML = `<i class="${iconClass}"></i>${div.innerHTML}`;
                                 pluginTabsNav.appendChild(tabButton);
                             });
-                            console.log('[STUB] updatePluginTabs: Added', this.installedPlugins.length, 'plugin tabs');
+                            debugLog('[STUB] updatePluginTabs: Added', this.installedPlugins.length, 'plugin tabs');
                         }, 100);
                     },
                     showNotification: function(message, type) {},
@@ -1735,7 +1747,7 @@
                     // First check if plugins are already in window.installedPlugins (from plugins_manager.js)
                     if (typeof window.installedPlugins !== 'undefined' && Array.isArray(window.installedPlugins) && window.installedPlugins.length > 0) {
                         this.installedPlugins = window.installedPlugins;
-                        console.log('Initialized installedPlugins from global:', this.installedPlugins.length);
+                        debugLog('Initialized installedPlugins from global:', this.installedPlugins.length);
                         // Ensure tabs are updated immediately
                         this.$nextTick(() => {
                             this.updatePluginTabs();
@@ -1780,7 +1792,7 @@
 
                     // Listen for plugin updates from pluginManager
                     document.addEventListener('pluginsUpdated', (event) => {
-                        console.log('Received pluginsUpdated event:', event.detail.plugins.length, 'plugins');
+                        debugLog('Received pluginsUpdated event:', event.detail.plugins.length, 'plugins');
                         this.installedPlugins = event.detail.plugins;
                         this.updatePluginTabs();
                     });
@@ -1805,7 +1817,7 @@
                                 
                                 // Only update if plugin list actually changed
                                 if (oldIds !== newIds) {
-                                    console.log('window.installedPlugins changed:', newPlugins.length, 'plugins');
+                                    debugLog('window.installedPlugins changed:', newPlugins.length, 'plugins');
                                     _installedPluginsValue = newPlugins;
                                     this.installedPlugins = newPlugins;
                                     this.updatePluginTabs();
@@ -1892,12 +1904,12 @@
                 async loadInstalledPlugins() {
                     // If pluginManager exists (plugins.html is loaded), delegate to it
                     if (window.pluginManager) {
-                        console.log('[FULL] Delegating plugin loading to pluginManager...');
+                        debugLog('[FULL] Delegating plugin loading to pluginManager...');
                         await window.pluginManager.loadInstalledPlugins();
                         // pluginManager should set window.installedPlugins, so update our component
                         if (window.installedPlugins && Array.isArray(window.installedPlugins)) {
                             this.installedPlugins = window.installedPlugins;
-                            console.log('[FULL] Updated component plugins from window.installedPlugins:', this.installedPlugins.length);
+                            debugLog('[FULL] Updated component plugins from window.installedPlugins:', this.installedPlugins.length);
                         }
                         this.updatePluginTabs();
                         return;
@@ -1905,18 +1917,18 @@
 
                     // Otherwise, load plugins directly (fallback for when plugins.html isn't loaded)
                     try {
-                        console.log('[FULL] Loading installed plugins directly...');
+                        debugLog('[FULL] Loading installed plugins directly...');
                         const data = await getInstalledPluginsSafe();
 
                         if (data.status === 'success') {
                             this.installedPlugins = data.data.plugins || [];
                             // Also update window.installedPlugins for consistency
                             window.installedPlugins = this.installedPlugins;
-                            console.log(`[FULL] Loaded ${this.installedPlugins.length} plugins:`, this.installedPlugins.map(p => p.id));
+                            debugLog(`[FULL] Loaded ${this.installedPlugins.length} plugins:`, this.installedPlugins.map(p => p.id));
                             
                             // Debug: Log enabled status for each plugin
                             this.installedPlugins.forEach(plugin => {
-                                console.log(`[DEBUG Alpine] Plugin ${plugin.id}: enabled=${plugin.enabled} (type: ${typeof plugin.enabled})`);
+                                debugLog(`[DEBUG Alpine] Plugin ${plugin.id}: enabled=${plugin.enabled} (type: ${typeof plugin.enabled})`);
                             });
                             
                             this.updatePluginTabs();
@@ -1929,7 +1941,7 @@
                 },
 
                 updatePluginTabs(retryCount = 0) {
-                    console.log('[FULL] updatePluginTabs called (retryCount:', retryCount, ')');
+                    debugLog('[FULL] updatePluginTabs called (retryCount:', retryCount, ')');
                     const maxRetries = 5;
 
                     // Debounce: Clear any pending update
@@ -1955,8 +1967,8 @@
                         ? this.installedPlugins 
                         : (window.installedPlugins || []);
                     
-                    console.log('[FULL] _doUpdatePluginTabs called with:', pluginsToShow.length, 'plugins (attempt', retryCount + 1, ')');
-                    console.log('[FULL] Plugin sources:', {
+                    debugLog('[FULL] _doUpdatePluginTabs called with:', pluginsToShow.length, 'plugins (attempt', retryCount + 1, ')');
+                    debugLog('[FULL] Plugin sources:', {
                         componentPlugins: this.installedPlugins?.length || 0,
                         windowPlugins: window.installedPlugins?.length || 0,
                         using: pluginsToShow.length > 0 ? (this.installedPlugins?.length > 0 ? 'component' : 'window') : 'none'
@@ -1969,13 +1981,13 @@
                     // Only skip if we have plugins and they match (don't skip if both are empty)
                     if (currentPluginIds === lastRenderedIds && retryCount === 0 && currentPluginIds.length > 0) {
                         // Plugin list hasn't changed, skip update
-                        console.log('[FULL] Plugin list unchanged, skipping update');
+                        debugLog('[FULL] Plugin list unchanged, skipping update');
                         return;
                     }
                     
                     // If we have no plugins and haven't rendered anything yet, still try to render (might be first load)
                     if (pluginsToShow.length === 0 && retryCount === 0) {
-                        console.log('[FULL] No plugins to show, but will retry in case they load...');
+                        debugLog('[FULL] No plugins to show, but will retry in case they load...');
                         if (retryCount < maxRetries) {
                             setTimeout(() => {
                                 this._doUpdatePluginTabs(retryCount + 1);
@@ -1990,7 +2002,7 @@
                     const pluginTabsRow = document.getElementById('plugin-tabs-row');
                     const pluginTabsNav = pluginTabsRow?.querySelector('nav');
 
-                    console.log('[FULL] Plugin tabs elements:', {
+                    debugLog('[FULL] Plugin tabs elements:', {
                         pluginTabsRow: !!pluginTabsRow,
                         pluginTabsNav: !!pluginTabsNav,
                         bodyExists: !!document.body,
@@ -2014,19 +2026,19 @@
                         return;
                     }
 
-                    console.log(`[FULL] Updating plugin tabs for ${pluginsToShow.length} plugins`);
+                    debugLog(`[FULL] Updating plugin tabs for ${pluginsToShow.length} plugins`);
 
                     // Always show the plugin tabs row (Plugin Manager should always be available)
-                    console.log('[FULL] Ensuring plugin tabs row is visible');
+                    debugLog('[FULL] Ensuring plugin tabs row is visible');
                     pluginTabsRow.style.display = 'block';
 
                     // Clear existing plugin tabs (except the Plugin Manager tab)
                     const existingTabs = pluginTabsNav.querySelectorAll('.plugin-tab');
-                    console.log(`[FULL] Removing ${existingTabs.length} existing plugin tabs`);
+                    debugLog(`[FULL] Removing ${existingTabs.length} existing plugin tabs`);
                     existingTabs.forEach(tab => tab.remove());
 
                     // Add tabs for each installed plugin
-                    console.log('[FULL] Adding tabs for plugins:', pluginsToShow.map(p => p.id));
+                    debugLog('[FULL] Adding tabs for plugins:', pluginsToShow.map(p => p.id));
                     pluginsToShow.forEach(plugin => {
                         const tabButton = document.createElement('button');
                         tabButton.type = 'button';
@@ -2050,10 +2062,10 @@
 
                         // Insert before the closing </nav> tag
                         pluginTabsNav.appendChild(tabButton);
-                        console.log('[FULL] Added tab for plugin:', plugin.id);
+                        debugLog('[FULL] Added tab for plugin:', plugin.id);
                     });
 
-                    console.log('[FULL] Plugin tabs update completed. Total tabs:', pluginTabsNav.querySelectorAll('.plugin-tab').length);
+                    debugLog('[FULL] Plugin tabs update completed. Total tabs:', pluginTabsNav.querySelectorAll('.plugin-tab').length);
                 },
 
                 updatePluginTabStates() {
@@ -2077,7 +2089,7 @@
                     if (typeof window.showNotification === 'function') {
                         window.showNotification(message, type);
                     } else {
-                        console.log(`[${type.toUpperCase()}]`, message);
+                        debugLog(`[${type.toUpperCase()}]`, message);
                     }
                 },
 
@@ -2096,7 +2108,7 @@
 
 
                 async loadPluginConfig(pluginId) {
-                    console.log('Loading config for plugin:', pluginId);
+                    debugLog('Loading config for plugin:', pluginId);
                     this.loading = true;
 
                     try {
@@ -2163,8 +2175,8 @@
                             
                             const pluginInfo = pluginsData.data.plugins.find(p => p.id === pluginId);
                             this.webUiActions = pluginInfo ? (pluginInfo.web_ui_actions || []) : [];
-                            console.log('[DEBUG] Loaded web_ui_actions for', pluginId, ':', this.webUiActions.length, 'actions');
-                            console.log('[DEBUG] Updated plugin data with commit info:', pluginInfo ? {
+                            debugLog('[DEBUG] Loaded web_ui_actions for', pluginId, ':', this.webUiActions.length, 'actions');
+                            debugLog('[DEBUG] Updated plugin data with commit info:', pluginInfo ? {
                                 last_commit: pluginInfo.last_commit,
                                 branch: pluginInfo.branch,
                                 last_updated: pluginInfo.last_updated
@@ -2174,7 +2186,7 @@
                             this.webUiActions = [];
                         }
 
-                        console.log('Loaded config, schema, and actions for', pluginId);
+                        debugLog('Loaded config, schema, and actions for', pluginId);
                     } catch (error) {
                         console.error('Error loading plugin config:', error);
                         this.config = { enabled: true, display_duration: 30 };
@@ -2193,13 +2205,13 @@
                     
                     // Only log once per plugin to avoid spam (Alpine.js may call this multiple times during rendering)
                     if (!this._configFormLogged || this._configFormLogged !== pluginId) {
-                        console.log('[DEBUG] generateConfigForm called for', pluginId, 'with', webUiActions?.length || 0, 'actions');
+                        debugLog('[DEBUG] generateConfigForm called for', pluginId, 'with', webUiActions?.length || 0, 'actions');
                         // Debug: Check if image_config.images has x-widget in schema
                         if (schema && schema.properties && schema.properties.image_config) {
                             const imgConfig = schema.properties.image_config;
                             if (imgConfig.properties && imgConfig.properties.images) {
                                 const imagesProp = imgConfig.properties.images;
-                                console.log('[DEBUG] Schema check - image_config.images:', {
+                                debugLog('[DEBUG] Schema check - image_config.images:', {
                                     type: imagesProp.type,
                                     'x-widget': imagesProp['x-widget'],
                                     'has x-widget': 'x-widget' in imagesProp,
@@ -2253,7 +2265,7 @@
                             const schemaProp = getSchemaProperty(schema, fullKey);
                             const xWidgetFromSchema = schemaProp ? (schemaProp['x-widget'] || schemaProp['x_widget']) : null;
                             
-                            console.log('[DEBUG generateFieldHtml] Array property:', fullKey, {
+                            debugLog('[DEBUG generateFieldHtml] Array property:', fullKey, {
                                 'prop.x-widget': prop['x-widget'],
                                 'prop.x_widget': prop['x_widget'],
                                 'schema.x-widget': xWidgetFromSchema,
@@ -2321,7 +2333,7 @@
                                 
                                 // Debug logging for file-upload widgets
                                 if (nestedProp.type === 'array' && (nestedProp['x-widget'] === 'file-upload' || nestedProp['x_widget'] === 'file-upload')) {
-                                    console.log('[DEBUG] Found file-upload widget in nested property:', nestedKey, 'fullKey:', fullKey + '.' + nestedKey, 'prop:', nestedProp);
+                                    debugLog('[DEBUG] Found file-upload widget in nested property:', nestedKey, 'fullKey:', fullKey + '.' + nestedKey, 'prop:', nestedProp);
                                 }
                                 
                                 html += generateFieldHtml(nestedKey, nestedProp, nestedValue, fullKey);
@@ -2411,7 +2423,7 @@
                                 if (imagesSchema['x-widget'] === 'file-upload' || imagesSchema['x_widget'] === 'file-upload') {
                                     isFileUpload = true;
                                     uploadConfig = imagesSchema['x-upload-config'] || imagesSchema['x_upload_config'] || {};
-                                    console.log('[DEBUG] ✅ Direct detection: images field has file-upload widget', uploadConfig);
+                                    debugLog('[DEBUG] ✅ Direct detection: images field has file-upload widget', uploadConfig);
                                 }
                             }
                             
@@ -2421,7 +2433,7 @@
                                 if (xWidgetFromProp === 'file-upload') {
                                     isFileUpload = true;
                                     uploadConfig = prop['x-upload-config'] || prop['x_upload_config'] || {};
-                                    console.log('[DEBUG] ✅ Detection via prop object');
+                                    debugLog('[DEBUG] ✅ Detection via prop object');
                                 }
                             }
                             
@@ -2435,12 +2447,12 @@
                                 if (xWidgetFromSchema === 'file-upload') {
                                     isFileUpload = true;
                                     uploadConfig = schemaProp['x-upload-config'] || schemaProp['x_upload_config'] || {};
-                                    console.log('[DEBUG] ✅ Detection via schema lookup');
+                                    debugLog('[DEBUG] ✅ Detection via schema lookup');
                                 }
                             }
                             
                             // Debug logging for ALL array fields to diagnose
-                            console.log('[DEBUG] Array field check:', fullKey, {
+                            debugLog('[DEBUG] Array field check:', fullKey, {
                                 'isFileUpload': isFileUpload,
                                 'prop keys': Object.keys(prop),
                                 'prop.x-widget': prop['x-widget'],
@@ -2450,7 +2462,7 @@
                             });
                             
                             if (isFileUpload) {
-                                console.log('[DEBUG] ✅ Rendering file-upload widget for', fullKey, 'with config:', uploadConfig);
+                                debugLog('[DEBUG] ✅ Rendering file-upload widget for', fullKey, 'with config:', uploadConfig);
                                 // Use the file upload widget from plugins.html
                                 // We'll need to call a function that exists in the global scope
                                 const maxFiles = uploadConfig.max_files || 10;
@@ -2645,7 +2657,7 @@
 
                     // Add web UI actions section if plugin defines any
                     if (webUiActions && webUiActions.length > 0) {
-                        console.log('[DEBUG] Rendering', webUiActions.length, 'actions in tab form');
+                        debugLog('[DEBUG] Rendering', webUiActions.length, 'actions in tab form');
                         
                         // Map color names to explicit Tailwind classes
                         const colorMap = {
@@ -2945,7 +2957,7 @@
                                         const jsonValue = JSON.parse(unescapedValue);
                                         if (Array.isArray(jsonValue)) {
                                             flatConfig[key] = jsonValue;
-                                            console.log(`File upload array field ${key}: parsed JSON array with ${jsonValue.length} items`);
+                                            debugLog(`File upload array field ${key}: parsed JSON array with ${jsonValue.length} items`);
                                         } else {
                                             // Fallback to empty array
                                             flatConfig[key] = [];
@@ -3081,8 +3093,8 @@
                             throw new Error(`Failed to parse server response: ${response.status} ${response.statusText}`);
                         }
                         
-                        console.log('Response status:', response.status, 'Response OK:', response.ok);
-                        console.log('Response data:', JSON.stringify(data, null, 2));
+                        debugLog('Response status:', response.status, 'Response OK:', response.ok);
+                        debugLog('Response data:', JSON.stringify(data, null, 2));
                         
                         if (!response.ok || data.status !== 'success') {
                             let errorMessage = data.message || 'Failed to save configuration';
@@ -3594,7 +3606,7 @@
 
         async function savePluginConfig(pluginId) {
             try {
-                console.log('Saving config for plugin:', pluginId);
+                debugLog('Saving config for plugin:', pluginId);
                 
                 // Load schema for type detection
                 let schema = {};
@@ -3611,14 +3623,14 @@
                 // Find the form in the active plugin tab
                 // Alpine.js hides/shows elements with display:none, so we look for the currently visible one
                 const allForms = document.querySelectorAll('form[x-on\\:submit\\.prevent]');
-                console.log('Found forms:', allForms.length);
+                debugLog('Found forms:', allForms.length);
                 
                 let form = null;
                 for (const f of allForms) {
                     const parent = f.closest('[x-show]');
                     if (parent && parent.style.display !== 'none' && parent.offsetParent !== null) {
                         form = f;
-                        console.log('Found visible form');
+                        debugLog('Found visible form');
                         break;
                     }
                 }
@@ -3712,7 +3724,7 @@
                                     const jsonValue = JSON.parse(unescapedValue);
                                     if (Array.isArray(jsonValue)) {
                                         flatConfig[key] = jsonValue;
-                                        console.log(`File upload array field ${key}: parsed JSON array with ${jsonValue.length} items`);
+                                        debugLog(`File upload array field ${key}: parsed JSON array with ${jsonValue.length} items`);
                                     } else {
                                         // Fallback to empty array
                                         flatConfig[key] = [];
@@ -3805,8 +3817,8 @@
 
                 const config = dotToNested(flatConfig);
 
-                console.log('Saving config for', pluginId, ':', config);
-                console.log('Flat config before nesting:', flatConfig);
+                debugLog('Saving config for', pluginId, ':', config);
+                debugLog('Flat config before nesting:', flatConfig);
 
                 // Save to backend
                 const response = await fetch('/api/v3/plugins/config', {
@@ -3863,7 +3875,7 @@
         // This fallback is only used if the widget hasn't loaded yet
         if (typeof window.showNotification !== 'function') {
             window.showNotification = function(message, type = 'info') {
-                console.log(`[${type.toUpperCase()}]`, message);
+                debugLog(`[${type.toUpperCase()}]`, message);
                 const notification = document.createElement('div');
                 notification.className = `fixed top-4 right-4 px-6 py-3 rounded-lg shadow-lg z-50 ${
                     type === 'success' ? 'bg-green-500' : type === 'error' ? 'bg-red-500' : 'bg-blue-500'

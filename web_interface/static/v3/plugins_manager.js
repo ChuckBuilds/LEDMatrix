@@ -38,7 +38,7 @@ const safeLocalStorage = {
 // Define critical functions immediately so they're available before any HTML is rendered
 // Debug logging controlled by safeLocalStorage.setItem('pluginDebug', 'true')
 const _PLUGIN_DEBUG_EARLY = safeLocalStorage.getItem('pluginDebug') === 'true';
-if (_PLUGIN_DEBUG_EARLY) console.log('[PLUGINS SCRIPT] Defining configurePlugin and togglePlugin at top level...');
+if (_PLUGIN_DEBUG_EARLY) debugLog('[PLUGINS SCRIPT] Defining configurePlugin and togglePlugin at top level...');
 
 // Expose on-demand functions early as stubs (will be replaced when IIFE runs)
 window.openOnDemandModal = function(pluginId) {
@@ -85,7 +85,7 @@ window.requestOnDemandStop = function({ stopService = false } = {}) {
 
 // Define updatePlugin early as a stub to ensure it's always available
 window.updatePlugin = window.updatePlugin || function(pluginId) {
-    if (_PLUGIN_DEBUG_EARLY) console.log('[PLUGINS STUB] updatePlugin called for', pluginId);
+    if (_PLUGIN_DEBUG_EARLY) debugLog('[PLUGINS STUB] updatePlugin called for', pluginId);
 
     // Validate pluginId
     if (!pluginId || typeof pluginId !== 'string') {
@@ -105,7 +105,7 @@ window.updatePlugin = window.updatePlugin || function(pluginId) {
     const requestBody = { plugin_id: pluginId };
     const requestBodyJson = JSON.stringify(requestBody);
 
-    console.log('[UPDATE] Sending request:', { url: '/api/v3/plugins/update', body: requestBodyJson });
+    debugLog('[UPDATE] Sending request:', { url: '/api/v3/plugins/update', body: requestBodyJson });
 
     // Make the API call directly
     return fetch('/api/v3/plugins/update', {
@@ -161,7 +161,7 @@ window.updatePlugin = window.updatePlugin || function(pluginId) {
 
 // Define uninstallPlugin early as a stub
 window.uninstallPlugin = window.uninstallPlugin || function(pluginId) {
-    if (_PLUGIN_DEBUG_EARLY) console.log('[PLUGINS STUB] uninstallPlugin called for', pluginId);
+    if (_PLUGIN_DEBUG_EARLY) debugLog('[PLUGINS STUB] uninstallPlugin called for', pluginId);
 
     if (!confirm(`Are you sure you want to uninstall ${pluginId}?`)) {
         return Promise.resolve({ cancelled: true });
@@ -200,7 +200,7 @@ window.uninstallPlugin = window.uninstallPlugin || function(pluginId) {
 
 // Define configurePlugin early to ensure it's always available
 window.configurePlugin = window.configurePlugin || async function(pluginId) {
-    if (_PLUGIN_DEBUG_EARLY) console.log('[PLUGINS STUB] configurePlugin called for', pluginId);
+    if (_PLUGIN_DEBUG_EARLY) debugLog('[PLUGINS STUB] configurePlugin called for', pluginId);
 
     // Switch to the plugin's configuration tab instead of opening a modal
     // This matches the behavior of clicking the plugin tab at the top
@@ -218,7 +218,7 @@ window.configurePlugin = window.configurePlugin || async function(pluginId) {
     if (appComponent) {
         // Set the active tab to the plugin ID
         appComponent.activeTab = pluginId;
-        if (_PLUGIN_DEBUG_EARLY) console.log('[PLUGINS STUB] Switched to plugin tab:', pluginId);
+        if (_PLUGIN_DEBUG_EARLY) debugLog('[PLUGINS STUB] Switched to plugin tab:', pluginId);
 
         // Scroll to top of page to ensure the tab is visible
         window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -237,7 +237,7 @@ if (!window._pluginToggleRequests) {
 
 // Define togglePlugin early to ensure it's always available
 window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
-    if (_PLUGIN_DEBUG_EARLY) console.log('[PLUGINS STUB] togglePlugin called for', pluginId, 'enabled:', enabled);
+    if (_PLUGIN_DEBUG_EARLY) debugLog('[PLUGINS STUB] togglePlugin called for', pluginId, 'enabled:', enabled);
 
     const plugin = (window.installedPlugins || []).find(p => p.id === pluginId);
     const pluginName = plugin ? (plugin.name || pluginId) : pluginId;
@@ -325,7 +325,7 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
     .then(data => {
         // Verify this response is for the latest request (prevent race conditions)
         if (window._pluginToggleRequests[pluginId] !== requestToken) {
-            console.log(`[togglePlugin] Ignoring out-of-order response for ${pluginId}`);
+            debugLog(`[togglePlugin] Ignoring out-of-order response for ${pluginId}`);
             return;
         }
 
@@ -364,7 +364,7 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
     .catch(error => {
         // Verify this error is for the latest request (prevent race conditions)
         if (window._pluginToggleRequests[pluginId] !== requestToken) {
-            console.log(`[togglePlugin] Ignoring out-of-order error for ${pluginId}`);
+            debugLog(`[togglePlugin] Ignoring out-of-order error for ${pluginId}`);
             return;
         }
 
@@ -491,7 +491,7 @@ window.__pluginDomReady = window.__pluginDomReady || false;
                 event.preventDefault();
                 event.stopPropagation();
 
-                console.log('[DEBUG toggle fallback] Plugin:', pluginId, 'Current enabled (from data):', currentEnabled, 'New state:', isChecked);
+                debugLog('[DEBUG toggle fallback] Plugin:', pluginId, 'Current enabled (from data):', currentEnabled, 'New state:', isChecked);
 
                 window.togglePlugin(pluginId, isChecked);
             } else if (action === 'configure' && window.configurePlugin) {
@@ -501,12 +501,12 @@ window.__pluginDomReady = window.__pluginDomReady || false;
             } else if (action === 'update' && window.updatePlugin) {
                 event.preventDefault();
                 event.stopPropagation();
-                console.log('[DEBUG update fallback] Updating plugin:', pluginId);
+                debugLog('[DEBUG update fallback] Updating plugin:', pluginId);
                 window.updatePlugin(pluginId);
             } else if (action === 'uninstall' && window.uninstallPlugin) {
                 event.preventDefault();
                 event.stopPropagation();
-                console.log('[DEBUG uninstall fallback] Uninstalling plugin:', pluginId);
+                debugLog('[DEBUG uninstall fallback] Uninstalling plugin:', pluginId);
                 if (confirm(`Are you sure you want to uninstall ${pluginId}?`)) {
                     window.uninstallPlugin(pluginId);
                 }
@@ -517,7 +517,7 @@ window.__pluginDomReady = window.__pluginDomReady || false;
     // Set up delegation on document (capture phase for better reliability)
     document.addEventListener('click', handleGlobalPluginAction, true);
     document.addEventListener('change', handleGlobalPluginAction, true);
-    console.log('[PLUGINS SCRIPT] Global event delegation set up');
+    debugLog('[PLUGINS SCRIPT] Global event delegation set up');
 })();
 
 // Note: configurePlugin and togglePlugin are now defined at the top of the file (after uninstallPlugin)
@@ -525,30 +525,30 @@ window.__pluginDomReady = window.__pluginDomReady || false;
 
 // Verify functions are defined (debug only)
 if (_PLUGIN_DEBUG_EARLY) {
-    console.log('[PLUGINS SCRIPT] Functions defined:', {
+    debugLog('[PLUGINS SCRIPT] Functions defined:', {
         configurePlugin: typeof window.configurePlugin,
         togglePlugin: typeof window.togglePlugin
     });
     if (typeof window.configurePlugin === 'function') {
-        console.log('[PLUGINS SCRIPT] ✓ configurePlugin ready');
+        debugLog('[PLUGINS SCRIPT] ✓ configurePlugin ready');
     }
     if (typeof window.togglePlugin === 'function') {
-        console.log('[PLUGINS SCRIPT] ✓ togglePlugin ready');
+        debugLog('[PLUGINS SCRIPT] ✓ togglePlugin ready');
     }
 }
 
 // GitHub Token Collapse Handler - Define early so it's available before IIFE
-console.log('[DEFINE] Defining attachGithubTokenCollapseHandler function...');
+debugLog('[DEFINE] Defining attachGithubTokenCollapseHandler function...');
 window.attachGithubTokenCollapseHandler = function() {
-    console.log('[attachGithubTokenCollapseHandler] Starting...');
+    debugLog('[attachGithubTokenCollapseHandler] Starting...');
     const toggleTokenCollapseBtn = document.getElementById('toggle-github-token-collapse');
-    console.log('[attachGithubTokenCollapseHandler] Button found:', !!toggleTokenCollapseBtn);
+    debugLog('[attachGithubTokenCollapseHandler] Button found:', !!toggleTokenCollapseBtn);
     if (!toggleTokenCollapseBtn) {
         console.warn('[attachGithubTokenCollapseHandler] GitHub token collapse button not found');
         return;
     }
 
-    console.log('[attachGithubTokenCollapseHandler] Checking toggleGithubTokenContent...', {
+    debugLog('[attachGithubTokenCollapseHandler] Checking toggleGithubTokenContent...', {
         exists: typeof window.toggleGithubTokenContent
     });
     if (!window.toggleGithubTokenContent) {
@@ -568,17 +568,17 @@ window.attachGithubTokenCollapseHandler = function() {
 
     // Attach listener to the new button
     newBtn.addEventListener('click', function(e) {
-        console.log('[attachGithubTokenCollapseHandler] Button clicked, calling toggleGithubTokenContent');
+        debugLog('[attachGithubTokenCollapseHandler] Button clicked, calling toggleGithubTokenContent');
         window.toggleGithubTokenContent(e);
     });
 
-    console.log('[attachGithubTokenCollapseHandler] Handler attached to button:', newBtn.id);
+    debugLog('[attachGithubTokenCollapseHandler] Handler attached to button:', newBtn.id);
 };
 
 // Toggle GitHub Token Settings section
-console.log('[DEFINE] Defining toggleGithubTokenContent function...');
+debugLog('[DEFINE] Defining toggleGithubTokenContent function...');
 window.toggleGithubTokenContent = function(e) {
-    console.log('[toggleGithubTokenContent] called', e);
+    debugLog('[toggleGithubTokenContent] called', e);
 
     if (e) {
         e.stopPropagation();
@@ -589,7 +589,7 @@ window.toggleGithubTokenContent = function(e) {
     const tokenIconCollapse = document.getElementById('github-token-icon-collapse');
     const toggleTokenCollapseBtn = document.getElementById('toggle-github-token-collapse');
 
-    console.log('[toggleGithubTokenContent] Elements found:', {
+    debugLog('[toggleGithubTokenContent] Elements found:', {
         tokenContent: !!tokenContent,
         tokenIconCollapse: !!tokenIconCollapse,
         toggleTokenCollapseBtn: !!toggleTokenCollapseBtn
@@ -603,7 +603,7 @@ window.toggleGithubTokenContent = function(e) {
     const hasHiddenClass = tokenContent.classList.contains('hidden');
     const computedDisplay = window.getComputedStyle(tokenContent).display;
 
-    console.log('[toggleGithubTokenContent] Current state:', {
+    debugLog('[toggleGithubTokenContent] Current state:', {
         hasHiddenClass,
         computedDisplay,
         buttonText: toggleTokenCollapseBtn.querySelector('span')?.textContent
@@ -620,7 +620,7 @@ window.toggleGithubTokenContent = function(e) {
         }
         const span = toggleTokenCollapseBtn.querySelector('span');
         if (span) span.textContent = 'Collapse';
-        console.log('[toggleGithubTokenContent] Content shown - removed hidden, added block');
+        debugLog('[toggleGithubTokenContent] Content shown - removed hidden, added block');
     } else {
         // Hide content - add hidden class, remove block class, ensure display is none
         tokenContent.classList.add('hidden');
@@ -632,15 +632,15 @@ window.toggleGithubTokenContent = function(e) {
         }
         const span = toggleTokenCollapseBtn.querySelector('span');
         if (span) span.textContent = 'Expand';
-        console.log('[toggleGithubTokenContent] Content hidden - added hidden, removed block, set display:none');
+        debugLog('[toggleGithubTokenContent] Content hidden - added hidden, removed block, set display:none');
     }
 };
 
 // Simple standalone handler for GitHub plugin installation
 // Defined early and globally to ensure it's always available
-console.log('[DEFINE] Defining handleGitHubPluginInstall function...');
+debugLog('[DEFINE] Defining handleGitHubPluginInstall function...');
 window.handleGitHubPluginInstall = function() {
-    console.log('[handleGitHubPluginInstall] Function called!');
+    debugLog('[handleGitHubPluginInstall] Function called!');
 
     const urlInput = document.getElementById('github-plugin-url');
     const statusDiv = document.getElementById('github-plugin-status');
@@ -654,7 +654,7 @@ window.handleGitHubPluginInstall = function() {
     }
 
     const repoUrl = urlInput.value.trim();
-    console.log('[handleGitHubPluginInstall] Repo URL:', repoUrl);
+    debugLog('[handleGitHubPluginInstall] Repo URL:', repoUrl);
 
     if (!repoUrl) {
         if (statusDiv) {
@@ -685,7 +685,7 @@ window.handleGitHubPluginInstall = function() {
         requestBody.branch = branch;
     }
 
-    console.log('[handleGitHubPluginInstall] Sending request:', requestBody);
+    debugLog('[handleGitHubPluginInstall] Sending request:', requestBody);
 
     fetch('/api/v3/plugins/install-from-url', {
         method: 'POST',
@@ -695,11 +695,11 @@ window.handleGitHubPluginInstall = function() {
         body: JSON.stringify(requestBody)
     })
     .then(response => {
-        console.log('[handleGitHubPluginInstall] Response status:', response.status);
+        debugLog('[handleGitHubPluginInstall] Response status:', response.status);
         return response.json();
     })
     .then(data => {
-        console.log('[handleGitHubPluginInstall] Response data:', data);
+        debugLog('[handleGitHubPluginInstall] Response data:', data);
         if (data.status === 'success') {
             if (statusDiv) {
                 statusDiv.innerHTML = `<span class="text-green-600"><i class="fas fa-check-circle mr-1"></i>Successfully installed: ${data.plugin_id}</span>`;
@@ -744,30 +744,30 @@ window.handleGitHubPluginInstall = function() {
         }
     });
 };
-console.log('[DEFINE] handleGitHubPluginInstall defined and ready');
+debugLog('[DEFINE] handleGitHubPluginInstall defined and ready');
 
 // GitHub Authentication Status - Define early so it's available in IIFE
 // Shows warning banner only when token is missing or invalid
 // The token itself is never exposed to the frontend for security
 // Returns a Promise so it can be awaited
-console.log('[DEFINE] Defining checkGitHubAuthStatus function...');
+debugLog('[DEFINE] Defining checkGitHubAuthStatus function...');
 window.checkGitHubAuthStatus = function checkGitHubAuthStatus() {
-    console.log('[checkGitHubAuthStatus] Starting...');
+    debugLog('[checkGitHubAuthStatus] Starting...');
     return fetch('/api/v3/plugins/store/github-status')
         .then(response => {
-            console.log('checkGitHubAuthStatus: Response status:', response.status);
+            debugLog('checkGitHubAuthStatus: Response status:', response.status);
             return response.json();
         })
         .then(data => {
-            console.log('checkGitHubAuthStatus: Data received:', data);
+            debugLog('checkGitHubAuthStatus: Data received:', data);
             if (data.status === 'success') {
                 const authData = data.data;
                 const tokenStatus = authData.token_status || (authData.authenticated ? 'valid' : 'none');
-                console.log('checkGitHubAuthStatus: Token status:', tokenStatus);
+                debugLog('checkGitHubAuthStatus: Token status:', tokenStatus);
                 const warning = document.getElementById('github-auth-warning');
                 const settings = document.getElementById('github-token-settings');
                 const rateLimit = document.getElementById('rate-limit-count');
-                console.log('checkGitHubAuthStatus: Elements found:', {
+                debugLog('checkGitHubAuthStatus: Elements found:', {
                     warning: !!warning,
                     settings: !!settings,
                     rateLimit: !!rateLimit
@@ -808,7 +808,7 @@ window.checkGitHubAuthStatus = function checkGitHubAuthStatus() {
                             // Show warning using both classList and style.display
                             warning.classList.remove('hidden');
                             warning.style.display = '';
-                            console.log(`GitHub token status: ${tokenStatus} - showing API limit warning`);
+                            debugLog(`GitHub token status: ${tokenStatus} - showing API limit warning`);
                         }
                     }
 
@@ -821,7 +821,7 @@ window.checkGitHubAuthStatus = function checkGitHubAuthStatus() {
                         // Hide warning using both classList and style.display
                         warning.classList.add('hidden');
                         warning.style.display = 'none';
-                        console.log('GitHub token is valid - hiding API limit warning');
+                        debugLog('GitHub token is valid - hiding API limit warning');
                     }
 
                     // Make settings panel visible but collapsed (accessible for token management)
@@ -872,7 +872,7 @@ window.checkGitHubAuthStatus = function checkGitHubAuthStatus() {
 (function() {
     'use strict';
 
-    if (_PLUGIN_DEBUG_EARLY) console.log('Plugin manager script starting...');
+    if (_PLUGIN_DEBUG_EARLY) debugLog('Plugin manager script starting...');
 
     // Local variables for this instance
 let installedPlugins = [];
@@ -1007,14 +1007,14 @@ window.pluginManager.initializing = false; // Track if initialization is in prog
 window.initPluginsPage = function() {
     // Prevent duplicate initialization
     if (window.pluginManager.initialized || window.pluginManager.initializing) {
-        console.log('Plugin page already initialized or initializing, skipping...');
+        debugLog('Plugin page already initialized or initializing, skipping...');
         return;
     }
 
     // Check if required elements exist
     const installedGrid = document.getElementById('installed-plugins-grid');
     if (!installedGrid) {
-        console.log('Plugin elements not ready yet');
+        debugLog('Plugin elements not ready yet');
         return false;
     }
 
@@ -1024,18 +1024,18 @@ window.initPluginsPage = function() {
     // Check GitHub auth status immediately (don't wait for full initialization)
     // This can run in parallel with other initialization
     if (window.checkGitHubAuthStatus) {
-        console.log('[INIT] Checking GitHub auth status immediately...');
+        debugLog('[INIT] Checking GitHub auth status immediately...');
         window.checkGitHubAuthStatus();
     }
 
     // If we fetched data before the DOM existed, render it now
     if (window.__pendingInstalledPlugins) {
-        console.log('[RENDER] Applying pending installed plugins data');
+        debugLog('[RENDER] Applying pending installed plugins data');
         renderInstalledPlugins(window.__pendingInstalledPlugins);
         window.__pendingInstalledPlugins = null;
     }
     if (window.__pendingStorePlugins) {
-        console.log('[RENDER] Applying pending plugin store data');
+        debugLog('[RENDER] Applying pending plugin store data');
         pluginStoreCache = window.__pendingStorePlugins;
         cacheTimestamp = Date.now();
         window.__pendingStorePlugins = null;
@@ -1137,7 +1137,7 @@ function initializePluginPageWhenReady() {
         // Check if plugins content was swapped in (only match direct plugins content targets)
         if (target.id === 'plugins-content' ||
             target.querySelector('#installed-plugins-grid')) {
-            console.log('HTMX swap detected for plugins, initializing...');
+            debugLog('HTMX swap detected for plugins, initializing...');
             // Reset all initialization flags so the fresh empty DOM gets populated
             window.pluginManager.initialized = false;
             window.pluginManager.initializing = false;
@@ -1152,12 +1152,12 @@ function initializePluginPageWhenReady() {
 let pluginsInitialized = false;
 
 function initializePlugins() {
-    console.log('[initializePlugins] FUNCTION CALLED, pluginsInitialized:', pluginsInitialized);
+    debugLog('[initializePlugins] FUNCTION CALLED, pluginsInitialized:', pluginsInitialized);
     // Guard against multiple initializations
     if (pluginsInitialized) {
-        console.log('[initializePlugins] Already initialized, skipping (but still setting up handlers)');
+        debugLog('[initializePlugins] Already initialized, skipping (but still setting up handlers)');
         // Still set up handlers even if already initialized (in case page was HTMX swapped)
-        console.log('[initializePlugins] Force setting up GitHub handlers anyway...');
+        debugLog('[initializePlugins] Force setting up GitHub handlers anyway...');
         if (typeof setupGitHubInstallHandlers === 'function') {
             setupGitHubInstallHandlers();
         } else {
@@ -1167,16 +1167,16 @@ function initializePlugins() {
     }
     pluginsInitialized = true;
 
-    console.log('[initializePlugins] Starting initialization...');
+    debugLog('[initializePlugins] Starting initialization...');
     pluginLog('[INIT] Initializing plugins...');
 
     // Check GitHub authentication status
-    console.log('[INIT] Checking for checkGitHubAuthStatus function...', {
+    debugLog('[INIT] Checking for checkGitHubAuthStatus function...', {
         exists: typeof window.checkGitHubAuthStatus,
         type: typeof window.checkGitHubAuthStatus
     });
     if (window.checkGitHubAuthStatus) {
-        console.log('[INIT] Calling checkGitHubAuthStatus...');
+        debugLog('[INIT] Calling checkGitHubAuthStatus...');
         try {
             window.checkGitHubAuthStatus();
         } catch (error) {
@@ -1222,11 +1222,11 @@ function initializePlugins() {
     }
 
     // Setup GitHub installation handlers
-    console.log('[initializePlugins] About to call setupGitHubInstallHandlers...');
+    debugLog('[initializePlugins] About to call setupGitHubInstallHandlers...');
     if (typeof setupGitHubInstallHandlers === 'function') {
-        console.log('[initializePlugins] setupGitHubInstallHandlers is a function, calling it...');
+        debugLog('[initializePlugins] setupGitHubInstallHandlers is a function, calling it...');
         setupGitHubInstallHandlers();
-        console.log('[initializePlugins] setupGitHubInstallHandlers called');
+        debugLog('[initializePlugins] setupGitHubInstallHandlers called');
     } else {
         console.error('[initializePlugins] ERROR: setupGitHubInstallHandlers is not a function! Type:', typeof setupGitHubInstallHandlers);
     }
@@ -1260,7 +1260,7 @@ const pluginLoadCache = {
 // Debug flag - set via safeLocalStorage.setItem('pluginDebug', 'true')
 const PLUGIN_DEBUG = typeof localStorage !== 'undefined' && safeLocalStorage.getItem('pluginDebug') === 'true';
 function pluginLog(...args) {
-    if (PLUGIN_DEBUG) console.log(...args);
+    if (PLUGIN_DEBUG) debugLog(...args);
 }
 
 function loadInstalledPlugins(forceRefresh = false) {
@@ -1320,7 +1320,7 @@ function loadInstalledPlugins(forceRefresh = false) {
                 // Debug logging only when enabled
                 if (PLUGIN_DEBUG) {
                     installedPlugins.forEach(plugin => {
-                        console.log(`[DEBUG] Plugin ${plugin.id}: enabled=${plugin.enabled}`);
+                        debugLog(`[DEBUG] Plugin ${plugin.id}: enabled=${plugin.enabled}`);
                     });
                 }
 
@@ -1433,7 +1433,7 @@ function renderInstalledPlugins(plugins) {
 
         // Debug: Log enabled status during rendering (only when debug enabled)
         if (PLUGIN_DEBUG) {
-            console.log(`[DEBUG RENDER] Plugin ${plugin.id}: enabled=${enabledBool}`);
+            debugLog(`[DEBUG RENDER] Plugin ${plugin.id}: enabled=${enabledBool}`);
         }
 
         // Escape plugin ID for use in HTML attributes and JavaScript
@@ -1560,7 +1560,7 @@ function handlePluginAction(event) {
     event.preventDefault();
     event.stopPropagation();
 
-    console.log('[EVENT DELEGATION] Plugin action:', action, 'Plugin ID:', pluginId);
+    debugLog('[EVENT DELEGATION] Plugin action:', action, 'Plugin ID:', pluginId);
 
     // Helper function to wait for a function to be available
     const waitForFunction = (funcName, maxAttempts = 10, delay = 50) => {
@@ -1613,7 +1613,7 @@ function handlePluginAction(event) {
             // Toggle the state - we want the opposite of current state
             const isChecked = !currentEnabled;
 
-            console.log('[DEBUG toggle] Plugin:', pluginId, 'Current enabled (from data):', currentEnabled, 'New state:', isChecked, 'Event type:', event.type);
+            debugLog('[DEBUG toggle] Plugin:', pluginId, 'Current enabled (from data):', currentEnabled, 'New state:', isChecked, 'Event type:', event.type);
 
             waitForFunction('togglePlugin', 10, 50)
                 .then(toggleFunc => {
@@ -1852,9 +1852,9 @@ function initializeOnDemandModal() {
 
 // Store the real implementation and replace the stub
 window.__openOnDemandModalImpl = function(pluginId) {
-    console.log('[__openOnDemandModalImpl] Called with pluginId:', pluginId);
+    debugLog('[__openOnDemandModalImpl] Called with pluginId:', pluginId);
     const plugin = findInstalledPlugin(pluginId);
-    console.log('[__openOnDemandModalImpl] Found plugin:', plugin ? plugin.id : 'NOT FOUND');
+    debugLog('[__openOnDemandModalImpl] Found plugin:', plugin ? plugin.id : 'NOT FOUND');
     if (!plugin) {
         console.warn('[__openOnDemandModalImpl] Plugin not found, installedPlugins:', window.installedPlugins?.length || 0);
         if (typeof showNotification === 'function') {
@@ -1866,14 +1866,14 @@ window.__openOnDemandModalImpl = function(pluginId) {
     // Note: On-demand can work with disabled plugins - the backend will temporarily enable them
     // We still log it for debugging but don't block the modal
     if (!plugin.enabled) {
-        console.log('[__openOnDemandModalImpl] Plugin is disabled, but on-demand will temporarily enable it');
+        debugLog('[__openOnDemandModalImpl] Plugin is disabled, but on-demand will temporarily enable it');
     }
 
     currentOnDemandPluginId = pluginId;
-    console.log('[__openOnDemandModalImpl] Setting currentOnDemandPluginId to:', pluginId);
+    debugLog('[__openOnDemandModalImpl] Setting currentOnDemandPluginId to:', pluginId);
 
     // Ensure modal is initialized
-    console.log('[__openOnDemandModalImpl] Initializing modal...');
+    debugLog('[__openOnDemandModalImpl] Initializing modal...');
     initializeOnDemandModal();
 
     const modal = document.getElementById('on-demand-modal');
@@ -1884,7 +1884,7 @@ window.__openOnDemandModalImpl = function(pluginId) {
     const startServiceCheckbox = document.getElementById('on-demand-start-service');
     const modalTitle = document.getElementById('on-demand-modal-title');
 
-    console.log('[__openOnDemandModalImpl] Modal elements check:', {
+    debugLog('[__openOnDemandModalImpl] Modal elements check:', {
         modal: !!modal,
         modeSelect: !!modeSelect,
         modeHint: !!modeHint,
@@ -1907,7 +1907,7 @@ window.__openOnDemandModalImpl = function(pluginId) {
         return;
     }
 
-    console.log('[__openOnDemandModalImpl] All elements found, opening modal...');
+    debugLog('[__openOnDemandModalImpl] All elements found, opening modal...');
 
     modalTitle.textContent = `Run ${resolvePluginDisplayName(pluginId)} On-Demand`;
     modeSelect.innerHTML = '';
@@ -1954,7 +1954,7 @@ window.__openOnDemandModalImpl = function(pluginId) {
             console.error('Error checking service status:', error);
         });
 
-    console.log('[__openOnDemandModalImpl] Setting modal display to flex');
+    debugLog('[__openOnDemandModalImpl] Setting modal display to flex');
     // Force modal to be visible and properly positioned
     // Remove all inline styles that might interfere
     modal.removeAttribute('style');
@@ -1974,8 +1974,8 @@ window.__openOnDemandModalImpl = function(pluginId) {
 
     // Force a reflow to ensure styles are applied
     modal.offsetHeight;
-    console.log('[__openOnDemandModalImpl] Modal display set, should be visible now. Modal element:', modal);
-    console.log('[__openOnDemandModalImpl] Modal computed styles:', {
+    debugLog('[__openOnDemandModalImpl] Modal display set, should be visible now. Modal element:', modal);
+    debugLog('[__openOnDemandModalImpl] Modal computed styles:', {
         display: window.getComputedStyle(modal).display,
         visibility: window.getComputedStyle(modal).visibility,
         opacity: window.getComputedStyle(modal).opacity,
@@ -1984,7 +1984,7 @@ window.__openOnDemandModalImpl = function(pluginId) {
     });
     // Also check if modal is actually in the viewport
     const rect = modal.getBoundingClientRect();
-    console.log('[__openOnDemandModalImpl] Modal bounding rect:', {
+    debugLog('[__openOnDemandModalImpl] Modal bounding rect:', {
         top: rect.top,
         left: rect.left,
         width: rect.width,
@@ -2006,7 +2006,7 @@ function closeOnDemandModal() {
 
 function submitOnDemandRequest(event) {
     event.preventDefault();
-    console.log('[submitOnDemandRequest] Form submitted, currentOnDemandPluginId:', currentOnDemandPluginId);
+    debugLog('[submitOnDemandRequest] Form submitted, currentOnDemandPluginId:', currentOnDemandPluginId);
 
     if (!currentOnDemandPluginId) {
         console.error('[submitOnDemandRequest] No plugin ID set');
@@ -2022,7 +2022,7 @@ function submitOnDemandRequest(event) {
         return;
     }
 
-    console.log('[submitOnDemandRequest] Form found, processing...');
+    debugLog('[submitOnDemandRequest] Form found, processing...');
 
     const formData = new FormData(form);
     const mode = formData.get('mode');
@@ -2044,7 +2044,7 @@ function submitOnDemandRequest(event) {
         }
     }
 
-    console.log('[submitOnDemandRequest] Payload:', payload);
+    debugLog('[submitOnDemandRequest] Payload:', payload);
     markOnDemandLoading();
 
     fetch('/api/v3/display/on-demand/start', {
@@ -2055,11 +2055,11 @@ function submitOnDemandRequest(event) {
         body: JSON.stringify(payload)
     })
         .then(response => {
-            console.log('[submitOnDemandRequest] Response status:', response.status);
+            debugLog('[submitOnDemandRequest] Response status:', response.status);
             return response.json();
         })
         .then(result => {
-            console.log('[submitOnDemandRequest] Response data:', result);
+            debugLog('[submitOnDemandRequest] Response data:', result);
             if (result.status === 'success') {
                 if (typeof showNotification === 'function') {
                     const pluginName = resolvePluginDisplayName(currentOnDemandPluginId);
@@ -2923,7 +2923,7 @@ window.toggleNestedSection = function(sectionId, event) {
 
 // Generic Plugin Action Handler
 window.executePluginAction = function(actionId, actionIndex, pluginIdParam = null) {
-    console.log('[DEBUG] executePluginAction called - actionId:', actionId, 'actionIndex:', actionIndex, 'pluginIdParam:', pluginIdParam);
+    debugLog('[DEBUG] executePluginAction called - actionId:', actionId, 'actionIndex:', actionIndex, 'pluginIdParam:', pluginIdParam);
 
     // Construct button ID first (we have actionId and actionIndex)
     const actionIdFull = `action-${actionId}-${actionIndex}`;
@@ -2938,7 +2938,7 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
     if (!pluginId && btn) {
         pluginId = btn.getAttribute('data-plugin-id');
         if (pluginId) {
-            console.log('[DEBUG] Got pluginId from button data attribute:', pluginId);
+            debugLog('[DEBUG] Got pluginId from button data attribute:', pluginId);
         }
     }
 
@@ -2948,7 +2948,7 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
         if (parentWithPluginId) {
             pluginId = parentWithPluginId.getAttribute('data-plugin-id');
             if (pluginId) {
-                console.log('[DEBUG] Got pluginId from parent element:', pluginId);
+                debugLog('[DEBUG] Got pluginId from parent element:', pluginId);
             }
         }
     }
@@ -2967,7 +2967,7 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
                 }
             }
             if (pluginId) {
-                console.log('[DEBUG] Got pluginId from container:', pluginId);
+                debugLog('[DEBUG] Got pluginId from container:', pluginId);
             }
         }
     }
@@ -2976,7 +2976,7 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
     if (!pluginId) {
         pluginId = currentPluginConfig?.pluginId;
         if (pluginId) {
-            console.log('[DEBUG] Got pluginId from currentPluginConfig:', pluginId);
+            debugLog('[DEBUG] Got pluginId from currentPluginConfig:', pluginId);
         }
     }
 
@@ -2988,7 +2988,7 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
                 const appData = appElement._x_dataStack[0];
                 if (appData.activeTab && appData.activeTab !== 'overview' && appData.activeTab !== 'plugins' && appData.activeTab !== 'wifi') {
                     pluginId = appData.activeTab;
-                    console.log('[DEBUG] Got pluginId from Alpine activeTab:', pluginId);
+                    debugLog('[DEBUG] Got pluginId from Alpine activeTab:', pluginId);
                 }
             }
         } catch (e) {
@@ -3009,7 +3009,7 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
                         if (pluginData && pluginData.plugin) {
                             pluginId = pluginData.plugin.id;
                             if (pluginId) {
-                                console.log('[DEBUG] Got pluginId from Alpine plugin data (scoped to button context):', pluginId);
+                                debugLog('[DEBUG] Got pluginId from Alpine plugin data (scoped to button context):', pluginId);
                             }
                         }
                     } catch (e) {
@@ -3028,7 +3028,7 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
                             if (containerData && containerData.plugin) {
                                 pluginId = containerData.plugin.id;
                                 if (pluginId) {
-                                    console.log('[DEBUG] Got pluginId from Alpine plugin data (scoped to container):', pluginId);
+                                    debugLog('[DEBUG] Got pluginId from Alpine plugin data (scoped to container):', pluginId);
                                 }
                             }
                         } catch (e) {
@@ -3053,7 +3053,7 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
         return;
     }
 
-    console.log('[DEBUG] executePluginAction - Final pluginId:', pluginId, 'actionId:', actionId, 'actionIndex:', actionIndex);
+    debugLog('[DEBUG] executePluginAction - Final pluginId:', pluginId, 'actionId:', actionId, 'actionIndex:', actionIndex);
 
     if (!btn || !statusDiv) {
         console.error(`Action elements not found: ${actionIdFull}`);
@@ -3075,15 +3075,15 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
 
     if (!action) {
         console.error(`Action not found: ${actionId} for plugin ${pluginId}`);
-        console.log('[DEBUG] currentPluginConfig:', currentPluginConfig);
-        console.log('[DEBUG] installedPlugins:', window.installedPlugins);
+        debugLog('[DEBUG] currentPluginConfig:', currentPluginConfig);
+        debugLog('[DEBUG] installedPlugins:', window.installedPlugins);
         if (typeof showNotification === 'function') {
             showNotification(`Action ${actionId} not found. Please refresh the page.`, 'error');
         }
         return;
     }
 
-    console.log('[DEBUG] Found action:', action);
+    debugLog('[DEBUG] Found action:', action);
 
     // Check if we're in step 2 (completing OAuth flow)
     if (btn.dataset.step === '2') {
@@ -3237,7 +3237,7 @@ if (!window.updatePlugin || window.updatePlugin.toString().includes('[UPDATE]'))
         const requestBody = { plugin_id: pluginId };
         const requestBodyJson = JSON.stringify(requestBody);
 
-        console.log('[UPDATE] Sending request:', { url: '/api/v3/plugins/update', body: requestBodyJson });
+        debugLog('[UPDATE] Sending request:', { url: '/api/v3/plugins/update', body: requestBodyJson });
 
         return fetch('/api/v3/plugins/update', {
             method: 'POST',
@@ -3308,7 +3308,7 @@ window.uninstallPlugin = function(pluginId) {
     })
     .then(response => response.json())
     .then(data => {
-        console.log('Uninstall response:', data);
+        debugLog('Uninstall response:', data);
 
         // Check if operation was queued
         if (data.status === 'success' && data.data && data.data.operation_id) {
@@ -3404,7 +3404,7 @@ function handleUninstallSuccess(pluginId) {
 }
 
 function refreshPlugins() {
-    console.log('[refreshPlugins] Button clicked, refreshing plugins...');
+    debugLog('[refreshPlugins] Button clicked, refreshing plugins...');
     // Clear cache to force fresh data
     pluginStoreCache = null;
     cacheTimestamp = null;
@@ -3419,7 +3419,7 @@ function refreshPlugins() {
 }
 
 function restartDisplay() {
-    console.log('[restartDisplay] Button clicked, restarting display service...');
+    debugLog('[restartDisplay] Button clicked, restarting display service...');
     showNotification('Restarting display service...', 'info');
 
     fetch('/api/v3/system/action', {
@@ -3444,7 +3444,7 @@ function searchPluginStore(fetchCommitInfo = true) {
 
     // If cache is valid and we don't need fresh commit info, just re-filter
     if (isCacheValid && !fetchCommitInfo) {
-        console.log('Using cached plugin store data');
+        debugLog('Using cached plugin store data');
         const storeGrid = document.getElementById('plugin-store-grid');
         if (storeGrid) {
             applyStoreFiltersAndSort();
@@ -3464,7 +3464,7 @@ function searchPluginStore(fetchCommitInfo = true) {
         url += '?fetch_commit_info=false';
     }
 
-    console.log('Store URL:', url);
+    debugLog('Store URL:', url);
 
     fetch(url)
         .then(response => response.json())
@@ -3473,7 +3473,7 @@ function searchPluginStore(fetchCommitInfo = true) {
 
             if (data.status === 'success') {
                 const plugins = data.data.plugins || [];
-                console.log('Store plugins count:', plugins.length);
+                debugLog('Store plugins count:', plugins.length);
 
                 pluginStoreCache = plugins;
                 cacheTimestamp = Date.now();
@@ -3954,7 +3954,7 @@ window.installFromCustomRegistry = function(pluginId, registryUrl, pluginPath, b
 }
 
 function setupCollapsibleSections() {
-    console.log('[setupCollapsibleSections] Setting up collapsible sections...');
+    debugLog('[setupCollapsibleSections] Setting up collapsible sections...');
 
     // Installed Plugins and Plugin Store sections no longer have collapse buttons
     // They are always visible
@@ -3964,7 +3964,7 @@ function setupCollapsibleSections() {
         window.attachGithubTokenCollapseHandler();
     }
 
-    console.log('[setupCollapsibleSections] Collapsible sections setup complete');
+    debugLog('[setupCollapsibleSections] Collapsible sections setup complete');
 }
 
 function loadSavedRepositories() {
@@ -4052,12 +4052,12 @@ window.removeSavedRepository = function(repoUrl) {
 
 // Separate function to attach install button handler (can be called multiple times)
 function attachInstallButtonHandler() {
-    console.log('[attachInstallButtonHandler] ===== FUNCTION CALLED =====');
+    debugLog('[attachInstallButtonHandler] ===== FUNCTION CALLED =====');
     const installBtn = document.getElementById('install-plugin-from-url');
     const pluginUrlInput = document.getElementById('github-plugin-url');
     const pluginStatusDiv = document.getElementById('github-plugin-status');
 
-    console.log('[attachInstallButtonHandler] Looking for install button elements:', {
+    debugLog('[attachInstallButtonHandler] Looking for install button elements:', {
         installBtn: !!installBtn,
         pluginUrlInput: !!pluginUrlInput,
         pluginStatusDiv: !!pluginStatusDiv
@@ -4066,7 +4066,7 @@ function attachInstallButtonHandler() {
     if (installBtn && pluginUrlInput) {
         // Check if handler already attached (prevent duplicates)
         if (installBtn.hasAttribute('data-handler-attached')) {
-            console.log('[attachInstallButtonHandler] Handler already attached, skipping');
+            debugLog('[attachInstallButtonHandler] Handler already attached, skipping');
             return;
         }
 
@@ -4080,12 +4080,12 @@ function attachInstallButtonHandler() {
             newBtn.setAttribute('data-handler-attached', 'true');
             parent.replaceChild(newBtn, installBtn);
 
-            console.log('[attachInstallButtonHandler] Install button cloned and replaced, type:', newBtn.type);
+            debugLog('[attachInstallButtonHandler] Install button cloned and replaced, type:', newBtn.type);
 
             newBtn.addEventListener('click', function(e) {
                 e.preventDefault();
                 e.stopPropagation();
-                console.log('[attachInstallButtonHandler] Install button clicked!');
+                debugLog('[attachInstallButtonHandler] Install button clicked!');
 
                 const repoUrl = pluginUrlInput.value.trim();
                 if (!repoUrl) {
@@ -4114,7 +4114,7 @@ function attachInstallButtonHandler() {
                     requestBody.branch = branch;
                 }
 
-                console.log('[attachInstallButtonHandler] Sending install request:', requestBody);
+                debugLog('[attachInstallButtonHandler] Sending install request:', requestBody);
 
                 fetch('/api/v3/plugins/install-from-url', {
                     method: 'POST',
@@ -4124,11 +4124,11 @@ function attachInstallButtonHandler() {
                     body: JSON.stringify(requestBody)
                 })
                 .then(response => {
-                    console.log('[attachInstallButtonHandler] Response status:', response.status);
+                    debugLog('[attachInstallButtonHandler] Response status:', response.status);
                     return response.json();
                 })
                 .then(data => {
-                    console.log('[attachInstallButtonHandler] Response data:', data);
+                    debugLog('[attachInstallButtonHandler] Response data:', data);
                     if (data.status === 'success') {
                         if (pluginStatusDiv) {
                             pluginStatusDiv.innerHTML = `<span class="text-green-600"><i class="fas fa-check-circle mr-1"></i>Successfully installed: ${data.plugin_id}</span>`;
@@ -4161,12 +4161,12 @@ function attachInstallButtonHandler() {
             pluginUrlInput.addEventListener('keypress', function(e) {
                 if (e.key === 'Enter') {
                     e.preventDefault();
-                    console.log('[attachInstallButtonHandler] Enter key pressed, triggering install');
+                    debugLog('[attachInstallButtonHandler] Enter key pressed, triggering install');
                     newBtn.click();
                 }
             });
 
-            console.log('[attachInstallButtonHandler] Install button handler attached successfully');
+            debugLog('[attachInstallButtonHandler] Install button handler attached successfully');
         } else {
             console.error('[attachInstallButtonHandler] Install button parent not found!');
         }
@@ -4179,14 +4179,14 @@ function attachInstallButtonHandler() {
 }
 
 function setupGitHubInstallHandlers() {
-    console.log('[setupGitHubInstallHandlers] ===== FUNCTION CALLED ===== Setting up GitHub install handlers...');
+    debugLog('[setupGitHubInstallHandlers] ===== FUNCTION CALLED ===== Setting up GitHub install handlers...');
 
     // Toggle GitHub install section visibility
     const toggleBtn = document.getElementById('toggle-github-install');
     const installSection = document.getElementById('github-install-section');
     const icon = document.getElementById('github-install-icon');
 
-    console.log('[setupGitHubInstallHandlers] Elements found:', {
+    debugLog('[setupGitHubInstallHandlers] Elements found:', {
         button: !!toggleBtn,
         section: !!installSection,
         icon: !!icon
@@ -4202,7 +4202,7 @@ function setupGitHubInstallHandlers() {
             newBtn.addEventListener('click', function(e) {
                 e.stopPropagation();
                 e.preventDefault();
-                console.log('[setupGitHubInstallHandlers] GitHub install toggle clicked');
+                debugLog('[setupGitHubInstallHandlers] GitHub install toggle clicked');
 
                 const section = document.getElementById('github-install-section');
                 const iconEl = document.getElementById('github-install-icon');
@@ -4225,9 +4225,9 @@ function setupGitHubInstallHandlers() {
                     if (span) span.textContent = 'Hide';
 
                     // Re-attach install button handler when section is shown (in case elements weren't ready before)
-                    console.log('[setupGitHubInstallHandlers] Section shown, will re-attach install button handler in 100ms');
+                    debugLog('[setupGitHubInstallHandlers] Section shown, will re-attach install button handler in 100ms');
                     setTimeout(() => {
-                        console.log('[setupGitHubInstallHandlers] Re-attaching install button handler now');
+                        debugLog('[setupGitHubInstallHandlers] Re-attaching install button handler now');
                         attachInstallButtonHandler();
                     }, 100);
                 } else {
@@ -4242,16 +4242,16 @@ function setupGitHubInstallHandlers() {
                     if (span) span.textContent = 'Show';
                 }
             });
-            console.log('[setupGitHubInstallHandlers] Handler attached');
+            debugLog('[setupGitHubInstallHandlers] Handler attached');
         }
     } else {
         console.warn('[setupGitHubInstallHandlers] Required elements not found');
     }
 
     // Install single plugin from URL - use separate function so we can re-call it
-    console.log('[setupGitHubInstallHandlers] About to call attachInstallButtonHandler...');
+    debugLog('[setupGitHubInstallHandlers] About to call attachInstallButtonHandler...');
     attachInstallButtonHandler();
-    console.log('[setupGitHubInstallHandlers] Called attachInstallButtonHandler');
+    debugLog('[setupGitHubInstallHandlers] Called attachInstallButtonHandler');
 
     // Load registry from URL
     const loadRegistryBtn = document.getElementById('load-registry-from-url');
@@ -4436,7 +4436,7 @@ function showSuccess(message) {
     if (typeof showNotification === 'function') {
         showNotification(message, 'success');
     } else {
-        console.log('Success: ' + message);
+        debugLog('Success: ' + message);
         // Show a temporary success message
         const statusDiv = document.getElementById('github-plugin-status') || document.getElementById('registry-status');
         if (statusDiv) {
@@ -5547,7 +5547,7 @@ if (typeof window !== 'undefined') {
 
     // Debug logging (only if pluginDebug is enabled)
     if (_PLUGIN_DEBUG_EARLY) {
-        console.log('[ARRAY-OBJECTS] Functions defined on window:', {
+        debugLog('[ARRAY-OBJECTS] Functions defined on window:', {
             addArrayObjectItem: typeof window.addArrayObjectItem,
             removeArrayObjectItem: typeof window.removeArrayObjectItem,
             updateArrayObjectData: typeof window.updateArrayObjectData,
@@ -5561,7 +5561,7 @@ if (typeof window !== 'undefined') {
 window.currentPluginConfig = null;
 
 // Force initialization immediately when script loads (for HTMX swapped content)
-console.log('Plugins script loaded, checking for elements...');
+debugLog('Plugins script loaded, checking for elements...');
 
 // Ensure all functions are globally available (in case IIFE didn't expose them properly)
 // These should already be set inside the IIFE, but this ensures they're available
@@ -5582,7 +5582,7 @@ if (typeof renderInstalledPlugins !== 'undefined') {
 
 // Verify critical functions are available
 if (_PLUGIN_DEBUG_EARLY) {
-    console.log('Plugin functions available:', {
+    debugLog('Plugin functions available:', {
         configurePlugin: typeof window.configurePlugin,
         togglePlugin: typeof window.togglePlugin,
         initializePlugins: typeof window.initializePlugins,
@@ -5593,7 +5593,7 @@ if (_PLUGIN_DEBUG_EARLY) {
 
 // Check GitHub auth status immediately if elements exist (don't wait for full initialization)
 if (window.checkGitHubAuthStatus && document.getElementById('github-auth-warning')) {
-    console.log('[EARLY] Checking GitHub auth status immediately on script load...');
+    debugLog('[EARLY] Checking GitHub auth status immediately on script load...');
     window.checkGitHubAuthStatus();
 }
 
@@ -5612,7 +5612,7 @@ if (typeof initializeOnDemandModal === 'function') {
 setTimeout(function() {
     const installedGrid = document.getElementById('installed-plugins-grid');
     if (installedGrid) {
-        console.log('Found installed-plugins-grid, forcing initialization...');
+        debugLog('Found installed-plugins-grid, forcing initialization...');
         window.pluginManager.initialized = false;
         if (typeof initializePluginPageWhenReady === 'function') {
             initializePluginPageWhenReady();
@@ -5620,7 +5620,7 @@ setTimeout(function() {
             window.initPluginsPage();
         }
     } else {
-        console.log('installed-plugins-grid not found yet, will retry via event listeners');
+        debugLog('installed-plugins-grid not found yet, will retry via event listeners');
     }
 
     // Also try to attach install button handler after a delay (fallback).
@@ -5819,7 +5819,7 @@ document.addEventListener('htmx:afterSettle', function() {
                 if (countEl) countEl.textContent = `${data.count} apps`;
 
                 if (data.rate_limit) {
-                    console.log(`[Starlark] GitHub rate limit: ${data.rate_limit.remaining}/${data.rate_limit.limit} remaining` + (data.cached ? ' (cached)' : ''));
+                    debugLog(`[Starlark] GitHub rate limit: ${data.rate_limit.remaining}/${data.rate_limit.limit} remaining` + (data.cached ? ' (cached)' : ''));
                 }
 
                 applyStarlarkFiltersAndSort();

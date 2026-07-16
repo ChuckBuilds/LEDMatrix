@@ -12,8 +12,8 @@ window.showNotification = function(message, type = 'info') {
         });
         document.dispatchEvent(event);
     } else {
-        // Fallback notification
-        console.log(`${type}: ${message}`);
+        // Fallback notification — user-facing last resort, so never gated
+        console.info(`${type}: ${message}`);
     }
 };
 
@@ -246,13 +246,13 @@ window.performanceMonitor = {
     logMetrics: function() {
         const metrics = this.getMetrics();
         console.group('Performance Metrics');
-        console.log('DOM Content Loaded:', metrics.domContentLoaded?.toFixed(2) || 'N/A', 'ms');
-        console.log('Load Complete:', metrics.loadComplete?.toFixed(2) || 'N/A', 'ms');
-        console.log('First Paint:', metrics.firstPaint?.toFixed(2) || 'N/A', 'ms');
-        console.log('First Contentful Paint:', metrics.firstContentfulPaint?.toFixed(2) || 'N/A', 'ms');
-        console.log('Resources:', metrics.resourceCount || 0, 'files,', (metrics.totalResourceSize / 1024).toFixed(2) || '0', 'KB');
+        debugLog('DOM Content Loaded:', metrics.domContentLoaded?.toFixed(2) || 'N/A', 'ms');
+        debugLog('Load Complete:', metrics.loadComplete?.toFixed(2) || 'N/A', 'ms');
+        debugLog('First Paint:', metrics.firstPaint?.toFixed(2) || 'N/A', 'ms');
+        debugLog('First Contentful Paint:', metrics.firstContentfulPaint?.toFixed(2) || 'N/A', 'ms');
+        debugLog('Resources:', metrics.resourceCount || 0, 'files,', (metrics.totalResourceSize / 1024).toFixed(2) || '0', 'KB');
         if (Object.keys(metrics.measures || {}).length > 0) {
-            console.log('Custom Measures:', metrics.measures);
+            debugLog('Custom Measures:', metrics.measures);
         }
         console.groupEnd();
     }
