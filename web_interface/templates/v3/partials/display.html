@@ -140,9 +140,9 @@
                         onclick="toggleSection('display-section-advanced-hardware')">
                     <div class="flex-1">
                         <h4 class="font-semibold text-gray-900">
-                            <i class="fas fa-sliders-h mr-1 text-gray-500"></i>Advanced Hardware Settings (10)
+                            <i class="fas fa-sliders-h mr-1 text-gray-500"></i>Advanced Hardware &amp; Display Options (15)
                         </h4>
-                        <p class="text-sm text-gray-600 mt-1">Multiplexing, panel variants, and PWM tuning &mdash; the defaults work for standard HUB75 panels.</p>
+                        <p class="text-sm text-gray-600 mt-1">Multiplexing, panel variants, PWM tuning, and display options Multiplexing, panel variants, and PWM tuning &mdash; the defaults work for standard HUB75 panels.mdash; the defaults work for standard HUB75 panels.</p>
                     </div>
                     <i id="display-section-advanced-hardware-icon" class="fas fa-chevron-right text-gray-500 transition-transform"></i>
                 </button>
@@ -281,77 +281,6 @@
                 </div>
             </div>
 
-                </div> <!-- /#display-section-advanced-hardware (nested-content) -->
-            </div> <!-- /advanced hardware nested-section -->
-
-            <script>
-                // Live "Your display: W x H" readout - width = cols x chain_length,
-                // height = rows x parallel (same math as the chain-length tooltip).
-                (function () {
-                    const ids = ['rows', 'cols', 'chain_length', 'parallel'];
-                    const out = document.getElementById('display-resolution-value');
-                    if (!out) return;
-                    function recompute() {
-                        const v = {};
-                        for (const id of ids) {
-                            const el = document.getElementById(id);
-                            v[id] = el ? parseInt(el.value, 10) : NaN;
-                        }
-                        if (Object.values(v).some(n => !Number.isFinite(n) || n <= 0)) {
-                            out.textContent = '—';
-                            return;
-                        }
-                        out.textContent = (v.cols * v.chain_length) + ' × ' + (v.rows * v.parallel) + ' pixels';
-                    }
-                    for (const id of ids) {
-                        const el = document.getElementById(id);
-                        if (el) el.addEventListener('input', recompute);
-                    }
-                    recompute();
-                })();
-            </script>
-        </div>
-
-        <!-- Double-Sided Display -->
-        <div class="bg-gray-50 rounded-lg p-4">
-            <h3 class="text-md font-medium text-gray-900 mb-1">Double-Sided Display</h3>
-            <p class="text-sm text-gray-600 mb-4">Show the same content on every panel in the chain &mdash; e.g. two 64&times;32 panels mirrored, or four panels as two identical screens. Rendered once and duplicated, so it adds no extra CPU. Takes effect after a display restart.</p>
-
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div class="form-group" id="setting-display-double_sided_enabled" data-setting-key="display.double_sided.enabled">
-                    <label class="flex items-center gap-2">
-                        <input type="checkbox"
-                               id="double_sided_enabled"
-                               name="double_sided_enabled"
-                               value="true"
-                               {% if main_config.display.get('double_sided', {}).get('enabled') %}checked{% endif %}
-                               class="form-control h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
-                        <span class="text-sm font-medium text-gray-700">Enabled</span>
-                        {{ ui.help_tip('Show the same content mirrored across every panel in the chain.\nRendered once and duplicated, so it adds no extra CPU. Takes effect after a display restart.', 'Double-Sided Enabled') }}
-                    </label>
-                </div>
-
-                <div class="form-group" id="setting-display-double_sided_copies" data-setting-key="display.double_sided.copies">
-                    <label for="double_sided_copies" class="block text-sm font-medium text-gray-700">Copies{{ ui.help_tip('How many identical screens to split the panel area into (2–8).\nMust divide the panel evenly — e.g. 2 for a two-sided cube.', 'Copies') }}</label>
-                    <input type="number"
-                           id="double_sided_copies"
-                           name="double_sided_copies"
-                           value="{{ main_config.display.get('double_sided', {}).get('copies', 2) }}"
-                           min="2"
-                           max="8"
-                           class="form-control">
-                </div>
-
-                <div class="form-group" id="setting-display-double_sided_axis" data-setting-key="display.double_sided.axis">
-                    <label for="double_sided_axis" class="block text-sm font-medium text-gray-700">Split Axis{{ ui.help_tip('Direction the display is divided into copies.\nHorizontal splits along the chained panels (side by side); Vertical splits along parallel chains (stacked).', 'Split Axis') }}</label>
-                    <select id="double_sided_axis" name="double_sided_axis" class="form-control">
-                        <option value="horizontal" {% if main_config.display.get('double_sided', {}).get('axis', 'horizontal') == 'horizontal' %}selected{% endif %}>Horizontal &mdash; chained panels (side by side)</option>
-                        <option value="vertical" {% if main_config.display.get('double_sided', {}).get('axis', 'horizontal') == 'vertical' %}selected{% endif %}>Vertical &mdash; parallel chains (stacked)</option>
-                    </select>
-                </div>
-            </div>
-        </div>
-
         <!-- Display Options -->
         <div class="bg-gray-50 rounded-lg p-4">
             <h3 class="text-md font-medium text-gray-900 mb-4">Display Options</h3>
@@ -422,6 +351,36 @@
                     </div>
                 </div>
             </div>
+        </div>
+                </div> <!-- /#display-section-advanced-hardware (nested-content) -->
+            </div> <!-- /advanced hardware nested-section -->
+
+            <script>
+                // Live "Your display: W x H" readout - width = cols x chain_length,
+                // height = rows x parallel (same math as the chain-length tooltip).
+                (function () {
+                    const ids = ['rows', 'cols', 'chain_length', 'parallel'];
+                    const out = document.getElementById('display-resolution-value');
+                    if (!out) return;
+                    function recompute() {
+                        const v = {};
+                        for (const id of ids) {
+                            const el = document.getElementById(id);
+                            v[id] = el ? parseInt(el.value, 10) : NaN;
+                        }
+                        if (Object.values(v).some(n => !Number.isFinite(n) || n <= 0)) {
+                            out.textContent = '—';
+                            return;
+                        }
+                        out.textContent = (v.cols * v.chain_length) + ' × ' + (v.rows * v.parallel) + ' pixels';
+                    }
+                    for (const id of ids) {
+                        const el = document.getElementById(id);
+                        if (el) el.addEventListener('input', recompute);
+                    }
+                    recompute();
+                })();
+            </script>
         </div>
 
         <!-- Vegas Scroll Mode Settings -->
@@ -508,6 +467,48 @@
                 </div>
             </div>
         </div>
+
+        <!-- Double-Sided Display -->
+        <div class="bg-gray-50 rounded-lg p-4">
+            <h3 class="text-md font-medium text-gray-900 mb-1">Double-Sided Display</h3>
+            <p class="text-sm text-gray-600 mb-4">Show the same content on every panel in the chain &mdash; e.g. two 64&times;32 panels mirrored, or four panels as two identical screens. Rendered once and duplicated, so it adds no extra CPU. Takes effect after a display restart.</p>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div class="form-group" id="setting-display-double_sided_enabled" data-setting-key="display.double_sided.enabled">
+                    <label class="flex items-center gap-2">
+                        <input type="checkbox"
+                               id="double_sided_enabled"
+                               name="double_sided_enabled"
+                               value="true"
+                               {% if main_config.display.get('double_sided', {}).get('enabled') %}checked{% endif %}
+                               class="form-control h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                        <span class="text-sm font-medium text-gray-700">Enabled</span>
+                        {{ ui.help_tip('Show the same content mirrored across every panel in the chain.\nRendered once and duplicated, so it adds no extra CPU. Takes effect after a display restart.', 'Double-Sided Enabled') }}
+                    </label>
+                </div>
+
+                <div class="form-group" id="setting-display-double_sided_copies" data-setting-key="display.double_sided.copies">
+                    <label for="double_sided_copies" class="block text-sm font-medium text-gray-700">Copies{{ ui.help_tip('How many identical screens to split the panel area into (2–8).\nMust divide the panel evenly — e.g. 2 for a two-sided cube.', 'Copies') }}</label>
+                    <input type="number"
+                           id="double_sided_copies"
+                           name="double_sided_copies"
+                           value="{{ main_config.display.get('double_sided', {}).get('copies', 2) }}"
+                           min="2"
+                           max="8"
+                           class="form-control">
+                </div>
+
+                <div class="form-group" id="setting-display-double_sided_axis" data-setting-key="display.double_sided.axis">
+                    <label for="double_sided_axis" class="block text-sm font-medium text-gray-700">Split Axis{{ ui.help_tip('Direction the display is divided into copies.\nHorizontal splits along the chained panels (side by side); Vertical splits along parallel chains (stacked).', 'Split Axis') }}</label>
+                    <select id="double_sided_axis" name="double_sided_axis" class="form-control">
+                        <option value="horizontal" {% if main_config.display.get('double_sided', {}).get('axis', 'horizontal') == 'horizontal' %}selected{% endif %}>Horizontal &mdash; chained panels (side by side)</option>
+                        <option value="vertical" {% if main_config.display.get('double_sided', {}).get('axis', 'horizontal') == 'vertical' %}selected{% endif %}>Vertical &mdash; parallel chains (stacked)</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+
 
         <!-- Multi-Display Sync Settings -->
         <div class="bg-gray-50 rounded-lg p-4 mt-6">
