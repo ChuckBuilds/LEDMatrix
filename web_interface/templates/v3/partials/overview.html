@@ -74,7 +74,7 @@
     <div class="flex items-start justify-between">
         <div class="flex-1">
             <p class="text-sm font-semibold text-blue-900"><i class="fas fa-rocket mr-1"></i>Getting Started</p>
-            <p class="text-xs text-blue-700 mt-0.5 mb-2">A few steps to get your display up and running. Click any step to jump there.</p>
+            <p class="text-xs text-blue-700 mt-0.5 mb-2">A few steps to get your display up and running. Click a step to jump there, or click its checkbox to mark it done yourself. The card hides once everything is checked.</p>
             <ul class="space-y-1 text-sm" id="getting-started-items">
                 <li><button type="button" class="gs-item text-left w-full" data-done="{{ '1' if _hw_done else '0' }}" data-tab="display">
                     <i class="far fa-square mr-2"></i>Set your panel size (Display tab)</button></li>
@@ -96,23 +96,62 @@
 <script>
 (function () {
     var KEY = 'ledmatrix-getting-started-dismissed';
+    var MANUAL_KEY = 'ledmatrix-getting-started-manual';
     var card = document.getElementById('getting-started-card');
     if (!card) return;
     try { if (localStorage.getItem(KEY) === '1') return; } catch (e) {}
     card.style.display = 'block';
 
-    function markDone(btn) {
-        btn.dataset.done = '1';
-        var icon = btn.querySelector('i');
-        if (icon) { icon.className = 'fas fa-check-square mr-2 text-green-600'; }
-        btn.classList.add('text-gray-500', 'line-through');
+    // Manual per-item overrides: the auto-detection is heuristic (a value
+    // saved AT its default — e.g. a user genuinely in the default timezone —
+    // reads as "not done"), so clicking an item's checkbox marks it done by
+    // hand, persisted per browser.
+    var manual = {};
+    try { manual = JSON.parse(localStorage.getItem(MANUAL_KEY) || '{}') || {}; } catch (e) {}
+    function saveManual() {
+        try { localStorage.setItem(MANUAL_KEY, JSON.stringify(manual)); } catch (e) {}
     }
 
-    // Apply server-derived states, wire deep links (same app-data access
-    // pattern as settings-search.js).
-    Array.prototype.forEach.call(card.querySelectorAll('.gs-item'), function (btn) {
-        if (btn.dataset.done === '1') markDone(btn);
-        btn.addEventListener('click', function () {
+    function setDone(btn, done) {
+        btn.dataset.done = done ? '1' : '0';
+        var icon = btn.querySelector('i');
+        if (icon) { icon.className = done ? 'fas fa-check-square mr-2 text-green-600' : 'far fa-square mr-2'; }
+        btn.classList.toggle('text-gray-500', done);
+        btn.classList.toggle('line-through', done);
+    }
+
+    // Once every step is done (auto-detected or manually checked), the card
+    // has served its purpose — hide it without requiring an explicit dismiss.
+    function maybeAutoHide() {
+        var items = card.querySelectorAll('.gs-item');
+        for (var i = 0; i < items.length; i++) {
+            if (items[i].dataset.done !== '1') return;
+        }
+        card.style.display = 'none';
+    }
+
+    function markDone(btn) {
+        if (!btn) return;
+        setDone(btn, true);
+        maybeAutoHide();
+    }
+
+    // Apply server-derived + manual states, wire deep links (same app-data
+    // access pattern as settings-search.js). Clicking the checkbox icon
+    // toggles manual done; clicking the text deep-links to the tab.
+    Array.prototype.forEach.call(card.querySelectorAll('.gs-item'), function (btn, idx) {
+        if (manual[idx] === 1) btn.dataset.done = '1';
+        if (btn.dataset.done === '1') setDone(btn, true);
+        btn.addEventListener('click', function (ev) {
+            var icon = btn.querySelector('i');
+            if (icon && ev.target === icon) {
+                var nowDone = btn.dataset.done !== '1';
+                setDone(btn, nowDone);
+                manual[idx] = nowDone ? 1 : 0;
+                saveManual();
+                if (nowDone) maybeAutoHide();
+                return;
+            }
             var appEl = document.querySelector('[x-data]');
             var data = appEl && appEl._x_dataStack && appEl._x_dataStack[0];
             if (data) {
@@ -121,6 +160,7 @@
             }
         });
     });
+    maybeAutoHide();
 
     // Plugin-derived states from the existing installed-plugins endpoint.
     fetch('/api/v3/plugins/installed')
