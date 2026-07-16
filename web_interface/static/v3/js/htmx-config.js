@@ -162,35 +162,15 @@
                         // Log but don't break the app
                         console.warn('HTMX swap error:', event.detail);
                     });
-                    
-                    document.body.addEventListener('htmx:afterSwap', function(event) {
-                        if (event.detail && event.detail.target) {
-                            try {
-                                const scripts = event.detail.target.querySelectorAll('script');
-                                scripts.forEach(function(oldScript) {
-                                    try {
-                                        if (oldScript.textContent.trim() || oldScript.src) {
-                                            const newScript = document.createElement('script');
-                                            if (oldScript.src) newScript.src = oldScript.src;
-                                            if (oldScript.type) newScript.type = oldScript.type;
-                                            if (oldScript.textContent) newScript.textContent = oldScript.textContent;
-                                            if (oldScript.parentNode) {
-                                                oldScript.parentNode.insertBefore(newScript, oldScript);
-                                                oldScript.parentNode.removeChild(oldScript);
-                                            } else {
-                                                // If no parent, append to head or body
-                                                (document.head || document.body).appendChild(newScript);
-                                            }
-                                        }
-                                    } catch {
-                                        // Silently ignore script execution errors
-                                    }
-                                });
-                            } catch {
-                                // Silently ignore errors in script processing
-                            }
-                        }
-                    });
+
+                    // Note: no custom htmx:afterSwap script re-execution here.
+                    // htmx's own default config (allowScriptTags: true, on by
+                    // default - confirmed in the vendored htmx.min.js) already
+                    // clones and re-inserts <script> tags in swapped content
+                    // to make the browser execute them, exactly like a real
+                    // page load. A duplicate handler here previously did the
+                    // same clone-and-reinsert a second time, executing every
+                    // inline <script> in every HTMX-loaded partial TWICE.
 
                     // Mark tab containers as loaded once their content settles, so switching
                     // away and back doesn't re-fetch. Scoped to the "loadtab" trigger (tab
