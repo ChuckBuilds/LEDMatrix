@@ -77,6 +77,13 @@ def client():
 
     from web_interface.blueprints import pages_v3 as pv
 
+    # pages_v3 is a module-level Blueprint singleton shared by the whole test
+    # process (test_web_settings_ui.py mutates the same attributes) - save
+    # the originals and restore them on teardown so this fixture can't leak
+    # its mocks into tests that run afterward.
+    original_config_manager = getattr(pv.pages_v3, "config_manager", None)
+    original_plugin_manager = getattr(pv.pages_v3, "plugin_manager", None)
+
     mock_cm = MagicMock()
     mock_cm.load_config.return_value = SMOKE_CONFIG
     mock_cm.get_raw_file_content.return_value = SMOKE_CONFIG
@@ -99,7 +106,11 @@ def client():
     # /v3 kept as a working legacy alias.
     app.register_blueprint(pv.pages_v3, url_prefix="")
     app.register_blueprint(pv.pages_v3, url_prefix="/v3", name="pages_v3_legacy")
-    return app.test_client()
+    try:
+        yield app.test_client()
+    finally:
+        pv.pages_v3.config_manager = original_config_manager
+        pv.pages_v3.plugin_manager = original_plugin_manager
 
 
 # (path, [markers that must appear in the body])

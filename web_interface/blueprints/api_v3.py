@@ -978,8 +978,14 @@ def save_main_config():
                 current_config['display'] = {}
             current_config['display']['plugin_rotation_order'] = parsed
 
-        # Handle display durations
-        duration_fields = [k for k in data.keys() if k.endswith('_duration') or k in ['default_duration', 'transition_duration']]
+        # Handle display durations. Popped from `data` (not just read) so
+        # they can never also fall through to the generic "remaining keys"
+        # merge near the end of this function, which would otherwise write
+        # them AGAIN as bogus top-level config keys (e.g. "clock_duration": 30
+        # sitting at config root alongside the correct
+        # display.display_durations.clock_duration).
+        duration_fields = [k for k in list(data.keys())
+                           if k.endswith('_duration') or k in ('default_duration', 'transition_duration')]
         if duration_fields:
             if 'display' not in current_config:
                 current_config['display'] = {}
@@ -987,13 +993,19 @@ def save_main_config():
                 current_config['display']['display_durations'] = {}
 
             for field in duration_fields:
-                if field in data:
-                    current_config['display']['display_durations'][field] = int(data[field])
+                raw_value = data.pop(field)
+                try:
+                    int_value = int(raw_value)
+                except (ValueError, TypeError):
+                    return jsonify({'status': 'error',
+                                    'message': f"Invalid duration for {field}: must be an integer"}), 400
+                current_config['display']['display_durations'][field] = int_value
 
         # Per-mode durations from the Rotation & Durations page, posted as
         # duration__<mode_key> (mode keys are arbitrary plugin mode names, so
-        # they can't use the suffix convention above)
-        mode_duration_fields = [k for k in data.keys() if k.startswith('duration__')]
+        # they can't use the suffix convention above). Same pop-and-validate
+        # treatment, for the same reason.
+        mode_duration_fields = [k for k in list(data.keys()) if k.startswith('duration__')]
         if mode_duration_fields:
             if 'display' not in current_config:
                 current_config['display'] = {}
@@ -1001,13 +1013,16 @@ def save_main_config():
                 current_config['display']['display_durations'] = {}
 
             for field in mode_duration_fields:
+                raw_value = data.pop(field)
                 mode_key = field[len('duration__'):]
                 if not mode_key:
                     continue
                 try:
-                    current_config['display']['display_durations'][mode_key] = int(data[field])
+                    int_value = int(raw_value)
                 except (ValueError, TypeError):
-                    logger.warning("Ignoring non-integer duration for %s", mode_key)
+                    return jsonify({'status': 'error',
+                                    'message': f"Invalid duration for mode '{mode_key}': must be an integer"}), 400
+                current_config['display']['display_durations'][mode_key] = int_value
 
         # Handle plugin configurations dynamically
         # Any key that matches a plugin ID should be saved as plugin config
@@ -1719,7 +1734,12 @@ def execute_system_action():
                         changed = set(diff.stdout.split()) if diff.returncode == 0 else set()
                         for rel in ('requirements.txt', 'web_interface/requirements.txt'):
                             req_path = PROJECT_ROOT / rel
-                            if rel in changed and req_path.exists():
+                            if rel not in changed or not req_path.exists():
+                                continue
+                            # Each file's install is isolated: a timeout or
+                            # OSError (e.g. the sudo wrapper/interpreter
+                            # missing) on one file must not abort the other.
+                            try:
                                 r = _pip_install_requirements(req_path, timeout=180)
                                 if r.returncode == 0:
                                     dep_notes.append(f"Dependencies from {rel} updated.")
@@ -1729,6 +1749,17 @@ def execute_system_action():
                                         "run Install Base Requirements from the Tools tab.")
                                     logger.warning("post-update pip install failed for %s: %s",
                                                    rel, _truncate_output(r.stdout, r.stderr))
+                            except subprocess.TimeoutExpired:
+                                dep_notes.append(
+                                    f"Dependency install from {rel} timed out — "
+                                    "run Install Base Requirements from the Tools tab.")
+                                logger.warning("post-update pip install timed out for %s", rel)
+                            except OSError as install_err:
+                                dep_notes.append(
+                                    f"Dependency install from {rel} failed — "
+                                    "run Install Base Requirements from the Tools tab.")
+                                logger.warning("post-update pip install errored for %s: %s",
+                                               rel, install_err)
                 except subprocess.TimeoutExpired:
                     logger.warning("post-update dependency sync timed out")
                 if dep_notes:
@@ -1773,10 +1804,22 @@ def execute_system_action():
             outputs = []
             all_ok = True
             for req_file in req_files:
-                result = _pip_install_requirements(req_file, timeout=120)
-                all_ok = all_ok and result.returncode == 0
-                outputs.append(f"== {req_file.relative_to(PROJECT_ROOT)} ==\n"
-                               + _truncate_output(result.stdout, result.stderr))
+                label = req_file.relative_to(PROJECT_ROOT)
+                # Isolate each file's install: a timeout or OSError on one
+                # (e.g. requirements.txt) must not abort the rest of the
+                # loop (e.g. web_interface/requirements.txt never attempted).
+                try:
+                    result = _pip_install_requirements(req_file, timeout=120)
+                    all_ok = all_ok and result.returncode == 0
+                    outputs.append(f"== {label} ==\n" + _truncate_output(result.stdout, result.stderr))
+                except subprocess.TimeoutExpired:
+                    all_ok = False
+                    outputs.append(f"== {label} ==\nTimed out after 120s")
+                    logger.warning("install_base_requirements timed out for %s", label)
+                except OSError as install_err:
+                    all_ok = False
+                    outputs.append(f"== {label} ==\nFailed: {install_err}")
+                    logger.warning("install_base_requirements errored for %s: %s", label, install_err)
             return jsonify({
                 'status': 'success' if all_ok else 'error',
                 'message': 'Base requirements installed successfully' if all_ok else 'pip install failed',
