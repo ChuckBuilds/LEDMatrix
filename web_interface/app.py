@@ -615,8 +615,6 @@ def system_status_generator():
 def display_preview_generator():
     """Generate display preview updates from snapshot file"""
     import base64
-    from PIL import Image
-    import io
 
     snapshot_path = "/tmp/led_matrix_preview.png"  # nosec B108 - fixed path matches display_manager; only read here
     # Viewer marker: this generator only runs while the broadcaster has
@@ -658,23 +656,23 @@ def display_preview_generator():
                 # Only read if file is new or has been updated
                 if last_modified is None or current_modified > last_modified:
                     try:
-                        # Read and encode the image
-                        with Image.open(snapshot_path) as img:
-                            # Convert to PNG and encode as base64
-                            buffer = io.BytesIO()
-                            img.save(buffer, format='PNG')
-                            img_str = base64.b64encode(buffer.getvalue()).decode('utf-8')
-                            
-                            preview_data = {
-                                'timestamp': time.time(),
-                                'width': width,
-                                'height': height,
-                                'image': img_str
-                            }
-                            last_modified = current_modified
-                            yield preview_data
-                    except Exception:  # nosec B110 - SSE preview file may be mid-write; transient error, skip this update
-                        # File might be being written, skip this update
+                        # The snapshot is already a PNG, written atomically by
+                        # the display service (tmp + os.replace in
+                        # display_manager), so pass the raw bytes straight
+                        # through instead of PIL-decoding and re-encoding —
+                        # identical payload, much less CPU on the Pi.
+                        with open(snapshot_path, 'rb') as f:
+                            img_str = base64.b64encode(f.read()).decode('utf-8')
+
+                        preview_data = {
+                            'timestamp': time.time(),
+                            'width': width,
+                            'height': height,
+                            'image': img_str
+                        }
+                        last_modified = current_modified
+                        yield preview_data
+                    except Exception:  # nosec B110 - transient read error (e.g. file rotated away); skip this update
                         pass
             else:
                 # No snapshot available
