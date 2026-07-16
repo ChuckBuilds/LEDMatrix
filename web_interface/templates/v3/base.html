@@ -462,6 +462,11 @@
                             class="nav-tab">
                         <i class="fas fa-desktop"></i>Display
                     </button>
+                    <button @click="activeTab = 'durations'"
+                            :class="activeTab === 'durations' ? 'nav-tab-active' : ''"
+                            class="nav-tab">
+                        <i class="fas fa-rotate"></i>Rotation
+                    </button>
                     <button @click="activeTab = 'config-editor'"
                             :class="activeTab === 'config-editor' ? 'nav-tab-active' : ''"
                             class="nav-tab">
@@ -680,6 +685,18 @@
                                 <div class="h-32 bg-gray-200 rounded"></div>
                                 <div class="h-32 bg-gray-200 rounded"></div>
                             </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Rotation & Durations tab -->
+            <div x-show="activeTab === 'durations'" x-transition>
+                <div id="durations-content" hx-get="/v3/partials/durations" hx-trigger="loadtab" hx-swap="innerHTML">
+                    <div class="animate-pulse">
+                        <div class="bg-white rounded-lg shadow p-6">
+                            <div class="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
+                            <div class="h-32 bg-gray-200 rounded"></div>
                         </div>
                     </div>
                 </div>
