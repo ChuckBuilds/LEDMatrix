@@ -2851,7 +2851,7 @@ class DisplayController:
         # configured rotation slot before resyncing the index.
         self._apply_plugin_rotation_order()
         self._resync_mode_index_after_change(previous_mode)
-        logger.info("Plugin reconcile complete: +%s -%s (%d modes)",
+        logger.info("[DisplayController] Plugin reconcile complete: +%s -%s (%d modes)",
                     sorted(to_add), sorted(to_remove), len(self.available_modes))
         return True
 
