@@ -48,3 +48,4 @@ config/backups/
 
 # Starlark apps runtime storage (installed .star files and cached renders)
 /starlark-apps/
+skin_renders/

@@ -29,6 +29,10 @@ except ImportError:
 
 
 class SportsCore(ABC):
+    # Which ScoreboardSkin render method this class's display path maps to.
+    # SportsLive inherits the default; SportsUpcoming/SportsRecent override.
+    SKIN_MODE = "live"
+
     def __init__(self, config: Dict[str, Any], display_manager: DisplayManager, cache_manager: CacheManager, logger: logging.Logger, sport_key: str):
         self.logger = logger
         self.config = config
@@ -99,6 +103,17 @@ class SportsCore(ABC):
         self.last_update = 0
         self.current_game = None
         self.fonts = self._load_fonts()
+
+        # Optional visual skin (see docs/SKIN_SYSTEM.md). "skin" is either a
+        # skin id applied to all modes, or a per-mode mapping like
+        # {"live": "retro", "recent": "built-in"}. Loaded lazily on first
+        # render so a broken skin can never block startup.
+        self._skin_config = self.mode_config.get("skin")
+        self.skin_options = self.mode_config.get("skin_options", {}) or {}
+        self._skin = None
+        self._skin_load_attempted = False
+        self._skin_failures = 0
+        self._skin_slow_renders = 0
         
         # Initialize dynamic team resolver and resolve favorite teams
         self.dynamic_resolver = DynamicTeamResolver()
@@ -205,6 +220,89 @@ class SportsCore(ABC):
             self.logger.error(f"Error in base _draw_scorebug_layout: {e}", exc_info=True)
 
 
+    def _resolve_skin_id(self) -> Optional[str]:
+        """The skin id configured for this instance's mode, or None for the
+        built-in renderer. Accepts a plain id (all modes) or a per-mode
+        mapping ({"live": "retro-baseball", "recent": "built-in"})."""
+        skin_id = self._skin_config
+        if isinstance(skin_id, dict):
+            skin_id = skin_id.get(self.SKIN_MODE)
+        if not skin_id or not isinstance(skin_id, str) or skin_id == "built-in":
+            return None
+        return skin_id
+
+    def _get_skin(self):
+        """Lazily load the configured skin once. Returns None (built-in
+        renderer) when no skin is configured or loading failed."""
+        if not self._skin_load_attempted:
+            self._skin_load_attempted = True
+            skin_id = self._resolve_skin_id()
+            if skin_id:
+                try:
+                    from src.skin_system import skin_runtime
+                    self._skin = skin_runtime.load_skin(
+                        skin_id, sport=self.sport, sport_key=self.sport_key,
+                        options=self.skin_options)
+                except Exception as e:
+                    self.logger.error(f"Failed to load skin '{skin_id}': {e}", exc_info=True)
+                    self._skin = None
+        return self._skin
+
+    def _render_game(self, game: Dict, force_clear: bool = False) -> None:
+        """Render one game: try the configured skin first, fall back to the
+        built-in _draw_scorebug_layout. A skin that raises 3 times in a row
+        is disabled for the rest of the session."""
+        skin = self._get_skin()
+        if skin is not None and self._skin_failures < 3:
+            try:
+                from src.skin_system import skin_runtime
+                ctx = skin_runtime.build_context(self, game)
+                render = getattr(skin, f"render_{self.SKIN_MODE}")
+                started = time.monotonic()
+                handled = render(ctx, dict(game))
+                elapsed = time.monotonic() - started
+                if elapsed > 0.15 and self._skin_slow_renders < 5:
+                    self._skin_slow_renders += 1
+                    self.logger.warning(
+                        f"Skin '{self._resolve_skin_id()}' took {elapsed * 1000:.0f}ms to "
+                        f"render {self.SKIN_MODE} — slow renders stall the whole display loop")
+                if handled:
+                    self._skin_failures = 0
+                    self.display_manager.image.paste(ctx.canvas, (0, 0))
+                    self.display_manager.update_display()
+                    return
+            except Exception:
+                self._skin_failures += 1
+                outcome = ("disabling skin for this session" if self._skin_failures >= 3
+                           else "falling back to built-in renderer")
+                self.logger.error(
+                    f"Skin '{self._resolve_skin_id()}' failed rendering {self.SKIN_MODE} "
+                    f"({self._skin_failures}/3); {outcome}", exc_info=True)
+        self._draw_scorebug_layout(game, force_clear)
+
+    def render_skin_card(self, game: Dict, size: tuple) -> Optional[Image.Image]:
+        """Render one game as a standalone card via the configured skin —
+        for vegas mode and previews. Tries render_vegas_card at the given
+        size, then the mode renderer on a card-sized canvas. Returns None
+        when no skin is active or the skin declined, so callers can use
+        their default rendering."""
+        skin = self._get_skin()
+        if skin is None or self._skin_failures >= 3:
+            return None
+        try:
+            from src.skin_system import skin_runtime
+            ctx = skin_runtime.build_context(self, game, size=size)
+            card = skin.render_vegas_card(ctx, dict(game))
+            if card is not None:
+                return card
+            ctx = skin_runtime.build_context(self, game, size=size)
+            render = getattr(skin, f"render_{self.SKIN_MODE}")
+            if render(ctx, dict(game)):
+                return ctx.canvas
+        except Exception as e:
+            self.logger.warning(f"Skin '{self._resolve_skin_id()}' card render failed: {e}")
+        return None
+
     def display(self, force_clear: bool = False) -> bool:
         """Common display method for all NCAA FB managers""" # Updated docstring
         if not self.is_enabled: # Check if module is enabled
@@ -229,7 +327,7 @@ class SportsCore(ABC):
             return False
 
         try:
-            self._draw_scorebug_layout(self.current_game, force_clear)
+            self._render_game(self.current_game, force_clear)
             # display_manager.update_display() should be called within subclass draw methods
             # or after calling display() in the main loop. Let's keep it out of the base display.
             return True
@@ -646,6 +744,8 @@ class SportsCore(ABC):
         pass
 
 class SportsUpcoming(SportsCore):
+    SKIN_MODE = "upcoming"
+
     def __init__(self, config: Dict[str, Any], display_manager: DisplayManager, cache_manager: CacheManager, logger: logging.Logger, sport_key: str):
         super().__init__(config, display_manager, cache_manager, logger, sport_key)
         self.upcoming_games = [] # Store all fetched upcoming games initially
@@ -973,7 +1073,7 @@ class SportsUpcoming(SportsCore):
                     self.logger.debug(f"Switched to game index {self.current_game_index}")
 
             if self.current_game:
-                self._draw_scorebug_layout(self.current_game, force_clear)
+                self._render_game(self.current_game, force_clear)
                 return True
             # update_display() is called within _draw_scorebug_layout for upcoming
             return False
@@ -984,6 +1084,7 @@ class SportsUpcoming(SportsCore):
 
 
 class SportsRecent(SportsCore):
+    SKIN_MODE = "recent"
 
     def __init__(self, config: Dict[str, Any], display_manager: DisplayManager, cache_manager: CacheManager, logger: logging.Logger, sport_key: str):
         super().__init__(config, display_manager, cache_manager, logger, sport_key)
@@ -1274,7 +1375,7 @@ class SportsRecent(SportsCore):
                     self.logger.debug(f"Switched to game index {self.current_game_index}")
 
             if self.current_game:
-                self._draw_scorebug_layout(self.current_game, force_clear)
+                self._render_game(self.current_game, force_clear)
                 return True
             # update_display() is called within _draw_scorebug_layout for recent
             return False

@@ -1214,6 +1214,11 @@ class PluginStoreManager:
             self.logger.error(f"Plugin not found in registry: {plugin_id}")
             return False
 
+        # Visual skins share the registry but install to skins/, not to a
+        # plugin directory (docs/SKIN_SYSTEM.md)
+        if (plugin_info.get('type') or 'plugin') == 'skin':
+            return self._install_skin_from_info(plugin_id, plugin_info, branch)
+
         repo_url = plugin_info.get('repo')
         if not repo_url:
             self.logger.error(f"Plugin {plugin_id} missing repository URL")
@@ -2254,19 +2259,136 @@ class PluginStoreManager:
         
         return None
     
+    def _install_skin_from_info(self, skin_id: str, skin_info: Dict,
+                                branch: Optional[str] = None) -> bool:
+        """Install a registry entry of type "skin" into skins/<id>/.
+
+        Reuses the plugin download machinery (git / monorepo zip / archive)
+        but validates skin.json instead of manifest.json and never installs
+        dependencies — skins are render-only (stdlib + PIL + the provided
+        SkinContext), which is also what keeps them safe to iterate on.
+        """
+        from src.skin_system import skin_runtime
+        from src.skin_system.skin_base import SKIN_API_VERSION
+
+        repo_url = skin_info.get('repo')
+        if not repo_url:
+            self.logger.error(f"Skin {skin_id} missing repository URL")
+            return False
+
+        skins_dir = skin_runtime.get_skins_directory()
+        skins_dir.mkdir(parents=True, exist_ok=True)
+        target = skins_dir / skin_id
+        if target.exists():
+            self.logger.warning(f"Skin directory already exists: {skin_id}. Removing before reinstall.")
+            if not self._safe_remove_directory(target):
+                return False
+
+        subpath = skin_info.get('plugin_path')
+        branch_candidates = self._distinct_sequence([
+            branch,
+            skin_info.get('branch'),
+            skin_info.get('default_branch'),
+            skin_info.get('last_commit_branch'),
+            'main',
+            'master'
+        ])
+
+        branch_used = None
+        if subpath:
+            for candidate in branch_candidates:
+                download_url = f"{repo_url}/archive/refs/heads/{candidate}.zip"
+                if self._install_from_monorepo(download_url, subpath, target):
+                    branch_used = candidate
+                    break
+        else:
+            branch_used = self._install_via_git(repo_url, target, branch_candidates)
+            if branch_used is None and not target.exists():
+                for candidate in branch_candidates:
+                    download_url = f"{repo_url}/archive/refs/heads/{candidate}.zip"
+                    if self._install_via_download(download_url, target):
+                        branch_used = candidate
+                        break
+
+        if branch_used is None and not target.exists():
+            self.logger.error(f"Failed to install skin {skin_id} via git or archive download")
+            return False
+
+        manifest_path = target / 'skin.json'
+        try:
+            with open(manifest_path, 'r', encoding='utf-8') as f:
+                manifest = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            self.logger.error(f"Skin {skin_id} has no valid skin.json: {e}")
+            self._safe_remove_directory(target)
+            return False
+
+        missing = [k for k in ('id', 'name', 'version', 'skin_api_version', 'class_name')
+                   if not manifest.get(k)]
+        if missing:
+            self.logger.error(f"Skin {skin_id} manifest missing fields: {missing}")
+            self._safe_remove_directory(target)
+            return False
+
+        def _api_major(v):
+            try:
+                return int(str(v).split('.')[0])
+            except (ValueError, IndexError):
+                return None
+
+        if _api_major(manifest['skin_api_version']) != _api_major(SKIN_API_VERSION):
+            self.logger.error(
+                f"Skin {skin_id} targets skin API {manifest['skin_api_version']} but this "
+                f"LEDMatrix provides {SKIN_API_VERSION}; not installing")
+            self._safe_remove_directory(target)
+            return False
+
+        # Directory name must match manifest id (same rule as plugins)
+        if manifest['id'] != skin_id:
+            correct = skins_dir / manifest['id']
+            self.logger.warning(
+                f"Skin manifest id '{manifest['id']}' doesn't match registry id '{skin_id}'; renaming")
+            if correct.exists() and not self._safe_remove_directory(correct):
+                return False
+            shutil.move(str(target), str(correct))
+
+        skin_runtime.discover_skins(force_refresh=True)
+        self.logger.info(f"Successfully installed skin: {skin_id} (branch: {branch_used})")
+        return True
+
+    def uninstall_skin(self, skin_id: str) -> bool:
+        """Remove an installed skin. Plugin configs referencing it keep
+        validating; rendering falls back to the built-in layout."""
+        from src.skin_system import skin_runtime
+
+        target = skin_runtime.get_skins_directory() / skin_id
+        if not target.exists():
+            self.logger.info(f"Skin {skin_id} not found (already uninstalled)")
+            return True
+        if self._safe_remove_directory(target):
+            skin_runtime.discover_skins(force_refresh=True)
+            self.logger.info(f"Successfully uninstalled skin: {skin_id}")
+            return True
+        return False
+
     def uninstall_plugin(self, plugin_id: str) -> bool:
         """
         Uninstall a plugin by removing its directory.
-        
+
         Args:
             plugin_id: Plugin identifier
-            
+
         Returns:
             True if uninstalled successfully (or already not installed)
         """
         plugin_path = self._find_plugin_path(plugin_id)
-        
+
         if plugin_path is None or not plugin_path.exists():
+            # A skin id passed to the plugin uninstall path (the store UI
+            # uses one uninstall flow) removes the skin instead
+            from src.skin_system import skin_runtime
+            if (skin_runtime.get_skins_directory() / plugin_id).exists():
+                return self.uninstall_skin(plugin_id)
             self.logger.info(f"Plugin {plugin_id} not found (already uninstalled)")
             return True  # Already uninstalled, consider this success
         

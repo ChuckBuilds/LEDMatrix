@@ -31,6 +31,14 @@
 - Plugin configs stored in `config/config.json`, NOT in plugin directories — safe across reinstalls
 - Third-party plugins can use their own repo URL with empty `plugin_path`
 
+## Skin System (visual overlays for sports scoreboards)
+- Skins live in `skins/<skin-id>/` (skin.json + skin.py), NOT in plugin dirs — plugin reinstall deletes plugin dirs
+- Core: `src/skin_system/` (ScoreboardSkin, SkinContext, runtime); hook: `SportsCore._render_game()` in `src/base_classes/sports.py`
+- Skins render onto `ctx.canvas` only; fallback to built-in renderer on `False`/exception (3 strikes disables for session)
+- View-model guaranteed keys are frozen (see `test/test_skin_system.py::TestViewModelContract`) — renaming keys in `_extract_game_details_common` or sport extractors breaks published skins
+- Validate skins headlessly: `python scripts/validate_skin.py --skin <id>`; docs: `docs/SKIN_SYSTEM.md`, `docs/CREATING_SKINS.md`
+- Skins are NOT monorepo plugins: no manifest bump / update_registry.py needed
+
 ## Common Pitfalls
 - paho-mqtt 2.x needs `callback_api_version=mqtt.CallbackAPIVersion.VERSION1` for v1 compat
 - BasePlugin uses `get_logger()` from `src.logging_config`, not standard `logging.getLogger()`
