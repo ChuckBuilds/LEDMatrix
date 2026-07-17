@@ -162,14 +162,35 @@
                         console.warn('HTMX swap error:', event.detail);
                     });
 
-                    // Note: no custom htmx:afterSwap script re-execution here.
-                    // htmx's own default config (allowScriptTags: true, on by
-                    // default - confirmed in the vendored htmx.min.js) already
-                    // clones and re-inserts <script> tags in swapped content
-                    // to make the browser execute them, exactly like a real
-                    // page load. A duplicate handler here previously did the
-                    // same clone-and-reinsert a second time, executing every
-                    // inline <script> in every HTMX-loaded partial TWICE.
+                    // Execute <script> tags in swapped content ourselves, on
+                    // htmx:afterSwap (synchronous, right after the swap) rather
+                    // than relying on htmx's own script handling, which runs
+                    // during its later "settle" phase (~20ms after swap, per
+                    // htmx's defaultSettleDelay). Alpine's MutationObserver
+                    // processes newly-inserted x-data elements synchronously
+                    // as soon as the swap lands, which is BEFORE htmx's settle
+                    // phase - so any partial whose x-data component function
+                    // (e.g. wifiSetup()) is defined by an inline <script> in
+                    // that same partial would have that script still un-run
+                    // when Alpine evaluates x-data, permanently failing with
+                    // "wifiSetup is not defined" (Alpine does not retry).
+                    // Disable htmx's own native script re-execution so the
+                    // same script doesn't also run a second time via settle.
+                    if (typeof htmx !== 'undefined' && htmx.config) {
+                        htmx.config.allowScriptTags = false;
+                    }
+                    document.body.addEventListener('htmx:afterSwap', function(event) {
+                        const target = event.detail && event.detail.target;
+                        if (!target || !(target instanceof Element)) return;
+                        target.querySelectorAll('script').forEach(function(oldScript) {
+                            const newScript = document.createElement('script');
+                            for (const attr of oldScript.attributes) {
+                                newScript.setAttribute(attr.name, attr.value);
+                            }
+                            newScript.textContent = oldScript.textContent;
+                            oldScript.replaceWith(newScript);
+                        });
+                    });
 
                     // Mark tab containers as loaded once their content settles, so switching
                     // away and back doesn't re-fetch. Scoped to the "loadtab" trigger (tab

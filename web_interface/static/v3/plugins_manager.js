@@ -667,7 +667,7 @@ window.handleGitHubPluginInstall = function() {
         return;
     }
 
-    if (!repoUrl.includes('github.com')) {
+    if (!isGithubUrl(repoUrl)) {
         if (statusDiv) {
             statusDiv.innerHTML = '<span class="text-red-600"><i class="fas fa-exclamation-circle mr-1"></i>Please enter a valid GitHub URL</span>';
         }
@@ -4022,9 +4022,9 @@ function renderSavedRepositories(repositories) {
                 <div class="flex-1 min-w-0">
                     <div class="flex items-center gap-2">
                         <i class="fas ${repoType === 'registry' ? 'fa-folder-open' : 'fa-code-branch'} text-gray-400 text-xs"></i>
-                        <span class="text-sm font-medium text-gray-900 truncate" title="${repoUrl}">${escapeHtml(repoName)}</span>
+                        <span class="text-sm font-medium text-gray-900 truncate" title="${escapeAttribute(repoUrl)}">${escapeHtml(repoName)}</span>
                     </div>
-                    <p class="text-xs text-gray-500 truncate" title="${repoUrl}">${escapeHtml(repoUrl)}</p>
+                    <p class="text-xs text-gray-500 truncate" title="${escapeAttribute(repoUrl)}">${escapeHtml(repoUrl)}</p>
                 </div>
                 <button onclick='if(window.removeSavedRepository){window.removeSavedRepository(${escapeJs(repoUrl)})}else{console.error("removeSavedRepository not available")}' class="ml-2 text-red-600 hover:text-red-800 text-xs px-2 py-1" title="Remove repository">
                     <i class="fas fa-trash"></i>
@@ -4107,7 +4107,7 @@ function attachInstallButtonHandler() {
                     return;
                 }
 
-                if (!repoUrl.includes('github.com')) {
+                if (!isGithubUrl(repoUrl)) {
                     if (pluginStatusDiv) {
                         pluginStatusDiv.innerHTML = '<span class="text-red-600"><i class="fas fa-exclamation-circle mr-1"></i>Please enter a valid GitHub URL</span>';
                     }
@@ -4280,7 +4280,7 @@ function setupGitHubInstallHandlers() {
                 return;
             }
 
-            if (!repoUrl.includes('github.com')) {
+            if (!isGithubUrl(repoUrl)) {
                 registryStatusDiv.innerHTML = '<span class="text-red-600"><i class="fas fa-exclamation-circle mr-1"></i>Please enter a valid GitHub URL</span>';
                 return;
             }
@@ -4336,7 +4336,7 @@ function setupGitHubInstallHandlers() {
                 return;
             }
 
-            if (!repoUrl.includes('github.com')) {
+            if (!isGithubUrl(repoUrl)) {
                 showError('Please enter a valid GitHub URL');
                 return;
             }
@@ -4479,6 +4479,19 @@ function showError(message) {
     `;
 }
 
+
+// Validate that a URL's actual host is github.com (not just a substring
+// match, which 'evil.com/github.com' or 'github.com.evil.com' would pass).
+// This is only a UX nicety pointing users at a valid URL - the server does
+// its own proper hostname validation before actually acting on the URL.
+function isGithubUrl(url) {
+    try {
+        const hostname = new URL(url).hostname.toLowerCase();
+        return hostname === 'github.com' || hostname === 'www.github.com';
+    } catch {
+        return false;
+    }
+}
 
 // Utility function to escape HTML
 function escapeHtml(text) {
