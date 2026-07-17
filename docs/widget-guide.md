@@ -206,6 +206,40 @@ To use an existing widget in your plugin's `config_schema.json`, simply add the 
 
 The widget will be automatically rendered when the plugin configuration form is loaded.
 
+## Marking Fields as Advanced (`x-advanced`)
+
+Add `"x-advanced": true` to any top-level, non-object property to move it out
+of the main form and into a single collapsed **Advanced Settings** section at
+the bottom of the plugin's configuration page:
+
+```json
+{
+  "properties": {
+    "city": {
+      "type": "string",
+      "title": "City"
+    },
+    "request_timeout": {
+      "type": "integer",
+      "default": 10,
+      "description": "HTTP timeout in seconds",
+      "x-advanced": true
+    }
+  }
+}
+```
+
+Guidelines:
+
+- Use it for fine-tuning knobs most users never touch (timeouts, retry
+  behavior, cache TTLs, styling overrides). Anything a first-time user must
+  set to get the plugin working should stay basic.
+- Nothing is hidden permanently — the section expands on click, and the
+  settings search finds and auto-expands advanced fields like any others.
+- The flag is ignored on `object`-type properties (they already render as
+  their own collapsible sections) and is safely ignored by older cores, so
+  adding it never breaks compatibility.
+
 ## Creating Custom Widgets
 
 ### Step 1: Create Widget File

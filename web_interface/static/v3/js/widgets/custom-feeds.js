@@ -209,6 +209,7 @@
                 const removeButton = document.createElement('button');
                 removeButton.type = 'button';
                 removeButton.className = 'text-red-600 hover:text-red-800 px-2 py-1';
+                removeButton.setAttribute('aria-label', 'Remove feed');
                 removeButton.addEventListener('click', function() {
                     window.removeCustomFeedRow(this);
                 });
@@ -333,6 +334,7 @@
         const removeButton = document.createElement('button');
         removeButton.type = 'button';
         removeButton.className = 'text-red-600 hover:text-red-800 px-2 py-1';
+        removeButton.setAttribute('aria-label', 'Remove feed');
         removeButton.addEventListener('click', function() {
             window.removeCustomFeedRow(this);
         });
@@ -404,7 +406,10 @@
         if (!file) return;
         
         const formData = new FormData();
-        formData.append('file', file);
+        // Backend contract (api_v3.upload_plugin_asset): field must be named
+        // "files" (request.files.getlist('files')), and the response carries
+        // results in a top-level "uploaded_files" key, not nested under "data".
+        formData.append('files', file);
         formData.append('plugin_id', pluginId);
         
         fetch('/api/v3/plugins/assets/upload', {
@@ -421,8 +426,8 @@
             return response.json();
         })
         .then(data => {
-            if (data.status === 'success' && data.data && data.data.files && data.data.files.length > 0) {
-                const uploadedFile = data.data.files[0];
+            if (data.status === 'success' && data.uploaded_files && data.uploaded_files.length > 0) {
+                const uploadedFile = data.uploaded_files[0];
                 const row = document.querySelector(`#${fieldId}_tbody tr[data-index="${index}"]`);
                 if (row) {
                     const logoCell = row.querySelector('td:nth-child(3)');
@@ -495,8 +500,6 @@
                     // Append container to logoCell
                     logoCell.appendChild(container);
                 }
-                // Allow re-uploading the same file
-                event.target.value = '';
             } else {
                 const notifyFn = window.showNotification || alert;
                 notifyFn('Upload failed: ' + (data.message || 'Unknown error'), 'error');
@@ -506,6 +509,12 @@
             console.error('Upload error:', error);
             const notifyFn = window.showNotification || alert;
             notifyFn('Upload failed: ' + error.message, 'error');
+        })
+        .finally(() => {
+            // Reset regardless of outcome, so the same file can be re-selected
+            // to retry after a failure (browsers won't fire "change" again
+            // for an input that still holds that exact file).
+            event.target.value = '';
         });
     };
 

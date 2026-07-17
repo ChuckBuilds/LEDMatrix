@@ -397,12 +397,51 @@ def _load_display_partial():
         return "Error loading partial", 500
 
 def _load_durations_partial():
-    """Load display durations partial"""
+    """Load rotation & durations partial.
+
+    Builds one duration entry per display mode of every enabled plugin
+    (falling back to the display controller's 30s default), overlaid with any
+    values saved in display.display_durations. Historically the template only
+    looped over saved keys, and nothing ever populated them, so the page
+    rendered empty.
+    """
     try:
         if pages_v3.config_manager:
             main_config = pages_v3.config_manager.load_config()
+            duration_groups = []
+            covered_keys = set()
+            if pages_v3.plugin_manager:
+                try:
+                    pages_v3.plugin_manager.discover_plugins()
+                    saved = (main_config.get('display', {}) or {}).get('display_durations', {}) or {}
+                    infos = sorted(pages_v3.plugin_manager.get_all_plugin_info(),
+                                   key=lambda i: (i.get('name') or i.get('id') or '').lower())
+                    for info in infos:
+                        pid = info.get('id')
+                        if not pid or not (main_config.get(pid, {}) or {}).get('enabled', False):
+                            continue
+                        modes = pages_v3.plugin_manager.get_plugin_display_modes(pid) or [pid]
+                        covered_keys.update(modes)
+                        duration_groups.append({
+                            'plugin_id': pid,
+                            'plugin_name': info.get('name') or pid,
+                            'modes': [{'key': m, 'value': saved.get(m, 30)} for m in modes],
+                        })
+                    # Saved keys not owned by any enabled plugin (disabled or
+                    # uninstalled plugins) stay visible rather than vanishing.
+                    leftovers = [{'key': k, 'value': v} for k, v in saved.items()
+                                 if k not in covered_keys]
+                    if leftovers:
+                        duration_groups.append({
+                            'plugin_id': '',
+                            'plugin_name': 'Other saved entries',
+                            'modes': leftovers,
+                        })
+                except Exception:
+                    logger.warning("durations: could not enumerate plugin modes", exc_info=True)
             return render_template('v3/partials/durations.html',
-                                 main_config=main_config)
+                                 main_config=main_config,
+                                 duration_groups=duration_groups)
     except Exception as e:
         logger.error("Error loading partial", exc_info=True)
         return "Error loading partial", 500

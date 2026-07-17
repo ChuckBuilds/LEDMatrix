@@ -961,8 +961,31 @@ def save_main_config():
                     return jsonify({"status": "error", "message": "sync_follower_position must be left or right"}), 400
                 current_config["sync"]["follower_position"] = pos_val
 
-        # Handle display durations
-        duration_fields = [k for k in data.keys() if k.endswith('_duration') or k in ['default_duration', 'transition_duration']]
+        # Handle primary rotation order: must be a JSON array of plugin-id
+        # strings. Reject anything else with a 400 rather than silently
+        # coercing, so a buggy client can't clear or corrupt the saved order.
+        if 'plugin_rotation_order' in data:
+            raw_order = data.pop('plugin_rotation_order')
+            try:
+                parsed = json.loads(raw_order) if isinstance(raw_order, str) else raw_order
+            except (json.JSONDecodeError, TypeError, ValueError):
+                return jsonify({'status': 'error',
+                                'message': 'plugin_rotation_order must be valid JSON'}), 400
+            if not isinstance(parsed, list) or not all(isinstance(p, str) for p in parsed):
+                return jsonify({'status': 'error',
+                                'message': 'plugin_rotation_order must be a list of plugin-id strings'}), 400
+            if 'display' not in current_config:
+                current_config['display'] = {}
+            current_config['display']['plugin_rotation_order'] = parsed
+
+        # Handle display durations. Popped from `data` (not just read) so
+        # they can never also fall through to the generic "remaining keys"
+        # merge near the end of this function, which would otherwise write
+        # them AGAIN as bogus top-level config keys (e.g. "clock_duration": 30
+        # sitting at config root alongside the correct
+        # display.display_durations.clock_duration).
+        duration_fields = [k for k in list(data.keys())
+                           if k.endswith('_duration') or k in ('default_duration', 'transition_duration')]
         if duration_fields:
             if 'display' not in current_config:
                 current_config['display'] = {}
@@ -970,8 +993,36 @@ def save_main_config():
                 current_config['display']['display_durations'] = {}
 
             for field in duration_fields:
-                if field in data:
-                    current_config['display']['display_durations'][field] = int(data[field])
+                raw_value = data.pop(field)
+                try:
+                    int_value = int(raw_value)
+                except (ValueError, TypeError):
+                    return jsonify({'status': 'error',
+                                    'message': f"Invalid duration for {field}: must be an integer"}), 400
+                current_config['display']['display_durations'][field] = int_value
+
+        # Per-mode durations from the Rotation & Durations page, posted as
+        # duration__<mode_key> (mode keys are arbitrary plugin mode names, so
+        # they can't use the suffix convention above). Same pop-and-validate
+        # treatment, for the same reason.
+        mode_duration_fields = [k for k in list(data.keys()) if k.startswith('duration__')]
+        if mode_duration_fields:
+            if 'display' not in current_config:
+                current_config['display'] = {}
+            if 'display_durations' not in current_config['display']:
+                current_config['display']['display_durations'] = {}
+
+            for field in mode_duration_fields:
+                raw_value = data.pop(field)
+                mode_key = field[len('duration__'):]
+                if not mode_key:
+                    continue
+                try:
+                    int_value = int(raw_value)
+                except (ValueError, TypeError):
+                    return jsonify({'status': 'error',
+                                    'message': f"Invalid duration for mode '{mode_key}': must be an integer"}), 400
+                current_config['display']['display_durations'][mode_key] = int_value
 
         # Handle plugin configurations dynamically
         # Any key that matches a plugin ID should be saved as plugin config
@@ -1639,6 +1690,16 @@ def execute_system_action():
                 except subprocess.TimeoutExpired:
                     logger.warning("git stash timed out, proceeding with pull")
 
+            # Record HEAD before the pull so dependency changes can be detected
+            old_head = None
+            try:
+                _pre = subprocess.run(['git', 'rev-parse', 'HEAD'],
+                                      capture_output=True, text=True, timeout=10, cwd=project_dir)
+                if _pre.returncode == 0:
+                    old_head = _pre.stdout.strip()
+            except subprocess.TimeoutExpired:
+                logger.warning("git rev-parse timed out before pull")
+
             # Perform the git pull
             result = subprocess.run(
                 ['git', 'pull', '--rebase'],
@@ -1655,6 +1716,54 @@ def execute_system_action():
                     pull_message = f"Code updated successfully. Local changes were automatically stashed.{stash_info}"
                 if result.stdout and "Already up to date" not in result.stdout:
                     pull_message = f"Code updated successfully.{stash_info}"
+
+                # Keep Python dependencies in sync automatically: if the pull
+                # changed a requirements file, install it now — users updating
+                # from the web UI (most of them) never SSH in to pip install.
+                # Installs go through the same root-visible path as the
+                # Tools-tab buttons (_pip_install_requirements).
+                dep_notes = []
+                try:
+                    _post = subprocess.run(['git', 'rev-parse', 'HEAD'],
+                                           capture_output=True, text=True, timeout=10, cwd=project_dir)
+                    new_head = _post.stdout.strip() if _post.returncode == 0 else None
+                    if old_head and new_head and old_head != new_head:
+                        diff = subprocess.run(
+                            ['git', 'diff', '--name-only', f'{old_head}..{new_head}'],
+                            capture_output=True, text=True, timeout=15, cwd=project_dir)
+                        changed = set(diff.stdout.split()) if diff.returncode == 0 else set()
+                        for rel in ('requirements.txt', 'web_interface/requirements.txt'):
+                            req_path = PROJECT_ROOT / rel
+                            if rel not in changed or not req_path.exists():
+                                continue
+                            # Each file's install is isolated: a timeout or
+                            # OSError (e.g. the sudo wrapper/interpreter
+                            # missing) on one file must not abort the other.
+                            try:
+                                r = _pip_install_requirements(req_path, timeout=180)
+                                if r.returncode == 0:
+                                    dep_notes.append(f"Dependencies from {rel} updated.")
+                                else:
+                                    dep_notes.append(
+                                        f"Dependency install from {rel} failed — "
+                                        "run Install Base Requirements from the Tools tab.")
+                                    logger.warning("post-update pip install failed for %s: %s",
+                                                   rel, _truncate_output(r.stdout, r.stderr))
+                            except subprocess.TimeoutExpired:
+                                dep_notes.append(
+                                    f"Dependency install from {rel} timed out — "
+                                    "run Install Base Requirements from the Tools tab.")
+                                logger.warning("post-update pip install timed out for %s", rel)
+                            except OSError as install_err:
+                                dep_notes.append(
+                                    f"Dependency install from {rel} failed — "
+                                    "run Install Base Requirements from the Tools tab.")
+                                logger.warning("post-update pip install errored for %s: %s",
+                                               rel, install_err)
+                except subprocess.TimeoutExpired:
+                    logger.warning("post-update dependency sync timed out")
+                if dep_notes:
+                    pull_message += " " + " ".join(dep_notes)
                 # A `git pull` restores built-in plugins (committed under
                 # plugin-repos/) even if the user uninstalled them. Re-remove
                 # any the user previously uninstalled so the update doesn't
@@ -1685,14 +1794,36 @@ def execute_system_action():
             result = subprocess.run(['sudo', 'systemctl', 'restart', 'ledmatrix-web.service'],
                                  capture_output=True, text=True, timeout=10)
         elif action == 'install_base_requirements':
-            req_file = PROJECT_ROOT / 'requirements.txt'
-            if not req_file.exists():
+            # Base + web interface requirements: flask-compress and friends
+            # live in web_interface/requirements.txt, not the root file.
+            req_files = [f for f in (PROJECT_ROOT / 'requirements.txt',
+                                     PROJECT_ROOT / 'web_interface' / 'requirements.txt')
+                         if f.exists()]
+            if not req_files:
                 return jsonify({'status': 'error', 'message': 'No requirements.txt found at project root'})
-            result = _pip_install_requirements(req_file, timeout=120)
+            outputs = []
+            all_ok = True
+            for req_file in req_files:
+                label = req_file.relative_to(PROJECT_ROOT)
+                # Isolate each file's install: a timeout or OSError on one
+                # (e.g. requirements.txt) must not abort the rest of the
+                # loop (e.g. web_interface/requirements.txt never attempted).
+                try:
+                    result = _pip_install_requirements(req_file, timeout=120)
+                    all_ok = all_ok and result.returncode == 0
+                    outputs.append(f"== {label} ==\n" + _truncate_output(result.stdout, result.stderr))
+                except subprocess.TimeoutExpired:
+                    all_ok = False
+                    outputs.append(f"== {label} ==\nTimed out after 120s")
+                    logger.warning("install_base_requirements timed out for %s", label)
+                except OSError as install_err:
+                    all_ok = False
+                    outputs.append(f"== {label} ==\nFailed: {install_err}")
+                    logger.warning("install_base_requirements errored for %s: %s", label, install_err)
             return jsonify({
-                'status': 'success' if result.returncode == 0 else 'error',
-                'message': 'Base requirements installed successfully' if result.returncode == 0 else 'pip install failed',
-                'output': _truncate_output(result.stdout, result.stderr)
+                'status': 'success' if all_ok else 'error',
+                'message': 'Base requirements installed successfully' if all_ok else 'pip install failed',
+                'output': "\n".join(outputs)
             })
         elif action == 'install_plugin_requirements':
             active_pm = getattr(api_v3, 'plugin_manager', None)
