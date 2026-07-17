@@ -3334,15 +3334,27 @@ window.uninstallPlugin = function(pluginId) {
     });
 }
 
-function pollOperationStatus(operationId, pluginId, pluginName, maxAttempts = 60, attempt = 0) {
+function pollOperationStatus(operationId, pluginId, pluginName, options = {}) {
+    const maxAttempts = options.maxAttempts || 60;
+    const attempt = options.attempt || 0;
+    const onComplete = options.onComplete || (() => handleUninstallSuccess(pluginId));
+    const onFailed = options.onFailed || ((errorMsg) => {
+        showNotification(errorMsg || `Operation failed for ${pluginName}`, 'error');
+        setTimeout(() => loadInstalledPlugins(), 1000);
+    });
+    const onTimeout = options.onTimeout || (() => {
+        showNotification(`Operation timed out for ${pluginName}`, 'error');
+        setTimeout(() => loadInstalledPlugins(), 1000);
+    });
+
     if (attempt >= maxAttempts) {
-        showNotification(`Uninstall operation timed out for ${pluginName}`, 'error');
-        // Refresh plugin list to see actual state
-        setTimeout(() => {
-            loadInstalledPlugins();
-        }, 1000);
+        onTimeout();
         return;
     }
+
+    const pollAgain = () => setTimeout(() => {
+        pollOperationStatus(operationId, pluginId, pluginName, { ...options, attempt: attempt + 1 });
+    }, 1000);
 
     fetch(`/api/v3/plugins/operation/${operationId}`)
         .then(response => response.json())
@@ -3352,32 +3364,16 @@ function pollOperationStatus(operationId, pluginId, pluginName, maxAttempts = 60
                 const status = operation.status;
 
                 if (status === 'completed') {
-                    // Operation completed successfully
-                    handleUninstallSuccess(pluginId);
+                    onComplete();
                 } else if (status === 'failed') {
-                    // Operation failed
-                    const errorMsg = operation.error || operation.message || `Failed to uninstall ${pluginName}`;
-                    showNotification(errorMsg, 'error');
-                    // Refresh plugin list to see actual state
-                    setTimeout(() => {
-                        loadInstalledPlugins();
-                    }, 1000);
-                } else if (status === 'pending' || status === 'in_progress') {
-                    // Still in progress, poll again
-                    setTimeout(() => {
-                        pollOperationStatus(operationId, pluginId, pluginName, maxAttempts, attempt + 1);
-                    }, 1000); // Poll every second
+                    onFailed(operation.error || operation.message);
                 } else {
-                    // Unknown status, poll again
-                    setTimeout(() => {
-                        pollOperationStatus(operationId, pluginId, pluginName, maxAttempts, attempt + 1);
-                    }, 1000);
+                    // 'pending', 'in_progress', or unknown - poll again
+                    pollAgain();
                 }
             } else {
                 // Error getting operation status, try again
-                setTimeout(() => {
-                    pollOperationStatus(operationId, pluginId, pluginName, maxAttempts, attempt + 1);
-                }, 1000);
+                pollAgain();
             }
         })
         .catch(error => {
@@ -3883,6 +3879,33 @@ window.installPlugin = function(pluginId, branch = null) {
         requestBody.branch = branch;
     }
 
+    function enableAfterInstall() {
+        // Enable immediately so install -> enable is one step; only nudge
+        // for a restart once enablement actually succeeded (persistent
+        // toast; duration 0 = stays until dismissed).
+        Promise.resolve(window.togglePlugin(pluginId, true)).then(toggleResult => {
+            if (toggleResult && toggleResult.status === 'success') {
+                showNotification(
+                    `${pluginId} installed and enabled — restart the display to show it`,
+                    {
+                        type: 'success',
+                        duration: 0,
+                        actionLabel: 'Restart Now',
+                        onAction: () => restartDisplay()
+                    }
+                );
+            } else {
+                showNotification(
+                    `${pluginId} installed, but enabling it failed — use its toggle in the plugin list`,
+                    'warning'
+                );
+            }
+        });
+        // Refresh installed plugins list, then re-render store to update badges
+        loadInstalledPlugins();
+        setTimeout(() => applyStoreFiltersAndSort(true), 500);
+    }
+
     fetch('/api/v3/plugins/install', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -3891,31 +3914,23 @@ window.installPlugin = function(pluginId, branch = null) {
     .then(response => response.json())
     .then(data => {
         showNotification(data.message, data.status);
-        if (data.status === 'success') {
-            // Enable immediately so install -> enable is one step; only nudge
-            // for a restart once enablement actually succeeded (persistent
-            // toast; duration 0 = stays until dismissed).
-            Promise.resolve(window.togglePlugin(pluginId, true)).then(toggleResult => {
-                if (toggleResult && toggleResult.status === 'success') {
-                    showNotification(
-                        `${pluginId} installed and enabled — restart the display to show it`,
-                        {
-                            type: 'success',
-                            duration: 0,
-                            actionLabel: 'Restart Now',
-                            onAction: () => restartDisplay()
-                        }
-                    );
-                } else {
-                    showNotification(
-                        `${pluginId} installed, but enabling it failed — use its toggle in the plugin list`,
-                        'warning'
-                    );
-                }
+        if (data.status !== 'success') return;
+
+        if (data.data && data.data.operation_id) {
+            // Install runs async via the operation queue - this response only
+            // means "queued", not "installed". Enabling immediately here would
+            // 404 with "Plugin not found" against the toggle endpoint, since
+            // the plugin manager hasn't discovered the new plugin yet (seen
+            // live: "installation queued" followed immediately by a failed
+            // enable). Wait for the operation to actually finish first.
+            pollOperationStatus(data.data.operation_id, pluginId, pluginId, {
+                onComplete: enableAfterInstall,
+                onFailed: (errorMsg) => showNotification(errorMsg || `Failed to install ${pluginId}`, 'error'),
+                onTimeout: () => showNotification(`Install operation timed out for ${pluginId}`, 'error')
             });
-            // Refresh installed plugins list, then re-render store to update badges
-            loadInstalledPlugins();
-            setTimeout(() => applyStoreFiltersAndSort(true), 500);
+        } else {
+            // No operation queue configured - install already completed synchronously.
+            enableAfterInstall();
         }
     })
     .catch(error => {
