@@ -69,12 +69,11 @@
                             errorStr.includes("reading 'insertBefore'")) {
                             // Check if it's from HTMX by looking at stack trace or error string
                             // Also check the call stack if available
-                            const isHtmxError = errorStr.includes('htmx.org') || 
-                                               errorStr.includes('htmx') || 
+                            const isHtmxError = errorStr.includes('htmx') ||
                                                errorStack.includes('htmx') ||
                                                args.some(arg => {
                                                    if (typeof arg === 'string') {
-                                                       return arg.includes('htmx.org') || arg.includes('htmx');
+                                                       return arg.includes('htmx');
                                                    }
                                                    // Check error objects for stack traces
                                                    if (arg && typeof arg === 'object' && arg.stack) {
