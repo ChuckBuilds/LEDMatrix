@@ -209,6 +209,7 @@
                 const removeButton = document.createElement('button');
                 removeButton.type = 'button';
                 removeButton.className = 'text-red-600 hover:text-red-800 px-2 py-1';
+                removeButton.setAttribute('aria-label', 'Remove feed');
                 removeButton.addEventListener('click', function() {
                     window.removeCustomFeedRow(this);
                 });
@@ -333,6 +334,7 @@
         const removeButton = document.createElement('button');
         removeButton.type = 'button';
         removeButton.className = 'text-red-600 hover:text-red-800 px-2 py-1';
+        removeButton.setAttribute('aria-label', 'Remove feed');
         removeButton.addEventListener('click', function() {
             window.removeCustomFeedRow(this);
         });
@@ -410,6 +412,9 @@
         // carries the result in a top-level "uploaded_files" key, not nested
         // under "data". file-upload-single.js's working upload flow uses this
         // same contract.
+        // Backend contract (api_v3.upload_plugin_asset): field must be named
+        // "files" (request.files.getlist('files')), and the response carries
+        // results in a top-level "uploaded_files" key, not nested under "data".
         formData.append('files', file);
         formData.append('plugin_id', pluginId);
 
@@ -501,8 +506,6 @@
                     // Append container to logoCell
                     logoCell.appendChild(container);
                 }
-                // Allow re-uploading the same file
-                event.target.value = '';
             } else {
                 const notifyFn = window.showNotification || alert;
                 notifyFn('Upload failed: ' + (data.message || 'Unknown error'), 'error');
@@ -512,6 +515,12 @@
             console.error('Upload error:', error);
             const notifyFn = window.showNotification || alert;
             notifyFn('Upload failed: ' + error.message, 'error');
+        })
+        .finally(() => {
+            // Reset regardless of outcome, so the same file can be re-selected
+            // to retry after a failure (browsers won't fire "change" again
+            // for an input that still holds that exact file).
+            event.target.value = '';
         });
     };
 

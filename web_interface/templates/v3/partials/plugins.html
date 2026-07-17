@@ -466,65 +466,6 @@
     </div>
     </div>
 
-    <!-- Plugin Configuration Modal -->
-    <div id="plugin-config-modal" class="fixed inset-0 modal-backdrop flex items-center justify-center z-50" style="display: none;">
-        <div class="modal-content p-6 w-full max-w-4xl max-h-[90vh] overflow-y-auto">
-            <div class="flex justify-between items-center mb-4">
-                <h3 id="plugin-config-title" class="text-lg font-semibold">Plugin Configuration</h3>
-                <div class="flex items-center space-x-2">
-                    <!-- View Toggle -->
-                    <div class="flex items-center bg-gray-100 rounded-lg p-1">
-                        <button id="view-toggle-form" class="view-toggle-btn active px-3 py-1 rounded text-sm font-medium transition-colors" data-view="form">
-                            <i class="fas fa-list mr-1"></i>Form
-                        </button>
-                        <button id="view-toggle-json" class="view-toggle-btn px-3 py-1 rounded text-sm font-medium transition-colors" data-view="json">
-                            <i class="fas fa-code mr-1"></i>JSON
-                        </button>
-                    </div>
-                    <!-- Reset Button -->
-                    <button id="reset-to-defaults-btn" class="px-3 py-1 text-sm bg-yellow-500 hover:bg-yellow-600 text-white rounded transition-colors" title="Reset to defaults">
-                        <i class="fas fa-undo mr-1"></i>Reset
-                    </button>
-                    <button id="close-plugin-config" class="text-gray-400 hover:text-gray-600">
-                        <i class="fas fa-times"></i>
-                    </button>
-                </div>
-            </div>
-            <!-- Validation Errors Display -->
-            <div id="plugin-config-validation-errors" class="hidden mb-4 p-3 bg-red-50 border border-red-200 rounded-md">
-                <div class="flex items-start">
-                    <i class="fas fa-exclamation-circle text-red-600 mt-0.5 mr-2"></i>
-                    <div class="flex-1">
-                        <p class="text-sm font-medium text-red-800 mb-2">Configuration Validation Errors</p>
-                        <ul id="validation-errors-list" class="text-sm text-red-700 list-disc list-inside space-y-1"></ul>
-                    </div>
-                </div>
-            </div>
-            <!-- Form View -->
-            <div id="plugin-config-form-view" class="plugin-config-view">
-                <div id="plugin-config-content">
-                    <!-- Plugin config form will be loaded here -->
-                </div>
-            </div>
-            <!-- JSON Editor View -->
-            <div id="plugin-config-json-view" class="plugin-config-view hidden">
-                <div class="mb-2">
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Configuration JSON</label>
-                    <textarea id="plugin-config-json-editor" class="w-full border border-gray-300 rounded-md font-mono text-sm" rows="20"></textarea>
-                </div>
-                <div class="flex justify-end space-x-2 pt-2 border-t border-gray-200">
-                    <button type="button" onclick="closePluginConfigModal()" class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md">
-                        Cancel
-                    </button>
-                    <button type="button" id="save-json-config-btn" class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md">
-                        <i class="fas fa-save mr-2"></i>Save Configuration
-                    </button>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-
 <!-- On-Demand Modal moved to base.html so it's always available -->
 
 <style>

@@ -22,7 +22,7 @@
             On Raspberry Pi 5: ensure the library was rebuilt from the latest submodule
             (<code class="bg-yellow-100 px-1 rounded">first_time_install.sh</code>)
             and try adjusting <strong>GPIO Slowdown</strong> (start at 3, reduce if the display looks dim or choppy).
-            Check the <a href="/v3/logs" class="underline font-medium">Logs tab</a> for the full error.
+            Check the <a href="#" @click.prevent="activeTab = 'logs'" class="underline font-medium">Logs tab</a> for the full error.
         </p>
     </div>
 
@@ -47,7 +47,7 @@
                            name="rows"
                            value="{{ main_config.display.hardware.rows or 32 }}"
                            min="1"
-                           max="64"
+                           max="128"
                            class="form-control">
                 </div>
 
@@ -85,7 +85,14 @@
                 </div>
             </div>
 
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <!-- Live total-resolution readout: width = cols x chain_length, height = rows x parallel -->
+            <p id="display-resolution-readout" class="text-sm text-gray-600 mb-4" aria-live="polite">
+                <i class="fas fa-expand-arrows-alt mr-1 text-gray-400"></i>
+                Your display: <strong id="display-resolution-value">&mdash;</strong>
+                <span class="text-gray-400">(columns &times; chain length wide, rows &times; parallel tall)</span>
+            </p>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div class="form-group" id="setting-display-brightness" data-setting-key="display.hardware.brightness">
                     <label for="brightness" class="block text-sm font-medium text-gray-700">Brightness{{ ui.help_tip('Overall LED brightness (1–100%).\nLower is dimmer, higher is brighter. Recommended: 70–90 indoors, 90–100 in bright rooms.', 'Brightness') }}</label>
                     <div class="flex items-center space-x-2">
@@ -109,9 +116,7 @@
                         <option value="regular-pi1" {% if main_config.display.hardware.hardware_mapping == "regular-pi1" %}selected{% endif %}>Regular Pi1</option>
                     </select>
                 </div>
-            </div>
 
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div class="form-group" id="setting-display-led_rgb_sequence" data-setting-key="display.hardware.led_rgb_sequence">
                     <label for="led_rgb_sequence" class="block text-sm font-medium text-gray-700">LED RGB Sequence{{ ui.help_tip('Order the panel expects color channels in.\nChange this only if reds/greens/blues look swapped. Default: RGB.', 'LED RGB Sequence') }}</label>
                     <select id="led_rgb_sequence" name="led_rgb_sequence" class="form-control">
@@ -123,7 +128,29 @@
                         <option value="BGR" {% if main_config.display.hardware.get('led_rgb_sequence', 'RGB') == "BGR" %}selected{% endif %}>BGR</option>
                     </select>
                 </div>
+            </div>
 
+            <!-- Advanced hardware settings: niche-panel and deep tuning fields.
+                 Collapsed by default; reuses the same nested-section shell as
+                 plugin config forms, so toggleSection() and the settings
+                 search's auto-expand both work unchanged. -->
+            <div class="nested-section border border-gray-300 rounded-lg mt-4">
+                <button type="button"
+                        class="w-full bg-gray-100 hover:bg-gray-200 px-4 py-3 flex items-center justify-between text-left transition-colors rounded-t-lg"
+                        aria-controls="display-section-advanced-hardware"
+                        aria-expanded="false"
+                        onclick="toggleSection('display-section-advanced-hardware')">
+                    <div class="flex-1">
+                        <h4 class="font-semibold text-gray-900">
+                            <i class="fas fa-sliders-h mr-1 text-gray-500"></i>Advanced Hardware &amp; Display Options (15)
+                        </h4>
+                        <p class="text-sm text-gray-600 mt-1">Multiplexing, panel variants, PWM tuning, and display options &mdash; the defaults work for standard HUB75 panels.</p>
+                    </div>
+                    <i id="display-section-advanced-hardware-icon" class="fas fa-chevron-right text-gray-500 transition-transform"></i>
+                </button>
+                <div id="display-section-advanced-hardware" class="nested-content bg-gray-50 px-4 py-4 space-y-4 hidden" style="display: none;">
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div class="form-group" id="setting-display-multiplexing" data-setting-key="display.hardware.multiplexing">
                     <label for="multiplexing" class="block text-sm font-medium text-gray-700">Multiplexing{{ ui.help_tip('Pixel-mapping scheme used by outdoor/specialty panels.\nLeave at 0 (Direct) for most indoor panels. Only change if the image is scrambled — try values until it looks right.', 'Multiplexing') }}</label>
                     <select id="multiplexing" name="multiplexing" class="form-control">
@@ -255,47 +282,6 @@
                            class="form-control">
                 </div>
             </div>
-        </div>
-
-        <!-- Double-Sided Display -->
-        <div class="bg-gray-50 rounded-lg p-4">
-            <h3 class="text-md font-medium text-gray-900 mb-1">Double-Sided Display</h3>
-            <p class="text-sm text-gray-600 mb-4">Show the same content on every panel in the chain &mdash; e.g. two 64&times;32 panels mirrored, or four panels as two identical screens. Rendered once and duplicated, so it adds no extra CPU. Takes effect after a display restart.</p>
-
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div class="form-group" id="setting-display-double_sided_enabled" data-setting-key="display.double_sided.enabled">
-                    <label class="flex items-center gap-2">
-                        <input type="checkbox"
-                               id="double_sided_enabled"
-                               name="double_sided_enabled"
-                               value="true"
-                               {% if main_config.display.get('double_sided', {}).get('enabled') %}checked{% endif %}
-                               class="form-control h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
-                        <span class="text-sm font-medium text-gray-700">Enabled</span>
-                        {{ ui.help_tip('Show the same content mirrored across every panel in the chain.\nRendered once and duplicated, so it adds no extra CPU. Takes effect after a display restart.', 'Double-Sided Enabled') }}
-                    </label>
-                </div>
-
-                <div class="form-group" id="setting-display-double_sided_copies" data-setting-key="display.double_sided.copies">
-                    <label for="double_sided_copies" class="block text-sm font-medium text-gray-700">Copies{{ ui.help_tip('How many identical screens to split the panel area into (2–8).\nMust divide the panel evenly — e.g. 2 for a two-sided cube.', 'Copies') }}</label>
-                    <input type="number"
-                           id="double_sided_copies"
-                           name="double_sided_copies"
-                           value="{{ main_config.display.get('double_sided', {}).get('copies', 2) }}"
-                           min="2"
-                           max="8"
-                           class="form-control">
-                </div>
-
-                <div class="form-group" id="setting-display-double_sided_axis" data-setting-key="display.double_sided.axis">
-                    <label for="double_sided_axis" class="block text-sm font-medium text-gray-700">Split Axis{{ ui.help_tip('Direction the display is divided into copies.\nHorizontal splits along the chained panels (side by side); Vertical splits along parallel chains (stacked).', 'Split Axis') }}</label>
-                    <select id="double_sided_axis" name="double_sided_axis" class="form-control">
-                        <option value="horizontal" {% if main_config.display.get('double_sided', {}).get('axis', 'horizontal') == 'horizontal' %}selected{% endif %}>Horizontal &mdash; chained panels (side by side)</option>
-                        <option value="vertical" {% if main_config.display.get('double_sided', {}).get('axis', 'horizontal') == 'vertical' %}selected{% endif %}>Vertical &mdash; parallel chains (stacked)</option>
-                    </select>
-                </div>
-            </div>
-        </div>
 
         <!-- Display Options -->
         <div class="bg-gray-50 rounded-lg p-4">
@@ -367,6 +353,36 @@
                     </div>
                 </div>
             </div>
+        </div>
+                </div> <!-- /#display-section-advanced-hardware (nested-content) -->
+            </div> <!-- /advanced hardware nested-section -->
+
+            <script>
+                // Live "Your display: W x H" readout - width = cols x chain_length,
+                // height = rows x parallel (same math as the chain-length tooltip).
+                (function () {
+                    const ids = ['rows', 'cols', 'chain_length', 'parallel'];
+                    const out = document.getElementById('display-resolution-value');
+                    if (!out) return;
+                    function recompute() {
+                        const v = {};
+                        for (const id of ids) {
+                            const el = document.getElementById(id);
+                            v[id] = el ? parseInt(el.value, 10) : NaN;
+                        }
+                        if (Object.values(v).some(n => !Number.isFinite(n) || n <= 0)) {
+                            out.textContent = '—';
+                            return;
+                        }
+                        out.textContent = (v.cols * v.chain_length) + ' × ' + (v.rows * v.parallel) + ' pixels';
+                    }
+                    for (const id of ids) {
+                        const el = document.getElementById(id);
+                        if (el) el.addEventListener('input', recompute);
+                    }
+                    recompute();
+                })();
+            </script>
         </div>
 
         <!-- Vegas Scroll Mode Settings -->
@@ -453,6 +469,48 @@
                 </div>
             </div>
         </div>
+
+        <!-- Double-Sided Display -->
+        <div class="bg-gray-50 rounded-lg p-4">
+            <h3 class="text-md font-medium text-gray-900 mb-1">Double-Sided Display</h3>
+            <p class="text-sm text-gray-600 mb-4">Show the same content on every panel in the chain &mdash; e.g. two 64&times;32 panels mirrored, or four panels as two identical screens. Rendered once and duplicated, so it adds no extra CPU. Takes effect after a display restart.</p>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div class="form-group" id="setting-display-double_sided_enabled" data-setting-key="display.double_sided.enabled">
+                    <label class="flex items-center gap-2">
+                        <input type="checkbox"
+                               id="double_sided_enabled"
+                               name="double_sided_enabled"
+                               value="true"
+                               {% if main_config.display.get('double_sided', {}).get('enabled') %}checked{% endif %}
+                               class="form-control h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                        <span class="text-sm font-medium text-gray-700">Enabled</span>
+                        {{ ui.help_tip('Show the same content mirrored across every panel in the chain.\nRendered once and duplicated, so it adds no extra CPU. Takes effect after a display restart.', 'Double-Sided Enabled') }}
+                    </label>
+                </div>
+
+                <div class="form-group" id="setting-display-double_sided_copies" data-setting-key="display.double_sided.copies">
+                    <label for="double_sided_copies" class="block text-sm font-medium text-gray-700">Copies{{ ui.help_tip('How many identical screens to split the panel area into (2–8).\nMust divide the panel evenly — e.g. 2 for a two-sided cube.', 'Copies') }}</label>
+                    <input type="number"
+                           id="double_sided_copies"
+                           name="double_sided_copies"
+                           value="{{ main_config.display.get('double_sided', {}).get('copies', 2) }}"
+                           min="2"
+                           max="8"
+                           class="form-control">
+                </div>
+
+                <div class="form-group" id="setting-display-double_sided_axis" data-setting-key="display.double_sided.axis">
+                    <label for="double_sided_axis" class="block text-sm font-medium text-gray-700">Split Axis{{ ui.help_tip('Direction the display is divided into copies.\nHorizontal splits along the chained panels (side by side); Vertical splits along parallel chains (stacked).', 'Split Axis') }}</label>
+                    <select id="double_sided_axis" name="double_sided_axis" class="form-control">
+                        <option value="horizontal" {% if main_config.display.get('double_sided', {}).get('axis', 'horizontal') == 'horizontal' %}selected{% endif %}>Horizontal &mdash; chained panels (side by side)</option>
+                        <option value="vertical" {% if main_config.display.get('double_sided', {}).get('axis', 'horizontal') == 'vertical' %}selected{% endif %}>Vertical &mdash; parallel chains (stacked)</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+
 
         <!-- Multi-Display Sync Settings -->
         <div class="bg-gray-50 rounded-lg p-4 mt-6">
@@ -583,182 +641,31 @@ if (typeof window.fixInvalidNumberInputs !== 'function') {
         });
     }
 
-    // Initialize plugin order list
-    function initPluginOrderList() {
+    // Initialize plugin order list via the shared drag-and-drop module
+    // (static/v3/js/widgets/plugin-order-list.js) — the same component the
+    // Durations tab uses for the primary rotation order.
+    function initPluginOrderList(attempt) {
         const container = document.getElementById('vegas_plugin_order');
         if (!container) return;
-
-        // Fetch available plugins
-        fetch('/api/v3/plugins/installed')
-            .then(response => response.json())
-            .then(data => {
-                // Handle both {data: {plugins: []}} and {plugins: []} response formats
-                const allPlugins = data.data?.plugins || data.plugins || [];
-                if (!allPlugins || allPlugins.length === 0) {
-                    container.innerHTML = '<p class="text-sm text-gray-500 italic">No plugins available</p>';
-                    return;
-                }
-
-                // Get current order and exclusions
-                const orderInput = document.getElementById('vegas_plugin_order_value');
-                const excludedInput = document.getElementById('vegas_excluded_plugins_value');
-                let currentOrder = [];
-                let excluded = [];
-
-                try {
-                    currentOrder = JSON.parse(orderInput.value || '[]');
-                    excluded = JSON.parse(excludedInput.value || '[]');
-                } catch (e) {
-                    console.error('Error parsing vegas config:', e);
-                }
-
-                // Build ordered plugin list (only enabled plugins)
-                const plugins = allPlugins.filter(p => p.enabled);
-                const orderedPlugins = [];
-
-                // First add plugins in current order
-                currentOrder.forEach(id => {
-                    const plugin = plugins.find(p => p.id === id);
-                    if (plugin) orderedPlugins.push(plugin);
-                });
-
-                // Then add remaining plugins
-                plugins.forEach(plugin => {
-                    if (!orderedPlugins.find(p => p.id === plugin.id)) {
-                        orderedPlugins.push(plugin);
-                    }
-                });
-
-                // Build HTML with display mode indicators
-                let html = '';
-                orderedPlugins.forEach((plugin, index) => {
-                    const isExcluded = excluded.includes(plugin.id);
-                    // Determine display mode (from plugin config or default)
-                    const vegasMode = plugin.vegas_mode || plugin.vegas_content_type || 'fixed';
-                    const modeLabels = {
-                        'scroll': { label: 'Scroll', icon: 'fa-scroll', color: 'text-blue-600' },
-                        'fixed': { label: 'Fixed', icon: 'fa-square', color: 'text-green-600' },
-                        'static': { label: 'Static', icon: 'fa-pause', color: 'text-orange-600' }
-                    };
-                    const modeInfo = modeLabels[vegasMode] || modeLabels['fixed'];
-                    // Escape plugin metadata to prevent XSS
-                    const safePluginId = escapeAttr(plugin.id);
-                    const safePluginName = escapeHtml(plugin.name || plugin.id);
-                    html += `
-                        <div class="flex items-center p-2 bg-gray-50 rounded border border-gray-200 cursor-move vegas-plugin-item"
-                             data-plugin-id="${safePluginId}" draggable="true">
-                            <i class="fas fa-grip-vertical text-gray-400 mr-3"></i>
-                            <label class="flex items-center flex-1">
-                                <input type="checkbox"
-                                       class="vegas-plugin-include h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded mr-2"
-                                       ${!isExcluded ? 'checked' : ''}>
-                                <span class="text-sm font-medium text-gray-700">${safePluginName}</span>
-                            </label>
-                            <span class="text-xs ${modeInfo.color} ml-2" title="Vegas display mode: ${modeInfo.label}">
-                                <i class="fas ${modeInfo.icon} mr-1"></i>${modeInfo.label}
-                            </span>
-                        </div>
-                    `;
-                });
-
-                container.innerHTML = html || '<p class="text-sm text-gray-500 italic">No enabled plugins</p>';
-
-                // Setup drag and drop
-                setupDragAndDrop(container);
-
-                // Setup checkbox handlers
-                container.querySelectorAll('.vegas-plugin-include').forEach(checkbox => {
-                    checkbox.addEventListener('change', updatePluginConfig);
-                });
-
-                // Initialize hidden inputs with current state
-                updatePluginConfig();
-            })
-            .catch(error => {
-                console.error('Error fetching plugins:', error);
-                container.innerHTML = '<p class="text-sm text-red-500">Error loading plugins</p>';
-            });
-    }
-
-    function setupDragAndDrop(container) {
-        let draggedItem = null;
-
-        container.querySelectorAll('.vegas-plugin-item').forEach(item => {
-            item.addEventListener('dragstart', function(e) {
-                draggedItem = this;
-                this.style.opacity = '0.5';
-                e.dataTransfer.effectAllowed = 'move';
-            });
-
-            item.addEventListener('dragend', function() {
-                this.style.opacity = '1';
-                draggedItem = null;
-                updatePluginConfig();
-            });
-
-            item.addEventListener('dragover', function(e) {
-                e.preventDefault();
-                e.dataTransfer.dropEffect = 'move';
-
-                const rect = this.getBoundingClientRect();
-                const midY = rect.top + rect.height / 2;
-
-                if (e.clientY < midY) {
-                    this.style.borderTop = '2px solid #3b82f6';
-                    this.style.borderBottom = '';
-                } else {
-                    this.style.borderBottom = '2px solid #3b82f6';
-                    this.style.borderTop = '';
-                }
-            });
-
-            item.addEventListener('dragleave', function() {
-                this.style.borderTop = '';
-                this.style.borderBottom = '';
-            });
-
-            item.addEventListener('drop', function(e) {
-                e.preventDefault();
-                this.style.borderTop = '';
-                this.style.borderBottom = '';
-
-                if (draggedItem && draggedItem !== this) {
-                    const rect = this.getBoundingClientRect();
-                    const midY = rect.top + rect.height / 2;
-
-                    if (e.clientY < midY) {
-                        container.insertBefore(draggedItem, this);
-                    } else {
-                        container.insertBefore(draggedItem, this.nextSibling);
-                    }
-                }
-            });
-        });
-    }
-
-    function updatePluginConfig() {
-        const container = document.getElementById('vegas_plugin_order');
-        const orderInput = document.getElementById('vegas_plugin_order_value');
-        const excludedInput = document.getElementById('vegas_excluded_plugins_value');
-
-        if (!container || !orderInput || !excludedInput) return;
-
-        const order = [];
-        const excluded = [];
-
-        container.querySelectorAll('.vegas-plugin-item').forEach(item => {
-            const pluginId = item.dataset.pluginId;
-            const checkbox = item.querySelector('.vegas-plugin-include');
-
-            order.push(pluginId);
-            if (checkbox && !checkbox.checked) {
-                excluded.push(pluginId);
+        if (!window.PluginOrderList) {
+            // Widget script is deferred; retry briefly, then surface a real
+            // error instead of waiting forever.
+            if ((attempt || 0) < 50) {
+                setTimeout(function() { initPluginOrderList((attempt || 0) + 1); }, 100);
+            } else {
+                container.textContent = 'Could not load the reorder widget — reload the page to try again.';
+                container.className = 'text-sm text-red-500';
             }
+            return;
+        }
+        window.PluginOrderList.init({
+            containerId: 'vegas_plugin_order',
+            orderInputId: 'vegas_plugin_order_value',
+            excludedInputId: 'vegas_excluded_plugins_value',
+            showVegasModeBadge: true
         });
-
-        orderInput.value = JSON.stringify(order);
-        excludedInput.value = JSON.stringify(excluded);
     }
+
 
     // Initialize on DOM ready
     if (document.readyState === 'loading') {

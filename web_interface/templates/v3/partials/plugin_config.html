@@ -893,6 +893,12 @@
                 <p class="mt-1 text-sm text-gray-600">{{ plugin.description or 'Plugin configuration' }}</p>
             </div>
             <div class="flex items-center space-x-4">
+                <button type="button"
+                        onclick="window.previewPluginNow('{{ plugin.id }}')"
+                        class="btn bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 text-sm rounded-md"
+                        title="Run this plugin on the display for 60 seconds and open the live preview">
+                    <i class="fas fa-play mr-1"></i>Preview on display
+                </button>
                 <label class="flex items-center cursor-pointer">
                     <input type="checkbox"
                            id="plugin-enabled-{{ plugin.id }}"
@@ -1005,13 +1011,53 @@
                         {# Use property order if defined, otherwise use natural order #}
                         {# Skip 'enabled' field - it's handled by the header toggle #}
                         {% set property_order = schema['x-propertyOrder'] if 'x-propertyOrder' in schema else schema.properties.keys()|list %}
+                        {# Flat (non-object) properties flagged "x-advanced": true are
+                           grouped into one collapsed "Advanced Settings" section after
+                           the basic fields. Object-type properties already render as
+                           their own collapsible sections, so the flag is ignored for
+                           them. Schemas without the flag render exactly as before. #}
+                        {% set tiers = namespace(basic=[], advanced=[]) %}
                         {% for key in property_order %}
                             {% if key in schema.properties and key != 'enabled' %}
                                 {% set prop = schema.properties[key] %}
-                                {% set value = config[key] if key in config else none %}
-                                {{ render_field(key, prop, value, '', plugin.id) }}
+                                {% set is_object = prop.type is defined and 'object' in prop.type %}
+                                {% if prop.get('x-advanced') and not is_object %}
+                                    {% set tiers.advanced = tiers.advanced + [key] %}
+                                {% else %}
+                                    {% set tiers.basic = tiers.basic + [key] %}
+                                {% endif %}
                             {% endif %}
                         {% endfor %}
+                        {% for key in tiers.basic %}
+                            {% set prop = schema.properties[key] %}
+                            {% set value = config[key] if key in config else none %}
+                            {{ render_field(key, prop, value, '', plugin.id) }}
+                        {% endfor %}
+                        {% if tiers.advanced %}
+                            {% set adv_section_id = (plugin.id ~ '-section-advanced-settings')|replace('.', '-')|replace('_', '-') %}
+                            <div class="nested-section border border-gray-300 rounded-lg mb-4">
+                                <button type="button"
+                                        class="w-full bg-gray-100 hover:bg-gray-200 px-4 py-3 flex items-center justify-between text-left transition-colors rounded-t-lg"
+                                        aria-controls="{{ adv_section_id }}"
+                                        aria-expanded="false"
+                                        onclick="toggleSection('{{ adv_section_id }}')">
+                                    <div class="flex-1">
+                                        <h4 class="font-semibold text-gray-900">
+                                            <i class="fas fa-sliders-h mr-1 text-gray-500"></i>Advanced Settings ({{ tiers.advanced|length }})
+                                        </h4>
+                                        <p class="text-sm text-gray-600 mt-1">Optional fine-tuning — the defaults work for most setups.</p>
+                                    </div>
+                                    <i id="{{ adv_section_id }}-icon" class="fas fa-chevron-right text-gray-500 transition-transform"></i>
+                                </button>
+                                <div id="{{ adv_section_id }}" class="nested-content bg-gray-50 px-4 py-4 space-y-3 hidden" style="display: none;">
+                                    {% for key in tiers.advanced %}
+                                        {% set prop = schema.properties[key] %}
+                                        {% set value = config[key] if key in config else none %}
+                                        {{ render_field(key, prop, value, '', plugin.id) }}
+                                    {% endfor %}
+                                </div>
+                            </div>
+                        {% endif %}
                     {% else %}
                         {# No schema - render simple form from config #}
                         {% if config %}

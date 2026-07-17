@@ -7,6 +7,7 @@ flask>=3.1.3,<4.0.0
 werkzeug>=3.1.6,<4.0.0
 flask-wtf>=1.2.0  # CSRF protection (optional for local-only, but recommended)
 flask-limiter>=3.5.0  # Rate limiting (prevent accidental abuse)
+flask-compress>=1.14  # gzip/brotli response compression (big win for the large JS/HTML over WiFi)
 
 # WebSocket support for plugins
 # Note: Web interface uses Server-Sent Events (SSE) for real-time updates, not WebSockets

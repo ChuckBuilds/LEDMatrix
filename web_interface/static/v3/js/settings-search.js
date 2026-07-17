@@ -173,7 +173,14 @@
 
     function setActiveTab(tab) {
         var data = getAppData();
-        if (data) { data.activeTab = tab; return true; }
+        if (data) {
+            data.activeTab = tab;
+            // Navigating from a search result should also dismiss the mobile
+            // nav drawer (harmless no-op on desktop, where the drawer CSS
+            // doesn't apply).
+            if ('mobileNavOpen' in data) data.mobileNavOpen = false;
+            return true;
+        }
         return false;
     }
 

@@ -1,8 +1,8 @@
 {% import 'v3/partials/_macros.html' as ui %}
 <div class="bg-white rounded-lg shadow p-6">
     <div class="border-b border-gray-200 pb-4 mb-6">
-        <h2 class="text-lg font-semibold text-gray-900">Display Durations</h2>
-        <p class="mt-1 text-sm text-gray-600">Configure how long each screen is shown before switching. Values in seconds.</p>
+        <h2 class="text-lg font-semibold text-gray-900">Rotation &amp; Durations</h2>
+        <p class="mt-1 text-sm text-gray-600">Set the order plugins rotate on the display and how long each screen is shown. Durations are in seconds.</p>
     </div>
 
     {{ ui.settings_filter() }}
@@ -16,22 +16,53 @@
           novalidate
           onsubmit="fixInvalidNumberInputs(this); return true;">
 
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {% for key, value in main_config.display.display_durations.items() %}
-            <div class="form-group" id="setting-durations-{{ key }}" data-setting-key="display.display_durations.{{ key }}">
-                <label for="duration_{{ key }}" class="block text-sm font-medium text-gray-700">
-                    {{ key | replace('_', ' ') | title }}{{ ui.help_tip('How long the ' ~ (key | replace('_', ' ')) ~ ' screen stays on before rotating to the next one, in seconds.\nRange: 5–600. Currently ' ~ value ~ 's.', key | replace('_', ' ') | title) }}
-                </label>
-                <input type="number"
-                       id="duration_{{ key }}"
-                       name="{{ key }}"
-                       value="{{ value }}"
-                       min="5"
-                       max="600"
-                       class="form-control">
+        <!-- Primary rotation order: drag to reorder which plugin shows first,
+             second, ... in the normal display rotation. Saved as
+             display.plugin_rotation_order and applied by the display
+             controller on startup and live plugin enable/disable. -->
+        <div class="bg-gray-50 rounded-lg p-4">
+            <h3 class="text-md font-medium text-gray-900 mb-1">Rotation Order</h3>
+            <p class="text-sm text-gray-600 mb-3">Drag plugins to set the order they rotate on the display. Each plugin's screens keep their own order within its turn. Takes effect after saving and restarting the display.</p>
+            <div id="rotation_plugin_order" class="space-y-2 bg-white rounded-lg p-3 border border-gray-200">
+                <p class="text-sm text-gray-500 italic">Loading plugins…</p>
+            </div>
+            <input type="hidden" id="rotation_plugin_order_value" name="plugin_rotation_order"
+                   value='{{ main_config.display.get("plugin_rotation_order", [])|tojson }}'>
+        </div>
+
+        {% if duration_groups %}
+        <div class="bg-gray-50 rounded-lg p-4 space-y-5">
+            <div>
+                <h3 class="text-md font-medium text-gray-900 mb-1">Screen Durations</h3>
+                <p class="text-sm text-gray-600">How long each screen stays on before rotating to the next one, in seconds (5&ndash;600, default 30).</p>
+            </div>
+            {% for group in duration_groups %}
+            <div>
+                <h4 class="text-sm font-semibold text-gray-800 mb-2">{{ group.plugin_name }}</h4>
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {% for mode in group.modes %}
+                    <div class="form-group" id="setting-durations-{{ mode.key }}" data-setting-key="display.display_durations.{{ mode.key }}">
+                        <label for="duration__{{ mode.key }}" class="block text-sm font-medium text-gray-700">
+                            {{ mode.key | replace('_', ' ') | title }}{{ ui.help_tip('How long the ' ~ (mode.key | replace('_', ' ')) ~ ' screen stays on before rotating to the next one, in seconds.\nRange: 5–600. Currently ' ~ mode.value ~ 's.', mode.key | replace('_', ' ') | title) }}
+                        </label>
+                        <input type="number"
+                               id="duration__{{ mode.key }}"
+                               name="duration__{{ mode.key }}"
+                               value="{{ mode.value }}"
+                               min="5"
+                               max="600"
+                               class="form-control">
+                    </div>
+                    {% endfor %}
+                </div>
             </div>
             {% endfor %}
         </div>
+        {% else %}
+        <div class="bg-gray-50 rounded-lg p-4">
+            <p class="text-sm text-gray-500 italic">No enabled plugins found &mdash; enable a plugin in the Plugin Manager to set its screen durations here.</p>
+        </div>
+        {% endif %}
 
         <!-- Submit Button -->
         <div class="flex justify-end">
@@ -43,3 +74,34 @@
         </div>
     </form>
 </div>
+
+<script>
+(function () {
+    // Shared drag-and-drop plugin list (static/v3/js/widgets/plugin-order-list.js,
+    // same module the Vegas Scroll section uses).
+    function initRotationOrderList(attempt) {
+        const container = document.getElementById('rotation_plugin_order');
+        if (!container) return;
+        if (!window.PluginOrderList) {
+            // Widget script is deferred; retry briefly, then surface a real
+            // error instead of showing "Loading…" forever.
+            if ((attempt || 0) < 50) {
+                setTimeout(function() { initRotationOrderList((attempt || 0) + 1); }, 100);
+            } else {
+                container.textContent = 'Could not load the reorder widget — reload the page to try again.';
+                container.className = 'text-sm text-red-500';
+            }
+            return;
+        }
+        window.PluginOrderList.init({
+            containerId: 'rotation_plugin_order',
+            orderInputId: 'rotation_plugin_order_value'
+        });
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initRotationOrderList);
+    } else {
+        initRotationOrderList();
+    }
+}());
+</script>
