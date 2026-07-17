@@ -153,7 +153,10 @@
                 return;
             }
             var appEl = document.querySelector('[x-data="app()"]') || document.querySelector('[x-data]');
-            var data = appEl && appEl._x_dataStack && appEl._x_dataStack[0];
+            // Same two-tier resolution as settings-search.js's getAppData():
+            // _x_dataStack on current Alpine, __x.$data as an older-API fallback.
+            var data = appEl && ((appEl._x_dataStack && appEl._x_dataStack[0]) ||
+                                  (appEl.__x && appEl.__x.$data));
             if (data) {
                 data.activeTab = btn.dataset.tab;
                 if ('mobileNavOpen' in data) data.mobileNavOpen = false;

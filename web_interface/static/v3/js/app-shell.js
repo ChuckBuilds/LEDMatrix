@@ -2775,7 +2775,7 @@
                 }
             };
             
-            window.executePluginAction = function(pluginId, actionId) {
+            window.executePluginAction = function(actionId, actionIndex, pluginId) {
                 fetch(`/api/v3/plugins/action?plugin_id=${pluginId}&action_id=${actionId}`, {
                     method: 'POST'
                 })
