@@ -284,6 +284,19 @@ class SchemaManager:
                     "type": "boolean",
                     "default": False,
                     "description": "Enable live priority takeover when plugin has live content"
+                },
+                # Skin selection (docs/SKIN_SYSTEM.md). Deliberately NOT an
+                # enum here: validation must keep passing when a configured
+                # skin gets uninstalled (rendering falls back to built-in).
+                # The install-dependent enum is injected only at serve time
+                # (inject_skin_selector) for the web UI dropdown.
+                "skin": {
+                    "type": ["string", "object", "null"],
+                    "description": "Visual skin id, or a per-mode mapping like {\"live\": \"my-skin\"}"
+                },
+                "skin_options": {
+                    "type": "object",
+                    "description": "Options passed through to the selected skin"
                 }
             }
             
@@ -354,6 +367,53 @@ class SchemaManager:
             self.logger.error(error_msg)
             return False, [error_msg]
     
+    def inject_skin_selector(self, schema: Dict[str, Any], plugin_id: str,
+                             current_value: Any = None) -> Dict[str, Any]:
+        """Return a copy of a plugin's schema with a "skin" dropdown added
+        when installed skins target this plugin (docs/SKIN_SYSTEM.md).
+
+        Serve-time only — validation never sees this enum, so a config
+        referencing an uninstalled skin stays valid (rendering falls back
+        to the built-in layout). The currently-configured value is always
+        included in the enum for the same reason: the dropdown must be able
+        to display a selection whose skin was removed.
+        """
+        # A per-mode mapping ({"live": ..., "recent": ...}) can't be edited
+        # through a string dropdown — injecting one would let the form save
+        # a string over the mapping. Leave the schema alone; per-mode users
+        # edit via the raw JSON config editor.
+        if isinstance(current_value, dict):
+            return schema
+
+        try:
+            from src.skin_system import skin_runtime
+            matching = skin_runtime.skins_for_plugin(plugin_id)
+        except Exception as e:
+            self.logger.debug(f"Skin discovery failed for {plugin_id}: {e}")
+            return schema
+
+        choices = sorted(matching.keys())
+        if isinstance(current_value, str) and current_value and \
+                current_value != "built-in" and current_value not in choices:
+            choices.append(current_value)
+        if not choices:
+            return schema
+
+        enhanced = copy.deepcopy(schema)
+        enhanced.setdefault("properties", {})
+        if "skin" not in enhanced["properties"]:
+            names = {sid: (matching.get(sid, {}).get("name") or sid) for sid in choices}
+            enhanced["properties"]["skin"] = {
+                "type": "string",
+                "title": "Visual Skin",
+                "description": "Replace this scoreboard's look with an installed skin "
+                               "(data, scheduling, and vegas mode are unaffected)",
+                "enum": ["built-in", *choices],
+                "enumNames": ["Built-in", *(names[sid] for sid in choices)],
+                "default": "built-in"
+            }
+        return enhanced
+
     def _format_validation_error(self, error: ValidationError, plugin_id: Optional[str] = None) -> str:
         """
         Format a validation error into a readable message.

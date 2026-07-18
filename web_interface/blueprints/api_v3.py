@@ -5393,6 +5393,18 @@ def get_plugin_schema():
         schema = schema_mgr.load_schema(plugin_id, use_cache=True)
 
         if schema:
+            # Offer installed visual skins as a dropdown (returns a copy;
+            # the cached schema and validation are never enum-restricted)
+            try:
+                current_skin = None
+                if api_v3.config_manager:
+                    config = api_v3.config_manager.load_config()
+                    current_skin = config.get(plugin_id, {}).get('skin')
+                injected = schema_mgr.inject_skin_selector(schema, plugin_id, current_skin)
+                if isinstance(injected, dict):
+                    schema = injected
+            except Exception:
+                logger.debug('Skin selector injection failed for %s', plugin_id, exc_info=True)
             return jsonify({'status': 'success', 'data': {'schema': schema}})
 
         # Return a simple default schema if file not found
@@ -5419,6 +5431,43 @@ def get_plugin_schema():
         return jsonify({'status': 'success', 'data': {'schema': default_schema}})
     except Exception as e:
         logger.error('Error in get_plugin_schema', exc_info=True)
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+
+@api_v3.route('/skins', methods=['GET'])
+def list_skins():
+    """List installed visual skins (docs/SKIN_SYSTEM.md).
+
+    Optional ?plugin_id=... filters to skins matching that plugin.
+    """
+    try:
+        from src.skin_system import skin_runtime
+
+        plugin_id = request.args.get('plugin_id')
+        if plugin_id:
+            skins = skin_runtime.skins_for_plugin(plugin_id)
+        else:
+            # The discovery cache self-invalidates on directory/manifest
+            # mtime changes, so no force_refresh — keeps Pi disk I/O down.
+            skins = skin_runtime.discover_skins()
+
+        payload = []
+        for skin_id, manifest in sorted(skins.items()):
+            skin_dir = Path(manifest['_skin_dir'])
+            preview = manifest.get('preview')
+            payload.append({
+                'id': skin_id,
+                'name': manifest.get('name', skin_id),
+                'version': manifest.get('version'),
+                'author': manifest.get('author'),
+                'description': manifest.get('description', ''),
+                'skin_api_version': manifest.get('skin_api_version'),
+                'targets': manifest.get('targets', {}),
+                'modes': manifest.get('modes', []),
+                'has_preview': bool(preview and (skin_dir / preview).is_file()),
+            })
+        return jsonify({'status': 'success', 'data': {'skins': payload}})
+    except Exception:
+        logger.error('Error in list_skins', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
 
 @api_v3.route('/plugins/config/reset', methods=['POST'])

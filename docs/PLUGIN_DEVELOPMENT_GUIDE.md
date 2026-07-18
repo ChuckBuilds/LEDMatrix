@@ -10,6 +10,12 @@ This guide explains how to set up a development workflow for plugins that are ma
 > scale. Existing plugins keep their classic rendering unless they adopt
 > those APIs; nothing migrates automatically.
 
+> **Just want a different look for an existing sports scoreboard?** You may
+> not need a plugin at all — a **skin** restyles the live/recent/upcoming
+> rendering while the plugin keeps handling data, scheduling, caching, and
+> vegas mode, in ~100 lines of drawing code. See
+> [CREATING_SKINS.md](CREATING_SKINS.md).
+
 ## Overview
 
 When developing plugins in separate repositories, you need a way to:
