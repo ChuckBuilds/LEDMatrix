@@ -7022,6 +7022,29 @@ def list_plugin_assets():
         logger.error('Unhandled exception', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
 
+@api_v3.route('/display/current-status', methods=['GET'])
+def get_current_display_status():
+    """Return the display mode/plugin currently intended to be shown.
+
+    Published by the display process (display_controller._publish_current_mode_state)
+    to the shared cache whenever the active mode changes, so the web UI (e.g. the
+    System Logs page) can show what's on screen without querying the display
+    process directly.
+    """
+    try:
+        cache = _ensure_cache_manager()
+        state = cache.get('display_current_state', max_age=120)
+        if state is None:
+            state = {
+                'mode': None,
+                'plugin_id': None,
+                'last_updated': None,
+            }
+        return jsonify({'status': 'success', 'data': state})
+    except Exception:
+        logger.error('Error in get_current_display_status', exc_info=True)
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+
 @api_v3.route('/logs', methods=['GET'])
 def get_logs():
     """Get system logs from journalctl"""

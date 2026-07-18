@@ -1137,6 +1137,29 @@ class DisplayController:
         remaining = self.on_demand_expires_at - time.time()
         return max(0.0, remaining)
 
+    def _publish_current_mode_state(self) -> None:
+        """Publish the currently active display mode/plugin to cache for the web UI."""
+        try:
+            state = {
+                'mode': self.current_display_mode,
+                'plugin_id': self.mode_to_plugin_id.get(self.current_display_mode),
+                'mode_index': self.current_mode_index,
+                'total_modes': len(self.available_modes),
+                'on_demand_active': self.on_demand_active,
+                'is_display_active': self.is_display_active,
+                'last_updated': time.time(),
+            }
+            self.cache_manager.set('display_current_state', state)
+            self._last_published_mode = self.current_display_mode
+        except (OSError, RuntimeError, ValueError, TypeError) as err:
+            logger.error("Failed to publish current display state: %s", err, exc_info=True)
+
+    def _publish_current_mode_state_if_changed(self) -> None:
+        """Publish current mode state only when it actually changed, to avoid
+        writing to the shared cache on every render tick."""
+        if self.current_display_mode != getattr(self, '_last_published_mode', None):
+            self._publish_current_mode_state()
+
     def _publish_on_demand_state(self) -> None:
         """Publish current on-demand state to cache for external consumers."""
         try:
@@ -1656,6 +1679,7 @@ class DisplayController:
             logger.info("Starting display with cached data (fast startup mode)")
             self.current_display_mode = self.available_modes[self.current_mode_index] if self.available_modes else 'none'
             logger.info(f"Initial mode set to: {self.current_display_mode} (index: {self.current_mode_index}, total modes: {len(self.available_modes)})")
+            self._publish_current_mode_state()
             
             while True:
                 # Apply plugin enable/disable edits saved via the web UI. The
@@ -1716,9 +1740,11 @@ class DisplayController:
                         logger.debug(f"Error clearing display when inactive: {e}")
                     
                     logger.info(f"Display not active (is_display_active={self.is_display_active}), sleeping...")
+                    self._publish_current_mode_state()
                     self._sleep_with_plugin_updates(60)
                     continue
                 
+                self._publish_current_mode_state_if_changed()
                 logger.debug("Display active, processing mode: %s", self.current_display_mode)
                 
                 # Plugins update on their own schedules - no forced sync updates needed

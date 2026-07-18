@@ -86,7 +86,9 @@ class BasePlugin(ABC):
         self.display_manager: Any = display_manager
         self.cache_manager: Any = cache_manager
         self.plugin_manager: Any = plugin_manager
-        self.logger: logging.Logger = get_logger(f"plugin.{plugin_id}", plugin_id=plugin_id)
+        # get_logger returns a PluginLoggerAdapter here (plugin_id given), which
+        # stamps every record with plugin_id so it survives into formatted output.
+        self.logger = get_logger(f"plugin.{plugin_id}", plugin_id=plugin_id)
         self.enabled: bool = config.get("enabled", True)
 
         self.logger.info("Initialized plugin: %s", plugin_id)
