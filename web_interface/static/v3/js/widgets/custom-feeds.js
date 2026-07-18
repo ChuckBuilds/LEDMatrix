@@ -406,12 +406,18 @@
         if (!file) return;
         
         const formData = new FormData();
+        // Backend contract (see api_v3.upload_plugin_asset): the request
+        // field must be named "files" (it does request.files.getlist('files')
+        // and 400s with "No files provided" otherwise), and the response
+        // carries the result in a top-level "uploaded_files" key, not nested
+        // under "data". file-upload-single.js's working upload flow uses this
+        // same contract.
         // Backend contract (api_v3.upload_plugin_asset): field must be named
         // "files" (request.files.getlist('files')), and the response carries
         // results in a top-level "uploaded_files" key, not nested under "data".
         formData.append('files', file);
         formData.append('plugin_id', pluginId);
-        
+
         fetch('/api/v3/plugins/assets/upload', {
             method: 'POST',
             body: formData
