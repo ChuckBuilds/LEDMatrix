@@ -1454,7 +1454,7 @@ function renderInstalledPlugins(plugins) {
                     </div>
                     <div class="text-sm text-gray-600 space-y-1.5 mb-3">
                         <p class="flex items-center"><i class="fas fa-user mr-2 text-gray-400 w-4"></i>${escapeHtml(plugin.author || 'Unknown')}</p>
-                        ${plugin.version ? `<p class="flex items-center"><i class="fas fa-tag mr-2 text-gray-400 w-4"></i>v${escapeHtml(plugin.version)}</p>` : ''}
+                        ${plugin.version ? `<p class="flex items-center flex-wrap gap-1.5"><i class="fas fa-tag mr-2 text-gray-400 w-4"></i>v${escapeHtml(plugin.version)}${plugin.update_available && plugin.latest_version ? `<span class="badge badge-info" title="Installed v${escapeAttr(plugin.version)} → latest v${escapeAttr(plugin.latest_version)}"><i class="fas fa-arrow-circle-up mr-1"></i>v${escapeHtml(plugin.latest_version)} available</span>` : ''}</p>` : ''}
                         <p class="flex items-center"><i class="fas fa-folder mr-2 text-gray-400 w-4"></i>${escapeHtml(plugin.category || 'General')}</p>
                     </div>
                     <p class="text-sm text-gray-700 leading-relaxed">${escapeHtml(plugin.description || 'No description available')}</p>
@@ -1501,11 +1501,12 @@ function renderInstalledPlugins(plugins) {
                     <i class="fas fa-cog mr-2"></i>Configure
                 </button>
                 <div style="display: flex; gap: 0.5rem;">
-                    <button class="btn bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded-md text-sm font-semibold"
+                    <button class="btn ${plugin.update_available ? 'bg-blue-600 hover:bg-blue-700 plugin-update-available' : 'bg-yellow-600 hover:bg-yellow-700'} text-white px-4 py-2 rounded-md text-sm font-semibold"
                             style="flex: 1;"
                             data-plugin-id="${escapedPluginId}"
-                            data-action="update">
-                        <i class="fas fa-sync mr-2"></i>Update
+                            data-action="update"
+                            title="${plugin.update_available && plugin.latest_version ? 'Update to v' + escapeAttr(plugin.latest_version) : 'Reinstall the latest published version'}">
+                        <i class="fas ${plugin.update_available ? 'fa-arrow-circle-up' : 'fa-sync'} mr-2"></i>${plugin.update_available && plugin.latest_version ? 'Update to v' + escapeHtml(plugin.latest_version) : 'Update'}
                     </button>
                     <button class="btn bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-semibold"
                             style="flex: 1;"

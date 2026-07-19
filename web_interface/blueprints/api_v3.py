@@ -120,6 +120,27 @@ def _get_plugin_version(plugin_id: str) -> str:
         logger.warning("[PluginVersion] Invalid JSON in manifest for %s at %s: %s", plugin_id, manifest_path, e)
     return ''
 
+def _is_plugin_update_available(installed_version: str, latest_version: str) -> bool:
+    """Return True when the registry's ``latest_version`` is strictly newer
+    than the installed version.
+
+    Uses PEP 440 / semver-aware comparison so a locally modified plugin whose
+    version is *ahead* of the published registry is not flagged as needing an
+    update. If either version string can't be parsed, falls back to a plain
+    inequality check (any difference is surfaced so the user can reconcile).
+    """
+    if not installed_version or not latest_version:
+        return False
+    if installed_version == latest_version:
+        return False
+    try:
+        from packaging.version import parse as _parse_version
+        return _parse_version(latest_version) > _parse_version(installed_version)
+    except Exception:
+        # Unparseable version string: we can't tell direction, so surface the
+        # mismatch rather than silently hiding a potential update.
+        return True
+
 def _ensure_cache_manager():
     """Ensure cache manager is initialized."""
     global cache_manager
@@ -2242,9 +2263,12 @@ def get_installed_plugins():
             if enabled is None:
                 enabled = plugin_instance.enabled if plugin_instance else True
 
-            # Verified from registry (no network call)
+            # Verified + latest published version from registry (no network call)
             store_info = api_v3.plugin_store_manager.get_registry_info(plugin_id)
             verified = store_info.get('verified', False) if store_info else False
+            latest_version = store_info.get('latest_version', '') if store_info else ''
+            installed_version = plugin_info.get('version', '')
+            update_available = _is_plugin_update_available(installed_version, latest_version)
 
             # Local git info (single subprocess on cache miss, zero on hit)
             plugin_path = Path(api_v3.plugin_manager.plugins_dir) / plugin_id
@@ -2291,6 +2315,8 @@ def get_installed_plugins():
                 'id': plugin_id,
                 'name': plugin_info.get('name', plugin_id),
                 'version': plugin_info.get('version', ''),
+                'latest_version': latest_version,
+                'update_available': update_available,
                 'author': plugin_info.get('author', 'Unknown'),
                 'category': plugin_info.get('category', 'General'),
                 'description': plugin_info.get('description', 'No description available'),
