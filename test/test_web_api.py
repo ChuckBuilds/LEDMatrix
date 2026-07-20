@@ -433,6 +433,9 @@ class TestPluginsAPI:
         # Missing either side yields no signal.
         assert _is_plugin_update_available('', '1.0.0') is False
         assert _is_plugin_update_available('1.0.0', '') is False
+        # Unparseable version differing from the installed one surfaces the
+        # mismatch rather than hiding a possible update.
+        assert _is_plugin_update_available('1.0.0', 'not-a-semver') is True
 
     def test_get_plugin_health(self, client, mock_plugin_manager):
         """Test getting plugin health information."""

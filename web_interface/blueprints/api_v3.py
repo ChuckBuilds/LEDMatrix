@@ -134,9 +134,15 @@ def _is_plugin_update_available(installed_version: str, latest_version: str) -> 
     if installed_version == latest_version:
         return False
     try:
-        from packaging.version import parse as _parse_version
+        from packaging.version import parse as _parse_version, InvalidVersion
+    except ImportError:
+        # packaging is a core dependency, but if it's somehow unavailable we
+        # can't compare semantically — surface the mismatch we already know
+        # exists (the two strings differ).
+        return True
+    try:
         return _parse_version(latest_version) > _parse_version(installed_version)
-    except Exception:
+    except InvalidVersion:
         # Unparseable version string: we can't tell direction, so surface the
         # mismatch rather than silently hiding a potential update.
         return True
