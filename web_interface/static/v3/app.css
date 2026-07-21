@@ -1334,6 +1334,21 @@ button.bg-white {
     color: #93c5fd;
 }
 
+/* Installed-plugin "Update" button when a newer version is published.
+   A gentle pulsing ring draws the eye without being noisy. */
+.plugin-update-available {
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.6);
+    animation: plugin-update-pulse 2s ease-out infinite;
+}
+@keyframes plugin-update-pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.55); }
+    70%  { box-shadow: 0 0 0 6px rgba(59, 130, 246, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .plugin-update-available { animation: none; }
+}
+
 /* Under-voltage / throttling warning banner */
 .power-warning-banner {
     background-color: #fef2f2;

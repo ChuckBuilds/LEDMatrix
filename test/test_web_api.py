@@ -372,11 +372,71 @@ class TestPluginsAPI:
         }
         
         response = client.get('/api/v3/plugins/installed')
-        
+
         assert response.status_code == 200
         data = json.loads(response.data)
         assert isinstance(data, (list, dict))
-    
+
+    def test_installed_plugins_report_update_available(self, client, mock_plugin_manager):
+        """Installed-plugin entries surface latest_version + update_available
+        by comparing the on-disk manifest version to the registry."""
+        from web_interface.blueprints.api_v3 import api_v3
+        api_v3.plugin_manager = mock_plugin_manager
+        # No on-disk manifest to merge — keep the version we hand in below.
+        mock_plugin_manager.plugins_dir = '/nonexistent-plugins-dir'
+        mock_plugin_manager.get_all_plugin_info.return_value = [
+            {'id': 'weather', 'name': 'Weather', 'version': '1.0.0'}
+        ]
+        # Avoid touching plugin instances (Vegas hooks, enabled fallback).
+        mock_plugin_manager.get_plugin.return_value = None
+        # Registry advertises a newer version than the installed one.
+        api_v3.plugin_store_manager.get_registry_info.return_value = {
+            'verified': True, 'latest_version': '1.2.0'
+        }
+
+        response = client.get('/api/v3/plugins/installed')
+
+        assert response.status_code == 200
+        payload = json.loads(response.data)
+        entry = payload['data']['plugins'][0]
+        assert entry['version'] == '1.0.0'
+        assert entry['latest_version'] == '1.2.0'
+        assert entry['update_available'] is True
+
+    def test_installed_plugins_no_update_when_current(self, client, mock_plugin_manager):
+        """No update is flagged when installed version matches the registry."""
+        from web_interface.blueprints.api_v3 import api_v3
+        api_v3.plugin_manager = mock_plugin_manager
+        mock_plugin_manager.plugins_dir = '/nonexistent-plugins-dir'
+        mock_plugin_manager.get_all_plugin_info.return_value = [
+            {'id': 'weather', 'name': 'Weather', 'version': '1.2.0'}
+        ]
+        mock_plugin_manager.get_plugin.return_value = None
+        api_v3.plugin_store_manager.get_registry_info.return_value = {
+            'verified': True, 'latest_version': '1.2.0'
+        }
+
+        response = client.get('/api/v3/plugins/installed')
+
+        assert response.status_code == 200
+        entry = json.loads(response.data)['data']['plugins'][0]
+        assert entry['latest_version'] == '1.2.0'
+        assert entry['update_available'] is False
+
+    def test_is_plugin_update_available_helper(self):
+        """Unit-level checks for the semver-aware update comparison."""
+        from web_interface.blueprints.api_v3 import _is_plugin_update_available
+        assert _is_plugin_update_available('1.0.0', '1.0.1') is True
+        assert _is_plugin_update_available('1.0.1', '1.0.1') is False
+        # Local build ahead of the registry must not be flagged.
+        assert _is_plugin_update_available('2.0.0', '1.9.9') is False
+        # Missing either side yields no signal.
+        assert _is_plugin_update_available('', '1.0.0') is False
+        assert _is_plugin_update_available('1.0.0', '') is False
+        # Unparseable version differing from the installed one surfaces the
+        # mismatch rather than hiding a possible update.
+        assert _is_plugin_update_available('1.0.0', 'not-a-semver') is True
+
     def test_get_plugin_health(self, client, mock_plugin_manager):
         """Test getting plugin health information."""
         from web_interface.blueprints.api_v3 import api_v3
