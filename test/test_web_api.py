@@ -146,6 +146,11 @@ class TestConfigAPI:
 
     def test_save_double_sided_settings(self, client, mock_config_manager):
         """Double-sided form fields are persisted under display.double_sided."""
+        # 2 copies on the vertical axis needs parallel to be a multiple of 2.
+        mock_config_manager.load_config.return_value['display']['hardware'] = {
+            'chain_length': 2, 'parallel': 2,
+        }
+
         response = client.post(
             '/api/v3/config/main',
             data={
@@ -174,6 +179,70 @@ class TestConfigAPI:
         ds = mock_config_manager.save_config_atomic.call_args[0][0]['display']['double_sided']
         assert ds['enabled'] is False
         assert ds['copies'] == 4
+
+    def test_save_double_sided_disabled_skips_divisibility_check(self, client, mock_config_manager):
+        """A copies/chain_length mismatch must not block saves while disabled.
+
+        The Display form posts copies/axis on every save, so validating them
+        with the feature off locked users out of every other display setting.
+        """
+        mock_config_manager.load_config.return_value['display']['hardware'] = {
+            'chain_length': 3, 'parallel': 1,
+        }
+
+        response = client.post(
+            '/api/v3/config/main',
+            data={
+                'double_sided_copies': '2',
+                'double_sided_axis': 'horizontal',
+                'brightness': '75',
+            },
+            content_type='application/x-www-form-urlencoded',
+        )
+
+        assert response.status_code == 200
+        ds = mock_config_manager.save_config_atomic.call_args[0][0]['display']['double_sided']
+        assert ds['enabled'] is False
+        assert ds['copies'] == 2
+
+    def test_save_double_sided_enabled_enforces_divisibility(self, client, mock_config_manager):
+        """The same mismatch is still rejected once the feature is turned on."""
+        mock_config_manager.load_config.return_value['display']['hardware'] = {
+            'chain_length': 3, 'parallel': 1,
+        }
+
+        response = client.post(
+            '/api/v3/config/main',
+            data={
+                'double_sided_enabled': 'true',
+                'double_sided_copies': '2',
+                'double_sided_axis': 'horizontal',
+            },
+            content_type='application/x-www-form-urlencoded',
+        )
+
+        assert response.status_code == 400
+        assert 'chain length' in response.get_json()['message']
+        mock_config_manager.save_config_atomic.assert_not_called()
+
+    def test_save_double_sided_disabled_ignores_bad_values(self, client, mock_config_manager):
+        """While disabled, unusable copies/axis are dropped rather than rejected."""
+        mock_config_manager.load_config.return_value['display']['double_sided'] = {
+            'enabled': True, 'copies': 2, 'axis': 'horizontal',
+        }
+
+        response = client.post(
+            '/api/v3/config/main',
+            data={'double_sided_copies': 'abc', 'double_sided_axis': 'diagonal'},
+            content_type='application/x-www-form-urlencoded',
+        )
+
+        assert response.status_code == 200
+        ds = mock_config_manager.save_config_atomic.call_args[0][0]['display']['double_sided']
+        assert ds['enabled'] is False
+        # Stored values left untouched rather than overwritten with junk.
+        assert ds['copies'] == 2
+        assert ds['axis'] == 'horizontal'
 
     def test_save_double_sided_invalid_copies_rejected(self, client, mock_config_manager):
         """copies < 2 is rejected with a 400 before any save."""

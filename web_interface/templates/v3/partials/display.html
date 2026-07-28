@@ -30,7 +30,7 @@
           hx-ext="json-enc"
           hx-headers='{"Content-Type": "application/json"}'
           hx-swap="none"
-          hx-on:htmx:after-request="showNotification(event.detail.xhr.responseJSON?.message || 'Display settings saved', event.detail.xhr.responseJSON?.status || 'success')"
+          hx-on:htmx:after-request="showDisplaySaveResult(event.detail.xhr)"
           class="space-y-6"
           novalidate
           onsubmit="fixInvalidNumberInputs(this); return true;">
@@ -475,22 +475,26 @@
             <h3 class="text-md font-medium text-gray-900 mb-1">Double-Sided Display</h3>
             <p class="text-sm text-gray-600 mb-4">Show the same content on every panel in the chain &mdash; e.g. two 64&times;32 panels mirrored, or four panels as two identical screens. Rendered once and duplicated, so it adds no extra CPU. Takes effect after a display restart.</p>
 
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div class="form-group" id="setting-display-double_sided_enabled" data-setting-key="display.double_sided.enabled">
-                    <label class="flex items-center gap-2">
-                        <input type="checkbox"
-                               id="double_sided_enabled"
-                               name="double_sided_enabled"
-                               value="true"
-                               {% if main_config.display.get('double_sided', {}).get('enabled') %}checked{% endif %}
-                               class="form-control h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
-                        <span class="text-sm font-medium text-gray-700">Enabled</span>
-                        {{ ui.help_tip('Show the same content mirrored across every panel in the chain.\nRendered once and duplicated, so it adds no extra CPU. Takes effect after a display restart.', 'Double-Sided Enabled') }}
-                    </label>
-                </div>
+            <div class="form-group mb-4" id="setting-display-double_sided_enabled" data-setting-key="display.double_sided.enabled">
+                <label class="flex items-center gap-2">
+                    <input type="checkbox"
+                           id="double_sided_enabled"
+                           name="double_sided_enabled"
+                           value="true"
+                           {% if main_config.display.get('double_sided', {}).get('enabled') %}checked{% endif %}
+                           class="form-control h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                    <span class="text-sm font-medium text-gray-700">Enabled</span>
+                    {{ ui.help_tip('Show the same content mirrored across every panel in the chain.\nRendered once and duplicated, so it adds no extra CPU. Takes effect after a display restart.', 'Double-Sided Enabled') }}
+                </label>
+            </div>
 
+            <!-- Hidden (not disabled) when the feature is off, so the values are
+                 still submitted and round-trip through a save. -->
+            <div id="double_sided_settings"
+                 class="grid grid-cols-1 md:grid-cols-2 gap-4"
+                 {% if not main_config.display.get('double_sided', {}).get('enabled') %}style="display: none;"{% endif %}>
                 <div class="form-group" id="setting-display-double_sided_copies" data-setting-key="display.double_sided.copies">
-                    <label for="double_sided_copies" class="block text-sm font-medium text-gray-700">Copies{{ ui.help_tip('How many identical screens to split the panel area into (2–8).\nMust divide the panel evenly — e.g. 2 for a two-sided cube.', 'Copies') }}</label>
+                    <label for="double_sided_copies" class="block text-sm font-medium text-gray-700">Copies{{ ui.help_tip('How many identical screens to split the panel area into (2–8).\nWhen enabled, this must divide the panel evenly — e.g. 2 for a two-sided cube.', 'Copies') }}</label>
                     <input type="number"
                            id="double_sided_copies"
                            name="double_sided_copies"
@@ -607,6 +611,22 @@ if (typeof window.fixInvalidNumberInputs !== 'function') {
     };
 }
 
+// Report the outcome of a display-settings save. XMLHttpRequest has no
+// `responseJSON` (that's a jQuery property) — read `responseText` and the real
+// status code, otherwise a failed save reports success.
+window.showDisplaySaveResult = function(xhr) {
+    let message = 'Display settings saved';
+    let status = xhr.status >= 400 ? 'error' : 'success';
+    try {
+        const data = JSON.parse(xhr.responseText);
+        if (data.message) message = data.message;
+        if (data.status) status = data.status;
+    } catch {
+        // Non-JSON body — fall back to the status-code verdict above.
+    }
+    showNotification(message, status);
+};
+
 // Vegas Scroll Mode Settings
 (function() {
     // Escape HTML to prevent XSS
@@ -628,6 +648,18 @@ if (typeof window.fixInvalidNumberInputs !== 'function') {
     if (vegasEnabledCheckbox && vegasSettings) {
         vegasEnabledCheckbox.addEventListener('change', function() {
             vegasSettings.style.display = this.checked ? 'block' : 'none';
+        });
+    }
+
+    // Double-sided: copies/axis only mean anything while the feature is on.
+    // Hidden rather than disabled so the fields keep submitting and the server
+    // still sees an 'off' state to persist.
+    const doubleSidedCheckbox = document.getElementById('double_sided_enabled');
+    const doubleSidedSettings = document.getElementById('double_sided_settings');
+
+    if (doubleSidedCheckbox && doubleSidedSettings) {
+        doubleSidedCheckbox.addEventListener('change', function() {
+            doubleSidedSettings.style.display = this.checked ? 'grid' : 'none';
         });
     }
 
