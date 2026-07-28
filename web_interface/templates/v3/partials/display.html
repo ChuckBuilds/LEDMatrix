@@ -615,12 +615,18 @@ if (typeof window.fixInvalidNumberInputs !== 'function') {
 // `responseJSON` (that's a jQuery property) — read `responseText` and the real
 // status code, otherwise a failed save reports success.
 window.showDisplaySaveResult = function(xhr) {
-    let message = 'Display settings saved';
-    let status = xhr.status >= 400 ? 'error' : 'success';
+    // Only 2xx counts as saved. A network failure reports status 0, which any
+    // `>= 400` test would wave through as success.
+    const httpSuccess = xhr.status >= 200 && xhr.status < 300;
+    let message = httpSuccess
+        ? 'Display settings saved'
+        : 'Display settings were not saved. Check your connection and try again.';
+    let status = httpSuccess ? 'success' : 'error';
     try {
         const data = JSON.parse(xhr.responseText);
         if (data.message) message = data.message;
-        if (data.status) status = data.status;
+        // A body can refine a successful verdict but never overturn a failed one.
+        if (httpSuccess && data.status) status = data.status;
     } catch {
         // Non-JSON body — fall back to the status-code verdict above.
     }

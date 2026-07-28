@@ -13,7 +13,7 @@ import uuid
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from urllib.parse import urlparse, urlunparse
 
 logger = logging.getLogger(__name__)
@@ -871,7 +871,7 @@ def save_main_config():
             enabled = _coerce_to_bool(data.get('double_sided_enabled'))
             ds_config['enabled'] = enabled
 
-            def _copies_fits_hardware(copies):
+            def _copies_fits_hardware(copies: int) -> Optional[str]:
                 """Error message if copies doesn't divide the panel evenly, else None."""
                 # Use axis from this request if provided, else from stored config.
                 hw = current_config.get('display', {}).get('hardware', {})

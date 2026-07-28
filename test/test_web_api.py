@@ -225,6 +225,27 @@ class TestConfigAPI:
         assert 'chain length' in response.get_json()['message']
         mock_config_manager.save_config_atomic.assert_not_called()
 
+    def test_save_double_sided_vertical_checks_parallel(self, client, mock_config_manager):
+        """The vertical axis is checked against parallel, not chain_length."""
+        mock_config_manager.load_config.return_value['display']['hardware'] = {
+            'chain_length': 2, 'parallel': 3,
+        }
+
+        response = client.post(
+            '/api/v3/config/main',
+            data={
+                'double_sided_enabled': 'true',
+                'double_sided_copies': '2',
+                'double_sided_axis': 'vertical',
+            },
+            content_type='application/x-www-form-urlencoded',
+        )
+
+        # chain_length 2 would divide evenly — only parallel 3 rejects this.
+        assert response.status_code == 400
+        assert 'parallel' in response.get_json()['message']
+        mock_config_manager.save_config_atomic.assert_not_called()
+
     def test_save_double_sided_disabled_ignores_bad_values(self, client, mock_config_manager):
         """While disabled, unusable copies/axis are dropped rather than rejected."""
         mock_config_manager.load_config.return_value['display']['double_sided'] = {
