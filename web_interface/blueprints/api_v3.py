@@ -13,7 +13,7 @@ import uuid
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from urllib.parse import urlparse, urlunparse
 
 logger = logging.getLogger(__name__)
@@ -864,16 +864,15 @@ def save_main_config():
             ds_config = current_config['display']['double_sided']
 
             # Enabled checkbox: omitted from the form when unchecked.
-            ds_config['enabled'] = _coerce_to_bool(data.get('double_sided_enabled'))
+            # The Display form posts copies/axis on every save regardless of this
+            # checkbox, so when the feature is off we accept the values without
+            # rejecting the whole save — otherwise a stale copies/chain_length
+            # mismatch locks the user out of every other display setting.
+            enabled = _coerce_to_bool(data.get('double_sided_enabled'))
+            ds_config['enabled'] = enabled
 
-            if 'double_sided_copies' in data and data['double_sided_copies'] not in ('', None):
-                try:
-                    copies = int(data['double_sided_copies'])
-                except (ValueError, TypeError):
-                    return jsonify({'status': 'error', 'message': "Double-sided copies must be an integer"}), 400
-                if not (2 <= copies <= 8):
-                    return jsonify({'status': 'error', 'message': "Double-sided copies must be between 2 and 8"}), 400
-                # Validate divisibility against the relevant hardware dimension.
+            def _copies_fits_hardware(copies: int) -> Optional[str]:
+                """Error message if copies doesn't divide the panel evenly, else None."""
                 # Use axis from this request if provided, else from stored config.
                 hw = current_config.get('display', {}).get('hardware', {})
                 effective_axis = (data.get('double_sided_axis')
@@ -881,18 +880,41 @@ def save_main_config():
                 if effective_axis == 'horizontal':
                     chain_length = int(hw.get('chain_length', 2) or 2)
                     if chain_length % copies != 0:
-                        return jsonify({'status': 'error', 'message': f"Double-sided copies ({copies}) must divide chain length ({chain_length}) evenly"}), 400
+                        return f"Double-sided copies ({copies}) must divide chain length ({chain_length}) evenly"
                 elif effective_axis == 'vertical':
                     parallel = int(hw.get('parallel', 1) or 1)
                     if parallel % copies != 0:
-                        return jsonify({'status': 'error', 'message': f"Double-sided copies ({copies}) must divide parallel ({parallel}) evenly"}), 400
-                ds_config['copies'] = copies
+                        return f"Double-sided copies ({copies}) must divide parallel ({parallel}) evenly"
+                return None
+
+            if 'double_sided_copies' in data and data['double_sided_copies'] not in ('', None):
+                copies = None
+                try:
+                    copies = int(data['double_sided_copies'])
+                except (ValueError, TypeError):
+                    if enabled:
+                        return jsonify({'status': 'error', 'message': "Double-sided copies must be an integer"}), 400
+                if copies is not None and not (2 <= copies <= 8):
+                    if enabled:
+                        return jsonify({'status': 'error', 'message': "Double-sided copies must be between 2 and 8"}), 400
+                    # Disabled: leave the stored value alone rather than writing junk.
+                    copies = None
+                if copies is not None:
+                    # Divisibility is a hardware-relational check — only meaningful
+                    # when the feature is actually on.
+                    if enabled:
+                        fit_error = _copies_fits_hardware(copies)
+                        if fit_error:
+                            return jsonify({'status': 'error', 'message': fit_error}), 400
+                    ds_config['copies'] = copies
 
             if 'double_sided_axis' in data:
                 axis = data['double_sided_axis']
                 if axis not in ('horizontal', 'vertical'):
-                    return jsonify({'status': 'error', 'message': "Double-sided axis must be 'horizontal' or 'vertical'"}), 400
-                ds_config['axis'] = axis
+                    if enabled:
+                        return jsonify({'status': 'error', 'message': "Double-sided axis must be 'horizontal' or 'vertical'"}), 400
+                else:
+                    ds_config['axis'] = axis
 
         # Handle Vegas scroll mode settings
         vegas_fields = ['vegas_scroll_enabled', 'vegas_scroll_speed', 'vegas_separator_width',
