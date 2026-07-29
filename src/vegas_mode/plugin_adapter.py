@@ -13,7 +13,7 @@ from typing import Optional, List, Any, Tuple, Union, TYPE_CHECKING
 from PIL import Image
 
 from src.vegas_mode.geometry import (
-    find_blank_cut,
+    blank_runs,
     separation_gap,
     trim_to_content,
 )
@@ -386,22 +386,48 @@ class PluginAdapter:
         if offset >= img.width:
             offset = 0
 
-        # Snap both edges to blank columns. The search radius is generous
-        # enough to clear a wide glyph but small enough not to distort the
-        # requested budget much.
-        snap = max(8, self.display_width // 16)
-        start = find_blank_cut(img, offset, snap, self.config.trim_threshold)
-        end = find_blank_cut(
-            img, min(start + budget, img.width), snap, self.config.trim_threshold)
-        if end <= start:
-            end = min(start + budget, img.width)
+        # Cut only where the plugin left a real gap between items. Snapping to
+        # any blank column used to pick the single-column gaps between
+        # characters, splitting a word and orphaning its tail into the next
+        # cycle — a lone "y" from "Wednesday" floating between two unrelated
+        # plugins. Overshooting the budget is the lesser evil.
+        min_run = max(2, self.config.min_cut_gap)
+        gaps = blank_runs(img, min_run, self.config.trim_threshold)
+
+        if not gaps:
+            # No internal gaps means continuous content — a map, a chart, a
+            # photo — where any column is as good as any other, so cut to the
+            # budget exactly. The gap rule exists to protect discrete items
+            # (words, ticker entries); it would be wrong to let a solid image
+            # escape the cap in its name.
+            end = min(offset + budget, img.width)
+            self._item_offsets[plugin_id] = 0 if end >= img.width else end
+            logger.info(
+                "[%s] Width budget %dpx: cropped continuous %dpx image to "
+                "[%d:%d] (no item gaps of %dpx+ to align to)",
+                plugin_id, budget, img.width, offset, end, min_run
+            )
+            return img.crop((offset, 0, end, img.height))
+
+        # Cut mid-gap so the content either side keeps some breathing room.
+        cuts = sorted({0, img.width} | {(a + b) // 2 for a, b in gaps})
+
+        start = max((c for c in cuts if c <= offset), default=0)
+        later = [c for c in cuts if c > start]
+        if not later:
+            end = img.width
+        else:
+            within = [c for c in later if c <= start + budget]
+            # No boundary inside the budget: take the next one and overrun,
+            # because the alternative is cutting through an item.
+            end = max(within) if within else min(later)
 
         # Next cycle resumes where this one stopped; wrap when the strip ends.
         self._item_offsets[plugin_id] = 0 if end >= img.width else end
 
         logger.info(
             "[%s] Width budget %dpx: cropped single %dpx image to [%d:%d] "
-            "(%dpx), window advances next cycle",
+            "(%dpx) at item boundaries, window advances next cycle",
             plugin_id, budget, img.width, start, end, end - start
         )
         return img.crop((start, 0, end, img.height))

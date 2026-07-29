@@ -969,3 +969,132 @@ class TestRotationAcrossMultipleCycles:
         for _ in range(10):
             adapter.invalidate_cache('rows')
             assert adapter.get_content(NativePlugin(rows), 'rows')
+
+
+def word_strip(words, letter_w=7, letter_gap=1, item_gap=32, height=DISPLAY_H):
+    """
+    Build a ticker-like strip: 'words' of solid blocks separated by 1px, with
+    a wide gap between words. Mirrors real rendered text, where the measured
+    gap between characters is a single column and the gap between items is 8px+.
+
+    Returns (image, list of (word_start, word_end) column ranges).
+    """
+    spans = []
+    x = 0
+    for w_i, letters in enumerate(words):
+        start = x
+        for l_i in range(letters):
+            x += letter_w
+            if l_i < letters - 1:
+                x += letter_gap
+        spans.append((start, x))
+        if w_i < len(words) - 1:
+            x += item_gap
+    img = Image.new('RGB', (x, height), (0, 0, 0))
+    for w_i, letters in enumerate(words):
+        sx = spans[w_i][0]
+        for l_i in range(letters):
+            lx = sx + l_i * (letter_w + letter_gap)
+            img.paste(Image.new('RGB', (letter_w, height), (255, 255, 255)), (lx, 0))
+    return img, spans
+
+
+class TestCutsNeverSplitWords:
+    """
+    A cut placed in a 1px inter-letter gap orphans the tail of a word into the
+    next cycle. That is what produced a lone "y" from "Wednesday" floating
+    between two unrelated plugins.
+    """
+
+    def test_cut_lands_in_an_item_gap_not_between_letters(self):
+        from src.vegas_mode.geometry import blank_runs
+        img, spans = word_strip([9, 9, 9, 9, 9])  # five 9-letter words
+
+        adapter = adapter_with(content_padding=0, max_plugin_width_ratio=0.2,
+                               min_cut_gap=6)
+        # Budget deliberately lands mid-word if cut naively.
+        images = adapter.get_content(NativePlugin([img]), 'ticker')
+        cut_width = images[0].width
+
+        # Every qualifying gap midpoint is a legal cut; assert we used one.
+        legal = {0, img.width} | {(a + b) // 2 for a, b in blank_runs(img, 6)}
+        assert cut_width in {c for c in legal}, \
+            f"cut at {cut_width} is not an item boundary; legal: {sorted(legal)}"
+
+    def test_no_partial_letter_at_either_edge(self):
+        # A split letter shows as a lit column touching the crop edge with the
+        # rest of its glyph missing. Requiring the edges to be blank is the
+        # simplest way to assert we cut inside a gap.
+        from src.vegas_mode.geometry import column_has_ink
+        img, _ = word_strip([9, 9, 9, 9, 9, 9])
+        adapter = adapter_with(content_padding=0, max_plugin_width_ratio=0.25,
+                               min_cut_gap=6)
+        out = adapter.get_content(NativePlugin([img]), 'ticker')[0]
+        ink = column_has_ink(out)
+        assert not ink[0] or not ink[-1] or out.width == img.width, \
+            "crop edges land on ink, so a glyph was cut through"
+
+    def test_rotation_never_orphans_a_fragment(self):
+        # Walk the window across the whole strip and assert no slice is a
+        # narrow sliver, which is what an orphaned letter looks like.
+        img, _ = word_strip([9] * 8)
+        adapter = adapter_with(content_padding=0, max_plugin_width_ratio=0.2,
+                               min_cut_gap=6)
+        widths = []
+        for _ in range(12):
+            adapter.invalidate_cache('ticker')
+            out = adapter.get_content(NativePlugin([img]), 'ticker')
+            assert out
+            widths.append(out[0].width)
+        # A single 7px letter is the fragment signature; nothing that narrow.
+        assert min(widths) > 10, f"orphaned fragment in {widths}"
+
+    def test_continuous_image_is_still_cut_to_budget(self):
+        # A map or chart has no item gaps; the gap rule must not let it escape
+        # the cap, because any column there is as good as another.
+        adapter = adapter_with(content_padding=0, max_plugin_width_ratio=1.0,
+                               min_cut_gap=6)
+        solid = canvas([(0, 4000)], width=4000)
+        out = adapter.get_content(NativePlugin([solid]), 'geochron')[0]
+        assert out.width == DISPLAY_W
+
+    def test_overruns_budget_rather_than_splitting(self):
+        # One very long item with no internal gap: the cut must wait for the
+        # next real boundary even though that exceeds the budget.
+        img, spans = word_strip([80, 9], letter_gap=1, item_gap=32)
+        adapter = adapter_with(content_padding=0, max_plugin_width_ratio=0.1,
+                               min_cut_gap=6)
+        out = adapter.get_content(NativePlugin([img]), 'longitem')[0]
+        assert out.width > int(DISPLAY_W * 0.1), \
+            "should overrun to the next boundary instead of cutting the item"
+
+    def test_min_cut_gap_of_two_still_excludes_letter_spacing(self):
+        from src.vegas_mode.geometry import blank_runs
+        img, _ = word_strip([9, 9, 9])
+        # 1px letter gaps must never qualify, whatever the setting.
+        assert all(end - start >= 2 for start, end in blank_runs(img, 2))
+
+
+    def test_permissive_gap_rule_would_have_split_a_word(self):
+        """
+        Pins the actual regression. With min_cut_gap=1 the 1px gaps between
+        letters qualify as cut points, so the crop lands inside a word; with the
+        default it can only land in the wide gaps between items.
+        """
+        from src.vegas_mode.geometry import blank_runs
+        img, _ = word_strip([9, 9, 9, 9, 9])
+
+        letter_gaps = {(a + b) // 2 for a, b in blank_runs(img, 1)}
+        item_gaps = {(a + b) // 2 for a, b in blank_runs(img, 6)}
+
+        # The permissive rule offers many more cut points, and the extra ones
+        # are exactly the mid-word positions.
+        assert len(letter_gaps) > len(item_gaps)
+        mid_word = letter_gaps - item_gaps
+        assert mid_word, "expected inter-letter gaps to exist in the fixture"
+
+        adapter = adapter_with(content_padding=0, max_plugin_width_ratio=0.2,
+                               min_cut_gap=6)
+        out = adapter.get_content(NativePlugin([img]), 'ticker')[0]
+        assert out.width not in mid_word, \
+            f"cut at {out.width} is a mid-word position"

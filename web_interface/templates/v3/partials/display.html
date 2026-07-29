@@ -623,6 +623,19 @@
                                    class="form-control">
                         </div>
                     </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                        <div class="form-group" id="setting-display-vegas_min_cut_gap" data-setting-key="display.vegas_scroll.min_cut_gap">
+                            <label for="vegas_min_cut_gap" class="block text-sm font-medium text-gray-700">Min Cut Gap (pixels){{ ui.help_tip('When a plugin is too wide for its share of a cycle and has to be narrowed, the cut is only made where there is at least this much blank space (1–128 px).\nDefault: 6. The gaps between letters are about 1px wide, so a smaller value lets a cut land inside a word and orphan its last letter into the next cycle. Raise it if cuts still land awkwardly. Continuous images such as maps have no gaps and are cut to fit regardless.', 'Min Cut Gap') }}</label>
+                            <input type="number"
+                                   id="vegas_min_cut_gap"
+                                   name="vegas_min_cut_gap"
+                                   value="{{ main_config.display.get('vegas_scroll', {}).get('min_cut_gap', 6) }}"
+                                   min="1"
+                                   max="128"
+                                   class="form-control">
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Plugin Order Section -->

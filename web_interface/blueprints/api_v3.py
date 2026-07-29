@@ -924,7 +924,7 @@ def save_main_config():
                        'vegas_max_plugin_width_ratio', 'vegas_dynamic_duration_enabled',
                        'vegas_min_cycle_duration', 'vegas_max_cycle_duration',
                        'vegas_intra_plugin_gap', 'vegas_render_width_pct',
-                       'vegas_min_content_separation']
+                       'vegas_min_content_separation', 'vegas_min_cut_gap']
 
         if any(k in data for k in vegas_fields):
             if 'display' not in current_config:
@@ -977,6 +977,7 @@ def save_main_config():
                 'vegas_intra_plugin_gap': ('intra_plugin_gap', 0, 128),
                 'vegas_render_width_pct': ('render_width_pct', 10, 100),
                 'vegas_min_content_separation': ('min_content_separation', 0, 256),
+                'vegas_min_cut_gap': ('min_cut_gap', 1, 128),
                 'vegas_target_fps': ('target_fps', 30, 200),
                 'vegas_buffer_ahead': ('buffer_ahead', 1, 5),
                 'vegas_trim_threshold': ('trim_threshold', 0, 254),

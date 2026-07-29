@@ -16,7 +16,7 @@ All column scans go through numpy: a Python-level per-column loop over a
 path.
 """
 
-from typing import NamedTuple, Optional, Tuple
+from typing import List, NamedTuple, Optional, Tuple
 
 import numpy as np
 from PIL import Image
@@ -190,6 +190,83 @@ def separation_gap(
     """
     existing = edge_blank(left_img, threshold)[1] + edge_blank(right_img, threshold)[0]
     return max(minimum, target - existing, 0)
+
+
+def blank_runs(
+    img: Image.Image,
+    min_run: int,
+    threshold: int = DEFAULT_INK_THRESHOLD,
+) -> List[Tuple[int, int]]:
+    """
+    Find maximal runs of blank columns at least ``min_run`` wide.
+
+    Distinguishes item boundaries from letter spacing. Measured on real
+    rendered text, the gaps *between characters* are a single column, while the
+    gaps a plugin puts *between items* are 8px and up (the stocks ticker uses
+    32px, baseball 48px). Treating any blank column as a cut point therefore
+    slices words in half; requiring a run excludes letter spacing.
+
+    Args:
+        img: Image to scan
+        min_run: Minimum consecutive blank columns to qualify
+        threshold: Ink threshold
+
+    Returns:
+        List of (start, end) half-open column ranges, in left-to-right order
+    """
+    blank = ~column_has_ink(img, threshold)
+    if not blank.any():
+        return []
+
+    # Vectorised run detection: pad with False so runs touching either edge get
+    # a boundary, then read starts and ends off the first difference. A Python
+    # loop here would be far too slow on a 17,000px ticker strip.
+    padded = np.concatenate(([False], blank, [False]))
+    diff = np.diff(padded.astype(np.int8))
+    starts = np.flatnonzero(diff == 1)
+    ends = np.flatnonzero(diff == -1)
+
+    long_enough = (ends - starts) >= max(1, min_run)
+    return list(zip(starts[long_enough].tolist(), ends[long_enough].tolist()))
+
+
+def find_item_boundary(
+    img: Image.Image,
+    target: int,
+    min_run: int,
+    threshold: int = DEFAULT_INK_THRESHOLD,
+) -> Optional[int]:
+    """
+    Find the column nearest ``target`` that sits inside a gap between items.
+
+    Used to narrow an oversized segment without cutting through a word. Only
+    runs of at least ``min_run`` blank columns are considered, so the
+    single-column gaps between characters are never chosen — cutting there
+    orphaned the tail of a word into the following cycle, which is how a lone
+    "y" from "Wednesday" ended up floating between two unrelated plugins.
+
+    Args:
+        img: Image to cut
+        target: Preferred cut column
+        min_run: Minimum blank-run width that counts as an item boundary
+        threshold: Ink threshold
+
+    Returns:
+        A column inside a qualifying gap, or None when the image has no such
+        gap at all — in which case the caller must not cut it.
+    """
+    runs = blank_runs(img, min_run, threshold)
+    if not runs:
+        return None
+
+    # Nearest point of the nearest run. For a run left of target that is its
+    # end (content resumes just after), for a run right of target its start
+    # (content stopped just before) — the right choice in both directions.
+    def clamp_to_run(run: Tuple[int, int]) -> int:
+        start, end = run
+        return max(start, min(target, end - 1))
+
+    return min((clamp_to_run(r) for r in runs), key=lambda c: abs(c - target))
 
 
 def find_blank_cut(

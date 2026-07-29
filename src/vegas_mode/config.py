@@ -64,6 +64,14 @@ class VegasModeConfig:
     # per cycle, so a 20-plugin install took seven cycles to come around.
     plugins_per_cycle: int = 6
 
+    # Minimum run of blank columns that counts as a boundary between items when
+    # an oversized segment has to be narrowed. Measured on rendered text, the
+    # gaps between characters are a single column while gaps between items are
+    # 8px and up, so anything above 1 stops a cut landing inside a word. Cutting
+    # mid-word orphaned the tail into the next cycle, which showed up as a lone
+    # letter floating between two unrelated plugins.
+    min_cut_gap: int = 6
+
     # Cap on one plugin's share of a cycle, as a multiple of display width.
     # A single ticker returning 7,000px would otherwise hold the panel for over
     # two minutes. Overflow is deferred to later cycles rather than discarded.
@@ -108,6 +116,7 @@ class VegasModeConfig:
             render_width_pct=int(vegas_config.get('render_width_pct', 100)),
             min_content_separation=int(
                 vegas_config.get('min_content_separation', 24)),
+            min_cut_gap=int(vegas_config.get('min_cut_gap', 6)),
             auto_trim=vegas_config.get('auto_trim', True),
             trim_threshold=int(vegas_config.get('trim_threshold', 10)),
             content_padding=int(vegas_config.get('content_padding', 8)),
@@ -136,6 +145,7 @@ class VegasModeConfig:
             'intra_plugin_gap': self.intra_plugin_gap,
             'render_width_pct': self.render_width_pct,
             'min_content_separation': self.min_content_separation,
+            'min_cut_gap': self.min_cut_gap,
             'auto_trim': self.auto_trim,
             'trim_threshold': self.trim_threshold,
             'content_padding': self.content_padding,
@@ -238,6 +248,11 @@ class VegasModeConfig:
                 "min_content_separation must be between 0 and 256, "
                 f"got {self.min_content_separation}")
 
+        if not 1 <= self.min_cut_gap <= 128:
+            errors.append(
+                "min_cut_gap must be between 1 and 128, "
+                f"got {self.min_cut_gap}")
+
         if self.intra_plugin_gap < 0:
             errors.append(
                 f"intra_plugin_gap must be >= 0, got {self.intra_plugin_gap}")
@@ -305,6 +320,8 @@ class VegasModeConfig:
         if 'min_content_separation' in vegas_config:
             self.min_content_separation = int(
                 vegas_config['min_content_separation'])
+        if 'min_cut_gap' in vegas_config:
+            self.min_cut_gap = int(vegas_config['min_cut_gap'])
         if 'auto_trim' in vegas_config:
             self.auto_trim = vegas_config['auto_trim']
         if 'trim_threshold' in vegas_config:
