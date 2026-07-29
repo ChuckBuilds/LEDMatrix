@@ -14,6 +14,7 @@ from PIL import Image
 
 from src.common.scroll_helper import ScrollHelper
 from src.vegas_mode.config import VegasModeConfig
+from src.vegas_mode.geometry import separation_gap
 from src.vegas_mode.stream_manager import StreamManager
 
 if TYPE_CHECKING:
@@ -188,12 +189,14 @@ class RenderPipeline:
 
             logger.info(
                 "Composed scroll image: %dx%d, %d plugin block(s), %d rows, "
-                "separator=%dpx between plugins / %dpx within",
+                "separator=%dpx between plugins, rows spaced to %dpx of ink "
+                "(min added %dpx)",
                 self.scroll_helper.cached_image.width if self.scroll_helper.cached_image else 0,
                 self.display_height,
                 len(blocks),
                 total_rows,
                 self.config.separator_width,
+                self.config.min_content_separation,
                 self.config.intra_plugin_gap,
             )
 
@@ -219,15 +222,27 @@ class RenderPipeline:
         if len(images) == 1:
             return images[0]
 
-        gap = max(0, self.config.intra_plugin_gap)
-        width = sum(img.width for img in images) + gap * (len(images) - 1)
+        floor = max(0, self.config.intra_plugin_gap)
+        target = max(0, self.config.min_content_separation)
+        threshold = self.config.trim_threshold
+
+        # Space by measured separation, not a flat gap. Rows drawn flush to
+        # their own edges (sports score cards) would otherwise end up nearly
+        # touching, while rows that already carry wide margins would be pushed
+        # needlessly further apart.
+        gaps = [
+            separation_gap(images[i], images[i + 1], target, floor, threshold)
+            for i in range(len(images) - 1)
+        ]
+
+        width = sum(img.width for img in images) + sum(gaps)
         height = max(img.height for img in images)
 
         block = Image.new('RGB', (width, height), (0, 0, 0))
         x = 0
-        for img in images:
+        for i, img in enumerate(images):
             block.paste(img, (x, 0))
-            x += img.width + gap
+            x += img.width + (gaps[i] if i < len(gaps) else 0)
         return block
 
     def render_frame(self) -> bool:

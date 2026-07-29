@@ -132,6 +132,8 @@
             "target_fps": 125,
             "buffer_ahead": 2,
             "intra_plugin_gap": 8,
+            "render_width_pct": 100,
+            "min_content_separation": 24,
             "auto_trim": true,
             "trim_threshold": 10,
             "content_padding": 8,

@@ -277,54 +277,64 @@ class TestPluginBoundaryGaps:
         return RenderPipeline(VegasModeConfig(**cfg), DM(), FakeStream())
 
     def test_separator_only_at_plugin_boundaries(self):
-        # Two plugins, two rows each. Expect: row row [sep] row row, with the
-        # small intra gap inside each pair.
+        # Two plugins, two rows each. Expect: row row [sep] row row. These rows
+        # are drawn flush to their edges, so the intra-plugin gap is the full
+        # min_content_separation.
         rows = [Image.new('RGB', (100, DISPLAY_H), (255, 255, 255)) for _ in range(4)]
         pipeline = self._pipeline(
             [('a', rows[:2]), ('b', rows[2:])],
-            separator_width=32, intra_plugin_gap=8, lead_in_width=0,
+            separator_width=32, intra_plugin_gap=8, min_content_separation=24,
+            lead_in_width=0,
         )
         assert pipeline.compose_scroll_content()
 
         ink = column_has_ink(pipeline.scroll_helper.cached_image)
         assert ink[:100].all()
-        assert not ink[100:108].any()      # intra gap inside plugin a
-        assert ink[108:208].all()
-        assert not ink[208:240].any()      # separator between a and b
-        assert ink[240:340].all()
-        assert not ink[340:348].any()      # intra gap inside plugin b
-        assert ink[348:448].all()
+        assert not ink[100:124].any()      # measured gap inside plugin a
+        assert ink[124:224].all()
+        assert not ink[224:256].any()      # separator between a and b
+        assert ink[256:356].all()
+        assert not ink[356:380].any()      # measured gap inside plugin b
+        assert ink[380:480].all()
 
     def test_total_width_uses_both_gap_sizes(self):
         rows = [Image.new('RGB', (100, DISPLAY_H), (255, 255, 255)) for _ in range(4)]
         pipeline = self._pipeline(
             [('a', rows[:2]), ('b', rows[2:])],
-            separator_width=32, intra_plugin_gap=8, lead_in_width=0,
+            separator_width=32, intra_plugin_gap=8, min_content_separation=24,
+            lead_in_width=0,
         )
         pipeline.compose_scroll_content()
-        # 4 rows + 2 intra gaps + 1 separator
-        assert pipeline.scroll_helper.cached_image.width == 400 + 16 + 32
+        # 4 rows + 2 measured intra gaps (24 each) + 1 separator
+        assert pipeline.scroll_helper.cached_image.width == 400 + 48 + 32
 
-    def test_f1_shaped_case_reclaims_the_chasms(self):
-        # 12 rows from one plugin: previously 11 separators at 32px = 352px of
-        # gap; now 11 intra gaps at 8px = 88px.
+    def test_f1_shaped_case_stays_below_the_separator_width(self):
+        # 12 rows from one plugin. Previously each boundary got the full 32px
+        # separator (352px of gap); rows are now spaced by measured separation,
+        # which for flush rows is min_content_separation.
         rows = [Image.new('RGB', (128, DISPLAY_H), (255, 255, 255)) for _ in range(12)]
         pipeline = self._pipeline(
             [('f1-scoreboard', rows)],
-            separator_width=32, intra_plugin_gap=8, lead_in_width=0,
+            separator_width=32, intra_plugin_gap=8, min_content_separation=24,
+            lead_in_width=0,
         )
         pipeline.compose_scroll_content()
-        assert pipeline.scroll_helper.cached_image.width == 12 * 128 + 11 * 8
+        width = pipeline.scroll_helper.cached_image.width
+        assert width == 12 * 128 + 11 * 24
+        assert width < 12 * 128 + 11 * 32  # cheaper than the old flat separator
 
     def test_single_row_plugin_image_is_not_copied(self):
         row = Image.new('RGB', (100, DISPLAY_H), (255, 255, 255))
         pipeline = self._pipeline([('solo', [row])], lead_in_width=0)
         assert pipeline._join_plugin_rows([row]) is row
 
-    def test_zero_intra_gap_butts_rows_together(self):
+    def test_rows_butt_together_only_when_both_gap_settings_are_zero(self):
+        # intra_plugin_gap alone no longer decides this: min_content_separation
+        # would still push flush rows apart, which is the point of it.
         rows = [Image.new('RGB', (50, DISPLAY_H), (255, 255, 255)) for _ in range(3)]
         pipeline = self._pipeline(
-            [('a', rows)], separator_width=32, intra_plugin_gap=0, lead_in_width=0)
+            [('a', rows)], separator_width=32, intra_plugin_gap=0,
+            min_content_separation=0, lead_in_width=0)
         pipeline.compose_scroll_content()
         assert pipeline.scroll_helper.cached_image.width == 150
         assert column_has_ink(pipeline.scroll_helper.cached_image).all()
@@ -601,3 +611,148 @@ class TestConfigSurface:
             trim_threshold=10, content_padding=8,
             min_plugin_width=8, lead_in_width=0,
         ).validate() == []
+
+
+class TestRenderWidthResolution:
+    """Vegas asks plugins to render narrower so layouts compact, not crop."""
+
+    class CfgPlugin:
+        def __init__(self, cfg=None):
+            self.config = cfg or {}
+
+        def get_vegas_content(self):
+            return None
+
+    def test_defaults_to_full_width(self):
+        adapter = adapter_with()
+        assert adapter.resolve_render_width(self.CfgPlugin(), 'p') == DISPLAY_W
+
+    def test_global_percentage_applies(self):
+        adapter = adapter_with(render_width_pct=50)
+        assert adapter.resolve_render_width(self.CfgPlugin(), 'p') == DISPLAY_W // 2
+
+    def test_per_plugin_override_beats_global(self):
+        adapter = adapter_with(render_width_pct=50)
+        plugin = self.CfgPlugin({'vegas_width_pct': 30})
+        assert adapter.resolve_render_width(plugin, 'p') == int(DISPLAY_W * 0.3)
+
+    def test_per_plugin_can_opt_back_to_full_width(self):
+        adapter = adapter_with(render_width_pct=30)
+        plugin = self.CfgPlugin({'vegas_width_pct': 100})
+        assert adapter.resolve_render_width(plugin, 'p') == DISPLAY_W
+
+    @pytest.mark.parametrize('bad', [0, 5, 150, -10, 'wide', None, ''])
+    def test_invalid_override_falls_back_to_global(self, bad):
+        adapter = adapter_with(render_width_pct=50)
+        plugin = self.CfgPlugin({'vegas_width_pct': bad})
+        assert adapter.resolve_render_width(plugin, 'p') == DISPLAY_W // 2
+
+    def test_plugin_without_config_is_safe(self):
+        adapter = adapter_with(render_width_pct=50)
+
+        class NoCfg:
+            pass
+
+        assert adapter.resolve_render_width(NoCfg(), 'p') == DISPLAY_W // 2
+
+    def test_never_exceeds_panel_width(self):
+        adapter = adapter_with(render_width_pct=100)
+        assert adapter.resolve_render_width(self.CfgPlugin(), 'p') <= DISPLAY_W
+
+
+class TestMeasuredSeparation:
+    """Rows are spaced by measured blank, not a flat additive gap."""
+
+    def _pipeline(self, grouped, **cfg):
+        from src.vegas_mode.render_pipeline import RenderPipeline
+
+        class FakeStream:
+            def get_grouped_content_for_composition(self):
+                return grouped
+
+            def get_active_plugin_ids(self):
+                return [pid for pid, _ in grouped]
+
+        class DM:
+            width = DISPLAY_W
+            height = DISPLAY_H
+
+            def set_scrolling_state(self, *a):
+                pass
+
+        return RenderPipeline(VegasModeConfig(**cfg), DM(), FakeStream())
+
+    def test_flush_rows_are_pushed_to_the_target(self):
+        # The reported problem: score cards drawn edge to edge sat 8px apart.
+        rows = [Image.new('RGB', (100, DISPLAY_H), (255, 255, 255)) for _ in range(3)]
+        p = self._pipeline([('scores', rows)],
+                           intra_plugin_gap=8, min_content_separation=24,
+                           lead_in_width=0)
+        block = p._join_plugin_rows(rows)
+        assert block.width == 300 + 24 * 2
+        ink = column_has_ink(block)
+        assert not ink[100:124].any()
+        assert ink[124:224].all()
+
+    def test_rows_with_margins_are_not_pushed_further(self):
+        # Each row already carries 12px blank per side = 24px facing total,
+        # which meets the target, so only the floor is added.
+        rows = [canvas([(12, 88)], width=100) for _ in range(3)]
+        p = self._pipeline([('padded', rows)],
+                           intra_plugin_gap=0, min_content_separation=24,
+                           lead_in_width=0)
+        block = p._join_plugin_rows(rows)
+        assert block.width == 300
+
+    def test_floor_still_applies_when_target_is_met(self):
+        rows = [canvas([(12, 88)], width=100) for _ in range(2)]
+        p = self._pipeline([('padded', rows)],
+                           intra_plugin_gap=6, min_content_separation=24,
+                           lead_in_width=0)
+        assert p._join_plugin_rows(rows).width == 200 + 6
+
+    def test_gaps_are_per_pair_not_uniform(self):
+        # Flush row then a padded row: the two gaps must differ.
+        flush = Image.new('RGB', (100, DISPLAY_H), (255, 255, 255))
+        padded = canvas([(20, 80)], width=100)
+        p = self._pipeline([('mixed', [flush, padded, flush])],
+                           intra_plugin_gap=0, min_content_separation=24,
+                           lead_in_width=0)
+        block = p._join_plugin_rows([flush, padded, flush])
+        # gap1: flush right(0) + padded left(20) = 20 -> add 4
+        # gap2: padded right(20) + flush left(0) = 20 -> add 4
+        assert block.width == 300 + 4 + 4
+
+    def test_zero_target_falls_back_to_the_floor(self):
+        rows = [Image.new('RGB', (50, DISPLAY_H), (255, 255, 255)) for _ in range(2)]
+        p = self._pipeline([('a', rows)],
+                           intra_plugin_gap=5, min_content_separation=0,
+                           lead_in_width=0)
+        assert p._join_plugin_rows(rows).width == 100 + 5
+
+
+class TestNewConfigKeys:
+    def test_render_width_pct_parses(self):
+        cfg = VegasModeConfig.from_config(
+            {'display': {'vegas_scroll': {'render_width_pct': 40}}})
+        assert cfg.render_width_pct == 40
+
+    def test_min_content_separation_parses(self):
+        cfg = VegasModeConfig.from_config(
+            {'display': {'vegas_scroll': {'min_content_separation': 16}}})
+        assert cfg.min_content_separation == 16
+
+    def test_defaults(self):
+        cfg = VegasModeConfig()
+        assert cfg.render_width_pct == 100
+        assert cfg.min_content_separation == 24
+
+    @pytest.mark.parametrize('overrides,bad_key', [
+        ({'render_width_pct': 5}, 'render_width_pct'),
+        ({'render_width_pct': 101}, 'render_width_pct'),
+        ({'min_content_separation': -1}, 'min_content_separation'),
+        ({'min_content_separation': 300}, 'min_content_separation'),
+    ])
+    def test_validate_rejects_out_of_range(self, overrides, bad_key):
+        errors = VegasModeConfig(**overrides).validate()
+        assert any(bad_key in e for e in errors), errors

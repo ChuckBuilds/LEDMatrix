@@ -438,13 +438,38 @@
 
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div class="form-group" id="setting-display-vegas_intra_plugin_gap" data-setting-key="display.vegas_scroll.intra_plugin_gap">
-                        <label for="vegas_intra_plugin_gap" class="block text-sm font-medium text-gray-700">Row Gap (pixels){{ ui.help_tip('Gap between rows contributed by the same plugin (0–128 px).\nDefault: 8. Multi-row plugins such as sports scoreboards, news feeds and the F1 standings return one image per row; this keeps those rows close together while Separator Width still marks the jump to the next plugin. Set 0 to butt rows directly together.', 'Row Gap') }}</label>
+                        <label for="vegas_intra_plugin_gap" class="block text-sm font-medium text-gray-700">Row Gap (pixels){{ ui.help_tip('Extra gap always added between rows contributed by the same plugin (0–128 px).\nDefault: 8. This is a floor on top of Row Separation below, which does most of the work. Set both to 0 to butt rows directly together.', 'Row Gap') }}</label>
                         <input type="number"
                                id="vegas_intra_plugin_gap"
                                name="vegas_intra_plugin_gap"
                                value="{{ main_config.display.get('vegas_scroll', {}).get('intra_plugin_gap', 8) }}"
                                min="0"
                                max="128"
+                               class="form-control">
+                    </div>
+
+                    <div class="form-group" id="setting-display-vegas_min_content_separation" data-setting-key="display.vegas_scroll.min_content_separation">
+                        <label for="vegas_min_content_separation" class="block text-sm font-medium text-gray-700">Row Separation (pixels){{ ui.help_tip('Blank space guaranteed between rows of the same plugin, measured from the actual content rather than added blindly (0–256 px).\nDefault: 24. Rows already carrying wide margins get nothing added; rows drawn right up to their own edges — sports score cards, for instance — get the full amount, so they no longer look like they are touching. Raise it if items still feel cramped.', 'Row Separation') }}</label>
+                        <input type="number"
+                               id="vegas_min_content_separation"
+                               name="vegas_min_content_separation"
+                               value="{{ main_config.display.get('vegas_scroll', {}).get('min_content_separation', 24) }}"
+                               min="0"
+                               max="256"
+                               class="form-control">
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="form-group" id="setting-display-vegas_render_width_pct" data-setting-key="display.vegas_scroll.render_width_pct">
+                        <label for="vegas_render_width_pct" class="block text-sm font-medium text-gray-700">Plugin Render Width (%){{ ui.help_tip('How much of the screen width each plugin is told it has while drawing for the ticker (10–100%).\nDefault: 100 (unchanged). Lowering it makes plugins choose a tighter layout rather than being cropped — a weather forecast becomes narrow cards instead of five columns spread across the panel. Useful on wide displays. Override per plugin with the vegas_width_pct setting in that plugin\'s own configuration.', 'Plugin Render Width') }}</label>
+                        <input type="number"
+                               id="vegas_render_width_pct"
+                               name="vegas_render_width_pct"
+                               value="{{ main_config.display.get('vegas_scroll', {}).get('render_width_pct', 100) }}"
+                               min="10"
+                               max="100"
+                               step="5"
                                class="form-control">
                     </div>
                 </div>

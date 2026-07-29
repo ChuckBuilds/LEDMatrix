@@ -139,6 +139,59 @@ def trim_to_content(
     return TrimResult(cropped, img.width, left, img.width - right)
 
 
+def edge_blank(
+    img: Image.Image, threshold: int = DEFAULT_INK_THRESHOLD
+) -> Tuple[int, int]:
+    """
+    Blank column counts at the left and right edges of an image.
+
+    Used to space items by *measured* separation rather than a flat added gap.
+    A fixed gap gets this wrong in both directions at once: card-style content
+    drawn flush to its own edges ends up nearly touching its neighbour, while
+    content that already carries wide margins gets pushed even further apart.
+
+    Args:
+        img: Image to measure
+        threshold: Ink threshold
+
+    Returns:
+        (left_blank, right_blank). For an entirely blank image both are the
+        full width, since there is no ink to be close to.
+    """
+    bounds = content_bounds(img, threshold)
+    if bounds is None:
+        return img.width, img.width
+    first, last = bounds
+    return first, img.width - 1 - last
+
+
+def separation_gap(
+    left_img: Image.Image,
+    right_img: Image.Image,
+    target: int,
+    minimum: int = 0,
+    threshold: int = DEFAULT_INK_THRESHOLD,
+) -> int:
+    """
+    Columns to insert between two images so their ink is ``target`` apart.
+
+    Only the shortfall is added: if the two images already carry enough blank
+    at the facing edges, nothing (beyond ``minimum``) is inserted.
+
+    Args:
+        left_img: Image on the left
+        right_img: Image on the right
+        target: Desired blank columns between the two pieces of ink
+        minimum: Floor applied regardless of what the images already have
+        threshold: Ink threshold
+
+    Returns:
+        Number of columns to insert, never negative
+    """
+    existing = edge_blank(left_img, threshold)[1] + edge_blank(right_img, threshold)[0]
+    return max(minimum, target - existing, 0)
+
+
 def find_blank_cut(
     img: Image.Image,
     target: int,

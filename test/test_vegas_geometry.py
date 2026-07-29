@@ -9,6 +9,8 @@ from src.vegas_mode.geometry import (
     column_has_ink,
     content_bounds,
     dead_window_stats,
+    edge_blank,
+    separation_gap,
     trim_to_content,
     window_coverage_stats,
 )
@@ -271,3 +273,49 @@ class TestLongestRunHelper:
     def test_run_lengths(self, flags, expected):
         from src.vegas_mode.geometry import _longest_true_run
         assert _longest_true_run(np.array(flags, dtype=bool)) == expected
+
+
+class TestEdgeBlank:
+    def test_measures_both_edges(self):
+        assert edge_blank(paint(make_img(100), 20, 60)) == (20, 40)
+
+    def test_flush_content_has_no_blank(self):
+        assert edge_blank(paint(make_img(50), 0, 50)) == (0, 0)
+
+    def test_blank_image_reports_full_width_both_sides(self):
+        # No ink means nothing to be close to.
+        assert edge_blank(make_img(64)) == (64, 64)
+
+
+class TestSeparationGap:
+    def test_flush_edges_get_the_full_target(self):
+        a = paint(make_img(50), 0, 50)
+        b = paint(make_img(50), 0, 50)
+        assert separation_gap(a, b, target=24) == 24
+
+    def test_existing_margins_reduce_the_added_gap(self):
+        # 8px blank on each facing edge already covers 16 of the 24 target.
+        a = paint(make_img(50), 0, 42)
+        b = paint(make_img(50), 8, 50)
+        assert separation_gap(a, b, target=24) == 8
+
+    def test_ample_existing_margin_adds_nothing(self):
+        a = paint(make_img(100), 0, 60)
+        b = paint(make_img(100), 40, 100)
+        assert separation_gap(a, b, target=24) == 0
+
+    def test_minimum_is_a_floor(self):
+        a = paint(make_img(100), 0, 60)
+        b = paint(make_img(100), 40, 100)
+        assert separation_gap(a, b, target=24, minimum=4) == 4
+
+    def test_never_negative(self):
+        a = paint(make_img(200), 0, 10)
+        b = paint(make_img(200), 190, 200)
+        assert separation_gap(a, b, target=8) == 0
+
+    def test_sports_card_case_gets_real_separation(self):
+        # The reported problem: cards drawn edge to edge sat 8px apart under a
+        # flat gap; measured separation lifts them to the 24px target.
+        card = paint(make_img(150), 0, 150)
+        assert separation_gap(card, card, target=24, minimum=8) == 24

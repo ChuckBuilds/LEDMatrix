@@ -179,6 +179,35 @@ class VisualTestDisplayManager:
         self.update_called = True
 
     @contextmanager
+    def render_size(self, width: int, height: Optional[int] = None):
+        """
+        Interface parity with DisplayManager.render_size().
+
+        Vegas mode narrows the canvas so plugins lay out compactly instead of
+        being cropped. The harness must offer the same context or that path
+        cannot be exercised offline — and because the adapter catches broadly,
+        a missing method shows up as "no content" rather than an error.
+        """
+        prev_image = self.image
+        prev_draw = self.draw
+        prev_w, prev_h = self._width, self._height
+
+        target_w = max(1, min(int(width), prev_w))
+        target_h = max(1, min(int(height) if height else prev_h, prev_h))
+
+        try:
+            self._width, self._height = target_w, target_h
+            self.matrix = _MatrixProxy(target_w, target_h)
+            self.image = Image.new('RGB', (target_w, target_h), (0, 0, 0))
+            self.draw = ImageDraw.Draw(self.image)
+            yield
+        finally:
+            self._width, self._height = prev_w, prev_h
+            self.matrix = _MatrixProxy(prev_w, prev_h)
+            self.image = prev_image
+            self.draw = prev_draw
+
+    @contextmanager
     def capture_mode(self):
         """
         Interface parity with DisplayManager.capture_mode().

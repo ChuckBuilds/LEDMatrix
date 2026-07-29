@@ -21,6 +21,20 @@ class VegasModeConfig:
     scroll_speed: float = 50.0  # Pixels per second
     separator_width: int = 32  # Gap between plugins (pixels)
 
+    # Fraction of the panel width a plugin is told it has while rendering for
+    # the ticker, as a percentage. Trimming can only remove blank margins; it
+    # cannot compact a layout that genuinely spans the display — a five-column
+    # forecast, a full-width progress bar, a centred stat block with the panel's
+    # whole width between its elements. Rendering at a narrower size makes the
+    # plugin choose a tighter layout instead. 100 disables it.
+    render_width_pct: int = 100
+
+    # Minimum blank columns guaranteed between adjacent content, measured from
+    # actual ink rather than added blindly. A flat additive gap leaves
+    # card-style content nearly touching when the cards are drawn flush to their
+    # own edges, while padding out content that already has wide margins.
+    min_content_separation: int = 24
+
     # Gap between rows contributed by the *same* plugin. separator_width marks
     # the handoff from one plugin to the next; applying it between every image
     # forced a 32px chasm between each row of a per-row ticker (the F1
@@ -91,6 +105,9 @@ class VegasModeConfig:
             scroll_speed=float(vegas_config.get('scroll_speed', 50.0)),
             separator_width=int(vegas_config.get('separator_width', 32)),
             intra_plugin_gap=int(vegas_config.get('intra_plugin_gap', 8)),
+            render_width_pct=int(vegas_config.get('render_width_pct', 100)),
+            min_content_separation=int(
+                vegas_config.get('min_content_separation', 24)),
             auto_trim=vegas_config.get('auto_trim', True),
             trim_threshold=int(vegas_config.get('trim_threshold', 10)),
             content_padding=int(vegas_config.get('content_padding', 8)),
@@ -117,6 +134,8 @@ class VegasModeConfig:
             'scroll_speed': self.scroll_speed,
             'separator_width': self.separator_width,
             'intra_plugin_gap': self.intra_plugin_gap,
+            'render_width_pct': self.render_width_pct,
+            'min_content_separation': self.min_content_separation,
             'auto_trim': self.auto_trim,
             'trim_threshold': self.trim_threshold,
             'content_padding': self.content_padding,
@@ -209,6 +228,16 @@ class VegasModeConfig:
         if self.buffer_ahead > 5:
             errors.append(f"buffer_ahead must be <= 5, got {self.buffer_ahead}")
 
+        if not 10 <= self.render_width_pct <= 100:
+            errors.append(
+                "render_width_pct must be between 10 and 100, "
+                f"got {self.render_width_pct}")
+
+        if not 0 <= self.min_content_separation <= 256:
+            errors.append(
+                "min_content_separation must be between 0 and 256, "
+                f"got {self.min_content_separation}")
+
         if self.intra_plugin_gap < 0:
             errors.append(
                 f"intra_plugin_gap must be >= 0, got {self.intra_plugin_gap}")
@@ -271,6 +300,11 @@ class VegasModeConfig:
             self.separator_width = int(vegas_config['separator_width'])
         if 'intra_plugin_gap' in vegas_config:
             self.intra_plugin_gap = int(vegas_config['intra_plugin_gap'])
+        if 'render_width_pct' in vegas_config:
+            self.render_width_pct = int(vegas_config['render_width_pct'])
+        if 'min_content_separation' in vegas_config:
+            self.min_content_separation = int(
+                vegas_config['min_content_separation'])
         if 'auto_trim' in vegas_config:
             self.auto_trim = vegas_config['auto_trim']
         if 'trim_threshold' in vegas_config:

@@ -8,6 +8,7 @@ implement get_vegas_content() and fallback capture of display() output.
 import logging
 import threading
 import time
+from contextlib import nullcontext
 from typing import Optional, List, Any, Tuple, Union, TYPE_CHECKING
 from PIL import Image
 
@@ -214,6 +215,66 @@ class PluginAdapter:
         self._cache_content(plugin_id, kept)
         return kept
 
+    def _render_at(self, width: int):
+        """
+        Context manager narrowing the plugin-facing canvas to ``width``.
+
+        Degrades to a no-op when the display manager predates render_size (a
+        third-party or older test harness). Losing the narrowing is a cosmetic
+        regression; raising here would be caught by the broad handlers upstream
+        and silently drop the plugin's content entirely.
+        """
+        render_size = getattr(self.display_manager, 'render_size', None)
+        if render_size is None:
+            logger.debug(
+                "display_manager has no render_size(); Vegas width requests "
+                "will be ignored"
+            )
+            return nullcontext()
+        return render_size(width)
+
+    def resolve_render_width(self, plugin: 'BasePlugin', plugin_id: str) -> int:
+        """
+        Width to tell a plugin it has while it renders for the ticker.
+
+        Resolution order, most specific first:
+          1. the plugin's own ``vegas_width_pct`` config value
+          2. the global ``vegas_scroll.render_width_pct``
+          3. the full panel width
+
+        A percentage rather than an absolute width so one setting travels
+        across panel sizes.
+
+        Args:
+            plugin: Plugin instance, consulted for a per-plugin override
+            plugin_id: Plugin identifier for logging
+
+        Returns:
+            Target width in pixels, never wider than the panel
+        """
+        pct = self.config.render_width_pct
+
+        plugin_cfg = getattr(plugin, 'config', None)
+        if isinstance(plugin_cfg, dict):
+            raw = plugin_cfg.get('vegas_width_pct')
+            if raw not in (None, ''):
+                try:
+                    candidate = int(raw)
+                except (TypeError, ValueError):
+                    logger.warning(
+                        "[%s] Invalid vegas_width_pct %r, ignoring", plugin_id, raw)
+                else:
+                    if 10 <= candidate <= 100:
+                        pct = candidate
+                    else:
+                        logger.warning(
+                            "[%s] vegas_width_pct %d out of range 10-100, ignoring",
+                            plugin_id, candidate)
+
+        if pct >= 100:
+            return self.display_width
+        return max(1, int(self.display_width * pct / 100))
+
     def _width_budget(self) -> int:
         """Maximum columns one plugin may occupy in a cycle. 0 means unlimited."""
         ratio = self.config.max_plugin_width_ratio
@@ -331,7 +392,27 @@ class PluginAdapter:
         """
         try:
             logger.info("[%s] Native: calling get_vegas_content()", plugin_id)
-            result = plugin.get_vegas_content()
+
+            # Tell the plugin how much width the ticker wants it to use, and
+            # narrow the canvas for the duration of the call. A plugin that
+            # sizes its own images from display_manager.matrix.width picks up
+            # the narrower value with no changes of its own; one that wants to
+            # be explicit can read get_vegas_render_width().
+            render_width = self.resolve_render_width(plugin, plugin_id)
+            plugin._vegas_render_width = render_width
+            try:
+                if render_width == self.display_width:
+                    result = plugin.get_vegas_content()
+                else:
+                    logger.info(
+                        "[%s] Native: requesting %dpx instead of %dpx",
+                        plugin_id, render_width, self.display_width
+                    )
+                    with self.display_manager.capture_mode(), \
+                            self._render_at(render_width):
+                        result = plugin.get_vegas_content()
+            finally:
+                plugin._vegas_render_width = None
 
             if result is None:
                 logger.info("[%s] Native: get_vegas_content() returned None", plugin_id)
@@ -683,7 +764,19 @@ class PluginAdapter:
 
             # Clear and call plugin display — use capture_mode to suppress hardware writes
             # that plugins may trigger internally via update_display().
-            with self.display_manager.capture_mode():
+            #
+            # render_size narrows the canvas the plugin lays out against, so a
+            # plugin that spreads across the whole panel produces a compact
+            # arrangement rather than one that has to be cropped afterwards.
+            render_width = self.resolve_render_width(plugin, plugin_id)
+            if render_width != self.display_width:
+                logger.info(
+                    "[%s] Fallback: rendering at %dpx instead of %dpx",
+                    plugin_id, render_width, self.display_width
+                )
+
+            with self.display_manager.capture_mode(), \
+                    self._render_at(render_width):
                 self.display_manager.clear()
                 logger.info("[%s] Fallback: display cleared, calling display()", plugin_id)
 
@@ -717,7 +810,8 @@ class PluginAdapter:
                     plugin_id
                 )
                 # Try once more with force_clear=True
-                with self.display_manager.capture_mode():
+                with self.display_manager.capture_mode(), \
+                        self._render_at(render_width):
                     self.display_manager.clear()
                     plugin.display(force_clear=True)
                     captured = self.display_manager.image.copy()
