@@ -11,6 +11,8 @@ import time
 from typing import Optional, List, Any, Tuple, Union, TYPE_CHECKING
 from PIL import Image
 
+from src.vegas_mode.geometry import find_blank_cut, trim_to_content
+
 if TYPE_CHECKING:
     from src.plugin_system.base_plugin import BasePlugin
 
@@ -26,14 +28,21 @@ class PluginAdapter:
     2. Fallback: Capture display_manager.image after calling plugin.display()
     """
 
-    def __init__(self, display_manager: Any):
+    def __init__(self, display_manager: Any, config: Optional[Any] = None):
         """
         Initialize the plugin adapter.
 
         Args:
             display_manager: DisplayManager instance for fallback capture
+            config: VegasModeConfig controlling trim behaviour. When omitted,
+                trimming runs with the dataclass defaults, so existing callers
+                and tests keep working unchanged.
         """
         self.display_manager = display_manager
+        if config is None:
+            from src.vegas_mode.config import VegasModeConfig
+            config = VegasModeConfig()
+        self.config = config
         # Handle both property and method access patterns
         self.display_width = (
             display_manager.width() if callable(display_manager.width)
@@ -48,6 +57,11 @@ class PluginAdapter:
         self._content_cache: dict = {}
         self._cache_lock = threading.Lock()
         self._cache_ttl = 5.0  # Cache for 5 seconds
+
+        # Per-plugin rotation offset, so a plugin whose content exceeds its
+        # width budget shows a different slice on each cycle rather than
+        # always the same opening items.
+        self._item_offsets: dict = {}
 
         logger.info(
             "PluginAdapter initialized: display=%dx%d",
@@ -93,8 +107,7 @@ class PluginAdapter:
                     "[%s] Native content SUCCESS: %d images, %dpx total",
                     plugin_id, len(content), total_width
                 )
-                self._cache_content(plugin_id, content)
-                return content
+                return self._finalize(content, plugin_id, 'native')
             logger.info("[%s] Native content returned None", plugin_id)
 
         # Try to get scroll_helper's cached image (for scrolling plugins like stocks/odds)
@@ -107,8 +120,7 @@ class PluginAdapter:
                 "[%s] ScrollHelper content SUCCESS: %d images, %dpx total",
                 plugin_id, len(content), total_width
             )
-            self._cache_content(plugin_id, content)
-            return content
+            return self._finalize(content, plugin_id, 'scroll_helper')
         if has_scroll_helper:
             logger.info("[%s] ScrollHelper content returned None", plugin_id)
 
@@ -121,14 +133,188 @@ class PluginAdapter:
                 "[%s] Fallback capture SUCCESS: %d images, %dpx total",
                 plugin_id, len(content), total_width
             )
-            self._cache_content(plugin_id, content)
-            return content
+            return self._finalize(content, plugin_id, 'fallback')
 
         logger.warning(
             "[%s] NO CONTENT from any method (native=%s, scroll_helper=%s, fallback=tried)",
             plugin_id, has_native, has_scroll_helper
         )
         return None
+
+    def _finalize(
+        self, images: List[Image.Image], plugin_id: str, source: str
+    ) -> Optional[List[Image.Image]]:
+        """
+        Trim dead space off a segment, then cache it.
+
+        Every content path funnels through here so trimming is applied
+        uniformly. Previously only the scroll_helper path had its margins
+        stripped, which left plugins that render onto a full-display canvas
+        contributing their entire blank canvas to the ticker.
+
+        Each image is trimmed independently because compose_scroll_content()
+        treats every image as its own item and inserts separator_width between
+        them — so a per-image trim is what makes that separator the real gap.
+
+        Args:
+            images: Raw content from one of the fetch paths
+            plugin_id: Plugin identifier for logging
+            source: Which path produced the content, for logging
+
+        Returns:
+            Trimmed image list, or None if nothing worth showing remains
+        """
+        if not self.config.auto_trim:
+            self._cache_content(plugin_id, images)
+            return images
+
+        original_width = sum(img.width for img in images)
+        kept: List[Image.Image] = []
+        dropped_blank = 0
+
+        for img in images:
+            result = trim_to_content(
+                img,
+                threshold=self.config.trim_threshold,
+                padding=self.config.content_padding,
+            )
+            if result.is_blank:
+                dropped_blank += 1
+                continue
+            kept.append(result.image)
+
+        if not kept:
+            logger.info(
+                "[%s] All %d image(s) from %s were blank — contributing nothing",
+                plugin_id, len(images), source
+            )
+            return None
+
+        trimmed_width = sum(img.width for img in kept)
+
+        if trimmed_width < self.config.min_plugin_width:
+            logger.info(
+                "[%s] Trimmed content %dpx is below min_plugin_width %dpx — skipping",
+                plugin_id, trimmed_width, self.config.min_plugin_width
+            )
+            return None
+
+        if trimmed_width != original_width or dropped_blank:
+            logger.info(
+                "[%s] Trimmed %s content: %dpx -> %dpx (%.0f%% reclaimed), "
+                "%d image(s) kept, %d blank dropped",
+                plugin_id, source, original_width, trimmed_width,
+                100.0 * (original_width - trimmed_width) / original_width
+                if original_width else 0.0,
+                len(kept), dropped_blank
+            )
+
+        kept = self._apply_width_budget(kept, plugin_id)
+
+        self._cache_content(plugin_id, kept)
+        return kept
+
+    def _width_budget(self) -> int:
+        """Maximum columns one plugin may occupy in a cycle. 0 means unlimited."""
+        ratio = self.config.max_plugin_width_ratio
+        if ratio <= 0:
+            return 0
+        return int(self.display_width * ratio)
+
+    def _apply_width_budget(
+        self, images: List[Image.Image], plugin_id: str
+    ) -> List[Image.Image]:
+        """
+        Hold one plugin to its share of a cycle.
+
+        A ticker returning 7,000px would otherwise own the panel for over two
+        minutes, which defeats the point of a rotation. Overflow is deferred
+        rather than discarded: the starting offset advances each time this
+        plugin is fetched, so later items appear on subsequent cycles instead
+        of never being seen.
+
+        Args:
+            images: Trimmed images for this plugin
+            plugin_id: Plugin identifier, used to track its rotation offset
+
+        Returns:
+            Images that fit the budget, starting from the plugin's current
+            rotation offset.
+        """
+        budget = self._width_budget()
+
+        # Count the gaps the compositor will insert between these rows, not
+        # just the pixels of the rows themselves — otherwise a plugin with many
+        # rows quietly occupies far more of the panel than its budget allows.
+        gap = max(0, self.config.intra_plugin_gap)
+        total = sum(img.width for img in images) + gap * (len(images) - 1)
+
+        if not budget or total <= budget:
+            # Fits, so reset rotation — the whole segment is being shown.
+            self._item_offsets.pop(plugin_id, None)
+            return images
+
+        if len(images) == 1:
+            return [self._crop_to_budget(images[0], budget, plugin_id)]
+
+        start = self._item_offsets.get(plugin_id, 0) % len(images)
+        selected: List[Image.Image] = []
+        used = 0
+        consumed = 0
+
+        # Walk forward from the rotation offset, taking whole items only, so a
+        # cut never lands in the middle of one.
+        for step in range(len(images)):
+            img = images[(start + step) % len(images)]
+            cost = img.width + (gap if selected else 0)
+            if selected and used + cost > budget:
+                break
+            selected.append(img)
+            used += cost
+            consumed += 1
+
+        self._item_offsets[plugin_id] = (start + consumed) % len(images)
+
+        logger.info(
+            "[%s] Width budget %dpx: showing %d of %d row(s) (%dpx incl. gaps) "
+            "from offset %d; remainder deferred to a later cycle",
+            plugin_id, budget, len(selected), len(images), used, start
+        )
+        return selected
+
+    def _crop_to_budget(
+        self, img: Image.Image, budget: int, plugin_id: str
+    ) -> Image.Image:
+        """
+        Narrow a single oversized image to the budget, advancing a window
+        through it across cycles.
+
+        The cut is snapped to the nearest blank column so it does not slice
+        through a glyph or logo and leave half a character at the panel edge.
+        """
+        offset = self._item_offsets.get(plugin_id, 0)
+        if offset >= img.width:
+            offset = 0
+
+        # Snap both edges to blank columns. The search radius is generous
+        # enough to clear a wide glyph but small enough not to distort the
+        # requested budget much.
+        snap = max(8, self.display_width // 16)
+        start = find_blank_cut(img, offset, snap, self.config.trim_threshold)
+        end = find_blank_cut(
+            img, min(start + budget, img.width), snap, self.config.trim_threshold)
+        if end <= start:
+            end = min(start + budget, img.width)
+
+        # Next cycle resumes where this one stopped; wrap when the strip ends.
+        self._item_offsets[plugin_id] = 0 if end >= img.width else end
+
+        logger.info(
+            "[%s] Width budget %dpx: cropped single %dpx image to [%d:%d] "
+            "(%dpx), window advances next cycle",
+            plugin_id, budget, img.width, start, end, end - start
+        )
+        return img.crop((start, 0, end, img.height))
 
     def _get_native_content(
         self, plugin: 'BasePlugin', plugin_id: str

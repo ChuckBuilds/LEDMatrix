@@ -21,6 +21,41 @@ class VegasModeConfig:
     scroll_speed: float = 50.0  # Pixels per second
     separator_width: int = 32  # Gap between plugins (pixels)
 
+    # Gap between rows contributed by the *same* plugin. separator_width marks
+    # the handoff from one plugin to the next; applying it between every image
+    # forced a 32px chasm between each row of a per-row ticker (the F1
+    # scoreboard renders its own rows 4px apart), which both looked wrong and
+    # silently inflated the width that plugin occupied.
+    intra_plugin_gap: int = 8
+
+    # Content density
+    #
+    # Plugins that render onto a full-display canvas contribute that whole
+    # canvas to the ticker, blank margins included. On a wide panel that is the
+    # dominant source of dead air: a plugin drawing 35px of text on a 512px
+    # canvas otherwise buys 9.5s of black at 50px/s. Trimming reclaims it.
+    auto_trim: bool = True
+    trim_threshold: int = 10  # Per-channel value a pixel must exceed to be "ink"
+    content_padding: int = 8  # Blank columns kept either side of trimmed content
+    min_plugin_width: int = 8  # Segments narrower than this after trim are dropped
+
+    # Columns of blank lead-in before the first item of a cycle. ScrollHelper
+    # defaults this to a full display width, which reads as the display being
+    # switched off at the start of every cycle.
+    lead_in_width: int = 0
+
+    # How many plugins are composed into one scroll cycle. Kept separate from
+    # buffer_ahead (which is only a prefetch low-water mark) because the two
+    # were previously the same number: a buffer_ahead of 2 meant just 3 plugins
+    # per cycle, so a 20-plugin install took seven cycles to come around.
+    plugins_per_cycle: int = 6
+
+    # Cap on one plugin's share of a cycle, as a multiple of display width.
+    # A single ticker returning 7,000px would otherwise hold the panel for over
+    # two minutes. Overflow is deferred to later cycles rather than discarded.
+    # 0 disables the cap.
+    max_plugin_width_ratio: float = 3.0
+
     # Plugin management
     plugin_order: List[str] = field(default_factory=list)
     excluded_plugins: Set[str] = field(default_factory=set)
@@ -55,6 +90,15 @@ class VegasModeConfig:
             enabled=vegas_config.get('enabled', False),
             scroll_speed=float(vegas_config.get('scroll_speed', 50.0)),
             separator_width=int(vegas_config.get('separator_width', 32)),
+            intra_plugin_gap=int(vegas_config.get('intra_plugin_gap', 8)),
+            auto_trim=vegas_config.get('auto_trim', True),
+            trim_threshold=int(vegas_config.get('trim_threshold', 10)),
+            content_padding=int(vegas_config.get('content_padding', 8)),
+            min_plugin_width=int(vegas_config.get('min_plugin_width', 8)),
+            lead_in_width=int(vegas_config.get('lead_in_width', 0)),
+            plugins_per_cycle=int(vegas_config.get('plugins_per_cycle', 6)),
+            max_plugin_width_ratio=float(
+                vegas_config.get('max_plugin_width_ratio', 3.0)),
             plugin_order=list(vegas_config.get('plugin_order', [])),
             excluded_plugins=set(vegas_config.get('excluded_plugins', [])),
             target_fps=int(vegas_config.get('target_fps', 125)),
@@ -72,6 +116,14 @@ class VegasModeConfig:
             'enabled': self.enabled,
             'scroll_speed': self.scroll_speed,
             'separator_width': self.separator_width,
+            'intra_plugin_gap': self.intra_plugin_gap,
+            'auto_trim': self.auto_trim,
+            'trim_threshold': self.trim_threshold,
+            'content_padding': self.content_padding,
+            'min_plugin_width': self.min_plugin_width,
+            'lead_in_width': self.lead_in_width,
+            'plugins_per_cycle': self.plugins_per_cycle,
+            'max_plugin_width_ratio': self.max_plugin_width_ratio,
             'plugin_order': self.plugin_order,
             'excluded_plugins': list(self.excluded_plugins),
             'target_fps': self.target_fps,
@@ -157,6 +209,44 @@ class VegasModeConfig:
         if self.buffer_ahead > 5:
             errors.append(f"buffer_ahead must be <= 5, got {self.buffer_ahead}")
 
+        if self.intra_plugin_gap < 0:
+            errors.append(
+                f"intra_plugin_gap must be >= 0, got {self.intra_plugin_gap}")
+        if self.intra_plugin_gap > 128:
+            errors.append(
+                f"intra_plugin_gap must be <= 128, got {self.intra_plugin_gap}")
+
+        if not 0 <= self.trim_threshold <= 254:
+            errors.append(
+                f"trim_threshold must be between 0 and 254, got {self.trim_threshold}")
+
+        if self.content_padding < 0:
+            errors.append(
+                f"content_padding must be >= 0, got {self.content_padding}")
+        if self.content_padding > 128:
+            errors.append(
+                f"content_padding must be <= 128, got {self.content_padding}")
+
+        if self.min_plugin_width < 0:
+            errors.append(
+                f"min_plugin_width must be >= 0, got {self.min_plugin_width}")
+
+        if self.lead_in_width < 0:
+            errors.append(
+                f"lead_in_width must be >= 0, got {self.lead_in_width}")
+
+        if self.plugins_per_cycle < 1:
+            errors.append(
+                f"plugins_per_cycle must be >= 1, got {self.plugins_per_cycle}")
+        if self.plugins_per_cycle > 50:
+            errors.append(
+                f"plugins_per_cycle must be <= 50, got {self.plugins_per_cycle}")
+
+        if self.max_plugin_width_ratio < 0:
+            errors.append(
+                "max_plugin_width_ratio must be >= 0 "
+                f"(0 disables the cap), got {self.max_plugin_width_ratio}")
+
         return errors
 
     def update(self, new_config: Dict[str, Any]) -> None:
@@ -174,6 +264,23 @@ class VegasModeConfig:
             self.scroll_speed = float(vegas_config['scroll_speed'])
         if 'separator_width' in vegas_config:
             self.separator_width = int(vegas_config['separator_width'])
+        if 'intra_plugin_gap' in vegas_config:
+            self.intra_plugin_gap = int(vegas_config['intra_plugin_gap'])
+        if 'auto_trim' in vegas_config:
+            self.auto_trim = vegas_config['auto_trim']
+        if 'trim_threshold' in vegas_config:
+            self.trim_threshold = int(vegas_config['trim_threshold'])
+        if 'content_padding' in vegas_config:
+            self.content_padding = int(vegas_config['content_padding'])
+        if 'min_plugin_width' in vegas_config:
+            self.min_plugin_width = int(vegas_config['min_plugin_width'])
+        if 'lead_in_width' in vegas_config:
+            self.lead_in_width = int(vegas_config['lead_in_width'])
+        if 'plugins_per_cycle' in vegas_config:
+            self.plugins_per_cycle = int(vegas_config['plugins_per_cycle'])
+        if 'max_plugin_width_ratio' in vegas_config:
+            self.max_plugin_width_ratio = float(
+                vegas_config['max_plugin_width_ratio'])
         if 'plugin_order' in vegas_config:
             self.plugin_order = list(vegas_config['plugin_order'])
         if 'excluded_plugins' in vegas_config:

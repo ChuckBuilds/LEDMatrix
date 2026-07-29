@@ -918,7 +918,12 @@ def save_main_config():
 
         # Handle Vegas scroll mode settings
         vegas_fields = ['vegas_scroll_enabled', 'vegas_scroll_speed', 'vegas_separator_width',
-                       'vegas_target_fps', 'vegas_buffer_ahead', 'vegas_plugin_order', 'vegas_excluded_plugins']
+                       'vegas_target_fps', 'vegas_buffer_ahead', 'vegas_plugin_order', 'vegas_excluded_plugins',
+                       'vegas_auto_trim', 'vegas_trim_threshold', 'vegas_content_padding',
+                       'vegas_min_plugin_width', 'vegas_lead_in_width', 'vegas_plugins_per_cycle',
+                       'vegas_max_plugin_width_ratio', 'vegas_dynamic_duration_enabled',
+                       'vegas_min_cycle_duration', 'vegas_max_cycle_duration',
+                       'vegas_intra_plugin_gap']
 
         if any(k in data for k in vegas_fields):
             if 'display' not in current_config:
@@ -933,13 +938,43 @@ def save_main_config():
             # was submitted (any vegas field present) but enabled key is missing,
             # the checkbox was unchecked and we should set enabled=False
             vegas_config['enabled'] = _coerce_to_bool(data.get('vegas_scroll_enabled'))
+            vegas_config['auto_trim'] = _coerce_to_bool(data.get('vegas_auto_trim'))
+            vegas_config['dynamic_duration_enabled'] = _coerce_to_bool(
+                data.get('vegas_dynamic_duration_enabled'))
+
+            # max_plugin_width_ratio is the one fractional setting, so it is
+            # handled outside the integer loop below.
+            if data.get('vegas_max_plugin_width_ratio') not in ('', None):
+                try:
+                    ratio = float(data['vegas_max_plugin_width_ratio'])
+                except (ValueError, TypeError):
+                    return jsonify({
+                        'status': 'error',
+                        'message': "Invalid value for vegas_max_plugin_width_ratio: "
+                                   "must be a number"
+                    }), 400
+                if not (0 <= ratio <= 20):
+                    return jsonify({
+                        'status': 'error',
+                        'message': "Invalid value for vegas_max_plugin_width_ratio: "
+                                   "must be between 0 and 20 (0 disables the cap)"
+                    }), 400
+                vegas_config['max_plugin_width_ratio'] = ratio
 
             # Handle numeric settings with validation
             numeric_fields = {
                 'vegas_scroll_speed': ('scroll_speed', 1, 100),
                 'vegas_separator_width': ('separator_width', 0, 500),
+                'vegas_intra_plugin_gap': ('intra_plugin_gap', 0, 128),
                 'vegas_target_fps': ('target_fps', 1, 200),
                 'vegas_buffer_ahead': ('buffer_ahead', 1, 20),
+                'vegas_trim_threshold': ('trim_threshold', 0, 254),
+                'vegas_content_padding': ('content_padding', 0, 128),
+                'vegas_min_plugin_width': ('min_plugin_width', 0, 512),
+                'vegas_lead_in_width': ('lead_in_width', 0, 2048),
+                'vegas_plugins_per_cycle': ('plugins_per_cycle', 1, 50),
+                'vegas_min_cycle_duration': ('min_cycle_duration', 5, 3600),
+                'vegas_max_cycle_duration': ('max_cycle_duration', 10, 3600),
             }
             for field_name, (config_key, min_val, max_val) in numeric_fields.items():
                 if field_name in data:

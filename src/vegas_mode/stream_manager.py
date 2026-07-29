@@ -14,7 +14,7 @@ Supports three display modes:
 import logging
 import threading
 import time
-from typing import Optional, List, Dict, Any, Deque, TYPE_CHECKING
+from typing import Optional, List, Dict, Any, Deque, Tuple, TYPE_CHECKING
 from collections import deque
 from dataclasses import dataclass, field
 from PIL import Image
@@ -116,8 +116,11 @@ class StreamManager:
             logger.warning("No plugins available for Vegas scroll")
             return False
 
-        # Prefetch initial content
-        self._prefetch_content(count=min(self.config.buffer_ahead + 1, len(self._ordered_plugins)))
+        # Fill the buffer to a whole cycle's worth of plugins. This used to be
+        # buffer_ahead + 1, which conflated prefetch depth with cycle size and
+        # meant a 20-plugin install only showed 3 plugins before recomposing.
+        self._prefetch_content(
+            count=min(self.config.plugins_per_cycle, len(self._ordered_plugins)))
 
         logger.info(
             "StreamManager initialized with %d plugins, %d segments buffered",
@@ -385,7 +388,7 @@ class StreamManager:
                 return
 
             for _ in range(count):
-                if len(self._active_buffer) >= self.config.buffer_ahead + 1:
+                if len(self._active_buffer) >= self.config.plugins_per_cycle:
                     break
 
                 # Ensure index is valid (guard against empty list)
@@ -521,28 +524,61 @@ class StreamManager:
             logger.debug("Refreshed content for %s in staging buffer", plugin_id)
 
     def _ensure_buffer_filled(self) -> None:
-        """Ensure buffer has enough content prefetched."""
-        if len(self._active_buffer) < self.config.buffer_ahead:
-            needed = self.config.buffer_ahead - len(self._active_buffer)
-            self._prefetch_content(count=needed)
+        """
+        Top the buffer back up after segments have been served.
+
+        buffer_ahead is the low-water mark only; plugins_per_cycle is the
+        ceiling and is enforced inside _prefetch_content.
+        """
+        low_water = min(self.config.buffer_ahead, self.config.plugins_per_cycle)
+        if len(self._active_buffer) < low_water:
+            self._prefetch_content(count=low_water - len(self._active_buffer))
 
     def get_all_content_for_composition(self) -> List[Image.Image]:
         """
         Get all buffered content as a flat list of images.
 
-        Used when composing the full scroll image.
         Skips STATIC segments as they don't have images to compose.
+
+        Prefer get_grouped_content_for_composition(): flattening loses the
+        plugin boundaries, which is what tells the compositor where a
+        separator belongs and where it does not.
 
         Returns:
             List of all images in buffer order
         """
         all_images = []
+        for _plugin_id, images in self.get_grouped_content_for_composition():
+            all_images.extend(images)
+        return all_images
+
+    def get_grouped_content_for_composition(self) -> List[Tuple[str, List[Image.Image]]]:
+        """
+        Get buffered content grouped by the plugin that produced it.
+
+        The grouping matters: separator_width is meant to mark the handoff from
+        one plugin to the next, not to sit between every row a single plugin
+        contributes. A per-row ticker like the F1 scoreboard returns over a
+        hundred images that it renders 4px apart internally, so flattening them
+        into one list and applying a uniform gap forced 32px between each of
+        its rows — both inconsistent with how the plugin looks standalone, and
+        a large hidden addition to the width it occupies.
+
+        Skips STATIC segments, which trigger a pause rather than contributing
+        scroll content, and segments left with no images.
+
+        Returns:
+            List of (plugin_id, images) in buffer order
+        """
+        grouped: List[Tuple[str, List[Image.Image]]] = []
         with self._buffer_lock:
             for segment in self._active_buffer:
-                # Skip STATIC segments - they trigger pauses, not scroll content
-                if segment.display_mode != VegasDisplayMode.STATIC:
-                    all_images.extend(segment.images)
-        return all_images
+                if segment.display_mode == VegasDisplayMode.STATIC:
+                    continue
+                if not segment.images:
+                    continue
+                grouped.append((segment.plugin_id, list(segment.images)))
+        return grouped
 
     def advance_cycle(self) -> None:
         """

@@ -110,20 +110,30 @@ class ScrollHelper:
         self.is_scrolling = False
         self.scroll_complete = False
         
-    def create_scrolling_image(self, content_items: list, 
+    def create_scrolling_image(self, content_items: list,
                              item_gap: int = 32,
-                             element_gap: int = 16) -> Image.Image:
+                             element_gap: int = 16,
+                             lead_gap: Optional[int] = None) -> Image.Image:
         """
         Create a wide image containing all content items for scrolling.
-        
+
         Args:
             content_items: List of PIL Images to include in scroll
             item_gap: Gap between different items
             element_gap: Gap between elements within an item
-            
+            lead_gap: Blank columns before the first item. Defaults to a full
+                display width, which makes a standalone ticker scroll in from
+                off-screen. Callers that loop many plugins back-to-back (Vegas
+                mode) pass a smaller value, since a full display width of black
+                reads as the panel being switched off at the start of every
+                cycle.
+
         Returns:
             PIL Image containing all content arranged horizontally
         """
+        if lead_gap is None:
+            lead_gap = self.display_width
+        lead_gap = max(0, int(lead_gap))
         if not content_items:
             # Create empty image if no content
             # Still set total_scroll_width to 0 to indicate no scrollable content
@@ -144,13 +154,13 @@ class ScrollHelper:
         total_width += element_gap * len(content_items)
         
         # Add initial gap before first item
-        total_width += self.display_width
-        
+        total_width += lead_gap
+
         # Create the full scrolling image
         full_image = Image.new('RGB', (total_width, self.display_height), (0, 0, 0))
-        
+
         # Position items
-        current_x = self.display_width  # Start with initial gap
+        current_x = lead_gap  # Start with initial gap
         
         for i, img in enumerate(content_items):
             # Paste the item image

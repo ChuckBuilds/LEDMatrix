@@ -64,7 +64,7 @@ class VegasModeCoordinator:
         self.plugin_manager = plugin_manager
 
         # Initialize components
-        self.plugin_adapter = PluginAdapter(display_manager)
+        self.plugin_adapter = PluginAdapter(display_manager, self.vegas_config)
         self.stream_manager = StreamManager(
             self.vegas_config,
             plugin_manager,
@@ -505,6 +505,10 @@ class VegasModeCoordinator:
             # Update components
             self.render_pipeline.update_config(new_vegas_config)
             self.stream_manager.config = new_vegas_config
+            self.plugin_adapter.config = new_vegas_config
+            # Cached segments were trimmed under the old settings, so drop them
+            # or a changed trim/padding value would not visibly take effect.
+            self.plugin_adapter.invalidate_cache()
 
             # Force refresh of stream manager to pick up plugin_order/buffer changes
             self.stream_manager._last_refresh = 0

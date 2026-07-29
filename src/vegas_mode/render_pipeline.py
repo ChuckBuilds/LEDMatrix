@@ -66,10 +66,6 @@ class RenderPipeline:
             else display_manager.height
         )
 
-        # Reusable blank frame for cycle-end pushes (allocated lazily,
-        # re-blacked before each reuse)
-        self._blank_frame = None
-
         # ScrollHelper for optimized scrolling
         self.scroll_helper = ScrollHelper(
             self.display_width,
@@ -141,23 +137,37 @@ class RenderPipeline:
             True if composition successful
         """
         try:
-            # Get all buffered content
-            images = self.stream_manager.get_all_content_for_composition()
+            # Content grouped by plugin, so a separator can be placed at the
+            # plugin boundaries only.
+            grouped = self.stream_manager.get_grouped_content_for_composition()
 
-            if not images:
+            if not grouped:
                 logger.warning("No content available for composition")
                 return False
 
-            # Add separator gaps between images
-            content_with_gaps = []
-            for i, img in enumerate(images):
-                content_with_gaps.append(img)
+            # Collapse each plugin's rows into a single block, joined by
+            # intra_plugin_gap. ScrollHelper applies one uniform gap between the
+            # items it is given, so handing it one item per plugin is what makes
+            # separator_width mean "between plugins" instead of "between every
+            # row". Without this, a per-row ticker such as the F1 scoreboard got
+            # the full separator between each of its ~116 rows.
+            blocks = []
+            total_rows = 0
+            for plugin_id, images in grouped:
+                total_rows += len(images)
+                blocks.append(self._join_plugin_rows(images))
 
-            # Create scrolling image via ScrollHelper
+            # Create scrolling image via ScrollHelper.
+            #
+            # lead_gap is explicit because ScrollHelper otherwise prepends a
+            # full display width of black — appropriate for a standalone ticker
+            # scrolling in from off-screen, but in Vegas mode it is charged
+            # once per cycle and reads as the panel switching off.
             self.scroll_helper.create_scrolling_image(
-                content_items=content_with_gaps,
+                content_items=blocks,
                 item_gap=self.config.separator_width,
-                element_gap=0
+                element_gap=0,
+                lead_gap=self.config.lead_in_width
             )
 
             # Verify scroll image was created successfully
@@ -177,11 +187,14 @@ class RenderPipeline:
             self._cycle_complete = False
 
             logger.info(
-                "Composed scroll image: %dx%d, %d plugins, %d items",
+                "Composed scroll image: %dx%d, %d plugin block(s), %d rows, "
+                "separator=%dpx between plugins / %dpx within",
                 self.scroll_helper.cached_image.width if self.scroll_helper.cached_image else 0,
                 self.display_height,
-                len(self._segments_in_scroll),
-                len(images)
+                len(blocks),
+                total_rows,
+                self.config.separator_width,
+                self.config.intra_plugin_gap,
             )
 
             return True
@@ -190,6 +203,32 @@ class RenderPipeline:
             # Expected errors from image operations, scroll helper, or bad data
             logger.exception("Error composing scroll content")
             return False
+
+    def _join_plugin_rows(self, images: List[Image.Image]) -> Image.Image:
+        """
+        Concatenate one plugin's images into a single block.
+
+        Args:
+            images: That plugin's content, in order
+
+        Returns:
+            A single image with the rows laid out left to right, separated by
+            ``intra_plugin_gap``. Returned unchanged when there is only one row,
+            which is the common case and avoids a pointless copy.
+        """
+        if len(images) == 1:
+            return images[0]
+
+        gap = max(0, self.config.intra_plugin_gap)
+        width = sum(img.width for img in images) + gap * (len(images) - 1)
+        height = max(img.height for img in images)
+
+        block = Image.new('RGB', (width, height), (0, 0, 0))
+        x = 0
+        for img in images:
+            block.paste(img, (x, 0))
+            x += img.width + gap
+        return block
 
     def render_frame(self) -> bool:
         """
@@ -236,24 +275,17 @@ class RenderPipeline:
                         "Scroll cycle complete after %.1fs",
                         time.time() - self._cycle_start_time
                     )
-                    # Push blank immediately so the hardware never shows any
-                    # post-wrap content while the coordinator recomposes the
-                    # next cycle (~100 ms). The blank is allocated once and
-                    # reused across cycle wraps (fresh paste each time in case
-                    # a consumer drew on the previous one).
-                    try:
-                        if self._blank_frame is None or self._blank_frame.size != (
-                                self.display_width, self.display_height):
-                            self._blank_frame = Image.new(
-                                'RGB', (self.display_width, self.display_height))
-                        else:
-                            self._blank_frame.paste(
-                                (0, 0, 0),
-                                (0, 0, self.display_width, self.display_height))
-                        self.display_manager.image = self._blank_frame
-                        self.display_manager.update_display()
-                    except Exception:
-                        logger.exception("Failed to write blank frame to display at cycle end")
+                    # Deliberately leave the last rendered frame on the panel.
+                    #
+                    # This used to push a blank frame so no post-wrap content
+                    # could be seen while the next cycle was composed. But
+                    # recomposing is synchronous and fetches plugin content:
+                    # measured 84ms at best and 4.8s at worst on a 512px panel,
+                    # and every millisecond of it was black. Holding the last
+                    # frame instead turns that into a brief freeze, which reads
+                    # as far less broken than the display switching off. The
+                    # frame is already past the end of the content, so there is
+                    # no second-pass content to leak.
                 return True  # Cycle done; coordinator starts new cycle next frame
 
             # Get visible portion
@@ -415,11 +447,12 @@ class RenderPipeline:
         result = self.compose_scroll_content()
 
         if result and self.sync_manager:
-            # When sync is active, start the leader at display_width instead of 0.
-            # This skips the initial black gap so the leader immediately shows content.
-            # The follower starts at position 0 (the gap) which looks like a clean
-            # blank transition rather than near-end content wrapping around.
-            self.scroll_helper.scroll_position = float(self.display_width)
+            # When sync is active, start the leader past the lead-in gap so it
+            # immediately shows content, leaving the follower on the blank gap
+            # for a clean transition rather than near-end content wrapping
+            # around. This tracks lead_in_width rather than assuming a full
+            # display width of gap, which is no longer the default.
+            self.scroll_helper.scroll_position = float(self.config.lead_in_width)
 
         if result and self.sync_manager:
             # Signal follower that a new cycle started (triggers its own rebuild)

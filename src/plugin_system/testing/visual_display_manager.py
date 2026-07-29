@@ -15,6 +15,7 @@ PIL Image canvas and draws text using the actual project fonts.
 import math
 import os
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, List, Optional, Tuple
 
@@ -61,6 +62,9 @@ class VisualTestDisplayManager:
 
         # Matrix proxy (plugins access display_manager.matrix.width/height)
         self.matrix = _MatrixProxy(width, height)
+
+        # Set while inside capture_mode(); mirrors DisplayManager's flag.
+        self._capture_mode_active = False
 
         # Scrolling state (interface compat, no-op)
         self._scrolling_state = {
@@ -173,6 +177,21 @@ class VisualTestDisplayManager:
     def update_display(self):
         """No-op for hardware; marks that display was updated."""
         self.update_called = True
+
+    @contextmanager
+    def capture_mode(self):
+        """
+        Interface parity with DisplayManager.capture_mode().
+
+        There is no hardware to suppress here, but Vegas mode's PluginAdapter
+        wraps every off-screen content fetch in this context, so the harness
+        must provide it for that code path to be exercisable in tests.
+        """
+        self._capture_mode_active = True
+        try:
+            yield
+        finally:
+            self._capture_mode_active = False
 
     def draw_text(self, text: str, x: Optional[int] = None, y: Optional[int] = None,
                   color: Tuple[int, int, int] = (255, 255, 255), small_font: bool = False,
