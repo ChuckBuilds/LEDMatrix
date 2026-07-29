@@ -222,16 +222,19 @@ def find_blank_cut(
         return target
 
     ink = column_has_ink(img, threshold)
-    lo = max(0, target - search_radius)
-    hi = min(width - 1, target + search_radius)
+
+    # target may legitimately equal width (a cut after the last column), but
+    # there is no column to inspect there, so both bounds stop at width - 1.
+    lo = max(0, min(target - search_radius, width - 1))
+    hi = max(0, min(target + search_radius, width - 1))
 
     # Walk outwards from target so the nearest gap wins.
     for offset in range(0, search_radius + 1):
         right = target + offset
-        if right <= hi and not ink[right]:
+        if lo <= right <= hi and not ink[right]:
             return right
         left = target - offset
-        if left >= lo and not ink[left]:
+        if lo <= left <= hi and not ink[left]:
             return left
 
     return target

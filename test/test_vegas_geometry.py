@@ -10,6 +10,7 @@ from src.vegas_mode.geometry import (
     content_bounds,
     dead_window_stats,
     edge_blank,
+    find_blank_cut,
     separation_gap,
     trim_to_content,
     window_coverage_stats,
@@ -319,3 +320,51 @@ class TestSeparationGap:
         # flat gap; measured separation lifts them to the 24px target.
         card = paint(make_img(150), 0, 150)
         assert separation_gap(card, card, target=24, minimum=8) == 24
+
+
+class TestFindBlankCut:
+    def test_snaps_to_the_nearest_gap(self):
+        img = paint(make_img(200), 0, 90)
+        paint(img, 110, 200)
+        # 100 is inside the 90..110 gap already.
+        assert find_blank_cut(img, 100, 20) == 100
+
+    def test_walks_outwards_to_find_a_gap(self):
+        img = paint(make_img(200), 0, 95)
+        paint(img, 105, 200)
+        cut = find_blank_cut(img, 90, 20)
+        assert 95 <= cut < 105
+
+    def test_solid_ink_returns_the_target(self):
+        assert find_blank_cut(paint(make_img(200), 0, 200), 100, 20) == 100
+
+    def test_target_at_image_width_does_not_index_past_the_end(self):
+        # A cut after the last column is legal. Indexing ink[width] raised
+        # IndexError in the field, losing that plugin's content for the cycle.
+        # Reached once the rotation offset advances so start + budget lands
+        # exactly on the image width.
+        img = paint(make_img(1840), 0, 1840)
+        assert find_blank_cut(img, 1840, 32) == 1840
+
+    def test_target_past_image_width_is_clamped(self):
+        img = paint(make_img(100), 0, 100)
+        assert find_blank_cut(img, 500, 32) == 100
+
+    def test_target_at_width_with_a_trailing_gap_snaps_back(self):
+        # Content 0..179, blank 180..199. The nearest blank column to 200 is
+        # 199, not the start of the gap — nearest is what keeps the cut as
+        # close as possible to the requested budget.
+        img = paint(make_img(200), 0, 180)
+        assert find_blank_cut(img, 200, 32) == 199
+
+    def test_zero_radius_returns_the_target(self):
+        assert find_blank_cut(paint(make_img(100), 0, 100), 50, 0) == 50
+
+    def test_negative_target_is_clamped_to_zero(self):
+        assert find_blank_cut(paint(make_img(100), 0, 100), -20, 8) == 0
+
+    @pytest.mark.parametrize("target", [0, 1, 50, 99, 100])
+    def test_never_raises_across_the_range(self, target):
+        img = paint(make_img(100), 0, 100)
+        cut = find_blank_cut(img, target, 16)
+        assert 0 <= cut <= 100

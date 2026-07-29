@@ -928,3 +928,44 @@ class TestBudgetUsesMeasuredGaps:
 
         p = RenderPipeline(VegasModeConfig(lead_in_width=0, **cfg), DM(), FakeStream())
         assert p._join_plugin_rows(selected).width <= DISPLAY_W
+
+
+class TestRotationAcrossMultipleCycles:
+    """
+    The single-image crop advances a window across cycles. The second and later
+    passes are where start + budget can land exactly on the image width, which
+    crashed find_blank_cut in the field and lost that plugin's content for the
+    cycle. First-pass-only tests never reach it.
+    """
+
+    def test_window_advances_over_many_cycles_without_error(self):
+        # Mirrors the field case: 1840px stocks strip, 1536px budget, so the
+        # second pass starts at 1536 and start + budget == 3072 -> clamped to
+        # the 1840 width, i.e. target == img.width.
+        adapter = adapter_with(content_padding=0, max_plugin_width_ratio=3.0)
+        strip = canvas([(0, 1840)], width=1840)
+        widths = []
+        for _ in range(8):
+            adapter.invalidate_cache('ledmatrix-stocks')
+            images = adapter.get_content(NativePlugin([strip]), 'ledmatrix-stocks')
+            assert images, "content must never be lost mid-rotation"
+            widths.append(images[0].width)
+        assert all(w > 0 for w in widths)
+
+    def test_offset_wraps_back_to_zero_at_the_end(self):
+        adapter = adapter_with(content_padding=0, max_plugin_width_ratio=3.0)
+        strip = canvas([(0, 1840)], width=1840)
+        seen_reset = False
+        for _ in range(6):
+            adapter.invalidate_cache('s')
+            adapter.get_content(NativePlugin([strip]), 's')
+            if adapter._item_offsets.get('s', 0) == 0:
+                seen_reset = True
+        assert seen_reset, "window should wrap round rather than stall at the end"
+
+    def test_multi_row_rotation_never_returns_empty(self):
+        adapter = adapter_with(content_padding=0, max_plugin_width_ratio=1.0)
+        rows = [canvas([(0, 200)], width=200) for _ in range(7)]
+        for _ in range(10):
+            adapter.invalidate_cache('rows')
+            assert adapter.get_content(NativePlugin(rows), 'rows')
