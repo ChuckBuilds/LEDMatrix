@@ -230,6 +230,11 @@ class VegasModeConfig:
         if self.min_plugin_width < 0:
             errors.append(
                 f"min_plugin_width must be >= 0, got {self.min_plugin_width}")
+        # Bounded because every segment narrower than this is dropped — an
+        # unbounded value would discard every plugin and leave a blank ticker.
+        if self.min_plugin_width > 512:
+            errors.append(
+                f"min_plugin_width must be <= 512, got {self.min_plugin_width}")
 
         if self.lead_in_width < 0:
             errors.append(

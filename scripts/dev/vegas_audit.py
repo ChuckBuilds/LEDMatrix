@@ -208,7 +208,12 @@ def main() -> int:
     display_manager = VisualTestDisplayManager(width=width, height=height)
     cache_manager = MockCacheManager()
     plugin_manager = MockPluginManager()
-    adapter = PluginAdapter(display_manager)
+    # Pass the loaded config, exactly as VegasModeCoordinator does. Omitting it
+    # makes PluginAdapter fall back to VegasModeConfig() defaults, so the audit
+    # would silently report trimming and width-budget behaviour that differs
+    # from the user's config.json — the same drift the lead_gap and grouping
+    # arguments below exist to avoid.
+    adapter = PluginAdapter(display_manager, vegas)
 
     if not args.json:
         print(f"Vegas audit — display {width}x{height}, scroll {speed:g}px/s, "

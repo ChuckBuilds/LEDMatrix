@@ -961,13 +961,21 @@ def save_main_config():
                     }), 400
                 vegas_config['max_plugin_width_ratio'] = ratio
 
-            # Handle numeric settings with validation
+            # Handle numeric settings with validation.
+            #
+            # These bounds must match VegasModeConfig.validate(), which is what
+            # actually gates Vegas starting. Where they were looser, a value
+            # saved with a 200 and then made VegasModeCoordinator.start() bail
+            # out with only a log line, so the ticker silently never ran.
+            # Where they were tighter (scroll_speed capped at 100 against a
+            # slider that goes to 200), a legitimate value was rejected with a
+            # 400. See test_vegas_api_bounds_match_validate.
             numeric_fields = {
-                'vegas_scroll_speed': ('scroll_speed', 1, 100),
-                'vegas_separator_width': ('separator_width', 0, 500),
+                'vegas_scroll_speed': ('scroll_speed', 1, 200),
+                'vegas_separator_width': ('separator_width', 0, 128),
                 'vegas_intra_plugin_gap': ('intra_plugin_gap', 0, 128),
-                'vegas_target_fps': ('target_fps', 1, 200),
-                'vegas_buffer_ahead': ('buffer_ahead', 1, 20),
+                'vegas_target_fps': ('target_fps', 30, 200),
+                'vegas_buffer_ahead': ('buffer_ahead', 1, 5),
                 'vegas_trim_threshold': ('trim_threshold', 0, 254),
                 'vegas_content_padding': ('content_padding', 0, 128),
                 'vegas_min_plugin_width': ('min_plugin_width', 0, 512),

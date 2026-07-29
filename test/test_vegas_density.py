@@ -398,6 +398,82 @@ class TestStreamGrouping:
         assert len(sm.get_all_content_for_composition()) == 5
 
 
+class TestApiBoundsMatchValidate:
+    """
+    The web API's accepted range for each Vegas setting must agree with
+    VegasModeConfig.validate(), which is what actually gates Vegas starting.
+
+    A looser API bound saves a value with a 200 and then makes
+    VegasModeCoordinator.start() bail out with only a log line, so the ticker
+    silently never runs. A tighter one rejects a legitimate value with a 400.
+    Both happened before this test existed.
+    """
+
+    # (config key, min, max) as validate() enforces them.
+    EXPECTED = {
+        'scroll_speed': (1, 200),
+        'separator_width': (0, 128),
+        'intra_plugin_gap': (0, 128),
+        'target_fps': (30, 200),
+        'buffer_ahead': (1, 5),
+        'trim_threshold': (0, 254),
+        'content_padding': (0, 128),
+        'min_plugin_width': (0, 512),
+        'plugins_per_cycle': (1, 50),
+    }
+
+    def _api_numeric_fields(self):
+        """Extract the numeric_fields map from api_v3 without importing Flask."""
+        import ast
+        import pathlib
+        src = pathlib.Path('web_interface/blueprints/api_v3.py').read_text()
+        tree = ast.parse(src)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign):
+                continue
+            targets = [t.id for t in node.targets if isinstance(t, ast.Name)]
+            if 'numeric_fields' not in targets:
+                continue
+            if not isinstance(node.value, ast.Dict):
+                continue
+            found = {}
+            for key, value in zip(node.value.keys, node.value.values):
+                if not isinstance(key, ast.Constant):
+                    continue
+                if not str(key.value).startswith('vegas_'):
+                    break
+                cfg_key, lo, hi = [ast.literal_eval(e) for e in value.elts]
+                found[cfg_key] = (lo, hi)
+            if found:
+                return found
+        raise AssertionError("could not locate the vegas numeric_fields map")
+
+    def test_every_bound_matches_validate(self):
+        api = self._api_numeric_fields()
+        mismatched = {
+            key: (api[key], expected)
+            for key, expected in self.EXPECTED.items()
+            if key in api and api[key] != expected
+        }
+        assert not mismatched, f"API bounds disagree with validate(): {mismatched}"
+
+    @pytest.mark.parametrize('key,bounds', sorted(EXPECTED.items()))
+    def test_validate_accepts_both_endpoints(self, key, bounds):
+        lo, hi = bounds
+        for value in (lo, hi):
+            cfg = VegasModeConfig(**{key: value})
+            errors = [e for e in cfg.validate() if key in e]
+            assert not errors, f"{key}={value} should be valid, got {errors}"
+
+    @pytest.mark.parametrize('key,bounds', sorted(EXPECTED.items()))
+    def test_validate_rejects_just_outside(self, key, bounds):
+        lo, hi = bounds
+        for value in (lo - 1, hi + 1):
+            cfg = VegasModeConfig(**{key: value})
+            errors = [e for e in cfg.validate() if key in e]
+            assert errors, f"{key}={value} should be rejected"
+
+
 class TestCycleSizing:
     def test_plugins_per_cycle_defaults_above_buffer_ahead(self):
         cfg = VegasModeConfig()
