@@ -120,7 +120,7 @@ class PluginAdapter:
                     "[%s] Native content SUCCESS: %d images, %dpx total",
                     plugin_id, len(content), total_width
                 )
-                return self._finalize(content, plugin_id, 'native')
+                return self._finalize(content, plugin_id, 'native', plugin)
             logger.info("[%s] Native content returned None", plugin_id)
 
         # Try to get scroll_helper's cached image (for scrolling plugins like stocks/odds)
@@ -133,7 +133,7 @@ class PluginAdapter:
                 "[%s] ScrollHelper content SUCCESS: %d images, %dpx total",
                 plugin_id, len(content), total_width
             )
-            return self._finalize(content, plugin_id, 'scroll_helper')
+            return self._finalize(content, plugin_id, 'scroll_helper', plugin)
         if has_scroll_helper:
             logger.info("[%s] ScrollHelper content returned None", plugin_id)
 
@@ -154,7 +154,7 @@ class PluginAdapter:
                 "[%s] Fallback capture SUCCESS: %d images, %dpx total",
                 plugin_id, len(content), total_width
             )
-            return self._finalize(content, plugin_id, 'fallback')
+            return self._finalize(content, plugin_id, 'fallback', plugin)
 
         logger.warning(
             "[%s] NO CONTENT from any method (native=%s, scroll_helper=%s, fallback=tried)",
@@ -163,7 +163,8 @@ class PluginAdapter:
         return None
 
     def _finalize(
-        self, images: List[Image.Image], plugin_id: str, source: str
+        self, images: List[Image.Image], plugin_id: str, source: str,
+        plugin: Optional['BasePlugin'] = None
     ) -> Optional[List[Image.Image]]:
         """
         Trim dead space off a segment, then cache it.
@@ -190,7 +191,7 @@ class PluginAdapter:
             # turning off margin cropping should not let one plugin hold the
             # panel for minutes. Skipping it here previously let a 14,848px
             # segment through untouched.
-            kept = self._apply_width_budget(list(images), plugin_id)
+            kept = self._apply_width_budget(list(images), plugin_id, plugin)
             self._cache_content(plugin_id, kept)
             return kept
 
@@ -235,7 +236,7 @@ class PluginAdapter:
                 len(kept), dropped_blank
             )
 
-        kept = self._apply_width_budget(kept, plugin_id)
+        kept = self._apply_width_budget(kept, plugin_id, plugin)
 
         self._cache_content(plugin_id, kept)
         return kept
@@ -332,15 +333,74 @@ class PluginAdapter:
             threshold=self.config.trim_threshold,
         )
 
-    def _width_budget(self) -> int:
-        """Maximum columns one plugin may occupy in a cycle. 0 means unlimited."""
+    def _plugin_setting(self, plugin: 'BasePlugin', key: str):
+        """Read a per-plugin config override, or None if absent."""
+        plugin_cfg = getattr(plugin, 'config', None)
+        if not isinstance(plugin_cfg, dict):
+            return None
+        value = plugin_cfg.get(key)
+        return None if value in (None, '') else value
+
+    def resolve_overflow_mode(self, plugin: 'BasePlugin', plugin_id: str) -> str:
+        """
+        How to handle content that exceeds this plugin's width budget.
+
+        'rotate' advances a window each cycle so everything is seen eventually,
+        which suits interchangeable items. 'truncate' always shows the start,
+        which suits ordered content — a league table that shows ranks 1-6 and
+        then resumes at 7 two rotations later reads as out of order, and nobody
+        needs rank 23 in a ticker anyway.
+
+        Per-plugin ``vegas_overflow`` wins over the global ``overflow_mode``.
+        """
+        raw = self._plugin_setting(plugin, 'vegas_overflow')
+        if raw is not None:
+            candidate = str(raw).strip().lower()
+            if candidate in ('rotate', 'truncate'):
+                return candidate
+            logger.warning(
+                "[%s] Invalid vegas_overflow %r, expected 'rotate' or 'truncate'",
+                plugin_id, raw
+            )
+        return self.config.overflow_mode
+
+    def _width_budget(self, plugin: Optional['BasePlugin'] = None,
+                      plugin_id: str = '') -> int:
+        """
+        Maximum columns one plugin may occupy in a cycle. 0 means unlimited.
+
+        A per-plugin ``vegas_max_width_screens`` overrides the global ratio, so
+        content that has to stay whole can be given room (or uncapped with 0)
+        without lifting the cap on every ticker.
+        """
         ratio = self.config.max_plugin_width_ratio
+
+        if plugin is not None:
+            raw = self._plugin_setting(plugin, 'vegas_max_width_screens')
+            if raw is not None:
+                try:
+                    candidate = float(raw)
+                except (TypeError, ValueError):
+                    logger.warning(
+                        "[%s] Invalid vegas_max_width_screens %r, ignoring",
+                        plugin_id, raw
+                    )
+                else:
+                    if candidate >= 0:
+                        ratio = candidate
+                    else:
+                        logger.warning(
+                            "[%s] vegas_max_width_screens must be >= 0, got %s",
+                            plugin_id, candidate
+                        )
+
         if ratio <= 0:
             return 0
         return int(self.display_width * ratio)
 
     def _apply_width_budget(
-        self, images: List[Image.Image], plugin_id: str
+        self, images: List[Image.Image], plugin_id: str,
+        plugin: Optional['BasePlugin'] = None
     ) -> List[Image.Image]:
         """
         Hold one plugin to its share of a cycle.
@@ -359,7 +419,9 @@ class PluginAdapter:
             Images that fit the budget, starting from the plugin's current
             rotation offset.
         """
-        budget = self._width_budget()
+        budget = self._width_budget(plugin, plugin_id)
+        mode = (self.resolve_overflow_mode(plugin, plugin_id)
+                if plugin is not None else self.config.overflow_mode)
 
         # Count the gaps the compositor will actually insert, not just the
         # pixels of the rows — otherwise a plugin with many rows quietly
@@ -377,9 +439,15 @@ class PluginAdapter:
             return images
 
         if len(images) == 1:
-            return [self._crop_to_budget(images[0], budget, plugin_id)]
+            return [self._crop_to_budget(images[0], budget, plugin_id, mode)]
 
-        start = self._item_offsets.get(plugin_id, 0) % len(images)
+        if mode == 'truncate':
+            # Ordered content: always show from the top. Deliberately does not
+            # advance the offset, so the same opening items appear every time
+            # rather than the viewer being shown the middle of a ranked list.
+            start = 0
+        else:
+            start = self._item_offsets.get(plugin_id, 0) % len(images)
         selected: List[Image.Image] = []
         used = 0
         consumed = 0
@@ -397,17 +465,24 @@ class PluginAdapter:
             used += cost
             consumed += 1
 
-        self._item_offsets[plugin_id] = (start + consumed) % len(images)
-
-        logger.info(
-            "[%s] Width budget %dpx: showing %d of %d row(s) (%dpx incl. gaps) "
-            "from offset %d; remainder deferred to a later cycle",
-            plugin_id, budget, len(selected), len(images), used, start
-        )
+        if mode == 'truncate':
+            logger.info(
+                "[%s] Width budget %dpx: showing the first %d of %d row(s) "
+                "(%dpx incl. gaps); the rest are not shown (overflow=truncate)",
+                plugin_id, budget, len(selected), len(images), used
+            )
+        else:
+            self._item_offsets[plugin_id] = (start + consumed) % len(images)
+            logger.info(
+                "[%s] Width budget %dpx: showing %d of %d row(s) (%dpx incl. gaps) "
+                "from offset %d; remainder deferred to a later cycle",
+                plugin_id, budget, len(selected), len(images), used, start
+            )
         return selected
 
     def _crop_to_budget(
-        self, img: Image.Image, budget: int, plugin_id: str
+        self, img: Image.Image, budget: int, plugin_id: str,
+        mode: str = 'rotate'
     ) -> Image.Image:
         """
         Narrow a single oversized image to the budget, advancing a window
@@ -416,9 +491,14 @@ class PluginAdapter:
         The cut is snapped to the nearest blank column so it does not slice
         through a glyph or logo and leave half a character at the panel edge.
         """
-        offset = self._item_offsets.get(plugin_id, 0)
-        if offset >= img.width:
+        if mode == 'truncate':
+            # Always the start of the strip, so a ranked table is never entered
+            # from the middle.
             offset = 0
+        else:
+            offset = self._item_offsets.get(plugin_id, 0)
+            if offset >= img.width:
+                offset = 0
 
         # Cut only where the plugin left a real gap between items. Snapping to
         # any blank column used to pick the single-column gaps between
@@ -435,11 +515,13 @@ class PluginAdapter:
             # (words, ticker entries); it would be wrong to let a solid image
             # escape the cap in its name.
             end = min(offset + budget, img.width)
-            self._item_offsets[plugin_id] = 0 if end >= img.width else end
+            if mode != 'truncate':
+                self._item_offsets[plugin_id] = 0 if end >= img.width else end
             logger.info(
                 "[%s] Width budget %dpx: cropped continuous %dpx image to "
-                "[%d:%d] (no item gaps of %dpx+ to align to)",
-                plugin_id, budget, img.width, offset, end, min_run
+                "[%d:%d] (no item gaps of %dpx+ to align to)%s",
+                plugin_id, budget, img.width, offset, end, min_run,
+                "" if mode != 'truncate' else "; showing the start only"
             )
             return img.crop((offset, 0, end, img.height))
 
@@ -456,13 +538,16 @@ class PluginAdapter:
             # because the alternative is cutting through an item.
             end = max(within) if within else min(later)
 
-        # Next cycle resumes where this one stopped; wrap when the strip ends.
-        self._item_offsets[plugin_id] = 0 if end >= img.width else end
+        if mode != 'truncate':
+            # Next cycle resumes where this one stopped; wrap when the strip ends.
+            self._item_offsets[plugin_id] = 0 if end >= img.width else end
 
         logger.info(
             "[%s] Width budget %dpx: cropped single %dpx image to [%d:%d] "
-            "(%dpx) at item boundaries, window advances next cycle",
-            plugin_id, budget, img.width, start, end, end - start
+            "(%dpx) at item boundaries, %s",
+            plugin_id, budget, img.width, start, end, end - start,
+            "showing the start only (overflow=truncate)"
+            if mode == 'truncate' else "window advances next cycle"
         )
         return img.crop((start, 0, end, img.height))
 

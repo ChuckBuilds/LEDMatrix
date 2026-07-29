@@ -547,6 +547,14 @@
                                    class="form-control">
                         </div>
 
+                        <div class="form-group" id="setting-display-vegas_overflow_mode" data-setting-key="display.vegas_scroll.overflow_mode">
+                            <label for="vegas_overflow_mode" class="block text-sm font-medium text-gray-700">When A Plugin Is Too Wide{{ ui.help_tip('What to do when a plugin has more content than its width allowance.\nRotate through it: show a different slice each time round, so everything is seen eventually. Right for interchangeable items like news headlines, odds or stock prices.\nShow the start only: always display from the beginning and drop the rest. Right for ordered content — a league table that shows ranks 1-6 and then resumes at 7 two rotations later reads as out of order.\nDefault: rotate. Override for one plugin with vegas_overflow in its own settings.', 'Overflow Handling') }}</label>
+                            <select id="vegas_overflow_mode" name="vegas_overflow_mode" class="form-control">
+                                <option value="rotate" {% if main_config.display.get('vegas_scroll', {}).get('overflow_mode', 'rotate') == 'rotate' %}selected{% endif %}>Rotate through it (default)</option>
+                                <option value="truncate" {% if main_config.display.get('vegas_scroll', {}).get('overflow_mode', 'rotate') == 'truncate' %}selected{% endif %}>Show the start only</option>
+                            </select>
+                        </div>
+
                         <div class="form-group" id="setting-display-vegas_max_plugin_width_ratio" data-setting-key="display.vegas_scroll.max_plugin_width_ratio">
                             <label for="vegas_max_plugin_width_ratio" class="block text-sm font-medium text-gray-700">Max Plugin Width (screens){{ ui.help_tip('Caps how much of one cycle a single plugin may occupy, measured in screen widths (0–20).\nDefault: 3. A long ticker such as a news feed or leaderboard is trimmed to this and the remainder shown on later cycles, so one plugin cannot hold the display for minutes. Set 0 for no limit.', 'Max Plugin Width') }}</label>
                             <input type="number"

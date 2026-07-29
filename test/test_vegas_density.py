@@ -1509,3 +1509,131 @@ class TestDeferredDraining:
         p.extend_scroll_content()
         assert p.drain_deferred() is True
         assert p.drain_deferred() is True
+
+
+class TestOverflowMode:
+    """
+    Rotating a window through content only makes sense when the items are
+    interchangeable. For ordered content it shows the middle of a ranked list —
+    ranks 1-6, then 7 onwards two rotations later, which reads as out of order.
+    """
+
+    class Cfg:
+        def __init__(self, cfg=None):
+            self.config = cfg or {}
+
+        def get_vegas_content(self):
+            return None
+
+    def test_default_is_rotate(self):
+        adapter = adapter_with()
+        assert adapter.resolve_overflow_mode(self.Cfg(), 'p') == 'rotate'
+
+    def test_global_mode_applies(self):
+        adapter = adapter_with(overflow_mode='truncate')
+        assert adapter.resolve_overflow_mode(self.Cfg(), 'p') == 'truncate'
+
+    def test_per_plugin_override_wins(self):
+        adapter = adapter_with(overflow_mode='rotate')
+        plugin = self.Cfg({'vegas_overflow': 'truncate'})
+        assert adapter.resolve_overflow_mode(plugin, 'p') == 'truncate'
+
+    @pytest.mark.parametrize('bad', ['sideways', '', None, 5])
+    def test_invalid_override_falls_back(self, bad):
+        adapter = adapter_with(overflow_mode='rotate')
+        plugin = self.Cfg({'vegas_overflow': bad})
+        assert adapter.resolve_overflow_mode(plugin, 'p') == 'rotate'
+
+    def test_truncate_always_shows_the_same_opening_rows(self):
+        # The reported problem: a ranked list should not resume from the middle.
+        adapter = adapter_with(content_padding=0, max_plugin_width_ratio=1.0,
+                               intra_plugin_gap=0, min_content_separation=0,
+                               overflow_mode='truncate')
+        rows = [canvas([(0, 200)], width=200) for _ in range(8)]
+        plugin = NativePlugin(rows)
+
+        first = adapter.get_content(plugin, 'ranks')
+        adapter.invalidate_cache('ranks')
+        second = adapter.get_content(plugin, 'ranks')
+        assert len(first) == len(second)
+        assert 'ranks' not in adapter._item_offsets, "must not advance a window"
+
+    def test_rotate_still_advances(self):
+        adapter = adapter_with(content_padding=0, max_plugin_width_ratio=1.0,
+                               intra_plugin_gap=0, min_content_separation=0,
+                               overflow_mode='rotate')
+        rows = [canvas([(0, 200)], width=200) for _ in range(8)]
+        adapter.get_content(NativePlugin(rows), 'ticker')
+        assert adapter._item_offsets.get('ticker', 0) > 0
+
+    def test_truncate_on_a_single_wide_image_starts_at_zero(self):
+        adapter = adapter_with(content_padding=0, max_plugin_width_ratio=1.0,
+                               overflow_mode='truncate')
+        strip = canvas([(0, 5000)], width=5000)
+        plugin = NativePlugin([strip])
+        first = adapter.get_content(plugin, 'table')[0]
+        adapter.invalidate_cache('table')
+        second = adapter.get_content(plugin, 'table')[0]
+        assert first.tobytes() == second.tobytes(), "window must not advance"
+
+
+class TestPerPluginWidthBudget:
+    class Cfg:
+        def __init__(self, cfg=None):
+            self.config = cfg or {}
+
+        def get_vegas_content(self):
+            return None
+
+    def test_global_ratio_by_default(self):
+        adapter = adapter_with(max_plugin_width_ratio=3.0)
+        assert adapter._width_budget(self.Cfg(), 'p') == DISPLAY_W * 3
+
+    def test_per_plugin_override_widens(self):
+        adapter = adapter_with(max_plugin_width_ratio=3.0)
+        plugin = self.Cfg({'vegas_max_width_screens': 8})
+        assert adapter._width_budget(plugin, 'p') == DISPLAY_W * 8
+
+    def test_per_plugin_zero_means_uncapped(self):
+        adapter = adapter_with(max_plugin_width_ratio=3.0)
+        plugin = self.Cfg({'vegas_max_width_screens': 0})
+        assert adapter._width_budget(plugin, 'p') == 0
+
+    def test_uncapped_plugin_keeps_all_its_content(self):
+        adapter = adapter_with(content_padding=0, max_plugin_width_ratio=1.0)
+
+        class Wide(NativePlugin):
+            def __init__(self, images):
+                super().__init__(images)
+                self.config = {'vegas_max_width_screens': 0}
+
+        strip = canvas([(0, 6000)], width=6000)
+        assert adapter.get_content(Wide([strip]), 'whole')[0].width == 6000
+
+    @pytest.mark.parametrize('bad', ['wide', -1, None, ''])
+    def test_invalid_override_falls_back_to_global(self, bad):
+        adapter = adapter_with(max_plugin_width_ratio=2.0)
+        plugin = self.Cfg({'vegas_max_width_screens': bad})
+        assert adapter._width_budget(plugin, 'p') == DISPLAY_W * 2
+
+    def test_no_plugin_uses_the_global(self):
+        adapter = adapter_with(max_plugin_width_ratio=2.0)
+        assert adapter._width_budget() == DISPLAY_W * 2
+
+    def test_truncate_single_image_never_records_an_offset(self):
+        # The behavioural guarantee behind the log message: no window state is
+        # kept, so every pass starts at the top.
+        adapter = adapter_with(content_padding=0, max_plugin_width_ratio=1.0,
+                               overflow_mode='truncate')
+        strip = canvas([(0, 5000)], width=5000)
+        for _ in range(4):
+            adapter.invalidate_cache('table')
+            adapter.get_content(NativePlugin([strip]), 'table')
+        assert 'table' not in adapter._item_offsets
+
+    def test_rotate_single_image_does_record_an_offset(self):
+        adapter = adapter_with(content_padding=0, max_plugin_width_ratio=1.0,
+                               overflow_mode='rotate')
+        strip = canvas([(0, 5000)], width=5000)
+        adapter.get_content(NativePlugin([strip]), 'ticker')
+        assert adapter._item_offsets.get('ticker', 0) > 0

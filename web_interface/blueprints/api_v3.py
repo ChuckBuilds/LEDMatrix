@@ -926,7 +926,7 @@ def save_main_config():
                        'vegas_intra_plugin_gap', 'vegas_render_width_pct',
                        'vegas_min_content_separation', 'vegas_min_cut_gap',
                        'vegas_continuous_scroll', 'vegas_extend_threshold_screens',
-                       'vegas_smooth_scroll']
+                       'vegas_smooth_scroll', 'vegas_overflow_mode']
 
         if any(k in data for k in vegas_fields):
             if 'display' not in current_config:
@@ -951,6 +951,16 @@ def save_main_config():
 
             # max_plugin_width_ratio is the one fractional setting, so it is
             # handled outside the integer loop below.
+            if data.get('vegas_overflow_mode') not in ('', None):
+                mode = str(data['vegas_overflow_mode']).strip().lower()
+                if mode not in ('rotate', 'truncate'):
+                    return jsonify({
+                        'status': 'error',
+                        'message': "Invalid value for vegas_overflow_mode: "
+                                   "must be 'rotate' or 'truncate'"
+                    }), 400
+                vegas_config['overflow_mode'] = mode
+
             if data.get('vegas_extend_threshold_screens') not in ('', None):
                 try:
                     screens = float(data['vegas_extend_threshold_screens'])

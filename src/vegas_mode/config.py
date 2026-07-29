@@ -91,6 +91,18 @@ class VegasModeConfig:
     # letter floating between two unrelated plugins.
     min_cut_gap: int = 6
 
+    # What to do when a plugin's content exceeds its width budget.
+    #
+    #   "rotate"   — advance a window each cycle so everything is seen eventually.
+    #                Right for interchangeable items: news headlines, odds, stocks.
+    #   "truncate" — always show the start. Right for ordered content, where a
+    #                window into the middle is meaningless: a league table that
+    #                shows ranks 1-6 then resumes at 7 two rotations later reads
+    #                as out of order and out of context.
+    #
+    # Override per plugin with vegas_overflow.
+    overflow_mode: str = "rotate"
+
     # Cap on one plugin's share of a cycle, as a multiple of display width.
     # A single ticker returning 7,000px would otherwise hold the panel for over
     # two minutes. Overflow is deferred to later cycles rather than discarded.
@@ -148,6 +160,7 @@ class VegasModeConfig:
             plugins_per_cycle=int(vegas_config.get('plugins_per_cycle', 6)),
             max_plugin_width_ratio=float(
                 vegas_config.get('max_plugin_width_ratio', 3.0)),
+            overflow_mode=str(vegas_config.get('overflow_mode', 'rotate')),
             plugin_order=list(vegas_config.get('plugin_order', [])),
             excluded_plugins=set(vegas_config.get('excluded_plugins', [])),
             target_fps=int(vegas_config.get('target_fps', 125)),
@@ -179,6 +192,7 @@ class VegasModeConfig:
             'lead_in_width': self.lead_in_width,
             'plugins_per_cycle': self.plugins_per_cycle,
             'max_plugin_width_ratio': self.max_plugin_width_ratio,
+            'overflow_mode': self.overflow_mode,
             'plugin_order': self.plugin_order,
             'excluded_plugins': list(self.excluded_plugins),
             'target_fps': self.target_fps,
@@ -322,6 +336,11 @@ class VegasModeConfig:
             errors.append(
                 f"plugins_per_cycle must be <= 50, got {self.plugins_per_cycle}")
 
+        if self.overflow_mode not in ('rotate', 'truncate'):
+            errors.append(
+                "overflow_mode must be 'rotate' or 'truncate', "
+                f"got {self.overflow_mode!r}")
+
         if self.max_plugin_width_ratio < 0:
             errors.append(
                 "max_plugin_width_ratio must be >= 0 "
@@ -375,6 +394,8 @@ class VegasModeConfig:
         if 'max_plugin_width_ratio' in vegas_config:
             self.max_plugin_width_ratio = float(
                 vegas_config['max_plugin_width_ratio'])
+        if 'overflow_mode' in vegas_config:
+            self.overflow_mode = str(vegas_config['overflow_mode'])
         if 'plugin_order' in vegas_config:
             self.plugin_order = list(vegas_config['plugin_order'])
         if 'excluded_plugins' in vegas_config:
