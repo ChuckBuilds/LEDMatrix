@@ -924,7 +924,8 @@ def save_main_config():
                        'vegas_max_plugin_width_ratio', 'vegas_dynamic_duration_enabled',
                        'vegas_min_cycle_duration', 'vegas_max_cycle_duration',
                        'vegas_intra_plugin_gap', 'vegas_render_width_pct',
-                       'vegas_min_content_separation', 'vegas_min_cut_gap']
+                       'vegas_min_content_separation', 'vegas_min_cut_gap',
+                       'vegas_continuous_scroll', 'vegas_extend_threshold_screens']
 
         if any(k in data for k in vegas_fields):
             if 'display' not in current_config:
@@ -942,9 +943,28 @@ def save_main_config():
             vegas_config['auto_trim'] = _coerce_to_bool(data.get('vegas_auto_trim'))
             vegas_config['dynamic_duration_enabled'] = _coerce_to_bool(
                 data.get('vegas_dynamic_duration_enabled'))
+            vegas_config['continuous_scroll'] = _coerce_to_bool(
+                data.get('vegas_continuous_scroll'))
 
             # max_plugin_width_ratio is the one fractional setting, so it is
             # handled outside the integer loop below.
+            if data.get('vegas_extend_threshold_screens') not in ('', None):
+                try:
+                    screens = float(data['vegas_extend_threshold_screens'])
+                except (ValueError, TypeError):
+                    return jsonify({
+                        'status': 'error',
+                        'message': "Invalid value for vegas_extend_threshold_screens: "
+                                   "must be a number"
+                    }), 400
+                if not (1.0 <= screens <= 10.0):
+                    return jsonify({
+                        'status': 'error',
+                        'message': "Invalid value for vegas_extend_threshold_screens: "
+                                   "must be between 1.0 and 10.0"
+                    }), 400
+                vegas_config['extend_threshold_screens'] = screens
+
             if data.get('vegas_max_plugin_width_ratio') not in ('', None):
                 try:
                     ratio = float(data['vegas_max_plugin_width_ratio'])

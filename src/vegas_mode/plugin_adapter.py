@@ -73,7 +73,8 @@ class PluginAdapter:
             self.display_width, self.display_height
         )
 
-    def get_content(self, plugin: 'BasePlugin', plugin_id: str) -> Optional[List[Image.Image]]:
+    def get_content(self, plugin: 'BasePlugin', plugin_id: str,
+                    offscreen_only: bool = False) -> Optional[List[Image.Image]]:
         """
         Get scrollable content from a plugin.
 
@@ -82,6 +83,13 @@ class PluginAdapter:
         Args:
             plugin: Plugin instance to get content from
             plugin_id: Plugin identifier for logging
+            offscreen_only: Skip every path that touches the shared display
+                canvas, for callers running off the render thread. The canvas
+                and the matrix proxy are process-wide mutable state, so
+                narrowing or capturing through them from another thread would
+                corrupt the frame the render loop is pushing. Returns None when
+                the plugin can only be served that way, leaving the caller to
+                fetch it on the render thread.
 
         Returns:
             List of PIL Images representing plugin content, or None if no content
@@ -105,7 +113,7 @@ class PluginAdapter:
         has_native = hasattr(plugin, 'get_vegas_content')
         logger.info("[%s] Has get_vegas_content: %s", plugin_id, has_native)
         if has_native:
-            content = self._get_native_content(plugin, plugin_id)
+            content = self._get_native_content(plugin, plugin_id, offscreen_only)
             if content:
                 total_width = sum(img.width for img in content)
                 logger.info(
@@ -118,7 +126,7 @@ class PluginAdapter:
         # Try to get scroll_helper's cached image (for scrolling plugins like stocks/odds)
         has_scroll_helper = hasattr(plugin, 'scroll_helper')
         logger.info("[%s] Has scroll_helper: %s", plugin_id, has_scroll_helper)
-        content = self._get_scroll_helper_content(plugin, plugin_id)
+        content = self._get_scroll_helper_content(plugin, plugin_id, offscreen_only)
         if content:
             total_width = sum(img.width for img in content)
             logger.info(
@@ -128,6 +136,14 @@ class PluginAdapter:
             return self._finalize(content, plugin_id, 'scroll_helper')
         if has_scroll_helper:
             logger.info("[%s] ScrollHelper content returned None", plugin_id)
+
+        if offscreen_only:
+            # Display capture needs the shared canvas; leave it to the caller.
+            logger.info(
+                "[%s] Needs display capture, deferring to the render thread",
+                plugin_id
+            )
+            return None
 
         # Fall back to display capture
         logger.info("[%s] Trying fallback display capture...", plugin_id)
@@ -451,7 +467,7 @@ class PluginAdapter:
         return img.crop((start, 0, end, img.height))
 
     def _get_native_content(
-        self, plugin: 'BasePlugin', plugin_id: str
+        self, plugin: 'BasePlugin', plugin_id: str, offscreen_only: bool = False
     ) -> Optional[List[Image.Image]]:
         """
         Get content via plugin's native get_vegas_content() method.
@@ -486,8 +502,17 @@ class PluginAdapter:
                 # capture_mode that write lands on the hardware, flashing the
                 # panel mid-scroll. The narrowing context is separate because it
                 # is a no-op at full width.
-                with self._capture(), self._render_at(render_width):
-                    result = plugin.get_vegas_content()
+                if offscreen_only:
+                    # _render_at swaps the shared canvas, so it is unsafe here.
+                    # _vegas_render_width is set regardless: a plugin reading
+                    # get_vegas_render_width() still gets its narrow size, and
+                    # one that only reads matrix.width renders full width and is
+                    # trimmed instead.
+                    with self._capture():
+                        result = plugin.get_vegas_content()
+                else:
+                    with self._capture(), self._render_at(render_width):
+                        result = plugin.get_vegas_content()
             finally:
                 plugin._vegas_render_width = None
 
@@ -567,7 +592,7 @@ class PluginAdapter:
             return None
 
     def _get_scroll_helper_content(
-        self, plugin: 'BasePlugin', plugin_id: str
+        self, plugin: 'BasePlugin', plugin_id: str, offscreen_only: bool = False
     ) -> Optional[List[Image.Image]]:
         """
         Get content from plugin's scroll_helper if available.
@@ -601,6 +626,13 @@ class PluginAdapter:
                     "[%s] scroll_helper.cached_image is None, triggering content generation",
                     plugin_id
                 )
+                if offscreen_only:
+                    # Generating it calls display(), which needs the canvas.
+                    logger.info(
+                        "[%s] scroll_helper cache empty; deferring generation "
+                        "to the render thread", plugin_id
+                    )
+                    return None
                 # Try to trigger scroll content generation
                 cached_image = self._trigger_scroll_content_generation(
                     plugin, plugin_id, scroll_helper

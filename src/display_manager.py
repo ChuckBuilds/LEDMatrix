@@ -186,8 +186,14 @@ class DisplayManager:
         self.config = config or {}
         self._force_fallback = force_fallback
         self._suppress_test_pattern = suppress_test_pattern
-        # When True, update_display() and clear() skip hardware writes (used during off-screen content capture)
-        self._capture_mode_active = False
+        # Per-thread capture state. update_display() and clear() skip hardware
+        # writes while the *calling* thread is capturing content off-screen.
+        #
+        # Thread-local rather than a plain flag because Vegas mode prepares
+        # upcoming content on a background thread: a shared flag set there would
+        # suppress the render loop's own frame pushes for the duration, freezing
+        # the panel exactly when the point was to avoid a freeze.
+        self._capture_state = threading.local()
         # Double-sided mode state (resolved in _setup_matrix). When disabled,
         # the logical image is blitted to the matrix unchanged.
         self._double_sided = None  # dict {copies, axis, logical_width, logical_height} or None
@@ -519,6 +525,15 @@ class DisplayManager:
             
         except Exception as e:
             logger.error(f"Error drawing test pattern: {e}", exc_info=True)
+
+    @property
+    def _capture_mode_active(self) -> bool:
+        """True while the calling thread is capturing content off-screen."""
+        return getattr(self._capture_state, 'active', False)
+
+    @_capture_mode_active.setter
+    def _capture_mode_active(self, value: bool) -> None:
+        self._capture_state.active = bool(value)
 
     @contextmanager
     def capture_mode(self):

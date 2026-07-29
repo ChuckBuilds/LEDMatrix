@@ -58,6 +58,18 @@ class VegasModeConfig:
     # switched off at the start of every cycle.
     lead_in_width: int = 0
 
+    # Keep one continuous strip, extending it with the next group of plugins as
+    # the scroll approaches the end, instead of composing a fresh strip and
+    # swapping it in. A swap stops the motion, substitutes every pixel at once
+    # and restarts with the viewport already full — read as a freeze, a flash
+    # and a jump. Extending means the next group simply scrolls in from the
+    # right. Set false to restore the swap behaviour.
+    continuous_scroll: bool = True
+
+    # Extend once the unscrolled remainder falls below this many screen widths.
+    # Needs to be more than one so the join is prepared before it is on screen.
+    extend_threshold_screens: float = 2.0
+
     # How many plugins are composed into one scroll cycle. Kept separate from
     # buffer_ahead (which is only a prefetch low-water mark) because the two
     # were previously the same number: a buffer_ahead of 2 meant just 3 plugins
@@ -117,6 +129,9 @@ class VegasModeConfig:
             min_content_separation=int(
                 vegas_config.get('min_content_separation', 24)),
             min_cut_gap=int(vegas_config.get('min_cut_gap', 6)),
+            continuous_scroll=vegas_config.get('continuous_scroll', True),
+            extend_threshold_screens=float(
+                vegas_config.get('extend_threshold_screens', 2.0)),
             auto_trim=vegas_config.get('auto_trim', True),
             trim_threshold=int(vegas_config.get('trim_threshold', 10)),
             content_padding=int(vegas_config.get('content_padding', 8)),
@@ -146,6 +161,8 @@ class VegasModeConfig:
             'render_width_pct': self.render_width_pct,
             'min_content_separation': self.min_content_separation,
             'min_cut_gap': self.min_cut_gap,
+            'continuous_scroll': self.continuous_scroll,
+            'extend_threshold_screens': self.extend_threshold_screens,
             'auto_trim': self.auto_trim,
             'trim_threshold': self.trim_threshold,
             'content_padding': self.content_padding,
@@ -248,6 +265,11 @@ class VegasModeConfig:
                 "min_content_separation must be between 0 and 256, "
                 f"got {self.min_content_separation}")
 
+        if not 1.0 <= self.extend_threshold_screens <= 10.0:
+            errors.append(
+                "extend_threshold_screens must be between 1.0 and 10.0, "
+                f"got {self.extend_threshold_screens}")
+
         if not 1 <= self.min_cut_gap <= 128:
             errors.append(
                 "min_cut_gap must be between 1 and 128, "
@@ -322,6 +344,11 @@ class VegasModeConfig:
                 vegas_config['min_content_separation'])
         if 'min_cut_gap' in vegas_config:
             self.min_cut_gap = int(vegas_config['min_cut_gap'])
+        if 'continuous_scroll' in vegas_config:
+            self.continuous_scroll = vegas_config['continuous_scroll']
+        if 'extend_threshold_screens' in vegas_config:
+            self.extend_threshold_screens = float(
+                vegas_config['extend_threshold_screens'])
         if 'auto_trim' in vegas_config:
             self.auto_trim = vegas_config['auto_trim']
         if 'trim_threshold' in vegas_config:

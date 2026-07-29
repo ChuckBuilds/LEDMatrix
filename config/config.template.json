@@ -135,6 +135,8 @@
             "render_width_pct": 100,
             "min_content_separation": 24,
             "min_cut_gap": 6,
+            "continuous_scroll": true,
+            "extend_threshold_screens": 2.0,
             "auto_trim": true,
             "trim_threshold": 10,
             "content_padding": 8,

@@ -35,6 +35,10 @@ class RenderPipeline:
     - Track scroll cycle completion
     """
 
+    # Minimum gap between fetches of canvas-bound plugins, so their individual
+    # stalls land in separate moments rather than one run of hitches.
+    DEFERRED_DRAIN_INTERVAL = 2.0
+
     def __init__(
         self,
         config: VegasModeConfig,
@@ -81,6 +85,14 @@ class RenderPipeline:
         self._active_scroll_image: Optional[Image.Image] = None
         self._staging_scroll_image: Optional[Image.Image] = None
         self._buffer_lock = threading.Lock()
+
+        # Group prepared off the render thread, waiting to be appended.
+        self._prepared_group = None
+        # Plugins that need the shared canvas, appended one at a time.
+        self._deferred_queue: List[str] = []
+        self._last_drain_time = 0.0
+        self._prefetch_thread: Optional[threading.Thread] = None
+        self._prefetch_lock = threading.Lock()
 
         # Render state
         self._is_rendering = False
@@ -207,6 +219,217 @@ class RenderPipeline:
             logger.exception("Error composing scroll content")
             return False
 
+    def needs_extension(self) -> bool:
+        """
+        Whether the strip should be extended with the next group of plugins.
+
+        Cheap enough to call every frame: it is arithmetic over cached state.
+        """
+        if not self.config.continuous_scroll or not self.scroll_helper.cached_image:
+            return False
+        threshold = int(self.display_width * self.config.extend_threshold_screens)
+        return self.scroll_helper.remaining_unscrolled() <= threshold
+
+    def start_prefetch(self) -> None:
+        """
+        Begin preparing the next group in the background, if not already doing so.
+
+        This is what makes the join seamless rather than merely continuous:
+        fetching a group costs 0.5-4.8s (rendering leaderboard and baseball cards
+        dominates), and doing it on the render thread stalls the scroll for that
+        long. Off the render thread there is a whole group's scroll time to work
+        in, so by the time the strip needs extending the content is already sat
+        waiting.
+
+        Only paths that avoid the shared display canvas run here; anything
+        needing it is marked and picked up on the render thread, where it is
+        safe. Those are the cheap ones — display capture measured 12-14ms
+        against seconds for the native renders.
+        """
+        if not self.config.continuous_scroll:
+            return
+
+        with self._prefetch_lock:
+            if self._prefetch_thread is not None and self._prefetch_thread.is_alive():
+                return
+            if self._prepared_group is not None:
+                return  # already have one waiting
+
+            def _work():
+                try:
+                    group = self.stream_manager.take_next_group(offscreen_only=True)
+                except Exception:
+                    logger.exception("Background prefetch failed")
+                    group = []
+                with self._prefetch_lock:
+                    self._prepared_group = group
+
+            self._prefetch_thread = threading.Thread(
+                target=_work, daemon=True, name="vegas-strip-prefetch")
+            self._prefetch_thread.start()
+
+    def drain_deferred(self) -> bool:
+        """
+        Fetch one queued canvas-bound plugin and append it to the strip.
+
+        Called once per frame. These plugins cannot be prepared off the render
+        thread — display capture and scroll-content generation both need the
+        shared canvas — so each costs roughly 290ms here. Doing one at a time
+        spreads that out instead of stalling for the whole group at once, and the
+        strip's lookahead means nothing runs dry while they arrive.
+
+        The cost is that a deferred plugin appears slightly after the group it
+        came with, which is a fair trade for a smooth scroll.
+
+        Returns:
+            True if a plugin was appended
+        """
+        if not self._deferred_queue:
+            return False
+
+        # Space the drains out. Each costs 40-600ms, and taking them back to
+        # back turns one long stall into a train of short ones — barely better.
+        # With a healthy lookahead there is no hurry, so wait a beat between
+        # them; when the strip is actually running short, fetch immediately.
+        threshold = int(self.display_width * self.config.extend_threshold_screens)
+        urgent = self.scroll_helper.remaining_unscrolled() <= threshold
+        if not urgent:
+            now = time.time()
+            if now - self._last_drain_time < self.DEFERRED_DRAIN_INTERVAL:
+                return False
+            self._last_drain_time = now
+        else:
+            self._last_drain_time = time.time()
+
+        plugin_id = self._deferred_queue.pop(0)
+        plugins = getattr(self.stream_manager.plugin_manager, 'plugins', {})
+        plugin = plugins.get(plugin_id)
+        if plugin is None:
+            return False
+
+        try:
+            images = self.stream_manager.plugin_adapter.get_content(plugin, plugin_id)
+        except Exception:
+            logger.exception("[%s] Error fetching deferred content", plugin_id)
+            return False
+
+        if not images:
+            return False
+
+        appended = self.scroll_helper.append_content(
+            content_items=[self._join_plugin_rows(images)],
+            item_gap=self.config.separator_width,
+            element_gap=0,
+        )
+        if appended:
+            with self._buffer_lock:
+                self._active_scroll_image = self.scroll_helper.cached_image
+            logger.info(
+                "[%s] Appended deferred content: strip now %dpx, %dpx ahead",
+                plugin_id, self.scroll_helper.total_scroll_width,
+                self.scroll_helper.remaining_unscrolled()
+            )
+        return appended
+
+    def has_deferred(self) -> bool:
+        """Whether any canvas-bound plugins are still queued."""
+        return bool(self._deferred_queue)
+
+    def _claim_prepared_group(self):
+        """Take the prefetched group, if one is ready."""
+        with self._prefetch_lock:
+            group = self._prepared_group
+            self._prepared_group = None
+        return group
+
+    def extend_scroll_content(self) -> bool:
+        """
+        Append the next group of plugins to the strip, without interrupting motion.
+
+        This is what replaces the swap. Scroll position is untouched, so the new
+        content simply arrives from the right; there is no substitution to see
+        and no restart with the viewport already full.
+
+        Consumed columns behind the viewport are then released, keeping the strip
+        bounded however long Vegas runs.
+
+        Returns:
+            True if the strip was extended
+        """
+        try:
+            grouped = self._claim_prepared_group()
+            if grouped is None:
+                # Nothing prepared (first extension, or prefetch still running).
+                # Fetch inline; the scroll hitches, but content keeps flowing.
+                logger.info("No prepared group ready; fetching inline")
+                grouped = self.stream_manager.take_next_group()
+
+            if not grouped:
+                logger.warning("No content available to extend the scroll strip")
+                return False
+
+            # Plugins the background thread had to defer need the shared canvas,
+            # so they can only be fetched here. Queue them rather than doing all
+            # of them now: measured, six in one go held the render thread for
+            # 1.75s. They are trickled in one per frame by drain_deferred(),
+            # which the strip's lookahead comfortably absorbs.
+            deferred = [pid for pid, images in grouped if images is None]
+            if deferred:
+                self._deferred_queue.extend(deferred)
+                logger.info(
+                    "Queued %d plugin(s) needing the render thread: %s",
+                    len(deferred), ', '.join(deferred)
+                )
+
+            grouped = [(pid, imgs) for pid, imgs in grouped if imgs]
+
+            if not grouped:
+                # Everything in this group is queued; the queue will extend the
+                # strip as it drains, so this is not a failure.
+                logger.info("Whole group deferred; strip will extend as it drains")
+                self.start_prefetch()
+                return bool(deferred)
+
+            blocks = []
+            total_rows = 0
+            for _plugin_id, images in grouped:
+                total_rows += len(images)
+                blocks.append(self._join_plugin_rows(images))
+
+            appended = self.scroll_helper.append_content(
+                content_items=blocks,
+                item_gap=self.config.separator_width,
+                element_gap=0,
+            )
+            if not appended:
+                return False
+
+            # Keep a screen's worth behind the viewport as a safety margin.
+            self.scroll_helper.drop_scrolled_prefix(keep_before=self.display_width)
+
+            with self._buffer_lock:
+                self._active_scroll_image = self.scroll_helper.cached_image
+
+            self._segments_in_scroll = [pid for pid, _ in grouped]
+            self.stats['composition_count'] += 1
+            self.stats['extensions'] = self.stats.get('extensions', 0) + 1
+
+            logger.info(
+                "Extended scroll strip with %d plugin block(s), %d rows: "
+                "strip now %dpx, %dpx still ahead of the viewport",
+                len(blocks), total_rows, self.scroll_helper.total_scroll_width,
+                self.scroll_helper.remaining_unscrolled()
+            )
+
+            # Line up the group after this one straight away, so it is ready
+            # well before the strip runs short again.
+            self.start_prefetch()
+            return True
+
+        except (ValueError, TypeError, OSError, RuntimeError):
+            logger.exception("Error extending scroll content")
+            return False
+
     def _join_plugin_rows(self, images: List[Image.Image]) -> Image.Image:
         """
         Concatenate one plugin's images into a single block.
@@ -281,6 +504,10 @@ class RenderPipeline:
             #
             # A strip no wider than the display never wraps, and subtracting
             # would make the cycle complete instantly, so clamp in that case.
+            # In continuous mode there is no cycle to complete: the strip is
+            # extended before the scroll can reach its end, so the wrap is never
+            # entered and motion never stops. The completion path below stays for
+            # the swap behaviour and as a backstop if an extension fails.
             wrap_point = self.scroll_helper.total_scroll_width
             if wrap_point > self.display_width:
                 wrap_point -= self.display_width

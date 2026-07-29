@@ -499,6 +499,31 @@
                     <h4 class="text-sm font-medium text-gray-900 mb-3">Cycle Pacing</h4>
                     <p class="text-sm text-gray-600 mb-3">How long one pass through the ticker lasts, and how many plugins it covers.</p>
 
+                    <div class="form-group mb-4" id="setting-display-vegas_continuous_scroll" data-setting-key="display.vegas_scroll.continuous_scroll">
+                        <label class="flex items-center">
+                            <input type="checkbox"
+                                   id="vegas_continuous_scroll"
+                                   name="vegas_continuous_scroll"
+                                   {% if main_config.display.get('vegas_scroll', {}).get('continuous_scroll', True) %}checked{% endif %}
+                                   class="form-checkbox">
+                            <span class="ml-2 text-sm text-gray-700">Scroll continuously between groups{{ ui.help_tip('Keep one endless strip, extending it with the next group of plugins as the scroll approaches the end, so they simply arrive from the right. Default: on.\nWith this off the ticker builds a fresh strip and swaps it in, which stops the motion, replaces everything at once and restarts with the screen already full — a freeze, a flash and a jump.', 'Continuous Scroll') }}</span>
+                        </label>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                        <div class="form-group" id="setting-display-vegas_extend_threshold_screens" data-setting-key="display.vegas_scroll.extend_threshold_screens">
+                            <label for="vegas_extend_threshold_screens" class="block text-sm font-medium text-gray-700">Extend When (screens left){{ ui.help_tip('How much unscrolled content triggers loading the next group, measured in screen widths (1.0–10.0).\nDefault: 2. Higher loads earlier and leaves more slack, at the cost of holding more content in memory. Only applies when Continuous Scroll is on.', 'Extend Threshold') }}</label>
+                            <input type="number"
+                                   id="vegas_extend_threshold_screens"
+                                   name="vegas_extend_threshold_screens"
+                                   value="{{ main_config.display.get('vegas_scroll', {}).get('extend_threshold_screens', 2.0) }}"
+                                   min="1"
+                                   max="10"
+                                   step="0.5"
+                                   class="form-control">
+                        </div>
+                    </div>
+
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div class="form-group" id="setting-display-vegas_plugins_per_cycle" data-setting-key="display.vegas_scroll.plugins_per_cycle">
                             <label for="vegas_plugins_per_cycle" class="block text-sm font-medium text-gray-700">Plugins Per Cycle{{ ui.help_tip('How many plugins are composed into one pass of the ticker (1–50).\nDefault: 6. Higher means more variety before the ticker restarts, and fewer recompose pauses. Lower means each plugin comes around sooner.', 'Plugins Per Cycle') }}</label>

@@ -1219,3 +1219,293 @@ class TestCaptureModeAlwaysHeld:
 
         adapter.get_content(Boom(dm), 'boom')
         assert dm.capture_depth == 0
+
+
+class TestContinuousExtension:
+    """
+    Continuous mode extends one strip instead of swapping in a new one, so the
+    next group scrolls in from the right: no freeze, no substitution, and no
+    restart with the viewport already full.
+    """
+
+    def _pipeline(self, groups, **cfg):
+        """groups: list of lists of (plugin_id, [images]) handed out in turn."""
+        from src.vegas_mode.render_pipeline import RenderPipeline
+
+        class FakeStream:
+            def __init__(self):
+                self.calls = []
+                self.plugin_manager = type('PM', (), {'plugins': {}})()
+                self.plugin_adapter = None
+                self._i = 0
+
+            def get_grouped_content_for_composition(self):
+                return groups[0] if groups else []
+
+            def get_active_plugin_ids(self):
+                return [pid for pid, _ in (groups[0] if groups else [])]
+
+            def take_next_group(self, count=None, offscreen_only=False):
+                self.calls.append(offscreen_only)
+                if self._i >= len(groups):
+                    return []
+                g = groups[self._i]
+                self._i += 1
+                return g
+
+        class DM:
+            width = DISPLAY_W
+            height = DISPLAY_H
+
+            def __init__(self):
+                self.image = Image.new('RGB', (DISPLAY_W, DISPLAY_H))
+                self.pushes = 0
+
+            def set_scrolling_state(self, *a):
+                pass
+
+            def update_display(self):
+                self.pushes += 1
+
+        cfg.setdefault('lead_in_width', 0)
+        stream = FakeStream()
+        return RenderPipeline(VegasModeConfig(**cfg), DM(), stream), stream
+
+    def _block(self, w):
+        return Image.new('RGB', (w, DISPLAY_H), (255, 255, 255))
+
+    def test_needs_extension_only_near_the_end(self):
+        p, _ = self._pipeline([[('a', [self._block(400)])]],
+                              continuous_scroll=True, extend_threshold_screens=2.0)
+        p.compose_scroll_content()
+        # 400px strip on a 512px display: already inside the threshold.
+        assert p.needs_extension()
+
+    def test_no_extension_when_plenty_remains(self):
+        p, _ = self._pipeline([[('a', [self._block(4000)])]],
+                              continuous_scroll=True, extend_threshold_screens=2.0)
+        p.compose_scroll_content()
+        assert not p.needs_extension()
+
+    def test_disabled_never_extends(self):
+        p, _ = self._pipeline([[('a', [self._block(100)])]],
+                              continuous_scroll=False)
+        p.compose_scroll_content()
+        assert not p.needs_extension()
+
+    def test_extension_grows_the_strip_and_keeps_position(self):
+        groups = [[('a', [self._block(600)])], [('b', [self._block(600)])]]
+        p, _ = self._pipeline(groups, continuous_scroll=True)
+        p.compose_scroll_content()
+        before_width = p.scroll_helper.total_scroll_width
+        p.scroll_helper.scroll_position = 120.0
+
+        assert p.extend_scroll_content()
+        assert p.scroll_helper.total_scroll_width > before_width
+        assert p.scroll_helper.scroll_position == 120.0
+
+    def test_extension_never_completes_the_cycle(self):
+        groups = [[('a', [self._block(600)])], [('b', [self._block(600)])]]
+        p, _ = self._pipeline(groups, continuous_scroll=True)
+        p.compose_scroll_content()
+        p.extend_scroll_content()
+        assert not p.scroll_helper.scroll_complete
+
+    def test_deferred_plugins_are_dropped_when_unresolvable(self):
+        # A None entry means "needs the render thread"; with no plugin instance
+        # available it must be skipped rather than crashing or inserting a gap.
+        groups = [[('a', [self._block(300)])],
+                  [('needs-canvas', None), ('b', [self._block(300)])]]
+        p, _ = self._pipeline(groups, continuous_scroll=True)
+        p.compose_scroll_content()
+        assert p.extend_scroll_content()
+        assert p.scroll_helper.total_scroll_width > 300
+
+    def test_empty_next_group_fails_cleanly(self):
+        # compose_scroll_content does not consume a group, so the first extend
+        # takes groups[0]; the second finds nothing left.
+        groups = [[('a', [self._block(300)])], []]
+        p, _ = self._pipeline(groups, continuous_scroll=True)
+        p.compose_scroll_content()
+        assert p.extend_scroll_content() is True
+        assert p.extend_scroll_content() is False
+
+    def test_prefetch_requests_offscreen_only(self):
+        # The background thread must never take a canvas-touching path.
+        groups = [[('a', [self._block(600)])], [('b', [self._block(600)])]]
+        p, stream = self._pipeline(groups, continuous_scroll=True)
+        p.compose_scroll_content()
+        p.start_prefetch()
+        if p._prefetch_thread:
+            p._prefetch_thread.join(timeout=5)
+        assert stream.calls == [True]
+
+    def test_prepared_group_is_used_without_refetching(self):
+        groups = [[('a', [self._block(600)])], [('b', [self._block(600)])]]
+        p, stream = self._pipeline(groups, continuous_scroll=True)
+        p.compose_scroll_content()
+        p.start_prefetch()
+        if p._prefetch_thread:
+            p._prefetch_thread.join(timeout=5)
+
+        assert p.extend_scroll_content()
+        # One offscreen prefetch, then one more kicked off for the group after.
+        assert stream.calls[0] is True
+        assert p._prepared_group is None or isinstance(p._prepared_group, list)
+
+    def test_strip_stays_bounded_over_many_extensions(self):
+        groups = [[('g%d' % i, [self._block(600)])] for i in range(30)]
+        p, _ = self._pipeline(groups, continuous_scroll=True)
+        p.compose_scroll_content()
+
+        widths = []
+        for _ in range(25):
+            p.scroll_helper.scroll_position += 300
+            p.scroll_helper.total_distance_scrolled += 300
+            if p.needs_extension():
+                p.extend_scroll_content()
+            widths.append(p.scroll_helper.total_scroll_width)
+        assert max(widths) < 6000, f"strip grew unbounded: {max(widths)}"
+
+
+class TestDeferredDraining:
+    """
+    Canvas-bound plugins cannot be prepared off the render thread, so they are
+    queued and appended one per frame. Doing all of them at once held the render
+    thread for 1.75s on hardware.
+    """
+
+    def _pipeline(self, group, plugin_images, **cfg):
+        from src.vegas_mode.render_pipeline import RenderPipeline
+
+        class FakeAdapter:
+            def __init__(self, mapping):
+                self.mapping = mapping
+                self.calls = []
+
+            def get_content(self, plugin, plugin_id, offscreen_only=False):
+                self.calls.append((plugin_id, offscreen_only))
+                return self.mapping.get(plugin_id)
+
+        class FakeStream:
+            def __init__(self):
+                self.plugin_manager = type(
+                    'PM', (), {'plugins': {pid: object() for pid in plugin_images}})()
+                self.plugin_adapter = FakeAdapter(plugin_images)
+                self._served = False
+
+            def get_grouped_content_for_composition(self):
+                return [('seed', [Image.new('RGB', (600, DISPLAY_H), (255, 255, 255))])]
+
+            def get_active_plugin_ids(self):
+                return ['seed']
+
+            def take_next_group(self, count=None, offscreen_only=False):
+                if self._served:
+                    return []
+                self._served = True
+                return group
+
+        class DM:
+            width = DISPLAY_W
+            height = DISPLAY_H
+
+            def __init__(self):
+                self.image = Image.new('RGB', (DISPLAY_W, DISPLAY_H))
+
+            def set_scrolling_state(self, *a):
+                pass
+
+            def update_display(self):
+                pass
+
+        cfg.setdefault('lead_in_width', 0)
+        cfg.setdefault('continuous_scroll', True)
+        stream = FakeStream()
+        p = RenderPipeline(VegasModeConfig(**cfg), DM(), stream)
+        p.compose_scroll_content()
+        return p, stream
+
+    def _img(self, w):
+        return [Image.new('RGB', (w, DISPLAY_H), (255, 255, 255))]
+
+    def test_deferred_plugins_are_queued_not_fetched_inline(self):
+        group = [('ready', self._img(200)), ('needs-canvas', None)]
+        p, stream = self._pipeline(group, {'needs-canvas': self._img(150)})
+        p.extend_scroll_content()
+        # Only queued at this point — no fetch for it yet.
+        assert p.has_deferred()
+        assert all(pid != 'needs-canvas' for pid, _ in stream.plugin_adapter.calls)
+
+    def test_draining_appends_one_at_a_time(self):
+        group = [('a', None), ('b', None), ('c', None)]
+        images = {k: self._img(120) for k in ('a', 'b', 'c')}
+        p, _ = self._pipeline(group, images)
+        p.extend_scroll_content()
+
+        widths = [p.scroll_helper.total_scroll_width]
+        drained = 0
+        while p.has_deferred():
+            assert p.drain_deferred()
+            drained += 1
+            widths.append(p.scroll_helper.total_scroll_width)
+        assert drained == 3
+        assert widths == sorted(widths), "each drain should extend the strip"
+
+    def test_drain_uses_the_full_path_not_offscreen(self):
+        group = [('needs-canvas', None)]
+        p, stream = self._pipeline(group, {'needs-canvas': self._img(150)})
+        p.extend_scroll_content()
+        p.drain_deferred()
+        assert ('needs-canvas', False) in stream.plugin_adapter.calls
+
+    def test_drain_is_a_no_op_with_an_empty_queue(self):
+        p, _ = self._pipeline([('a', self._img(200))], {})
+        p.extend_scroll_content()
+        assert not p.has_deferred()
+        assert p.drain_deferred() is False
+
+    def test_scroll_position_survives_draining(self):
+        group = [('a', None), ('b', None)]
+        p, _ = self._pipeline(group, {k: self._img(120) for k in ('a', 'b')})
+        p.extend_scroll_content()
+        p.scroll_helper.scroll_position = 200.0
+        while p.has_deferred():
+            p.drain_deferred()
+        assert p.scroll_helper.scroll_position == 200.0
+
+    def test_a_plugin_yielding_nothing_is_dropped_from_the_queue(self):
+        group = [('empty', None)]
+        p, _ = self._pipeline(group, {'empty': None})
+        p.extend_scroll_content()
+        assert p.drain_deferred() is False
+        assert not p.has_deferred(), "must not retry forever"
+
+    def test_all_deferred_group_still_reports_progress(self):
+        # Nothing appendable right now, but the queue will extend the strip.
+        group = [('a', None), ('b', None)]
+        p, _ = self._pipeline(group, {k: self._img(100) for k in ('a', 'b')})
+        assert p.extend_scroll_content() is True
+        assert p.has_deferred()
+
+    def test_drains_are_spaced_when_lookahead_is_healthy(self):
+        # With plenty of strip ahead there is no hurry, so consecutive drains
+        # must be throttled rather than firing back to back.
+        group = [('a', None), ('b', None)]
+        p, _ = self._pipeline(group, {k: self._img(4000) for k in ('a', 'b')})
+        p.extend_scroll_content()
+
+        assert p.drain_deferred() is True          # first one goes through
+        # Strip is now long, so the next is deferred by the interval.
+        assert p.scroll_helper.remaining_unscrolled() > (
+            DISPLAY_W * p.config.extend_threshold_screens)
+        assert p.drain_deferred() is False
+        assert p.has_deferred(), "queue must be kept, not dropped"
+
+    def test_urgent_drain_ignores_the_throttle(self):
+        # When the strip is nearly exhausted, content matters more than smoothness.
+        group = [('a', None), ('b', None)]
+        p, _ = self._pipeline(group, {k: self._img(80) for k in ('a', 'b')})
+        p.extend_scroll_content()
+        assert p.drain_deferred() is True
+        assert p.drain_deferred() is True

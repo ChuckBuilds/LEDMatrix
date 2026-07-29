@@ -580,6 +580,62 @@ class StreamManager:
                 grouped.append((segment.plugin_id, list(segment.images)))
         return grouped
 
+    def take_next_group(
+        self, count: Optional[int] = None, offscreen_only: bool = False
+    ) -> List[Tuple[str, Optional[List[Image.Image]]]]:
+        """
+        Fetch and hand over the next slice of the rotation.
+
+        For continuous scrolling, where the strip is extended rather than
+        replaced. Advances the rotation index so plugins come round in order
+        across an unbroken strip, and bypasses the active buffer entirely — that
+        buffer exists to stage a *replacement* cycle, which continuous mode has
+        no use for.
+
+        Args:
+            count: Number of plugins to gather, defaulting to plugins_per_cycle
+            offscreen_only: Only use content paths that avoid the shared display
+                canvas, for use off the render thread
+
+        Returns:
+            Ordered list of (plugin_id, images). ``images`` is None when the
+            plugin could not be served under ``offscreen_only``, so the caller
+            can fetch just those on the render thread while keeping the order.
+        """
+        if count is None:
+            count = self.config.plugins_per_cycle
+
+        self.refresh()
+
+        with self._buffer_lock:
+            if not self._ordered_plugins:
+                return []
+            total = len(self._ordered_plugins)
+            ids = []
+            for _ in range(min(max(1, count), total)):
+                ids.append(self._ordered_plugins[self._prefetch_index])
+                self._prefetch_index = (self._prefetch_index + 1) % total
+
+        plugins = getattr(self.plugin_manager, 'plugins', {})
+        group: List[Tuple[str, Optional[List[Image.Image]]]] = []
+
+        for plugin_id in ids:
+            plugin = plugins.get(plugin_id)
+            if not plugin:
+                continue
+            try:
+                images = self.plugin_adapter.get_content(
+                    plugin, plugin_id, offscreen_only=offscreen_only)
+            except Exception:
+                logger.exception("[%s] ERROR fetching content", plugin_id)
+                self.stats['fetch_errors'] += 1
+                continue
+            if images:
+                self.stats['segments_fetched'] += 1
+            group.append((plugin_id, images if images else None))
+
+        return group
+
     def advance_cycle(self) -> None:
         """
         Advance to next cycle by clearing the active buffer.

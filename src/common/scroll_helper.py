@@ -648,6 +648,128 @@ class ScrollHelper:
         """
         return self.scroll_complete
     
+    def append_content(self, content_items: list,
+                       item_gap: int = 32,
+                       element_gap: int = 0) -> bool:
+        """
+        Append items to the right of the existing strip, preserving scroll state.
+
+        Lets a caller keep one continuous strip instead of replacing it. Vegas
+        mode uses this so the next group of plugins scrolls in from the right
+        rather than the strip being swapped out underneath the viewer — a swap
+        shows as a flash and a hard cut to already-full-screen content.
+
+        ``scroll_position`` and ``total_distance_scrolled`` are untouched, so
+        motion continues uninterrupted; only the strip gets longer. Because
+        completion is measured against ``total_scroll_width``, extending the
+        strip also defers completion, which is the intent.
+
+        Args:
+            content_items: Images to append, in order
+            item_gap: Gap between appended items, and between the existing
+                content and the first appended item
+            element_gap: Extra gap after each item, mirroring
+                create_scrolling_image
+
+        Returns:
+            True if content was appended
+        """
+        if not content_items:
+            return False
+
+        if self.cached_image is None or self.cached_array is None:
+            # Nothing to extend yet — this is just the first build.
+            self.create_scrolling_image(
+                content_items, item_gap=item_gap, element_gap=element_gap, lead_gap=0)
+            return True
+
+        gap = max(0, item_gap)
+        addition_width = (
+            sum(img.width for img in content_items)
+            + gap * len(content_items)          # one leading gap per item
+            + element_gap * len(content_items)
+        )
+
+        addition = Image.new('RGB', (addition_width, self.display_height), (0, 0, 0))
+        x = 0
+        for img in content_items:
+            x += gap                            # separate from whatever precedes
+            addition.paste(img, (x, 0))
+            x += img.width + element_gap
+
+        # numpy concatenate then one conversion back, rather than allocating a
+        # full-width PIL image and pasting twice: the strip can be tens of
+        # thousands of columns wide and this runs on the render path.
+        self.cached_array = np.concatenate(
+            (self.cached_array, np.array(addition)), axis=1)
+        self.cached_image = Image.fromarray(self.cached_array)
+        self.total_scroll_width = self.cached_image.width
+        self.scroll_complete = False
+
+        self.logger.info(
+            "Appended %d item(s) (%dpx) to scroll strip: now %dpx, position %.0f",
+            len(content_items), addition_width, self.total_scroll_width,
+            self.scroll_position
+        )
+        return True
+
+    def drop_scrolled_prefix(self, keep_before: int = 0) -> int:
+        """
+        Discard columns that have already scrolled past, to bound memory.
+
+        A continuously extended strip would otherwise grow without limit. All
+        the positional state is shifted by the amount removed so the visible
+        frame and the completion arithmetic are unchanged:
+        ``total_distance_scrolled`` and ``total_scroll_width`` both shrink by the
+        same amount, preserving their difference.
+
+        Args:
+            keep_before: Columns to retain behind the current position, as a
+                safety margin against a caller reading slightly behind it
+
+        Returns:
+            Number of columns actually removed
+        """
+        if self.cached_image is None or self.cached_array is None:
+            return 0
+
+        # While the viewport wraps, get_visible_portion fills its right-hand side
+        # from the *head* of the strip, so trimming the head would change what
+        # is on screen. Continuous mode extends before ever reaching that state;
+        # refusing here keeps "trimming is invisible" true unconditionally.
+        if self.scroll_position + self.display_width > self.cached_image.width:
+            return 0
+
+        cut = int(self.scroll_position) - max(0, keep_before)
+        if cut <= 0:
+            return 0
+        # Never trim so far that the remaining strip is narrower than the
+        # viewport, or get_visible_portion has nothing to slice.
+        cut = min(cut, max(0, self.cached_image.width - self.display_width))
+        if cut <= 0:
+            return 0
+
+        # .copy() so the original buffer is released rather than kept alive by
+        # a numpy view.
+        self.cached_array = self.cached_array[:, cut:].copy()
+        self.cached_image = Image.fromarray(self.cached_array)
+        self.total_scroll_width = self.cached_image.width
+        self.scroll_position -= cut
+        self.total_distance_scrolled = max(0.0, self.total_distance_scrolled - cut)
+
+        self.logger.debug(
+            "Dropped %dpx of scrolled strip: now %dpx, position %.0f",
+            cut, self.total_scroll_width, self.scroll_position
+        )
+        return cut
+
+    def remaining_unscrolled(self) -> int:
+        """Columns of strip still to the right of the viewport."""
+        if self.cached_image is None:
+            return 0
+        return max(0, self.total_scroll_width - int(self.scroll_position)
+                   - self.display_width)
+
     def reset_scroll(self) -> None:
         """
         Reset scroll position to beginning.
