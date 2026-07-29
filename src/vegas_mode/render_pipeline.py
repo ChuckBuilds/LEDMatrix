@@ -6,6 +6,7 @@ Uses the existing ScrollHelper for numpy-optimized scroll operations.
 """
 
 import logging
+import os
 import time
 import threading
 from collections import deque
@@ -256,6 +257,15 @@ class RenderPipeline:
                 return  # already have one waiting
 
             def _work():
+                # Deprioritise against the render loop. Linux applies nice
+                # per-thread, and the heavy lifting here is PIL and numpy work
+                # that releases the GIL, so the scheduler can actually act on
+                # it — without this the prefetch competes for the same cores and
+                # costs frames.
+                try:
+                    os.nice(10)
+                except (OSError, AttributeError):
+                    pass
                 try:
                     group = self.stream_manager.take_next_group(offscreen_only=True)
                 except Exception:
