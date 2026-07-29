@@ -756,3 +756,175 @@ class TestNewConfigKeys:
     def test_validate_rejects_out_of_range(self, overrides, bad_key):
         errors = VegasModeConfig(**overrides).validate()
         assert any(bad_key in e for e in errors), errors
+
+
+class TestCycleEndsBeforeWrap:
+    """
+    get_visible_portion wraps the head of the strip into the right side of the
+    frame once scroll_position + display_width passes the end. With a leading
+    blank that was invisible; with lead_in_width=0 it showed the cycle's first
+    plugin re-entering while the last one exited, then a recompose replaced
+    both — the reported "switched mid-scroll".
+    """
+
+    def _pipeline(self, strip_width, **cfg):
+        from src.vegas_mode.render_pipeline import RenderPipeline
+
+        class FakeStream:
+            def get_grouped_content_for_composition(self):
+                return [('a', [Image.new('RGB', (strip_width, DISPLAY_H), (255, 255, 255))])]
+
+            def get_active_plugin_ids(self):
+                return ['a']
+
+        class DM:
+            width = DISPLAY_W
+            height = DISPLAY_H
+
+            def __init__(self):
+                self.image = Image.new('RGB', (DISPLAY_W, DISPLAY_H))
+
+            def set_scrolling_state(self, *a):
+                pass
+
+            def update_display(self):
+                pass
+
+        p = RenderPipeline(VegasModeConfig(lead_in_width=0, **cfg), DM(), FakeStream())
+        assert p.compose_scroll_content()
+        return p
+
+    def _advance_to(self, pipeline, distance):
+        pipeline.scroll_helper.total_distance_scrolled = distance
+        pipeline.scroll_helper.scroll_position = float(distance)
+
+    def test_cycle_is_not_complete_before_the_wrap_point(self):
+        p = self._pipeline(2000)
+        self._advance_to(p, 2000 - DISPLAY_W - 1)
+        p.render_frame()
+        assert not p.is_cycle_complete()
+
+    def test_cycle_completes_exactly_at_the_wrap_point(self):
+        p = self._pipeline(2000)
+        self._advance_to(p, 2000 - DISPLAY_W)
+        p.render_frame()
+        assert p.is_cycle_complete()
+
+    def test_completes_a_full_display_width_earlier_than_the_strip_end(self):
+        # The whole point: it must not run to total_scroll_width, which is
+        # where the wrapped content has already been on screen for 10s at
+        # 50px/s on a 512px panel.
+        p = self._pipeline(3000)
+        self._advance_to(p, 3000 - DISPLAY_W - 1)
+        p.render_frame()
+        assert not p.is_cycle_complete()
+        self._advance_to(p, 3000 - DISPLAY_W)
+        p.render_frame()
+        assert p.is_cycle_complete()
+
+    def test_strip_narrower_than_the_display_does_not_complete_instantly(self):
+        # Subtracting the display width would go negative and end the cycle on
+        # the very first frame, spinning the recompose loop.
+        p = self._pipeline(200)
+        self._advance_to(p, 0)
+        p.render_frame()
+        assert not p.is_cycle_complete()
+
+    def test_strip_narrower_than_the_display_still_completes(self):
+        p = self._pipeline(200)
+        self._advance_to(p, 200)
+        p.render_frame()
+        assert p.is_cycle_complete()
+
+    def test_strip_exactly_the_display_width(self):
+        p = self._pipeline(DISPLAY_W)
+        self._advance_to(p, 0)
+        p.render_frame()
+        assert not p.is_cycle_complete()
+        self._advance_to(p, DISPLAY_W)
+        p.render_frame()
+        assert p.is_cycle_complete()
+
+
+class TestBudgetIndependentOfTrim:
+    """
+    Turning off margin trimming must not disable the per-plugin width cap —
+    they are unrelated concerns. Found in the field: with auto_trim off, the F1
+    scoreboard contributed 116 images / 14,848px untouched, producing a 33,821px
+    cycle.
+    """
+
+    def test_budget_still_applies_with_trim_off(self):
+        adapter = adapter_with(auto_trim=False, max_plugin_width_ratio=1.0,
+                               intra_plugin_gap=0, min_content_separation=0)
+        items = [canvas([(0, 400)], width=400) for _ in range(10)]
+        images = adapter.get_content(NativePlugin(items), 'f1-scoreboard')
+        assert sum(i.width for i in images) <= DISPLAY_W
+
+    def test_trim_off_still_leaves_content_untrimmed(self):
+        # The margins must survive; only the cap should act.
+        adapter = adapter_with(auto_trim=False, max_plugin_width_ratio=0)
+        images = adapter.get_content(NativePlugin([canvas([(4, 39)])]), 'x')
+        assert images[0].width == DISPLAY_W
+
+    def test_single_oversized_image_capped_with_trim_off(self):
+        adapter = adapter_with(auto_trim=False, max_plugin_width_ratio=1.0)
+        images = adapter.get_content(
+            NativePlugin([canvas([(0, 6898)], width=6898)]), 'leaderboard')
+        assert images[0].width <= DISPLAY_W + DISPLAY_W // 16
+
+
+class TestBudgetUsesMeasuredGaps:
+    """
+    The budget must count the gaps the compositor actually inserts. Assuming the
+    flat intra_plugin_gap under-counted by up to
+    (min_content_separation - intra_plugin_gap) per row, so a many-row plugin
+    overran its cap.
+    """
+
+    def test_flush_rows_are_budgeted_with_the_measured_gap(self):
+        # 6 flush rows of 100px against a 512px budget. With 24px measured gaps
+        # only 4 fit (400 + 3*24 = 472; a 5th would be 596).
+        adapter = adapter_with(content_padding=0, max_plugin_width_ratio=1.0,
+                               intra_plugin_gap=8, min_content_separation=24)
+        rows = [Image.new('RGB', (100, DISPLAY_H), (255, 255, 255)) for _ in range(6)]
+        images = adapter.get_content(NativePlugin(rows), 'rows')
+        n = len(images)
+        assert 100 * n + 24 * (n - 1) <= DISPLAY_W
+        assert n == 4
+
+    def test_larger_separation_fits_fewer_rows(self):
+        rows = [Image.new('RGB', (100, DISPLAY_H), (255, 255, 255)) for _ in range(8)]
+        tight = adapter_with(content_padding=0, max_plugin_width_ratio=1.0,
+                            intra_plugin_gap=0, min_content_separation=0)
+        loose = adapter_with(content_padding=0, max_plugin_width_ratio=1.0,
+                            intra_plugin_gap=0, min_content_separation=48)
+        assert len(loose.get_content(NativePlugin(rows), 'r')) < \
+            len(tight.get_content(NativePlugin(rows), 'r'))
+
+    def test_composed_block_respects_the_budget_end_to_end(self):
+        # The real invariant: what the compositor produces must fit the cap.
+        from src.vegas_mode.render_pipeline import RenderPipeline
+
+        cfg = dict(content_padding=0, max_plugin_width_ratio=1.0,
+                   intra_plugin_gap=8, min_content_separation=24)
+        adapter = adapter_with(**cfg)
+        rows = [Image.new('RGB', (90, DISPLAY_H), (255, 255, 255)) for _ in range(9)]
+        selected = adapter.get_content(NativePlugin(rows), 'rows')
+
+        class FakeStream:
+            def get_grouped_content_for_composition(self):
+                return [('rows', selected)]
+
+            def get_active_plugin_ids(self):
+                return ['rows']
+
+        class DM:
+            width = DISPLAY_W
+            height = DISPLAY_H
+
+            def set_scrolling_state(self, *a):
+                pass
+
+        p = RenderPipeline(VegasModeConfig(lead_in_width=0, **cfg), DM(), FakeStream())
+        assert p._join_plugin_rows(selected).width <= DISPLAY_W

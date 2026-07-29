@@ -265,21 +265,29 @@ class RenderPipeline:
 
             # Determine if the cycle is done.
             #
-            # scroll_helper considers a cycle complete only after
-            # total_distance_scrolled >= total_scroll_width + display_width.
-            # That extra display_width of travel causes a "wrap-around" phase
-            # where scroll_position resets to ~0 and the first plugin's content
-            # re-enters from the right — the user sees this 2-3 s of re-entry
-            # as "a plugin partially displaying before the next one starts."
+            # get_visible_portion wraps: once scroll_position + display_width
+            # passes the end of the strip it fills the right-hand side of the
+            # frame from the *head* of the same strip. So the last
+            # display_width of travel shows the cycle's first plugin re-entering
+            # on the right while its last plugin exits on the left, and the
+            # recompose that follows then replaces both at once. That reads as
+            # the ticker "switching mid-scroll".
             #
-            # We end the cycle as soon as total_distance_scrolled reaches
-            # total_scroll_width (the wrap-around point), before any second-pass
-            # content becomes visible.  The scroll_helper's own is_scroll_complete()
-            # check is kept as a fallback for any edge-cases where that threshold
-            # is never hit.
+            # This used to be hidden because the strip began with a full
+            # display_width of blank, so the wrapped-in region was black.
+            # lead_in_width now defaults to 0 (that blank was 10s of dead panel
+            # at 50px/s), which exposed the wrap — so the cycle has to end
+            # before it, one display width earlier.
+            #
+            # A strip no wider than the display never wraps, and subtracting
+            # would make the cycle complete instantly, so clamp in that case.
+            wrap_point = self.scroll_helper.total_scroll_width
+            if wrap_point > self.display_width:
+                wrap_point -= self.display_width
+
             at_wrap_point = (
                 not self._cycle_complete and
-                self.scroll_helper.total_distance_scrolled >= self.scroll_helper.total_scroll_width
+                self.scroll_helper.total_distance_scrolled >= wrap_point
             )
 
             if at_wrap_point or self.scroll_helper.is_scroll_complete():

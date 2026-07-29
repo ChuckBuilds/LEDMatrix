@@ -12,7 +12,11 @@ from contextlib import nullcontext
 from typing import Optional, List, Any, Tuple, Union, TYPE_CHECKING
 from PIL import Image
 
-from src.vegas_mode.geometry import find_blank_cut, trim_to_content
+from src.vegas_mode.geometry import (
+    find_blank_cut,
+    separation_gap,
+    trim_to_content,
+)
 
 if TYPE_CHECKING:
     from src.plugin_system.base_plugin import BasePlugin
@@ -166,8 +170,13 @@ class PluginAdapter:
             Trimmed image list, or None if nothing worth showing remains
         """
         if not self.config.auto_trim:
-            self._cache_content(plugin_id, images)
-            return images
+            # Trimming is off, but the width budget is a separate concern —
+            # turning off margin cropping should not let one plugin hold the
+            # panel for minutes. Skipping it here previously let a 14,848px
+            # segment through untouched.
+            kept = self._apply_width_budget(list(images), plugin_id)
+            self._cache_content(plugin_id, kept)
+            return kept
 
         original_width = sum(img.width for img in images)
         kept: List[Image.Image] = []
@@ -275,6 +284,20 @@ class PluginAdapter:
             return self.display_width
         return max(1, int(self.display_width * pct / 100))
 
+    def _row_gap(self, left: Image.Image, right: Image.Image) -> int:
+        """
+        Gap the compositor will insert between two of a plugin's rows.
+
+        Mirrors RenderPipeline._join_plugin_rows so the width budget measures
+        what will actually be rendered.
+        """
+        return separation_gap(
+            left, right,
+            target=max(0, self.config.min_content_separation),
+            minimum=max(0, self.config.intra_plugin_gap),
+            threshold=self.config.trim_threshold,
+        )
+
     def _width_budget(self) -> int:
         """Maximum columns one plugin may occupy in a cycle. 0 means unlimited."""
         ratio = self.config.max_plugin_width_ratio
@@ -304,11 +327,15 @@ class PluginAdapter:
         """
         budget = self._width_budget()
 
-        # Count the gaps the compositor will insert between these rows, not
-        # just the pixels of the rows themselves — otherwise a plugin with many
-        # rows quietly occupies far more of the panel than its budget allows.
-        gap = max(0, self.config.intra_plugin_gap)
-        total = sum(img.width for img in images) + gap * (len(images) - 1)
+        # Count the gaps the compositor will actually insert, not just the
+        # pixels of the rows — otherwise a plugin with many rows quietly
+        # occupies far more of the panel than its budget allows. These must use
+        # the same measured rule as RenderPipeline._join_plugin_rows; assuming
+        # the flat intra_plugin_gap here under-counted by up to
+        # (min_content_separation - intra_plugin_gap) per row.
+        total = sum(img.width for img in images) + sum(
+            self._row_gap(images[i], images[i + 1]) for i in range(len(images) - 1)
+        )
 
         if not budget or total <= budget:
             # Fits, so reset rotation — the whole segment is being shown.
@@ -327,7 +354,9 @@ class PluginAdapter:
         # cut never lands in the middle of one.
         for step in range(len(images)):
             img = images[(start + step) % len(images)]
-            cost = img.width + (gap if selected else 0)
+            cost = img.width
+            if selected:
+                cost += self._row_gap(selected[-1], img)
             if selected and used + cost > budget:
                 break
             selected.append(img)
