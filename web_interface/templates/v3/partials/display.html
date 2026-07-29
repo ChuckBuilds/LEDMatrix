@@ -510,6 +510,17 @@
                         </label>
                     </div>
 
+                    <div class="form-group mb-4" id="setting-display-vegas_smooth_scroll" data-setting-key="display.vegas_scroll.smooth_scroll">
+                        <label class="flex items-center">
+                            <input type="checkbox"
+                                   id="vegas_smooth_scroll"
+                                   name="vegas_smooth_scroll"
+                                   {% if main_config.display.get('vegas_scroll', {}).get('smooth_scroll', True) %}checked{% endif %}
+                                   class="form-checkbox">
+                            <span class="ml-2 text-sm text-gray-700">Smooth sub-pixel motion{{ ui.help_tip('Blend between neighbouring pixel positions so the ticker moves once per rendered frame instead of once per pixel. Default: on.\nWithout it, motion happens only as often as the scroll speed in pixels per second — at 50 px/s that is 50 steps a second however fast the display renders, which reads as a slight judder. The trade is that text softens very slightly horizontally, since each frame blends two positions. Turn it off if you prefer maximum crispness.', 'Smooth Scrolling') }}</span>
+                        </label>
+                    </div>
+
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                         <div class="form-group" id="setting-display-vegas_extend_threshold_screens" data-setting-key="display.vegas_scroll.extend_threshold_screens">
                             <label for="vegas_extend_threshold_screens" class="block text-sm font-medium text-gray-700">Extend When (screens left){{ ui.help_tip('How much unscrolled content triggers loading the next group, measured in screen widths (1.0–10.0).\nDefault: 2. Higher loads earlier and leaves more slack, at the cost of holding more content in memory. Only applies when Continuous Scroll is on.', 'Extend Threshold') }}</label>

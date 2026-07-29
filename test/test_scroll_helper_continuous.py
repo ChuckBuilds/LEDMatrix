@@ -243,3 +243,94 @@ class TestContinuousScrollingEndToEnd:
 
         assert max(widths) < 3000, f"strip grew unbounded: max {max(widths)}"
         assert not sh.scroll_complete, "continuous strip should never complete"
+
+
+class TestSubPixelBlending:
+    """
+    Integer positioning quantises motion to whole pixels, so distinct frames per
+    second equals scroll speed regardless of frame rate — at 50px/s and 78fps,
+    36% of frames were identical. Blending between neighbouring positions gives
+    motion at the frame rate instead.
+    """
+
+    def _strip(self, width=2000):
+        rng = np.random.default_rng(0)
+        arr = (rng.random((H, width, 3)) * 255).astype(np.uint8)
+        sh = helper()
+        sh.create_scrolling_image([Image.fromarray(arr)],
+                                  item_gap=0, element_gap=0, lead_gap=0)
+        return sh
+
+    def _frame(self, sh, pos, subpixel):
+        sh.sub_pixel_scrolling = subpixel
+        sh.scroll_position = pos
+        return np.asarray(sh.get_visible_portion()).astype(int)
+
+    def test_integer_mode_ignores_the_fraction(self):
+        sh = self._strip()
+        a = self._frame(sh, 500.0, False)
+        b = self._frame(sh, 500.9, False)
+        assert np.array_equal(a, b), "integer positioning should not move sub-pixel"
+
+    def test_blending_moves_within_a_pixel(self):
+        sh = self._strip()
+        a = self._frame(sh, 500.0, True)
+        b = self._frame(sh, 500.5, True)
+        assert not np.array_equal(a, b)
+
+    def test_zero_fraction_matches_the_integer_frame(self):
+        # No interpolation to do, so it must be pixel-identical and take the
+        # cheap path.
+        sh = self._strip()
+        assert np.array_equal(self._frame(sh, 700.0, True),
+                              self._frame(sh, 700.0, False))
+
+    def test_blend_is_monotonic_between_neighbours(self):
+        # Marching the fraction from 0 to 1 should approach the next integer
+        # frame, not wander.
+        sh = self._strip()
+        target = self._frame(sh, 501.0, False)
+        dists = []
+        for frac in (0.0, 0.25, 0.5, 0.75):
+            f = self._frame(sh, 500.0 + frac, True)
+            dists.append(np.abs(f - target).mean())
+        assert dists == sorted(dists, reverse=True), f"not converging: {dists}"
+
+    def test_blend_endpoints_bracket_the_two_frames(self):
+        sh = self._strip()
+        near = self._frame(sh, 500.0, False)
+        far = self._frame(sh, 501.0, False)
+        mid = self._frame(sh, 500.5, True)
+        # Every blended pixel must lie between its two sources.
+        lo = np.minimum(near, far)
+        hi = np.maximum(near, far)
+        assert (mid >= lo - 1).all() and (mid <= hi + 1).all()
+
+    def test_output_size_and_mode_are_unchanged(self):
+        sh = self._strip()
+        sh.sub_pixel_scrolling = True
+        sh.scroll_position = 300.4
+        frame = sh.get_visible_portion()
+        assert frame.size == (W, H)
+        assert frame.mode == 'RGB'
+
+    def test_works_near_the_end_of_the_strip(self):
+        # One of the two slices wraps here; must not raise or missize.
+        sh = self._strip(width=600)
+        sh.sub_pixel_scrolling = True
+        sh.scroll_position = float(600 - W // 2) + 0.5
+        frame = sh.get_visible_portion()
+        assert frame is not None and frame.size == (W, H)
+
+    def test_works_at_the_very_last_column(self):
+        sh = self._strip(width=600)
+        sh.sub_pixel_scrolling = True
+        sh.scroll_position = 599.5
+        assert sh.get_visible_portion().size == (W, H)
+
+    @pytest.mark.parametrize("frac", [0.01, 0.1, 0.33, 0.5, 0.67, 0.9, 0.99])
+    def test_never_raises_across_the_fraction_range(self, frac):
+        sh = self._strip()
+        sh.sub_pixel_scrolling = True
+        sh.scroll_position = 400.0 + frac
+        assert sh.get_visible_portion().size == (W, H)

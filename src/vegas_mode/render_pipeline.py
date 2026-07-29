@@ -124,6 +124,7 @@ class RenderPipeline:
         """Configure ScrollHelper with current settings."""
         self.scroll_helper.set_frame_based_scrolling(self.config.frame_based_scrolling)
         self.scroll_helper.set_scroll_delay(self.config.scroll_delay)
+        self.scroll_helper.set_sub_pixel_scrolling(self.config.smooth_scroll)
 
         # Config scroll_speed is always pixels per second, but ScrollHelper
         # interprets it differently based on frame_based_scrolling mode:

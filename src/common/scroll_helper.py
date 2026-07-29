@@ -348,13 +348,72 @@ class ScrollHelper:
         """
         if not self.cached_image or self.cached_array is None:
             return None
-        
-        # Use integer pixel positioning for high FPS scrolling (like stock ticker)
+
         start_x_int = int(self.scroll_position)
         end_x_int = start_x_int + self.display_width
-        
-        # Fast integer pixel path (no interpolation - high frame rate provides smoothness)
+
+        # Integer positioning quantises motion to whole pixels, so the number of
+        # distinct frames per second equals the scroll speed in px/s, no matter
+        # how fast the loop renders. At 50px/s and 78fps that made 36% of frames
+        # identical: the extra frames cost work and bought nothing. Blending
+        # between the two neighbouring positions gives motion at the frame rate
+        # instead of the step rate.
+        if self.sub_pixel_scrolling:
+            fractional = self.scroll_position - start_x_int
+            if fractional > 0.0:
+                return self._blend_visible_portion(start_x_int, fractional)
+
         return self._get_visible_portion_integer(start_x_int, end_x_int)
+
+    def _blend_visible_portion(self, start_x: int, fractional: float) -> Image.Image:
+        """
+        Linear blend between the frames at ``start_x`` and ``start_x + 1``.
+
+        Implemented with numpy rather than scipy.ndimage.shift: scipy is not
+        installed on the target devices (HAS_SCIPY is False there), which is why
+        the pre-existing sub-pixel path was dead code — get_visible_portion never
+        consulted the flag, and the scipy fallback would not have interpolated
+        anyway.
+
+        Args:
+            start_x: Left column of the earlier of the two frames
+            fractional: How far between the two, in [0, 1)
+
+        Returns:
+            The blended frame
+        """
+        width = self.display_width
+        strip_width = self.cached_array.shape[1]
+
+        if start_x + width + 1 <= strip_width:
+            # Slice the backing array directly. Going via
+            # _get_visible_portion_integer would build two PIL images only for
+            # them to be converted straight back to arrays, which measured 15x
+            # the cost of the integer path.
+            near = self.cached_array[:, start_x:start_x + width]
+            far = self.cached_array[:, start_x + 1:start_x + 1 + width]
+        else:
+            # Close enough to the end that one of the slices wraps; let the
+            # integer path handle that and pay the conversion. Continuous mode
+            # extends the strip before reaching here, so this is the rare case.
+            near = np.asarray(
+                self._get_visible_portion_integer(start_x, start_x + width))
+            far = np.asarray(
+                self._get_visible_portion_integer(start_x + 1, start_x + 1 + width))
+
+        # Fixed-point rather than float32: integer multiply-add on uint16 is
+        # markedly faster than float maths on the Pi's ARM cores, and 8 bits of
+        # weight is finer than the panel can show.
+        weight = int(fractional * 256.0)
+        blended = (
+            (near.astype(np.uint16) * (256 - weight)
+             + far.astype(np.uint16) * weight) >> 8
+        ).astype(np.uint8)
+
+        return Image.frombytes(
+            'RGB', (width, self.display_height),
+            np.ascontiguousarray(blended).tobytes()
+        )
     
     def _get_visible_portion_integer(self, start_x: int, end_x: int) -> Image.Image:
         """Fast integer pixel extraction (no interpolation).

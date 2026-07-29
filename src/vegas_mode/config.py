@@ -58,6 +58,13 @@ class VegasModeConfig:
     # switched off at the start of every cycle.
     lead_in_width: int = 0
 
+    # Blend between neighbouring pixel positions so motion happens at the frame
+    # rate rather than the scroll speed. With integer positioning the number of
+    # distinct frames per second equals scroll_speed, so at 50px/s the motion is
+    # 50 discrete 1px steps however fast the loop runs. The trade is a slight
+    # horizontal softening of text, since each frame is a blend of two positions.
+    smooth_scroll: bool = True
+
     # Keep one continuous strip, extending it with the next group of plugins as
     # the scroll approaches the end, instead of composing a fresh strip and
     # swapping it in. A swap stops the motion, substitutes every pixel at once
@@ -129,6 +136,7 @@ class VegasModeConfig:
             min_content_separation=int(
                 vegas_config.get('min_content_separation', 24)),
             min_cut_gap=int(vegas_config.get('min_cut_gap', 6)),
+            smooth_scroll=vegas_config.get('smooth_scroll', True),
             continuous_scroll=vegas_config.get('continuous_scroll', True),
             extend_threshold_screens=float(
                 vegas_config.get('extend_threshold_screens', 2.0)),
@@ -161,6 +169,7 @@ class VegasModeConfig:
             'render_width_pct': self.render_width_pct,
             'min_content_separation': self.min_content_separation,
             'min_cut_gap': self.min_cut_gap,
+            'smooth_scroll': self.smooth_scroll,
             'continuous_scroll': self.continuous_scroll,
             'extend_threshold_screens': self.extend_threshold_screens,
             'auto_trim': self.auto_trim,
@@ -344,6 +353,8 @@ class VegasModeConfig:
                 vegas_config['min_content_separation'])
         if 'min_cut_gap' in vegas_config:
             self.min_cut_gap = int(vegas_config['min_cut_gap'])
+        if 'smooth_scroll' in vegas_config:
+            self.smooth_scroll = vegas_config['smooth_scroll']
         if 'continuous_scroll' in vegas_config:
             self.continuous_scroll = vegas_config['continuous_scroll']
         if 'extend_threshold_screens' in vegas_config:
