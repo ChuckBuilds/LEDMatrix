@@ -224,6 +224,24 @@ class PluginAdapter:
         self._cache_content(plugin_id, kept)
         return kept
 
+    def _capture(self):
+        """
+        Context manager suppressing hardware writes while plugin render code runs.
+
+        Degrades to a no-op when the display manager predates capture_mode. As
+        with _render_at, losing the suppression risks a visible flash, whereas
+        raising would be swallowed by the broad handlers upstream and drop the
+        plugin's content entirely — much worse.
+        """
+        capture_mode = getattr(self.display_manager, 'capture_mode', None)
+        if capture_mode is None:
+            logger.debug(
+                "display_manager has no capture_mode(); plugin writes during "
+                "content capture may reach the panel"
+            )
+            return nullcontext()
+        return capture_mode()
+
     def _render_at(self, width: int):
         """
         Context manager narrowing the plugin-facing canvas to ``width``.
@@ -454,18 +472,22 @@ class PluginAdapter:
             # the narrower value with no changes of its own; one that wants to
             # be explicit can read get_vegas_render_width().
             render_width = self.resolve_render_width(plugin, plugin_id)
+            if render_width != self.display_width:
+                logger.info(
+                    "[%s] Native: requesting %dpx instead of %dpx",
+                    plugin_id, render_width, self.display_width
+                )
+
             plugin._vegas_render_width = render_width
             try:
-                if render_width == self.display_width:
+                # capture_mode unconditionally, even at full width. Building
+                # Vegas content is an off-screen operation, but a plugin is free
+                # to call update_display() while doing it — and outside
+                # capture_mode that write lands on the hardware, flashing the
+                # panel mid-scroll. The narrowing context is separate because it
+                # is a no-op at full width.
+                with self._capture(), self._render_at(render_width):
                     result = plugin.get_vegas_content()
-                else:
-                    logger.info(
-                        "[%s] Native: requesting %dpx instead of %dpx",
-                        plugin_id, render_width, self.display_width
-                    )
-                    with self.display_manager.capture_mode(), \
-                            self._render_at(render_width):
-                        result = plugin.get_vegas_content()
             finally:
                 plugin._vegas_render_width = None
 
@@ -727,7 +749,7 @@ class PluginAdapter:
             # Save display state to restore after
             original_image = self.display_manager.image.copy()
 
-            with self.display_manager.capture_mode():
+            with self._capture():
                 # Method 1: Try _create_scrolling_display (stocks pattern)
                 if hasattr(plugin, '_create_scrolling_display'):
                     logger.info(
@@ -830,8 +852,7 @@ class PluginAdapter:
                     plugin_id, render_width, self.display_width
                 )
 
-            with self.display_manager.capture_mode(), \
-                    self._render_at(render_width):
+            with self._capture(), self._render_at(render_width):
                 self.display_manager.clear()
                 logger.info("[%s] Fallback: display cleared, calling display()", plugin_id)
 
@@ -865,8 +886,7 @@ class PluginAdapter:
                     plugin_id
                 )
                 # Try once more with force_clear=True
-                with self.display_manager.capture_mode(), \
-                        self._render_at(render_width):
+                with self._capture(), self._render_at(render_width):
                     self.display_manager.clear()
                     plugin.display(force_clear=True)
                     captured = self.display_manager.image.copy()

@@ -3,6 +3,8 @@ Tests for the Vegas mode density work: dead-space trimming in PluginAdapter
 and the configurable lead-in gap in ScrollHelper.
 """
 
+from contextlib import contextmanager
+
 import pytest
 from PIL import Image
 
@@ -16,13 +18,45 @@ DISPLAY_H = 64
 
 
 class FakeDisplayManager:
-    """Minimal stand-in; the native content path never touches the canvas."""
+    """Stand-in offering the same contexts the real DisplayManager does.
+
+    capture_mode and render_size must both be present: the adapter degrades
+    gracefully when they are missing, so a fake without them would silently
+    exercise the degraded path instead of the real one.
+    """
 
     width = DISPLAY_W
     height = DISPLAY_H
 
     def __init__(self):
         self.image = Image.new('RGB', (DISPLAY_W, DISPLAY_H))
+        self.draw = None
+        self._capture_mode_active = False
+
+    @contextmanager
+    def capture_mode(self):
+        self._capture_mode_active = True
+        try:
+            yield
+        finally:
+            self._capture_mode_active = False
+
+    @contextmanager
+    def render_size(self, width, height=None):
+        prev = self.image
+        target_w = max(1, min(int(width), DISPLAY_W))
+        target_h = max(1, min(int(height) if height else DISPLAY_H, DISPLAY_H))
+        try:
+            self.image = Image.new('RGB', (target_w, target_h))
+            yield
+        finally:
+            self.image = prev
+
+    def clear(self):
+        self.image = Image.new('RGB', self.image.size)
+
+    def update_display(self):
+        pass
 
 
 class NativePlugin:
@@ -1098,3 +1132,90 @@ class TestCutsNeverSplitWords:
         out = adapter.get_content(NativePlugin([img]), 'ticker')[0]
         assert out.width not in mid_word, \
             f"cut at {out.width} is a mid-word position"
+
+
+class TestCaptureModeAlwaysHeld:
+    """
+    Building Vegas content is off-screen work, but plugins are free to call
+    update_display() while doing it. Outside capture_mode that write reaches the
+    hardware and flashes the panel mid-scroll, so every path that runs plugin
+    render code must hold capture_mode — including at full width, where the
+    narrowing context is a no-op.
+    """
+
+    class RecordingDM:
+        width = DISPLAY_W
+        height = DISPLAY_H
+
+        def __init__(self):
+            self.image = Image.new('RGB', (DISPLAY_W, DISPLAY_H))
+            self.draw = None
+            self.capture_depth = 0
+            self.hardware_writes_while_uncaptured = 0
+
+        from contextlib import contextmanager
+
+        @contextmanager
+        def capture_mode(self):
+            self.capture_depth += 1
+            try:
+                yield
+            finally:
+                self.capture_depth -= 1
+
+        @contextmanager
+        def render_size(self, width, height=None):
+            yield
+
+        def clear(self):
+            self.image = Image.new('RGB', (DISPLAY_W, DISPLAY_H))
+
+        def update_display(self):
+            if self.capture_depth == 0:
+                self.hardware_writes_while_uncaptured += 1
+
+    class PushyPlugin:
+        """A plugin that pushes to the display while building Vegas content."""
+
+        def __init__(self, dm, images):
+            self.display_manager = dm
+            self.config = {}
+            self._images = images
+
+        def get_vegas_content(self):
+            self.display_manager.update_display()
+            return self._images
+
+    def _run(self, **cfg):
+        dm = self.RecordingDM()
+        adapter = PluginAdapter(dm, VegasModeConfig(**cfg))
+        plugin = self.PushyPlugin(dm, [canvas([(100, 300)])])
+        adapter.get_content(plugin, 'pushy')
+        return dm
+
+    def test_no_hardware_write_escapes_at_full_width(self):
+        dm = self._run(render_width_pct=100)
+        assert dm.hardware_writes_while_uncaptured == 0
+
+    def test_no_hardware_write_escapes_when_narrowing(self):
+        dm = self._run(render_width_pct=50)
+        assert dm.hardware_writes_while_uncaptured == 0
+
+    def test_capture_mode_is_released_afterwards(self):
+        dm = self._run(render_width_pct=100)
+        assert dm.capture_depth == 0
+
+    def test_capture_mode_released_even_when_the_plugin_raises(self):
+        dm = self.RecordingDM()
+        adapter = PluginAdapter(dm, VegasModeConfig())
+
+        class Boom:
+            def __init__(self, d):
+                self.display_manager = d
+                self.config = {}
+
+            def get_vegas_content(self):
+                raise ValueError("boom")
+
+        adapter.get_content(Boom(dm), 'boom')
+        assert dm.capture_depth == 0
