@@ -629,6 +629,25 @@ class RenderPipeline:
 
         return False
 
+    def refresh_updated_plugins(self) -> bool:
+        """
+        Let changed plugin data reach the strip without interrupting motion.
+
+        Used instead of :meth:`hot_swap_content` when scrolling continuously.
+        The swap rebuilds the whole image and repositions the scroll, which is
+        visible as a freeze and a jump; the strip is extended here rather than
+        replaced, so it is enough to drop the stale caches and let the plugin
+        recompose when it next comes round.
+
+        Returns:
+            True if any plugin's cached content was dropped.
+        """
+        try:
+            return bool(self.stream_manager.invalidate_pending_updates())
+        except Exception:  # pylint: disable=broad-except
+            logger.exception("Failed to refresh updated plugins")
+            return False
+
     def hot_swap_content(self) -> bool:
         """
         Hot-swap to new composed content.

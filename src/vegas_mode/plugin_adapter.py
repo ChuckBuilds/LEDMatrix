@@ -1135,6 +1135,53 @@ class PluginAdapter:
             else:
                 self._content_cache.clear()
 
+    def invalidate_plugin_scroll_cache(
+        self, plugin: 'BasePlugin', plugin_id: str
+    ) -> bool:
+        """
+        Drop a plugin's own cached scroll image so its visual is rebuilt.
+
+        Invalidating only this adapter's cache is not enough. A plugin that
+        composes a scroll strip hands back the *same* image every time until its
+        own cache is cleared — the sports plugins' ``get_vegas_content()``
+        regenerates only "if the cache is empty" — so without this a segment
+        keeps rendering whatever data it was first built from. That is how a
+        game that was live last night can still be displayed as live the next
+        morning.
+
+        Two layouts to cover: a helper directly on the plugin (stocks, news,
+        odds-ticker) and one owned by a scroll-display manager (the sports
+        scoreboards). ``cached_image`` and ``cached_array`` must be cleared
+        together, since the array is the image's numpy mirror and code paths
+        read whichever is convenient.
+
+        Returns:
+            True if a cache was found and cleared.
+        """
+        cleared = False
+        for owner in (plugin, getattr(plugin, '_scroll_manager', None),
+                      getattr(plugin, 'scroll_manager', None)):
+            if owner is None:
+                continue
+            helper = getattr(owner, 'scroll_helper', None)
+            if helper is None:
+                continue
+            try:
+                if getattr(helper, 'cached_image', None) is not None:
+                    helper.cached_image = None
+                    cleared = True
+                if getattr(helper, 'cached_array', None) is not None:
+                    helper.cached_array = None
+                    cleared = True
+            except Exception:  # pylint: disable=broad-except
+                logger.exception(
+                    "[%s] Could not clear scroll cache on %s",
+                    plugin_id, type(owner).__name__
+                )
+        if cleared:
+            logger.debug("[%s] Cleared plugin scroll cache", plugin_id)
+        return cleared
+
     def get_content_type(self, plugin: 'BasePlugin', plugin_id: str) -> str:
         """
         Get the type of content a plugin provides.

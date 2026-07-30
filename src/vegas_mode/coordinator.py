@@ -307,6 +307,16 @@ class VegasModeCoordinator:
             self._apply_pending_config()
 
         if self.vegas_config.continuous_scroll:
+            # Drop cached content for plugins whose data just changed, so the
+            # next time each comes round it is composed from current data. The
+            # swap path's hot_swap_content() does this via process_updates(),
+            # but it also rebuilds and repositions the whole strip, which is
+            # the freeze-and-jump this mode exists to avoid. Without this the
+            # pending-update flags are never consumed and a segment keeps
+            # rendering whatever it was first built from — last night's live
+            # game still shown as live the next morning.
+            self.render_pipeline.refresh_updated_plugins()
+
             # Extend the strip before the scroll can reach its end, so the next
             # group arrives from the right and motion never stops. No cycle
             # boundary, so no freeze, no substitution and no restart with the

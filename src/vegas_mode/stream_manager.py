@@ -201,6 +201,47 @@ class StreamManager:
 
         logger.debug("Plugin %s marked for update", plugin_id)
 
+    def invalidate_pending_updates(self) -> List[str]:
+        """
+        Drop cached content for plugins whose data changed, without refetching.
+
+        The continuous-scroll counterpart to :meth:`process_updates`. That method
+        belongs to the swap path: it refetches immediately and merges into the
+        active buffer, which continuous mode bypasses entirely, and doing that
+        work on the render thread would hitch the scroll.
+
+        Here it is enough to clear the caches and let the plugin come round in
+        the rotation, which recomposes it from current data a moment later. Left
+        uncalled, ``_pending_updates`` simply accumulates and no visual ever
+        refreshes — a game that was live last night keeps being drawn as live.
+
+        Returns:
+            The plugin ids whose caches were dropped.
+        """
+        with self._buffer_lock:
+            if not self._pending_updates:
+                return []
+            updated = list(self._pending_updates.keys())
+            self._pending_updates.clear()
+
+        plugins = getattr(self.plugin_manager, 'plugins', {})
+        for plugin_id in updated:
+            try:
+                self.plugin_adapter.invalidate_cache(plugin_id)
+                plugin = plugins.get(plugin_id)
+                if plugin is not None:
+                    self.plugin_adapter.invalidate_plugin_scroll_cache(
+                        plugin, plugin_id)
+            except Exception:  # pylint: disable=broad-except
+                logger.exception(
+                    "[%s] Could not invalidate cached content", plugin_id)
+
+        logger.info(
+            "Vegas: dropped cached content for %d updated plugin(s): %s",
+            len(updated), ', '.join(updated)
+        )
+        return updated
+
     def has_pending_updates(self) -> bool:
         """Check if any plugins have pending updates awaiting processing."""
         with self._buffer_lock:
