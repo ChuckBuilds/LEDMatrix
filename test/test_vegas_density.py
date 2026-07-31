@@ -1057,16 +1057,20 @@ class TestCutsNeverSplitWords:
 
     def test_no_partial_letter_at_either_edge(self):
         # A split letter shows as a lit column touching the crop edge with the
-        # rest of its glyph missing. Requiring the edges to be blank is the
-        # simplest way to assert we cut inside a gap.
+        # rest of its glyph missing. The crop always starts at 0 here (fresh
+        # adapter, no prior rotation offset), and word_strip's first word
+        # begins at column 0 with no lead-in gap, so the left edge is the
+        # true start of the content rather than a cut and legitimately
+        # carries ink. Only the right edge is where the width budget actually
+        # cropped, so that is the one that must land in a gap.
         from src.vegas_mode.geometry import column_has_ink
         img, _ = word_strip([9, 9, 9, 9, 9, 9])
         adapter = adapter_with(content_padding=0, max_plugin_width_ratio=0.25,
                                min_cut_gap=6)
         out = adapter.get_content(NativePlugin([img]), 'ticker')[0]
         ink = column_has_ink(out)
-        assert not ink[0] or not ink[-1] or out.width == img.width, \
-            "crop edges land on ink, so a glyph was cut through"
+        assert not ink[-1] or out.width == img.width, \
+            "crop's right edge lands on ink, so a glyph was cut through"
 
     def test_rotation_never_orphans_a_fragment(self):
         # Walk the window across the whole strip and assert no slice is a
@@ -1351,7 +1355,9 @@ class TestContinuousExtension:
         assert p.extend_scroll_content()
         # One offscreen prefetch, then one more kicked off for the group after.
         assert stream.calls[0] is True
-        assert p._prepared_group is None or isinstance(p._prepared_group, list)
+        # The extend must consume the prepared group rather than fetching inline,
+        # so no offscreen_only=False call may appear.
+        assert False not in stream.calls
 
     def test_strip_stays_bounded_over_many_extensions(self):
         groups = [[('g%d' % i, [self._block(600)])] for i in range(30)]
