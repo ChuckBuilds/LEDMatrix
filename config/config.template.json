@@ -130,7 +130,25 @@
             "plugin_order": [],
             "excluded_plugins": [],
             "target_fps": 125,
-            "buffer_ahead": 2
+            "buffer_ahead": 2,
+            "intra_plugin_gap": 8,
+            "render_width_pct": 100,
+            "min_content_separation": 24,
+            "min_cut_gap": 6,
+            "continuous_scroll": true,
+            "smooth_scroll": true,
+            "extend_threshold_screens": 2.0,
+            "auto_trim": true,
+            "trim_threshold": 10,
+            "content_padding": 8,
+            "min_plugin_width": 8,
+            "lead_in_width": 0,
+            "plugins_per_cycle": 6,
+            "max_plugin_width_ratio": 3.0,
+            "overflow_mode": "rotate",
+            "dynamic_duration_enabled": true,
+            "min_cycle_duration": 60,
+            "max_cycle_duration": 240
         }
     },
     "sync": {

@@ -505,6 +505,40 @@ class BasePlugin(ABC):
     # -------------------------------------------------------------------------
     # Vegas scroll mode support
     # -------------------------------------------------------------------------
+    def get_vegas_render_width(self) -> int:
+        """
+        Width the Vegas ticker wants this plugin's content to occupy.
+
+        On a wide panel a layout built to fill the screen reads as sparse in a
+        ticker — a forecast spread over five columns, a progress bar drawn at
+        100% width, a stat block with the panel's whole width between its
+        elements. Vegas asks for a narrower render so the plugin can choose a
+        tighter arrangement instead of being cropped afterwards.
+
+        Vegas also narrows ``display_manager`` for the duration of the call, so
+        a plugin that already sizes itself from ``matrix.width`` needs no
+        changes. Read this only when you size content some other way.
+
+        Controlled by the plugin's own ``vegas_width_pct`` config value, else
+        the global ``display.vegas_scroll.render_width_pct``.
+
+        Returns:
+            Target width in pixels. Outside a Vegas content request, the full
+            display width.
+        """
+        requested = getattr(self, '_vegas_render_width', None)
+        if isinstance(requested, int) and requested > 0:
+            return requested
+
+        display_manager = getattr(self, 'display_manager', None)
+        matrix = getattr(display_manager, 'matrix', None)
+        if matrix is not None and getattr(matrix, 'width', None):
+            return int(matrix.width)
+        width = getattr(display_manager, 'width', None)
+        if callable(width):
+            width = width()
+        return int(width) if width else 128
+
     def get_vegas_content(self) -> Optional[Any]:
         """
         Get content for Vegas-style continuous scroll mode.

@@ -425,13 +425,51 @@
                     </div>
 
                     <div class="form-group" id="setting-display-vegas_separator_width" data-setting-key="display.vegas_scroll.separator_width">
-                        <label for="vegas_separator_width" class="block text-sm font-medium text-gray-700">Separator Width (pixels){{ ui.help_tip('Blank gap inserted between each plugin block in the ticker (0–128 px).\nDefault: 32. Larger values make the boundary between plugins clearer.', 'Separator Width') }}</label>
+                        <label for="vegas_separator_width" class="block text-sm font-medium text-gray-700">Separator Width (pixels){{ ui.help_tip('Blank gap where one plugin hands off to the next (0–128 px).\nDefault: 32. Larger values make the boundary between plugins clearer. This does not apply between rows of the same plugin — see Row Gap for that.', 'Separator Width') }}</label>
                         <input type="number"
                                id="vegas_separator_width"
                                name="vegas_separator_width"
                                value="{{ main_config.display.get('vegas_scroll', {}).get('separator_width', 32) }}"
                                min="0"
                                max="128"
+                               class="form-control">
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="form-group" id="setting-display-vegas_intra_plugin_gap" data-setting-key="display.vegas_scroll.intra_plugin_gap">
+                        <label for="vegas_intra_plugin_gap" class="block text-sm font-medium text-gray-700">Row Gap (pixels){{ ui.help_tip('Extra gap always added between rows contributed by the same plugin (0–128 px).\nDefault: 8. This is a floor on top of Row Separation below, which does most of the work. Set both to 0 to butt rows directly together.', 'Row Gap') }}</label>
+                        <input type="number"
+                               id="vegas_intra_plugin_gap"
+                               name="vegas_intra_plugin_gap"
+                               value="{{ main_config.display.get('vegas_scroll', {}).get('intra_plugin_gap', 8) }}"
+                               min="0"
+                               max="128"
+                               class="form-control">
+                    </div>
+
+                    <div class="form-group" id="setting-display-vegas_min_content_separation" data-setting-key="display.vegas_scroll.min_content_separation">
+                        <label for="vegas_min_content_separation" class="block text-sm font-medium text-gray-700">Row Separation (pixels){{ ui.help_tip('Blank space guaranteed between rows of the same plugin, measured from the actual content rather than added blindly (0–256 px).\nDefault: 24. Rows already carrying wide margins get nothing added; rows drawn right up to their own edges — sports score cards, for instance — get the full amount, so they no longer look like they are touching. Raise it if items still feel cramped.', 'Row Separation') }}</label>
+                        <input type="number"
+                               id="vegas_min_content_separation"
+                               name="vegas_min_content_separation"
+                               value="{{ main_config.display.get('vegas_scroll', {}).get('min_content_separation', 24) }}"
+                               min="0"
+                               max="256"
+                               class="form-control">
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="form-group" id="setting-display-vegas_render_width_pct" data-setting-key="display.vegas_scroll.render_width_pct">
+                        <label for="vegas_render_width_pct" class="block text-sm font-medium text-gray-700">Plugin Render Width (%){{ ui.help_tip('How much of the screen width each plugin is told it has while drawing for the ticker (10–100%).\nDefault: 100 (unchanged). Lowering it makes plugins choose a tighter layout rather than being cropped — a weather forecast becomes narrow cards instead of five columns spread across the panel. Useful on wide displays. Override per plugin with the vegas_width_pct setting in that plugin\'s own configuration.', 'Plugin Render Width') }}</label>
+                        <input type="number"
+                               id="vegas_render_width_pct"
+                               name="vegas_render_width_pct"
+                               value="{{ main_config.display.get('vegas_scroll', {}).get('render_width_pct', 100) }}"
+                               min="10"
+                               max="100"
+                               step="5"
                                class="form-control">
                     </div>
                 </div>
@@ -453,6 +491,194 @@
                             <option value="2" {% if main_config.display.get('vegas_scroll', {}).get('buffer_ahead', 2) == 2 %}selected{% endif %}>2 Plugins (Recommended)</option>
                             <option value="3" {% if main_config.display.get('vegas_scroll', {}).get('buffer_ahead', 2) == 3 %}selected{% endif %}>3 Plugins (More buffer)</option>
                         </select>
+                    </div>
+                </div>
+
+                <!-- Cycle Pacing -->
+                <div class="mt-4 pt-4 border-t border-gray-200">
+                    <h4 class="text-sm font-medium text-gray-900 mb-3">Cycle Pacing</h4>
+                    <p class="text-sm text-gray-600 mb-3">How long one pass through the ticker lasts, and how many plugins it covers.</p>
+
+                    <div class="form-group mb-4" id="setting-display-vegas_continuous_scroll" data-setting-key="display.vegas_scroll.continuous_scroll">
+                        <label class="flex items-center">
+                            <input type="checkbox"
+                                   id="vegas_continuous_scroll"
+                                   name="vegas_continuous_scroll"
+                                   {% if main_config.display.get('vegas_scroll', {}).get('continuous_scroll', True) %}checked{% endif %}
+                                   class="form-checkbox">
+                            <span class="ml-2 text-sm text-gray-700">Scroll continuously between groups{{ ui.help_tip('Keep one endless strip, extending it with the next group of plugins as the scroll approaches the end, so they simply arrive from the right. Default: on.\nWith this off the ticker builds a fresh strip and swaps it in, which stops the motion, replaces everything at once and restarts with the screen already full — a freeze, a flash and a jump.', 'Continuous Scroll') }}</span>
+                        </label>
+                    </div>
+
+                    <div class="form-group mb-4" id="setting-display-vegas_smooth_scroll" data-setting-key="display.vegas_scroll.smooth_scroll">
+                        <label class="flex items-center">
+                            <input type="checkbox"
+                                   id="vegas_smooth_scroll"
+                                   name="vegas_smooth_scroll"
+                                   {% if main_config.display.get('vegas_scroll', {}).get('smooth_scroll', True) %}checked{% endif %}
+                                   class="form-checkbox">
+                            <span class="ml-2 text-sm text-gray-700">Smooth sub-pixel motion{{ ui.help_tip('Blend between neighbouring pixel positions so the ticker moves once per rendered frame instead of once per pixel. Default: on.\nWithout it, motion happens only as often as the scroll speed in pixels per second — at 50 px/s that is 50 steps a second however fast the display renders, which reads as a slight judder. The trade is that text softens very slightly horizontally, since each frame blends two positions. Turn it off if you prefer maximum crispness.', 'Smooth Scrolling') }}</span>
+                        </label>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                        <div class="form-group" id="setting-display-vegas_extend_threshold_screens" data-setting-key="display.vegas_scroll.extend_threshold_screens">
+                            <label for="vegas_extend_threshold_screens" class="block text-sm font-medium text-gray-700">Extend When (screens left){{ ui.help_tip('How much unscrolled content triggers loading the next group, measured in screen widths (1.0–10.0).\nDefault: 2. Higher loads earlier and leaves more slack, at the cost of holding more content in memory. Only applies when Continuous Scroll is on.', 'Extend Threshold') }}</label>
+                            <input type="number"
+                                   id="vegas_extend_threshold_screens"
+                                   name="vegas_extend_threshold_screens"
+                                   value="{{ main_config.display.get('vegas_scroll', {}).get('extend_threshold_screens', 2.0) }}"
+                                   min="1"
+                                   max="10"
+                                   step="0.5"
+                                   class="form-control">
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="form-group" id="setting-display-vegas_plugins_per_cycle" data-setting-key="display.vegas_scroll.plugins_per_cycle">
+                            <label for="vegas_plugins_per_cycle" class="block text-sm font-medium text-gray-700">Plugins Per Cycle{{ ui.help_tip('How many plugins are composed into one pass of the ticker (1–50).\nDefault: 6. Higher means more variety before the ticker restarts, and fewer recompose pauses. Lower means each plugin comes around sooner.', 'Plugins Per Cycle') }}</label>
+                            <input type="number"
+                                   id="vegas_plugins_per_cycle"
+                                   name="vegas_plugins_per_cycle"
+                                   value="{{ main_config.display.get('vegas_scroll', {}).get('plugins_per_cycle', 6) }}"
+                                   min="1"
+                                   max="50"
+                                   class="form-control">
+                        </div>
+
+                        <div class="form-group" id="setting-display-vegas_overflow_mode" data-setting-key="display.vegas_scroll.overflow_mode">
+                            <label for="vegas_overflow_mode" class="block text-sm font-medium text-gray-700">When A Plugin Is Too Wide{{ ui.help_tip('What to do when a plugin has more content than its width allowance.\nRotate through it: show a different slice each time round, so everything is seen eventually. Right for interchangeable items like news headlines, odds or stock prices.\nShow the start only: always display from the beginning and drop the rest. Right for ordered content — a league table that shows ranks 1-6 and then resumes at 7 two rotations later reads as out of order.\nDefault: rotate. Override for one plugin with vegas_overflow in its own settings.', 'Overflow Handling') }}</label>
+                            <select id="vegas_overflow_mode" name="vegas_overflow_mode" class="form-control">
+                                <option value="rotate" {% if main_config.display.get('vegas_scroll', {}).get('overflow_mode', 'rotate') == 'rotate' %}selected{% endif %}>Rotate through it (default)</option>
+                                <option value="truncate" {% if main_config.display.get('vegas_scroll', {}).get('overflow_mode', 'rotate') == 'truncate' %}selected{% endif %}>Show the start only</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group" id="setting-display-vegas_max_plugin_width_ratio" data-setting-key="display.vegas_scroll.max_plugin_width_ratio">
+                            <label for="vegas_max_plugin_width_ratio" class="block text-sm font-medium text-gray-700">Max Plugin Width (screens){{ ui.help_tip('Caps how much of one cycle a single plugin may occupy, measured in screen widths (0–20).\nDefault: 3. A long ticker such as a news feed or leaderboard is trimmed to this and the remainder shown on later cycles, so one plugin cannot hold the display for minutes. Set 0 for no limit.', 'Max Plugin Width') }}</label>
+                            <input type="number"
+                                   id="vegas_max_plugin_width_ratio"
+                                   name="vegas_max_plugin_width_ratio"
+                                   value="{{ main_config.display.get('vegas_scroll', {}).get('max_plugin_width_ratio', 3.0) }}"
+                                   min="0"
+                                   max="20"
+                                   step="0.5"
+                                   class="form-control">
+                        </div>
+                    </div>
+
+                    <div class="form-group mt-4" id="setting-display-vegas_dynamic_duration_enabled" data-setting-key="display.vegas_scroll.dynamic_duration_enabled">
+                        <label class="flex items-center">
+                            <input type="checkbox"
+                                   id="vegas_dynamic_duration_enabled"
+                                   name="vegas_dynamic_duration_enabled"
+                                   {% if main_config.display.get('vegas_scroll', {}).get('dynamic_duration_enabled', True) %}checked{% endif %}
+                                   class="form-checkbox">
+                            <span class="ml-2 text-sm text-gray-700">Size cycle time to the content{{ ui.help_tip('When on, each cycle runs just long enough to scroll all its content past, clamped to the min and max below.\nWhen off, the max is always used. Default: on.', 'Dynamic Cycle Duration') }}</span>
+                        </label>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
+                        <div class="form-group" id="setting-display-vegas_min_cycle_duration" data-setting-key="display.vegas_scroll.min_cycle_duration">
+                            <label for="vegas_min_cycle_duration" class="block text-sm font-medium text-gray-700">Min Cycle Time (seconds){{ ui.help_tip('Shortest a single ticker pass may last (5–3600 s).\nDefault: 60.', 'Min Cycle Time') }}</label>
+                            <input type="number"
+                                   id="vegas_min_cycle_duration"
+                                   name="vegas_min_cycle_duration"
+                                   value="{{ main_config.display.get('vegas_scroll', {}).get('min_cycle_duration', 60) }}"
+                                   min="5"
+                                   max="3600"
+                                   class="form-control">
+                        </div>
+
+                        <div class="form-group" id="setting-display-vegas_max_cycle_duration" data-setting-key="display.vegas_scroll.max_cycle_duration">
+                            <label for="vegas_max_cycle_duration" class="block text-sm font-medium text-gray-700">Max Cycle Time (seconds){{ ui.help_tip('Longest a single ticker pass may last before it restarts with fresh content (10–3600 s).\nThis is the setting that caps total Vegas scroll time. Default: 240. Lower it if the ticker feels like it takes too long to come back around.', 'Max Cycle Time') }}</label>
+                            <input type="number"
+                                   id="vegas_max_cycle_duration"
+                                   name="vegas_max_cycle_duration"
+                                   value="{{ main_config.display.get('vegas_scroll', {}).get('max_cycle_duration', 240) }}"
+                                   min="10"
+                                   max="3600"
+                                   class="form-control">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Dead Space -->
+                <div class="mt-4 pt-4 border-t border-gray-200">
+                    <h4 class="text-sm font-medium text-gray-900 mb-3">Dead Space</h4>
+                    <p class="text-sm text-gray-600 mb-3">Plugins that draw onto a full-screen canvas contribute all the empty space around their content. Trimming reclaims it so the ticker stays full.</p>
+
+                    <div class="form-group mb-4" id="setting-display-vegas_auto_trim" data-setting-key="display.vegas_scroll.auto_trim">
+                        <label class="flex items-center">
+                            <input type="checkbox"
+                                   id="vegas_auto_trim"
+                                   name="vegas_auto_trim"
+                                   {% if main_config.display.get('vegas_scroll', {}).get('auto_trim', True) %}checked{% endif %}
+                                   class="form-checkbox">
+                            <span class="ml-2 text-sm text-gray-700">Trim empty edges from plugin content{{ ui.help_tip('Crops blank columns from the left and right of each plugin block before it enters the ticker. Space between two pieces of content inside a block is left alone, so layouts are not altered. Default: on.', 'Auto Trim') }}</span>
+                        </label>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="form-group" id="setting-display-vegas_content_padding" data-setting-key="display.vegas_scroll.content_padding">
+                            <label for="vegas_content_padding" class="block text-sm font-medium text-gray-700">Content Padding (pixels){{ ui.help_tip('Blank columns kept either side of trimmed content, so it does not butt against the separator (0–128 px).\nDefault: 8.', 'Content Padding') }}</label>
+                            <input type="number"
+                                   id="vegas_content_padding"
+                                   name="vegas_content_padding"
+                                   value="{{ main_config.display.get('vegas_scroll', {}).get('content_padding', 8) }}"
+                                   min="0"
+                                   max="128"
+                                   class="form-control">
+                        </div>
+
+                        <div class="form-group" id="setting-display-vegas_lead_in_width" data-setting-key="display.vegas_scroll.lead_in_width">
+                            <label for="vegas_lead_in_width" class="block text-sm font-medium text-gray-700">Lead-In Gap (pixels){{ ui.help_tip('Blank space before the first plugin of each cycle (0–2048 px).\nDefault: 0. Anything approaching your screen width reads as the display switching off at the start of every cycle.', 'Lead-In Gap') }}</label>
+                            <input type="number"
+                                   id="vegas_lead_in_width"
+                                   name="vegas_lead_in_width"
+                                   value="{{ main_config.display.get('vegas_scroll', {}).get('lead_in_width', 0) }}"
+                                   min="0"
+                                   max="2048"
+                                   class="form-control">
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                        <div class="form-group" id="setting-display-vegas_trim_threshold" data-setting-key="display.vegas_scroll.trim_threshold">
+                            <label for="vegas_trim_threshold" class="block text-sm font-medium text-gray-700">Trim Threshold{{ ui.help_tip('How bright a pixel must be to count as content rather than empty space (0–254).\nDefault: 10, which ignores the near-black noise left by image compression. Raise it if very dark artwork is being kept; lower it if dark detail is being cropped.', 'Trim Threshold') }}</label>
+                            <input type="number"
+                                   id="vegas_trim_threshold"
+                                   name="vegas_trim_threshold"
+                                   value="{{ main_config.display.get('vegas_scroll', {}).get('trim_threshold', 10) }}"
+                                   min="0"
+                                   max="254"
+                                   class="form-control">
+                        </div>
+
+                        <div class="form-group" id="setting-display-vegas_min_plugin_width" data-setting-key="display.vegas_scroll.min_plugin_width">
+                            <label for="vegas_min_plugin_width" class="block text-sm font-medium text-gray-700">Min Plugin Width (pixels){{ ui.help_tip('Plugin blocks narrower than this after trimming are skipped for that cycle (0–512 px).\nDefault: 8. Raise it to hide plugins showing only a tiny placeholder such as "No Data" until they have real content.', 'Min Plugin Width') }}</label>
+                            <input type="number"
+                                   id="vegas_min_plugin_width"
+                                   name="vegas_min_plugin_width"
+                                   value="{{ main_config.display.get('vegas_scroll', {}).get('min_plugin_width', 8) }}"
+                                   min="0"
+                                   max="512"
+                                   class="form-control">
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                        <div class="form-group" id="setting-display-vegas_min_cut_gap" data-setting-key="display.vegas_scroll.min_cut_gap">
+                            <label for="vegas_min_cut_gap" class="block text-sm font-medium text-gray-700">Min Cut Gap (pixels){{ ui.help_tip('When a plugin is too wide for its share of a cycle and has to be narrowed, the cut is only made where there is at least this much blank space (1–128 px).\nDefault: 6. The gaps between letters are about 1px wide, so a smaller value lets a cut land inside a word and orphan its last letter into the next cycle. Raise it if cuts still land awkwardly. Continuous images such as maps have no gaps and are cut to fit regardless.', 'Min Cut Gap') }}</label>
+                            <input type="number"
+                                   id="vegas_min_cut_gap"
+                                   name="vegas_min_cut_gap"
+                                   value="{{ main_config.display.get('vegas_scroll', {}).get('min_cut_gap', 6) }}"
+                                   min="1"
+                                   max="128"
+                                   class="form-control">
+                        </div>
                     </div>
                 </div>
 

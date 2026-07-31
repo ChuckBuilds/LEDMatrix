@@ -186,8 +186,14 @@ class DisplayManager:
         self.config = config or {}
         self._force_fallback = force_fallback
         self._suppress_test_pattern = suppress_test_pattern
-        # When True, update_display() and clear() skip hardware writes (used during off-screen content capture)
-        self._capture_mode_active = False
+        # Per-thread capture state. update_display() and clear() skip hardware
+        # writes while the *calling* thread is capturing content off-screen.
+        #
+        # Thread-local rather than a plain flag because Vegas mode prepares
+        # upcoming content on a background thread: a shared flag set there would
+        # suppress the render loop's own frame pushes for the duration, freezing
+        # the panel exactly when the point was to avoid a freeze.
+        self._capture_state = threading.local()
         # Double-sided mode state (resolved in _setup_matrix). When disabled,
         # the logical image is blitted to the matrix unchanged.
         self._double_sided = None  # dict {copies, axis, logical_width, logical_height} or None
@@ -520,6 +526,15 @@ class DisplayManager:
         except Exception as e:
             logger.error(f"Error drawing test pattern: {e}", exc_info=True)
 
+    @property
+    def _capture_mode_active(self) -> bool:
+        """True while the calling thread is capturing content off-screen."""
+        return getattr(self._capture_state, 'active', False)
+
+    @_capture_mode_active.setter
+    def _capture_mode_active(self, value: bool) -> None:
+        self._capture_state.active = bool(value)
+
     @contextmanager
     def capture_mode(self):
         """Suppress hardware output during off-screen content capture.
@@ -535,6 +550,59 @@ class DisplayManager:
             yield
         finally:
             self._capture_mode_active = False
+
+    @contextmanager
+    def render_size(self, width: int, height: Optional[int] = None):
+        """Temporarily present a smaller logical canvas to plugins.
+
+        Plugins lay out against ``display_manager.matrix.width`` (and the
+        ``width``/``height`` properties, which defer to it), so the only way to
+        get a *narrower layout* rather than a cropped one is to tell the plugin
+        the screen is narrower while it renders. Trimming after the fact cannot
+        fix a forecast spread across five columns or a progress bar drawn at
+        100% width — those need the plugin to make different layout decisions.
+
+        Vegas mode uses this so a plugin can occupy a fraction of a wide panel
+        and still look deliberately composed. Reuses the same _LogicalMatrix
+        indirection that double-sided mode relies on, so plugins see a
+        consistent size from every accessor.
+
+        Only meaningful inside :meth:`capture_mode` — this swaps the shared
+        image buffer, so the render loop must not be writing to it concurrently.
+
+        Args:
+            width: Logical width to report, clamped to at least 1 and to the
+                real panel width (a larger canvas would overflow the hardware).
+            height: Logical height, defaulting to the current height.
+        """
+        real_matrix = self.matrix
+        prev_image = getattr(self, 'image', None)
+        prev_draw = getattr(self, 'draw', None)
+
+        current_w = self.width
+        current_h = self.height
+        target_w = max(1, min(int(width), current_w))
+        target_h = max(1, min(int(height) if height else current_h, current_h))
+
+        if target_w == current_w and target_h == current_h:
+            # Nothing to do; avoid pointless wrapping and buffer churn.
+            yield
+            return
+
+        try:
+            if real_matrix is not None:
+                self.matrix = _LogicalMatrix(real_matrix, target_w, target_h)
+            # With no hardware, the width/height properties fall through to
+            # self.image, so swapping the buffer below is enough on its own.
+            self.image = Image.new('RGB', (target_w, target_h))
+            self.draw = ImageDraw.Draw(self.image)
+            yield
+        finally:
+            self.matrix = real_matrix
+            if prev_image is not None:
+                self.image = prev_image
+            if prev_draw is not None:
+                self.draw = prev_draw
 
     def _composite_double_sided(self):
         """Tile the logical screen across the full physical chain.

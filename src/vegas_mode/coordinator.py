@@ -64,7 +64,7 @@ class VegasModeCoordinator:
         self.plugin_manager = plugin_manager
 
         # Initialize components
-        self.plugin_adapter = PluginAdapter(display_manager)
+        self.plugin_adapter = PluginAdapter(display_manager, self.vegas_config)
         self.stream_manager = StreamManager(
             self.vegas_config,
             plugin_manager,
@@ -233,6 +233,11 @@ class VegasModeCoordinator:
             self._should_stop = False
             self._start_time = time.time()
 
+        # Line up the next group immediately, so the first extension is already
+        # warm rather than stalling the scroll to fetch it.
+        if self.vegas_config.continuous_scroll:
+            self.render_pipeline.start_prefetch()
+
         logger.info("Vegas mode started")
         return True
 
@@ -301,16 +306,43 @@ class VegasModeCoordinator:
         if has_pending_update:
             self._apply_pending_config()
 
-        # Check if we need to start a new cycle
-        if self.render_pipeline.is_cycle_complete():
-            if not self.render_pipeline.start_new_cycle():
-                logger.warning("Failed to start new Vegas cycle")
-                return False
-            self.stats['cycles_completed'] += 1
+        if self.vegas_config.continuous_scroll:
+            # Drop cached content for plugins whose data just changed, so the
+            # next time each comes round it is composed from current data. The
+            # swap path's hot_swap_content() does this via process_updates(),
+            # but it also rebuilds and repositions the whole strip, which is
+            # the freeze-and-jump this mode exists to avoid. Without this the
+            # pending-update flags are never consumed and a segment keeps
+            # rendering whatever it was first built from — last night's live
+            # game still shown as live the next morning.
+            self.render_pipeline.refresh_updated_plugins()
 
-        # Check for hot-swap opportunities
-        if self.render_pipeline.should_recompose():
-            self.render_pipeline.hot_swap_content()
+            # Extend the strip before the scroll can reach its end, so the next
+            # group arrives from the right and motion never stops. No cycle
+            # boundary, so no freeze, no substitution and no restart with the
+            # viewport already full.
+            # Trickle in the plugins that can only be fetched here, one per
+            # frame, before considering a further extension.
+            if self.render_pipeline.has_deferred():
+                self.render_pipeline.drain_deferred()
+            elif self.render_pipeline.needs_extension():
+                if self.render_pipeline.extend_scroll_content():
+                    self.stats['cycles_completed'] += 1
+                elif self.render_pipeline.is_cycle_complete():
+                    # Extension failed and the strip has run out: fall back to
+                    # the swap rather than sitting on a dead frame.
+                    self.render_pipeline.start_new_cycle()
+        else:
+            # Check if we need to start a new cycle
+            if self.render_pipeline.is_cycle_complete():
+                if not self.render_pipeline.start_new_cycle():
+                    logger.warning("Failed to start new Vegas cycle")
+                    return False
+                self.stats['cycles_completed'] += 1
+
+            # Check for hot-swap opportunities
+            if self.render_pipeline.should_recompose():
+                self.render_pipeline.hot_swap_content()
 
         # Render frame
         return self.render_pipeline.render_frame()
@@ -337,7 +369,14 @@ class VegasModeCoordinator:
         self._update_static_mode_plugins()
 
         frame_interval = self.vegas_config.get_frame_interval()
-        duration = self.render_pipeline.get_dynamic_duration()
+        if self.vegas_config.continuous_scroll:
+            # The strip is continuously extended and trimmed, so its width says
+            # nothing about how long to run. This is only how often control
+            # returns to the display controller; interrupts are still checked
+            # every few frames, so it costs nothing to make it a fixed period.
+            duration = float(self.vegas_config.max_cycle_duration)
+        else:
+            duration = self.render_pipeline.get_dynamic_duration()
         start_time = time.time()
         frame_count = 0
         fps_log_interval = 5.0  # Log FPS every 5 seconds
@@ -347,6 +386,8 @@ class VegasModeCoordinator:
         logger.info("Starting Vegas iteration for %.1fs", duration)
 
         while True:
+            frame_started = time.time()
+
             # Check for STATIC mode plugin that should pause scroll
             static_plugin = self._check_static_plugin_trigger()
             if static_plugin:
@@ -367,8 +408,14 @@ class VegasModeCoordinator:
                         # Paused for live priority - let caller handle
                         return False
 
-            # Sleep for frame interval
-            time.sleep(frame_interval)
+            # Sleep only the remainder of the frame budget. This used to sleep
+            # the whole interval on top of however long the frame took, so at a
+            # measured 31.6ms per frame a fixed 8ms of that was pure idle — a
+            # quarter of the budget spent not rendering. Subtracting the work
+            # already done keeps the pacing target while reclaiming that time,
+            # and yields the GIL either way so other threads still run.
+            frame_elapsed = time.time() - frame_started
+            time.sleep(max(0.0, frame_interval - frame_elapsed))
 
             # Increment frame count and check for interrupt periodically
             frame_count += 1
@@ -505,6 +552,10 @@ class VegasModeCoordinator:
             # Update components
             self.render_pipeline.update_config(new_vegas_config)
             self.stream_manager.config = new_vegas_config
+            self.plugin_adapter.config = new_vegas_config
+            # Cached segments were trimmed under the old settings, so drop them
+            # or a changed trim/padding value would not visibly take effect.
+            self.plugin_adapter.invalidate_cache()
 
             # Force refresh of stream manager to pick up plugin_order/buffer changes
             self.stream_manager._last_refresh = 0
