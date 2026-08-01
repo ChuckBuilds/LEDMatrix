@@ -214,13 +214,31 @@ class SportsScrollDisplay:
             self.logger.debug("Ignoring unusable target_fps: %r", raw)
             return None
 
+    def _coerce_float(self, value: Any, default: float) -> float:
+        """A usable float from config, or ``default``.
+
+        ``dict.get(key, default)`` only helps when the key is *absent*; a key
+        present with ``null`` or a string returns that value verbatim and blows
+        up in the arithmetic below — inside ``__init__``, so the whole display
+        fails to construct.
+        """
+        if value is None:
+            return default
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            self.logger.warning(
+                "Ignoring unusable scroll setting %r; using %s", value, default
+            )
+            return default
+
     def _configure_scroll_helper(self) -> None:
         """Apply config to the scroll helper. Safe to call again after a change."""
         settings = self._get_scroll_settings()
 
-        scroll_speed = settings.get("scroll_speed", 50.0)
-        scroll_delay = settings.get("scroll_delay", 0.01)
-        dynamic_duration = settings.get("dynamic_duration", True)
+        scroll_speed = self._coerce_float(settings.get("scroll_speed"), 50.0)
+        scroll_delay = self._coerce_float(settings.get("scroll_delay"), 0.01)
+        dynamic_duration = bool(settings.get("dynamic_duration", True))
 
         self.scroll_helper.set_scroll_delay(scroll_delay)
         self.scroll_helper.set_dynamic_duration_settings(
@@ -277,12 +295,16 @@ class SportsScrollDisplay:
         if not self.scroll_helper.cached_image:
             return False
 
-        self.scroll_helper.update_scroll_position()
-        visible = self.scroll_helper.get_visible_portion()
-        if not visible:
-            return False
-
         try:
+            # Inside the try, not before it: advancing the position and cropping
+            # the visible slice are as capable of raising as the display push,
+            # and the promise below is that no frame failure reaches the
+            # plugin's loop.
+            self.scroll_helper.update_scroll_position()
+            visible = self.scroll_helper.get_visible_portion()
+            if not visible:
+                return False
+
             self.display_manager.image = visible
             self.display_manager.update_display()
             self._frame_count += 1
@@ -383,7 +405,11 @@ class SportsScrollDisplayManager:
         self.logger = custom_logger or logger
         self.global_config = global_config or {}
         self._scroll_displays: Dict[str, SportsScrollDisplay] = {}
-        self._current_game_type: Optional[str] = None
+        # "" rather than None, matching SportsScrollDisplay's own empty value —
+        # both are falsy, so `game_type or self._current_game_type` behaved
+        # either way, but two spellings of "nothing active" across two classes
+        # is a trap for anyone comparing state between them.
+        self._current_game_type: str = ""
 
     def get_scroll_display(self, game_type: str) -> SportsScrollDisplay:
         """The display for ``game_type``, created on first use."""
@@ -405,9 +431,19 @@ class SportsScrollDisplayManager:
     ) -> bool:
         """Build content for ``game_type`` and make it the active strip."""
         scroll_display = self.get_scroll_display(game_type)
-        success = scroll_display.prepare_scroll_content(
-            games, game_type, leagues, rankings_cache
-        )
+        try:
+            success = scroll_display.prepare_scroll_content(
+                games, game_type, leagues, rankings_cache
+            )
+        except Exception:
+            # prepare_scroll_content is subclass-implemented and builds cards
+            # straight from feed data, which is exactly where this PR's other
+            # crashes came from. One sport's bad payload must not take down the
+            # shared orchestration for the others.
+            self.logger.exception(
+                "Error preparing scroll content for game_type=%s", game_type
+            )
+            return False
         if success:
             self._current_game_type = game_type
         return success
@@ -437,7 +473,7 @@ class SportsScrollDisplayManager:
         """Clear every display and forget which one was active."""
         for scroll_display in self._scroll_displays.values():
             scroll_display.clear()
-        self._current_game_type = None
+        self._current_game_type = ""
 
     def get_all_vegas_content_items(self) -> List[Image.Image]:
         """Every display's Vegas items, for splicing into the marquee."""

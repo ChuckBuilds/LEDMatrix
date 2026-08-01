@@ -178,7 +178,8 @@ class TestScrollSettings:
     def test_a_null_league_block_is_tolerated(self, build):
         """`config['nhl'] = None` appears in hand-edited configs."""
         display = build({"nhl": None})
-        assert display._get_scroll_settings()["scroll_speed"] == 50.0
+        assert (display._get_scroll_settings()["scroll_speed"]
+                == DEFAULT_SCROLL_SETTINGS["scroll_speed"])
 
 
 # ---------------------------------------------------------------------------
@@ -245,6 +246,25 @@ class TestConfigureScrollHelper:
         display = build(global_config={"target_fps": "120"})
         display.scroll_helper.set_target_fps.assert_called_once_with(120.0)
 
+    @pytest.mark.parametrize("bad", [None, "fast", {}, []])
+    def test_unusable_scroll_speed_degrades_instead_of_crashing(self, build, bad):
+        """`.get(key, default)` only helps when the key is *absent*. A key
+        present with null reaches the arithmetic and raises inside __init__,
+        taking the whole display down before it renders anything."""
+        display = build({"nhl": {"scroll_settings": {"scroll_speed": bad}}})
+        # 50.0 px/s * 0.01 s/frame == 0.5 px/frame, i.e. the default speed.
+        display.scroll_helper.set_scroll_speed.assert_called_with(0.5)
+
+    @pytest.mark.parametrize("bad", [None, "slow", {}])
+    def test_unusable_scroll_delay_degrades_instead_of_crashing(self, build, bad):
+        display = build({"nhl": {"scroll_settings": {"scroll_delay": bad}}})
+        display.scroll_helper.set_scroll_delay.assert_called_with(0.01)
+
+    def test_numeric_strings_are_accepted(self, build):
+        display = build({"nhl": {"scroll_settings": {
+            "scroll_speed": "100", "scroll_delay": "0.02"}}})
+        display.scroll_helper.set_scroll_speed.assert_called_with(2.0)
+
     def test_fps_clamping_is_left_to_the_helper(self, build):
         """Deliberately not clamped here — a second copy of the range would
         drift from ScrollHelper.set_target_fps."""
@@ -306,6 +326,16 @@ class TestFramePumping:
         display.scroll_helper.get_visible_portion.return_value = Image.new(
             "RGB", (128, 32))
         display.display_manager.update_display.side_effect = RuntimeError("boom")
+        assert display.display_scroll_frame() is False
+
+    @pytest.mark.parametrize("failing", ["update_scroll_position",
+                                         "get_visible_portion"])
+    def test_a_scroll_helper_failure_is_contained_too(self, build, failing):
+        """These ran outside the try, so a raise there reached the caller's
+        frame loop despite the stated promise that none can."""
+        display = build()
+        display.prepare_scroll_content([{"id": "g1"}], "live", ["nhl"])
+        getattr(display.scroll_helper, failing).side_effect = RuntimeError("boom")
         assert display.display_scroll_frame() is False
 
     def test_frames_are_counted(self, build):
@@ -407,7 +437,23 @@ class TestManager:
 
     def test_failed_prepare_does_not_become_active(self, manager):
         assert manager.prepare_and_display([], "live", ["nhl"]) is False
-        assert manager._current_game_type is None
+        assert not manager._current_game_type
+
+    def test_a_raising_subclass_does_not_escape_the_orchestration(self, manager):
+        """prepare_scroll_content is subclass code building cards from feed
+        data. One sport's bad payload must not take down the others."""
+        display = manager.get_scroll_display("live")
+        display.prepare_scroll_content = MagicMock(side_effect=KeyError("status"))
+        assert manager.prepare_and_display([{"id": "g1"}], "live", ["nhl"]) is False
+        assert not manager._current_game_type
+
+    def test_empty_game_type_sentinel_matches_the_display(self, manager):
+        """Both classes must spell 'nothing active' the same way; two spellings
+        across two classes is a trap for anyone comparing their state."""
+        manager.prepare_and_display([{"id": "g1"}], "live", ["nhl"])
+        manager.clear_all()
+        assert (manager._current_game_type
+                == manager.get_scroll_display("live")._current_game_type == "")
 
     def test_display_frame_uses_the_active_type(self, manager):
         manager.prepare_and_display([{"id": "g1"}], "live", ["nhl"])
@@ -437,7 +483,7 @@ class TestManager:
         manager.prepare_and_display([{"id": "g1"}], "live", ["nhl"])
         manager.prepare_and_display([{"id": "g2"}], "recent", ["nhl"])
         manager.clear_all()
-        assert manager._current_game_type is None
+        assert not manager._current_game_type
         for game_type in ("live", "recent"):
             assert manager.get_scroll_display(game_type)._current_games == []
 
@@ -526,6 +572,11 @@ class TestAgainstTheRealScrollHelper:
             real.display_frame()
             time.sleep(0.0012)
 
+        # Asserted separately so a host too slow to sustain the frame rate
+        # reports a timeout rather than looking like a scrolling defect.
+        assert time.time() < deadline, (
+            "scroll did not finish within 20s — the host may be too slow to "
+            "sustain the configured frame rate")
         assert real.is_complete() is True
         assert display.scroll_helper.scroll_position > 128
 

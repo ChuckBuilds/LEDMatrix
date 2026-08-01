@@ -166,9 +166,9 @@ self.rotation = get_rotation_strategy("swrr", weight_for=self._live_weight)
 `weight_for` is supplied by the host, so the *favorites* policy stays with the
 plugin and `rotation.py` never learns what a favorite is. An unknown strategy
 name degrades to `simple` rather than raising: the name comes from user config,
-and a typo should cost the boost, not the scoreboard. A plugin needing an
-ordering core does not ship calls `register_rotation_strategy` instead of core
-growing a branch.
+and a typo should cost the boost, not the scoreboard. When a plugin needs an
+ordering that core does not ship, it calls `register_rotation_strategy` to add
+its own — rather than core growing a branch for it.
 
 `test_sports_capabilities.py` checks each strategy against a **verbatim
 transcription** of the plugin code it replaces, over every live-game shape up to

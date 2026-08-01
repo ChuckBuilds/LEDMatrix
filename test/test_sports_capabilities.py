@@ -86,6 +86,17 @@ class TestRegistry:
         with pytest.raises(ValueError):
             register_rotation_strategy("", SimpleRotation)
 
+    @pytest.mark.parametrize("bad", [
+        SimpleRotation(),          # an instance, not the class
+        str,                       # unrelated class
+        lambda **kw: None,         # a factory function
+    ])
+    def test_a_non_strategy_factory_is_rejected(self, bad):
+        """Fail at registration, not several frames later inside schedule(),
+        where the cause is no longer on the stack."""
+        with pytest.raises(TypeError):
+            register_rotation_strategy("bad-factory", bad)
+
     def test_weight_for_is_optional(self):
         """Default weights are equal, so every strategy degenerates to a plain
         round robin — the pre-boost behavior."""
@@ -110,6 +121,17 @@ class TestWeights:
     def test_unusable_weights_fall_back_to_one(self, bad):
         strategy = get_rotation_strategy("weighted", weight_for=lambda g: bad)
         assert strategy.weights([game("a")]) == {"a": 1}
+
+    def test_huge_weights_are_clamped(self):
+        """A cycle is sum(weights) long and each step scans every game, so an
+        unbounded weight from a misread config spins the display thread."""
+        strategy = get_rotation_strategy("weighted", weight_for=lambda g: 10_000)
+        assert strategy.weights([game("a")]) == {"a": RotationStrategy.MAX_WEIGHT}
+
+    def test_a_clamped_cycle_stays_bounded(self):
+        strategy = get_rotation_strategy("weighted", weight_for=lambda g: 10_000)
+        order = strategy.schedule([game("a"), game("b")])
+        assert len(order) == 2 * RotationStrategy.MAX_WEIGHT
 
 
 class TestSimpleRotation:
@@ -214,6 +236,20 @@ class TestSmoothWeightedRotation:
     def test_schedule_previews_without_perturbing_state(self):
         games = [game("a", home="FAV"), game("b")]
         strategy = SmoothWeightedRotation(weight_for=boost({"FAV"}, 3))
+        preview = strategy.schedule(games)
+        actual = [strategy.next_game(games)["id"] for _ in range(len(preview))]
+        assert preview == actual
+
+    def test_preview_uses_the_subclass_ordering(self):
+        """schedule() promises the order repeated next_game calls produce. Built
+        from the base class, a subclass that overrides next_game gets a preview
+        of the wrong algorithm."""
+        class Reversed(SmoothWeightedRotation):
+            def next_game(self, games):
+                return super().next_game(list(reversed(games)))
+
+        games = [game("a"), game("b"), game("c")]
+        strategy = Reversed()
         preview = strategy.schedule(games)
         actual = [strategy.next_game(games)["id"] for _ in range(len(preview))]
         assert preview == actual
@@ -461,6 +497,24 @@ class TestCelebrationConfig:
         manager = celebrating(mode_config={"celebrate_opponent_scores": False,
                                            "celebrate_opponent_goals": True})
         assert manager.celebrate_opponent_scores is False
+
+    @pytest.mark.parametrize("bad", ["eight", None, {}, []])
+    def test_unusable_duration_falls_back(self, celebrating, bad):
+        """The duration is compared numerically on the display path, outside
+        any try block — a string from a hand-edited config would propagate a
+        TypeError straight out of display()."""
+        manager = celebrating(mode_config={"celebration_duration": bad})
+        assert manager.celebration_duration == 8.0
+
+    @pytest.mark.parametrize("bad", [0, -5])
+    def test_non_positive_duration_is_floored(self, celebrating, bad):
+        """Zero or negative would arm a celebration that can never render."""
+        manager = celebrating(mode_config={"celebration_duration": bad})
+        assert manager.celebration_duration == 1.0
+
+    def test_numeric_string_duration_is_accepted(self, celebrating):
+        assert celebrating(
+            mode_config={"celebration_duration": "12"}).celebration_duration == 12.0
 
 
 class TestScoreDetection:
@@ -724,6 +778,52 @@ class TestDisplayTakeover:
         manager._draw_celebration_layout = MagicMock(side_effect=RuntimeError("boom"))
         assert manager.display() is True
         assert manager.display_calls == [False]
+
+    def test_a_render_failure_disarms_rather_than_retrying(self, celebrating):
+        """Left armed, the same render fails on every frame for the rest of the
+        window — a traceback per frame, and no scorebug."""
+        manager = celebrating()
+        manager._check_for_score(game("g1", home_score=0))
+        manager._check_for_score(game("g1", home_score=1))
+        manager._draw_celebration_layout = MagicMock(side_effect=RuntimeError("boom"))
+        manager.display()
+        assert manager.active_celebration is None
+        manager.display()
+        assert manager._draw_celebration_layout.call_count == 1
+
+
+class TestBaselinePruning:
+    """`_score_baselines` gains an entry per game and only _check_for_win ever
+    removed one, so a board running all season grows the dict without bound."""
+
+    def test_prunes_games_no_longer_live(self, celebrating):
+        manager = celebrating()
+        for gid in ("g1", "g2", "g3"):
+            manager._check_for_score(game(gid, home_score=1))
+        manager.prune_score_baselines([game("g2")])
+        assert set(manager._score_baselines) == {"g2"}
+
+    def test_keeps_every_still_live_game(self, celebrating):
+        manager = celebrating()
+        for gid in ("g1", "g2"):
+            manager._check_for_score(game(gid, home_score=1))
+        manager.prune_score_baselines([game("g1"), game("g2")])
+        assert set(manager._score_baselines) == {"g1", "g2"}
+
+    def test_empty_live_set_clears_everything(self, celebrating):
+        manager = celebrating()
+        manager._check_for_score(game("g1", home_score=1))
+        manager.prune_score_baselines([])
+        assert manager._score_baselines == {}
+
+    def test_pruning_does_not_disturb_a_surviving_baseline(self, celebrating):
+        manager = celebrating()
+        manager._check_for_score(game("g1", home_score=2))
+        manager.prune_score_baselines([game("g1")])
+        manager._check_for_score(game("g1", home_score=3))
+        assert manager.active_celebration is not None, (
+            "pruning must not drop a live game's baseline and re-trigger the "
+            "first-sighting suppression")
 
     def test_disabled_manager_renders_nothing(self, celebrating):
         manager = celebrating()

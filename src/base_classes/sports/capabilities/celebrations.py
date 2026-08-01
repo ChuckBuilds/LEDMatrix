@@ -51,7 +51,20 @@ class CelebrationMixin:
         super().__init__(*args, **kwargs)
         mode_config = getattr(self, "mode_config", {}) or {}
         self.celebration_enabled = mode_config.get("celebration_enabled", True)
-        self.celebration_duration = mode_config.get("celebration_duration", 8)
+        # Coerced and floored at init: this value is compared numerically on the
+        # display path, where a string from a hand-edited config would raise
+        # TypeError outside any try block, and a zero or negative value would
+        # arm a celebration that can never render.
+        raw_duration = mode_config.get("celebration_duration", 8)
+        try:
+            self.celebration_duration = max(1.0, float(raw_duration))
+        except (TypeError, ValueError):
+            self.logger.warning(
+                "[Celebrations] Unusable celebration_duration %r; using 8s. "
+                "Set a positive number of seconds.",
+                raw_duration,
+            )
+            self.celebration_duration = 8.0
         # Both spellings: the soccer lineage ships `celebrate_opponent_goals`,
         # football ships `celebrate_opponent_scores`. Whichever the plugin's
         # schema declares is the one its users have set.
@@ -121,6 +134,25 @@ class CelebrationMixin:
             return True
         # Favorites exist but this team isn't one -> it's the opponent.
         return self.celebrate_opponent_scores
+
+    def prune_score_baselines(self, live_games: List[Dict]) -> None:
+        """Drop baselines for games no longer live.
+
+        Only :meth:`_check_for_win` removes entries, and it only fires for games
+        seen to go final. A game that vanishes from the live list any other way
+        — postponed, dropped by the feed, or simply still live when the board
+        restarts — leaves its baseline behind forever, so on a board that runs
+        all season the dict grows without bound.
+
+        Call this from ``update()`` with the current live set, alongside the
+        equivalent pruning in :meth:`SmoothWeightedRotation.next_game`.
+        """
+        live_ids = {g.get("id") for g in live_games}
+        self._score_baselines = {
+            gid: baseline
+            for gid, baseline in self._score_baselines.items()
+            if gid in live_ids
+        }
 
     def has_active_celebration(self) -> bool:
         """True while a celebration is within its display window."""
@@ -255,7 +287,7 @@ class CelebrationMixin:
         # resumes on it.
         self.current_game = dict(game)
         self.logger.info(
-            f"Celebration ({kind}) armed: {phrase} "
+            f"[Celebrations] {kind} armed: {phrase} "
             f"[{game.get('away_abbr')} {away_score}-{home_score} {game.get('home_abbr')}]"
         )
 
@@ -323,7 +355,7 @@ class CelebrationMixin:
                     away_logo, (-2, center_y - away_logo.height // 2), away_logo
                 )
         except Exception as e:
-            self.logger.debug(f"Celebration logo load failed: {e}")
+            self.logger.debug(f"[Celebrations] Logo load failed: {e}")
 
         # Phrase across the top, shrunk to fit the panel width.
         phrase = celebration["phrase"]
@@ -365,12 +397,19 @@ class CelebrationMixin:
             return False
         celebration = self.active_celebration
         if celebration:
-            if time.time() - celebration["started_at"] < self.celebration_duration:
+            if self.has_active_celebration():
                 try:
                     self._draw_celebration_layout(celebration, force_clear)
                     return True
                 except Exception as e:
-                    self.logger.error(f"Error drawing celebration: {e}", exc_info=True)
+                    self.logger.error(
+                        f"[Celebrations] Error drawing celebration: {e}", exc_info=True
+                    )
+                    # Disarm rather than retry: the same render would fail on
+                    # every frame for the rest of the window, logging a
+                    # traceback each time and leaving the scorebug off screen.
+                    self.active_celebration = None
+                    self.last_game_switch = time.time()
             else:
                 self.active_celebration = None
                 # Reset the dwell so the scorebug resumes on the scoring/winning

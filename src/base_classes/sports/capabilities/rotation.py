@@ -50,6 +50,12 @@ class RotationStrategy:
     #: Name this strategy is registered under. Set by :func:`register_rotation_strategy`.
     name: str = ""
 
+    #: Ceiling on a per-game weight. A cycle is ``sum(weights)`` long and each
+    #: step scans every game, so an unbounded weight — a misread config field,
+    #: say — would spin the display thread for an unbounded time. On a Pi that
+    #: stalls rendering outright, so the bound is clamped like the floor is.
+    MAX_WEIGHT = 16
+
     def __init__(self, weight_for: Optional[Callable[[Dict], int]] = None):
         self._weight_for = weight_for or (lambda game: 1)
 
@@ -58,7 +64,8 @@ class RotationStrategy:
 
         A weight below 1 is clamped up: a zero or negative weight would starve
         a game out of the rotation entirely, which no caller means to express
-        and which would make ``total_weight`` collapse.
+        and which would make ``total_weight`` collapse. It is clamped down at
+        :attr:`MAX_WEIGHT` for the reason documented there.
         """
         weights: Dict[str, int] = {}
         for game in games:
@@ -69,7 +76,7 @@ class RotationStrategy:
                 weight = int(self._weight_for(game))
             except (TypeError, ValueError):
                 weight = 1
-            weights[gid] = max(1, weight)
+            weights[gid] = min(self.MAX_WEIGHT, max(1, weight))
         return weights
 
     def schedule(self, games: List[Dict]) -> List[str]:
@@ -183,7 +190,11 @@ class SmoothWeightedRotation(RotationStrategy):
         weights = self.weights(games)
         if not weights:
             return []
-        preview = SmoothWeightedRotation(self._weight_for)
+        # type(self), not this class: a subclass that overrides next_game must
+        # be previewed through its own ordering, or the returned order is not
+        # the one repeated next_game calls would produce — which is exactly
+        # what this method promises.
+        preview = type(self)(self._weight_for)
         preview._current = dict(self._current)
         order: List[str] = []
         for _ in range(sum(weights.values())):
@@ -200,12 +211,19 @@ _REGISTRY: Dict[str, Type[RotationStrategy]] = {}
 def register_rotation_strategy(name: str, factory: Type[RotationStrategy]) -> None:
     """Register a rotation strategy under ``name``.
 
-    A plugin needing an ordering core does not ship registers it here rather
-    than core growing a sport-specific branch. Re-registering a name replaces
-    it, so a plugin may also override a built-in for itself.
+    When a plugin needs an ordering that core does not ship, it registers its
+    own here instead of core growing a sport-specific branch. Re-registering a
+    name replaces it, so a plugin may also override a built-in for itself.
     """
     if not name:
         raise ValueError("rotation strategy name must be a non-empty string")
+    # Fail at registration, not at the first schedule() call several frames
+    # later, where the cause is no longer on the stack.
+    if not (isinstance(factory, type) and issubclass(factory, RotationStrategy)):
+        raise TypeError(
+            f"rotation strategy {name!r} must be a RotationStrategy subclass, "
+            f"got {factory!r}"
+        )
     factory.name = name
     _REGISTRY[name] = factory
 
