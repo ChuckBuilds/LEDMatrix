@@ -31,3 +31,41 @@ jobs:
             test/plugins/test_harness.py \
             test/plugins/test_visual_rendering.py \
             test/plugins/test_plugin_matrix.py
+
+  unit-tests:
+    name: Core unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-test.txt
+          pip install RGBMatrixEmulator
+
+      # Safety net for the shared sports/scroll/style infrastructure. These
+      # suites existed but were not enrolled in CI, so a refactor of
+      # src/base_classes or src/common could regress them silently. Enrolled
+      # explicitly (not `pytest test/`) so known hardware-only suites don't
+      # break CI; grow this list as more suites are made headless.
+      - name: Run core unit suites
+        run: |
+          pytest --no-cov \
+            test/test_skin_system.py \
+            test/test_font_manager.py \
+            test/test_data_sources.py \
+            test/test_api_extractors.py \
+            test/test_scroll_helper.py \
+            test/test_scroll_helper_continuous.py \
+            test/test_adaptive_layout.py \
+            test/test_loader_compat_warning.py \
+            test/test_sports_base_characterization.py \
+            test/test_element_style.py
