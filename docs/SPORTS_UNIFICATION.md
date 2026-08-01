@@ -94,7 +94,8 @@ deprecation cycle.
 | `_draw_scorebug_layout(game, force_clear)` | Sport's card rendering | base layout |
 | `_custom_scorebug_layout(game, draw)` | Per-sport overlay on the base layout | no-op |
 | `render_skin_card(game, size)` | Skin-system entry point | built-in fallback |
-| `score_phrase(game)` | Celebration wording (`"GOAL"` vs `"TOUCHDOWN"`) | `"SCORE"` — only consulted when `CelebrationMixin` is present |
+| `score_phrase(points, team_abbr)` | Celebration wording (`"GOOOOAAALLL!"` vs `"TOUCHDOWN!"`). `points` is the score delta, which sports with variable-value scores use to name the play | `"<abbr> SCORES!"` — only consulted when `CelebrationMixin` is present |
+| `win_phrase(team_abbr)` | Win-celebration wording | `"<abbr> WINS!"` — mixin only |
 | `_favorite_key(game, side)` | Which view-model field identifies a team for favorites matching | `game["<side>_abbr"]` |
 | `_config_schema_path()` | Plugin's `config_schema.json` — returning it routes `_get_layout_offset` through the `src.element_style` resolver (and gives it the defaults to compare against) | `None`, i.e. the classic inline `customization.layout` read |
 | `_font_root()` | Directory to resolve `assets/fonts` against | core install root |
@@ -106,6 +107,7 @@ constants rather than behavior:
 |---|---|---|
 | `FINAL_PERIOD` | Period at/after which a zero clock can mean "over" | `4` (hockey overrides to `3`) |
 | `CLOCK_COUNTS_DOWN` | Whether `0:00` means "expired" | `True` (soccer/afl/nrl override to `False` — their clocks count up, so `0:00` is kickoff) |
+| `COALESCE_SCORING_SEQUENCE` | Fold score increments arriving during an active celebration into that one celebration | `False` (football overrides to `True` — a touchdown lands as +6, then +1 for the extra point) |
 
 ### Why these are seams and not branches
 
@@ -119,13 +121,63 @@ NRL fills it, and core never learns the string `"nrl"`.
 soccer clock reading `0:00` means the match has not kicked off, so running the
 clock-expiry branch there would evict live games.
 
+`COALESCE_SCORING_SEQUENCE` is the third of the same kind. In football one
+scoring play arrives as two score updates, so the follow-up must be folded into
+the first celebration; in soccer two increments a few seconds apart are two real
+goals, and folding them would swallow one. Neither default is "right" — which is
+precisely why it is a declared per-sport constant rather than a hidden
+assumption baked into the shared body.
+
+## Capabilities
+
+```
+capabilities/
+  celebrations.py   CelebrationMixin        opt-in: afl, nrl, soccer, football
+  rotation.py       RotationStrategy + registry
+```
+
+**`CelebrationMixin`** merges the two dialects the lineages grew
+(`_check_for_goal`/`celebrate_opponent_goals` vs
+`_check_for_score`/`celebrate_opponent_scores`). Their bodies were identical
+apart from three things, each now a seam: wording (`score_phrase`), follow-up
+suppression (`COALESCE_SCORING_SEQUENCE`), and team identity (`_favorite_key`,
+so NRL matches on id). Both config spellings are read, so a plugin adopting the
+mixin keeps working with the keys already in its published schema.
+
+Mix it in **before** the mode class — `class SoccerLive(CelebrationMixin,
+SportsLive)` — so the celebration `display()` runs first and falls through to
+the scorebug via `super()`.
+
+**Rotation strategies.** The three "dialects" turned out to be one algorithm
+(Smooth Weighted Round-Robin) in two shapes: an incremental picker holding state
+across calls (afl/nrl/soccer) and a precomputed per-cycle list
+(football/baseball/basketball, and hockey with a different loop shape). They
+agree within a cycle and differ only at the boundary — the incremental form has
+no restart seam — so core ships both rather than declaring a winner:
+
+```python
+self.rotation = get_rotation_strategy("swrr", weight_for=self._live_weight)
+```
+
+`weight_for` is supplied by the host, so the *favorites* policy stays with the
+plugin and `rotation.py` never learns what a favorite is. An unknown strategy
+name degrades to `simple` rather than raising: the name comes from user config,
+and a typo should cost the boost, not the scoreboard. A plugin needing an
+ordering core does not ship calls `register_rotation_strategy` instead of core
+growing a branch.
+
+`test_sports_capabilities.py` checks each strategy against a **verbatim
+transcription** of the plugin code it replaces, over every live-game shape up to
+four games. That differential is what B5 deletes the bundled copies on the
+strength of.
+
 ## Phases
 
 | Phase | Scope | Risk control |
 |---|---|---|
 | **B0** ✅ | Characterization tests, CI unit job, `element_style`, font cwd fix, CHANGELOG discipline | — |
-| **B1** | Promote the nine universal methods; convert `sports.py` → package | Characterization suite must stay green; no behavior change intended |
-| **B2** | `CelebrationMixin` + rotation strategies as opt-in capabilities | Plugins that don't opt in have zero new code in their MRO |
+| **B1** ✅ | Promote the nine universal methods; convert `sports.py` → package | Characterization suite must stay green; no behavior change intended |
+| **B2** ✅ | `CelebrationMixin` + rotation strategies as opt-in capabilities | Plugins that don't opt in have zero new code in their MRO; strategies checked against verbatim plugin transcriptions |
 | **B3** | Upstream `ScrollDisplay` as `src/common/sports_scroll.py`, reading `global_config['target_fps']` natively | Plugin copies remain until sunset |
 | **B4** | Bump to 3.2.0, record modules in CHANGELOG, migrate `ledmatrix_min` → `ledmatrix_min_version` | Gives plugins a version to floor on |
 | **B5** | Pilot one plugin per lineage (hockey, soccer, football) on guarded core imports; then the remaining six; then delete bundled copies | Pilot soaks before rollout; harness + golden suites gate each |

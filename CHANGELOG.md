@@ -35,6 +35,20 @@ release that ships it.
   A plugin may start calling these once its manifest floors
   `ledmatrix_min_version` at the release that ships them.
 
+- `src/base_classes/sports/capabilities/` — opt-in capabilities for the sports
+  scoreboards, composed by inheritance rather than gated by config branches
+  inside the base classes:
+  - `CelebrationMixin` — the score/win takeover, merging the goal and score
+    dialects behind the `score_phrase()` / `win_phrase()` hooks, the
+    `COALESCE_SCORING_SEQUENCE` class attribute and the `_favorite_key` seam.
+    Reads both the `celebrate_opponent_goals` and `celebrate_opponent_scores`
+    config spellings. Sports that do not mix it in have none of this code in
+    their MRO.
+  - `RotationStrategy` + a name registry (`swrr`, `weighted`, `simple`,
+    plus `register_rotation_strategy` for plugin-supplied orderings). Each
+    built-in is verified against a verbatim transcription of the plugin
+    implementation it replaces. An unknown name degrades to `simple`.
+
 ### Changed
 - **Live games are no longer dropped when the feed omits a game clock.**
   `SportsLive._is_game_really_over` previously (in the baseball and UFC
