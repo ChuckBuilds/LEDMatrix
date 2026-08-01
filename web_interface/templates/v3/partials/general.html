@@ -49,6 +49,18 @@
             <label for="timezone" class="block text-sm font-medium text-gray-700">Timezone{{ ui.help_tip('Time zone used for clocks, schedules, and time-based content.\nChoose the zone where the display physically lives so on/off schedules fire at the correct local time.', 'Timezone') }}</label>
             <div id="timezone_container" class="mt-1"></div>
         </div>
+
+        <!-- Scroll frame rate (device-wide) -->
+        <div class="form-group" id="setting-general-target-fps" data-setting-key="target_fps">
+            <label for="target_fps" class="block text-sm font-medium text-gray-700">Scroll Frame Rate{{ ui.help_tip('Frames per second for scrolling content, applied across plugins that scroll.\nHigher is smoother but uses more CPU; lower frees CPU but looks steppier.\nRange 30-200. Default: 100.', 'Scroll Frame Rate') }}</label>
+            <input type="number"
+                   id="target_fps"
+                   name="target_fps"
+                   value="{{ main_config.target_fps or 100 }}"
+                   min="30"
+                   max="200"
+                   class="form-control">
+        </div>
         <script>
         (function() {
             // Track if already initialized to prevent re-render

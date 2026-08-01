@@ -88,6 +88,7 @@
         }
     },
     "timezone": "America/New_York",
+    "target_fps": 100,
     "location": {
         "city": "Tampa",
         "state": "Florida",
