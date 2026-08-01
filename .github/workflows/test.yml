@@ -5,6 +5,10 @@ on:
   push:
     branches: [main]
 
+# Both jobs only check out the repo and run pytest.
+permissions:
+  contents: read
+
 jobs:
   plugin-safety:
     name: Plugin safety harness + unit tests
