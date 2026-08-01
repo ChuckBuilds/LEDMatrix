@@ -75,4 +75,5 @@ jobs:
             test/test_element_style.py \
             test/test_sports_core_promotions.py \
             test/test_sports_modes_promotions.py \
-            test/test_sports_capabilities.py
+            test/test_sports_capabilities.py \
+            test/test_sports_scroll.py

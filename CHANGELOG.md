@@ -13,7 +13,21 @@ here, against a version number. When you add a module plugins will import via
 `src.*`, note it in the Unreleased section and bump `src/__init__.py` in the
 release that ships it.
 
-## Unreleased
+**Use `ledmatrix_min_version` in manifests, not `ledmatrix_min`.** The loader
+accepts both, but the store flags the old spelling as deprecated
+(`store_manager.py`) and only the new one is in `schema/manifest_schema.json`.
+
+## 3.2.0
+
+**The first release shipping the unified sports library.** This is the version
+a sports plugin floors `ledmatrix_min_version` at before deleting its bundled
+copy of `sports.py`, `scroll_display.py`, `data_sources.py` or
+`base_odds_manager.py` — the sunset rule in
+`docs/plugin-development/08-shared-sports-code.md` keys on exactly this number.
+
+Adoption is deliberately staged: the modules below ship here, plugins adopt them
+behind guarded imports, and only then do the bundled copies go away. Nothing in
+this release changes what an existing plugin loads.
 
 ### Added
 - `src/element_style.py` — per-element style resolver backing the
@@ -24,7 +38,6 @@ release that ships it.
   system, data sources, API extractors, scroll helper, adaptive layout, loader
   compatibility warning) plus new characterization tests for
   `src/base_classes/sports.py` ahead of the shared sports-code unification.
-
 - `src/base_classes/sports/` — `sports.py` is now a package (`core.py` +
   `modes.py`). The import path is unchanged: `from src.base_classes.sports
   import SportsCore` still works.
@@ -49,7 +62,17 @@ release that ships it.
     built-in is verified against a verbatim transcription of the plugin
     implementation it replaces. An unknown name degrades to `simple`.
 
+- `src/common/sports_scroll.py` — `SportsScrollDisplay` and
+  `SportsScrollDisplayManager`, the shared scroll **orchestration** layer for
+  the sports scoreboards, plus native support for
+  `global_config['target_fps']` (the bundled plugin copies hardcode ~100 FPS
+  via `scroll_delay` and never consult the global target). Content building
+  (`prepare_scroll_content`, `_load_separator_icons`) is per-sport and stays an
+  override point — see `docs/SPORTS_UNIFICATION.md` for where the line falls
+  and why.
+
 ### Changed
+- `src/__init__.py` bumped to **3.2.0** — the number the sunset rule keys on.
 - **Live games are no longer dropped when the feed omits a game clock.**
   `SportsLive._is_game_really_over` previously (in the baseball and UFC
   plugin lineages) coerced a missing or non-string clock to the literal

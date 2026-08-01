@@ -76,6 +76,10 @@ src/base_classes/sports/
   capabilities/
     celebrations.py      CelebrationMixin        (opt-in: 4 of 9 plugins)
     rotation.py          RotationStrategy + registry
+
+src/common/
+  sports_scroll.py       SportsScrollDisplay / …Manager — scroll orchestration
+                         (content building stays in the plugins)
 ```
 
 `from src.base_classes.sports import SportsCore` keeps working — the package
@@ -171,6 +175,30 @@ transcription** of the plugin code it replaces, over every live-game shape up to
 four games. That differential is what B5 deletes the bundled copies on the
 strength of.
 
+## Scroll display — where the promotion line falls
+
+`src/common/sports_scroll.py` is deliberately *not* a superset of the ten
+`scroll_display.py` copies. A method-level comparison of the eight that share a
+shape (f1 and ufc are genuine forks) found a sharp split:
+
+| Layer | Evidence | Outcome |
+|---|---|---|
+| Orchestration — `get_all_vegas_content_items`, `clear_all`, `get_scroll_info`, `get_dynamic_duration`, `is_complete`, `display_frame` | identical to 96–100% similar across all eight | **promoted** |
+| Settings — `_get_scroll_settings` | one algorithm; the copies differ *only* in which league keys they walk | **promoted**, with the ladder as data (`SCROLL_LEAGUE_KEYS`) |
+| Content — `prepare_scroll_content`, `_load_separator_icons` | 8 distinct bodies across 8 plugins (145 lines, 53% similar at worst); icons 6% | **override point, permanently** |
+
+Same name, different job: `prepare_scroll_content` draws *this sport's* game
+card. Merging the eight bodies would be the exact mistake the promotion rule
+exists to prevent, so the base class raises `NotImplementedError` rather than
+rendering something plausible — a base that rendered *something* would let a
+plugin ship a silently blank scroll.
+
+The one behavior the upstreamed version adds is native
+`global_config['target_fps']` support. The bundled copies hardcode ~100 FPS via
+`scroll_delay = 0.01` and never consult the global smooth-scrolling target;
+Part A threaded it through each copy by hand, and this makes that threading
+legacy compatibility rather than the mechanism.
+
 ## Phases
 
 | Phase | Scope | Risk control |
@@ -178,7 +206,7 @@ strength of.
 | **B0** ✅ | Characterization tests, CI unit job, `element_style`, font cwd fix, CHANGELOG discipline | — |
 | **B1** ✅ | Promote the nine universal methods; convert `sports.py` → package | Characterization suite must stay green; no behavior change intended |
 | **B2** ✅ | `CelebrationMixin` + rotation strategies as opt-in capabilities | Plugins that don't opt in have zero new code in their MRO; strategies checked against verbatim plugin transcriptions |
-| **B3** | Upstream `ScrollDisplay` as `src/common/sports_scroll.py`, reading `global_config['target_fps']` natively | Plugin copies remain until sunset |
+| **B3** ✅ | Upstream the scroll **orchestration** layer as `src/common/sports_scroll.py`, reading `global_config['target_fps']` natively | Plugin copies remain until sunset; content building stays per-sport |
 | **B4** | Bump to 3.2.0, record modules in CHANGELOG, migrate `ledmatrix_min` → `ledmatrix_min_version` | Gives plugins a version to floor on |
 | **B5** | Pilot one plugin per lineage (hockey, soccer, football) on guarded core imports; then the remaining six; then delete bundled copies | Pilot soaks before rollout; harness + golden suites gate each |
 
