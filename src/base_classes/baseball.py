@@ -164,7 +164,13 @@ class Baseball(SportsCore):
             # Get game state information
             if status_state == "in":
                 # For live games, get detailed state
-                inning = game_event["status"].get(
+                # Use the competition-level `status` already validated by
+                # _extract_game_details_common. Real ESPN events duplicate
+                # status at the event top level, but MiLB events (synthesized
+                # from the MLB Stats API into an ESPN-like shape) populate
+                # only the competition-level one, so the top-level lookup
+                # raised a bare KeyError and dropped the event.
+                inning = status.get(
                     "period", 1
                 )  # Get inning from status period
 
@@ -187,7 +193,7 @@ class Baseball(SportsCore):
                 if "end" in status_detail or "end" in status_short:
                     inning_half = "top"
                     inning = (
-                        game_event["status"].get("period", 1) + 1
+                        status.get("period", 1) + 1
                     )  # Use period and increment for next inning
                     if is_favorite_game:
                         self.logger.debug(

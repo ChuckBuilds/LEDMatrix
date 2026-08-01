@@ -25,10 +25,48 @@ release that ships it.
   compatibility warning) plus new characterization tests for
   `src/base_classes/sports.py` ahead of the shared sports-code unification.
 
+- `src/base_classes/sports/` — `sports.py` is now a package (`core.py` +
+  `modes.py`). The import path is unchanged: `from src.base_classes.sports
+  import SportsCore` still works.
+- Nine methods promoted onto the sports base classes from the plugins'
+  bundled copies, plus the override points `_favorite_key`,
+  `_config_schema_path` and `_font_root` and the class attributes
+  `FINAL_PERIOD` / `CLOCK_COUNTS_DOWN`. See `docs/SPORTS_UNIFICATION.md`.
+  A plugin may start calling these once its manifest floors
+  `ledmatrix_min_version` at the release that ships them.
+
+### Changed
+- **Live games are no longer dropped when the feed omits a game clock.**
+  `SportsLive._is_game_really_over` previously (in the baseball and UFC
+  plugin lineages) coerced a missing or non-string clock to the literal
+  `"0:00"` and then treated the game as finished once `period >= 4`. Baseball
+  has no game clock and `period` is the inning, so live MLB games disappeared
+  from the scoreboard from the 5th inning onward; UFC was affected the same
+  way. The clock check is now skipped when the clock is unusable, and the
+  period threshold is the per-sport `FINAL_PERIOD` (hockey ends in P3).
+  Sports whose clocks count up — soccer, AFL, NRL — set
+  `CLOCK_COUNTS_DOWN = False` and never run the check at all, since `0:00`
+  there means kickoff rather than expiry.
+
 ### Fixed
 - `FontManager` resolves `assets/fonts` against the core install root instead
   of the process working directory, so font loading works when the process
   starts elsewhere (e.g. the plugin safety harness on CI).
+- Hockey events whose competitors carry no `statistics` array are no longer
+  discarded. The extractor read `competitor["statistics"]` unguarded, so a
+  `KeyError` inside the generator dropped the entire event despite valid
+  scores and status; shot counts now fall back to `0`.
+- Live baseball events that populate status only at the competition level are
+  no longer discarded. The extractor read the event top-level
+  `game_event["status"]` for the inning; real ESPN events duplicate it, but
+  MiLB events synthesized from the MLB Stats API do not, so the lookup raised
+  a bare `KeyError`. It now reads the already-validated competition-level
+  status.
+- `SportsCore._resolve_project_path` resolved relative logo directories
+  against `<root>/src` instead of the repo root after `sports.py` became a
+  package — the class bodies moved byte-identically but `__file__` gained a
+  directory. Both it and `_font_root` now derive from one `_INSTALL_ROOT`
+  constant.
 
 ## 3.1.0
 
