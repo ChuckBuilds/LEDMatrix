@@ -400,7 +400,7 @@ def build_manager(monkeypatch, tmp_path):
     monkeypatch.setattr(
         SportsCore, "_initialize_logo_dir", lambda self, configured: tmp_path)
     monkeypatch.setattr(
-        "src.base_classes.sports.get_background_service",
+        "src.base_classes.sports.core.get_background_service",
         lambda *args, **kwargs: MagicMock())
 
     def build(cls, schedule, **mode_cfg):
