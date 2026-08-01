@@ -465,6 +465,38 @@ class TestFontLoaderCwdIndependence:
         assert isinstance(font, ImageFont.FreeTypeFont)
         assert Path(font.path) == FONTS_DIR / TTF_NAME
 
+    @pytest.mark.parametrize("key", ["score", "time", "team", "status",
+                                     "detail", "rank"])
+    def test_load_fonts_survives_an_unrelated_cwd(self, monkeypatch, key):
+        """`_load_fonts` had the same cwd-relative literals the seam exists to
+        remove; every scoreboard font silently became PIL's default bitmap face
+        when the process started outside the install root."""
+        monkeypatch.chdir("/")
+        fonts = SportsCore._load_fonts(probe())
+        assert isinstance(fonts[key], ImageFont.FreeTypeFont), (
+            f"fonts['{key}'] degraded to PIL's default face outside the "
+            "install root")
+
+
+class TestShouldLogCooldown:
+    """`_should_log` reads `self._last_warning_time` unguarded, so it must be
+    initialized in __init__ — otherwise the first warning of a run raises
+    AttributeError instead of logging."""
+
+    def test_cooldown_clock_is_initialized(self, build):
+        assert build()._last_warning_time == 0
+
+    def test_first_call_logs_then_cools_down(self, build):
+        manager = build()
+        assert manager._should_log("api", cooldown=60) is True
+        assert manager._should_log("api", cooldown=60) is False
+
+    def test_cooldown_expires(self, build):
+        manager = build()
+        assert manager._should_log("api", cooldown=60) is True
+        manager._last_warning_time -= 61
+        assert manager._should_log("api", cooldown=60) is True
+
 
 # ---------------------------------------------------------------------------
 # 4. Seam guard rails

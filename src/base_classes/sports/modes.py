@@ -842,8 +842,11 @@ class SportsLive(SportsCore):
         self.count_log_interval = 5  # Only log count data every 5 seconds
         # Initialize test_mode - defaults to False (live mode)
         self.test_mode = self.mode_config.get("test_mode", False)
-        # Freshness bookkeeping for _detect_stale_games():
-        # {game_id: {"clock": ts, "score": ts, "last_seen": ts}}
+        # Freshness bookkeeping for _detect_stale_games(). The base class only
+        # *reads* this map; a subclass's update() stamps entries as it ingests a
+        # feed: {game_id: {"clock": ts, "score": ts, "last_seen": ts}}.
+        # Until a subclass writes "last_seen", the staleness branch of
+        # _detect_stale_games is inert and only the game-over check applies.
         self.game_update_timestamps = {}
         self.stale_game_timeout = self.mode_config.get("stale_game_timeout", 300)  # 5 minutes default
 
@@ -884,7 +887,11 @@ class SportsLive(SportsCore):
             return False
 
         raw_clock = game.get("clock")
-        period = game.get("period", 0)
+        # `or 0` rather than a get() default: feeds routinely send an explicit
+        # null period, and `None >= FINAL_PERIOD` raises TypeError — which would
+        # take down the whole live-update pass, since the only caller
+        # (_detect_stale_games) has no try/except around it.
+        period = game.get("period") or 0
 
         # Only check clock-based finish if we have a valid clock string. A
         # missing or non-string clock is NOT coerced to "0:00": sports without a
@@ -892,8 +899,11 @@ class SportsLive(SportsCore):
         # otherwise be declared over from the FINAL_PERIOD-th period onward.
         if isinstance(raw_clock, str) and raw_clock.strip() and period >= self.FINAL_PERIOD:
             clock = raw_clock
+            # Compare numerically rather than against a literal set: feeds spell
+            # an expired clock "0:00", ":00" and "00:00" depending on sport, and
+            # a membership test silently misses every spelling not listed.
             clock_normalized = clock.replace(":", "").strip()
-            if clock_normalized in ("000", "00") or clock in ("0:00", ":00"):
+            if clock_normalized.isdigit() and int(clock_normalized) == 0:
                 self.logger.debug(
                     f"_is_game_really_over({game_str}): "
                     f"returning True - clock at 0:00 (clock='{clock}', period={period})"

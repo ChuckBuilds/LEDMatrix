@@ -62,6 +62,20 @@ release that ships it.
   MiLB events synthesized from the MLB Stats API do not, so the lookup raised
   a bare `KeyError`. It now reads the already-validated competition-level
   status.
+- `SportsLive._is_game_really_over` no longer crashes the live-update pass when
+  a feed sends an explicit null `period`. `None >= FINAL_PERIOD` raised
+  `TypeError`, and the only caller (`_detect_stale_games`) has no `try/except`
+  — the same failure shape as the already-fixed null `period_text`.
+- An expired clock spelled `"00:00"` now ends the game. The check compared the
+  colon-stripped clock against a hand-listed set of literals, which `"0000"` is
+  not a member of, so a finished game with a two-digit-minute clock stayed on
+  the scoreboard indefinitely. The comparison is now numeric.
+- `SportsCore._load_fonts` resolves `assets/fonts` through the `_font_root()`
+  seam instead of the process working directory. Started outside the install
+  root, every scoreboard font silently degraded to PIL's default bitmap face.
+- `SportsCore._should_log` no longer raises `AttributeError` on the first
+  warning of a run; `_last_warning_time` is initialized in `__init__` rather
+  than lazily by an unrelated method.
 - `SportsCore._resolve_project_path` resolved relative logo directories
   against `<root>/src` instead of the repo root after `sports.py` became a
   package — the class bodies moved byte-identically but `__file__` gained a

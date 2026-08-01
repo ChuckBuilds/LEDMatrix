@@ -254,11 +254,31 @@ class TestIsGameReallyOver:
         manager = build_manager(_LiveHarness)
         assert manager._is_game_really_over(game(clock="12:00", period=2)) is False
 
-    @pytest.mark.parametrize("clock", ["0:00", ":00", "00", "000", " 0:00 "])
+    @pytest.mark.parametrize(
+        "clock", ["0:00", ":00", "00", "000", " 0:00 ", "00:00", "0", "0000"])
     def test_expired_clock_at_final_period_is_over(self, build_manager, clock):
+        """Every spelling of a zeroed clock counts, not a hand-listed few.
+
+        "00:00" is the one that motivated comparing numerically: it normalizes
+        to "0000", which matched none of the literals the plugin copies listed,
+        so a two-digit-minute expired clock kept the game on screen forever.
+        """
         manager = build_manager(_LiveHarness)
         assert manager._is_game_really_over(
             game(clock=clock, period=4, period_text="Q4")) is True
+
+    def test_none_period_at_expired_clock_does_not_raise(self, build_manager):
+        """`period` present-but-None: `None >= FINAL_PERIOD` is a TypeError, and
+        `_detect_stale_games` has no try/except — the same failure shape as the
+        `period_text` case above."""
+        manager = build_manager(_LiveHarness)
+        assert manager._is_game_really_over(
+            game(clock="0:00", period=None, period_text="Q4")) is False
+
+    def test_none_period_with_running_clock_does_not_raise(self, build_manager):
+        manager = build_manager(_LiveHarness)
+        assert manager._is_game_really_over(
+            game(clock="8:12", period=None, period_text="Q2")) is False
 
     def test_expired_clock_after_final_period_is_over(self, build_manager):
         manager = build_manager(_LiveHarness)

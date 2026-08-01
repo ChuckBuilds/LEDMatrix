@@ -185,6 +185,10 @@ class SportsCore(ABC):
         }
         self.last_update = 0
         self.current_game = None
+        # Cooldown clock for _should_log(). Initialized here rather than lazily:
+        # _should_log() reads it unguarded, so whichever warning fires first
+        # would otherwise raise AttributeError instead of logging.
+        self._last_warning_time = 0
         self.fonts = self._load_fonts()
 
         # Optional visual skin (see docs/SKIN_SYSTEM.md). "skin" is either a
@@ -425,17 +429,26 @@ class SportsCore(ABC):
 
 
     def _load_fonts(self):
-        """Load fonts used by the scoreboard."""
+        """Load fonts used by the scoreboard.
+
+        Paths go through :meth:`_resolve_font_path` so the bundled fonts are
+        found regardless of the process working directory — a bare
+        ``"assets/fonts/..."`` silently degraded every scoreboard to the PIL
+        default font whenever the process started elsewhere (the plugin safety
+        harness on CI being the case that surfaced it).
+        """
         fonts = {}
+        press_start = self._resolve_font_path("PressStart2P-Regular.ttf")
+        four_by_six = self._resolve_font_path("4x6-font.ttf")
         try:
-            fonts['score'] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 10)
-            fonts['time'] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 8)
-            fonts['team'] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 8)
-            fonts['status'] = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6) # Using 4x6 for status
-            fonts['detail'] = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6) # Added detail font
-            fonts['rank'] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 10)
+            fonts['score'] = ImageFont.truetype(press_start, 10)
+            fonts['time'] = ImageFont.truetype(press_start, 8)
+            fonts['team'] = ImageFont.truetype(press_start, 8)
+            fonts['status'] = ImageFont.truetype(four_by_six, 6) # Using 4x6 for status
+            fonts['detail'] = ImageFont.truetype(four_by_six, 6) # Added detail font
+            fonts['rank'] = ImageFont.truetype(press_start, 10)
             logging.info("Successfully loaded fonts") # Changed log prefix
-        except IOError:
+        except OSError:
             logging.warning("Fonts not found, using default PIL font.") # Changed log prefix
             fonts['score'] = ImageFont.load_default()
             fonts['time'] = ImageFont.load_default()
