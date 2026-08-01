@@ -185,9 +185,12 @@ class SportsCore(ABC):
         }
         self.last_update = 0
         self.current_game = None
-        # Cooldown clock for _should_log(). Initialized here rather than lazily:
-        # _should_log() reads it unguarded, so whichever warning fires first
-        # would otherwise raise AttributeError instead of logging.
+        # Cooldown clocks for _should_log(), one per warning type. Initialized
+        # here rather than lazily: _should_log() reads them unguarded, so
+        # whichever warning fires first would otherwise raise AttributeError
+        # instead of logging. `_last_warning_time` is the single-clock field
+        # the plugin copies expose; kept for subclasses that read it.
+        self._warning_cooldowns: Dict[str, float] = {}
         self._last_warning_time = 0
         self.fonts = self._load_fonts()
 
@@ -428,7 +431,7 @@ class SportsCore(ABC):
              return False
 
 
-    def _load_fonts(self):
+    def _load_fonts(self) -> Dict[str, Any]:
         """Load fonts used by the scoreboard.
 
         Paths go through :meth:`_resolve_font_path` so the bundled fonts are
@@ -437,7 +440,7 @@ class SportsCore(ABC):
         default font whenever the process started elsewhere (the plugin safety
         harness on CI being the case that surfaced it).
         """
-        fonts = {}
+        fonts: Dict[str, Any] = {}
         press_start = self._resolve_font_path("PressStart2P-Regular.ttf")
         four_by_six = self._resolve_font_path("4x6-font.ttf")
         try:
@@ -447,9 +450,15 @@ class SportsCore(ABC):
             fonts['status'] = ImageFont.truetype(four_by_six, 6) # Using 4x6 for status
             fonts['detail'] = ImageFont.truetype(four_by_six, 6) # Added detail font
             fonts['rank'] = ImageFont.truetype(press_start, 10)
-            logging.info("Successfully loaded fonts") # Changed log prefix
+            self.logger.info("Successfully loaded fonts")
         except OSError:
-            logging.warning("Fonts not found, using default PIL font.") # Changed log prefix
+            # Name the directory we searched: the usual cause is an install
+            # whose assets/fonts is missing, and the bare message sent people
+            # hunting for a font-format problem instead.
+            self.logger.warning(
+                "Fonts not found under %s, using default PIL font.",
+                self._font_root(),
+            )
             fonts['score'] = ImageFont.load_default()
             fonts['time'] = ImageFont.load_default()
             fonts['team'] = ImageFont.load_default()
@@ -634,9 +643,19 @@ class SportsCore(ABC):
             return pytz.utc
 
     def _should_log(self, warning_type: str, cooldown: int = 60) -> bool:
-        """Check if we should log a warning based on cooldown period."""
+        """Whether a warning of this kind is outside its cooldown window.
+
+        Cooldowns are tracked **per ``warning_type``**. They previously shared
+        one timestamp, so the parameter was accepted and ignored: an API-error
+        warning would silence an unrelated cache warning for the next minute,
+        and whichever fired first won. Nothing in core called this, so no
+        behavior regressed with the fix — but every caller has always been
+        entitled to assume its own warning type has its own clock.
+        """
         current_time = time.time()
-        if current_time - self._last_warning_time > cooldown:
+        if current_time - self._warning_cooldowns.get(warning_type, 0) > cooldown:
+            self._warning_cooldowns[warning_type] = current_time
+            # Kept in step for subclasses that read it directly.
             self._last_warning_time = current_time
             return True
         return False

@@ -494,8 +494,31 @@ class TestShouldLogCooldown:
     def test_cooldown_expires(self, build):
         manager = build()
         assert manager._should_log("api", cooldown=60) is True
-        manager._last_warning_time -= 61
+        manager._warning_cooldowns["api"] -= 61
         assert manager._should_log("api", cooldown=60) is True
+
+    def test_cooldowns_are_tracked_per_warning_type(self, build):
+        """The parameter was accepted and ignored: one shared timestamp meant an
+        API warning silenced an unrelated cache warning for the next minute."""
+        manager = build()
+        assert manager._should_log("api", cooldown=60) is True
+        assert manager._should_log("cache", cooldown=60) is True
+        assert manager._should_log("api", cooldown=60) is False
+        assert manager._should_log("cache", cooldown=60) is False
+
+    def test_one_type_expiring_does_not_free_another(self, build):
+        manager = build()
+        manager._should_log("api")
+        manager._should_log("cache")
+        manager._warning_cooldowns["api"] -= 61
+        assert manager._should_log("api") is True
+        assert manager._should_log("cache") is False
+
+    def test_legacy_single_clock_field_is_kept_in_step(self, build):
+        """Subclasses in the plugin copies read _last_warning_time directly."""
+        manager = build()
+        manager._should_log("api")
+        assert manager._last_warning_time == manager._warning_cooldowns["api"]
 
 
 # ---------------------------------------------------------------------------
