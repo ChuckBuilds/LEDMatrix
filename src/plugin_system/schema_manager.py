@@ -115,7 +115,17 @@ class SchemaManager:
             if not isinstance(schema, dict):
                 self.logger.error(f"Invalid schema format for {plugin_id}: not a dictionary")
                 return None
-            
+
+            # Expand any customization.x-style-elements declaration into the
+            # full per-element style blocks (font/size/color + layout
+            # offsets) the web-UI config form renders. No-op for schemas
+            # without the declaration; never raises.
+            try:
+                from src.element_style import expand_style_elements
+                schema = expand_style_elements(schema)
+            except ImportError:
+                pass
+
             # Cache the schema
             self._schema_cache[plugin_id] = schema
             
