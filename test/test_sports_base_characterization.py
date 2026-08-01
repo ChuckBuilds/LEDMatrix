@@ -363,6 +363,20 @@ class TestExtractGameDetailsContract:
         assert details is not None
         assert details["inning"] == 7
 
+    def test_baseball_live_without_top_level_status_extracts_for_favorites(self):
+        # The favourite-team branch logs the status payload for diagnostics and
+        # read the same event top-level key the test above proves can be
+        # absent. So the identical MiLB event that extracts fine for a
+        # non-favourite raised KeyError and was dropped once the team WAS a
+        # favourite -- the worst shape for the bug, since it only hit the games
+        # the user cared most about, and only on the diagnostic path that was
+        # supposed to help debug them.
+        event = make_event("413", "in", "2026-07-16T23:05:00Z", period=7)
+        del event["status"]
+        details = extract(Baseball, event, favorites=["TB"])
+        assert details is not None
+        assert details["inning"] == 7
+
 
 # ---------------------------------------------------------------------------
 # 2. update() flow on concrete subclasses (offline, cache-fed)

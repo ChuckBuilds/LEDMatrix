@@ -151,7 +151,12 @@ class Baseball(SportsCore):
 
             # Only log detailed information for favorite teams
             if is_favorite_game:
-                self.logger.debug(f"Full status data: {game_event['status']}")
+                # Use the validated competition-level `status` here too. MiLB
+                # events carry no event-level one, so this debug line raised a
+                # KeyError and dropped the very games it was meant to help
+                # diagnose -- and only for favourites, which is the worst way
+                # for it to fail.
+                self.logger.debug(f"Full status data: {status}")
                 self.logger.debug(f"Status type: {game_status}, State: {status_state}")
                 self.logger.debug(f"Status detail: {status['type'].get('detail', '')}")
                 self.logger.debug(
