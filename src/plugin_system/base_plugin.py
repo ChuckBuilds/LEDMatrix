@@ -199,6 +199,14 @@ class BasePlugin(ABC):
             # Only a real mapping is usable: callers do .get() on this and feed
             # the result to numeric code, so handing back whatever a stub or a
             # half-built manager returned would fail later and further away.
+            #
+            # An empty dict is treated as "nothing here yet" rather than a
+            # valid answer, so resolution continues to the next source. Both
+            # managers default to the same config/config.json, so falling
+            # through cannot pick up a different file's settings -- but it does
+            # rescue the case where the first manager simply hasn't loaded yet,
+            # which would otherwise return {} and silently disable every
+            # setting read through this property.
             if isinstance(config, dict) and config:
                 return config
         return {}

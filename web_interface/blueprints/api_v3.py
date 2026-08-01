@@ -753,8 +753,18 @@ def save_main_config():
         # would have been quietly altered is reported rather than appearing to
         # save and then behaving differently.
         if 'target_fps' in data and data['target_fps'] not in ('', None):
+            raw_target_fps = data['target_fps']
+            # A JSON body can carry real floats and bools, where int() would
+            # silently truncate: 90.5 would save as 90, and true as 1. Reject
+            # them rather than storing a value the user did not ask for. Form
+            # posts arrive as strings, so '90.5' still fails in int() below.
+            if isinstance(raw_target_fps, (bool, float)):
+                return jsonify({
+                    'status': 'error',
+                    'message': "Invalid value for target_fps: must be an integer"
+                }), 400
             try:
-                target_fps = int(data['target_fps'])
+                target_fps = int(raw_target_fps)
             except (ValueError, TypeError):
                 return jsonify({
                     'status': 'error',

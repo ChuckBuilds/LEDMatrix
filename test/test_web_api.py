@@ -201,6 +201,21 @@ class TestConfigAPI:
         saved = mock_config_manager.save_config_atomic.call_args[0][0]
         assert saved['web_display_autostart'] is True
 
+    @pytest.mark.parametrize('value', [90.5, 90.0, True])
+    def test_save_target_fps_rejects_non_integer_json(self, client, mock_config_manager, value):
+        """int() would truncate silently: 90.5 -> 90, True -> 1.
+
+        Only JSON can carry these; a form post sends '90.5', which int()
+        already rejects.
+        """
+        response = client.post(
+            '/api/v3/config/main',
+            data=json.dumps({'target_fps': value}),
+            content_type='application/json',
+        )
+
+        assert response.status_code == 400
+
     @pytest.mark.parametrize('value', ['20', '250', 'fast'])
     def test_save_target_fps_rejects_out_of_range(self, client, mock_config_manager, value):
         """Values ScrollHelper would silently clamp are reported instead."""

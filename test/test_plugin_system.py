@@ -303,6 +303,21 @@ class TestBasePluginGlobalConfig:
         )
         assert plugin.global_config["target_fps"] == 100
 
+    def test_empty_plugin_manager_config_falls_through(self, mock_display_manager):
+        """An empty first source means "not loaded yet", not "the answer".
+
+        Both managers default to the same config/config.json, so falling
+        through cannot pick up a different file. Returning {} here instead
+        would silently disable every setting read through this property --
+        the exact failure this property exists to fix.
+        """
+        plugin = self._plugin(
+            mock_display_manager,
+            self._manager_with({"target_fps": 100}),   # cache_manager
+            self._manager_with({}),                    # plugin_manager: empty
+        )
+        assert plugin.global_config["target_fps"] == 100
+
     def test_returns_empty_dict_when_no_config_manager(self, mock_display_manager):
         # Plain objects: no config_manager attribute at all.
         plugin = self._plugin(mock_display_manager, object(), object())
@@ -356,4 +371,4 @@ class TestBasePluginGlobalConfig:
         import json
         with open("config/config.template.json") as fh:
             template = json.load(fh)
-        assert isinstance(template.get("target_fps"), int)
+        assert template.get("target_fps") == 100
