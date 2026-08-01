@@ -208,7 +208,18 @@ legacy compatibility rather than the mechanism.
 | **B2** ✅ | `CelebrationMixin` + rotation strategies as opt-in capabilities | Plugins that don't opt in have zero new code in their MRO; strategies checked against verbatim plugin transcriptions |
 | **B3** ✅ | Upstream the scroll **orchestration** layer as `src/common/sports_scroll.py`, reading `global_config['target_fps']` natively | Plugin copies remain until sunset; content building stays per-sport |
 | **B4** | Bump to 3.2.0, record modules in CHANGELOG, migrate `ledmatrix_min` → `ledmatrix_min_version` | Gives plugins a version to floor on |
-| **B5** | Pilot one plugin per lineage (hockey, soccer, football) on guarded core imports; then the remaining six; then delete bundled copies | Pilot soaks before rollout; harness + golden suites gate each |
+| **B5** ⏳ | Pilot one plugin per lineage (hockey, soccer, football) on core imports; then the remaining six; then delete bundled copies | Pilot soaks before rollout; harness + golden suites gate each |
+
+**B5 is blocked on this PR merging and 3.2.0 shipping** — a plugin cannot floor
+`ledmatrix_min_version` at a release that does not exist, and an unguarded
+`src.common.sports_scroll` import would break every user on 3.1.0.
+
+The hockey scroll-display pilot has been **validated ahead of that gate**:
+adopted against a core carrying 3.2.0, `scroll_display.py` went from 691 to 289
+lines and all 16 harness renders (8 sizes × 2 screens) came out byte-for-byte
+identical to the pre-adoption run. The adoption recipe and the two gotchas it
+surfaced are written up in the plugins repo's
+`docs/plugin-development/08-shared-sports-code.md`.
 
 ## Rules for contributors
 
