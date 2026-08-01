@@ -10,7 +10,7 @@ import time
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import pytz
 import requests
@@ -31,6 +31,77 @@ try:
     from src.base_odds_manager import BaseOddsManager as OddsManager
 except ImportError:
     OddsManager = None
+
+# The core install root, resolved from this module's own location so nothing
+# here depends on the process working directory.
+#
+# The index is the number of directories between this file and the root:
+# src/base_classes/sports/core.py -> sports -> base_classes -> src -> root.
+# It is defined ONCE, here, because hand-counting it at each use site is
+# exactly what broke when this module moved from src/base_classes/sports.py
+# into the package (the old depth of 2 silently started resolving to src/).
+# If this module ever moves again, this is the single line to update.
+_INSTALL_ROOT = Path(__file__).resolve().parents[3]
+
+# Shared element-style resolver. Core always ships src.element_style, so the
+# guard is never taken here — it is kept because this module's methods are
+# back-copied verbatim into the plugins' bundled `sports.py`, where older
+# cores genuinely lack the module (the plugins fall back to the classic
+# inline config read below).
+try:
+    from src.element_style import ElementStyleResolver, defaults_from_schema_file
+    STYLE_AVAILABLE = True
+except ImportError:  # pragma: no cover - core always ships element_style
+    STYLE_AVAILABLE = False
+
+
+# --- Font catalog delegation -------------------------------------------------
+# The plugin copies each carried their own alias table mapping font *family*
+# names ("press_start") to filenames. That table is a duplicate of the core
+# FontManager's `common_fonts` catalog, so resolve through the catalog instead
+# and let the two never drift apart. Same lazy module-level shape as
+# skin_runtime._get_font_manager / base_plugin._fallback_font_manager: a
+# SportsCore host has no plugin_manager to borrow a FontManager from.
+
+_shared_font_catalog: Optional[Any] = None
+
+
+def _font_catalog() -> Any:
+    """Shared read-only FontManager used purely as a font-name catalog."""
+    global _shared_font_catalog
+    if _shared_font_catalog is None:
+        from src.font_manager import FontManager
+        _shared_font_catalog = FontManager({})
+    return _shared_font_catalog
+
+
+def _resolve_font_family_alias(font_name: str) -> str:
+    """Resolve a font family alias to its filename, leaving filenames as-is.
+
+    A config `font` value may be either a family name from the FontManager
+    catalog ("press_start", "four_by_six", "five_by_seven") or a literal
+    filename; the former resolve here, the latter pass through unchanged.
+    """
+    try:
+        catalogued = _font_catalog().common_fonts.get(font_name)
+    except Exception:
+        return font_name
+    return os.path.basename(catalogued) if catalogued else font_name
+
+
+def _read_bdf_native_size(bdf_path: str) -> Optional[int]:
+    """A BDF file's one true pixel size, delegated to FontManager.
+
+    Deliberately NOT reimplemented here: the plugin copies grew a variant
+    that scans the whole file and returns a partially collected value when
+    parsing raises, where FontManager's stops at the first STARTCHAR and
+    returns None on error.
+    """
+    try:
+        from src.font_manager import FontManager
+        return FontManager._read_bdf_native_size(bdf_path)
+    except Exception:
+        return None
 
 
 class SportsCore(ABC):
@@ -96,6 +167,13 @@ class SportsCore(ABC):
         self.session.mount("http://", adapter)
 
         self._logo_cache = {}
+
+        # Font caches for _load_custom_font_from_element_config: per-frame
+        # callers (font-ladder walks) resolve the same (name, size) over and
+        # over, and the BDF strike size means re-reading a file header.
+        # Both are released in cleanup().
+        self._font_cache: Dict[Tuple[str, int], Any] = {}
+        self._bdf_native_size_cache: Dict[str, Optional[int]] = {}
 
         # Set up headers
         self.headers = {
@@ -172,8 +250,7 @@ class SportsCore(ABC):
         """Convert relative paths to absolute ones rooted at the project directory."""
         if path.is_absolute():
             return path
-        project_root = Path(__file__).resolve().parents[2]
-        return (project_root / path).resolve()
+        return (_INSTALL_ROOT / path).resolve()
 
     def _get_logo_directory_fallbacks(self, configured_dir: Path) -> List[Path]:
         """Return fallback directories to try when the configured directory is not writable."""
@@ -753,3 +830,261 @@ class SportsCore(ABC):
 
     def _custom_scorebug_layout(self, game: dict, draw_overlay: ImageDraw.ImageDraw):
         pass
+
+    # ------------------------------------------------------------------
+    # Promoted from the plugin copies (see docs/SPORTS_UNIFICATION.md).
+    # Everything below is present in all nine bundled `sports.py` copies;
+    # the canonical form of each is documented on the method.
+    # ------------------------------------------------------------------
+
+    def _favorite_key(self, game: Dict, side: str) -> Optional[str]:
+        """Override point: which view-model field identifies a team when
+        matching against ``favorite_teams``.
+
+        ``side`` is ``"home"`` or ``"away"``. The default is the team
+        abbreviation — what eight of the nine scoreboards match on, and what
+        users type into their favorites list.
+
+        NRL overrides this to the team **id**, because NRL abbreviations are
+        not unique: "NEW" is both Newcastle Knights and New Zealand Warriors,
+        "CAN" both Canberra Raiders and Canterbury Bulldogs. Matching those by
+        abbreviation selects the wrong club. It is a seam rather than a branch
+        precisely so core never has to learn the string "nrl"::
+
+            def _favorite_key(self, game, side):
+                return str(game.get(f"{side}_id"))
+
+        An override that stringifies should note that a missing id becomes the
+        literal ``"None"``, which would spuriously match a favorites list
+        containing that string. The default returns ``None``, which never
+        matches.
+        """
+        return game.get(f"{side}_abbr")
+
+    def _config_schema_path(self) -> Optional[str]:
+        """Override point: the plugin's ``config_schema.json``, used as the
+        reference for style-resolver defaults.
+
+        None (the default) means no schema is available — layout offsets are
+        then read with the classic inline config lookup, which is exactly what
+        a plugin that never shipped resolver support does today. A plugin
+        opting into :mod:`src.element_style` returns its own schema path::
+
+            def _config_schema_path(self):
+                return os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                    'config_schema.json')
+
+        It must not be derived from this module's ``__file__``: after
+        promotion that resolves inside ``src/base_classes/sports/``, where no
+        ``config_schema.json`` exists.
+        """
+        return None
+
+    def _font_root(self) -> str:
+        """Override point: the directory ``assets/fonts`` resolves against.
+
+        Defaults to the core install root, derived from this module's own
+        location — the same strategy as ``FontManager._resolve_asset_path``.
+        A plugin bundling its own fonts overrides this to return its plugin
+        directory. Never a cwd-relative path: fonts must load no matter where
+        the process was started from (e.g. the plugin safety harness on CI).
+        """
+        return str(_INSTALL_ROOT)
+
+    def _resolve_font_path(self, font_name: str) -> str:
+        """Locate a font file by filename, independently of the process cwd.
+
+        Tries ``assets/fonts/<name>`` relative to the cwd first (preserving
+        behavior for a process started from an install root), then under
+        :meth:`_font_root`. Returns the cwd-relative path unchanged when the
+        file is nowhere to be found, so callers log the familiar path.
+        """
+        relative = os.path.join('assets', 'fonts', font_name)
+        if os.path.exists(relative):
+            return relative
+        candidate = os.path.join(self._font_root(), relative)
+        if os.path.exists(candidate):
+            return candidate
+        return relative
+
+    def _get_layout_offset(self, element: str, axis: str, default: int = 0) -> int:
+        """
+        Get layout offset for a specific element and axis.
+
+        Args:
+            element: Element name (e.g., 'home_logo', 'score', 'status_text')
+            axis: 'x_offset' or 'y_offset' (or 'away_x_offset', 'home_x_offset' for records)
+            default: Default value if not configured (default: 0)
+
+        Returns:
+            Offset value from config or default (always returns int)
+        """
+        schema_path = self._config_schema_path() if STYLE_AVAILABLE else None
+        if schema_path:
+            # Shared resolver (rebuilt if the config dict was swapped out,
+            # matching the classic path's read-config-on-every-call semantics).
+            # Note it is stricter than the classic read below: a boolean offset
+            # degrades to the default instead of counting as 1/0, which is the
+            # more correct reading of a pixel offset.
+            resolver = getattr(self, '_style_resolver_cached', None)
+            if resolver is None or resolver._config is not self.config:
+                resolver = ElementStyleResolver(
+                    self.config, defaults_from_schema_file(schema_path))
+                self._style_resolver_cached = resolver
+            return resolver.offset_value(element, axis, default)
+        try:
+            layout_config = self.config.get('customization', {}).get('layout', {})
+            element_config = layout_config.get(element, {})
+            offset_value = element_config.get(axis, default)
+
+            # Ensure we return an integer (handle float/string from config)
+            if isinstance(offset_value, (int, float)):
+                return int(offset_value)
+            elif isinstance(offset_value, str):
+                # Try to convert string to int
+                try:
+                    return int(float(offset_value))
+                except (ValueError, TypeError):
+                    self.logger.warning(
+                        f"Invalid layout offset value for {element}.{axis}: '{offset_value}', using default {default}"
+                    )
+                    return default
+            else:
+                return default
+        except Exception as e:
+            # Gracefully handle any config access errors
+            self.logger.debug(f"Error reading layout offset for {element}.{axis}: {e}, using default {default}")
+            return default
+
+    def _load_custom_font_from_element_config(
+        self,
+        element_config: Dict[str, Any],
+        default_size: int = 8,
+        default_font: Optional[str] = None,
+    ) -> ImageFont.FreeTypeFont:
+        """
+        Load a custom font from an element configuration dictionary.
+
+        Args:
+            element_config: Configuration dict for a single element containing 'font' and 'font_size' keys
+            default_size: Default font size if not specified in config
+            default_font: Default font filename when not specified in config (e.g. '4x6-font.ttf' for odds)
+
+        Returns:
+            PIL ImageFont object
+        """
+        base_default = default_font or "PressStart2P-Regular.ttf"
+        font_name = element_config.get('font', base_default)
+        font_size = int(element_config.get('font_size', default_size))  # Ensure integer for PIL
+
+        # Resolve family aliases (e.g. "press_start") to real filenames, then
+        # locate the file against _font_root() rather than the cwd.
+        resolved_name = _resolve_font_family_alias(font_name)
+        font_path = self._resolve_font_path(resolved_name)
+
+        # Memoized: per-frame callers (font-ladder walks) resolve the same
+        # (name, size) repeatedly -- return the previously loaded face.
+        cache_key = (resolved_name, font_size)
+        cached_font = self._font_cache.get(cache_key)
+        if cached_font is not None:
+            return cached_font
+
+        # Try to load the font
+        try:
+            if os.path.exists(font_path):
+                # Try loading as TTF first (works for both TTF and some BDF files with PIL)
+                if font_path.lower().endswith('.ttf'):
+                    font = ImageFont.truetype(font_path, font_size)
+                    self.logger.debug(f"Loaded font: {font_name} at size {font_size}")
+                    self._font_cache[cache_key] = font
+                    return font
+                elif font_path.lower().endswith('.bdf'):
+                    # BDF fonts are fixed-size bitmaps, not scalable outlines --
+                    # FreeType only accepts the exact pixel size baked into the
+                    # file (its "strike") and raises "invalid pixel size" for
+                    # anything else. Try the requested size first (in case it
+                    # happens to match), then fall back to the file's real
+                    # native size, so a BDF font can still be selected via
+                    # font_size-driven configs without the caller needing to
+                    # know its exact strike size.
+                    #
+                    # This retry is the OLDER lineage's behavior and it is the
+                    # correct one: the newer copies call truetype() on a BDF at
+                    # any size (which simply fails) or refuse BDF outright.
+                    try:
+                        font = ImageFont.truetype(font_path, font_size)
+                        self.logger.debug(f"Loaded BDF font: {font_name} at size {font_size}")
+                        self._font_cache[cache_key] = font
+                        return font
+                    except OSError:
+                        if font_path in self._bdf_native_size_cache:
+                            native_size = self._bdf_native_size_cache[font_path]
+                        else:
+                            native_size = _read_bdf_native_size(font_path)
+                            self._bdf_native_size_cache[font_path] = native_size
+                        if native_size and native_size != font_size:
+                            try:
+                                font = ImageFont.truetype(font_path, native_size)
+                                self.logger.debug(
+                                    f"Loaded BDF font: {font_name} at its native size {native_size} "
+                                    f"(requested {font_size} isn't a valid strike for this file)"
+                                )
+                                self._font_cache[cache_key] = font
+                                return font
+                            except Exception as retry_exc:
+                                self.logger.debug(
+                                    f"BDF font {font_name} also failed to load at native "
+                                    f"size {native_size}: {retry_exc}"
+                                )
+                        self.logger.warning(f"Could not load BDF font {font_name} with PIL, using default")
+                        # Fall through to default
+                else:
+                    self.logger.warning(f"Unknown font file type: {font_name}, using default")
+            else:
+                self.logger.warning(f"Font file not found: {font_path}, using default")
+        except Exception as e:
+            self.logger.error(f"Error loading font {font_name}: {e}, using default")
+
+        # Fall back to default font. Cached under the requested (name, size)
+        # key too, so a misconfigured or missing font pays the disk cost once
+        # instead of on every frame of a font-ladder walk.
+        default_font_path = self._resolve_font_path(
+            _resolve_font_family_alias(base_default))
+        try:
+            if os.path.exists(default_font_path):
+                font = ImageFont.truetype(default_font_path, font_size)
+            else:
+                self.logger.warning("Default font not found, using PIL default")
+                font = ImageFont.load_default()
+        except Exception as e:
+            self.logger.error(f"Error loading default font: {e}")
+            font = ImageFont.load_default()
+        self._font_cache[cache_key] = font
+        return font
+
+    def cleanup(self):
+        """Clean up resources when plugin is unloaded."""
+        # Close HTTP session
+        if hasattr(self, 'session') and self.session:
+            try:
+                self.session.close()
+            except Exception as e:
+                self.logger.warning(f"Error closing session: {e}")
+
+        # Clear caches
+        if hasattr(self, '_logo_cache'):
+            self._logo_cache.clear()
+        # Font caches hold PIL faces; without this they are an unbounded
+        # per-instance leak across enable/disable cycles.
+        if hasattr(self, '_font_cache'):
+            self._font_cache.clear()
+        if hasattr(self, '_bdf_native_size_cache'):
+            self._bdf_native_size_cache.clear()
+
+        # NOTE: self.background_service is deliberately NOT shut down here.
+        # get_background_service() returns a PROCESS-WIDE singleton shared by
+        # every scoreboard; shutting it down from one unloading plugin would
+        # stop background fetching for all the others. Whoever owns the
+        # process owns its lifecycle. Do not "fix" this.
+
+        self.logger.info(f"{self.__class__.__name__} cleanup completed")

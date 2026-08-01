@@ -95,6 +95,29 @@ deprecation cycle.
 | `_custom_scorebug_layout(game, draw)` | Per-sport overlay on the base layout | no-op |
 | `render_skin_card(game, size)` | Skin-system entry point | built-in fallback |
 | `score_phrase(game)` | Celebration wording (`"GOAL"` vs `"TOUCHDOWN"`) | `"SCORE"` — only consulted when `CelebrationMixin` is present |
+| `_favorite_key(game, side)` | Which view-model field identifies a team for favorites matching | `game["<side>_abbr"]` |
+| `_config_schema_path()` | Plugin's `config_schema.json` — returning it routes `_get_layout_offset` through the `src.element_style` resolver (and gives it the defaults to compare against) | `None`, i.e. the classic inline `customization.layout` read |
+| `_font_root()` | Directory to resolve `assets/fonts` against | core install root |
+
+Two class attributes serve the same purpose for values that are per-sport
+constants rather than behavior:
+
+| Attribute | Meaning | Default |
+|---|---|---|
+| `FINAL_PERIOD` | Period at/after which a zero clock can mean "over" | `4` (hockey overrides to `3`) |
+| `CLOCK_COUNTS_DOWN` | Whether `0:00` means "expired" | `True` (soccer/afl/nrl override to `False` — their clocks count up, so `0:00` is kickoff) |
+
+### Why these are seams and not branches
+
+`_favorite_key` exists because NRL abbreviations are **not unique** — "NEW" is both
+Newcastle Knights and New Zealand Warriors, "CAN" both Canberra and Canterbury —
+so NRL matches favorites on team ID. Flattening every plugin to abbreviations
+would silently select the wrong club for NRL users. The base declares the seam,
+NRL fills it, and core never learns the string `"nrl"`.
+
+`CLOCK_COUNTS_DOWN` exists for the same reason in the opposite direction: a
+soccer clock reading `0:00` means the match has not kicked off, so running the
+clock-expiry branch there would evict live games.
 
 ## Phases
 

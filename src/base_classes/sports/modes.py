@@ -7,7 +7,7 @@ import logging
 import time
 from abc import abstractmethod
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -33,6 +33,71 @@ class SportsUpcoming(SportsCore):
         self.warning_cooldown = 300
         self.last_game_switch = 0
         self.game_display_duration = 15 # Display each upcoming game for 15 seconds
+
+    def _select_games_for_display(
+        self, processed_games: List[Dict], favorite_teams: List[str]
+    ) -> List[Dict]:
+        """
+        Single-pass game selection with proper deduplication and counting.
+
+        When a game involves two favorite teams, it counts toward BOTH teams' limits.
+        This prevents unexpected game counts from the multi-pass algorithm.
+
+        Team identity goes through the ``_favorite_key`` override point rather
+        than reading ``home_abbr``/``away_abbr`` directly, because abbreviations
+        are not unique in every league (NRL matches on team ID instead).
+        """
+        sorted_games = sorted(
+            processed_games,
+            key=lambda g: g.get("start_time_utc")
+            or datetime.max.replace(tzinfo=timezone.utc),
+        )
+
+        if not favorite_teams:
+            return sorted_games
+
+        selected_games = []
+        selected_ids = set()
+        team_counts = {team: 0 for team in favorite_teams}
+
+        for game in sorted_games:
+            game_id = game.get("id")
+            if game_id in selected_ids:
+                continue
+
+            home = self._favorite_key(game, "home")
+            away = self._favorite_key(game, "away")
+
+            home_fav = home in favorite_teams
+            away_fav = away in favorite_teams
+
+            if not home_fav and not away_fav:
+                continue
+
+            home_needs = home_fav and team_counts[home] < self.upcoming_games_to_show
+            away_needs = away_fav and team_counts[away] < self.upcoming_games_to_show
+
+            if home_needs or away_needs:
+                selected_games.append(game)
+                selected_ids.add(game_id)
+                if home_fav:
+                    team_counts[home] += 1
+                if away_fav:
+                    team_counts[away] += 1
+
+                self.logger.debug(
+                    f"Selected game {away}@{home}: team_counts={team_counts}"
+                )
+
+            if all(c >= self.upcoming_games_to_show for c in team_counts.values()):
+                self.logger.debug("All favorite teams satisfied, stopping selection")
+                break
+
+        self.logger.info(
+            f"Selected {len(selected_games)} games for {len(favorite_teams)} "
+            f"favorite teams: {team_counts}"
+        )
+        return selected_games
 
     def update(self):
         """Update upcoming games data."""
@@ -369,6 +434,96 @@ class SportsRecent(SportsCore):
         self.update_interval = self.mode_config.get("recent_update_interval", 3600) # Check for recent games every hour
         self.last_game_switch = 0
         self.game_display_duration = 15 # Display each recent game for 15 seconds
+        # Tracks when each game was first seen with an expired clock, keyed by
+        # game id. Promoted alongside the zero-clock helpers below; without it
+        # the first _get_zero_clock_duration() call raises AttributeError.
+        self._zero_clock_timestamps: Dict[str, float] = {}  # Track games at 0:00
+
+    # -- Zero-clock tracking ------------------------------------------------
+    # Byte-identical in all nine plugin copies. Note that afl/nrl/soccer define
+    # these but never call them — their clocks count up, so 0:00 means kickoff
+    # rather than expiry (see CLOCK_COUNTS_DOWN on SportsLive). That makes the
+    # pair a future `CountdownClockMixin` candidate so it stops appearing in the
+    # MRO of sports that cannot use it — B2 work, not now.
+
+    def _get_zero_clock_duration(self, game_id: str) -> float:
+        """Track how long a game has been at 0:00 clock."""
+        current_time = time.time()
+        if game_id not in self._zero_clock_timestamps:
+            self._zero_clock_timestamps[game_id] = current_time
+            return 0.0
+        return current_time - self._zero_clock_timestamps[game_id]
+
+    def _clear_zero_clock_tracking(self, game_id: str) -> None:
+        """Clear tracking when game clock moves away from 0:00 or game ends."""
+        if game_id in self._zero_clock_timestamps:
+            del self._zero_clock_timestamps[game_id]
+
+    def _select_recent_games_for_display(
+        self, processed_games: List[Dict], favorite_teams: List[str]
+    ) -> List[Dict]:
+        """
+        Single-pass game selection for recent games with proper deduplication.
+
+        When a game involves two favorite teams, it counts toward BOTH teams' limits.
+        Games are sorted by most recent first.
+
+        Team identity goes through the ``_favorite_key`` override point rather
+        than reading ``home_abbr``/``away_abbr`` directly, because abbreviations
+        are not unique in every league (NRL matches on team ID instead).
+        """
+        sorted_games = sorted(
+            processed_games,
+            key=lambda g: g.get("start_time_utc")
+            or datetime.min.replace(tzinfo=timezone.utc),
+            reverse=True,
+        )
+
+        if not favorite_teams:
+            return sorted_games
+
+        selected_games = []
+        selected_ids = set()
+        team_counts = {team: 0 for team in favorite_teams}
+
+        for game in sorted_games:
+            game_id = game.get("id")
+            if game_id in selected_ids:
+                continue
+
+            home = self._favorite_key(game, "home")
+            away = self._favorite_key(game, "away")
+
+            home_fav = home in favorite_teams
+            away_fav = away in favorite_teams
+
+            if not home_fav and not away_fav:
+                continue
+
+            home_needs = home_fav and team_counts[home] < self.recent_games_to_show
+            away_needs = away_fav and team_counts[away] < self.recent_games_to_show
+
+            if home_needs or away_needs:
+                selected_games.append(game)
+                selected_ids.add(game_id)
+                if home_fav:
+                    team_counts[home] += 1
+                if away_fav:
+                    team_counts[away] += 1
+
+                self.logger.debug(
+                    f"Selected recent game {away}@{home}: team_counts={team_counts}"
+                )
+
+            if all(c >= self.recent_games_to_show for c in team_counts.values()):
+                self.logger.debug("All favorite teams satisfied, stopping selection")
+                break
+
+        self.logger.info(
+            f"Selected {len(selected_games)} recent games for {len(favorite_teams)} "
+            f"favorite teams: {team_counts}"
+        )
+        return selected_games
 
     def update(self):
         """Update recent games data."""
@@ -659,6 +814,17 @@ class SportsRecent(SportsCore):
             return False
 
 class SportsLive(SportsCore):
+    # Per-sport constants for the "is this live game actually over?" check.
+    # These are values, not behavior, so they are class attributes rather than
+    # override points (see docs/SPORTS_UNIFICATION.md "Override points").
+    #
+    # FINAL_PERIOD: the period at/after which an expired clock can mean "over".
+    #   4 for four-quarter sports; hockey overrides to 3.
+    # CLOCK_COUNTS_DOWN: whether "0:00" means the clock expired. False for
+    #   sports whose clock counts up (soccer/afl/nrl), where 0:00 is kickoff —
+    #   running the expiry branch there would evict games that just started.
+    FINAL_PERIOD = 4
+    CLOCK_COUNTS_DOWN = True
 
     def __init__(self, config: Dict[str, Any], display_manager: DisplayManager, cache_manager: CacheManager, logger: logging.Logger, sport_key: str):
         super().__init__(config, display_manager, cache_manager, logger, sport_key)
@@ -676,10 +842,106 @@ class SportsLive(SportsCore):
         self.count_log_interval = 5  # Only log count data every 5 seconds
         # Initialize test_mode - defaults to False (live mode)
         self.test_mode = self.mode_config.get("test_mode", False)
+        # Freshness bookkeeping for _detect_stale_games():
+        # {game_id: {"clock": ts, "score": ts, "last_seen": ts}}
+        self.game_update_timestamps = {}
+        self.stale_game_timeout = self.mode_config.get("stale_game_timeout", 300)  # 5 minutes default
 
     @abstractmethod
     def _test_mode_update(self) -> None:
         return
+
+    def _is_game_really_over(self, game: Dict) -> bool:
+        """Check if a game appears to be over even if API says it's live.
+
+        Two independent signals:
+        1. ``period_text`` says "final" — universal across every sport.
+        2. The clock has expired at/after :attr:`FINAL_PERIOD` — only meaningful
+           where :attr:`CLOCK_COUNTS_DOWN` is true.
+
+        Fails *safe*: anything ambiguous returns False and the game keeps being
+        displayed. The only caller, :meth:`_detect_stale_games`, removes games
+        on a True, so a false positive silently drops a live game.
+        """
+        game_str = f"{game.get('away_abbr')}@{game.get('home_abbr')}"
+
+        # `period_text` may be present-but-None; `or ""` keeps that from raising
+        # AttributeError — the caller has no try/except around this call.
+        period_text = (game.get("period_text") or "").lower()
+        if "final" in period_text:
+            self.logger.debug(
+                f"_is_game_really_over({game_str}): "
+                f"returning True - 'final' in period_text='{period_text}'"
+            )
+            return True
+
+        if not self.CLOCK_COUNTS_DOWN:
+            # Count-up clock: 0:00 means the match has not started.
+            self.logger.debug(
+                f"_is_game_really_over({game_str}): returning False "
+                f"(count-up clock, period_text='{period_text}')"
+            )
+            return False
+
+        raw_clock = game.get("clock")
+        period = game.get("period", 0)
+
+        # Only check clock-based finish if we have a valid clock string. A
+        # missing or non-string clock is NOT coerced to "0:00": sports without a
+        # game clock (e.g. baseball, where `period` is the inning) would
+        # otherwise be declared over from the FINAL_PERIOD-th period onward.
+        if isinstance(raw_clock, str) and raw_clock.strip() and period >= self.FINAL_PERIOD:
+            clock = raw_clock
+            clock_normalized = clock.replace(":", "").strip()
+            if clock_normalized in ("000", "00") or clock in ("0:00", ":00"):
+                self.logger.debug(
+                    f"_is_game_really_over({game_str}): "
+                    f"returning True - clock at 0:00 (clock='{clock}', period={period})"
+                )
+                return True
+
+        self.logger.debug(
+            f"_is_game_really_over({game_str}): returning False"
+        )
+        return False
+
+    def _detect_stale_games(self, games: List[Dict]) -> None:
+        """Remove games that appear stale or haven't updated.
+
+        Mutates ``games`` **in place** and returns None. Removal is by value
+        (``list.remove`` uses ``dict.__eq__``), so two structurally-equal game
+        dicts in the same list would drop the first occurrence.
+        """
+        current_time = time.time()
+
+        for game in games[:]:  # Copy list to iterate safely
+            game_id = game.get("id")
+            if not game_id:
+                continue
+
+            # Check if game data is stale
+            timestamps = self.game_update_timestamps.get(game_id, {})
+            last_seen = timestamps.get("last_seen", 0)
+
+            if last_seen > 0 and current_time - last_seen > self.stale_game_timeout:
+                self.logger.warning(
+                    f"Removing stale game {game.get('away_abbr')}@{game.get('home_abbr')} "
+                    f"(last seen {int(current_time - last_seen)}s ago)"
+                )
+                games.remove(game)
+                if game_id in self.game_update_timestamps:
+                    del self.game_update_timestamps[game_id]
+                continue
+
+            # Also check if game appears to be over
+            if self._is_game_really_over(game):
+                self.logger.debug(
+                    f"Removing game that appears over: {game.get('away_abbr')}@{game.get('home_abbr')} "
+                    f"(clock={game.get('clock')}, period={game.get('period')}, period_text={game.get('period_text')})"
+                )
+                games.remove(game)
+                if game_id in self.game_update_timestamps:
+                    del self.game_update_timestamps[game_id]
 
     def update(self):
         """Update live game data and handle game switching."""
