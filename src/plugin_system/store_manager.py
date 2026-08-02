@@ -1192,6 +1192,81 @@ class PluginStoreManager:
         return next((p for p in plugins if p.get('id') == plugin_id), None)
     
     def install_plugin(self, plugin_id: str, branch: Optional[str] = None) -> bool:
+        """Install a plugin, keeping any existing install until the new one is
+        known good.
+
+        `_install_plugin_impl` deletes the existing directory *before*
+        downloading, so every failure after that point — a dropped connection, a
+        malformed manifest, or the compatibility gate refusing the new version —
+        left the user with no plugin at all. `_reinstall_with_rollback` gives the
+        *update* path exactly this protection; a direct install had none, and the
+        compatibility gate added a new way to reach it.
+
+        Pass-through when nothing is installed, and when called from
+        `_reinstall_with_rollback`, which has already moved the old copy aside.
+
+        The aside name embeds '.standalone-backup-' so plugin discovery
+        (`plugin_manager._scan_directory_for_plugins`) skips it even though it
+        still holds a manifest.json.
+        """
+        plugin_path = self.plugins_dir / plugin_id
+        if not plugin_path.exists():
+            return self._install_plugin_impl(plugin_id, branch)
+
+        backup_path = plugin_path.with_name(
+            f"{plugin_path.name}.standalone-backup-preinstall")
+        if backup_path.exists() and not self._safe_remove_directory(backup_path):
+            # Can't stage a safety net. Better to attempt the install than to
+            # refuse outright, which is what the caller got before this existed.
+            self.logger.warning(
+                "Could not clear stale pre-install backup for %s at %s; "
+                "installing without a rollback net", plugin_id, backup_path)
+            return self._install_plugin_impl(plugin_id, branch)
+
+        try:
+            plugin_path.rename(backup_path)
+        except OSError as e:
+            self.logger.warning(
+                "Could not set aside existing install of %s (%s); "
+                "installing without a rollback net", plugin_id, e)
+            return self._install_plugin_impl(plugin_id, branch)
+
+        try:
+            installed = self._install_plugin_impl(plugin_id, branch)
+        except Exception:
+            self._restore_preinstall_backup(plugin_id, plugin_path, backup_path)
+            raise
+
+        if installed:
+            if not self._safe_remove_directory(backup_path):
+                self.logger.warning(
+                    "Install of %s succeeded but the previous copy at %s could "
+                    "not be removed; it will be cleared on the next install",
+                    plugin_id, backup_path)
+            return True
+
+        self._restore_preinstall_backup(plugin_id, plugin_path, backup_path)
+        return False
+
+    def _restore_preinstall_backup(
+        self, plugin_id: str, plugin_path: Path, backup_path: Path
+    ) -> None:
+        """Put the previous install back after a failed (re)install."""
+        self.logger.error(
+            "Install of %s failed; restoring the previous version", plugin_id)
+        try:
+            if plugin_path.exists():
+                # Partial download debris from the failed install.
+                self._safe_remove_directory(plugin_path)
+            backup_path.rename(plugin_path)
+            self.logger.info("Restored previous install of %s", plugin_id)
+        except OSError as e:
+            self.logger.error(
+                "CRITICAL: could not restore %s from %s: %s. The previous "
+                "install is preserved there — rename it back manually.",
+                plugin_id, backup_path, e)
+
+    def _install_plugin_impl(self, plugin_id: str, branch: Optional[str] = None) -> bool:
         """
         Install a plugin from the official registry. Always installs the latest commit
         from the repository's default branch (or specified branch).
