@@ -146,6 +146,77 @@ class BasePlugin(ABC):
         raise NotImplementedError("Plugins must implement display()")
 
     # -------------------------------------------------------------------------
+    # Global (whole-device) configuration
+    # -------------------------------------------------------------------------
+    @property
+    def global_config(self) -> Dict[str, Any]:
+        """
+        The full LEDMatrix configuration, for reading device-wide settings.
+
+        ``self.config`` is only this plugin's own slice, so cross-cutting
+        settings — ``target_fps``, ``timezone``, ``location`` — were previously
+        unreachable from a plugin without reaching into a manager by hand.
+
+        Resolution order mirrors the timezone helpers the sports plugins
+        already ship: ``plugin_manager.config_manager`` first (the cores that
+        hang it there), then ``cache_manager.config_manager``. Returns ``{}``
+        when neither is available, so callers can use plain ``.get()`` without
+        guarding, and a plugin on a core that predates this property still
+        loads — ``getattr(self, 'global_config', {})`` simply yields the
+        default.
+
+        Treat as read-only: the returned dict is the live config the core is
+        using, so mutating it edits every other consumer's view and can be
+        persisted back to disk.
+
+        Assignment is still allowed and wins over the resolved value. Several
+        shipped plugins (news, stock-news, ledmatrix-stocks, ledmatrix-
+        elections, ledmatrix-leaderboard, nfl-draft) set
+        ``self.global_config`` to their own ``config['global']`` sub-dict; a
+        property without a setter would raise AttributeError and stop those
+        plugins loading.
+
+        Example:
+            fps = self.global_config.get('target_fps')
+        """
+        override = getattr(self, '_global_config_override', None)
+        if override is not None:
+            return override
+        for owner in (self.plugin_manager, self.cache_manager):
+            config_manager = getattr(owner, 'config_manager', None)
+            if config_manager is None:
+                continue
+            try:
+                config = config_manager.get_config()
+            except Exception:
+                # A broken or unreadable config must never stop a plugin from
+                # loading; fall through to the next source, then to {}.
+                self.logger.debug(
+                    "Could not read global config from %s",
+                    type(owner).__name__, exc_info=True,
+                )
+                continue
+            # Only a real mapping is usable: callers do .get() on this and feed
+            # the result to numeric code, so handing back whatever a stub or a
+            # half-built manager returned would fail later and further away.
+            #
+            # An empty dict is treated as "nothing here yet" rather than a
+            # valid answer, so resolution continues to the next source. Both
+            # managers default to the same config/config.json, so falling
+            # through cannot pick up a different file's settings -- but it does
+            # rescue the case where the first manager simply hasn't loaded yet,
+            # which would otherwise return {} and silently disable every
+            # setting read through this property.
+            if isinstance(config, dict) and config:
+                return config
+        return {}
+
+    @global_config.setter
+    def global_config(self, value: Dict[str, Any]) -> None:
+        """Let a plugin substitute its own view (see the getter's docstring)."""
+        self._global_config_override = value
+
+    # -------------------------------------------------------------------------
     # Adaptive layout support (opt-in)
     # -------------------------------------------------------------------------
     @property
