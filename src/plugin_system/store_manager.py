@@ -1333,6 +1333,26 @@ class PluginStoreManager:
                     self._safe_remove_directory(plugin_path)
                     return False
 
+                # Refuse a plugin that needs a newer core than this one. The
+                # registry carries no compatibility field, so the floor is only
+                # knowable once the files are down — checking here, before
+                # dependency installation, is the earliest possible point.
+                #
+                # Refusing costs the user nothing: on an update this returns
+                # False and _reinstall_with_rollback restores the version they
+                # already had. Allowing it costs them a plugin that raises
+                # ModuleNotFoundError at load and is reported only as one line
+                # in the journal. See docs/SPORTS_UNIFICATION.md (phase B4/B6).
+                from src import __version__ as core_version
+                from src.plugin_system import compatibility
+
+                compatible, reason = compatibility.check(manifest, core_version)
+                if not compatible:
+                    self.logger.error(
+                        "Refusing to install %s: %s", plugin_id, reason)
+                    self._safe_remove_directory(plugin_path)
+                    return False
+
                 if 'entry_point' not in manifest:
                     manifest['entry_point'] = 'manager.py'
                     manifest_modified = True
