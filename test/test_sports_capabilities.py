@@ -16,6 +16,7 @@ See docs/SPORTS_UNIFICATION.md.
 """
 
 import sys
+import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -754,20 +755,35 @@ class TestDisplayTakeover:
         manager._draw_celebration_layout.assert_called_once()
 
     def test_expired_celebration_clears_and_defers(self, celebrating):
-        manager = celebrating(mode_config={"celebration_duration": 0})
+        # A short-but-valid duration: celebration_duration is clamped to a 1.0s
+        # floor, so a config of 0 does NOT expire on the next frame. Backdate
+        # started_at past the window to exercise the real expiry branch —
+        # otherwise the celebration is still active and this only passes
+        # because _draw_celebration_layout happens to raise in the harness
+        # (that path is covered by test_a_render_failure_falls_through).
+        manager = celebrating(mode_config={"celebration_duration": 1})
         manager._check_for_score(game("g1", home_score=0))
         manager._check_for_score(game("g1", home_score=1))
+        manager.active_celebration["started_at"] = time.time() - 2  # past the 1s window
+        # Mock the layout so a render can't raise: otherwise the exception
+        # branch clears the celebration too, and this test would pass whether
+        # or not expiry actually fired. An expired celebration must NOT render.
+        manager._draw_celebration_layout = MagicMock()
         assert manager.display() is True
+        manager._draw_celebration_layout.assert_not_called()
         assert manager.active_celebration is None
         assert manager.display_calls == [False]
 
     def test_expiry_resets_the_dwell_clock(self, celebrating):
         """So the scorebug resumes on the scoring game for a full duration
         before rotation can move on."""
-        manager = celebrating(mode_config={"celebration_duration": 0})
+        manager = celebrating(mode_config={"celebration_duration": 1})
         manager._check_for_score(game("g1", home_score=0))
         manager._check_for_score(game("g1", home_score=1))
+        manager.active_celebration["started_at"] = time.time() - 2  # past the 1s window
+        manager._draw_celebration_layout = MagicMock()  # expiry, not a render failure
         manager.display()
+        manager._draw_celebration_layout.assert_not_called()
         assert manager.last_game_switch > 0
 
     def test_a_render_failure_falls_through_to_the_scorebug(self, celebrating):
