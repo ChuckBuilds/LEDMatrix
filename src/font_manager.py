@@ -659,6 +659,25 @@ class FontManager:
 
     # ==================== Font Discovery ====================
 
+    @staticmethod
+    def _resolve_asset_path(relative_path: str) -> str:
+        """Resolve a repo-relative asset path independently of the process cwd.
+
+        Prefers the working directory (preserving behavior when the process
+        runs from the install root), then falls back to the install root
+        derived from this module's own location. Without the fallback, any
+        process started outside the install root (e.g. the plugin safety
+        harness on CI) silently loses every font and degrades to PIL's
+        default face.
+        """
+        if os.path.exists(relative_path):
+            return relative_path
+        install_root = Path(__file__).resolve().parent.parent
+        candidate = install_root / relative_path
+        if candidate.exists():
+            return str(candidate)
+        return relative_path
+
     def _initialize_fonts(self):
         """Initialize font catalog and validate configuration."""
         self._scan_fonts_directory()
@@ -667,7 +686,7 @@ class FontManager:
 
     def _scan_fonts_directory(self):
         """Scan assets/fonts directory for available fonts."""
-        fonts_dir = "assets/fonts"
+        fonts_dir = self._resolve_asset_path("assets/fonts")
         if not os.path.exists(fonts_dir):
             logger.warning(f"Fonts directory not found: {fonts_dir}")
             return
@@ -683,6 +702,7 @@ class FontManager:
     def _register_common_fonts(self):
         """Register common font aliases from common_fonts dictionary."""
         for family_name, font_path in self.common_fonts.items():
+            font_path = self._resolve_asset_path(font_path)
             # Check if font file exists
             if os.path.exists(font_path):
                 # Register the common font name (overrides auto-generated name if exists)
