@@ -847,7 +847,7 @@ class SportsLive(SportsCore):
         # feed: {game_id: {"clock": ts, "score": ts, "last_seen": ts}}.
         # Until a subclass writes "last_seen", the staleness branch of
         # _detect_stale_games is inert and only the game-over check applies.
-        self.game_update_timestamps = {}
+        self.game_update_timestamps: Dict[str, Dict[str, float]] = {}
         self.stale_game_timeout = self.mode_config.get("stale_game_timeout", 300)  # 5 minutes default
 
     @abstractmethod
