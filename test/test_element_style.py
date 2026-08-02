@@ -377,6 +377,22 @@ class TestResolverPlumbing:
         font = load_font("5x7.bdf", 7)
         assert isinstance(font, freetype.Face)
 
+    @pytest.mark.parametrize("hostile", [
+        "../../config/config.json",
+        "../secrets.txt",
+        "sub/dir/font.ttf",
+        "..",
+    ])
+    def test_relative_font_name_with_path_components_is_rejected(self, hostile):
+        # font_name comes from plugin config (web-UI writable); a relative name
+        # carrying path separators would escape assets/fonts/ after os.path.join
+        # and let a config probe arbitrary paths. Only bare filenames resolve.
+        assert resolve_font_path(hostile) is None
+
+    def test_bare_filename_still_resolves(self):
+        # The guard must not reject legitimate bare names.
+        assert resolve_font_path("PressStart2P-Regular.ttf") is not None
+
     def test_schema_manager_expands_on_load(self, tmp_path):
         # The web-UI form path: SchemaManager.load_schema serves the
         # expanded schema so the style blocks actually appear in the UI.

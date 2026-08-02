@@ -106,6 +106,13 @@ def resolve_font_path(font_name: str) -> Optional[str]:
         return None
     if os.path.isabs(font_name):
         return font_name if os.path.isfile(font_name) else None
+    # A relative name must be a bare filename. font_name comes from plugin
+    # config, which the web UI writes; a value like "../../config/config.json"
+    # would otherwise escape assets/fonts/ once joined and let a config probe
+    # arbitrary paths for existence. os.path.basename collapses any such value
+    # to its last component, so a name that isn't already bare is rejected.
+    if os.path.basename(font_name) != font_name:
+        return None
     candidates = (
         os.path.join(os.getcwd(), _FONTS_SUBDIR, font_name),
         os.path.join(_CORE_ROOT, _FONTS_SUBDIR, font_name),
