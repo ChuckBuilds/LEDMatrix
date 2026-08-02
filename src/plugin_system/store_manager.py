@@ -149,18 +149,27 @@ class PluginStoreManager:
         # loser can end up renaming the winner's in-progress install aside
         # mid-download, stealing its own rollback safety net. Keyed by
         # plugin_id so unrelated plugins still update concurrently.
-        self._reinstall_locks: Dict[str, threading.Lock] = {}
+        # Reentrant: install_plugin takes this lock, and _reinstall_with_rollback
+        # holds it across its call to install_plugin. A plain Lock would
+        # self-deadlock on that nesting.
+        self._reinstall_locks: Dict[str, "threading.RLock"] = {}
         self._reinstall_locks_guard = threading.Lock()
 
         # Ensure plugins directory exists
         self.plugins_dir.mkdir(exist_ok=True)
 
-    def _get_reinstall_lock(self, plugin_id: str) -> threading.Lock:
-        """Lazily create (or fetch) the per-plugin reinstall lock."""
+    def _get_reinstall_lock(self, plugin_id: str):
+        """Lazily create (or fetch) the per-plugin reinstall lock.
+
+        Reentrant by necessity: `install_plugin` acquires it to protect its
+        set-aside/restore, and `_reinstall_with_rollback` holds it across its
+        own call to `install_plugin`. With a plain `Lock` that nesting
+        deadlocks the request thread.
+        """
         with self._reinstall_locks_guard:
             lock = self._reinstall_locks.get(plugin_id)
             if lock is None:
-                lock = threading.Lock()
+                lock = threading.RLock()
                 self._reinstall_locks[plugin_id] = lock
             return lock
 
@@ -1208,45 +1217,54 @@ class PluginStoreManager:
         The aside name embeds '.standalone-backup-' so plugin discovery
         (`plugin_manager._scan_directory_for_plugins`) skips it even though it
         still holds a manifest.json.
+
+        Held under the per-plugin reinstall lock for the same reason
+        `_reinstall_with_rollback` is: the web UI runs Flask with
+        threaded=True, so a double-clicked Install button gives two threads the
+        same plugin_id. Interleaved, one thread's restore would delete the
+        other's freshly installed copy. The lock is reentrant because the
+        rollback path already holds it when it calls in here.
         """
-        plugin_path = self.plugins_dir / plugin_id
-        if not plugin_path.exists():
-            return self._install_plugin_impl(plugin_id, branch)
+        with self._get_reinstall_lock(plugin_id):
+            plugin_path = self.plugins_dir / plugin_id
+            if not plugin_path.exists():
+                return self._install_plugin_impl(plugin_id, branch)
 
-        backup_path = plugin_path.with_name(
-            f"{plugin_path.name}.standalone-backup-preinstall")
-        if backup_path.exists() and not self._safe_remove_directory(backup_path):
-            # Can't stage a safety net. Better to attempt the install than to
-            # refuse outright, which is what the caller got before this existed.
-            self.logger.warning(
-                "Could not clear stale pre-install backup for %s at %s; "
-                "installing without a rollback net", plugin_id, backup_path)
-            return self._install_plugin_impl(plugin_id, branch)
-
-        try:
-            plugin_path.rename(backup_path)
-        except OSError as e:
-            self.logger.warning(
-                "Could not set aside existing install of %s (%s); "
-                "installing without a rollback net", plugin_id, e)
-            return self._install_plugin_impl(plugin_id, branch)
-
-        try:
-            installed = self._install_plugin_impl(plugin_id, branch)
-        except Exception:
-            self._restore_preinstall_backup(plugin_id, plugin_path, backup_path)
-            raise
-
-        if installed:
-            if not self._safe_remove_directory(backup_path):
+            backup_path = plugin_path.with_name(
+                f"{plugin_path.name}.standalone-backup-preinstall")
+            if backup_path.exists() and not self._safe_remove_directory(backup_path):
+                # Can't stage a safety net. Better to attempt the install than
+                # to refuse outright, which is what callers got before this
+                # existed.
                 self.logger.warning(
-                    "Install of %s succeeded but the previous copy at %s could "
-                    "not be removed; it will be cleared on the next install",
-                    plugin_id, backup_path)
-            return True
+                    "Could not clear stale pre-install backup for %s at %s; "
+                    "installing without a rollback net", plugin_id, backup_path)
+                return self._install_plugin_impl(plugin_id, branch)
 
-        self._restore_preinstall_backup(plugin_id, plugin_path, backup_path)
-        return False
+            try:
+                plugin_path.rename(backup_path)
+            except OSError as e:
+                self.logger.warning(
+                    "Could not set aside existing install of %s (%s); "
+                    "installing without a rollback net", plugin_id, e)
+                return self._install_plugin_impl(plugin_id, branch)
+
+            try:
+                installed = self._install_plugin_impl(plugin_id, branch)
+            except Exception:
+                self._restore_preinstall_backup(plugin_id, plugin_path, backup_path)
+                raise
+
+            if installed:
+                if not self._safe_remove_directory(backup_path):
+                    self.logger.warning(
+                        "Install of %s succeeded but the previous copy at %s "
+                        "could not be removed; it will be cleared on the next "
+                        "install", plugin_id, backup_path)
+                return True
+
+            self._restore_preinstall_backup(plugin_id, plugin_path, backup_path)
+            return False
 
     def _restore_preinstall_backup(
         self, plugin_id: str, plugin_path: Path, backup_path: Path
