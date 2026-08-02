@@ -79,9 +79,10 @@ def _competitor(abbr, team_id, score, home_away, record="30-10-5"):
             "logo": None,
         },
         "records": [{"summary": record}],
-        # The hockey extractor iterates competitor["statistics"] and
-        # returns None for the whole event when the key is absent (see
-        # test_hockey_event_without_statistics_returns_none).
+        # The hockey extractor reads competitor["statistics"] for shot counts;
+        # it now defaults to an empty list when the key is absent rather than
+        # dropping the whole event (see
+        # test_hockey_event_without_statistics_still_extracts).
         "statistics": [],
     }
 
@@ -305,15 +306,25 @@ class TestExtractGameDetailsContract:
         assert details["home_shots"] == 0
         assert details["away_shots"] == 0
 
-    def test_hockey_event_without_statistics_returns_none(self):
-        # PINNED AS-IS: the hockey extractor unconditionally iterates
-        # competitor["statistics"]; a competitor without the key raises
-        # KeyError internally and the WHOLE event is dropped (returns
-        # None), even though scores/status are present.
+    def test_hockey_event_without_statistics_still_extracts(self):
+        # FIXED (was pinned as returning None): the hockey extractor used to
+        # iterate competitor["statistics"] unguarded, so a competitor without
+        # the key raised KeyError internally and the WHOLE event was dropped
+        # despite valid scores and status. It now defaults to an empty list,
+        # matching the behaviour already shipped in the hockey plugin, so the
+        # event survives with zeroed shot counts -- the same values
+        # test_hockey_live_power_play_and_default_shots already expects for an
+        # EMPTY statistics array.
         event = make_event("410", "in", "2026-01-15T18:30:00Z")
         for comp in event["competitions"][0]["competitors"]:
             del comp["statistics"]
-        assert extract(Hockey, event) is None
+        details = extract(Hockey, event)
+        assert details is not None
+        assert details["home_abbr"] == "TB"
+        assert details["away_abbr"] == "DAL"
+        assert details["home_score"] == "3"
+        assert details["home_shots"] == 0
+        assert details["away_shots"] == 0
 
     def test_baseball_live_inning_and_count(self):
         event = make_event(
@@ -337,14 +348,35 @@ class TestExtractGameDetailsContract:
         assert details["status"] == "status_in_progress"
         assert details["series_summary"] == ""
 
-    def test_baseball_live_without_top_level_status_returns_none(self):
-        # PINNED AS-IS: for live games the baseball extractor reads
-        # game_event["status"] (the event TOP-LEVEL status, not the
-        # competition status) for the inning; an otherwise-valid live
-        # event lacking that duplicate key is dropped entirely.
-        event = make_event("412", "in", "2026-07-16T23:05:00Z")
+    def test_baseball_live_without_top_level_status_still_extracts(self):
+        # FIXED (was pinned as returning None): the baseball extractor read
+        # game_event["status"] -- the event TOP-LEVEL status -- for the
+        # inning, so an otherwise-valid live event lacking that duplicate key
+        # was dropped entirely. Real ESPN events carry status in both places,
+        # but MiLB events (synthesized from the MLB Stats API into an
+        # ESPN-like shape) populate only the competition-level one. It now
+        # reads the competition-level `status` that
+        # _extract_game_details_common has already validated, so it can never
+        # be missing at that point.
+        event = make_event("412", "in", "2026-07-16T23:05:00Z", period=7)
         del event["status"]
-        assert extract(Baseball, event) is None
+        details = extract(Baseball, event)
+        assert details is not None
+        assert details["inning"] == 7
+
+    def test_baseball_live_without_top_level_status_extracts_for_favorites(self):
+        # The favourite-team branch logs the status payload for diagnostics and
+        # read the same event top-level key the test above proves can be
+        # absent. So the identical MiLB event that extracts fine for a
+        # non-favourite raised KeyError and was dropped once the team WAS a
+        # favourite -- the worst shape for the bug, since it only hit the games
+        # the user cared most about, and only on the diagnostic path that was
+        # supposed to help debug them.
+        event = make_event("413", "in", "2026-07-16T23:05:00Z", period=7)
+        del event["status"]
+        details = extract(Baseball, event, favorites=["TB"])
+        assert details is not None
+        assert details["inning"] == 7
 
 
 # ---------------------------------------------------------------------------
@@ -400,7 +432,7 @@ def build_manager(monkeypatch, tmp_path):
     monkeypatch.setattr(
         SportsCore, "_initialize_logo_dir", lambda self, configured: tmp_path)
     monkeypatch.setattr(
-        "src.base_classes.sports.get_background_service",
+        "src.base_classes.sports.core.get_background_service",
         lambda *args, **kwargs: MagicMock())
 
     # Rig requests.Session BEFORE any manager is built. Construction creates

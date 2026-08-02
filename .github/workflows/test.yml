@@ -72,4 +72,8 @@ jobs:
             test/test_adaptive_layout.py \
             test/test_loader_compat_warning.py \
             test/test_sports_base_characterization.py \
-            test/test_element_style.py
+            test/test_element_style.py \
+            test/test_sports_core_promotions.py \
+            test/test_sports_modes_promotions.py \
+            test/test_sports_capabilities.py \
+            test/test_sports_scroll.py
