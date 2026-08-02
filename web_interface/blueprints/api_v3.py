@@ -747,6 +747,36 @@ def save_main_config():
         if 'timezone' in data:
             current_config['timezone'] = data['timezone']
 
+        # Device-wide scroll frame rate, read by plugins via
+        # BasePlugin.global_config. Bounds match ScrollHelper.set_target_fps,
+        # which clamps silently -- rejecting here instead means a value that
+        # would have been quietly altered is reported rather than appearing to
+        # save and then behaving differently.
+        if 'target_fps' in data and data['target_fps'] not in ('', None):
+            raw_target_fps = data['target_fps']
+            # A JSON body can carry real floats and bools, where int() would
+            # silently truncate: 90.5 would save as 90, and true as 1. Reject
+            # them rather than storing a value the user did not ask for. Form
+            # posts arrive as strings, so '90.5' still fails in int() below.
+            if isinstance(raw_target_fps, (bool, float)):
+                return jsonify({
+                    'status': 'error',
+                    'message': "Invalid value for target_fps: must be an integer"
+                }), 400
+            try:
+                target_fps = int(raw_target_fps)
+            except (ValueError, TypeError):
+                return jsonify({
+                    'status': 'error',
+                    'message': "Invalid value for target_fps: must be an integer"
+                }), 400
+            if not (30 <= target_fps <= 200):
+                return jsonify({
+                    'status': 'error',
+                    'message': "Invalid value for target_fps: must be between 30 and 200"
+                }), 400
+            current_config['target_fps'] = target_fps
+
         # Handle location settings
         if 'city' in data or 'state' in data or 'country' in data:
             if 'location' not in current_config:
@@ -1282,7 +1312,7 @@ def save_main_config():
             if key in ['timezone', 'city', 'state', 'country',
                        'web_display_autostart', 'auto_discover',
                        'auto_load_enabled', 'development_mode',
-                       'plugins_directory']:
+                       'plugins_directory', 'target_fps']:
                 continue
             # Skip fields that are already handled above in their own named sections.
             # Without this, every form field name lands as a top-level config key too.

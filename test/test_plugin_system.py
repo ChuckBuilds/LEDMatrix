@@ -250,5 +250,125 @@ class TestBasePlugin:
             
         config = {"enabled": True, "live_priority": True}
         plugin = ConcretePlugin("test", config, mock_display_manager, mock_cache_manager, None)
-        
+
         assert plugin.has_live_priority() is True
+
+
+class TestBasePluginGlobalConfig:
+    """global_config exposes device-wide settings that self.config cannot.
+
+    The sports scoreboards read `getattr(self, 'global_config', {})` to find
+    the shared target_fps; before this property existed nothing ever set that
+    attribute, so the lookup silently returned {} and the setting could never
+    take effect on any core.
+    """
+
+    @staticmethod
+    def _plugin(display_manager, cache_manager, plugin_manager=None):
+        from src.plugin_system.base_plugin import BasePlugin
+
+        class ConcretePlugin(BasePlugin):
+            def update(self): pass
+            def display(self, force_clear=False): pass
+
+        return ConcretePlugin(
+            "test", {"enabled": True}, display_manager, cache_manager, plugin_manager
+        )
+
+    @staticmethod
+    def _manager_with(config):
+        """A stand-in manager exposing config_manager.get_config()."""
+        manager = MagicMock()
+        manager.config_manager.get_config.return_value = config
+        return manager
+
+    def test_reads_config_from_plugin_manager(self, mock_display_manager, mock_cache_manager):
+        plugin = self._plugin(
+            mock_display_manager, mock_cache_manager,
+            self._manager_with({"target_fps": 100}),
+        )
+        assert plugin.global_config["target_fps"] == 100
+
+    def test_falls_back_to_cache_manager(self, mock_display_manager):
+        # The core that hangs config_manager off the cache manager instead.
+        cache_manager = self._manager_with({"target_fps": 75})
+        plugin = self._plugin(mock_display_manager, cache_manager, plugin_manager=None)
+        assert plugin.global_config["target_fps"] == 75
+
+    def test_plugin_manager_wins_over_cache_manager(self, mock_display_manager):
+        plugin = self._plugin(
+            mock_display_manager,
+            self._manager_with({"target_fps": 75}),
+            self._manager_with({"target_fps": 100}),
+        )
+        assert plugin.global_config["target_fps"] == 100
+
+    def test_empty_plugin_manager_config_falls_through(self, mock_display_manager):
+        """An empty first source means "not loaded yet", not "the answer".
+
+        Both managers default to the same config/config.json, so falling
+        through cannot pick up a different file. Returning {} here instead
+        would silently disable every setting read through this property --
+        the exact failure this property exists to fix.
+        """
+        plugin = self._plugin(
+            mock_display_manager,
+            self._manager_with({"target_fps": 100}),   # cache_manager
+            self._manager_with({}),                    # plugin_manager: empty
+        )
+        assert plugin.global_config["target_fps"] == 100
+
+    def test_returns_empty_dict_when_no_config_manager(self, mock_display_manager):
+        # Plain objects: no config_manager attribute at all.
+        plugin = self._plugin(mock_display_manager, object(), object())
+        assert plugin.global_config == {}
+
+    def test_unreadable_config_does_not_raise(self, mock_display_manager):
+        # A plugin must still load when the config on disk is broken.
+        broken = MagicMock()
+        broken.config_manager.get_config.side_effect = OSError("unreadable")
+        plugin = self._plugin(mock_display_manager, broken, broken)
+        assert plugin.global_config == {}
+
+    def test_non_dict_config_is_rejected(self, mock_display_manager):
+        # A stub or half-built manager can return a non-mapping; handing that
+        # back would blow up later in numeric code, far from the cause.
+        plugin = self._plugin(
+            mock_display_manager, object(), self._manager_with("not-a-dict")
+        )
+        assert plugin.global_config == {}
+
+    def test_missing_property_degrades_to_default(self, mock_display_manager, mock_cache_manager):
+        # How plugins actually call it, so a plugin written against this core
+        # still loads on one that predates the property.
+        plugin = self._plugin(mock_display_manager, mock_cache_manager, object())
+        assert getattr(plugin, "global_config", {}).get("target_fps") is None
+
+    def test_plugin_may_still_assign_global_config(self, mock_display_manager, mock_cache_manager):
+        # news, stock-news, ledmatrix-stocks, ledmatrix-elections,
+        # ledmatrix-leaderboard and nfl-draft all do exactly this. Without a
+        # setter the property raises "has no setter" and those plugins stop
+        # loading entirely.
+        from src.plugin_system.base_plugin import BasePlugin
+
+        class AssigningPlugin(BasePlugin):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.global_config = self.config.get("global", {})
+
+            def update(self): pass
+            def display(self, force_clear=False): pass
+
+        plugin = AssigningPlugin(
+            "news", {"enabled": True, "global": {"scroll_speed": 2}},
+            mock_display_manager, mock_cache_manager, self._manager_with({"target_fps": 100}),
+        )
+        # The plugin's own value wins over the resolved config.
+        assert plugin.global_config == {"scroll_speed": 2}
+
+    def test_template_ships_a_global_target_fps(self):
+        # The plumbing is useless if the setting isn't in the shipped config.
+        import json
+        with open("config/config.template.json") as fh:
+            template = json.load(fh)
+        assert template.get("target_fps") == 100

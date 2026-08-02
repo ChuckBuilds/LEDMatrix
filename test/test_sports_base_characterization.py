@@ -79,9 +79,10 @@ def _competitor(abbr, team_id, score, home_away, record="30-10-5"):
             "logo": None,
         },
         "records": [{"summary": record}],
-        # The hockey extractor iterates competitor["statistics"] and
-        # returns None for the whole event when the key is absent (see
-        # test_hockey_event_without_statistics_returns_none).
+        # The hockey extractor reads competitor["statistics"] for shot counts;
+        # it now defaults to an empty list when the key is absent rather than
+        # dropping the whole event (see
+        # test_hockey_event_without_statistics_still_extracts).
         "statistics": [],
     }
 

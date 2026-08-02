@@ -167,6 +167,78 @@ class TestConfigAPI:
             'enabled': True, 'copies': 2, 'axis': 'vertical',
         }
 
+    def test_save_target_fps(self, client, mock_config_manager):
+        """The device-wide scroll frame rate persists as a top-level int."""
+        response = client.post(
+            '/api/v3/config/main',
+            data={'target_fps': '90'},
+            content_type='application/x-www-form-urlencoded',
+        )
+
+        assert response.status_code == 200
+        saved = mock_config_manager.save_config_atomic.call_args[0][0]
+        # Must be the coerced int, not the raw form string -- the generic
+        # remaining-keys loop would otherwise write '90' back over it.
+        assert saved['target_fps'] == 90
+
+    def test_save_target_fps_alone_does_not_reset_other_general_settings(
+            self, client, mock_config_manager):
+        """A target_fps-only POST must not be treated as a full General-tab save.
+
+        The general branch reads web_display_autostart as an unchecked-checkbox
+        (absent means False), so counting target_fps as a general update would
+        silently switch autostart off for anyone setting only the frame rate.
+        """
+        mock_config_manager.load_config.return_value['web_display_autostart'] = True
+
+        response = client.post(
+            '/api/v3/config/main',
+            data={'target_fps': '90'},
+            content_type='application/x-www-form-urlencoded',
+        )
+
+        assert response.status_code == 200
+        saved = mock_config_manager.save_config_atomic.call_args[0][0]
+        assert saved['web_display_autostart'] is True
+
+    @pytest.mark.parametrize('value', [90.5, 90.0, True])
+    def test_save_target_fps_rejects_non_integer_json(self, client, mock_config_manager, value):
+        """int() would truncate silently: 90.5 -> 90, True -> 1.
+
+        Only JSON can carry these; a form post sends '90.5', which int()
+        already rejects.
+        """
+        response = client.post(
+            '/api/v3/config/main',
+            data=json.dumps({'target_fps': value}),
+            content_type='application/json',
+        )
+
+        assert response.status_code == 400
+
+    @pytest.mark.parametrize('value', ['20', '250', 'fast'])
+    def test_save_target_fps_rejects_out_of_range(self, client, mock_config_manager, value):
+        """Values ScrollHelper would silently clamp are reported instead."""
+        response = client.post(
+            '/api/v3/config/main',
+            data={'target_fps': value},
+            content_type='application/x-www-form-urlencoded',
+        )
+
+        assert response.status_code == 400
+
+    def test_save_target_fps_accepts_bounds(self, client, mock_config_manager):
+        """Both endpoints of the documented range are valid."""
+        for value in ('30', '200'):
+            response = client.post(
+                '/api/v3/config/main',
+                data={'target_fps': value},
+                content_type='application/x-www-form-urlencoded',
+            )
+            assert response.status_code == 200, f"{value} should be accepted"
+            saved = mock_config_manager.save_config_atomic.call_args[0][0]
+            assert saved['target_fps'] == int(value)
+
     def test_save_double_sided_unchecked_disables(self, client, mock_config_manager):
         """An omitted 'enabled' checkbox is saved as disabled, not left stale."""
         response = client.post(
