@@ -150,3 +150,73 @@ class TestUpdatePathStillWorks:
         assert observed["dirs"] == ["hockey-scoreboard.standalone-backup-migrating"]
         # And the user still has their plugin.
         assert (plugins_dir / "hockey-scoreboard" / "marker.txt").read_text() == "the-original"
+
+
+class TestConcurrency:
+    """The web UI runs Flask threaded, so a double-clicked Install button puts
+    two threads on the same plugin_id. `_reinstall_with_rollback` already
+    guarded against this; the install wrapper has to as well, or one thread's
+    restore deletes the other's freshly installed copy."""
+
+    def test_rollback_calling_install_does_not_deadlock(self, store, monkeypatch):
+        """The rollback path holds the per-plugin lock across its call to
+        install_plugin. A non-reentrant lock would hang the request thread
+        forever — this test would time out rather than fail."""
+        import threading
+
+        mgr, plugins_dir = store
+        path = _existing_install(plugins_dir, "hockey-scoreboard", "the-original")
+        monkeypatch.setattr(
+            mgr, "_install_plugin_impl",
+            lambda pid, branch=None: bool(_existing_install(plugins_dir, pid, "new")))
+
+        done = threading.Event()
+        result = {}
+
+        def run():
+            result["ok"] = mgr._reinstall_with_rollback("hockey-scoreboard", path)
+            done.set()
+
+        t = threading.Thread(target=run, daemon=True)
+        t.start()
+        assert done.wait(timeout=10), (
+            "install_plugin deadlocked when called from _reinstall_with_rollback "
+            "— the per-plugin lock must be reentrant"
+        )
+        assert result["ok"] is True
+
+    def test_concurrent_installs_serialize(self, store, monkeypatch):
+        """Two threads installing the same plugin must not interleave their
+        set-aside/restore, and the survivor must be a complete install."""
+        import threading
+
+        mgr, plugins_dir = store
+        _existing_install(plugins_dir, "hockey-scoreboard", "the-original")
+
+        in_flight = []
+        overlap = []
+
+        def slow_impl(plugin_id, branch=None):
+            in_flight.append(1)
+            if len(in_flight) > 1:
+                overlap.append(1)
+            threading.Event().wait(0.05)
+            _existing_install(plugins_dir, plugin_id, "installed")
+            in_flight.pop()
+            return True
+
+        monkeypatch.setattr(mgr, "_install_plugin_impl", slow_impl)
+
+        threads = [threading.Thread(target=mgr.install_plugin,
+                                    args=("hockey-scoreboard",), daemon=True)
+                   for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+            assert not t.is_alive(), "concurrent install hung"
+
+        assert not overlap, "two installs of the same plugin ran concurrently"
+        assert (plugins_dir / "hockey-scoreboard" / "marker.txt").exists()
+        leftovers = [p.name for p in plugins_dir.iterdir() if "backup" in p.name]
+        assert not leftovers, f"backup left behind: {leftovers}"
