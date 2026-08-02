@@ -434,6 +434,17 @@ def build_manager(monkeypatch, tmp_path):
         "src.base_classes.sports.core.get_background_service",
         lambda *args, **kwargs: MagicMock())
 
+    # Rig requests.Session BEFORE any manager is built. Construction creates
+    # both SportsCore.session and the ESPNDataSource.session; replacing only
+    # manager.session after the fact (below) leaves data_source.session real,
+    # so an accidental fetch during or right after construction could reach
+    # the network. Patching the class makes every session created here raise.
+    def _offline_get(*args, **kwargs):
+        raise requests.exceptions.ConnectionError(
+            "characterization tests are offline")
+
+    monkeypatch.setattr(requests.Session, "get", _offline_get)
+
     def build(cls, schedule, **mode_cfg):
         config = {
             "timezone": "UTC",
