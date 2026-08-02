@@ -27,7 +27,7 @@ These are independent concerns. Conflating them is what produces god classes.
 | Plugin loads on a core that predates a module | Guarded import with a bundled fallback (`try: from src.X import Y / except ModuleNotFoundError: from y import Y`) |
 | Plugin loads on a core that predates a *method* | Capability probing — `hasattr(SportsCore, "_detect_stale_games")` — never a version comparison. The loader's compat check is advisory-only (it logs and continues), so probing is the real protection. |
 | Core changes never break a plugin's rendering | The **view-model contract**: `_extract_game_details_common` returns a dict whose `GUARANTEED_KEYS` are frozen by `test/test_skin_system.py::TestViewModelContract`. Keys may be added, never renamed or removed. |
-| A plugin can drop its bundled copy safely | The **sunset rule**: only when its manifest floors `ledmatrix_min_version` at the first core release shipping the module (recorded in `CHANGELOG.md`). |
+| A plugin can drop its bundled copy safely | The **sunset rule**: its manifest must floor `ledmatrix_min_version` at the first core release shipping the module (recorded in `CHANGELOG.md`) — *necessary but not sufficient*. Nothing enforces that floor today, so the copy also waits for the B6 gate below. |
 
 The core API is **additive-only**. A method the plugins call is never removed or
 given a new required parameter; new behavior arrives as new methods with
@@ -201,25 +201,132 @@ legacy compatibility rather than the mechanism.
 
 ## Phases
 
-| Phase | Scope | Risk control |
-|---|---|---|
-| **B0** ✅ | Characterization tests, CI unit job, `element_style`, font cwd fix, CHANGELOG discipline | — |
-| **B1** ✅ | Promote the nine universal methods; convert `sports.py` → package | Characterization suite must stay green; no behavior change intended |
-| **B2** ✅ | `CelebrationMixin` + rotation strategies as opt-in capabilities | Plugins that don't opt in have zero new code in their MRO; strategies checked against verbatim plugin transcriptions |
-| **B3** ✅ | Upstream the scroll **orchestration** layer as `src/common/sports_scroll.py`, reading `global_config['target_fps']` natively | Plugin copies remain until sunset; content building stays per-sport |
-| **B4** | Bump to 3.2.0, record modules in CHANGELOG, migrate `ledmatrix_min` → `ledmatrix_min_version` | Gives plugins a version to floor on |
-| **B5** ⏳ | Pilot one plugin per lineage (hockey, soccer, football) on core imports; then the remaining six; then delete bundled copies | Pilot soaks before rollout; harness + golden suites gate each |
+B0–B3 are merged and shipping in core 3.2.0. Everything that remains is
+**rollout**, and it splits into three phases with very different risk profiles.
+The original plan folded the last two together; they are separated here because
+one of them is safe by construction and the other is not.
 
-**B5 is blocked on this PR merging and 3.2.0 shipping** — a plugin cannot floor
-`ledmatrix_min_version` at a release that does not exist, and an unguarded
-`src.common.sports_scroll` import would break every user on 3.1.0.
+| Phase | Scope | Status | Gate |
+|---|---|---|---|
+| **B0** | Characterization tests, CI unit job, `element_style`, font cwd fix, CHANGELOG discipline | ✅ | — |
+| **B1** | Promote the nine universal methods; convert `sports.py` → package | ✅ | Characterization suite green; no behavior change intended |
+| **B2** | `CelebrationMixin` + rotation strategies as opt-in capabilities | ✅ | Non-adopters have zero new code in their MRO; strategies checked against verbatim plugin transcriptions |
+| **B3** | Upstream the scroll **orchestration** layer as `src/common/sports_scroll.py`, reading `global_config['target_fps']` natively | ✅ | Content building stays per-sport |
+| **B4** | Ship 3.2.0 *and* make version reporting trustworthy | ⏳ **next** | Tag, release, and `src.__version__` agree; compatibility gate merged |
+| **B5** | Adoption — guarded core imports: three pilots, then the remaining six. **Bundled copies stay.** | after B4 | Per plugin: harness + goldens byte-identical, then a device soak |
+| **B6** | Sunset — delete the bundled copies | **blocked** | B4's gate shipped *and* in users' hands (see below) |
 
-The hockey scroll-display pilot has been **validated ahead of that gate**:
-adopted against a core carrying 3.2.0, `scroll_display.py` went from 691 to 289
-lines and all 16 harness renders (8 sizes × 2 screens) came out byte-for-byte
-identical to the pre-adoption run. The adoption recipe and the two gotchas it
-surfaced are written up in the plugins repo's
+### B4 — what "ship 3.2.0" actually requires
+
+Cutting the tag is the small part. The version *number* has to become something
+a floor can be trusted against, and today it is not:
+
+- **The tag and `src.__version__` have never agreed.** `v3.1.0` was tagged
+  2026-05-31; `__version__` only became `"3.1.0"` on 2026-07-12 (`7f7f0d64`).
+  The v3.1.0 release therefore reports `__version__ = "1.0.0"`.
+- **Which silences the compatibility warning entirely for that population.**
+  `PluginLoader._warn_if_incompatible` skips the check when the parsed core
+  version is below `(2, 0, 0)` — an anti-spam guard that, given the above,
+  matches exactly the users most likely to be behind.
+- **Nothing enforces a floor anyway.** The check is advisory (it logs and
+  continues), and neither `StoreManager.install_plugin` nor
+  `StoreManager.update_plugin` compares the core version at all — `update_plugin`
+  compares the plugin's manifest version against the registry's
+  `latest_version` and nothing else.
+
+So B4 is: tag and release 3.2.0; make the tag, the release, and `__version__`
+agree, and keep them agreeing; reconsider the `< 2.0.0` skip; migrate manifests
+from `ledmatrix_min` to `ledmatrix_min_version`; and add the install/update
+compatibility gate that B6 depends on.
+
+### B5 — adoption is safe by construction
+
+A plugin adopting core imports keeps its bundled copy and reaches it through the
+guarded import (see the Upgradability table above). On a core that ships the
+module the plugin uses core code; on one that doesn't it falls back and behaves
+exactly as it does today. There is no version of this step that breaks a user,
+which is why it does not wait for B6's gate.
+
+The hockey scroll-display pilot is **already validated**: adopted against a core
+carrying 3.2.0, `scroll_display.py` went from 691 to 289 lines and all 16 harness
+renders (8 sizes × 2 screens) came out byte-for-byte identical to the
+pre-adoption run. That byte-comparison is the acceptance gate for every
+adoption. The recipe and its two gotchas are in the plugins repo's
 `docs/plugin-development/08-shared-sports-code.md`.
+
+### B6 — why the sunset needs more than a version floor
+
+Deleting a bundled copy removes the fallback, so the guarded import becomes a
+hard dependency. On a core without the module the plugin raises
+`ModuleNotFoundError` at load; `PluginManager.load_plugin` catches it, records
+`PluginState.ERROR`, logs one line, and continues. Nothing crashes — the user
+simply loses that scoreboard, with no visible explanation.
+
+Verified against a `v3.1.0` worktree: `src/common/sports_scroll.py`,
+`src/element_style.py` and the `src/base_classes/sports/` package are all absent
+there, and the import fails with `exc.name == 'src.common.sports_scroll'`. Guard
+sets must name that exact dotted path — `{"src"}` alone does not match it.
+
+Combined with the B4 findings, a plugin that deletes its copy today reaches an
+un-updated user through a normal store update, fails to load, and warns nobody.
+**B6 therefore waits for B4's compatibility gate to have shipped and to have
+been in users' hands long enough that the population running a core without it
+is small.** The bundled copies cost disk space; deleting them early costs
+scoreboards, silently. That trade is not close.
+
+Before the first sunset, add a **compatibility regression test**: load each
+adopted plugin with its bundled copy removed against a pinned old-core worktree
+and assert it fails loudly and specifically, then against current core and assert
+it works. That test is what turns "we think this is safe" into something CI
+re-checks on every change.
+
+## What's next
+
+In order. Each step is independently useful and independently revertible.
+
+1. **Tag and publish v3.2.0.** The code is already on `main` (`21825cbf`).
+   Nothing else blocks this, and it is what makes `ledmatrix_min_version:
+   "3.2.0"` refer to something real.
+2. **Make the version number honest.** Have the release process assert that the
+   tag, the GitHub release, and `src.__version__` agree — a check in CI is
+   cheaper than the confusion of the last two releases. Then revisit the
+   `< 2.0.0` skip in `_warn_if_incompatible`, which currently silences the
+   warning for the users who most need it.
+3. **Add the compatibility gate** to `StoreManager.install_plugin` and
+   `.update_plugin`: refuse a plugin whose declared floor exceeds
+   `src.__version__`, and surface the reason in the store UI rather than only
+   the log. This is the single change that turns the floor from documentation
+   into a guarantee, and B6 depends on it.
+4. **Migrate the manifests** to `ledmatrix_min_version`. Currently 28 plugins
+   spell it both ways across their `versions[]` entries, 12 use only the old
+   spelling, and 2 only the new. Scope the sweep to the nine sports plugins if a
+   42-plugin version-bump wave isn't worth it.
+5. **Run B5 adoption** — hockey, soccer, football, then the remaining six.
+   Bundled copies stay. Byte-identical harness output per plugin, then a soak.
+6. **Only then plan B6**, with the compatibility regression test described above
+   in CI first.
+
+## How to keep this project healthy
+
+Lessons this migration paid for, worth applying beyond it:
+
+- **A version number is a promise; keep it in one place.** Three different
+  answers to "what version am I on" (tag, release, `__version__`) is what made
+  the floor untrustworthy. Assert their agreement mechanically.
+- **Advisory checks protect nobody.** If a rule matters, enforce it where the
+  action happens — the install path, not a log line the user will never read.
+  If it doesn't matter enough to enforce, don't write the rule.
+- **Prefer failures that are loud and early.** A plugin that dies at load with
+  one journal line is indistinguishable, to a user, from a plugin that was never
+  installed. Surface plugin health in the UI.
+- **Keep the two repos' rules in sync deliberately.** The sunset rule lives in
+  both this file and the plugins repo's
+  `docs/plugin-development/08-shared-sports-code.md`. When one changes, change
+  the other in the same PR — drift between them is how a contributor ends up
+  following a rule that was superseded.
+- **Measure before and after, on real hardware.** Byte-identical harness renders
+  and a device soak caught what unit tests could not. Reserve "it should be
+  fine" for things you have actually looked at.
 
 ## Rules for contributors
 
