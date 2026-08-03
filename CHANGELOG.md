@@ -29,6 +29,21 @@ Adoption is deliberately staged: the modules below ship here, plugins adopt them
 behind guarded imports, and only then do the bundled copies go away. Nothing in
 this release changes what an existing plugin loads.
 
+**This is also the first release that *enforces* `ledmatrix_min_version`.**
+Before it, the floor was advisory — the loader logged a warning and continued,
+and the plugin store never compared the core version at all, so an update could
+deliver a plugin that could not run. From 3.2.0 the store refuses such an
+install. That matters for the sunset rule: a plugin may only delete its bundled
+fallback once the cores in the field actually enforce the floor, which means
+waiting for 3.2.0 to be widely installed rather than merely released. See
+`docs/SPORTS_UNIFICATION.md`, phase B6.
+
+One deliberate exception: a core reporting a version below `2.0.0` is treated as
+*unknown* rather than old and is never blocked. The v3.1.0 release ships
+`__version__ = "1.0.0"` (the tag was cut before the string was bumped), and
+nearly every published manifest floors at `2.0.0` — so blocking on that number
+would lock those users out of the plugin store entirely.
+
 ### Added
 - `src/element_style.py` — per-element style resolver backing the
   `x-style-elements` config-schema extension. Already consumed (behind guarded
@@ -71,8 +86,37 @@ this release changes what an existing plugin loads.
   override point — see `docs/SPORTS_UNIFICATION.md` for where the line falls
   and why.
 
+- `src/plugin_system/compatibility.py` — the single place that answers "can this
+  plugin run on this core?", shared by the loader (advisory, at load time) and
+  the store (blocking, at install/update time) so the two cannot drift. Reads
+  every spelling published manifests use, including the deprecated
+  `versions[].ledmatrix_min`. It does **not** yet evaluate `compatible_versions`,
+  which is the schema-required field and can express upper bounds; closing that
+  is tracked in `docs/SPORTS_UNIFICATION.md` before B6.
+- `scripts/check_release_version.py` and a `Release version check` workflow —
+  assert that a tag, the newest CHANGELOG heading and `src.__version__` agree,
+  on pushed `v*` tags and published releases. Runnable via `workflow_dispatch`
+  to check a tag *before* creating it. Added because `v3.1.0` was tagged six
+  weeks before `src/__init__.py` was bumped to match, which is why devices
+  installed from that release report `1.0.0`.
+
 ### Changed
 - `src/__init__.py` bumped to **3.2.0** — the number the sunset rule keys on.
+- **The plugin store refuses an incompatible install.**
+  `StoreManager.install_plugin` now checks the downloaded manifest's declared
+  floor against `src.__version__` and refuses when the plugin needs a newer
+  core. The check sits in `install_plugin` because `_reinstall_with_rollback`
+  calls it, so a refused *update* restores the version the user already had.
+  Refusal requires evidence: an undeclared floor, an unparseable version on
+  either side, or an untrustworthy core version all allow the install.
+- **A failed install no longer destroys the plugin it replaced.**
+  `install_plugin` previously deleted the existing plugin directory before
+  downloading, so any later failure — a dropped connection, a malformed
+  manifest, or the new compatibility refusal — left the user with nothing. The
+  existing copy is now set aside and restored if the install fails, matching
+  the protection `_reinstall_with_rollback` already gave the update path.
+- `web_interface.__version__` re-exports `src.__version__` instead of carrying
+  its own hardcoded `"3.0.0"`, which had drifted two majors from the core.
 - **Live games are no longer dropped when the feed omits a game clock.**
   `SportsLive._is_game_really_over` previously (in the baseball and UFC
   plugin lineages) coerced a missing or non-string clock to the literal
@@ -86,6 +130,12 @@ this release changes what an existing plugin loads.
   there means kickoff rather than expiry.
 
 ### Fixed
+- **Plugin updates could hang the web request thread.** The per-plugin reinstall
+  locks were non-reentrant, and `_reinstall_with_rollback` holds one across its
+  call to `install_plugin` — which now takes the same lock to protect the
+  set-aside/restore above. That nesting deadlocked
+  `update_plugin → _reinstall_with_rollback → install_plugin`, the standard
+  path for every monorepo plugin update. The locks are now `RLock`s.
 - `FontManager` resolves `assets/fonts` against the core install root instead
   of the process working directory, so font loading works when the process
   starts elsewhere (e.g. the plugin safety harness on CI).
