@@ -152,6 +152,8 @@ ASSUME_YES=${LEDMATRIX_ASSUME_YES:-0}
 SKIP_SOUND=${LEDMATRIX_SKIP_SOUND:-0}
 SKIP_PERF=${LEDMATRIX_SKIP_PERF:-0}
 SKIP_REBOOT_PROMPT=${LEDMATRIX_SKIP_REBOOT_PROMPT:-0}
+SKIP_SWAP=${LEDMATRIX_SKIP_SWAP:-0}
+BUILD_JOBS_OVERRIDE=${LEDMATRIX_BUILD_JOBS:-}
 
 usage() {
     cat <<USAGE
@@ -163,11 +165,21 @@ Options:
       --skip-sound          Skip sound module configuration
       --skip-perf           Skip performance tweaks (isolcpus/audio)
       --no-reboot-prompt    Do not prompt for reboot at the end
+      --skip-swap           Never add temporary swap for the C++ build
+      --build-jobs N        Compile the C++ library with N parallel jobs
+                            (default: scaled to available RAM)
   -h, --help                Show this help message and exit
 
 Environment variables (same effect as flags):
   LEDMATRIX_ASSUME_YES=1, RPI_RGB_FORCE_REBUILD=1, LEDMATRIX_SKIP_SOUND=1,
-  LEDMATRIX_SKIP_PERF=1, LEDMATRIX_SKIP_REBOOT_PROMPT=1
+  LEDMATRIX_SKIP_PERF=1, LEDMATRIX_SKIP_REBOOT_PROMPT=1,
+  LEDMATRIX_SKIP_SWAP=1, LEDMATRIX_BUILD_JOBS=N
+
+Low-memory devices:
+  On a Pi with under 2GB of RAM the C++ build is limited to fewer parallel
+  jobs and a temporary swapfile is added for the duration of the build, then
+  removed. Without this the compiler is killed by the kernel out-of-memory
+  killer on 512MB and 1GB models.
 USAGE
 }
 
@@ -178,11 +190,37 @@ while [ $# -gt 0 ]; do
         --skip-sound) SKIP_SOUND=1 ;;
         --skip-perf) SKIP_PERF=1 ;;
         --no-reboot-prompt) SKIP_REBOOT_PROMPT=1 ;;
+        --skip-swap) SKIP_SWAP=1 ;;
+        --build-jobs)
+            shift
+            if [ $# -eq 0 ]; then echo "--build-jobs requires a number"; usage; exit 1; fi
+            BUILD_JOBS_OVERRIDE="$1"
+            ;;
         -h|--help) usage; exit 0 ;;
         *) echo "Unknown option: $1"; usage; exit 1 ;;
     esac
     shift
 done
+
+# Low-memory build helpers (job sizing, temporary swap, OOM detection).
+# Sourced rather than inlined so the sizing logic can be unit-tested; if the
+# file is missing we fall back to the historical behaviour rather than failing
+# the install.
+LOWMEM_LIB="$PROJECT_ROOT_DIR/scripts/install/lib_lowmem.sh"
+LOWMEM_AVAILABLE=0
+if [ -f "$LOWMEM_LIB" ]; then
+    # shellcheck source=scripts/install/lib_lowmem.sh
+    . "$LOWMEM_LIB"
+    LOWMEM_AVAILABLE=1
+else
+    echo "⚠ $LOWMEM_LIB not found; skipping low-memory build protections."
+    lm_remove_build_swap() { return 0; }
+fi
+
+# Remove the temporary build swapfile no matter how the script ends. Step 6
+# tears it down itself; this is the backstop for the error path, since
+# on_error ends in `exit` and EXIT traps still run.
+trap 'lm_remove_build_swap' EXIT
 
 # Helpers
 retry() {
@@ -263,15 +301,135 @@ check_disk_space() {
     fi
 }
 
+# Decide how much memory Step 6's C++ build may use, and say so up front.
+#
+# Sets TOTAL_RAM_MB, TOTAL_SWAP_MB, BUILD_JOBS and LOW_RAM for later steps.
+check_memory() {
+    command -v nproc >/dev/null 2>&1 && CPU_CORES=$(nproc) || CPU_CORES=1
+
+    if [ "$LOWMEM_AVAILABLE" != "1" ]; then
+        TOTAL_RAM_MB=0
+        TOTAL_SWAP_MB=0
+        LOW_RAM=0
+        BUILD_JOBS=${BUILD_JOBS_OVERRIDE:-$CPU_CORES}
+        return 0
+    fi
+
+    TOTAL_RAM_MB=$(lm_total_ram_mb)
+    TOTAL_SWAP_MB=$(lm_total_swap_mb)
+
+    # Test hook: exercise the low-memory path on a machine that has plenty.
+    if [ -n "${LEDMATRIX_FORCE_LOW_RAM:-}" ] && [ "${LEDMATRIX_FORCE_LOW_RAM}" != "0" ]; then
+        TOTAL_RAM_MB="${LEDMATRIX_FORCE_LOW_RAM}"
+        echo "⚠ LEDMATRIX_FORCE_LOW_RAM set: pretending this device has ${TOTAL_RAM_MB}MB of RAM"
+    fi
+
+    LOW_RAM=0
+    if [ "$TOTAL_RAM_MB" -gt 0 ] && [ "$TOTAL_RAM_MB" -lt 2048 ]; then
+        LOW_RAM=1
+    fi
+
+    if [ -n "$BUILD_JOBS_OVERRIDE" ]; then
+        # Validated here rather than trusted: a non-numeric value would other-
+        # wise fail much later, inside an arithmetic test in Step 6.
+        if ! echo "$BUILD_JOBS_OVERRIDE" | grep -qE '^[1-9][0-9]*$'; then
+            echo "✗ Invalid build job count: '$BUILD_JOBS_OVERRIDE' (expected a positive integer)"
+            exit 1
+        fi
+        BUILD_JOBS="$BUILD_JOBS_OVERRIDE"
+    else
+        BUILD_JOBS=$(lm_build_jobs "$TOTAL_RAM_MB" "$CPU_CORES")
+    fi
+
+    echo "System memory: ${TOTAL_RAM_MB}MB RAM, ${TOTAL_SWAP_MB}MB swap, ${CPU_CORES} core(s)"
+    if [ "$LOW_RAM" = "1" ]; then
+        echo "⚠ Low-memory device detected."
+        echo "  The rpi-rgb-led-matrix C++ build in Step 6 will use ${BUILD_JOBS} parallel job(s)"
+        echo "  instead of all cores, and a temporary swapfile will be added for the build"
+        echo "  and removed afterwards. Without this the compiler is killed by the kernel"
+        echo "  out-of-memory killer. Expect Step 6 to take 15-25 minutes."
+        if [ "$SKIP_SWAP" = "1" ]; then
+            echo "  Temporary swap is disabled (--skip-swap); the build may still run out of memory."
+        fi
+    else
+        echo "✓ Memory sufficient for the rpi-rgb-led-matrix build (${BUILD_JOBS} parallel job(s))"
+    fi
+}
+
+# Compile and install the rgbmatrix Python package.
+#
+# CMAKE_BUILD_PARALLEL_LEVEL is the setting that actually caps the compile:
+# upstream's pyproject.toml declares no [tool.scikit-build] options, so
+# scikit-build-core drives Ninja through `cmake --build`, which reads this
+# variable. Ninja's own default is nproc+2, i.e. six concurrent cc1plus
+# processes on a 4-core Pi. MAKEFLAGS is ignored by Ninja and is set only to
+# cover the Makefile-generator fallback if ninja-build is somehow absent.
+#
+# BUILD_TMPDIR redirects pip's build tree off tmpfs where applicable — see
+# where it is computed in Step 6.
+run_rgbmatrix_build() {
+    local jobs="$1" out="$2"
+    local pid elapsed=0
+
+    TMPDIR="${BUILD_TMPDIR:-${TMPDIR:-/tmp}}" \
+    CMAKE_BUILD_PARALLEL_LEVEL="$jobs" \
+    MAKEFLAGS="-j${jobs}" \
+        python3 -m pip install --break-system-packages . > "$out" 2>&1 &
+    pid=$!
+
+    # The build's output is captured to a file, so without a heartbeat a serial
+    # compile on a 1GB Pi looks like a 20-minute hang and invites a Ctrl-C.
+    while kill -0 "$pid" 2>/dev/null; do
+        sleep 30
+        elapsed=$((elapsed + 30))
+        if kill -0 "$pid" 2>/dev/null; then
+            printf '  ... still compiling (%dm%02ds elapsed)\n' "$((elapsed / 60))" "$((elapsed % 60))"
+        fi
+    done
+
+    wait "$pid"
+}
+
+# Explain a failed rgbmatrix build. The kernel OOM killer writes nothing to the
+# build's own output, which is why this used to be reported as a missing
+# build-tools problem and sent users chasing packages they already had.
+print_rgbmatrix_build_failure() {
+    local out="$1"
+
+    if [ "$LOWMEM_AVAILABLE" = "1" ] && lm_build_failed_on_oom "$out"; then
+        echo "✗ The rpi-rgb-led-matrix build was killed: the system ran out of memory."
+        echo "  This is NOT a missing build-tools problem — the C++ compiler ran out of RAM."
+        echo "  RAM: ${TOTAL_RAM_MB}MB   Swap: $(lm_total_swap_mb)MB   Parallel jobs used: ${BUILD_JOBS}"
+        if [ -n "${LM_SWAP_SKIP_REASON:-}" ]; then
+            echo "  No temporary swap was added: ${LM_SWAP_SKIP_REASON}"
+        fi
+        echo ""
+        echo "  Try one of these, then re-run this script (it resumes at Step 6):"
+        echo "    1. Force a single compile job:"
+        echo "       sudo ./first_time_install.sh --build-jobs 1"
+        echo "    2. Add permanent swap, if the temporary swapfile could not be created:"
+        echo "       sudo apt install -y dphys-swapfile"
+        echo "       sudo sed -i 's/^#\\?CONF_SWAPSIZE=.*/CONF_SWAPSIZE=2048/' /etc/dphys-swapfile"
+        echo "       sudo sed -i 's/^#\\?CONF_MAXSWAP=.*/CONF_MAXSWAP=2048/' /etc/dphys-swapfile"
+        echo "       sudo dphys-swapfile swapoff && sudo dphys-swapfile setup && sudo dphys-swapfile swapon"
+        echo "    3. Free up disk space so a larger swapfile fits: sudo apt clean"
+    else
+        echo "✗ Failed to install rpi-rgb-led-matrix Python package"
+        echo "  Ensure build tools are installed:"
+        echo "  sudo apt install -y python-dev-is-python3 cmake build-essential"
+    fi
+}
+
 echo ""
 echo "This script will perform the following steps:"
-echo "1. Install system dependencies"
+echo "1. Check prerequisites (network, disk, memory) and install system dependencies"
 echo "2. Fix cache permissions"
 echo "3. Fix assets directory permissions"
 echo "3.1. Fix plugin directory permissions"
 echo "4. Ensure configuration files exist"
 echo "5. Install Python project dependencies (requirements.txt)"
 echo "6. Build and install rpi-rgb-led-matrix and test import"
+echo "   (compiles C++; low-memory Pis get temporary swap and a serial build)"
 echo "7. Install web interface dependencies"
 echo "7.5. Install main LED Matrix service"
 echo "8. Install web interface service"
@@ -315,9 +473,16 @@ echo "----------------------------------------"
 # Pre-flight checks before APT operations
 check_network
 check_disk_space
+check_memory
 
-# Update package list
-apt_update
+# Update package list. The one-shot installer refreshes the lists moments
+# before invoking this script and exports LEDMATRIX_APT_UPDATED=1, so skip the
+# duplicate refresh on that path.
+if [ "${LEDMATRIX_APT_UPDATED:-0}" = "1" ]; then
+    echo "Package lists already refreshed by the one-shot installer; skipping apt update."
+else
+    apt_update
+fi
 
 # Install required system packages
 echo "Installing Python packages and dependencies..."
@@ -902,29 +1067,59 @@ else
             fi
         fi
 
+        # Add temporary swap on low-memory devices so the compiler survives.
+        CURRENT_STEP="Prepare the low-memory build environment"
+        if [ "$LOWMEM_AVAILABLE" = "1" ] && [ "$SKIP_SWAP" != "1" ]; then
+            lm_ensure_build_swap "$(lm_swap_needed_mb "$TOTAL_RAM_MB" "$TOTAL_SWAP_MB")"
+        elif [ "$SKIP_SWAP" = "1" ]; then
+            LM_SWAP_SKIP_REASON="disabled with --skip-swap"
+        fi
+
+        # pip builds in $TMPDIR. Debian 13 mounts /tmp as tmpfs, so the default
+        # would hold the entire C++ build tree in RAM — competing with the very
+        # compiler we are trying to keep under the memory limit.
+        BUILD_TMPDIR=""
+        if [ "$LOWMEM_AVAILABLE" = "1" ]; then
+            _disk_tmp=$(lm_disk_backed_tmpdir)
+            if [ -n "$_disk_tmp" ]; then
+                BUILD_TMPDIR="$_disk_tmp/ledmatrix-build"
+                mkdir -p "$BUILD_TMPDIR"
+                echo "Building in $BUILD_TMPDIR (TMPDIR is memory-backed; keeping the build tree on disk)"
+            fi
+        fi
+
+        CURRENT_STEP="Build and install rpi-rgb-led-matrix"
         pushd "$PROJECT_ROOT_DIR/rpi-rgb-led-matrix-master" >/dev/null
         echo "Installing rpi-rgb-led-matrix Python package (scikit-build-core + cmake)..."
         echo "  Build deps required: python-dev-is-python3 cmake"
-        echo "  This compiles C++ — may take 2-5 minutes on Pi 4/5..."
+        echo "  Compiling C++ with ${BUILD_JOBS} parallel job(s)..."
+        if [ "$BUILD_JOBS" -le 1 ]; then
+            echo "  Deliberately serial to stay within this device's memory — expect 15-25 minutes."
+        else
+            echo "  This may take 2-5 minutes on a Pi 4/5..."
+        fi
         BUILD_OUTPUT=$(mktemp)
         BUILD_SUCCESS=false
-        if python3 -m pip install --break-system-packages . > "$BUILD_OUTPUT" 2>&1; then
+        if run_rgbmatrix_build "$BUILD_JOBS" "$BUILD_OUTPUT"; then
             BUILD_SUCCESS=true
         fi
         cat "$BUILD_OUTPUT" >> "$LOG_FILE"
         if [ "$BUILD_SUCCESS" != true ]; then
-            echo "✗ Failed to install rpi-rgb-led-matrix Python package"
-            echo "  Ensure build tools are installed:"
-            echo "  sudo apt install -y python-dev-is-python3 cmake build-essential"
+            print_rgbmatrix_build_failure "$BUILD_OUTPUT"
             echo ""
             echo "-- Last 50 lines of build output --"
             tail -n 50 "$BUILD_OUTPUT"
             rm -f "$BUILD_OUTPUT"
+            if [ -n "$BUILD_TMPDIR" ]; then rm -rf "$BUILD_TMPDIR"; fi
             popd >/dev/null
+            lm_remove_build_swap
             exit 1
         fi
         rm -f "$BUILD_OUTPUT"
+        if [ -n "$BUILD_TMPDIR" ]; then rm -rf "$BUILD_TMPDIR"; fi
         popd >/dev/null
+        # Hand the memory back well before Step 14's reboot.
+        lm_remove_build_swap
     else
         echo "✗ rpi-rgb-led-matrix-master directory not found at $PROJECT_ROOT_DIR"
         echo "Failed to initialize submodule or clone repository"

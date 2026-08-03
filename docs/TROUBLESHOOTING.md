@@ -82,6 +82,70 @@ python3 web_interface/start.py
 
 ## Common Issues by Category
 
+### Installation & Build Issues
+
+#### Step 6 fails: "Failed building wheel for rgbmatrix"
+
+**Symptoms:**
+
+```
+note: This error originates from a subprocess, and is likely not a problem with pip.
+  ERROR: Failed building wheel for rgbmatrix
+Failed to build rgbmatrix
+✗ Failed to install rpi-rgb-led-matrix Python package
+```
+
+**Cause:**
+
+Almost always the kernel's out-of-memory killer, not missing build tools. The
+`rpi-rgb-led-matrix` library compiles roughly 45 C++ translation units, two of
+them Cython-generated — a single `cc1plus` on those can peak near 800MB. The
+build system defaults to running several of those at once, which exceeds RAM on
+512MB and 1GB boards. Because the OOM killer writes nothing to pip's output, the
+failure looks like a toolchain problem, and `sudo apt install -y
+python-dev-is-python3 cmake build-essential` will report everything is already
+up to date.
+
+**How to confirm:**
+
+```bash
+dmesg -T | grep -i "out of memory"     # look for "Killed process ... (cc1plus)"
+free -h                                 # total RAM and swap
+```
+
+**Fix:**
+
+Current versions of the installer handle this automatically: they cap build
+parallelism based on available RAM and add a temporary swapfile for the build,
+removing it when the build finishes. If you are on an older checkout, or the
+temporary swapfile could not be created, either force a serial compile:
+
+```bash
+sudo ./first_time_install.sh --build-jobs 1
+```
+
+or add permanent swap and re-run the installer, which resumes at Step 6:
+
+```bash
+sudo apt install -y dphys-swapfile
+sudo sed -i 's/^#\?CONF_SWAPSIZE=.*/CONF_SWAPSIZE=2048/' /etc/dphys-swapfile
+sudo sed -i 's/^#\?CONF_MAXSWAP=.*/CONF_MAXSWAP=2048/' /etc/dphys-swapfile
+sudo dphys-swapfile swapoff && sudo dphys-swapfile setup && sudo dphys-swapfile swapon
+sudo ./first_time_install.sh
+```
+
+`CONF_MAXSWAP` matters: it defaults to 2048 and silently clamps `CONF_SWAPSIZE`,
+so setting only `CONF_SWAPSIZE` to a larger value has no effect.
+
+**Related:**
+
+- The installer needs roughly 3GB free on the card to place the swapfile. If
+  disk is tight it will say so and skip the swapfile: `sudo apt clean` first.
+- `sudo bash scripts/check_system_compatibility.sh` reports RAM and disk.
+- `sudo bash scripts/diagnose_dependencies.sh` dumps build-dependency state.
+
+---
+
 ### Web Interface & Service Issues
 
 #### Service Not Running/Starting

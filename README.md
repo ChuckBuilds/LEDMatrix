@@ -141,6 +141,7 @@ The system supports live, recent, and upcoming game information for multiple spo
     sudo RPI_RGB_FORCE_REBUILD=1 ./first_time_install.sh
     ```
   - Pi 5 config: leave `rp1_rio` at `0` (PIO mode, default) and set `gpio_slowdown` to `1` or `2`.
+  - **1GB models (Pi 3B / 3B+) and other low-memory boards**: supported, but the `rpi-rgb-led-matrix` C++ build needs more memory than the Pi has. The installer detects this automatically, compiles with fewer parallel jobs, and adds a temporary swapfile for the build which it removes afterwards. Expect that step to take 15-25 minutes instead of 2-5, and leave at least **3GB free** on the SD card. If you manage swap yourself, opt out with `--skip-swap`. To pin the compiler down further, use `--build-jobs 1`.
 
 
 ### RGB Matrix Bonnet / HAT
@@ -314,12 +315,12 @@ curl -fsSL https://raw.githubusercontent.com/ChuckBuilds/LEDMatrix/main/scripts/
 ```
 
 This one-shot installer will automatically:
-- Check system prerequisites (network, disk space, sudo access)
+- Check system prerequisites (network, disk space, memory, sudo access)
 - Install required system packages (git, python3, build tools, etc.)
 - Clone or update the LEDMatrix repository
 - Run the complete first-time installation script
 
-The installation process typically takes 10-30 minutes depending on your internet connection and Pi model. All errors are reported explicitly with actionable fixes.
+The installation process typically takes 10-30 minutes depending on your internet connection and Pi model. Pi 3B/3B+ and other 1GB boards land at the top of that range, because the C++ library is compiled serially to stay within available memory. All errors are reported explicitly with actionable fixes.
 
 **Note:** The script is safe to run multiple times and will handle existing installations gracefully.
 
