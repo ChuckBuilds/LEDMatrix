@@ -384,10 +384,14 @@ run_rgbmatrix_build() {
 
     # The build's output is captured to a file, so without a heartbeat a serial
     # compile on a 1GB Pi looks like a 20-minute hang and invites a Ctrl-C.
+    #
+    # Polled at a short interval but reported every 30s: polling at the report
+    # interval instead would add most of that interval to the wall time of
+    # every build, including fast ones on a Pi 4/5.
     while kill -0 "$pid" 2>/dev/null; do
-        sleep 30
-        elapsed=$((elapsed + 30))
-        if kill -0 "$pid" 2>/dev/null; then
+        sleep 2
+        elapsed=$((elapsed + 2))
+        if [ "$((elapsed % 30))" -eq 0 ] && kill -0 "$pid" 2>/dev/null; then
             printf '  ... still compiling (%dm%02ds elapsed)\n' "$((elapsed / 60))" "$((elapsed % 60))"
         fi
     done
