@@ -1,0 +1,40 @@
+name: Release version check
+
+# A release tag, the CHANGELOG, and src.__version__ must agree. They have not
+# always: v3.1.0 was tagged while src/__init__.py still said "1.0.0", which
+# silently exempted every device installed from that release from plugin
+# compatibility warnings. See docs/SPORTS_UNIFICATION.md (phase B4).
+on:
+  push:
+    tags: ["v*"]
+  release:
+    types: [published]
+  # Pre-flight: run this against the tag you are about to create.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to check (e.g. v3.2.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  version-matches-tag:
+    name: Tag matches src.__version__
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+
+      # No dependencies: the script reads src/__init__.py and CHANGELOG.md only.
+      - name: Assert the tag, CHANGELOG and src.__version__ agree
+        run: python scripts/check_release_version.py "${TAG}"
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
