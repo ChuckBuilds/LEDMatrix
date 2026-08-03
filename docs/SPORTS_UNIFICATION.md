@@ -239,6 +239,29 @@ agree, and keep them agreeing; reconsider the `< 2.0.0` skip; migrate manifests
 from `ledmatrix_min` to `ledmatrix_min_version`; and add the install/update
 compatibility gate that B6 depends on.
 
+#### Two fields express compatibility, and the gate only reads one
+
+`compatible_versions` is the canonical contract: `schema/manifest_schema.json`
+**requires** it, all 42 published manifests carry it, and it holds semver
+*ranges* — `[">=2.0.0"]` in 41 of them, `[">=1.0.0"]` in `7-segment-clock`.
+`ledmatrix_min_version` is the optional per-release floor inside `versions[]`.
+
+The gate as merged reads only the floor. Today that is harmless: no manifest
+uses an upper bound, and the two fields agree everywhere except
+`7-segment-clock` (`>=1.0.0` against a `2.0.0` floor). But the fields *can*
+disagree, and the range syntax the schema already permits includes upper bounds
+— a plugin declaring `["2.0.0 - 2.9.9"]` means "not compatible with 3.x" and
+the gate would install it on 3.2.0 regardless.
+
+**Before B6, the gate must evaluate `compatible_versions` as well**, and the
+manifest migration must reconcile the two fields rather than only renaming the
+floor. Deciding which wins when they disagree is part of that work; the safe
+default is the more restrictive.
+
+(The schema also deprecates a top-level `ledmatrix_version` in favour of
+`compatible_versions`. No manifest still carries it, so there is nothing to
+migrate there.)
+
 ### B5 — adoption is safe by construction
 
 A plugin adopting core imports keeps its bundled copy and reaches it through the
@@ -274,11 +297,29 @@ been in users' hands long enough that the population running a core without it
 is small.** The bundled copies cost disk space; deleting them early costs
 scoreboards, silently. That trade is not close.
 
-Before the first sunset, add a **compatibility regression test**: load each
-adopted plugin with its bundled copy removed against a pinned old-core worktree
-and assert it fails loudly and specifically, then against current core and assert
-it works. That test is what turns "we think this is safe" into something CI
-re-checks on every change.
+Before the first sunset, add a **compatibility regression test**. It has to
+cover four cases, not one — B5's safety claim and B6's failure mode are
+different propositions and only the second is obvious:
+
+| | bundled copy present | bundled copy removed |
+|---|---|---|
+| **pinned old core** | **loads** — this is B5's whole guarantee, that the guarded import falls back | `PluginState.ERROR`, and the recorded error names the exact missing module |
+| **current core** | loads, using core code | loads, using core code |
+
+The top-left cell is the one worth writing first: nothing in the suite currently
+proves that an adopted plugin still works on a core that predates the module,
+which is the entire basis for saying B5 is safe to run ahead of the gate.
+
+Assert the old-core/removed-copy case as `PluginState.ERROR` **plus the missing
+module path**, not as an uncaught exception. `PluginManager.load_plugin` catches
+`ModuleNotFoundError`, so nothing propagates — a test expecting a raise would
+pass for the wrong reason on a core where the module is merely broken rather
+than absent. "Fails loudly" is aspirational, not what the code does today: it
+fails into `ERROR` state with one log line, which is precisely why B6 needs the
+gate rather than trusting the failure to be noticed.
+
+The same suite should exercise the install/update gate, since it is the other
+half of the guarantee.
 
 ## What's next
 
@@ -297,10 +338,14 @@ In order. Each step is independently useful and independently revertible.
    `src.__version__`, and surface the reason in the store UI rather than only
    the log. This is the single change that turns the floor from documentation
    into a guarantee, and B6 depends on it.
-4. **Migrate the manifests** to `ledmatrix_min_version`. Currently 28 plugins
-   spell it both ways across their `versions[]` entries, 12 use only the old
-   spelling, and 2 only the new. Scope the sweep to the nine sports plugins if a
-   42-plugin version-bump wave isn't worth it.
+4. **Migrate the manifests** to `ledmatrix_min_version`, and reconcile them with
+   `compatible_versions` (see above — that field is the required, canonical one,
+   and the gate does not read it yet). Currently 28 plugins spell the floor both
+   ways across their `versions[]` entries, 12 use only the old spelling, and 2
+   only the new. Scope the sweep to the nine sports plugins if a 42-plugin
+   version-bump wave isn't worth it — but the `compatible_versions` half has to
+   cover every manifest the gate can refuse, or define explicit legacy handling,
+   before the gate is allowed to block anything.
 5. **Run B5 adoption** — hockey, soccer, football, then the remaining six.
    Bundled copies stay. Byte-identical harness output per plugin, then a soak.
 6. **Only then plan B6**, with the compatibility regression test described above
