@@ -307,6 +307,17 @@ check_disk_space() {
 check_memory() {
     command -v nproc >/dev/null 2>&1 && CPU_CORES=$(nproc) || CPU_CORES=1
 
+    # Validated up front rather than trusted: a non-numeric value would other-
+    # wise survive as far as an arithmetic test in Step 6 and fail there with a
+    # generic error. This must precede the fallback return below, which also
+    # honours the override.
+    if [ -n "$BUILD_JOBS_OVERRIDE" ]; then
+        if ! echo "$BUILD_JOBS_OVERRIDE" | grep -qE '^[1-9][0-9]*$'; then
+            echo "✗ Invalid build job count: '$BUILD_JOBS_OVERRIDE' (expected a positive integer)"
+            exit 1
+        fi
+    fi
+
     if [ "$LOWMEM_AVAILABLE" != "1" ]; then
         TOTAL_RAM_MB=0
         TOTAL_SWAP_MB=0
@@ -330,12 +341,6 @@ check_memory() {
     fi
 
     if [ -n "$BUILD_JOBS_OVERRIDE" ]; then
-        # Validated here rather than trusted: a non-numeric value would other-
-        # wise fail much later, inside an arithmetic test in Step 6.
-        if ! echo "$BUILD_JOBS_OVERRIDE" | grep -qE '^[1-9][0-9]*$'; then
-            echo "✗ Invalid build job count: '$BUILD_JOBS_OVERRIDE' (expected a positive integer)"
-            exit 1
-        fi
         BUILD_JOBS="$BUILD_JOBS_OVERRIDE"
     else
         BUILD_JOBS=$(lm_build_jobs "$TOTAL_RAM_MB" "$CPU_CORES")
@@ -1083,8 +1088,15 @@ else
             _disk_tmp=$(lm_disk_backed_tmpdir)
             if [ -n "$_disk_tmp" ]; then
                 BUILD_TMPDIR="$_disk_tmp/ledmatrix-build"
-                mkdir -p "$BUILD_TMPDIR"
-                echo "Building in $BUILD_TMPDIR (TMPDIR is memory-backed; keeping the build tree on disk)"
+                # If this fails (a nearly-full disk being the likely cause on
+                # exactly the devices this targets), fall back to the default
+                # rather than pointing the build at a path that does not exist.
+                if mkdir -p "$BUILD_TMPDIR" 2>/dev/null; then
+                    echo "Building in $BUILD_TMPDIR (TMPDIR is memory-backed; keeping the build tree on disk)"
+                else
+                    echo "⚠ Could not create $BUILD_TMPDIR; falling back to the default TMPDIR"
+                    BUILD_TMPDIR=""
+                fi
             fi
         fi
 

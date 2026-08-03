@@ -403,7 +403,12 @@ main() {
         # Pass both -y flag AND environment variable for non-interactive mode
         # This ensures it works even if the script re-executes itself with sudo
         # Also ensure stdin is properly handled for non-interactive mode
-        sudo -E env TMPDIR=/tmp LEDMATRIX_ASSUME_YES=1 bash ./first_time_install.sh -y </dev/null
+        # LEDMATRIX_APT_UPDATED is passed explicitly rather than relying on
+        # -E: a sudoers env_reset/env_keep policy can strip exported variables,
+        # which would silently reinstate the duplicate apt update.
+        sudo -E env TMPDIR=/tmp LEDMATRIX_ASSUME_YES=1 \
+            LEDMATRIX_APT_UPDATED="${LEDMATRIX_APT_UPDATED:-0}" \
+            bash ./first_time_install.sh -y </dev/null
     fi
     INSTALL_EXIT_CODE=$?
     trap 'on_error $LINENO' ERR  # Re-enable ERR trap
