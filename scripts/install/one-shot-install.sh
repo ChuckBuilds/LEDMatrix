@@ -145,6 +145,34 @@ check_disk_space() {
     fi
 }
 
+# Report available memory so the user knows what to expect before the wait.
+#
+# Informational only — first_time_install.sh does the real work of capping
+# build parallelism and adding temporary swap. Never fatal: a low-RAM Pi is
+# supported, it is just slower.
+check_memory() {
+    CURRENT_STEP="Memory check"
+    if [ ! -r /proc/meminfo ]; then
+        print_warning "Cannot read /proc/meminfo, skipping memory check"
+        return 0
+    fi
+
+    TOTAL_RAM_MB=$(awk '/^MemTotal:/ {printf "%d\n", $2 / 1024; exit}' /proc/meminfo 2>/dev/null || echo 0)
+    TOTAL_RAM_MB=${TOTAL_RAM_MB:-0}
+
+    if [ "$TOTAL_RAM_MB" -eq 0 ]; then
+        print_warning "Could not determine system memory, continuing"
+    elif [ "$TOTAL_RAM_MB" -lt 2048 ]; then
+        print_warning "Low memory: ${TOTAL_RAM_MB}MB RAM"
+        echo "  The rpi-rgb-led-matrix C++ build needs more memory than this Pi has."
+        echo "  The installer will compile with fewer parallel jobs and add a temporary"
+        echo "  swapfile for the build, removing it afterwards. That step will take"
+        echo "  15-25 minutes rather than the usual 2-5."
+    else
+        print_success "Memory sufficient: ${TOTAL_RAM_MB}MB RAM"
+    fi
+}
+
 # Ensure sudo access
 check_sudo() {
     CURRENT_STEP="Sudo access check"
@@ -204,7 +232,7 @@ main() {
     print_step "LED Matrix One-Shot Installation"
     
     echo "This script will:"
-    echo "  1. Check prerequisites (network, disk space, sudo)"
+    echo "  1. Check prerequisites (network, disk space, memory, sudo)"
     echo "  2. Install system dependencies (git, python3, build tools)"
     echo "  3. Clone the LEDMatrix repository"
     echo "  4. Run the first-time installation script"
@@ -213,6 +241,7 @@ main() {
     # Check prerequisites
     check_network
     check_disk_space
+    check_memory
     check_sudo
     # Note: /tmp permissions are checked and fixed inline before running first_time_install.sh
     # (only if actually wrong, not preemptively)
@@ -228,12 +257,14 @@ main() {
         exit 1
     fi
     
-    # Update package list first
+    # Update package list first. first_time_install.sh is told the lists are
+    # already fresh so it does not repeat this a minute later.
     if [ "$EUID" -eq 0 ]; then
         retry apt-get update -qq
     else
         retry sudo apt-get update -qq
     fi
+    export LEDMATRIX_APT_UPDATED=1
     
     # Install git and curl (needed for cloning and the script itself)
     if ! command -v git >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
@@ -372,7 +403,12 @@ main() {
         # Pass both -y flag AND environment variable for non-interactive mode
         # This ensures it works even if the script re-executes itself with sudo
         # Also ensure stdin is properly handled for non-interactive mode
-        sudo -E env TMPDIR=/tmp LEDMATRIX_ASSUME_YES=1 bash ./first_time_install.sh -y </dev/null
+        # LEDMATRIX_APT_UPDATED is passed explicitly rather than relying on
+        # -E: a sudoers env_reset/env_keep policy can strip exported variables,
+        # which would silently reinstate the duplicate apt update.
+        sudo -E env TMPDIR=/tmp LEDMATRIX_ASSUME_YES=1 \
+            LEDMATRIX_APT_UPDATED="${LEDMATRIX_APT_UPDATED:-0}" \
+            bash ./first_time_install.sh -y </dev/null
     fi
     INSTALL_EXIT_CODE=$?
     trap 'on_error $LINENO' ERR  # Re-enable ERR trap
