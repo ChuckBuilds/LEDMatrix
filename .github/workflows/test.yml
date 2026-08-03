@@ -76,4 +76,7 @@ jobs:
             test/test_sports_core_promotions.py \
             test/test_sports_modes_promotions.py \
             test/test_sports_capabilities.py \
-            test/test_sports_scroll.py
+            test/test_sports_scroll.py \
+            test/test_version_consistency.py \
+            test/test_plugin_compatibility_gate.py \
+            test/test_install_preserves_existing.py
