@@ -5,9 +5,9 @@ Run it *before* creating a tag to check yourself:
 
     python scripts/check_release_version.py v3.2.0
 
-CI runs it on every pushed `v*` tag and published release
-(`.github/workflows/release-version-check.yml`), so a mismatch shows up as a
-red check on the release rather than as a silent wrong answer on user devices.
+Wiring it into CI (on pushed `v*` tags and published releases) is a follow-up
+PR, so for now it is a manual pre-flight: run it before creating the tag and a
+mismatch shows up here rather than as a silent wrong answer on user devices.
 
 Why this exists: `v3.1.0` was tagged 2026-05-31 while `src/__init__.py` still
 said `"1.0.0"`; the bump to `"3.1.0"` did not land until 2026-07-12. Devices
@@ -27,8 +27,13 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
-HEADING = re.compile(r"^##\s+(?P<version>\d+\.\d+\.\d+)\s*$", re.MULTILINE)
+# [0-9] rather than \d, and [ \t] rather than \s: \d also matches non-ASCII
+# decimal digits (which int() parses), and \s matches newlines, so "##\n3.2.0"
+# would otherwise read as a version heading. Keep these in step with
+# test/test_version_consistency.py.
+SEMVER = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
+HEADING = re.compile(
+    r"^##[ \t]+(?P<version>[0-9]+\.[0-9]+\.[0-9]+)[ \t]*$", re.MULTILINE)
 
 
 def normalize(tag: str) -> str:
@@ -37,6 +42,13 @@ def normalize(tag: str) -> str:
 
 
 def newest_changelog_version(changelog: Path) -> str | None:
+    """Newest version heading, or None when there is none.
+
+    Raises OSError if the file cannot be read; main() turns that into a clear
+    message rather than a traceback, because this runs as a release gate and a
+    traceback there reads as "the tooling is broken", not "your CHANGELOG is
+    missing".
+    """
     headings = HEADING.findall(changelog.read_text(encoding="utf-8"))
     return headings[0] if headings else None
 
@@ -52,9 +64,20 @@ def main() -> int:
     from src import __version__ as core_version
 
     tag_version = normalize(args.tag)
-    changelog_version = newest_changelog_version(REPO_ROOT / "CHANGELOG.md")
+    changelog_path = REPO_ROOT / "CHANGELOG.md"
 
     problems: list[str] = []
+
+    try:
+        changelog_version = newest_changelog_version(changelog_path)
+    except OSError as e:
+        print(
+            f"Release version check FAILED for tag {args.tag}:\n"
+            f"  - could not read {changelog_path}: {e}\n"
+            f"    Restore the file (git checkout -- CHANGELOG.md) and re-run.",
+            file=sys.stderr,
+        )
+        return 1
 
     if not SEMVER.match(tag_version):
         problems.append(

@@ -13,8 +13,12 @@ which is below the `(2, 0, 0)` floor in `PluginLoader._warn_if_incompatible` —
 so those users get no compatibility warning at all. See
 `docs/SPORTS_UNIFICATION.md` (phase B4).
 
-The matching tag check runs at release time in
-`.github/workflows/release-version-check.yml`; a tag is not available here.
+A tag is not available here, so the tag half of the check lives in
+`scripts/check_release_version.py`. Wiring that script into CI (on pushed `v*`
+tags and published releases) is a follow-up PR; until it lands, run it by hand
+before tagging:
+
+    python scripts/check_release_version.py v3.2.0
 
 Note: `src.plugin_system.__version__` is deliberately NOT checked. That module
 versions the *plugin API* (it sits beside `__api_version__` and is documented as
@@ -31,10 +35,15 @@ import src
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CHANGELOG = REPO_ROOT / "CHANGELOG.md"
 
-SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+# [0-9] rather than \d: \d also matches non-ASCII decimal digits, which int()
+# happily parses, so a heading in Arabic-Indic numerals would pass the pattern
+# and then mismatch confusingly. [ \t] rather than \s for the same class of
+# reason -- \s matches newlines, so "##\n3.2.0" would read as a heading.
+SEMVER = re.compile(r"^([0-9]+)\.([0-9]+)\.([0-9]+)$")
 # Version headings look like "## 3.2.0". A leading "## Unreleased" section is
 # allowed and skipped -- it is where module additions are staged before a bump.
-HEADING = re.compile(r"^##\s+(?P<version>\d+\.\d+\.\d+)\s*$", re.MULTILINE)
+HEADING = re.compile(
+    r"^##[ \t]+(?P<version>[0-9]+\.[0-9]+\.[0-9]+)[ \t]*$", re.MULTILINE)
 
 
 def test_core_version_is_semver():
@@ -89,3 +98,16 @@ def test_web_interface_version_tracks_the_core():
         "web_interface.__version__ has drifted from src.__version__; it should "
         "re-export the canonical value rather than hardcode its own."
     )
+
+
+def test_heading_pattern_is_strict_about_digits_and_whitespace():
+    """`\\d` also matches non-ASCII decimal digits and `\\s` matches newlines,
+    either of which would let a malformed heading through and then fail the
+    comparison with a confusing message. Pin the tightened patterns."""
+    assert HEADING.findall("## 3.2.0\n") == ["3.2.0"]
+    assert HEADING.findall("##\t3.2.0  \n") == ["3.2.0"]
+    # A bare "##" whose version sits on the next line is not a heading.
+    assert HEADING.findall("##\n3.2.0\n") == []
+    # Arabic-Indic digits parse via int() but are not our version format.
+    assert HEADING.findall("## ٣.٢.٠\n") == []
+    assert SEMVER.match("٣.٢.٠") is None
