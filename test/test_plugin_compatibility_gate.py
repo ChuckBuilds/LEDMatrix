@@ -230,3 +230,85 @@ class TestLoaderAndStoreAgree:
         )
         assert loader_would_warn is (not expected)
         assert hasattr(PluginLoader, "_warn_if_incompatible")
+
+
+# --------------------------------------------------------------------------
+# compatible_versions — the schema-required field, and the only one that can
+# express an upper bound
+# --------------------------------------------------------------------------
+
+class TestCompatibleVersions:
+    @pytest.mark.parametrize("spec,core,expected", [
+        (">=2.0.0", "3.2.0", True),
+        (">=2.0.0", "1.9.9", False),
+        ("<=3.0.0", "3.2.0", False),
+        ("<=3.0.0", "2.9.0", True),
+        (">3.2.0", "3.2.0", False),
+        ("<4.0.0", "3.2.0", True),
+        ("3.2.0", "3.2.0", True),      # bare == exact match
+        ("3.2.0", "3.2.1", False),
+        ("~3.2.0", "3.2.9", True),     # patch-level only
+        ("~3.2.0", "3.3.0", False),
+        ("^3.2.0", "3.9.9", True),     # minor + patch
+        ("^3.2.0", "4.0.0", False),
+        ("2.0.0 - 3.2.0", "3.2.0", True),   # inclusive both ends
+        ("2.0.0 - 3.2.0", "2.0.0", True),
+        ("2.0.0 - 3.2.0", "3.2.1", False),
+        ("v3.2.0", "3.2.0", True),     # leading v tolerated
+        ("3.2.0-beta.1", "3.2.0", True),  # prerelease suffix ignored
+    ])
+    def test_range_forms(self, spec, core, expected):
+        got = compatibility.satisfies_compatible_versions(
+            {"compatible_versions": [spec]}, compatibility.parse_semver(core))
+        assert got is expected, f"{spec!r} vs {core}"
+
+    def test_array_is_alternatives_not_conjunction(self):
+        """Satisfying any one entry is enough — otherwise ['<2.0.0','>=3.0.0']
+        could never be satisfied by anything."""
+        m = {"compatible_versions": ["<2.0.0", ">=3.0.0"]}
+        assert compatibility.satisfies_compatible_versions(
+            m, compatibility.parse_semver("3.2.0")) is True
+
+    def test_absent_or_unparseable_is_no_evidence(self):
+        core = compatibility.parse_semver("3.2.0")
+        assert compatibility.satisfies_compatible_versions({}, core) is None
+        assert compatibility.satisfies_compatible_versions(
+            {"compatible_versions": []}, core) is None
+        assert compatibility.satisfies_compatible_versions(
+            {"compatible_versions": ["not a version"]}, core) is None
+        # One unparseable entry alongside a good one must not poison the result.
+        assert compatibility.satisfies_compatible_versions(
+            {"compatible_versions": ["garbage", ">=2.0.0"]}, core) is True
+
+
+class TestMoreRestrictiveWins:
+    def test_upper_bound_blocks_a_core_that_clears_the_floor(self):
+        """The gap this closes: the floor says 2.0.0 and the core is 3.2.0, so
+        the floor alone would allow it — but the plugin said it stops at 2.x."""
+        m = {"name": "Legacy Plugin",
+             "compatible_versions": ["2.0.0 - 2.9.9"],
+             "versions": [{"ledmatrix_min_version": "2.0.0"}]}
+        ok, reason = compatibility.check(m, "3.2.0")
+        assert ok is False
+        assert "2.0.0 - 2.9.9" in reason and "3.2.0" in reason
+
+    def test_floor_blocks_when_ranges_would_allow(self):
+        m = {"name": "Needs Newer",
+             "compatible_versions": [">=1.0.0"],
+             "versions": [{"ledmatrix_min_version": "9.9.9"}]}
+        ok, reason = compatibility.check(m, "3.2.0")
+        assert ok is False
+        assert "9.9.9" in reason
+
+    def test_both_satisfied_allows(self):
+        m = {"compatible_versions": [">=2.0.0"],
+             "versions": [{"ledmatrix_min_version": "2.0.0"}]}
+        assert compatibility.check(m, "3.2.0") == (True, None)
+
+    def test_untrustworthy_core_still_bypasses_both_checks(self):
+        """A core reporting 1.0.0 fails `>=2.0.0`, which 41 of 42 published
+        manifests declare. Blocking there would empty the plugin store for
+        exactly the users who cannot be helped by it."""
+        m = {"compatible_versions": [">=2.0.0"],
+             "versions": [{"ledmatrix_min_version": "2.0.0"}]}
+        assert compatibility.check(m, "1.0.0") == (True, None)
