@@ -81,17 +81,24 @@ class TestCheck:
         ok, reason = compatibility.check({"id": "x"}, "3.2.0")
         assert ok is True and reason is None
 
-    def test_untrustworthy_core_version_allows_everything(self):
+    def test_untrustworthy_core_allows_todays_ecosystem_floor(self):
         """The v3.1.0 release reports 1.0.0. Nearly every manifest floors at
-        2.0.0, so blocking here would stop those users installing any plugin
-        at all — strictly worse than the problem being solved."""
+        2.0.0, so blocking *that* would stop those users installing any plugin
+        at all — strictly worse than the problem being solved.
+
+        A floor ABOVE 2.0.0 is refused instead; see
+        TestUntrustworthyCoreAndTheSunset for why that case is different."""
         ok, reason = compatibility.check(
-            {"min_ledmatrix_version": "3.2.0"}, "1.0.0")
+            {"min_ledmatrix_version": "2.0.0"}, "1.0.0")
         assert ok is True and reason is None
 
-    def test_unparseable_core_version_allows(self):
-        ok, _ = compatibility.check({"min_ledmatrix_version": "3.2.0"}, "not-a-version")
+    def test_unparseable_core_version_allows_the_ecosystem_floor(self):
+        """An unidentifiable core is treated exactly like an untrustworthy one:
+        today's 2.0.0 floor is allowed, a post-sunset floor is not."""
+        ok, _ = compatibility.check({"min_ledmatrix_version": "2.0.0"}, "not-a-version")
         assert ok is True
+        ok, _ = compatibility.check({"min_ledmatrix_version": "3.2.0"}, "not-a-version")
+        assert ok is False
 
     def test_unparseable_floor_allows(self):
         ok, _ = compatibility.check({"min_ledmatrix_version": {"nope": 1}}, "3.2.0")
@@ -230,3 +237,194 @@ class TestLoaderAndStoreAgree:
         )
         assert loader_would_warn is (not expected)
         assert hasattr(PluginLoader, "_warn_if_incompatible")
+
+
+# --------------------------------------------------------------------------
+# compatible_versions — the schema-required field, and the only one that can
+# express an upper bound
+# --------------------------------------------------------------------------
+
+class TestCompatibleVersions:
+    @pytest.mark.parametrize("spec,core,expected", [
+        (">=2.0.0", "3.2.0", True),
+        (">=2.0.0", "1.9.9", False),
+        ("<=3.0.0", "3.2.0", False),
+        ("<=3.0.0", "2.9.0", True),
+        (">3.2.0", "3.2.0", False),
+        ("<4.0.0", "3.2.0", True),
+        ("3.2.0", "3.2.0", True),      # bare == exact match
+        ("3.2.0", "3.2.1", False),
+        ("~3.2.0", "3.2.9", True),     # patch-level only
+        ("~3.2.0", "3.3.0", False),
+        ("^3.2.0", "3.9.9", True),     # minor + patch
+        ("^3.2.0", "4.0.0", False),
+        ("2.0.0 - 3.2.0", "3.2.0", True),   # inclusive both ends
+        ("2.0.0 - 3.2.0", "2.0.0", True),
+        ("2.0.0 - 3.2.0", "3.2.1", False),
+        ("v3.2.0", "3.2.0", True),     # leading v tolerated
+        ("3.2.0-beta.1", "3.2.0", True),  # prerelease suffix ignored
+    ])
+    def test_range_forms(self, spec, core, expected):
+        got = compatibility.satisfies_compatible_versions(
+            {"compatible_versions": [spec]}, compatibility.parse_semver(core))
+        assert got is expected, f"{spec!r} vs {core}"
+
+    def test_array_is_alternatives_not_conjunction(self):
+        """Satisfying any one entry is enough — otherwise ['<2.0.0','>=3.0.0']
+        could never be satisfied by anything."""
+        m = {"compatible_versions": ["<2.0.0", ">=3.0.0"]}
+        assert compatibility.satisfies_compatible_versions(
+            m, compatibility.parse_semver("3.2.0")) is True
+
+    def test_absent_or_unparseable_is_no_evidence(self):
+        core = compatibility.parse_semver("3.2.0")
+        assert compatibility.satisfies_compatible_versions({}, core) is None
+        assert compatibility.satisfies_compatible_versions(
+            {"compatible_versions": []}, core) is None
+        assert compatibility.satisfies_compatible_versions(
+            {"compatible_versions": ["not a version"]}, core) is None
+        # One unparseable entry alongside a good one must not poison the result.
+        assert compatibility.satisfies_compatible_versions(
+            {"compatible_versions": ["garbage", ">=2.0.0"]}, core) is True
+
+
+class TestMoreRestrictiveWins:
+    def test_upper_bound_blocks_a_core_that_clears_the_floor(self):
+        """The gap this closes: the floor says 2.0.0 and the core is 3.2.0, so
+        the floor alone would allow it — but the plugin said it stops at 2.x."""
+        m = {"name": "Legacy Plugin",
+             "compatible_versions": ["2.0.0 - 2.9.9"],
+             "versions": [{"ledmatrix_min_version": "2.0.0"}]}
+        ok, reason = compatibility.check(m, "3.2.0")
+        assert ok is False
+        assert "2.0.0 - 2.9.9" in reason and "3.2.0" in reason
+
+    def test_floor_blocks_when_ranges_would_allow(self):
+        m = {"name": "Needs Newer",
+             "compatible_versions": [">=1.0.0"],
+             "versions": [{"ledmatrix_min_version": "9.9.9"}]}
+        ok, reason = compatibility.check(m, "3.2.0")
+        assert ok is False
+        assert "9.9.9" in reason
+
+    def test_both_satisfied_allows(self):
+        m = {"compatible_versions": [">=2.0.0"],
+             "versions": [{"ledmatrix_min_version": "2.0.0"}]}
+        assert compatibility.check(m, "3.2.0") == (True, None)
+
+    def test_untrustworthy_core_still_bypasses_both_checks(self):
+        """A core reporting 1.0.0 fails `>=2.0.0`, which 41 of 42 published
+        manifests declare. Blocking there would empty the plugin store for
+        exactly the users who cannot be helped by it."""
+        m = {"compatible_versions": [">=2.0.0"],
+             "versions": [{"ledmatrix_min_version": "2.0.0"}]}
+        assert compatibility.check(m, "1.0.0") == (True, None)
+
+
+class TestUntrustworthyCoreAndTheSunset:
+    """The population B6 would otherwise break.
+
+    A device installed from the v3.1.0 release reports `__version__ = "1.0.0"`.
+    The gate cannot tell it apart from a genuine 1.0.0 install, so it cannot
+    reason about what that core actually has — and at the B6 sunset the
+    plugin's guarded-import fallback is gone. Without this rule the store hands
+    those users a 3.2.0-floored plugin that fails to load, and nothing else in
+    the system protects them.
+
+    The rule: on an untrustworthy core, refuse a floor *above* the ecosystem
+    baseline, allow anything at or below it. Every manifest published today
+    floors at exactly 2.0.0, so nobody is locked out of the store.
+    """
+
+    UNTRUSTWORTHY = ["1.0.0", "0.9.0", "1.9.9"]
+
+    @pytest.mark.parametrize("core", UNTRUSTWORTHY)
+    def test_refuses_a_post_sunset_floor(self, core):
+        m = {"name": "Hockey Scoreboard",
+             "versions": [{"ledmatrix_min_version": "3.2.0"}]}
+        ok, reason = compatibility.check(m, core)
+        assert ok is False, (
+            f"core {core} must not receive a 3.2.0-floored plugin: after the "
+            "sunset there is no fallback and it will fail to load"
+        )
+        assert "3.2.0" in reason and core in reason
+
+    @pytest.mark.parametrize("core", UNTRUSTWORTHY)
+    def test_still_allows_todays_ecosystem_floor(self, core):
+        """Regression guard: every published manifest floors at 2.0.0. If this
+        starts refusing, those users lose the plugin store entirely."""
+        m = {"versions": [{"ledmatrix_min": "2.0.0"}]}
+        assert compatibility.check(m, core) == (True, None)
+
+    @pytest.mark.parametrize("core", UNTRUSTWORTHY)
+    def test_still_allows_an_undeclared_floor(self, core):
+        assert compatibility.check({"id": "x"}, core) == (True, None)
+
+    def test_trustworthy_core_below_the_floor_is_unaffected(self):
+        """A core that reports 3.1.0 is believable and already handled by the
+        ordinary comparison — not by this rule."""
+        m = {"name": "P", "versions": [{"ledmatrix_min_version": "3.2.0"}]}
+        ok, reason = compatibility.check(m, "3.1.0")
+        assert ok is False
+        assert "too old to identify" not in reason, (
+            "a believable version should get the ordinary message"
+        )
+
+
+class TestMalformedManifests:
+    """A manifest we cannot parse must read as "no declared floor", not raise.
+
+    This matters more since the untrustworthy-core branch of check() began
+    resolving the floor for *every* manifest: one hand-edited or third-party
+    file with the wrong shape would take down the whole install path rather
+    than just itself.
+    """
+
+    @pytest.mark.parametrize("manifest", [
+        {"requires": ["python>=3.9"]},          # a list, not a mapping
+        {"requires": "python>=3.9"},            # a bare string
+        {"versions": {"a": 1}},                 # a mapping, not a list
+        {"versions": "1.0.0"},                  # a bare string
+        {"versions": [None]},                   # a list of the wrong thing
+        {"versions": []},
+    ])
+    def test_shape_errors_read_as_no_floor(self, manifest):
+        assert compatibility.declared_min_version(manifest) is None
+        assert compatibility.check(manifest, "1.0.0") == (True, None)
+        assert compatibility.check(manifest, "3.2.0") == (True, None)
+
+    def test_a_valid_requires_block_still_works(self):
+        assert compatibility.declared_min_version(
+            {"requires": {"min_ledmatrix_version": "3.2.0"}}) == "3.2.0"
+
+
+class TestSuffixedVersions:
+    """Prerelease and build metadata must not leak into the numbers.
+
+    The digit scrape used to pull them in: "3.2.0+build42" became (3, 2, 42)
+    and "3.2.0-rc1" became (3, 2, 1) — a release candidate ranking above its
+    own release. Both fed reject decisions.
+    """
+
+    @pytest.mark.parametrize("text,expected", [
+        ("3.2.0", (3, 2, 0)),
+        ("3.2.0+build42", (3, 2, 0)),
+        ("3.2.0-rc1", (3, 2, 0)),
+        ("3.2.0-rc.1+build.9", (3, 2, 0)),
+        ("v3.2.0+build42", (3, 2, 0)),
+    ])
+    def test_suffixes_are_dropped(self, text, expected):
+        assert compatibility.parse_semver(text) == expected
+
+    def test_a_build_of_the_pinned_version_is_not_refused(self):
+        """The regression: an exact "3.2.0" pin refused a core running
+        3.2.0+build42, which is that same version."""
+        ok, reason = compatibility.check(
+            {"compatible_versions": ["3.2.0"]}, "3.2.0+build42")
+        assert ok is True, f"refused a build of the pinned version: {reason}"
+
+    def test_a_release_candidate_does_not_outrank_its_release(self):
+        m = {"versions": [{"ledmatrix_min_version": "3.2.0"}]}
+        assert compatibility.check(m, "3.2.0-rc1")[0] is True
+        # ...and still refuses something genuinely older.
+        assert compatibility.check(m, "3.1.0-rc1")[0] is False
