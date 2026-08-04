@@ -40,7 +40,20 @@ def parse_semver(value: Any) -> Optional[Tuple[int, int, int]]:
     3-tuple, or ``None`` when unparseable. A leading ``v`` is tolerated."""
     if not isinstance(value, str):
         return None
-    parts = value.strip().lstrip('v').split('.')
+    text = value.strip().lstrip('v')
+    # Drop the prerelease/build suffix before scraping digits. Without this the
+    # scrape pulls them into the numbers: "3.2.0+build42" parsed as (3, 2, 42)
+    # and "3.2.0-rc1" as (3, 2, 1) -- a release candidate ranking *above* its
+    # own release, and a build of 3.2.0 failing an exact "3.2.0" match.
+    #
+    # Prereleases compare equal to their release here rather than below it.
+    # Full prerelease ordering is more than any caller needs, and equal is far
+    # closer to right than the old behaviour.
+    for sep in ('+', '-'):
+        head, found, _tail = text.partition(sep)
+        if found:
+            text = head
+    parts = text.split('.')
     try:
         nums = [int(''.join(ch for ch in p if ch.isdigit()) or 0) for p in parts[:3]]
     except ValueError:
@@ -143,16 +156,25 @@ def declared_min_version(manifest: Dict[str, Any]) -> Optional[str]:
     of `ledmatrix_min_version` (`store_manager._validate_manifest_fields` flags
     it); both are read because a large share of published manifests still carry
     the old one.
+
+    Container types are validated rather than assumed. A hand-edited or
+    third-party manifest can carry `requires` as a list or `versions` as a
+    mapping, and both used to raise out of here (`AttributeError` and
+    `KeyError` respectively). That now matters far more than it did: the
+    untrustworthy-core branch of :func:`check` calls this for *every* manifest,
+    so one malformed file would take down the install path rather than just
+    itself. A shape we do not recognise means "no declared floor".
     """
-    declared = (
-        manifest.get('min_ledmatrix_version')
-        or (manifest.get('requires') or {}).get('min_ledmatrix_version')
-    )
+    declared = manifest.get('min_ledmatrix_version')
+    if not declared:
+        requires = manifest.get('requires')
+        if isinstance(requires, dict):
+            declared = requires.get('min_ledmatrix_version')
     if declared:
         return declared
 
-    versions = manifest.get('versions') or []
-    if versions and isinstance(versions[0], dict):
+    versions = manifest.get('versions')
+    if isinstance(versions, list) and versions and isinstance(versions[0], dict):
         return (versions[0].get('ledmatrix_min_version')
                 or versions[0].get('ledmatrix_min'))
     return None

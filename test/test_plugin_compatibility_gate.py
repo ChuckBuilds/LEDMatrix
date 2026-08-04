@@ -369,3 +369,62 @@ class TestUntrustworthyCoreAndTheSunset:
         assert "too old to identify" not in reason, (
             "a believable version should get the ordinary message"
         )
+
+
+class TestMalformedManifests:
+    """A manifest we cannot parse must read as "no declared floor", not raise.
+
+    This matters more since the untrustworthy-core branch of check() began
+    resolving the floor for *every* manifest: one hand-edited or third-party
+    file with the wrong shape would take down the whole install path rather
+    than just itself.
+    """
+
+    @pytest.mark.parametrize("manifest", [
+        {"requires": ["python>=3.9"]},          # a list, not a mapping
+        {"requires": "python>=3.9"},            # a bare string
+        {"versions": {"a": 1}},                 # a mapping, not a list
+        {"versions": "1.0.0"},                  # a bare string
+        {"versions": [None]},                   # a list of the wrong thing
+        {"versions": []},
+    ])
+    def test_shape_errors_read_as_no_floor(self, manifest):
+        assert compatibility.declared_min_version(manifest) is None
+        assert compatibility.check(manifest, "1.0.0") == (True, None)
+        assert compatibility.check(manifest, "3.2.0") == (True, None)
+
+    def test_a_valid_requires_block_still_works(self):
+        assert compatibility.declared_min_version(
+            {"requires": {"min_ledmatrix_version": "3.2.0"}}) == "3.2.0"
+
+
+class TestSuffixedVersions:
+    """Prerelease and build metadata must not leak into the numbers.
+
+    The digit scrape used to pull them in: "3.2.0+build42" became (3, 2, 42)
+    and "3.2.0-rc1" became (3, 2, 1) — a release candidate ranking above its
+    own release. Both fed reject decisions.
+    """
+
+    @pytest.mark.parametrize("text,expected", [
+        ("3.2.0", (3, 2, 0)),
+        ("3.2.0+build42", (3, 2, 0)),
+        ("3.2.0-rc1", (3, 2, 0)),
+        ("3.2.0-rc.1+build.9", (3, 2, 0)),
+        ("v3.2.0+build42", (3, 2, 0)),
+    ])
+    def test_suffixes_are_dropped(self, text, expected):
+        assert compatibility.parse_semver(text) == expected
+
+    def test_a_build_of_the_pinned_version_is_not_refused(self):
+        """The regression: an exact "3.2.0" pin refused a core running
+        3.2.0+build42, which is that same version."""
+        ok, reason = compatibility.check(
+            {"compatible_versions": ["3.2.0"]}, "3.2.0+build42")
+        assert ok is True, f"refused a build of the pinned version: {reason}"
+
+    def test_a_release_candidate_does_not_outrank_its_release(self):
+        m = {"versions": [{"ledmatrix_min_version": "3.2.0"}]}
+        assert compatibility.check(m, "3.2.0-rc1")[0] is True
+        # ...and still refuses something genuinely older.
+        assert compatibility.check(m, "3.1.0-rc1")[0] is False
