@@ -395,6 +395,37 @@ class PluginManager:
             self.state_manager.set_state(plugin_id, PluginState.ERROR, error=e)
             return False
     
+    #: Config keys the **core** reads out of a plugin's own config block. The
+    #: plugin never declares them, so a schema with
+    #: ``"additionalProperties": false`` — 37 of the 42 published ones — reports
+    #: them as violations and the plugin gets flagged degraded in the web UI for
+    #: using a documented core feature.
+    #:
+    #: Listed explicitly rather than matched on a ``vegas_`` prefix, because
+    #: ``vegas_mode`` is the opposite case: plugins *do* declare that one, and a
+    #: prefix rule would silently stop validating it.
+    #:
+    #: Read by: ``vegas_mode/plugin_adapter.py`` (``vegas_width_pct``,
+    #: ``vegas_overflow``) and ``base_plugin.py`` (``vegas_max_width_screens``).
+    CORE_OWNED_CONFIG_KEYS = frozenset({
+        'vegas_width_pct',
+        'vegas_overflow',
+        'vegas_max_width_screens',
+    })
+
+    def _strip_core_owned_keys(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """A shallow copy of ``config`` without the core's own tuning keys.
+
+        Only the top level is touched, and only when such a key is present, so
+        the common case allocates nothing extra.
+        """
+        if not isinstance(config, dict):
+            return config
+        if not self.CORE_OWNED_CONFIG_KEYS.intersection(config):
+            return config
+        return {k: v for k, v in config.items()
+                if k not in self.CORE_OWNED_CONFIG_KEYS}
+
     def _validate_config_schema_soft(self, plugin_id: str, config: Dict[str, Any]) -> None:
         """Validate a plugin's config against its JSON schema — warn/degrade only.
 
@@ -419,7 +450,7 @@ class PluginManager:
 
         try:
             is_valid, errors = self.schema_manager.validate_config_against_schema(
-                config, schema, plugin_id
+                self._strip_core_owned_keys(config), schema, plugin_id
             )
         except Exception as e:  # pragma: no cover - defensive
             # Validation machinery itself failed — do not penalise the plugin.
