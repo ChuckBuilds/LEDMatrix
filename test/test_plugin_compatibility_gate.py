@@ -81,17 +81,24 @@ class TestCheck:
         ok, reason = compatibility.check({"id": "x"}, "3.2.0")
         assert ok is True and reason is None
 
-    def test_untrustworthy_core_version_allows_everything(self):
+    def test_untrustworthy_core_allows_todays_ecosystem_floor(self):
         """The v3.1.0 release reports 1.0.0. Nearly every manifest floors at
-        2.0.0, so blocking here would stop those users installing any plugin
-        at all — strictly worse than the problem being solved."""
+        2.0.0, so blocking *that* would stop those users installing any plugin
+        at all — strictly worse than the problem being solved.
+
+        A floor ABOVE 2.0.0 is refused instead; see
+        TestUntrustworthyCoreAndTheSunset for why that case is different."""
         ok, reason = compatibility.check(
-            {"min_ledmatrix_version": "3.2.0"}, "1.0.0")
+            {"min_ledmatrix_version": "2.0.0"}, "1.0.0")
         assert ok is True and reason is None
 
-    def test_unparseable_core_version_allows(self):
-        ok, _ = compatibility.check({"min_ledmatrix_version": "3.2.0"}, "not-a-version")
+    def test_unparseable_core_version_allows_the_ecosystem_floor(self):
+        """An unidentifiable core is treated exactly like an untrustworthy one:
+        today's 2.0.0 floor is allowed, a post-sunset floor is not."""
+        ok, _ = compatibility.check({"min_ledmatrix_version": "2.0.0"}, "not-a-version")
         assert ok is True
+        ok, _ = compatibility.check({"min_ledmatrix_version": "3.2.0"}, "not-a-version")
+        assert ok is False
 
     def test_unparseable_floor_allows(self):
         ok, _ = compatibility.check({"min_ledmatrix_version": {"nope": 1}}, "3.2.0")
@@ -312,3 +319,53 @@ class TestMoreRestrictiveWins:
         m = {"compatible_versions": [">=2.0.0"],
              "versions": [{"ledmatrix_min_version": "2.0.0"}]}
         assert compatibility.check(m, "1.0.0") == (True, None)
+
+
+class TestUntrustworthyCoreAndTheSunset:
+    """The population B6 would otherwise break.
+
+    A device installed from the v3.1.0 release reports `__version__ = "1.0.0"`.
+    The gate cannot tell it apart from a genuine 1.0.0 install, so it cannot
+    reason about what that core actually has — and at the B6 sunset the
+    plugin's guarded-import fallback is gone. Without this rule the store hands
+    those users a 3.2.0-floored plugin that fails to load, and nothing else in
+    the system protects them.
+
+    The rule: on an untrustworthy core, refuse a floor *above* the ecosystem
+    baseline, allow anything at or below it. Every manifest published today
+    floors at exactly 2.0.0, so nobody is locked out of the store.
+    """
+
+    UNTRUSTWORTHY = ["1.0.0", "0.9.0", "1.9.9"]
+
+    @pytest.mark.parametrize("core", UNTRUSTWORTHY)
+    def test_refuses_a_post_sunset_floor(self, core):
+        m = {"name": "Hockey Scoreboard",
+             "versions": [{"ledmatrix_min_version": "3.2.0"}]}
+        ok, reason = compatibility.check(m, core)
+        assert ok is False, (
+            f"core {core} must not receive a 3.2.0-floored plugin: after the "
+            "sunset there is no fallback and it will fail to load"
+        )
+        assert "3.2.0" in reason and core in reason
+
+    @pytest.mark.parametrize("core", UNTRUSTWORTHY)
+    def test_still_allows_todays_ecosystem_floor(self, core):
+        """Regression guard: every published manifest floors at 2.0.0. If this
+        starts refusing, those users lose the plugin store entirely."""
+        m = {"versions": [{"ledmatrix_min": "2.0.0"}]}
+        assert compatibility.check(m, core) == (True, None)
+
+    @pytest.mark.parametrize("core", UNTRUSTWORTHY)
+    def test_still_allows_an_undeclared_floor(self, core):
+        assert compatibility.check({"id": "x"}, core) == (True, None)
+
+    def test_trustworthy_core_below_the_floor_is_unaffected(self):
+        """A core that reports 3.1.0 is believable and already handled by the
+        ordinary comparison — not by this rule."""
+        m = {"name": "P", "versions": [{"ledmatrix_min_version": "3.2.0"}]}
+        ok, reason = compatibility.check(m, "3.1.0")
+        assert ok is False
+        assert "too old to identify" not in reason, (
+            "a believable version should get the ordinary message"
+        )

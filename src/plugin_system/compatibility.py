@@ -182,10 +182,32 @@ def check(manifest: Dict[str, Any], core_version: str) -> Tuple[bool, Optional[s
     ``reason`` is user-facing text, present only when incompatible.
     """
     current = parse_semver(core_version)
-    if current is None or current < TRUSTWORTHY_FLOOR:
-        return True, None
-
     name = manifest.get('name') or manifest.get('id') or 'This plugin'
+
+    if current is None or current < TRUSTWORTHY_FLOOR:
+        # The version is not evidence of what this core HAS. But a floor above
+        # the ecosystem baseline says the plugin needs modules that arrived
+        # *after* 2.0.0 — and a core reporting below that either is the v3.1.0
+        # release (which ships __version__ = "1.0.0" and has none of the 3.2.0
+        # modules) or is genuinely ancient. Either way it will not have them.
+        #
+        # This is the only protection available to that population: they cannot
+        # be told apart from a real 1.0.0 install, so the gate cannot reason
+        # about them, and the *plugin's* guarded-import fallback disappears at
+        # the B6 sunset. Refusing the install leaves them on the version they
+        # already run instead of handing them one that fails to load.
+        #
+        # Floors at or below 2.0.0 are still allowed, which is every manifest
+        # published today — so this does not lock anyone out of the store.
+        declared = declared_min_version(manifest)
+        needed = parse_semver(declared)
+        if needed is not None and needed > TRUSTWORTHY_FLOOR:
+            return False, (
+                f"{name} requires LEDMatrix {declared} or newer. This system "
+                f"reports {core_version}, which is too old to identify "
+                f"reliably — update LEDMatrix, then install it."
+            )
+        return True, None
 
     # Ranges first: they are the canonical field and can rule out a core that
     # clears the floor.
