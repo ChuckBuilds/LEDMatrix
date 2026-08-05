@@ -265,10 +265,13 @@ migrate there.)
 ### B5 — adoption is safe by construction
 
 A plugin adopting core imports keeps its bundled copy and reaches it through the
-guarded import (see the Upgradability table above). On a core that ships the
-module the plugin uses core code; on one that doesn't it falls back and behaves
-exactly as it does today. There is no version of this step that breaks a user,
-which is why it does not wait for B6's gate.
+guarded import (see the Upgradability table above). On a core that doesn't ship
+the module the plugin falls back and behaves exactly as it does today. That
+fallback compatibility is safe by construction. On a core that *does* ship the
+module, correctness is not automatic — object-level and scroll-mode validation
+(building both classes and comparing, per the retrospective below) is required
+to prove full behavior. There is no version of this step that breaks a user *on
+an old core*, which is why it does not wait for B6's gate.
 
 The hockey scroll-display pilot is **already validated**: adopted against a core
 carrying 3.2.0, `scroll_display.py` went from 691 to 289 lines and all 16 harness
