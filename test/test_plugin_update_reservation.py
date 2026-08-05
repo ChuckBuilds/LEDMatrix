@@ -200,9 +200,17 @@ class TestNoConcurrentUpdate:
 
         _hammer(pm.run_scheduled_updates, threads=8, rounds=3)
 
-        deadline = time.monotonic() + 10
-        while plugin._active and time.monotonic() < deadline:
+        # Wait for an update to have both started and finished. Polling only
+        # `_active` races the worker: before it picks the item up nothing is
+        # active yet, so the loop would fall straight through and assert on a
+        # plugin that never ran.
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            if plugin.update_calls >= 1 and plugin._active == 0:
+                break
             time.sleep(0.05)
+
+        assert plugin.update_calls >= 1, "no update ran on the async path"
         assert plugin.max_concurrent == 1, (
             f"update() ran {plugin.max_concurrent}x concurrently on the "
             "async path")
@@ -218,13 +226,17 @@ class TestNoStrandedState:
 
         _hammer(pm.run_scheduled_updates, threads=6, rounds=2)
 
-        deadline = time.monotonic() + 10
+        deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
-            if (pm.state_manager.get_state(plugin_id) == PluginState.ENABLED
+            if (plugin.update_calls >= 1
+                    and pm.state_manager.get_state(plugin_id) == PluginState.ENABLED
                     and not pm._pending_updates):
                 break
             time.sleep(0.05)
 
+        # ENABLED is also the starting state, so without this the assertion
+        # below would pass on a plugin that never got scheduled at all.
+        assert plugin.update_calls >= 1, "no update ran; the state assertion would be vacuous"
         assert pm.state_manager.get_state(plugin_id) == PluginState.ENABLED, \
             "plugin stranded in RUNNING; can_execute() would refuse it forever"
         assert not pm._pending_updates, "pending set not drained"
