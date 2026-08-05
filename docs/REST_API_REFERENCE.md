@@ -31,9 +31,9 @@ All endpoints return JSON responses with a standard format:
 - [Plugin-specific endpoints](#plugin-specific-endpoints)
 - [Starlark Apps](#starlark-apps)
 
-> The API blueprint is mounted at `/api/v3` (`web_interface/app.py:144`).
+> The API blueprint is mounted at `/api/v3` (`web_interface/app.py:199`).
 > SSE stream endpoints (`/api/v3/stream/*`) are defined directly on the
-> Flask app at `app.py:607-615`. There are about 92 routes total — see
+> Flask app at `app.py:799-809`. There are 94 routes total — see
 > `web_interface/blueprints/api_v3.py` for the canonical list.
 
 ---

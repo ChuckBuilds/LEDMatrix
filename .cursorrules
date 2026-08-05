@@ -3,21 +3,21 @@
 ## Plugin System Overview
 
 The LEDMatrix project uses a plugin-based architecture. All display
-functionality (except core calendar) is implemented as plugins that are
+functionality is implemented as plugins that are
 dynamically loaded from the directory configured by
 `plugin_system.plugins_directory` in `config.json` — the default is
-`plugin-repos/` (per `config/config.template.json:130`).
+`plugin-repos/` (per `config/config.template.json:167`).
 
 > **Fallback note (scoped):** `PluginManager.discover_plugins()`
-> (`src/plugin_system/plugin_manager.py:154`) only scans the
+> (`src/plugin_system/plugin_manager.py:208`) only scans the
 > configured directory — there is no fallback to `plugins/` in the
 > main discovery path. A fallback to `plugins/` does exist in two
 > narrower places:
-> - `store_manager.py:1700-1718` — store operations (install/update/
+> - `store_manager.py:2342-2373` — store operations (install/update/
 >   uninstall) check `plugins/` if the plugin isn't found in the
 >   configured directory, so plugin-store flows work even when your
 >   dev symlinks live in `plugins/`.
-> - `schema_manager.py:70-80` — `get_schema_path()` probes both
+> - `schema_manager.py:48-80` — `get_schema_path()` probes both
 >   `plugins/` and `plugin-repos/` for `config_schema.json` so the
 >   web UI form generation finds the schema regardless of where the
 >   plugin lives.
