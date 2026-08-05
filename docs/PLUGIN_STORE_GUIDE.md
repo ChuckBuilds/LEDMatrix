@@ -481,13 +481,13 @@ A: Yes, if a plugin needs API keys, it can access them like core managers do.
 A: Most plugins are small (1-5MB). Check individual plugin documentation for specific requirements.
 
 **Q: Can I create my own plugin?**
-A: Yes! See [PLUGIN_DEVELOPMENT.md](PLUGIN_DEVELOPMENT.md) for instructions.
+A: Yes! See [PLUGIN_DEVELOPMENT_GUIDE.md](PLUGIN_DEVELOPMENT_GUIDE.md) for instructions.
 
 ---
 
 ## Related Documentation
 
-- [PLUGIN_DEVELOPMENT.md](PLUGIN_DEVELOPMENT.md) - Create your own plugins
+- [PLUGIN_DEVELOPMENT_GUIDE.md](PLUGIN_DEVELOPMENT_GUIDE.md) - Create your own plugins
 - [PLUGIN_API_REFERENCE.md](PLUGIN_API_REFERENCE.md) - Plugin API documentation
-- [PLUGIN_ARCHITECTURE.md](PLUGIN_ARCHITECTURE.md) - Plugin system architecture
+- [PLUGIN_ARCHITECTURE_SPEC.md](PLUGIN_ARCHITECTURE_SPEC.md) - Plugin system architecture (historical)
 - [REST_API_REFERENCE.md](REST_API_REFERENCE.md) - Complete REST API reference

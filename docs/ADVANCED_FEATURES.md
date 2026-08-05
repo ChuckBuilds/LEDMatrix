@@ -984,8 +984,11 @@ These core utilities **already handle permissions** - you don't need to call per
 If you encounter permission issues:
 
 ```bash
-# Fix all permissions at once
-sudo ./scripts/fix_permissions.sh
+# Targeted permission fixes (see scripts/fix_perms/README.md)
+sudo ./scripts/fix_perms/fix_assets_permissions.sh   # assets/ tree (logos, fonts)
+sudo ./scripts/fix_perms/fix_cache_permissions.sh    # all cache directories
+sudo ./scripts/fix_perms/fix_plugin_permissions.sh   # plugin directories
+sudo ./scripts/fix_perms/fix_web_permissions.sh      # web interface files
 
 # Fix specific directory
 sudo chown -R ledpi:ledpi /home/ledpi/LEDMatrix/config
@@ -1017,7 +1020,7 @@ stat -c "%a %n" config/config.json
 
 ## Related Documentation
 
-- [PLUGIN_DEVELOPMENT.md](PLUGIN_DEVELOPMENT.md) - Creating plugins with Vegas/on-demand support
+- [PLUGIN_DEVELOPMENT_GUIDE.md](PLUGIN_DEVELOPMENT_GUIDE.md) - Creating plugins with Vegas/on-demand support
 - [WEB_INTERFACE_GUIDE.md](WEB_INTERFACE_GUIDE.md) - Using on-demand controls in web UI
 - [PLUGIN_API_REFERENCE.md](PLUGIN_API_REFERENCE.md) - Complete API documentation
 - [DEVELOPMENT.md](DEVELOPMENT.md) - Development environment and testing

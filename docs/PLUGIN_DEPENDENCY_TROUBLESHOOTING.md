@@ -169,6 +169,6 @@ If you continue to experience issues:
 ## Related Documentation
 
 - [Plugin Dependency Guide](PLUGIN_DEPENDENCY_GUIDE.md)
-- [Plugin Development Guide](docs/plugin_development.md)
-- [Troubleshooting Quick Start](TROUBLESHOOTING_QUICK_START.md)
+- [Plugin Development Guide](PLUGIN_DEVELOPMENT_GUIDE.md)
+- [Troubleshooting](TROUBLESHOOTING.md)
 

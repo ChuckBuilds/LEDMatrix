@@ -667,5 +667,5 @@ For your plugin to work well in the plugin store:
 - [Advanced Plugin Development](ADVANCED_PLUGIN_DEVELOPMENT.md) - Advanced patterns and examples
 - [Plugin Quick Reference](PLUGIN_QUICK_REFERENCE.md) - Quick development reference
 - [Plugin Configuration Guide](PLUGIN_CONFIGURATION_GUIDE.md) - Configuration setup
-- [Plugin Store User Guide](PLUGIN_STORE_USER_GUIDE.md) - Using the plugin store
+- [Plugin Store Guide](PLUGIN_STORE_GUIDE.md) - Using the plugin store
 
