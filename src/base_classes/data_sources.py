@@ -44,9 +44,16 @@ class DataSource(ABC):
         """Fetch standings for a sport/league."""
     
     def get_headers(self) -> Dict[str, str]:
-        """Get headers for API requests."""
+        """Get headers for API requests.
+
+        The agent carries the project URL deliberately. Around 2026-08-04 ESPN
+        began returning 403 for bare custom tokens like 'LEDMatrix/1.0' — and
+        for browser-style strings — while accepting an agent that identifies
+        the client and links to it. An Accept header alone does not rescue the
+        bare form when the request goes out through requests.
+        """
         return {
-            'User-Agent': 'LEDMatrix/1.0',
+            'User-Agent': 'LEDMatrix/1.0 (+https://github.com/ChuckBuilds/LEDMatrix)',
             'Accept': 'application/json'
         }
 
