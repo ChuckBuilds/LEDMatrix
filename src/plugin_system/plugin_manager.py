@@ -113,6 +113,15 @@ class PluginManager:
         self._update_queue: "queue.Queue[Optional[Tuple[str, float]]]" = queue.Queue()
         self._pending_updates: set = set()
         self._pending_lock = threading.Lock()
+        # Serializes the "is this plugin eligible?" -> "claim it (RUNNING)"
+        # transition. Two schedulers run concurrently in practice — the render
+        # loop's _tick_plugin_updates() and Vegas mode's vegas-plugin-tick
+        # daemon thread, which is never joined — so without this both can
+        # observe ENABLED and both call update() on the same plugin. Held only
+        # across the check and the state transition, never across update()
+        # itself: that would serialize slow plugins behind each other and
+        # reintroduce the stall the async worker exists to avoid.
+        self._reservation_lock = threading.Lock()
         self._plugin_locks: Dict[str, threading.Lock] = {}
         self._plugin_locks_guard = threading.Lock()
         self._update_worker: Optional[threading.Thread] = None
@@ -808,25 +817,69 @@ class PluginManager:
             if self.health_tracker and self.health_tracker.should_skip_plugin(plugin_id):
                 continue
 
-            # Check if plugin can execute
-            if not self.state_manager.can_execute(plugin_id):
-                continue
-
             interval = self._get_plugin_update_interval(plugin_id, plugin_instance)
             if interval is None:
                 continue
 
-            with self._plugin_last_update_lock:
-                last_update = self.plugin_last_update.get(plugin_id, 0.0)
+            # Eligibility check, due check and the RUNNING transition happen
+            # together, so a concurrent scheduler cannot claim the same plugin.
+            if not self._reserve_for_update(plugin_id, current_time, interval):
+                continue
 
-            if last_update == 0.0 or (current_time - last_update) >= interval:
-                if self._synchronous_updates:
-                    # Kill-switch path: the original inline execution
-                    # (blocks the caller until update() completes/times out)
-                    self.state_manager.set_state(plugin_id, PluginState.RUNNING)
-                    self._execute_update_now(plugin_id, plugin_instance, current_time)
-                else:
-                    self._enqueue_update(plugin_id, current_time)
+            if self._synchronous_updates:
+                # Kill-switch path: the original inline execution
+                # (blocks the caller until update() completes/times out)
+                self._execute_update_now(plugin_id, plugin_instance, current_time)
+            else:
+                self._enqueue_update(plugin_id, current_time)
+
+    def _reserve_for_update(
+        self,
+        plugin_id: str,
+        current_time: Optional[float] = None,
+        interval: Optional[float] = None,
+    ) -> bool:
+        """Atomically claim a plugin for update, returning True if we won it.
+
+        can_execute() and the RUNNING transition have to happen under one lock.
+        As two separate calls, two scheduler threads can both see ENABLED and
+        both go on to run the same plugin's update() concurrently — unsafe for
+        any plugin that isn't reentrant (shared mutable state, a non-thread-safe
+        HTTP session or cache).
+
+        The due-time check is inside the lock too. Leaving it outside would let
+        a second thread that had already decided "due" claim the plugin the
+        instant the first finished, running update() twice in one interval.
+
+        Args:
+            plugin_id: Plugin to claim.
+            current_time: Now, for the due check. Omit to skip that check.
+            interval: Seconds between updates. Omit to skip the due check.
+
+        Returns:
+            True if this caller reserved the plugin and must dispatch it,
+            False if it is ineligible, not yet due, or already claimed.
+        """
+        with self._reservation_lock:
+            if not self.state_manager.can_execute(plugin_id):
+                return False
+
+            if current_time is not None and interval is not None:
+                with self._plugin_last_update_lock:
+                    last_update = self.plugin_last_update.get(plugin_id, 0.0)
+                if last_update != 0.0 and (current_time - last_update) < interval:
+                    return False
+
+            self.state_manager.set_state(plugin_id, PluginState.RUNNING)
+            return True
+
+    def _release_reservation(self, plugin_id: str) -> None:
+        """Hand a claimed plugin back when it never got dispatched.
+
+        Without this a plugin reserved but not queued would sit in RUNNING
+        forever, and can_execute() would refuse it on every later tick.
+        """
+        self.state_manager.set_state(plugin_id, PluginState.ENABLED)
 
     def get_plugin_lock(self, plugin_id: str) -> threading.Lock:
         """Per-plugin lock keeping update() and display() mutually exclusive.
@@ -843,16 +896,40 @@ class PluginManager:
             return lock
 
     def _enqueue_update(self, plugin_id: str, scheduled_time: float) -> None:
-        """Queue a due update for the background worker (dedup while pending)."""
+        """Queue an already-reserved update for the background worker.
+
+        The caller has reserved the plugin (RUNNING), which is what blocks
+        re-entry and shows the truthful state in the web UI while the item
+        waits its turn. The pending set stays as a second line of defence; if
+        it ever fires the reservation has to be handed back, or the plugin
+        would sit in RUNNING with nothing queued to release it.
+        """
         with self._pending_lock:
             if plugin_id in self._pending_updates:
+                self.logger.warning(
+                    "Plugin %s reserved for update but already queued; "
+                    "releasing the reservation", plugin_id)
+                self._release_reservation(plugin_id)
                 return
             self._pending_updates.add(plugin_id)
-        # RUNNING is set at enqueue time so can_execute() blocks re-entry and
-        # the web UI shows the truthful state while the item waits its turn.
-        self.state_manager.set_state(plugin_id, PluginState.RUNNING)
-        self._ensure_update_worker()
-        self._update_queue.put((plugin_id, scheduled_time))
+        try:
+            self._ensure_update_worker()
+            self._update_queue.put((plugin_id, scheduled_time))
+        except Exception as exc:  # pylint: disable=broad-except
+            # Thread.start() raises RuntimeError when the OS refuses a new
+            # thread — a real condition on a Pi under memory pressure. Nothing
+            # is queued to release the plugin at that point, so the claim has to
+            # be undone here, or it sits in RUNNING with nothing to clear it and
+            # can_execute() refuses it for the rest of the process. Swallowed
+            # rather than raised so the remaining plugins in this tick still get
+            # their turn.
+            self.logger.error(
+                "Could not queue update for plugin %s (%s: %s); releasing the "
+                "reservation so the next tick can retry",
+                plugin_id, type(exc).__name__, exc, exc_info=True)
+            with self._pending_lock:
+                self._pending_updates.discard(plugin_id)
+            self._release_reservation(plugin_id)
 
     def _ensure_update_worker(self) -> None:
         if self._update_worker is not None and self._update_worker.is_alive():
@@ -937,6 +1014,14 @@ class PluginManager:
                     return
                 finished['done'] = True
             try:
+                # Drop the queue reservation *before* the state goes back to
+                # ENABLED. The other order leaves a window where a scheduler
+                # sees ENABLED, reserves the plugin, then finds it still in
+                # _pending_updates -- the enqueue is dropped and the plugin
+                # would sit in RUNNING with nothing left to release it.
+                if lock is not None:
+                    with self._pending_lock:
+                        self._pending_updates.discard(plugin_id)
                 if success:
                     with self._plugin_last_update_lock:
                         self.plugin_last_update[plugin_id] = scheduled_time
@@ -949,8 +1034,6 @@ class PluginManager:
             finally:
                 if lock is not None:
                     lock.release()
-                    with self._pending_lock:
-                        self._pending_updates.discard(plugin_id)
 
         if lock is None:
             # Synchronous / no-lock path: unchanged behavior.
@@ -1041,13 +1124,12 @@ class PluginManager:
             if not hasattr(plugin_instance, "update"):
                 continue
             
-            # Check if plugin can execute
-            if not self.state_manager.can_execute(plugin_id):
+            # Eligibility check and the RUNNING transition together, so a
+            # concurrent scheduler cannot claim the same plugin (see
+            # _reserve_for_update).
+            if not self._reserve_for_update(plugin_id):
                 continue
-            
-            # Update state to RUNNING
-            self.state_manager.set_state(plugin_id, PluginState.RUNNING)
-            
+
             try:
                 success = self.plugin_executor.execute_update(plugin_instance, plugin_id)
                 if success:
