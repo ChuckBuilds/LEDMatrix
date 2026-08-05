@@ -274,3 +274,62 @@ class TestNoStrandedState:
         assert not violations, (
             f"{len(violations)} sample(s) saw a non-RUNNING plugin still in "
             "_pending_updates")
+
+
+class TestDispatchFailure:
+    """A reservation must survive the dispatch itself failing.
+
+    _enqueue_update() claims the plugin, adds it to the pending set, and only
+    then starts the worker and queues the item. threading.Thread.start() raises
+    RuntimeError when the OS refuses a new thread — not hypothetical on a Pi
+    under memory or thread pressure. Nothing is queued to release the plugin at
+    that point, so without an explicit rollback it stays RUNNING with a stale
+    pending entry and can_execute() refuses it for the rest of the process.
+    """
+
+    def test_reservation_released_when_the_worker_cannot_start(self, pm):
+        plugin_id = _install(pm, OverlapDetectingPlugin())
+
+        def refuse_to_start():
+            raise RuntimeError("can't start new thread")
+
+        pm._ensure_update_worker = refuse_to_start
+
+        assert pm._reserve_for_update(plugin_id) is True
+        pm._enqueue_update(plugin_id, time.time())
+
+        assert pm.state_manager.get_state(plugin_id) == PluginState.ENABLED, \
+            "plugin left in RUNNING after a failed dispatch; can_execute() " \
+            "would refuse it forever"
+        assert plugin_id not in pm._pending_updates, \
+            "stale pending entry would make the next enqueue hit the dedup"
+        assert pm._reserve_for_update(plugin_id) is True, \
+            "plugin must be claimable again on the next tick"
+
+    def test_dispatch_failure_does_not_abort_the_rest_of_the_tick(self, pm):
+        """One plugin failing to queue must not skip the others in that tick."""
+        first = OverlapDetectingPlugin()
+        second = OverlapDetectingPlugin()
+        _install(pm, first, plugin_id="plugin-a")
+        _install(pm, second, plugin_id="plugin-b")
+
+        calls = []
+        real_ensure = pm._ensure_update_worker
+
+        def fail_first_only():
+            calls.append(1)
+            if len(calls) == 1:
+                raise RuntimeError("can't start new thread")
+            return real_ensure()
+
+        pm._ensure_update_worker = fail_first_only
+
+        pm.run_scheduled_updates()  # must not propagate the RuntimeError
+
+        assert len(calls) == 2, (
+            "run_scheduled_updates() stopped after the failing plugin; the "
+            "exception escaped the enqueue")
+        for plugin_id in ("plugin-a", "plugin-b"):
+            assert pm.state_manager.get_state(plugin_id) in (
+                PluginState.ENABLED, PluginState.RUNNING), \
+                f"{plugin_id} left in an unexpected state"

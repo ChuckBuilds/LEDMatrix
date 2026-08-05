@@ -912,8 +912,24 @@ class PluginManager:
                 self._release_reservation(plugin_id)
                 return
             self._pending_updates.add(plugin_id)
-        self._ensure_update_worker()
-        self._update_queue.put((plugin_id, scheduled_time))
+        try:
+            self._ensure_update_worker()
+            self._update_queue.put((plugin_id, scheduled_time))
+        except Exception as exc:  # pylint: disable=broad-except
+            # Thread.start() raises RuntimeError when the OS refuses a new
+            # thread — a real condition on a Pi under memory pressure. Nothing
+            # is queued to release the plugin at that point, so the claim has to
+            # be undone here, or it sits in RUNNING with nothing to clear it and
+            # can_execute() refuses it for the rest of the process. Swallowed
+            # rather than raised so the remaining plugins in this tick still get
+            # their turn.
+            self.logger.error(
+                "Could not queue update for plugin %s (%s: %s); releasing the "
+                "reservation so the next tick can retry",
+                plugin_id, type(exc).__name__, exc, exc_info=True)
+            with self._pending_lock:
+                self._pending_updates.discard(plugin_id)
+            self._release_reservation(plugin_id)
 
     def _ensure_update_worker(self) -> None:
         if self._update_worker is not None and self._update_worker.is_alive():
