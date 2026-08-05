@@ -31,9 +31,6 @@ owned by the `ledmatrix` service user or by `root`.
   systemd journal access, and the sudoers entries the web interface
   needs to control the display service.
 
-- **`fix_nhl_cache.sh`** — Targeted fix for NHL plugin cache issues
-  (clears the NHL cache and restarts the display service).
-
 - **`safe_plugin_rm.sh`** — Validates that a plugin removal path is
   inside an allowed base directory before deleting it. Used by the web
   interface (via sudo) when a user clicks **Uninstall** on a plugin —

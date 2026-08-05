@@ -7,8 +7,8 @@ import os
 import logging
 from typing import Tuple
 
-# Add the src directory to Python path so we can import the logo downloader
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+# Add the project root to Python path so we can import the logo downloader
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Set up logging
 logging.basicConfig(
@@ -28,7 +28,7 @@ def download_nba_logos(force_download: bool = False) -> Tuple[int, int]:
         Tuple of (downloaded_count, failed_count)
     """
     try:
-        from logo_downloader import download_all_logos_for_league
+        from src.logo_downloader import download_all_logos_for_league
 
         logger.info("🏀 Starting NBA logo download...")
         logger.info(f"Target directory: assets/sports/nba_logos/")
