@@ -59,7 +59,9 @@ mypy>=1.5.0,<2.0.0
 # psutil            — per-plugin resource monitoring in
 #                     src/plugin_system/resource_monitor.py. The monitor
 #                     silently no-ops when missing (PSUTIL_AVAILABLE = False).
-#   pip install 'psutil>=5.9.0,<6.0.0'
+#                     Note: web_interface/requirements.txt requires this
+#                     range as a hard dependency — keep the two in sync.
+#   pip install 'psutil>=6.0.0,<7.0.0'
 #
 # Flask-Limiter     — request rate limiting in web_interface/app.py
 #                     (accidental-abuse protection, not security). The
