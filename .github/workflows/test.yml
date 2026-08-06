@@ -4,6 +4,9 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Manual runs against any branch — useful when a PR's automatic run
+  # needs a re-run or didn't get created.
+  workflow_dispatch:
 
 # Both jobs only check out the repo and run pytest.
 permissions:
