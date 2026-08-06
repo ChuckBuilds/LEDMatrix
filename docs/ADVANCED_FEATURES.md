@@ -47,6 +47,11 @@ Enable Vegas mode in `config/config.json`:
 }
 ```
 
+Vegas mode can also be configured entirely from the web UI — the
+**Display** tab has a Vegas Scroll Mode section (enable toggle, scroll
+speed, separator width, dynamic duration, and more), so hand-editing
+JSON is optional.
+
 **Configuration Options:**
 
 | Setting | Default | Description |
@@ -57,7 +62,11 @@ Enable Vegas mode in `config/config.json`:
 | `plugin_order` | `[]` | Plugin display order (empty = auto) |
 | `excluded_plugins` | `[]` | Plugins to exclude from Vegas mode |
 | `target_fps` | `125` | Target frame rate |
-| `buffer_ahead` | `2` | Number of panels to render ahead |
+| `buffer_ahead` | `2` | Number of plugins buffered ahead |
+
+This table is a subset — `display.vegas_scroll` supports 26 keys in
+total. See the full list in
+[CONFIG_REFERENCE.md](CONFIG_REFERENCE.md#displayvegas_scroll--continuous-scroll-mode).
 
 ### Per-Plugin Configuration
 
@@ -79,8 +88,12 @@ Override Vegas behavior for specific plugins:
 | Setting | Values | Description |
 |---------|--------|-------------|
 | `vegas_mode` | `scroll`, `fixed`, `static` | Display mode for this plugin |
-| `vegas_panel_count` | `1-10` | Width in panels (1 panel = display width) |
+| `vegas_panel_count` | any positive integer | Width in panels (1 panel = display width) |
 | `display_duration` | seconds | Pause duration for STATIC mode |
+
+Plugins may also set `vegas_overflow` and `vegas_max_width_screens` in
+their config section to control how oversized content is handled (see
+`PluginManager` in `src/plugin_system/plugin_manager.py`).
 
 ### Plugin Integration (Developer Guide)
 
@@ -451,7 +464,7 @@ time when something is active.
 
 ### REST API Reference
 
-The API is mounted at `/api/v3` (`web_interface/app.py:144`).
+The API is mounted at `/api/v3` (`web_interface/app.py:199`).
 
 #### Start On-Demand Display
 
@@ -518,13 +531,15 @@ curl http://localhost:5000/api/v3/display/on-demand/status
 
 > There is no public Python on-demand API. The display controller's
 > on-demand machinery is internal — drive it through the REST endpoints
-> above (or the web UI buttons), which write a request into the cache
-> manager under the `display_on_demand_request` key
-> (`web_interface/blueprints/api_v3.py:1622,1687`) that the controller
-> polls at `src/display_controller.py:921`. A separate
+> above (or the web UI buttons). The API handlers
+> (`start_on_demand_display()` / `stop_on_demand_display()` in
+> `web_interface/blueprints/api_v3.py`) write a request into the cache
+> manager under the `display_on_demand_request` key, which
+> `DisplayController._poll_on_demand_requests()`
+> (`src/display_controller.py`) picks up. A separate
 > `display_on_demand_config` key is used by the controller itself
-> during activation to track what's currently running (written at
-> `display_controller.py:1195`, cleared at `:1221`).
+> during activation (`_activate_on_demand()`) to track what's
+> currently running, and is cleared by `_clear_on_demand()`.
 
 ### Duration Modes
 
@@ -646,13 +661,13 @@ keys helps troubleshoot stuck states.
 **When Set:** Every display loop iteration
 **Auto-Cleared:** Never (continuously updated)
 
-**4. display_on_demand_processed_id** (TTL: 5 minutes)
+**4. display_on_demand_processed_id** (TTL: 1 hour)
 ```
 "uuid-string-of-last-processed-request"
 ```
 **Purpose:** Prevents duplicate request processing
 **When Set:** After processing request
-**Auto-Cleared:** After 5 minutes TTL
+**Auto-Cleared:** After 1 hour TTL
 
 ### When Manual Clearing is Needed
 
@@ -685,9 +700,9 @@ keys helps troubleshoot stuck states.
 The cache is stored as JSON files under one of:
 
 - `/var/cache/ledmatrix/` (preferred when the service has permission)
-- `~/.cache/ledmatrix/`
+- `~/.ledmatrix_cache/`
 - `/opt/ledmatrix/cache/`
-- `/tmp/ledmatrix-cache/` (fallback)
+- `$TMPDIR/ledmatrix_cache/` (fallback)
 
 ```bash
 # Find the cache dir actually in use
@@ -711,8 +726,9 @@ cache.clear_cache('display_on_demand_request')
 cache.clear_cache('display_on_demand_processed_id')
 ```
 
-> The actual public method is `clear_cache(key=None)` — there is no
-> `delete()` method on `CacheManager`.
+> `CacheManager` also has a `delete(key)` method — a thin wrapper over
+> `clear_cache(key)` — so `cache.delete('display_on_demand_config')`
+> works equally well.
 
 ### Cache Impact on Running Service
 
@@ -730,7 +746,7 @@ The display controller automatically handles cleanup:
 - **Config key**: Cleared when on-demand stops
 - **State key**: Updated every display loop iteration
 - **Request key**: Expires after 1 hour TTL (or after processing)
-- **Processed ID**: Expires after 5 minutes TTL
+- **Processed ID**: Expires after 1 hour TTL
 
 ---
 
@@ -821,9 +837,6 @@ same shape as the example above.
 ### Testing
 
 ```bash
-# Run background service test
-python test_background_service.py
-
 # Check logs for background operations
 sudo journalctl -u ledmatrix -f | grep "background"
 ```
@@ -832,9 +845,10 @@ sudo journalctl -u ledmatrix -f | grep "background"
 
 **View Statistics:**
 ```python
-from src.background_data_service import BackgroundDataService
+from src.background_data_service import get_background_service
+from src.cache_manager import CacheManager
 
-service = BackgroundDataService()
+service = get_background_service(CacheManager())
 stats = service.get_statistics()
 print(f"Active tasks: {stats['active_tasks']}")
 print(f"Completed: {stats['completed']}")
@@ -875,6 +889,7 @@ from src.common.permission_utils import (
     ensure_file_permissions,
     get_config_file_mode,
     get_assets_file_mode,
+    get_assets_dir_mode,
     get_plugin_file_mode,
     get_cache_dir_mode
 )
@@ -883,7 +898,10 @@ from src.common.permission_utils import (
 ensure_directory_permissions(Path("assets/sports"), get_assets_dir_mode())
 
 # Set file permissions after writing
-ensure_file_permissions(Path("config/config.json"), get_config_file_mode())
+# (get_config_file_mode requires the file path — secrets files get a
+# stricter mode than the main config)
+config_path = Path("config/config.json")
+ensure_file_permissions(config_path, get_config_file_mode(config_path))
 ```
 
 ### When to Use Utilities
@@ -938,7 +956,7 @@ from src.common.permission_utils import ensure_file_permissions, get_config_file
 config_path = Path("config/config.json")
 with open(config_path, 'w') as f:
     json.dump(data, f)
-ensure_file_permissions(config_path, get_config_file_mode())
+ensure_file_permissions(config_path, get_config_file_mode(config_path))
 ```
 
 **Pattern 3: Downloading Logo**

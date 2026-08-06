@@ -69,23 +69,24 @@ default configuration as it ships in the repo:
 ```json
 {
     "pixel_outline": 0,
-    "pixel_size": 5,
+    "pixel_size": 16,
     "pixel_style": "square",
     "pixel_glow": 6,
-    "display_adapter": "pygame",
+    "display_adapter": "browser",
+    "allow_adapter_fallback": true,
     "icon_path": null,
     "emulator_title": null,
     "suppress_font_warnings": false,
-    "suppress_adapter_load_errors": false,
     "browser": {
         "_comment": "For use with the browser adapter only.",
         "port": 8888,
-        "target_fps": 24,
+        "target_fps": 60,
         "fps_display": false,
         "quality": 70,
         "image_border": true,
         "debug_text": false,
-        "image_format": "JPEG"
+        "image_format": "JPEG",
+        "open_immediately": false
     },
     "log_level": "info"
 }
@@ -96,13 +97,13 @@ default configuration as it ships in the repo:
 | Option | Description | Default | Values |
 |--------|-------------|---------|--------|
 | `pixel_outline` | Pixel border thickness | 0 | 0-5 |
-| `pixel_size` | Size of each pixel | 5 | 1-64 (8–16 is typical for testing) |
+| `pixel_size` | Size of each pixel | 16 | 1-64 (8–16 is typical for testing) |
 | `pixel_style` | Pixel shape | "square" | "square", "circle" |
 | `pixel_glow` | Glow effect intensity | 6 | 0-20 |
-| `display_adapter` | Display backend | "pygame" | "pygame", "browser" |
+| `display_adapter` | Display backend | "browser" | "browser", "pygame" |
+| `allow_adapter_fallback` | Fall back to another adapter if the configured one fails to load | true | true/false |
 | `emulator_title` | Window title | null | Any string |
 | `suppress_font_warnings` | Hide font warnings | false | true/false |
-| `suppress_adapter_load_errors` | Hide adapter errors | false | true/false |
 
 ### 3. Browser Adapter Configuration
 
@@ -111,18 +112,32 @@ When using the browser adapter, additional options are available:
 | Option | Description | Default |
 |--------|-------------|---------|
 | `port` | Web server port | 8888 |
-| `target_fps` | Target frames per second | 24 |
+| `target_fps` | Target frames per second | 60 |
 | `fps_display` | Show FPS counter | false |
 | `quality` | Image compression quality | 70 |
 | `image_border` | Show image border | true |
 | `debug_text` | Show debug information | false |
 | `image_format` | Image format | "JPEG" |
+| `open_immediately` | Open the browser page automatically on start | false |
 
 ## Running the Emulator
 
-### 1. Set Environment Variable
+### 1. Use the `-e` Flag (Recommended)
 
-Enable emulator mode by setting the `EMULATOR` environment variable:
+`run.py` accepts exactly two flags: `-e`/`--emulator` and
+`-d`/`--debug`.
+
+```bash
+python3 run.py -e
+
+# With verbose logging
+python3 run.py -e -d
+```
+
+### 2. Alternative: Set the Environment Variable
+
+You can also enable emulator mode via the `EMULATOR` environment
+variable:
 
 **Windows (Command Prompt):**
 ```cmd
@@ -138,22 +153,14 @@ python run.py
 
 **Linux/macOS:**
 ```bash
-export EMULATOR=true
-python3 run.py
-```
-
-### 2. Alternative: Direct Python Execution
-
-You can also run the emulator directly:
-
-```bash
 EMULATOR=true python3 run.py
 ```
 
 ### 3. Verify Emulator Mode
 
 When running in emulator mode, you should see:
-- A window displaying the LED matrix simulation
+- The emulated matrix — a web page at `http://localhost:8888` with the
+  default browser adapter, or a desktop window with the pygame adapter
 - Console output indicating emulator mode
 - No hardware initialization errors
 
@@ -161,7 +168,36 @@ When running in emulator mode, you should see:
 
 LEDMatrix supports two display adapters for the emulator:
 
-### 1. Pygame Adapter (Default)
+### 1. Browser Adapter (Default)
+
+The browser adapter runs a web server and displays the matrix as a web
+page at `http://localhost:8888`. This is the adapter the shipped
+`emulator_config.json` uses.
+
+**Features:**
+- Web-based interface
+- Remote access capability
+- Mobile-friendly
+- Screenshot capture
+
+**Configuration:**
+```json
+{
+    "display_adapter": "browser",
+    "browser": {
+        "port": 8888,
+        "target_fps": 60,
+        "quality": 70
+    }
+}
+```
+
+**Usage:**
+1. Start the emulator (`python3 run.py -e`)
+2. Open browser to `http://localhost:8888`
+3. View the LED matrix display
+
+### 2. Pygame Adapter (Alternative)
 
 The pygame adapter provides a native desktop window with real-time display.
 
@@ -185,33 +221,6 @@ The pygame adapter provides a native desktop window with real-time display.
 - `F11` - Toggle fullscreen
 - `+/-` - Zoom in/out
 - `R` - Reset zoom
-
-### 2. Browser Adapter
-
-The browser adapter runs a web server and displays the matrix in a web browser.
-
-**Features:**
-- Web-based interface
-- Remote access capability
-- Mobile-friendly
-- Screenshot capture
-
-**Configuration:**
-```json
-{
-    "display_adapter": "browser",
-    "browser": {
-        "port": 8888,
-        "target_fps": 24,
-        "quality": 70
-    }
-}
-```
-
-**Usage:**
-1. Start the emulator with browser adapter
-2. Open browser to `http://localhost:8888`
-3. View the LED matrix display
 
 ## Troubleshooting
 
@@ -299,17 +308,18 @@ Modify the display dimensions in your main config:
 
 ### 2. Plugin Development
 
-For plugin development with the emulator:
+`run.py` always runs the full rotation — it has no single-plugin flag.
+To preview or check one plugin in isolation, use the dev tools:
 
 ```bash
-# Enable emulator mode
-export EMULATOR=true
+# Run the full display in emulator mode (optionally with debug logging)
+python3 run.py -e -d
 
-# Run with specific plugin
-python run.py --plugin my-plugin
+# Live single-plugin preview in the browser (port 5001)
+python3 scripts/dev_server.py
 
-# Debug mode
-python run.py --debug
+# Headless render/validation of one plugin
+python3 scripts/check_plugin.py --plugin my-plugin
 ```
 
 ### 3. Performance Tuning
@@ -344,11 +354,10 @@ The emulator can work alongside the web interface:
 
 ```bash
 # Terminal 1: Start emulator
-export EMULATOR=true
-python run.py
+python3 run.py -e
 
-# Terminal 2: Start web interface
-python web_interface/app.py
+# Terminal 2: Start web interface (supported entry point)
+python3 web_interface/start.py
 ```
 
 Access the web interface at `http://localhost:5000` while the emulator runs.
@@ -365,13 +374,14 @@ Access the web interface at `http://localhost:5000` while the emulator runs.
 ### 2. Plugin Testing
 
 ```bash
-# Test specific plugin
-export EMULATOR=true
-python run.py --plugin clock-simple
+# Test a specific plugin (headless check)
+python3 scripts/check_plugin.py --plugin clock-simple
 
-# Test all plugins
-export EMULATOR=true
-python run.py --test-plugins
+# Preview a single plugin live in the browser (port 5001)
+python3 scripts/dev_server.py
+
+# Test the full rotation in the emulator
+python3 run.py -e
 ```
 
 ### 3. Configuration Management
@@ -385,9 +395,8 @@ python run.py --test-plugins
 ### Basic Clock Display
 
 ```bash
-# Start emulator with clock
-export EMULATOR=true
-python run.py
+# Start emulator with clock enabled in config.json
+python3 run.py -e
 ```
 
 ### Sports Scores
@@ -395,16 +404,16 @@ python run.py
 ```bash
 # Configure for sports display
 # Edit config/config.json to enable sports plugins
-export EMULATOR=true
-python run.py
+python3 run.py -e
 ```
 
 ### Custom Text Display
 
 ```bash
-# Use text display plugin
-export EMULATOR=true
-python run.py --plugin text-display --text "Hello World"
+# Preview the text display plugin on its own
+python3 scripts/check_plugin.py --plugin text-display
+# or use the live dev preview server
+python3 scripts/dev_server.py
 ```
 
 ## Support

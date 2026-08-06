@@ -33,7 +33,7 @@ crashing) simply restores the built-in look.
 ## The render funnel
 
 Every sports scoreboard (baseball, football, basketball, hockey — anything
-built on `src/base_classes/sports.py`) renders through exactly one seam:
+built on the `src/base_classes/sports/` package, `core.py`) renders through exactly one seam:
 `SportsCore._render_game(game, force_clear)`.
 
 1. The mode class's `display()` (live, `SportsUpcoming`, `SportsRecent`)

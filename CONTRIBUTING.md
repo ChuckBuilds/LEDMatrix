@@ -40,7 +40,7 @@ improvements, and code changes.
 ## Running the tests
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements.txt -r requirements-test.txt
 pytest
 ```
 
@@ -57,9 +57,12 @@ integration tests.
    `docs/<short-description>`.
 3. **Keep PRs focused.** One conceptual change per PR. If you find
    adjacent bugs while working, fix them in a separate PR.
-4. **Follow the existing code style.** Python code uses standard
-   `black`/`ruff` conventions; HTML/JS in `web_interface/` follows the
-   patterns already in `templates/v3/` and `static/v3/`.
+4. **Follow the existing code style.** The pre-commit hooks run
+   `flake8` (E9, F63, F7, F82 plus bugbear `B` checks), `mypy` on
+   `src/`, `bandit`, and `gitleaks` — install them with
+   `pre-commit install` so they run on every commit; HTML/JS in
+   `web_interface/` follows the patterns already in `templates/v3/`
+   and `static/v3/`.
 5. **Update documentation** alongside code changes. If you add a
    config key, document it in the relevant `*.md` file (or, for
    plugins, in `config_schema.json` so the form is auto-generated).

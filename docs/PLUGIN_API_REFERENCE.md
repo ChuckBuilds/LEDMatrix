@@ -201,8 +201,9 @@ the mode selector for this plugin.
 
 #### `get_vegas_segment_width() -> Optional[int]`
 
-For `FIXED_SEGMENT` plugins, the width in pixels of the segment they
-occupy in the scroll. `None` lets the controller pick a default.
+For `FIXED_SEGMENT` plugins, the number of *panels* the segment
+occupies in the scroll (pixel width = panels × `single_panel_width`,
+from `display.hardware.cols`). `None` uses the default of 1 panel.
 
 > The full source for `BasePlugin` lives in
 > `src/plugin_system/base_plugin.py`. If a method here disagrees with the

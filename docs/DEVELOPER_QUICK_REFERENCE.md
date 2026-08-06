@@ -190,7 +190,8 @@ def display(self, force_clear=False):
 
 ```
 LEDMatrix/
-├── plugins/              # Installed plugins
+├── plugin-repos/         # Installed plugins (default; plugins/ is only
+│                         #   for dev symlinks via scripts/dev/dev_plugin_setup.sh)
 ├── config/
 │   ├── config.json      # Main configuration
 │   └── config_secrets.json  # API keys and secrets

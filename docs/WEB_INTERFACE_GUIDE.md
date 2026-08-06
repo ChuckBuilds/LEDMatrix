@@ -39,12 +39,18 @@ present:
 - **WiFi** — Network selection and AP-mode setup
 - **Schedule** — Power and dim schedules
 - **Display** — Matrix hardware configuration (rows, cols, hardware
-  mapping, GPIO slowdown, brightness, PWM)
+  mapping, GPIO slowdown, brightness, PWM) and Vegas Scroll Mode
+  settings
+- **Rotation** — drag-and-drop **Rotation Order** list and per-plugin
+  **Screen Durations**
 - **Config Editor** — Raw `config.json` editor with validation
+- **Backup & Restore** — back up and restore your configuration
 - **Fonts** — Upload and manage fonts
 - **Logs** — Real-time log streaming
 - **Cache** — Cached data inspection and cleanup
 - **Operation History** — Recent service operations
+- **Tools** — system diagnostics, git & updates, Python dependencies,
+  maintenance, power supply, network radio, services, and plugin health
 
 A second nav row holds plugin tabs:
 
@@ -111,6 +117,12 @@ Configure your LED matrix hardware:
 - Dynamic Duration — global cap for plugins that extend their display
   time based on content
 
+**Vegas Scroll Mode:** the Display tab also has a full Vegas Scroll
+Mode section — enable toggle, scroll speed, separator width, dynamic
+duration, and related settings — so you can configure Vegas mode
+entirely from the web UI without hand-editing JSON. See
+[ADVANCED_FEATURES.md](ADVANCED_FEATURES.md) for what the options do.
+
 Changes require **Restart Display Service** from the Overview tab.
 
 ### Plugin Manager Tab
@@ -159,9 +171,10 @@ Manage fonts for your display:
 - See font previews
 - Check font sizes and styles
 
-**Plugin Font Overrides:**
-- Set custom fonts for specific plugins
-- Override default font choices
+**Font Overrides:**
+- Overrides are set per display *element* (e.g. a specific score or
+  clock text element), not per plugin
+- Override default font choices for individual elements
 - Preview font changes
 
 **Delete Fonts:**
@@ -183,9 +196,11 @@ View real-time system logs:
 - Filter by plugin or component
 
 **Actions:**
+- **Refresh**: Reload the log view
 - **Clear**: Clear the current view
 - **Download**: Download logs for offline analysis
-- **Pause**: Pause auto-scrolling
+- **Auto-scroll** checkbox: toggle automatic scrolling to the latest
+  entries
 
 ---
 
@@ -248,7 +263,8 @@ The web interface uses Server-Sent Events (SSE) for real-time updates:
 **Performance:**
 - Minimal bandwidth usage
 - Server-side rendering for fast load times
-- Progressive enhancement - works without JavaScript
+- The UI is built on Alpine.js and HTMX, so JavaScript must be enabled
+  in the browser
 
 ---
 
@@ -267,17 +283,6 @@ The interface is fully responsive and works on mobile devices:
 
 ---
 
-## Keyboard Shortcuts
-
-Use keyboard shortcuts for faster navigation:
-
-- **Tab**: Navigate between form fields
-- **Enter**: Submit forms
-- **Esc**: Close modals
-- **Ctrl+F**: Search in logs
-
----
-
 ## API Access
 
 The web interface is built on a REST API that you can access programmatically:
@@ -288,7 +293,7 @@ http://your-pi-ip:5000/api/v3
 ```
 
 The API blueprint mounts at `/api/v3` (see
-`web_interface/app.py:144`). All endpoints below are relative to that
+`web_interface/app.py:199`). All endpoints below are relative to that
 base.
 
 **Common Endpoints:**

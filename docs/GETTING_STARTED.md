@@ -21,18 +21,30 @@ This guide will help you set up your LEDMatrix display for the first time and ge
 
 ---
 
-## Quick Start (5 Minutes)
+## Quick Start
 
-### 1. First Boot
+### 1. Install LEDMatrix
 
-1. Insert the MicroSD card with LEDMatrix installed
-2. Connect the LED matrix to your Raspberry Pi
-3. Plug in the power supply
-4. Wait for the Pi to boot (about 60 seconds)
+There is no prebuilt SD card image — you install LEDMatrix onto stock
+Raspberry Pi OS Lite yourself:
 
-**Expected Behavior:**
+1. Flash Raspberry Pi OS Lite to the MicroSD card (Raspberry Pi Imager)
+2. Connect the LED matrix to your Raspberry Pi, insert the card, and
+   power on
+3. SSH into the Pi and run the one-shot installer:
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/ChuckBuilds/LEDMatrix/main/scripts/install/one-shot-install.sh | bash
+   ```
+   or clone the repo and run `sudo ./first_time_install.sh` — see the
+   [README Installation Steps / Quick Install](../README.md#installation-steps)
+   for full details
+
+**Expected Behavior after install:**
 - LED matrix will light up
-- Display will show default plugins (clock, weather, etc.)
+- A fresh install ships only the bundled `starlark-apps` and
+  `web-ui-info` plugins — clock, weather, sports, etc. must be
+  installed from the Plugin Store (web UI → Plugin Manager) before
+  anything else displays
 - Pi creates WiFi network "LEDMatrix-Setup" if not connected
 
 ### 2. Connect to WiFi
@@ -73,7 +85,7 @@ You should see:
 2. Set your matrix configuration:
    - **Rows**: 32 or 64 (match your hardware)
    - **Columns**: commonly 64 or 96; the web UI accepts any integer
-     in the 16–128 range, but 64 and 96 are the values the bundled
+     in the 1–128 range, but 64 and 96 are the values the bundled
      panel hardware ships with
    - **Chain Length**: Number of panels chained horizontally
    - **Hardware Mapping**: usually `adafruit-hat-pwm` (with the PWM jumper
@@ -115,10 +127,15 @@ You can also install community plugins straight from a GitHub URL using the
 
 1. Each installed plugin gets its own tab in the second navigation row
 2. Open that plugin's tab to edit its settings (favorite teams, API keys,
-   update intervals, display duration, etc.)
+   update intervals, etc.)
 3. Click **Save**
 4. Restart the display service from **Overview** so the new settings take
    effect
+
+**Note:** how long each plugin stays on screen is not set in the
+plugin's own tab — use the **Rotation** tab's **Screen Durations**
+section instead (saved to `display.display_durations` in
+`config.json`).
 
 **Example: Weather Plugin**
 - Set your location (city, state, country)
@@ -208,12 +225,14 @@ The fastest way to verify a plugin works without waiting for the rotation:
 ### Customize Your Display
 
 **Adjust display durations:**
-- Each plugin's tab has a **Display Duration (seconds)** field — set how
-  long that plugin stays on screen each rotation.
+- Open the **Rotation** tab and use the **Screen Durations** section to
+  set how long each plugin stays on screen per rotation (saved to
+  `display.display_durations`).
 
 **Organize plugin order:**
-- Use the **Plugin Manager** tab to enable/disable plugins. The display
-  cycles through enabled plugins in the order they appear.
+- The **Rotation** tab also has a drag-and-drop **Rotation Order** list
+  (saved to `display.plugin_rotation_order`). Enable/disable plugins
+  from the **Plugin Manager** tab.
 
 **Add more plugins:**
 - Check the **Plugin Store** section of **Plugin Manager** for new plugins.
@@ -280,9 +299,13 @@ sudo journalctl -u ledmatrix-web -f
 │   ├── config_secrets.json   # API keys and secrets
 │   └── wifi_config.json      # WiFi settings
 ├── plugin-repos/             # Installed plugins (default location)
-├── cache/                    # Cached data
 └── web_interface/            # Web interface files
 ```
+
+> Cached data does not live in the project directory — the cache manager
+> uses the first writable location among `/var/cache/ledmatrix`,
+> `~/.ledmatrix_cache`, `/opt/ledmatrix/cache`, and
+> `$TMPDIR/ledmatrix_cache`.
 
 > The plugin install location is configurable via
 > `plugin_system.plugins_directory` in `config.json`. The default is
@@ -303,11 +326,14 @@ System tabs:
 - WiFi              Network selection and AP-mode setup
 - Schedule          Power and dim schedules
 - Display           Matrix hardware configuration
+- Rotation          Rotation order (drag-and-drop) and screen durations
 - Config Editor     Raw config.json editor
+- Backup & Restore  Config backup and restore
 - Fonts             Upload and manage fonts
 - Logs              Real-time log viewing
 - Cache             Cached data inspection and cleanup
 - Operation History Recent service operations
+- Tools             System diagnostics, updates, dependencies, maintenance
 
 Plugin tabs (second row):
 - Plugin Manager    Browse the Plugin Store, install/enable plugins
