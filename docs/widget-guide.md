@@ -206,6 +206,45 @@ To use an existing widget in your plugin's `config_schema.json`, simply add the 
 
 The widget will be automatically rendered when the plugin configuration form is loaded.
 
+## Labelling Enum Options (`x-options.labels`)
+
+A plain `enum` renders as a dropdown whose option text is the value with
+underscores replaced and title case applied — `day_first` becomes "Day First".
+That is fine for values that read as their own label, and wrong for values that
+do not: `vs` becomes "Vs", and `abbrev` says nothing about the `Sep 19` it
+actually produces.
+
+Supply `x-options.labels` to set the visible text. This is the same convention
+the `checkbox-group` widget uses:
+
+```json
+{
+  "date_format": {
+    "type": "string",
+    "enum": ["abbrev", "numeric", "day_first"],
+    "default": "abbrev",
+    "x-options": {
+      "labels": {
+        "abbrev": "Sep 19",
+        "numeric": "9/19",
+        "day_first": "19 Sep"
+      }
+    }
+  }
+}
+```
+
+Labels are **display only** — the stored value is still the enum value, so
+adding them never changes a saved config. The map may be partial: any value
+without a label keeps the humanised fallback. Older cores that predate this
+support ignore `x-options` and render the fallback for every option, so a
+plugin can ship labels without requiring a core upgrade.
+
+Array-table columns (`x-widget: array-table`) accept the same
+`x-options.labels` on a column definition, but their fallback is the **raw
+value** rather than the humanised one, because those columns hold values such
+as ticker symbols where `aapl` → "Aapl" would be wrong.
+
 ## Marking Fields as Advanced (`x-advanced`)
 
 Add `"x-advanced": true` to any top-level, non-object property to move it out

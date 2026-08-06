@@ -85,5 +85,6 @@ jobs:
             test/test_plugin_update_reservation.py \
             test/test_template_targets.py \
             test/test_widget_scripts.py \
+            test/test_enum_option_labels.py \
             test/test_doc_links.py \
             test/web_interface/test_cache.py
