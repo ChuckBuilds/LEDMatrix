@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import shutil
+import stat
 import socket
 import tempfile
 import zipfile
@@ -491,8 +492,61 @@ def _extract_zip_safe(zip_path: Path, dest_dir: Path) -> None:
 
 
 def _copy_file(src: Path, dst: Path) -> None:
+    """Replace ``dst`` with ``src``, atomically, without needing to own ``dst``.
+
+    ``shutil.copy2`` opens the destination for writing, so it needs write
+    permission on the *existing file*. Several config files are installed
+    root-owned and group-readable while the web interface — which is what runs
+    a restore — deliberately runs as a non-root user. Restoring those failed
+    with EACCES even though the account could create files in the same
+    directory perfectly well.
+
+    Writing a temporary file alongside and renaming over the target needs only
+    directory permission, which the web user has. It is also atomic: a crash
+    mid-restore can no longer leave a half-written config behind.
+
+    The destination's existing mode is preserved when there is one, so
+    restoring secrets does not silently widen them to the umask default.
+    """
     dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dst)
+
+    existing_mode: Optional[int] = None
+    existing_owner: Optional[Tuple[int, int]] = None
+    if dst.exists():
+        try:
+            info = dst.stat()
+            existing_mode = stat.S_IMODE(info.st_mode)
+            existing_owner = (info.st_uid, info.st_gid)
+        except OSError:
+            existing_mode = None
+            existing_owner = None
+
+    fd, tmp_name = tempfile.mkstemp(dir=str(dst.parent), prefix=f".{dst.name}.", suffix=".tmp")
+    os.close(fd)
+    tmp_path = Path(tmp_name)
+    try:
+        shutil.copyfile(src, tmp_path)
+        if existing_mode is not None:
+            os.chmod(tmp_path, existing_mode)
+        else:
+            shutil.copymode(src, tmp_path)
+        if existing_owner is not None:
+            # Replacing a file creates a new inode owned by whoever is running,
+            # which would silently move a root-owned config to the web user.
+            # Carry the previous owner across when the OS permits it — only
+            # root can hand a file to another user, so this is best-effort and
+            # a plain restore as the web user simply keeps its own ownership.
+            try:
+                os.chown(tmp_path, existing_owner[0], existing_owner[1])
+            except (OSError, PermissionError):
+                pass
+        os.replace(tmp_path, dst)
+    except BaseException:
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
+        raise
 
 
 def restore_backup(

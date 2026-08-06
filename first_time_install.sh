@@ -1480,34 +1480,38 @@ if [ -f "$PROJECT_ROOT_DIR/config/config.json" ]; then
 fi
 
 # Set proper permissions for secrets file (restrictive: owner rw, group r)
-# If service runs as root, set ownership to root so it can read as owner
-# Otherwise, use ACTUAL_USER and rely on group membership
+# Owned by whoever WRITES the file, which is the web interface.
+#
+# This used to read the User= of ledmatrix.service — the display service —
+# and, finding root, hand the file to root:ledmatrix 640. But the display
+# service only ever reads secrets, and root can read any file regardless of
+# mode. The account that *writes* them is the web interface: it saves config
+# edits and performs backup restores, and it deliberately does not run as root
+# (a web server should not). So a root-owned, group-read-only file left the web
+# UI unable to write its own secrets, and restoring a backup failed with
+# "Permission denied: config_secrets.json" while every other file in the same
+# backup restored fine.
+#
+# Owning by the writer keeps the tighter 640 rather than loosening to
+# group-writable, and root still reads it as superuser.
 if [ -f "$PROJECT_ROOT_DIR/config/config_secrets.json" ]; then
-    # Check if service runs as root (from service file or template)
-    SERVICE_USER="root"
-    if [ -f "/etc/systemd/system/ledmatrix.service" ]; then
-        SERVICE_USER=$(grep "^User=" /etc/systemd/system/ledmatrix.service | cut -d'=' -f2 || echo "root")
-    elif [ -f "$PROJECT_ROOT_DIR/systemd/ledmatrix.service" ]; then
-        SERVICE_USER=$(grep "^User=" "$PROJECT_ROOT_DIR/systemd/ledmatrix.service" | cut -d'=' -f2 || echo "root")
+    # The web service is the writer; fall back to the display service, then to
+    # the installing user, so an unusual layout still lands somewhere sensible.
+    SECRETS_OWNER=""
+    for unit in "/etc/systemd/system/ledmatrix-web.service" \
+                "$PROJECT_ROOT_DIR/systemd/ledmatrix-web.service"; do
+        if [ -f "$unit" ]; then
+            SECRETS_OWNER=$(grep -m1 "^User=" "$unit" | cut -d'=' -f2)
+            [ -n "$SECRETS_OWNER" ] && break
+        fi
+    done
+    if [ -z "$SECRETS_OWNER" ]; then
+        SECRETS_OWNER="$ACTUAL_USER"
     fi
-    
-    if [ "$SERVICE_USER" = "root" ]; then
-        # Service runs as root - set ownership to root so it can read as owner
-        chown "root:$LEDMATRIX_GROUP" "$PROJECT_ROOT_DIR/config/config_secrets.json" || true
-        echo "✓ Secrets file permissions set (root:$LEDMATRIX_GROUP for root service)"
-    else
-        # Service runs as regular user - use ACTUAL_USER and rely on group membership
-        chown "$ACTUAL_USER:$LEDMATRIX_GROUP" "$PROJECT_ROOT_DIR/config/config_secrets.json" || true
-        echo "✓ Secrets file permissions set ($ACTUAL_USER:$LEDMATRIX_GROUP)"
-    fi
-    # Group-writable, not just group-readable. The web interface performs
-    # backup restores, and it does not necessarily run as the file's owner: on
-    # a fresh install the secrets file ended up owned by root while the web
-    # service ran as the login user, so restoring a backup failed with
-    # "Permission denied: config_secrets.json" while every other file in the
-    # same backup restored fine. Read-only for the group makes secrets the one
-    # thing a restore cannot put back.
-    chmod 660 "$PROJECT_ROOT_DIR/config/config_secrets.json"
+    # A root-owned file is only correct when the writer really is root.
+    chown "$SECRETS_OWNER:$LEDMATRIX_GROUP" "$PROJECT_ROOT_DIR/config/config_secrets.json" || true
+    echo "✓ Secrets file owned by the web service user ($SECRETS_OWNER:$LEDMATRIX_GROUP, mode 640)"
+    chmod 640 "$PROJECT_ROOT_DIR/config/config_secrets.json"
 fi
 
 # Set proper permissions for YTM auth file (readable by all users including root service)
