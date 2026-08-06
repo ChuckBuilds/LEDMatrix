@@ -838,6 +838,10 @@ def save_main_config():
                 except (ValueError, TypeError):
                     return jsonify({'status': 'error', 'message': f"Invalid multiplexing value '{data['multiplexing']}'. Must be an integer from 0 to 22."}), 400
 
+            # Validate pixel_mapper_config (free-form mapper string, e.g. "U-mapper;Rotate:90")
+            if 'pixel_mapper_config' in data and not isinstance(data['pixel_mapper_config'], str):
+                return jsonify({'status': 'error', 'message': 'pixel_mapper_config must be a string (e.g. "U-mapper;Rotate:90" or empty)'}), 400
+
             # Validate row_address_type
             if 'row_address_type' in data:
                 try:

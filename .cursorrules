@@ -227,7 +227,7 @@ Common optional fields:
 
 ## Plugin Loading Process
 
-1. **Discovery**: PluginManager scans `plugins/` directory for directories containing `manifest.json`
+1. **Discovery**: PluginManager scans the configured `plugin_system.plugins_directory` (default `plugin-repos/`) for directories containing `manifest.json`
 2. **Validation**: Validates manifest structure and required fields
 3. **Loading**: Imports plugin module and instantiates plugin class
 4. **Configuration**: Loads plugin config from `config/config.json`
@@ -301,7 +301,7 @@ Common optional fields:
 ## File Organization
 
 ```
-plugins/
+plugin-repos/            # default install dir (plugins/ when using dev symlinks)
   <plugin-id>/
     manifest.json          # Plugin metadata
     manager.py             # Main plugin class

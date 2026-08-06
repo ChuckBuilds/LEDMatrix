@@ -333,7 +333,7 @@ python3 scripts/setup_plugin_repos.py
 python3 scripts/audit_plugins.py
 
 # Validate a single plugin
-python3 scripts/check_plugin.py <plugin-id>
+python3 scripts/check_plugin.py --plugin <plugin-id>
 ```
 
 Registry regeneration (`update_registry.py`) lives in the

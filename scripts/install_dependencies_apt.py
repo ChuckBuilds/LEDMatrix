@@ -44,7 +44,7 @@ def install_via_apt(package_name: str) -> Tuple[bool, str]:
     apt_package_map = {
         'flask': 'python3-flask',
         'PIL': 'python3-pil',
-        'freetype': 'python3-freetype',
+        'freetype-py': 'python3-freetype',
         'psutil': 'python3-psutil',
         'werkzeug': 'python3-werkzeug',
         'numpy': 'python3-numpy',
@@ -95,7 +95,9 @@ def install_via_pip(package_name: str) -> Tuple[bool, str]:
 
 
 # Distribution (pip/apt) names whose importable module name differs.
-IMPORT_NAME_MAP = {}
+IMPORT_NAME_MAP = {
+    'freetype-py': 'freetype',
+}
 
 
 def check_package_installed(package_name: str) -> bool:
@@ -139,7 +141,7 @@ def main():
     required_packages = [
         'flask',
         'PIL',
-        'freetype',
+        'freetype-py',
         'psutil',
         'werkzeug',
         'numpy',

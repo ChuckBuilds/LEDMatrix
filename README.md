@@ -54,10 +54,11 @@ LEDMatrix is a plugin platform: the displays below are plugins installed
 from the built-in Plugin Store (web interface → Plugins), where each can be
 individually enabled, ordered, and configured — display durations, teams,
 stocks, weather, timezones, and more. The core repo ships with just two
-bundled plugins (`starlark-apps` and `web-ui-info`); everything else lives
-in the [ledmatrix-plugins](https://github.com/ChuckBuilds/ledmatrix-plugins)
-monorepo and installs with one click. Displays available in the store
-include:
+bundled plugins (`starlark-apps` and `web-ui-info`); the official plugins
+live in the [ledmatrix-plugins](https://github.com/ChuckBuilds/ledmatrix-plugins)
+monorepo and install with one click, and third-party plugins can be
+installed from their own GitHub repositories. Displays available in the
+store include:
 
 ### Time and Weather
 - Real-time clock display (2x 64x32 Displays 4mm Pixel Pitch)
@@ -428,7 +429,7 @@ I recommend using the web-ui "Quick Actions" to control the Display.
 ## Plugins
 
 <details>
-LEDMatrix uses a plugin-based architecture where all display functionality (except the core calendar) is implemented as plugins. All managers that were previously built into the core system are now available as plugins through the Plugin Store.
+LEDMatrix uses a plugin-based architecture where all display functionality is implemented as plugins. All managers that were previously built into the core system are now available as plugins through the Plugin Store.
 
 ### Plugin Store
 See the [Plugin Store documentation](https://github.com/ChuckBuilds/ledmatrix-plugins) for detailed installation instructions.

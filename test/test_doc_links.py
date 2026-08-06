@@ -6,20 +6,23 @@ links inside fenced code blocks.
 """
 import re
 from pathlib import Path
+from typing import Iterator
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 LINK_RE = re.compile(r'\[[^\]]*\]\(([^)\s]+)\)')
 FENCE_RE = re.compile(r'^(```|~~~)')
 
 
-def _md_files():
+def _md_files() -> Iterator[Path]:
+    """Yield active markdown files (repo root + docs/, excluding docs/archive/)."""
     yield from PROJECT_ROOT.glob('*.md')
     for path in PROJECT_ROOT.glob('docs/**/*.md'):
         if 'archive' not in path.parts:
             yield path
 
 
-def test_relative_markdown_links_resolve():
+def test_relative_markdown_links_resolve() -> None:
+    """Every relative markdown link outside code fences must resolve on disk."""
     broken = []
     for md in _md_files():
         in_fence = False

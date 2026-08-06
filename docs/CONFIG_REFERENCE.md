@@ -55,7 +55,7 @@ in `DisplayManager` (`src/display_manager.py`, ~lines 270–295).
 | `chain_length` | int, `2` |
 | `parallel` | int, `1` |
 | `brightness` | int, `90` |
-| `hardware_mapping` | string, `"adafruit-hat"` |
+| `hardware_mapping` | string, `"adafruit-hat"` (code default `"adafruit-hat-pwm"`) |
 | `scan_mode` | int, `0` |
 | `pwm_bits` | int, `9` (code default 10) |
 | `pwm_dither_bits` | int, `1` |
