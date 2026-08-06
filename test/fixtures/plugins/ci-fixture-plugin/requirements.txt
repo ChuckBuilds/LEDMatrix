@@ -1,0 +1,1 @@
+# No dependencies — the fixture must load in any environment.

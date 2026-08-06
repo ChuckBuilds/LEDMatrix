@@ -13,6 +13,12 @@ jobs:
   plugin-safety:
     name: Plugin safety harness + unit tests
     runs-on: ubuntu-latest
+    env:
+      # The bundled fixture plugin gives the harness at least one real plugin
+      # to render, and REQUIRE_PLUGINS turns "discovered zero plugins" into a
+      # hard failure instead of a silent all-skip green run.
+      LEDMATRIX_PLUGINS_DIR: test/fixtures/plugins
+      LEDMATRIX_REQUIRE_PLUGINS: "1"
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -29,12 +35,9 @@ jobs:
           pip install -r requirements.txt -r requirements-test.txt
           pip install RGBMatrixEmulator
 
-      - name: Run harness + visual rendering tests
+      - name: Run plugin safety harness
         run: |
-          pytest --no-cov \
-            test/plugins/test_harness.py \
-            test/plugins/test_visual_rendering.py \
-            test/plugins/test_plugin_matrix.py
+          pytest --no-cov test/plugins/
 
   unit-tests:
     name: Core unit tests
@@ -55,35 +58,15 @@ jobs:
           pip install -r requirements.txt -r requirements-test.txt
           pip install RGBMatrixEmulator
 
-      # Safety net for the shared sports/scroll/style infrastructure. These
-      # suites existed but were not enrolled in CI, so a refactor of
-      # src/base_classes or src/common could regress them silently. Enrolled
-      # explicitly (not `pytest test/`) so known hardware-only suites don't
-      # break CI; grow this list as more suites are made headless.
+      # Run the ENTIRE test tree (except test/plugins, which the
+      # plugin-safety job owns). New test files are enrolled automatically;
+      # excluding anything requires a visible, commented --ignore here.
+      # Coverage is measured and enforced only in this step — pytest.ini
+      # deliberately carries no coverage flags so local runs stay fast.
       - name: Run core unit suites
         run: |
-          pytest --no-cov \
-            test/test_skin_system.py \
-            test/test_font_manager.py \
-            test/test_data_sources.py \
-            test/test_api_extractors.py \
-            test/test_scroll_helper.py \
-            test/test_scroll_helper_continuous.py \
-            test/test_adaptive_layout.py \
-            test/test_loader_compat_warning.py \
-            test/test_sports_base_characterization.py \
-            test/test_element_style.py \
-            test/test_sports_core_promotions.py \
-            test/test_sports_modes_promotions.py \
-            test/test_sports_capabilities.py \
-            test/test_sports_scroll.py \
-            test/test_version_consistency.py \
-            test/test_plugin_compatibility_gate.py \
-            test/test_install_preserves_existing.py \
-            test/test_core_owned_config_keys.py \
-            test/test_async_plugin_updates.py \
-            test/test_plugin_update_reservation.py \
-            test/test_template_targets.py \
-            test/test_widget_scripts.py \
-            test/test_doc_links.py \
-            test/web_interface/test_cache.py
+          pytest -m "not hardware" test/ \
+            --ignore=test/plugins \
+            --cov=src --cov=web_interface \
+            --cov-report=term \
+            --cov-fail-under=45
