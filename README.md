@@ -365,6 +365,12 @@ sudo bash ./first_time_install.sh
 
 This single script installs services, dependencies, configures permissions and sudoers, and validates the setup.
 
+It finishes by asking whether to reboot. If you run it non-interactively — piped, over a script, or with `-y` — there is no one to ask, so **it reboots immediately without prompting**. Pass `--no-reboot-prompt` to install without rebooting:
+
+```bash
+sudo bash ./first_time_install.sh -y --no-reboot-prompt
+```
+
 </details>
 
 </details>

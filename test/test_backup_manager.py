@@ -41,6 +41,13 @@ def _make_project(root: Path) -> Path:
         json.dumps({"ap_mode": {"ssid": "LEDMatrix"}}),
         encoding="utf-8",
     )
+    # Device-local auth that lives in config/ like the three above. It was
+    # omitted from backups, so a restore silently signed the user out of
+    # YouTube Music and they had to re-authenticate by hand.
+    (root / "config" / "ytm_auth.json").write_text(
+        json.dumps({"token": "YTM-TOKEN"}),
+        encoding="utf-8",
+    )
 
     fonts = root / "assets" / "fonts"
     fonts.mkdir(parents=True)
@@ -239,6 +246,10 @@ def test_restore_roundtrip(project: Path, empty_project: Path, tmp_path: Path) -
 
     restored_secrets = json.loads((empty_project / "config" / "config_secrets.json").read_text())
     assert restored_secrets["ledmatrix-weather"]["api_key"] == "SECRET"
+
+    assert "ytm_auth" in result.restored
+    restored_ytm = json.loads((empty_project / "config" / "ytm_auth.json").read_text())
+    assert restored_ytm["token"] == "YTM-TOKEN"
 
     # User font restored, bundled font untouched.
     assert (empty_project / "assets" / "fonts" / "my-custom-font.ttf").read_bytes() == b"\x00\x01USER"

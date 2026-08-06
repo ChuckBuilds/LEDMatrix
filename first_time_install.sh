@@ -1494,13 +1494,20 @@ if [ -f "$PROJECT_ROOT_DIR/config/config_secrets.json" ]; then
     if [ "$SERVICE_USER" = "root" ]; then
         # Service runs as root - set ownership to root so it can read as owner
         chown "root:$LEDMATRIX_GROUP" "$PROJECT_ROOT_DIR/config/config_secrets.json" || true
-        echo "✓ Secrets file permissions set (root:ledmatrix for root service)"
+        echo "✓ Secrets file permissions set (root:$LEDMATRIX_GROUP for root service)"
     else
         # Service runs as regular user - use ACTUAL_USER and rely on group membership
         chown "$ACTUAL_USER:$LEDMATRIX_GROUP" "$PROJECT_ROOT_DIR/config/config_secrets.json" || true
-        echo "✓ Secrets file permissions set ($ACTUAL_USER:ledmatrix)"
+        echo "✓ Secrets file permissions set ($ACTUAL_USER:$LEDMATRIX_GROUP)"
     fi
-    chmod 640 "$PROJECT_ROOT_DIR/config/config_secrets.json"
+    # Group-writable, not just group-readable. The web interface performs
+    # backup restores, and it does not necessarily run as the file's owner: on
+    # a fresh install the secrets file ended up owned by root while the web
+    # service ran as the login user, so restoring a backup failed with
+    # "Permission denied: config_secrets.json" while every other file in the
+    # same backup restored fine. Read-only for the group makes secrets the one
+    # thing a restore cannot put back.
+    chmod 660 "$PROJECT_ROOT_DIR/config/config_secrets.json"
 fi
 
 # Set proper permissions for YTM auth file (readable by all users including root service)

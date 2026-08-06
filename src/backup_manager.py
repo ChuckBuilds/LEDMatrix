@@ -82,6 +82,10 @@ BUNDLED_FONTS: frozenset[str] = frozenset({
 _CONFIG_REL = Path("config/config.json")
 _SECRETS_REL = Path("config/config_secrets.json")
 _WIFI_REL = Path("config/wifi_config.json")
+# Sits in config/ next to the three above and is pure user state — a
+# YouTube Music session that has to be re-authenticated by hand if lost.
+# It was omitted from backups, so a restore silently signed the user out.
+_YTM_REL = Path("config/ytm_auth.json")
 _FONTS_REL = Path("assets/fonts")
 _PLUGIN_UPLOADS_REL = Path("assets/plugins")
 _STATE_REL = Path("data/plugin_state.json")
@@ -303,6 +307,9 @@ def create_backup(
             if (project_root / _WIFI_REL).exists():
                 zf.write(project_root / _WIFI_REL, _WIFI_REL.as_posix())
                 contents.append("wifi")
+            if (project_root / _YTM_REL).exists():
+                zf.write(project_root / _YTM_REL, _YTM_REL.as_posix())
+                contents.append("ytm_auth")
 
             # User-uploaded fonts.
             user_fonts = iter_user_fonts(project_root)
@@ -348,6 +355,7 @@ def preview_backup_contents(project_root: Path) -> Dict[str, Any]:
         "has_config": (project_root / _CONFIG_REL).exists(),
         "has_secrets": (project_root / _SECRETS_REL).exists(),
         "has_wifi": (project_root / _WIFI_REL).exists(),
+        "has_ytm_auth": (project_root / _YTM_REL).exists(),
         "user_fonts": [p.name for p in iter_user_fonts(project_root)],
         "plugin_uploads": len(iter_plugin_uploads(project_root)),
         "plugins": list_installed_plugins(project_root),
@@ -429,6 +437,8 @@ def validate_backup(zip_path: Path) -> Tuple[bool, str, Dict[str, Any]]:
                 detected.append("secrets")
             if _WIFI_REL.as_posix() in names:
                 detected.append("wifi")
+            if _YTM_REL.as_posix() in names:
+                detected.append("ytm_auth")
             if any(n.startswith(_FONTS_REL.as_posix() + "/") for n in names):
                 detected.append("fonts")
             if any(
@@ -545,6 +555,18 @@ def restore_backup(
                 result.errors.append(f"Failed to restore wifi_config.json: {e}")
         elif (tmp_dir / _WIFI_REL).exists():
             result.skipped.append("wifi")
+
+        # YouTube Music session. Follows restore_wifi rather than getting its
+        # own flag: it is device-local auth in the same sense, and a separate
+        # toggle for one file would be noise in the restore dialog.
+        if options.restore_wifi and (tmp_dir / _YTM_REL).exists():
+            try:
+                _copy_file(tmp_dir / _YTM_REL, project_root / _YTM_REL)
+                result.restored.append("ytm_auth")
+            except OSError as e:
+                result.errors.append(f"Failed to restore ytm_auth.json: {e}")
+        elif (tmp_dir / _YTM_REL).exists():
+            result.skipped.append("ytm_auth")
 
         # User fonts — skip anything that collides with a bundled font.
         tmp_fonts = tmp_dir / _FONTS_REL
