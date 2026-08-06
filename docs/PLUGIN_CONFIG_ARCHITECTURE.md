@@ -1,5 +1,11 @@
 # Plugin Configuration Tabs - Architecture
 
+> This page covers internals (how the config system works under the
+> hood). For designing a plugin's config schema, the canonical guide is
+> [PLUGIN_CONFIGURATION_GUIDE.md](PLUGIN_CONFIGURATION_GUIDE.md); for
+> the user-facing tabs feature, see
+> [PLUGIN_CONFIGURATION_TABS.md](PLUGIN_CONFIGURATION_TABS.md).
+
 ## System Architecture
 
 ### Component Overview
