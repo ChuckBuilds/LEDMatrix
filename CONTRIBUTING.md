@@ -59,7 +59,8 @@ integration tests.
    adjacent bugs while working, fix them in a separate PR.
 4. **Follow the existing code style.** The pre-commit hooks run
    `flake8` (E9, F63, F7, F82 plus bugbear `B` checks), `mypy` on
-   `src/`, `bandit`, and `gitleaks` — install them with
+   `src/`, `bandit`, and `gitleaks` — install the CLI with
+   `python -m pip install pre-commit`, then run
    `pre-commit install` so they run on every commit; HTML/JS in
    `web_interface/` follows the patterns already in `templates/v3/`
    and `static/v3/`.

@@ -662,7 +662,7 @@ keys helps troubleshoot stuck states.
 **Auto-Cleared:** Never (continuously updated)
 
 **4. display_on_demand_processed_id** (TTL: 1 hour)
-```
+```text
 "uuid-string-of-last-processed-request"
 ```
 **Purpose:** Prevents duplicate request processing

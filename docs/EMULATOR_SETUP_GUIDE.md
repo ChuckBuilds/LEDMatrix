@@ -283,8 +283,7 @@ Enable debug logging:
 ```json
 {
     "log_level": "debug",
-    "suppress_font_warnings": false,
-    "suppress_adapter_load_errors": false
+    "suppress_font_warnings": false
 }
 ```
 

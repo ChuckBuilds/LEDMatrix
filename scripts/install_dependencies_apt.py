@@ -99,9 +99,32 @@ IMPORT_NAME_MAP = {
     'freetype-py': 'freetype',
 }
 
+# Minimum versions that must be met for an already-installed package to count
+# as satisfied. Debian Bookworm's python3-freetype is 2.3.0, below the
+# freetype-py>=2.5.1 pin in requirements.txt, so an import-only check would
+# wrongly skip the pip upgrade.
+MIN_VERSIONS = {
+    'freetype-py': (2, 5, 1),
+}
+
+
+def _installed_version_tuple(dist_name: str) -> tuple:
+    """Return the installed distribution version as an int tuple, or () if unknown."""
+    try:
+        from importlib.metadata import version
+        parts = []
+        for part in version(dist_name).split('.'):
+            digits = ''.join(ch for ch in part if ch.isdigit())
+            if not digits:
+                break
+            parts.append(int(digits))
+        return tuple(parts)
+    except Exception:
+        return ()
+
 
 def check_package_installed(package_name: str) -> bool:
-    """Check if a package is already installed."""
+    """Check if a package is already installed (and meets any minimum version)."""
     import_name = IMPORT_NAME_MAP.get(package_name, package_name)
     # Suppress deprecation warnings when checking if packages are installed
     # (we're just checking, not using them)
@@ -109,9 +132,16 @@ def check_package_installed(package_name: str) -> bool:
         warnings.filterwarnings('ignore', category=DeprecationWarning)
         try:
             __import__(import_name)
-            return True
         except ImportError:
             return False
+    minimum = MIN_VERSIONS.get(package_name)
+    if minimum:
+        installed = _installed_version_tuple(package_name)
+        if not installed or installed < minimum:
+            print(f"{package_name} is installed but below the required "
+                  f"{'.'.join(map(str, minimum))}; will upgrade via pip")
+            return False
+    return True
 
 
 def print_failure_summary(failed_packages: List[str], failure_details: dict) -> None:
@@ -157,8 +187,13 @@ def main():
             print(f"{package} is already installed")
             continue
 
-        # Try apt first, then pip
+        # Try apt first, then pip. An apt install only counts if it also
+        # satisfies any minimum version (Debian's python3-freetype can be
+        # older than the freetype-py pin), otherwise fall through to pip.
         ok, apt_output = install_via_apt(package)
+        if ok and package in MIN_VERSIONS and not check_package_installed(package):
+            ok = False
+            apt_output = f"apt version of {package} is below the required minimum"
         if not ok:
             ok, pip_output = install_via_pip(package)
             if not ok:

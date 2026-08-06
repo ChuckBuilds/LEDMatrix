@@ -1183,18 +1183,26 @@ else
     cd "$PROJECT_ROOT_DIR"
 
     # Try to install dependencies using the smart installer if available
+    WEB_DEPS_OK=true
     if [ -f "$PROJECT_ROOT_DIR/scripts/install_dependencies_apt.py" ]; then
         echo "Using smart dependency installer..."
         # -u: unbuffered stdout/stderr so output is captured in $LOG_FILE in
         # real time and in order relative to this script's own echo statements
-        python3 -u "$PROJECT_ROOT_DIR/scripts/install_dependencies_apt.py"
+        if ! python3 -u "$PROJECT_ROOT_DIR/scripts/install_dependencies_apt.py"; then
+            WEB_DEPS_OK=false
+        fi
     else
         echo "Web dependencies already installed from web_interface/requirements.txt in Step 5"
     fi
 
-    # Create marker file to indicate dependencies are installed
-    touch "$PROJECT_ROOT_DIR/.web_deps_installed"
-    echo "✓ Web interface dependencies installed"
+    # Create the marker only when installation actually succeeded, so a
+    # re-run retries instead of silently skipping missing dependencies.
+    if [ "$WEB_DEPS_OK" = true ]; then
+        touch "$PROJECT_ROOT_DIR/.web_deps_installed"
+        echo "✓ Web interface dependencies installed"
+    else
+        echo "⚠ Web interface dependency install reported errors; not creating .web_deps_installed (will retry on next run)"
+    fi
 fi
 echo ""
 

@@ -306,7 +306,7 @@ sudo journalctl -u ledmatrix-web -f
 > uses the first writable location among `/var/cache/ledmatrix`,
 > `~/.ledmatrix_cache`, `/opt/ledmatrix/cache`, and
 > `$TMPDIR/ledmatrix_cache`.
-
+>
 > The plugin install location is configurable via
 > `plugin_system.plugins_directory` in `config.json`. The default is
 > `plugin-repos/`. Plugin discovery (`PluginManager.discover_plugins()`)
