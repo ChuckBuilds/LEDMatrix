@@ -76,8 +76,8 @@ def install_via_pip(package_name: str) -> Tuple[bool, str]:
     pip RECORD file, so an uninstall attempt fails with "uninstall-no-record-file"
     and aborts the whole install. With --ignore-installed, pip lays the new
     version down in /usr/local where it shadows the apt copy instead of removing
-    it. This matters when a pip dependency (google-api-python-client pulls a
-    newer requests) needs to upgrade an apt-managed package.
+    it. This matters when a pip dependency needs to upgrade an apt-managed
+    package (e.g. a package that pulls a newer requests).
 
     Returns (success, output).
     """
@@ -95,10 +95,7 @@ def install_via_pip(package_name: str) -> Tuple[bool, str]:
 
 
 # Distribution (pip/apt) names whose importable module name differs.
-IMPORT_NAME_MAP = {
-    'python-dateutil': 'dateutil',
-    'websocket-client': 'websocket',
-}
+IMPORT_NAME_MAP = {}
 
 
 def check_package_installed(package_name: str) -> bool:
