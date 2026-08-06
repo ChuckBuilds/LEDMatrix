@@ -59,6 +59,7 @@ Going deeper:
 
 ## Reference
 
+- [CONFIG_REFERENCE.md](CONFIG_REFERENCE.md) — every key in config.json and config_secrets.json
 - [REST_API_REFERENCE.md](REST_API_REFERENCE.md) — all web-interface HTTP endpoints
 - [PLUGIN_API_REFERENCE.md](PLUGIN_API_REFERENCE.md) — Python APIs available to plugins
 - [DEVELOPER_QUICK_REFERENCE.md](DEVELOPER_QUICK_REFERENCE.md) — common dev tasks
