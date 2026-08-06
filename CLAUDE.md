@@ -24,6 +24,16 @@
 - Plugin instantiation args: `plugin_id, config, display_manager, cache_manager, plugin_manager`
 - Config schemas use JSON Schema Draft-7
 - Display dimensions: always read dynamically from `self.display_manager.matrix.width/height`
+- Secrets: namespaced by plugin id in `config/config_secrets.json`, declared
+  via `"x-secret": true` in the plugin's config schema, and deep-merged into
+  the plugin's config dict at load time — plugins read them with plain
+  `config.get(...)`, never a separate accessor
+
+## Dev Workflow
+- Link a plugin for development: `./scripts/dev/dev_plugin_setup.sh link-github <name>` (or `link <name> <path>`); symlinks land in `plugins/` — set `plugin_system.plugins_directory` to `plugins` so discovery picks them up
+- Browser preview without the display loop: `python3 scripts/dev_server.py` → http://localhost:5001
+- Full display in emulator mode: `python3 run.py -e` (or `EMULATOR=true python3 run.py`)
+- Validate one plugin headlessly: `python3 scripts/check_plugin.py --plugin <id>`
 
 ## Plugin Store Architecture
 - Official plugins live in the `ledmatrix-plugins` monorepo (not individual repos)
@@ -46,4 +56,7 @@
 ## Common Pitfalls
 - paho-mqtt 2.x needs `callback_api_version=mqtt.CallbackAPIVersion.VERSION1` for v1 compat
 - BasePlugin uses `get_logger()` from `src.logging_config`, not standard `logging.getLogger()`
+- `DisplayManager` has no `draw_image()` — paste onto the PIL image directly:
+  `self.display_manager.image.paste(img, (x, y))` then `update_display()`
+  (use a mask for transparency: `image.paste(rgba, (x, y), rgba)`)
 - When modifying a plugin in the monorepo, you MUST bump `version` in its `manifest.json` and run `python update_registry.py` — otherwise users won't receive the update

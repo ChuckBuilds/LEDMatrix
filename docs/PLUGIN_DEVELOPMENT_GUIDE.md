@@ -589,11 +589,24 @@ Your plugin must:
 ### Versioning Best Practices
 
 - **Use semantic versioning**: `MAJOR.MINOR.PATCH` (e.g., `1.2.3`)
-- **Automatic version bumping**: Use the pre-push git hook for automatic patch version bumps
-- **Manual versioning**: Only needed for major/minor bumps or special cases
-- **GitHub as source of truth**: Plugin store fetches versions from GitHub releases/tags/manifest
+- **GitHub as source of truth**: the plugin store resolves versions in this
+  order: GitHub Releases → GitHub Tags → manifest from branch → git commit hash
+- **Automatic version bumping**: install the self-contained pre-push hook in
+  your plugin repo and patch versions bump themselves on push (a git tag
+  `v{version}` is created and `manifest.json` staged automatically):
 
-See the [Git Workflow rules](../.cursorrules) for version management details.
+  ```bash
+  # From your plugin repository directory
+  cp /path/to/LEDMatrix/scripts/git-hooks/pre-push-plugin-version .git/hooks/pre-push
+  chmod +x .git/hooks/pre-push
+  ```
+
+  Set `SKIP_TAG=1` in the environment to skip auto-tagging for one push.
+- **Manual versioning**: only needed for major/minor bumps, CI pipelines that
+  bypass hooks, or forks without the hook — use
+  `scripts/bump_plugin_version.py`.
+- **Registry stores no versions**: `plugins.json` holds only metadata (name,
+  description, repo URL).
 
 ### Submitting to Official Registry
 
