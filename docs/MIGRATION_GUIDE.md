@@ -86,7 +86,7 @@ The plugin system has been enhanced but remains backward compatible with existin
 
 If you encounter issues during migration:
 
-1. Check the [README.md](README.md) for current installation and usage instructions
+1. Check the [project root README](../README.md) for current installation and usage instructions
 2. Review script README files:
    - [`scripts/install/README.md`](../scripts/install/README.md) - Installation scripts documentation
    - [`scripts/fix_perms/README.md`](../scripts/fix_perms/README.md) - Permission scripts documentation

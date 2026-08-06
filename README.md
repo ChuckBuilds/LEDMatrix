@@ -50,7 +50,15 @@ I'm trying to be open to constructive criticism and support, as long as it's a r
 
 <details>
 <summary>Core Features</summary>
-The following plugins are available inside of the LEDMatrix project. These modular, rotating Displays that can be individually enabled or disabled per the user's needs with some configuration around display durations, teams, stocks, weather, timezones, and more. Displays include:
+LEDMatrix is a plugin platform: the displays below are plugins installed
+from the built-in Plugin Store (web interface → Plugins), where each can be
+individually enabled, ordered, and configured — display durations, teams,
+stocks, weather, timezones, and more. The core repo ships with just two
+bundled plugins (`starlark-apps` and `web-ui-info`); the official plugins
+live in the [ledmatrix-plugins](https://github.com/ChuckBuilds/ledmatrix-plugins)
+monorepo and install with one click, and third-party plugins can be
+installed from their own GitHub repositories. Displays available in the
+store include:
 
 ### Time and Weather
 - Real-time clock display (2x 64x32 Displays 4mm Pixel Pitch)
@@ -372,6 +380,10 @@ This single script installs services, dependencies, configures permissions and s
 
 ### Initial Setup
 
+For a complete list of every key in `config.json` and
+`config_secrets.json`, see
+[docs/CONFIG_REFERENCE.md](docs/CONFIG_REFERENCE.md).
+
 For most settings I recommend using the web interface:
 Edit the project via the web interface at http://[IP ADDRESS or HOSTNAME]:5000 or http://ledpi:5000 .
 
@@ -417,7 +429,7 @@ I recommend using the web-ui "Quick Actions" to control the Display.
 ## Plugins
 
 <details>
-LEDMatrix uses a plugin-based architecture where all display functionality (except the core calendar) is implemented as plugins. All managers that were previously built into the core system are now available as plugins through the Plugin Store.
+LEDMatrix uses a plugin-based architecture where all display functionality is implemented as plugins. All managers that were previously built into the core system are now available as plugins through the Plugin Store.
 
 ### Plugin Store
 See the [Plugin Store documentation](https://github.com/ChuckBuilds/ledmatrix-plugins) for detailed installation instructions.
@@ -610,12 +622,7 @@ These settings control runtime behavior and GPIO timing:
 
 ### Display Durations (`display.display_durations`)
 
-Controls how long each display module stays visible in seconds before switching to the next one.
-
-- **`calendar`** (integer, default: 30)
-  - Duration in seconds for the calendar display
-  - Increase for more time to read dates/events
-  - Decrease to cycle through other displays faster
+Controls how long each installed plugin stays visible in seconds before switching to the next one, keyed by plugin id.
 
 - **Plugin-specific durations**
   - Each plugin can have its own duration setting

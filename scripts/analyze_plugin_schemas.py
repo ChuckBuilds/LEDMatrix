@@ -193,7 +193,7 @@ def analyze_schema(schema_path: Path) -> Dict[str, Any]:
 def main():
     """Main analysis function."""
     project_root = Path(__file__).parent.parent
-    plugins_dir = project_root / "plugins"
+    plugins_dir = project_root / "plugin-repos"
     
     if not plugins_dir.exists():
         print(f"Plugins directory not found: {plugins_dir}")

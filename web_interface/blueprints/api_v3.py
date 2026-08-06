@@ -807,7 +807,7 @@ def save_main_config():
                          'gpio_slowdown', 'rp1_rio', 'scan_mode', 'disable_hardware_pulsing', 'inverse_colors', 'show_refresh_rate',
                          'pwm_bits', 'pwm_dither_bits', 'pwm_lsb_nanoseconds', 'limit_refresh_rate_hz', 'use_short_date_format',
                          'max_dynamic_duration_seconds', 'led_rgb_sequence', 'multiplexing', 'panel_type',
-                         'row_address_type']
+                         'row_address_type', 'pixel_mapper_config']
 
         if any(k in data for k in display_fields):
             if 'display' not in current_config:
@@ -838,6 +838,10 @@ def save_main_config():
                 except (ValueError, TypeError):
                     return jsonify({'status': 'error', 'message': f"Invalid multiplexing value '{data['multiplexing']}'. Must be an integer from 0 to 22."}), 400
 
+            # Validate pixel_mapper_config (free-form mapper string, e.g. "U-mapper;Rotate:90")
+            if 'pixel_mapper_config' in data and not isinstance(data['pixel_mapper_config'], str):
+                return jsonify({'status': 'error', 'message': 'pixel_mapper_config must be a string (e.g. "U-mapper;Rotate:90" or empty)'}), 400
+
             # Validate row_address_type
             if 'row_address_type' in data:
                 try:
@@ -850,7 +854,8 @@ def save_main_config():
             # Handle hardware settings
             for field in ['rows', 'cols', 'chain_length', 'parallel', 'brightness', 'hardware_mapping', 'scan_mode',
                          'pwm_bits', 'pwm_dither_bits', 'pwm_lsb_nanoseconds', 'limit_refresh_rate_hz',
-                         'led_rgb_sequence', 'multiplexing', 'panel_type', 'row_address_type']:
+                         'led_rgb_sequence', 'multiplexing', 'panel_type', 'row_address_type',
+                         'pixel_mapper_config']:
                 if field in data:
                     if field in ['rows', 'cols', 'chain_length', 'parallel', 'brightness', 'scan_mode',
                                'pwm_bits', 'pwm_dither_bits', 'pwm_lsb_nanoseconds', 'limit_refresh_rate_hz',

@@ -29,15 +29,16 @@ Start here:
 Going deeper:
 
 - [ADVANCED_PLUGIN_DEVELOPMENT.md](ADVANCED_PLUGIN_DEVELOPMENT.md) — advanced patterns
-- [PLUGIN_ARCHITECTURE_SPEC.md](PLUGIN_ARCHITECTURE_SPEC.md) — full plugin-system spec
+- [PLUGIN_ARCHITECTURE_SPEC.md](PLUGIN_ARCHITECTURE_SPEC.md) — original plugin-system design spec (historical; see its banner for what has drifted)
 - [PLUGIN_DEPENDENCY_GUIDE.md](PLUGIN_DEPENDENCY_GUIDE.md) /
   [PLUGIN_DEPENDENCY_TROUBLESHOOTING.md](PLUGIN_DEPENDENCY_TROUBLESHOOTING.md)
 - [PLUGIN_WEB_UI_ACTIONS.md](PLUGIN_WEB_UI_ACTIONS.md) (+ [example JSON](PLUGIN_WEB_UI_ACTIONS_EXAMPLE.json))
-- [PLUGIN_CUSTOM_ICONS.md](PLUGIN_CUSTOM_ICONS.md) /
-  [PLUGIN_CUSTOM_ICONS_FEATURE.md](PLUGIN_CUSTOM_ICONS_FEATURE.md)
+- [PLUGIN_CUSTOM_ICONS.md](PLUGIN_CUSTOM_ICONS.md)
 - [PLUGIN_REGISTRY_SETUP_GUIDE.md](PLUGIN_REGISTRY_SETUP_GUIDE.md) (+ [registry template](plugin_registry_template.json))
 - [STARLARK_APPS_GUIDE.md](STARLARK_APPS_GUIDE.md) — Starlark-based mini-apps
 - [widget-guide.md](widget-guide.md) — widget development
+- [ADAPTIVE_LAYOUT.md](ADAPTIVE_LAYOUT.md) — render legibly on any panel size (opt-in font/layout scaling)
+- [plugin-safety-harness.md](plugin-safety-harness.md) — test a plugin across every screen and matrix size
 
 ## Configuring plugins
 
@@ -52,9 +53,12 @@ Going deeper:
 - [ADVANCED_FEATURES.md](ADVANCED_FEATURES.md) — Vegas scroll, on-demand display,
   cache management, background services, permissions
 - [FONT_MANAGER.md](FONT_MANAGER.md) — font system
+- [SKIN_SYSTEM.md](SKIN_SYSTEM.md) — skin architecture for sports scoreboards
+- [CREATING_SKINS.md](CREATING_SKINS.md) — writing and validating a skin
 
 ## Reference
 
+- [CONFIG_REFERENCE.md](CONFIG_REFERENCE.md) — every key in config.json and config_secrets.json
 - [REST_API_REFERENCE.md](REST_API_REFERENCE.md) — all web-interface HTTP endpoints
 - [PLUGIN_API_REFERENCE.md](PLUGIN_API_REFERENCE.md) — Python APIs available to plugins
 - [DEVELOPER_QUICK_REFERENCE.md](DEVELOPER_QUICK_REFERENCE.md) — common dev tasks
@@ -66,6 +70,7 @@ Going deeper:
 - [HOW_TO_RUN_TESTS.md](HOW_TO_RUN_TESTS.md) — running the test suite
 - [MULTI_ROOT_WORKSPACE_SETUP.md](MULTI_ROOT_WORKSPACE_SETUP.md) — multi-repo workspace
 - [MIGRATION_GUIDE.md](MIGRATION_GUIDE.md) — breaking changes between releases
+- [SPORTS_UNIFICATION.md](SPORTS_UNIFICATION.md) — how the sports scoreboard base classes are organized
 
 ## Archive
 

@@ -1,11 +1,10 @@
 """
 Centralized error handling for web interface.
 
-Provides decorators and helpers for consistent error handling across API endpoints.
+Provides helpers for consistent error responses across API endpoints.
 """
 
-import functools
-from typing import Callable, Any, Optional
+from typing import Any, Optional
 from flask import jsonify
 
 from src.web_interface.errors import (
@@ -15,70 +14,6 @@ from src.logging_config import get_logger
 
 
 logger = get_logger(__name__)
-
-
-def handle_errors(
-    default_error_code: Optional[ErrorCode] = None,
-    default_category: Optional[ErrorCategory] = None,
-    log_error: bool = True
-):
-    """
-    Decorator to handle errors in API endpoints.
-    
-    Catches exceptions and converts them to structured error responses.
-    
-    Args:
-        default_error_code: Default error code if exception doesn't match known types
-        default_category: Default error category
-        log_error: Whether to log the error
-    """
-    def decorator(func: Callable) -> Callable:
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            try:
-                return func(*args, **kwargs)
-            except WebInterfaceError as e:
-                # Already a structured error
-                if log_error:
-                    logger.error(
-                        f"Error in {func.__name__}: {e.message}",
-                        extra={
-                            'error_code': e.error_code.value,
-                            'category': e.category.value,
-                            'context': e.context
-                        }
-                    )
-                return jsonify(e.to_dict()), 500
-            
-            except Exception as e:
-                # Convert to structured error
-                web_error = WebInterfaceError.from_exception(
-                    e,
-                    error_code=default_error_code,
-                    context={
-                        'function': func.__name__,
-                        'endpoint': getattr(func, '__name__', 'unknown')
-                    }
-                )
-                
-                if default_category:
-                    web_error.category = default_category
-                
-                if log_error:
-                    logger.error(
-                        f"Unhandled error in {func.__name__}: {e}",
-                        exc_info=True,
-                        extra={
-                            'error_code': web_error.error_code.value,
-                            'category': web_error.category.value,
-                            'context': web_error.context
-                        }
-                    )
-                
-                return jsonify(web_error.to_dict()), 500
-        
-        return wrapper
-    return decorator
 
 
 def create_error_response(

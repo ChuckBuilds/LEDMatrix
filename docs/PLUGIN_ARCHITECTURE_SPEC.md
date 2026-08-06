@@ -8,9 +8,12 @@
 > - Code paths reference `web_interface_v2.py`; the current web UI is
 >   `web_interface/app.py` with v3 Blueprint-based templates.
 > - The example Flask routes use `/api/plugins/*`; the real API
->   blueprint is mounted at `/api/v3` (`web_interface/app.py:144`).
+>   blueprint is mounted at `/api/v3` (`web_interface/app.py:199`).
 > - The default plugin location is `plugin-repos/` (configurable via
 >   `plugin_system.plugins_directory`), not `./plugins/`.
+> - Example imports use `src/plugin_system/base_classes/*_plugin.py`;
+>   the shipped base classes live in `src/base_classes/` (e.g.
+>   `src.base_classes.sports.SportsCore`, `src.base_classes.hockey.Hockey`).
 > - The "Migration Strategy" and "Implementation Roadmap" sections
 >   describe work that has now shipped.
 >

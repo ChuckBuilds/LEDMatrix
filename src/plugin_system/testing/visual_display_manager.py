@@ -10,6 +10,17 @@ without requiring hardware or the RGBMatrixEmulator. Used for:
 Unlike MockDisplayManager (which logs calls but doesn't render) or
 MagicMock (which tracks nothing visual), this class creates a real
 PIL Image canvas and draws text using the actual project fonts.
+
+MAINTENANCE WARNING: this class is a deliberate fork of
+src/display_manager.py so it can run without hardware. It mirrors
+these DisplayManager methods by name and behavior: _load_fonts,
+_draw_bdf_text, get_font_height, get_text_width, draw_text,
+draw_text_with_icons, draw_weather_icon (and the _draw_sun/_draw_cloud/
+_draw_rain/_draw_snow/_draw_storm family), format_date_with_ordinal,
+capture_mode, set_scrolling_state, is_currently_scrolling,
+process_deferred_updates, update_display, render_size. A behavior
+change to any of those in DisplayManager must be mirrored here, or
+plugin visual tests will pass against stale behavior.
 """
 
 import math

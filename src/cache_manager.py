@@ -39,14 +39,10 @@ from src.cache.cache_strategy import CacheStrategy
 from src.cache.cache_metrics import CacheMetrics
 from src.logging_config import get_logger
 
-class DateTimeEncoder(json.JSONEncoder):
-    """JSON encoder that serialises ``datetime`` objects as ISO-8601 strings."""
-
-    def default(self, obj):
-        """Return ISO-8601 string for datetime; delegate all other types to the base encoder."""
-        if isinstance(obj, datetime):
-            return obj.isoformat()
-        return super().default(obj)
+# Canonical implementation lives in src.cache.disk_cache; re-exported here
+# because this module's docstring documents it and external code may import
+# it from either path.
+from src.cache.disk_cache import DateTimeEncoder  # noqa: F401 - deliberate re-export
 
 class CacheManager:
     """Manages caching of API responses to reduce API calls."""

@@ -989,6 +989,9 @@
     <script src="{{ url_for('static', filename='v3/js/widgets/google-calendar-picker.js') }}" defer></script>
     <script src="{{ url_for('static', filename='v3/js/widgets/day-selector.js') }}" defer></script>
     <script src="{{ url_for('static', filename='v3/js/widgets/time-range.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='v3/js/widgets/time-picker.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='v3/js/widgets/file-upload-single.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='v3/js/widgets/plugin-file-manager.js') }}" defer></script>
     <script src="{{ url_for('static', filename='v3/js/widgets/schedule-picker.js') }}" defer></script>
     <!-- Basic input widgets -->
     <script src="{{ url_for('static', filename='v3/js/widgets/text-input.js') }}" defer></script>
@@ -1010,7 +1013,11 @@
     <!-- Reusable JSON file manager widget (used by of-the-day and others via x-widget: json-file-manager) -->
     <script src="{{ url_for('static', filename='v3/js/widgets/json-file-manager.js') }}" defer></script>
 
-    <!-- Legacy plugins_manager.js (for backward compatibility during migration) -->
+    <!-- plugins_manager.js: loaded LAST on purpose — it defines the live
+         window.* implementations for several plugin actions (installPlugin,
+         uninstallPlugin, executePluginAction, ...) and intentionally wins
+         over same-named definitions in js/app.js and js/app-shell.js. Do not
+         remove or reorder without resolving that overlap first. -->
     <script src="{{ url_for('static', filename='v3/plugins_manager.js') }}?v=20260307" defer></script>
     
     <!-- Custom feeds table helpers live in js/widgets/custom-feeds.js (the

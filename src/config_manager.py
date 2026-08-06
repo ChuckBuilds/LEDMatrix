@@ -449,10 +449,6 @@ class ConfigManager:
         """Get display configuration."""
         return self.config.get('display', {})
 
-    def get_clock_config(self) -> Dict[str, Any]:
-        """Get clock configuration."""
-        return self.config.get('clock', {})
-
     def get_config(self) -> Dict[str, Any]:
         """Get the full configuration dictionary.
         

@@ -11,27 +11,22 @@ pytz>=2024.2,<2025.0  # Updated for latest timezone data
 
 # HTTP requests
 requests>=2.33.0,<3.0.0
+urllib3>=2.7.0,<3.0.0  # requests transitive, but imported directly (urllib3.util.retry.Retry); floor is a security floor, not the API floor — 1.26.x carries ~10 CVEs
 
 # Google API integration
 
 # Font rendering
 freetype-py>=2.5.1,<3.0.0
 
-# Spotify integration
+# Spotify integration (used by web_interface/blueprints/api_v3.py OAuth endpoints)
 spotipy>=2.25.2,<3.0.0
 
 # Flask web framework
 Flask>=3.1.3,<4.0.0
 
-# Text processing
-
-# Calendar integration
-
-# WebSocket support
-python-socketio>=5.14.0,<6.0.0
-python-engineio>=4.9.0,<5.0.0
-websockets>=12.0,<14.0
-websocket-client>=1.8.0,<2.0.0
+# WebSocket support: intentionally NOT declared here. Plugins that need
+# it (e.g. ledmatrix-music's Socket.IO client) declare it in their own
+# requirements.txt, which the plugin store installs.
 
 # JSON Schema validation
 jsonschema>=4.20.0,<5.0.0
@@ -39,11 +34,8 @@ jsonschema>=4.20.0,<5.0.0
 # Requirement specifier parsing (plugin dependency satisfaction checks)
 packaging>=23.0,<27.0
 
-# Testing dependencies
-pytest>=9.0.3,<10.0.0
-pytest-cov>=4.1.0,<5.0.0
-pytest-mock>=3.11.0,<4.0.0
-mypy>=1.5.0,<2.0.0
+# Testing dependencies live in requirements-test.txt:
+#   pip install -r requirements.txt -r requirements-test.txt
 
 # ───────────────────────────────────────────────────────────────────────
 # Optional dependencies — the code imports these inside try/except
@@ -59,7 +51,9 @@ mypy>=1.5.0,<2.0.0
 # psutil            — per-plugin resource monitoring in
 #                     src/plugin_system/resource_monitor.py. The monitor
 #                     silently no-ops when missing (PSUTIL_AVAILABLE = False).
-#   pip install 'psutil>=5.9.0,<6.0.0'
+#                     Note: web_interface/requirements.txt requires this
+#                     range as a hard dependency — keep the two in sync.
+#   pip install 'psutil>=6.0.0,<7.0.0'
 #
 # Flask-Limiter     — request rate limiting in web_interface/app.py
 #                     (accidental-abuse protection, not security). The

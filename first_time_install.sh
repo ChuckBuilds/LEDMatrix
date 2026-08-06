@@ -821,10 +821,6 @@ if [ ! -f "$PROJECT_ROOT_DIR/config/config_secrets.json" ]; then
         echo "⚠ Template config/config_secrets.template.json not found; creating a minimal secrets file"
         cat > "$PROJECT_ROOT_DIR/config/config_secrets.json" <<'EOF'
 {
-    "youtube": {
-        "api_key": "YOUR_YOUTUBE_API_KEY",
-        "channel_id": "YOUR_YOUTUBE_CHANNEL_ID"
-    },
     "github": {
         "api_token": "YOUR_GITHUB_PERSONAL_ACCESS_TOKEN"
     }
@@ -1187,25 +1183,26 @@ else
     cd "$PROJECT_ROOT_DIR"
 
     # Try to install dependencies using the smart installer if available
+    WEB_DEPS_OK=true
     if [ -f "$PROJECT_ROOT_DIR/scripts/install_dependencies_apt.py" ]; then
         echo "Using smart dependency installer..."
         # -u: unbuffered stdout/stderr so output is captured in $LOG_FILE in
         # real time and in order relative to this script's own echo statements
-        python3 -u "$PROJECT_ROOT_DIR/scripts/install_dependencies_apt.py"
-    else
-        echo "Using pip to install dependencies..."
-        if [ -f "$PROJECT_ROOT_DIR/requirements_web_v2.txt" ]; then
-            # --ignore-installed: see the Step 5 web_interface/requirements.txt
-            # install above — same apt/pip RECORD-file conflict applies here.
-            python3 -m pip install --break-system-packages --prefer-binary --ignore-installed -r requirements_web_v2.txt
-        else
-            echo "⚠ requirements_web_v2.txt not found; skipping web dependency install"
+        if ! python3 -u "$PROJECT_ROOT_DIR/scripts/install_dependencies_apt.py"; then
+            WEB_DEPS_OK=false
         fi
+    else
+        echo "Web dependencies already installed from web_interface/requirements.txt in Step 5"
     fi
 
-    # Create marker file to indicate dependencies are installed
-    touch "$PROJECT_ROOT_DIR/.web_deps_installed"
-    echo "✓ Web interface dependencies installed"
+    # Create the marker only when installation actually succeeded, so a
+    # re-run retries instead of silently skipping missing dependencies.
+    if [ "$WEB_DEPS_OK" = true ]; then
+        touch "$PROJECT_ROOT_DIR/.web_deps_installed"
+        echo "✓ Web interface dependencies installed"
+    else
+        echo "⚠ Web interface dependency install reported errors; not creating .web_deps_installed (will retry on next run)"
+    fi
 fi
 echo ""
 

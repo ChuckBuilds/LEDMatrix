@@ -57,6 +57,11 @@
         target.appendChild(frag);
     }
 
+    if (typeof window.LEDMatrixWidgets === 'undefined') {
+        console.error('[TimePicker] LEDMatrixWidgets registry not loaded');
+        return;
+    }
+
     window.LEDMatrixWidgets.register('time-picker', {
         name: 'Time Picker Widget',
         version: '1.0.0',

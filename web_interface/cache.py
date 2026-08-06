@@ -29,6 +29,12 @@ def set_cached(key: str, value: Any, ttl_seconds: int = 60) -> None:
     _cache_timestamps[key] = time.time()
 
 
+def delete_cached(key: str) -> None:
+    """Remove a single key from the cache if present."""
+    _cache.pop(key, None)
+    _cache_timestamps.pop(key, None)
+
+
 def invalidate_cache(pattern: Optional[str] = None) -> None:
     """Invalidate cache entries matching pattern, or all if pattern is None."""
     if pattern is None:
