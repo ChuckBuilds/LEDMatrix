@@ -187,10 +187,17 @@ class LogoHelper:
     def normalize_abbreviation(self, team_abbr: str) -> str:
         """
         Normalize team abbreviation for consistent filename usage.
-        
+
+        NOTE: this deliberately differs from
+        LogoDownloader.normalize_abbreviation (src/logo_downloader.py),
+        which replaces filesystem-unsafe characters (/ \\ : * ? " < > |)
+        but does not strip spaces. Plugins call the LogoDownloader
+        version; changing either implementation changes which logo
+        filenames resolve on existing installs.
+
         Args:
             team_abbr: Raw team abbreviation
-            
+
         Returns:
             Normalized abbreviation
         """

@@ -118,7 +118,14 @@ class LogoDownloader:
     
     @staticmethod
     def normalize_abbreviation(abbreviation: str) -> str:
-        """Normalize team abbreviation for consistent filename usage."""
+        """Normalize team abbreviation for consistent filename usage.
+
+        Public API: sports scoreboard plugins call this directly.
+        NOTE: LogoHelper.normalize_abbreviation (src/common/logo_helper.py)
+        is a deliberately different variant (strips spaces, fewer character
+        replacements) — keep both behaviors stable; logo filenames on
+        existing installs depend on them.
+        """
         # Handle special characters that can cause filesystem issues
         normalized = abbreviation.upper()
         
