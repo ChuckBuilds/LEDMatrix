@@ -7,3 +7,4 @@
 # pytest>=9.0.3,<10 and made the two files impossible to install together.
 # Only declare what requirements.txt doesn't already provide.
 freezegun>=1.2,<2        # deterministic time for golden-image tests
+mypy>=1.5.0,<2.0.0       # static type checking (also pinned in .pre-commit-config.yaml)

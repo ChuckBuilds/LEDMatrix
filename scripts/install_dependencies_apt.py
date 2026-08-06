@@ -49,12 +49,7 @@ def install_via_apt(package_name: str) -> Tuple[bool, str]:
         'werkzeug': 'python3-werkzeug',
         'numpy': 'python3-numpy',
         'requests': 'python3-requests',
-        'python-dateutil': 'python3-dateutil',
-        'pytz': 'python3-tz',
-        'geopy': 'python3-geopy',
-        'unidecode': 'python3-unidecode',
-        'websockets': 'python3-websockets',
-        'websocket-client': 'python3-websocket-client'
+        'pytz': 'python3-tz'
     }
 
     apt_package = apt_package_map.get(package_name, f'python3-{package_name}')
@@ -152,12 +147,7 @@ def main():
         'werkzeug',
         'numpy',
         'requests',
-        'python-dateutil',
-        'pytz',
-        'geopy',
-        'unidecode',
-        'websockets',
-        'websocket-client'
+        'pytz'
     ]
 
     failed_packages = []
@@ -177,15 +167,12 @@ def main():
                 failure_details[package] = pip_output or apt_output
 
     # Install packages that don't have apt equivalents
+    # Packages without apt equivalents. Plugin-specific dependencies
+    # (timezonefinder, google-api stack, icalevents, socketio, ...) are
+    # no longer installed here — store plugins declare their own
+    # requirements.txt, which the plugin store installs.
     special_packages = [
-        'timezonefinder>=6.5.0,<7.0.0',
-        'google-auth-oauthlib>=1.2.0,<2.0.0',
-        'google-auth-httplib2>=0.2.0,<1.0.0',
-        'google-api-python-client>=2.147.0,<3.0.0',
         'spotipy',
-        'icalevents',
-        'python-socketio>=5.11.0,<6.0.0',
-        'python-engineio>=4.9.0,<5.0.0'
     ]
 
     for package in special_packages:
