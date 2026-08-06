@@ -42,7 +42,7 @@ from src.logging_config import get_logger
 # Canonical implementation lives in src.cache.disk_cache; re-exported here
 # because this module's docstring documents it and external code may import
 # it from either path.
-from src.cache.disk_cache import DateTimeEncoder
+from src.cache.disk_cache import DateTimeEncoder  # noqa: F401 - deliberate re-export
 
 class CacheManager:
     """Manages caching of API responses to reduce API calls."""

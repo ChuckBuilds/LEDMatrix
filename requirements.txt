@@ -11,7 +11,7 @@ pytz>=2024.2,<2025.0  # Updated for latest timezone data
 
 # HTTP requests
 requests>=2.33.0,<3.0.0
-urllib3>=1.26.0,<3.0.0  # requests transitive, but imported directly (urllib3.util.retry.Retry)
+urllib3>=2.7.0,<3.0.0  # requests transitive, but imported directly (urllib3.util.retry.Retry); floor is a security floor, not the API floor — 1.26.x carries ~10 CVEs
 
 # Google API integration
 
