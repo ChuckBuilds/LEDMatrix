@@ -75,6 +75,13 @@ def _ids(entry: Optional[Dict[str, Any]]) -> Optional[str]:
 
 
 class TestRegistryLookupByManifestId:
+    def test_get_plugin_info_resolves_manifest_id(self, store: PluginStoreManager) -> None:
+        """get_plugin_info() delegates to the same lookup as get_registry_info()."""
+        assert (
+            _ids(store.get_plugin_info("ledmatrix-weather", fetch_latest_from_github=False))
+            == "weather"
+        )
+
     def test_exact_registry_id_still_resolves(self, store: PluginStoreManager) -> None:
         assert _ids(store.get_registry_info("weather")) == "weather"
 

@@ -1508,10 +1508,26 @@ if [ -f "$PROJECT_ROOT_DIR/config/config_secrets.json" ]; then
     if [ -z "$SECRETS_OWNER" ]; then
         SECRETS_OWNER="$ACTUAL_USER"
     fi
+    SECRETS_FILE="$PROJECT_ROOT_DIR/config/config_secrets.json"
     # A root-owned file is only correct when the writer really is root.
-    chown "$SECRETS_OWNER:$LEDMATRIX_GROUP" "$PROJECT_ROOT_DIR/config/config_secrets.json" || true
+    if ! chown "$SECRETS_OWNER:$LEDMATRIX_GROUP" "$SECRETS_FILE"; then
+        echo "✗ ERROR: Failed to set ownership on $SECRETS_FILE to $SECRETS_OWNER:$LEDMATRIX_GROUP" >&2
+        echo "  Try: sudo chown $SECRETS_OWNER:$LEDMATRIX_GROUP $SECRETS_FILE" >&2
+        exit 1
+    fi
+    if ! chmod 640 "$SECRETS_FILE"; then
+        echo "✗ ERROR: Failed to set permissions on $SECRETS_FILE to 640" >&2
+        echo "  Try: sudo chmod 640 $SECRETS_FILE" >&2
+        exit 1
+    fi
+    ACTUAL_OWNERSHIP=$(stat -c '%U:%G' "$SECRETS_FILE" 2>/dev/null || echo "unknown")
+    ACTUAL_MODE=$(stat -c '%a' "$SECRETS_FILE" 2>/dev/null || echo "unknown")
+    if [ "$ACTUAL_OWNERSHIP" != "$SECRETS_OWNER:$LEDMATRIX_GROUP" ] || [ "$ACTUAL_MODE" != "640" ]; then
+        echo "✗ ERROR: $SECRETS_FILE ended up as $ACTUAL_OWNERSHIP mode $ACTUAL_MODE, expected $SECRETS_OWNER:$LEDMATRIX_GROUP mode 640" >&2
+        echo "  The web interface may be unable to read or write config_secrets.json." >&2
+        exit 1
+    fi
     echo "✓ Secrets file owned by the web service user ($SECRETS_OWNER:$LEDMATRIX_GROUP, mode 640)"
-    chmod 640 "$PROJECT_ROOT_DIR/config/config_secrets.json"
 fi
 
 # Set proper permissions for YTM auth file (readable by all users including root service)

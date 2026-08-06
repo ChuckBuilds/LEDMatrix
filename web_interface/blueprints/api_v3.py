@@ -7862,14 +7862,18 @@ def _resolve_backup_export_dir() -> Path:
     export at all.
     """
     preferred = PROJECT_ROOT.parent / "ledmatrix-backups"
+    fallback = PROJECT_ROOT / "config" / "backups" / "exports"
     try:
         preferred.mkdir(parents=True, exist_ok=True)
-        probe = preferred / ".writetest"
-        probe.write_text("", encoding="utf-8")
-        probe.unlink()
+        with tempfile.NamedTemporaryFile(dir=preferred, prefix=".writetest-"):
+            pass
         return preferred
-    except OSError:
-        return PROJECT_ROOT / "config" / "backups" / "exports"
+    except OSError as e:
+        logger.warning(
+            f"[Backup] Export dir {preferred} is not writable ({e}); "
+            f"falling back to {fallback}, which a reinstall will delete"
+        )
+        return fallback
 
 
 _BACKUP_EXPORT_DIR = _resolve_backup_export_dir()
@@ -8022,7 +8026,15 @@ def backup_restore():
                     else:
                         result.plugins_failed.append({'plugin_id': pid, 'error': 'Store manager unavailable'})
                 except Exception as pe:
-                    result.plugins_failed.append({'plugin_id': pid, 'error': str(pe)})
+                    logger.error(
+                        "[Backup] Failed to reinstall plugin %r: %s", pid, pe, exc_info=True
+                    )
+                    result.plugins_failed.append({'plugin_id': pid, 'error': 'Installation failed; see server logs'})
+
+        # A restore that dropped files can still report success if the only
+        # failures were plugin reinstalls, since those don't touch result.errors.
+        if result.plugins_failed:
+            result.success = False
 
         data = result.to_dict()
         if not result.success:
@@ -8032,7 +8044,9 @@ def backup_restore():
             # config restores and secrets do not. "Restore had errors" alone
             # left the user unable to tell a wholly failed restore from one
             # that quietly dropped their API keys.
-            failed_plugins = [p.get('plugin_id') for p in (result.plugins_failed or [])]
+            failed_plugins = [
+                str(p.get('plugin_id')) for p in (result.plugins_failed or []) if p.get('plugin_id')
+            ]
             parts = []
             if result.restored:
                 parts.append(f"restored: {', '.join(result.restored)}")
