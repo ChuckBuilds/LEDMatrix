@@ -2299,56 +2299,6 @@ function renderArrayObjectItem(fieldId, fullKey, itemProperties, itemValue, inde
 
 
 // Functions to handle patternProperties key-value pairs
-window.addKeyValuePair = function(fieldId, fullKey, maxProperties) {
-    const pairsContainer = document.getElementById(fieldId + '_pairs');
-    if (!pairsContainer) return;
-
-    const currentPairs = pairsContainer.querySelectorAll('.key-value-pair');
-    if (currentPairs.length >= maxProperties) {
-        alert(`Maximum ${maxProperties} entries allowed`);
-        return;
-    }
-
-    const newIndex = currentPairs.length;
-    const valueType = 'string'; // Default to string, could be determined from schema
-
-    const pairHtml = `
-        <div class="flex items-center gap-2 key-value-pair" data-index="${newIndex}">
-            <input type="text"
-                   name="${fullKey}[key_${newIndex}]"
-                   value=""
-                   placeholder="Key"
-                   class="flex-1 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
-                   data-key-index="${newIndex}"
-                   onchange="updateKeyValuePairData('${fieldId}', '${fullKey}')">
-            <input type="text"
-                   name="${fullKey}[value_${newIndex}]"
-                   value=""
-                   placeholder="Value"
-                   class="flex-1 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
-                   data-value-index="${newIndex}"
-                   onchange="updateKeyValuePairData('${fieldId}', '${fullKey}')">
-            <button type="button"
-                    onclick="removeKeyValuePair('${fieldId}', ${newIndex})"
-                    class="px-3 py-2 text-red-600 hover:text-red-800 hover:bg-red-50 rounded-md transition-colors"
-                    title="Remove">
-                <i class="fas fa-trash"></i>
-            </button>
-        </div>
-    `;
-
-    pairsContainer.insertAdjacentHTML('beforeend', pairHtml);
-    updateKeyValuePairData(fieldId, fullKey);
-
-    // Update add button state
-    const addButton = pairsContainer.nextElementSibling;
-    if (addButton && currentPairs.length + 1 >= maxProperties) {
-        addButton.disabled = true;
-        addButton.style.opacity = '0.5';
-        addButton.style.cursor = 'not-allowed';
-    }
-};
-
 window.removeKeyValuePair = function(fieldId, index) {
     const pairsContainer = document.getElementById(fieldId + '_pairs');
     if (!pairsContainer) return;
@@ -4559,23 +4509,6 @@ function formatDate(dateString) {
     }
 }
 
-function formatCommit(commit, branch) {
-    const shortCommit = commit ? String(commit).substring(0, 7) : '';
-    const branchText = branch ? String(branch) : '';
-
-    if (branchText && shortCommit) {
-        return `${branchText} · ${shortCommit}`;
-    }
-    if (branchText) {
-        return branchText;
-    }
-    if (shortCommit) {
-        return shortCommit;
-    }
-    return 'Latest';
-}
-
-// Check if plugin is new (updated within last 7 days)
 function isNewPlugin(lastUpdated) {
     if (!lastUpdated) return false;
 
@@ -4605,26 +4538,6 @@ function debounce(func, wait) {
 }
 
 // Toggle password visibility for secret fields
-function togglePasswordVisibility(fieldId) {
-    const input = document.getElementById(fieldId);
-    const icon = document.getElementById(fieldId + '-icon');
-
-    if (input && icon) {
-        if (input.type === 'password') {
-            input.type = 'text';
-            icon.classList.remove('fa-eye');
-            icon.classList.add('fa-eye-slash');
-        } else {
-            input.type = 'password';
-            icon.classList.remove('fa-eye-slash');
-            icon.classList.add('fa-eye');
-        }
-    }
-}
-
-// GitHub Token Configuration Functions
-// Open GitHub Token Settings panel (only opens, doesn't close)
-// Used when user clicks "Configure Token" link
 window.openGithubTokenSettings = function() {
     const settings = document.getElementById('github-token-settings');
     const warning = document.getElementById('github-auth-warning');

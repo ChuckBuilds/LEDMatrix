@@ -1189,14 +1189,7 @@ else
         # real time and in order relative to this script's own echo statements
         python3 -u "$PROJECT_ROOT_DIR/scripts/install_dependencies_apt.py"
     else
-        echo "Using pip to install dependencies..."
-        if [ -f "$PROJECT_ROOT_DIR/requirements_web_v2.txt" ]; then
-            # --ignore-installed: see the Step 5 web_interface/requirements.txt
-            # install above — same apt/pip RECORD-file conflict applies here.
-            python3 -m pip install --break-system-packages --prefer-binary --ignore-installed -r requirements_web_v2.txt
-        else
-            echo "⚠ requirements_web_v2.txt not found; skipping web dependency install"
-        fi
+        echo "Web dependencies already installed from web_interface/requirements.txt in Step 5"
     fi
 
     # Create marker file to indicate dependencies are installed

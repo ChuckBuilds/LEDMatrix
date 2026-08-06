@@ -10,10 +10,7 @@ Make sure you have the testing packages installed:
 
 ```bash
 # Install all dependencies including test packages
-pip install -r requirements.txt
-
-# Or install just the test dependencies
-pip install pytest pytest-cov pytest-mock
+pip install -r requirements.txt -r requirements-test.txt
 ```
 
 ### 2. Set Environment Variables
@@ -302,7 +299,7 @@ If tests fail due to missing packages:
 
 ```bash
 # Install all dependencies
-pip install -r requirements.txt
+pip install -r requirements.txt -r requirements-test.txt
 
 # Or install specific missing package
 pip install <package-name>
