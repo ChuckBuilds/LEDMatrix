@@ -253,7 +253,6 @@ test/
 ├── test_error_aggregator.py             # Error aggregation tests
 ├── test_schema_manager.py               # Schema manager tests
 ├── test_web_api.py                      # Web API tests
-├── test_nba_*.py                        # NBA-specific test suites
 ├── plugins/                             # Per-plugin test suites
 │   ├── test_clock_simple.py
 │   ├── test_calendar.py
