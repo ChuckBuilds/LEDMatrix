@@ -450,3 +450,112 @@ class TestExampleSkin:
         ctx = skin_runtime.build_context(host, game, size=size)
         assert getattr(skin, f"render_{mode}")(ctx, game) is True
         assert ctx.canvas.convert("L").getbbox() is not None
+
+
+class TestRenderSkinCard:
+    """render_skin_card (vegas cards) shares _render_game's 3-strike counter.
+
+    The asymmetry pinned here: _render_game resets the counter on success,
+    render_skin_card does NOT — card successes never clear strikes, so
+    failures accumulated across card renders (however far apart) still
+    disable the skin for the session.
+    """
+
+    def _probe(self, skin):
+        from src.base_classes.sports import SportsCore
+        probe = _FallbackProbe(skin)
+        probe.render_skin_card = (
+            lambda game, size: SportsCore.render_skin_card(probe, game, size))
+        return probe
+
+    def test_vegas_card_returned_when_skin_provides_one(self):
+        card_img = Image.new("RGB", (96, 32), (0, 0, 255))
+
+        class CardSkin(ScoreboardSkin):
+            def render_vegas_card(self, ctx, game):
+                return card_img
+
+        probe = self._probe(CardSkin({}, {}))
+        assert probe.render_skin_card({}, (96, 32)) is card_img
+
+    def test_vegas_card_none_falls_through_to_mode_renderer(self):
+        class ModeOnlySkin(ScoreboardSkin):
+            def render_live(self, ctx, game):
+                ctx.draw.rectangle([0, 0, 5, 5], fill=(255, 0, 0))
+                return True
+
+        probe = self._probe(ModeOnlySkin({}, {}))
+        card = probe.render_skin_card({}, (96, 32))
+        assert card is not None
+        assert card.size == (96, 32)
+        assert card.convert("L").getbbox() is not None
+
+    def test_skin_declining_returns_none(self):
+        probe = self._probe(ScoreboardSkin({}, {}))  # all renders -> False
+        assert probe.render_skin_card({}, (96, 32)) is None
+        assert probe._skin_failures == 0  # declining is not a failure
+
+    def test_no_skin_returns_none(self):
+        probe = self._probe(None)
+        assert probe.render_skin_card({}, (96, 32)) is None
+
+    def test_card_failures_count_toward_shared_disable(self):
+        class BrokenCardSkin(ScoreboardSkin):
+            calls = 0
+
+            def render_vegas_card(self, ctx, game):
+                BrokenCardSkin.calls += 1
+                raise ValueError("kaboom")
+
+        probe = self._probe(BrokenCardSkin({}, {}))
+        for _ in range(5):
+            assert probe.render_skin_card({}, (96, 32)) is None
+        # Skin stopped being consulted after the 3rd failure...
+        assert BrokenCardSkin.calls == 3
+        assert probe._skin_failures == 3
+        # ...and the shared counter also disables _render_game's skin path.
+        probe._render_game({"status_text": "Q1"})
+        assert probe.builtin_calls == 1
+        assert BrokenCardSkin.calls == 3  # not consulted again
+
+    def test_card_success_does_not_reset_strikes(self):
+        """Characterized asymmetry: unlike _render_game (which resets the
+        counter on success, core.py _render_game), a successful card render
+        leaves accumulated strikes in place — 2 failures + N successes + 1
+        failure still disables the skin."""
+        card_img = Image.new("RGB", (96, 32), (0, 0, 255))
+
+        class FlakyCardSkin(ScoreboardSkin):
+            fail = True
+
+            def render_vegas_card(self, ctx, game):
+                if FlakyCardSkin.fail:
+                    raise ValueError("kaboom")
+                return card_img
+
+        probe = self._probe(FlakyCardSkin({}, {}))
+        FlakyCardSkin.fail = True
+        probe.render_skin_card({}, (96, 32))
+        probe.render_skin_card({}, (96, 32))
+        assert probe._skin_failures == 2
+
+        FlakyCardSkin.fail = False
+        for _ in range(10):
+            assert probe.render_skin_card({}, (96, 32)) is card_img
+        assert probe._skin_failures == 2  # successes did NOT clear strikes
+
+        FlakyCardSkin.fail = True
+        probe.render_skin_card({}, (96, 32))
+        assert probe._skin_failures == 3
+        assert probe.render_skin_card({}, (96, 32)) is None  # disabled
+
+    def test_render_game_success_does_reset_strikes(self):
+        """The other half of the asymmetry, for contrast with the above."""
+        class GoodSkin(ScoreboardSkin):
+            def render_live(self, ctx, game):
+                return True
+
+        probe = _FallbackProbe(GoodSkin({}, {}))
+        probe._skin_failures = 2
+        probe._render_game({"status_text": "Q1"})
+        assert probe._skin_failures == 0
