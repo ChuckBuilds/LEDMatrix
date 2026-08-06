@@ -80,4 +80,8 @@ jobs:
             test/test_version_consistency.py \
             test/test_plugin_compatibility_gate.py \
             test/test_install_preserves_existing.py \
-            test/test_core_owned_config_keys.py
+            test/test_core_owned_config_keys.py \
+            test/test_template_targets.py \
+            test/test_widget_scripts.py \
+            test/test_doc_links.py \
+            test/web_interface/test_cache.py
