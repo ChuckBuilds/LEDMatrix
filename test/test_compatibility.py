@@ -216,7 +216,7 @@ class TestCheck:
         assert ok is False
         assert "2.0.0 - 2.9.9" in reason
 
-    def test_unparseable_core_version_is_compatible(self):
+    def test_unparseable_core_with_high_floor_is_blocked(self):
         manifest = {"min_ledmatrix_version": "3.2.0",
                     "compatible_versions": [">=3.2.0"]}
         # An unparseable core version is "unknown", not "old"... but note

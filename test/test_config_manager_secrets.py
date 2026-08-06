@@ -99,9 +99,9 @@ class TestSaveStripsSecrets:
         on_disk = json.loads((tmp_path / "config.json").read_text())
         assert on_disk == {"timezone": "UTC"}
 
-    def test_unreadable_secrets_file_writes_secrets_to_config_json(self, tmp_path):
+    def test_corrupt_secrets_file_writes_secrets_to_config_json(self, tmp_path):
         # SUSPECTED BUG (characterized, not fixed): when the secrets file is
-        # unreadable/corrupt at save time, save_config proceeds without
+        # corrupt (or otherwise unloadable) at save time, save_config proceeds without
         # stripping — writing the merged secrets into config.json in
         # plaintext. The code comments acknowledge the tradeoff (it prevents
         # data loss); this test pins the behavior so any future change to it

@@ -16,10 +16,16 @@ from src.plugin_system.base_plugin import BasePlugin
 
 
 class CIFixturePlugin(BasePlugin):
+    """Deterministic CI-only fixture plugin: renders a border + diagonals
+    pattern sized from the display's declared dimensions. Never shipped to
+    devices; exists solely so the plugin safety harness has a real plugin
+    to exercise in CI."""
+
     def update(self) -> None:
         """Nothing to fetch — the render is self-contained."""
 
     def display(self, force_clear: bool = False) -> None:
+        self.display_manager.clear()
         width = self.display_manager.matrix.width
         height = self.display_manager.matrix.height
         border = tuple(self.config.get("border_color", [0, 255, 0]))

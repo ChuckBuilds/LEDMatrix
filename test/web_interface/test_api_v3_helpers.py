@@ -11,6 +11,7 @@ characterized quirks marked below.
 
 import sys
 from pathlib import Path
+from typing import Any, ClassVar, Dict
 
 import pytest
 
@@ -153,7 +154,7 @@ class TestParseFormValue:
 
 
 class TestGetSchemaProperty:
-    SCHEMA = {
+    SCHEMA: ClassVar[Dict[str, Any]] = {
         "properties": {
             "brightness": {"type": "integer"},
             "customization": {

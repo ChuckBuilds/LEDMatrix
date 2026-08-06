@@ -1,1 +1,7 @@
 # No dependencies — the fixture must load in any environment.
+#
+# Pillow is deliberately NOT pinned here even though manager.py imports
+# PIL: it is a core LEDMatrix dependency (see the repo-root
+# requirements.txt), so it is always present wherever the harness runs,
+# and the harness loads plugins with install_deps=False anyway. Pinning
+# it here would only invite a needless pip install during test runs.
