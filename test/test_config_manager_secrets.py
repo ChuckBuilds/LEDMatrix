@@ -4,8 +4,9 @@ Tests for the ConfigManager secrets round-trip and the load_config fast path.
 The contract under test: config_secrets.json values are deep-merged INTO the
 in-memory config at load time, and stripped back OUT before anything is
 written to config.json — so secrets live in exactly one file on disk. This
-suite pins that round-trip plus its known sharp edges (some marked as
-SUSPECTED BUG and characterized rather than fixed).
+suite pins that round-trip plus its sharp edges, including the guard that a
+save REFUSES (ConfigError) when the secrets file exists but can't be loaded,
+rather than leaking merged secrets into config.json in plaintext.
 
 Complements test_config_manager.py, which covers loading/migration/validation.
 """
@@ -16,6 +17,7 @@ import os
 import pytest
 
 from src.config_manager import ConfigManager
+from src.exceptions import ConfigError
 
 
 def make_manager(tmp_path, config=None, secrets=None):
@@ -99,13 +101,11 @@ class TestSaveStripsSecrets:
         on_disk = json.loads((tmp_path / "config.json").read_text())
         assert on_disk == {"timezone": "UTC"}
 
-    def test_corrupt_secrets_file_writes_secrets_to_config_json(self, tmp_path):
-        # SUSPECTED BUG (characterized, not fixed): when the secrets file is
-        # corrupt (or otherwise unloadable) at save time, save_config proceeds without
-        # stripping — writing the merged secrets into config.json in
-        # plaintext. The code comments acknowledge the tradeoff (it prevents
-        # data loss); this test pins the behavior so any future change to it
-        # is deliberate.
+    def test_corrupt_secrets_file_refuses_save_no_plaintext_leak(self, tmp_path):
+        # Regression guard: when the secrets file exists but is corrupt at
+        # save time, stripping is impossible — the save must raise instead of
+        # writing the merged secrets into config.json in plaintext (the
+        # historical behavior).
         manager = make_manager(
             tmp_path,
             config={"weather": {"city": "Austin"}},
@@ -114,10 +114,28 @@ class TestSaveStripsSecrets:
         loaded = manager.load_config()
         (tmp_path / "config_secrets.json").write_text("{corrupt")
 
-        manager.save_config(loaded)
+        with pytest.raises(ConfigError):
+            manager.save_config(loaded)
+
+        # On-disk config untouched: no secret leaked.
+        on_disk = json.loads((tmp_path / "config.json").read_text())
+        assert "api_key" not in on_disk.get("weather", {})
+
+    def test_corrupt_secrets_file_refuses_atomic_save_too(self, tmp_path):
+        # Same refusal on the atomic save path, which shared the leak.
+        manager = make_manager(
+            tmp_path,
+            config={"weather": {"city": "Austin"}},
+            secrets={"weather": {"api_key": "s3cret"}},
+        )
+        loaded = manager.load_config()
+        (tmp_path / "config_secrets.json").write_text("{corrupt")
+
+        with pytest.raises(ConfigError):
+            manager.save_config_atomic(loaded)
 
         on_disk = json.loads((tmp_path / "config.json").read_text())
-        assert on_disk["weather"].get("api_key") == "s3cret"  # leaked
+        assert "api_key" not in on_disk.get("weather", {})
 
 
 class TestLoadFastPath:

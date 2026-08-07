@@ -383,10 +383,15 @@ class SportsCore(ABC):
             ctx = skin_runtime.build_context(self, game, size=size)
             card = skin.render_vegas_card(ctx, dict(game))
             if card is not None:
+                # A successful render clears accumulated strikes, mirroring
+                # _render_game — transient failures must not add up across
+                # the session and disable a working skin.
+                self._skin_failures = 0
                 return card
             ctx = skin_runtime.build_context(self, game, size=size)
             render = getattr(skin, f"render_{self.SKIN_MODE}")
             if render(ctx, dict(game)):
+                self._skin_failures = 0
                 return ctx.canvas
         except Exception:
             # Card failures count toward the same 3-strike session disable

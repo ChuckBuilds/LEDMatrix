@@ -1,25 +1,17 @@
 """
-Drift guard: the repo has FOUR version-comparison implementations, and they
-do not agree. This file pins each one's answer on the same inputs so any
-future change to one of them (or a fifth copy appearing) surfaces here.
+Drift guard for version comparison.
 
-The four:
-1. src/plugin_system/compatibility.py  — parse_semver / tuple comparison
-   (install gate).
-2. web_interface/blueprints/api_v3.py  — _is_plugin_update_available, uses
-   packaging.version (update badge in the UI).
-3. src/plugin_system/store_manager.py  — update_plugin's raw STRING EQUALITY
-   for monorepo plugins ("local_version == remote_version").
-4. src/skin_system/skin_runtime.py     — _major, int(major) gate for the
-   skin API.
+There is now ONE shared "should this plugin update?" comparator —
+`src.plugin_system.compatibility.is_update_available` — used by both the web
+UI's update badge (`api_v3._is_plugin_update_available`) and the store's
+`update_plugin` reinstall decision, so the badge and the actual reinstall
+can never disagree. (Historically the store used raw string equality, which
+reinstalled over cosmetic differences like "v1.2.0" vs "1.2.0" and even
+DOWNGRADED locally-ahead plugins; this file's tests killed that.)
 
-SUSPECTED BUG (characterized here, not fixed): #3 disagrees with #2. For
-"v1.2.0" vs "1.2.0" the UI says "no update available" while update_plugin
-performs a full reinstall; for a locally-ahead plugin ("2.0.0" installed,
-registry "1.9.0") the UI says no update but update_plugin DOWNGRADES via
-reinstall. Unifying on one comparator is tracked follow-up work; when that
-lands, the expectations in TestStoreManagerStringEquality flip and this
-file is the reminder to update them deliberately.
+Two other version parsers legitimately remain and are pinned here so they
+don't drift: `compatibility.parse_semver` (the install-compatibility gate,
+range-spec oriented) and `skin_runtime._major` (skin API major gate).
 """
 
 import json
@@ -28,44 +20,40 @@ from unittest.mock import patch
 import pytest
 from packaging.version import parse as pkg_parse
 
-from src.plugin_system.compatibility import parse_semver
+from src.plugin_system.compatibility import is_update_available, parse_semver
 from src.skin_system.skin_runtime import _major
 from src.plugin_system.store_manager import PluginStoreManager
 from web_interface.blueprints.api_v3 import _is_plugin_update_available
 
 
-# (installed, registry) pairs and what each comparator concludes.
+# (installed, registry) -> update available?
 CASES = [
-    # pair                  parse_semver equal?   api_v3 update?   store equal-string?
-    (("1.2.0", "1.2.0"),    True,                 False,           True),
-    (("v1.2.0", "1.2.0"),   True,                 False,           False),
-    (("1.2", "1.2.0"),      True,                 False,           False),
-    (("1.2.0", "1.2.0-rc1"), True,                False,           False),
-    (("1.2.0", "1.3.0"),    False,                True,            False),
-    (("2.0.0", "1.9.0"),    False,                False,           False),
+    (("1.2.0", "1.2.0"), False),   # identical
+    (("v1.2.0", "1.2.0"), False),  # cosmetic v-prefix, semantically equal
+    (("1.2", "1.2.0"), False),     # short form, semantically equal
+    (("1.2.0", "1.2.0-rc1"), False),  # rc of same release is not newer
+    (("1.2.0", "1.3.0"), True),    # registry genuinely newer
+    (("2.0.0", "1.9.0"), False),   # locally ahead — never downgrade
+    (("abc.def", "1.0.0"), True),  # unparseable — surface the mismatch
+    (("", "1.0.0"), False),        # missing either side — nothing to do
+    (("1.0.0", ""), False),
 ]
 
 
-class TestComparatorMatrix:
-    @pytest.mark.parametrize("pair,semver_equal,api_update,store_equal", CASES)
-    def test_parse_semver_equality(self, pair, semver_equal, api_update, store_equal):
-        a, b = pair
-        assert (parse_semver(a) == parse_semver(b)) is semver_equal
-
-    @pytest.mark.parametrize("pair,semver_equal,api_update,store_equal", CASES)
-    def test_api_v3_update_available(self, pair, semver_equal, api_update, store_equal):
+class TestSharedComparator:
+    @pytest.mark.parametrize("pair,expected", CASES)
+    def test_is_update_available(self, pair, expected):
         installed, latest = pair
-        assert _is_plugin_update_available(installed, latest) is api_update
+        assert is_update_available(installed, latest) is expected
 
-    @pytest.mark.parametrize("pair,semver_equal,api_update,store_equal", CASES)
-    def test_store_manager_string_equality(self, pair, semver_equal, api_update, store_equal):
-        # The literal comparison update_plugin performs at its
-        # "already at latest version" check.
-        a, b = pair
-        assert (a == b) is store_equal
+    @pytest.mark.parametrize("pair,expected", CASES)
+    def test_api_v3_helper_agrees(self, pair, expected):
+        # The UI badge helper must be a pure alias of the shared comparator.
+        installed, latest = pair
+        assert _is_plugin_update_available(installed, latest) is expected
 
 
-class TestStoreManagerStringEquality:
+class TestStoreManagerUsesSharedComparator:
     """Drive update_plugin's real code path to its version check."""
 
     def _store(self, tmp_path, local_version, registry_version):
@@ -98,18 +86,30 @@ class TestStoreManagerStringEquality:
         assert result is True
         reinstall.assert_not_called()
 
-    def test_v_prefix_triggers_reinstall_despite_semantic_equality(self, tmp_path):
-        # SUSPECTED BUG: packaging (and api_v3) treat these as equal; the
-        # string comparison does not, so the user gets a full reinstall.
+    def test_v_prefix_equivalent_skips_reinstall(self, tmp_path):
+        # "v1.2.0" == "1.2.0" semantically — no pointless reinstall.
         store, info = self._store(tmp_path, "v1.2.0", "1.2.0")
+        result, reinstall = self._run_update(store, info)
+        assert result is True
+        reinstall.assert_not_called()
+
+    def test_locally_ahead_version_is_never_downgraded(self, tmp_path):
+        # A plugin ahead of the registry (local dev build) must not be
+        # "updated" — that would be a downgrade.
+        store, info = self._store(tmp_path, "2.0.0", "1.9.0")
+        result, reinstall = self._run_update(store, info)
+        assert result is True
+        reinstall.assert_not_called()
+
+    def test_registry_newer_triggers_reinstall(self, tmp_path):
+        store, info = self._store(tmp_path, "1.2.0", "1.3.0")
         result, reinstall = self._run_update(store, info)
         reinstall.assert_called_once()
         assert result is True
 
-    def test_locally_ahead_version_triggers_downgrade_reinstall(self, tmp_path):
-        # SUSPECTED BUG: a plugin ahead of the registry (local dev build) is
-        # "updated" — i.e. downgraded — because inequality is the only test.
-        store, info = self._store(tmp_path, "2.0.0", "1.9.0")
+    def test_unparseable_version_surfaces_via_reinstall(self, tmp_path):
+        # Direction unknowable → reconcile by reinstalling from the registry.
+        store, info = self._store(tmp_path, "abc.def", "1.0.0")
         result, reinstall = self._run_update(store, info)
         reinstall.assert_called_once()
         assert result is True
