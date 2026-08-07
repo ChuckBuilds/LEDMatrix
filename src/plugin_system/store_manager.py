@@ -1143,7 +1143,7 @@ class PluginStoreManager:
         """
         registry = self.fetch_registry()
         plugins = registry.get('plugins', []) or []
-        plugin_info = next((p for p in plugins if p['id'] == plugin_id), None)
+        plugin_info = self._match_registry_entry(plugins, plugin_id)
 
         if not plugin_info:
             return None
@@ -1183,6 +1183,37 @@ class PluginStoreManager:
 
         return plugin_info
 
+    @staticmethod
+    def _match_registry_entry(plugins: List[Dict], plugin_id: str) -> Optional[Dict]:
+        """Find a registry entry by its id, or by the directory it installs to.
+
+        Four shipped plugins have a registry ``id`` that differs from the ``id``
+        in their own manifest: ``weather`` installs to ``plugins/ledmatrix-weather``,
+        and likewise stocks, music and leaderboard. Installation already prefers
+        the manifest id for the directory name, so on disk, in ``config.json``
+        and in a backup manifest those plugins are called ``ledmatrix-weather``.
+
+        Only the registry calls them ``weather``, and nothing resolved that in
+        reverse: restoring a backup asked the store for ``ledmatrix-weather``
+        and got "Plugin not found in registry", silently dropping four enabled
+        plugins from a restored device.
+
+        Matching ``plugin_path`` fixes it without renaming any published id,
+        which would orphan ``plugin_state.json`` entries keyed on the old ones.
+        Exact id always wins, so an entry whose *path* happens to collide with
+        another entry's id cannot shadow it.
+        """
+        if not plugin_id:
+            return None
+        exact = next((p for p in plugins if p.get('id') == plugin_id), None)
+        if exact is not None:
+            return exact
+        for entry in plugins:
+            path = (entry.get('plugin_path') or '').rstrip('/')
+            if path and path.rsplit('/', 1)[-1] == plugin_id:
+                return entry
+        return None
+
     def get_registry_info(self, plugin_id: str) -> Optional[Dict]:
         """
         Get plugin information from the registry cache only (no GitHub API calls).
@@ -1198,7 +1229,7 @@ class PluginStoreManager:
         """
         registry = self.fetch_registry()
         plugins = registry.get('plugins', []) or []
-        return next((p for p in plugins if p.get('id') == plugin_id), None)
+        return self._match_registry_entry(plugins, plugin_id)
     
     def install_plugin(self, plugin_id: str, branch: Optional[str] = None) -> bool:
         """Install a plugin, keeping any existing install until the new one is
@@ -2969,7 +3000,10 @@ class PluginStoreManager:
             remote_branch = plugin_info_remote.get('branch') or plugin_info_remote.get('default_branch')
 
             # Compare local manifest version against registry latest_version
-            # to avoid unnecessary reinstalls for monorepo plugins
+            # to avoid unnecessary reinstalls for monorepo plugins. Uses the
+            # same semantic comparator as the web UI's update badge, so
+            # equivalent spellings ("v1.2.0" vs "1.2.0") never trigger a
+            # reinstall and a locally-ahead version is never downgraded.
             try:
                 local_manifest_path = plugin_path / "manifest.json"
                 if local_manifest_path.exists():
@@ -2977,8 +3011,16 @@ class PluginStoreManager:
                         local_manifest = json.load(f)
                     local_version = local_manifest.get('version', '')
                     remote_version = plugin_info_remote.get('latest_version', '')
-                    if local_version and remote_version and local_version == remote_version:
-                        self.logger.info(f"Plugin {plugin_id} already at latest version {local_version}")
+                    from src.plugin_system.compatibility import is_update_available
+                    # No truthiness gate: the shared comparator already treats
+                    # a missing version on either side as "no update", and the
+                    # store must agree with the UI badge in that case too. A
+                    # missing manifest (not just a missing version field)
+                    # still falls through to the reinstall recovery path.
+                    if not is_update_available(local_version, remote_version):
+                        self.logger.info(
+                            f"Plugin {plugin_id} already at latest version "
+                            f"(installed {local_version}, registry {remote_version})")
                         return True
             except Exception as e:
                 self.logger.debug(f"Could not compare versions for {plugin_id}: {e}")

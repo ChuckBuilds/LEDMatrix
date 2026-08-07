@@ -11,8 +11,17 @@ orphaning VegasModeCoordinator.mark_plugin_updated() -- it has had zero
 callers since.
 """
 
+import os
 from typing import Dict, List, Optional
 from unittest.mock import MagicMock
+
+# display_controller imports display_manager, which imports the hardware
+# rgbmatrix module unless EMULATOR=true was set before import. Use the
+# emulator (same convention as test_display_dirty_tracking.py and
+# test/plugins/conftest.py) so this file collects on machines without the
+# hardware library — and so display_manager gets the emulator binding no
+# matter which test module imports it first.
+os.environ.setdefault("EMULATOR", "true")
 
 from src.display_controller import DisplayController
 

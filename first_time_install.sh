@@ -1480,27 +1480,54 @@ if [ -f "$PROJECT_ROOT_DIR/config/config.json" ]; then
 fi
 
 # Set proper permissions for secrets file (restrictive: owner rw, group r)
-# If service runs as root, set ownership to root so it can read as owner
-# Otherwise, use ACTUAL_USER and rely on group membership
+# Owned by whoever WRITES the file, which is the web interface.
+#
+# This used to read the User= of ledmatrix.service — the display service —
+# and, finding root, hand the file to root:ledmatrix 640. But the display
+# service only ever reads secrets, and root can read any file regardless of
+# mode. The account that *writes* them is the web interface: it saves config
+# edits and performs backup restores, and it deliberately does not run as root
+# (a web server should not). So a root-owned, group-read-only file left the web
+# UI unable to write its own secrets, and restoring a backup failed with
+# "Permission denied: config_secrets.json" while every other file in the same
+# backup restored fine.
+#
+# Owning by the writer keeps the tighter 640 rather than loosening to
+# group-writable, and root still reads it as superuser.
 if [ -f "$PROJECT_ROOT_DIR/config/config_secrets.json" ]; then
-    # Check if service runs as root (from service file or template)
-    SERVICE_USER="root"
-    if [ -f "/etc/systemd/system/ledmatrix.service" ]; then
-        SERVICE_USER=$(grep "^User=" /etc/systemd/system/ledmatrix.service | cut -d'=' -f2 || echo "root")
-    elif [ -f "$PROJECT_ROOT_DIR/systemd/ledmatrix.service" ]; then
-        SERVICE_USER=$(grep "^User=" "$PROJECT_ROOT_DIR/systemd/ledmatrix.service" | cut -d'=' -f2 || echo "root")
+    # The web service is the writer; fall back to the display service, then to
+    # the installing user, so an unusual layout still lands somewhere sensible.
+    SECRETS_OWNER=""
+    for unit in "/etc/systemd/system/ledmatrix-web.service" \
+                "$PROJECT_ROOT_DIR/systemd/ledmatrix-web.service"; do
+        if [ -f "$unit" ]; then
+            SECRETS_OWNER=$(grep -m1 "^User=" "$unit" | cut -d'=' -f2)
+            [ -n "$SECRETS_OWNER" ] && break
+        fi
+    done
+    if [ -z "$SECRETS_OWNER" ]; then
+        SECRETS_OWNER="$ACTUAL_USER"
     fi
-    
-    if [ "$SERVICE_USER" = "root" ]; then
-        # Service runs as root - set ownership to root so it can read as owner
-        chown "root:$LEDMATRIX_GROUP" "$PROJECT_ROOT_DIR/config/config_secrets.json" || true
-        echo "✓ Secrets file permissions set (root:ledmatrix for root service)"
-    else
-        # Service runs as regular user - use ACTUAL_USER and rely on group membership
-        chown "$ACTUAL_USER:$LEDMATRIX_GROUP" "$PROJECT_ROOT_DIR/config/config_secrets.json" || true
-        echo "✓ Secrets file permissions set ($ACTUAL_USER:ledmatrix)"
+    SECRETS_FILE="$PROJECT_ROOT_DIR/config/config_secrets.json"
+    # A root-owned file is only correct when the writer really is root.
+    if ! chown "$SECRETS_OWNER:$LEDMATRIX_GROUP" "$SECRETS_FILE"; then
+        echo "✗ ERROR: Failed to set ownership on $SECRETS_FILE to $SECRETS_OWNER:$LEDMATRIX_GROUP" >&2
+        echo "  Try: sudo chown $SECRETS_OWNER:$LEDMATRIX_GROUP $SECRETS_FILE" >&2
+        exit 1
     fi
-    chmod 640 "$PROJECT_ROOT_DIR/config/config_secrets.json"
+    if ! chmod 640 "$SECRETS_FILE"; then
+        echo "✗ ERROR: Failed to set permissions on $SECRETS_FILE to 640" >&2
+        echo "  Try: sudo chmod 640 $SECRETS_FILE" >&2
+        exit 1
+    fi
+    ACTUAL_OWNERSHIP=$(stat -c '%U:%G' "$SECRETS_FILE" 2>/dev/null || echo "unknown")
+    ACTUAL_MODE=$(stat -c '%a' "$SECRETS_FILE" 2>/dev/null || echo "unknown")
+    if [ "$ACTUAL_OWNERSHIP" != "$SECRETS_OWNER:$LEDMATRIX_GROUP" ] || [ "$ACTUAL_MODE" != "640" ]; then
+        echo "✗ ERROR: $SECRETS_FILE ended up as $ACTUAL_OWNERSHIP mode $ACTUAL_MODE, expected $SECRETS_OWNER:$LEDMATRIX_GROUP mode 640" >&2
+        echo "  The web interface may be unable to read or write config_secrets.json." >&2
+        exit 1
+    fi
+    echo "✓ Secrets file owned by the web service user ($SECRETS_OWNER:$LEDMATRIX_GROUP, mode 640)"
 fi
 
 # Set proper permissions for YTM auth file (readable by all users including root service)

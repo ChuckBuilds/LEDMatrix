@@ -450,3 +450,122 @@ class TestExampleSkin:
         ctx = skin_runtime.build_context(host, game, size=size)
         assert getattr(skin, f"render_{mode}")(ctx, game) is True
         assert ctx.canvas.convert("L").getbbox() is not None
+
+
+class TestRenderSkinCard:
+    """render_skin_card (vegas cards) shares _render_game's 3-strike counter.
+
+    Both paths reset the counter on success — transient failures must not
+    accumulate across a session and disable a working skin.
+    """
+
+    def _probe(self, skin):
+        from src.base_classes.sports import SportsCore
+        probe = _FallbackProbe(skin)
+        probe.render_skin_card = (
+            lambda game, size: SportsCore.render_skin_card(probe, game, size))
+        return probe
+
+    def test_vegas_card_returned_when_skin_provides_one(self):
+        card_img = Image.new("RGB", (96, 32), (0, 0, 255))
+
+        class CardSkin(ScoreboardSkin):
+            def render_vegas_card(self, ctx, game):
+                return card_img
+
+        probe = self._probe(CardSkin({}, {}))
+        assert probe.render_skin_card({}, (96, 32)) is card_img
+
+    def test_vegas_card_none_falls_through_to_mode_renderer(self):
+        class ModeOnlySkin(ScoreboardSkin):
+            def render_live(self, ctx, game):
+                ctx.draw.rectangle([0, 0, 5, 5], fill=(255, 0, 0))
+                return True
+
+        probe = self._probe(ModeOnlySkin({}, {}))
+        card = probe.render_skin_card({}, (96, 32))
+        assert card is not None
+        assert card.size == (96, 32)
+        assert card.convert("L").getbbox() is not None
+
+    def test_skin_declining_returns_none(self):
+        probe = self._probe(ScoreboardSkin({}, {}))  # all renders -> False
+        assert probe.render_skin_card({}, (96, 32)) is None
+        assert probe._skin_failures == 0  # declining is not a failure
+
+    def test_no_skin_returns_none(self):
+        probe = self._probe(None)
+        assert probe.render_skin_card({}, (96, 32)) is None
+
+    def test_card_failures_count_toward_shared_disable(self):
+        class BrokenCardSkin(ScoreboardSkin):
+            calls = 0
+
+            def render_vegas_card(self, ctx, game):
+                BrokenCardSkin.calls += 1
+                raise ValueError("kaboom")
+
+        probe = self._probe(BrokenCardSkin({}, {}))
+        for _ in range(5):
+            assert probe.render_skin_card({}, (96, 32)) is None
+        # Skin stopped being consulted after the 3rd failure...
+        assert BrokenCardSkin.calls == 3
+        assert probe._skin_failures == 3
+        # ...and the shared counter also disables _render_game's skin path.
+        probe._render_game({"status_text": "Q1"})
+        assert probe.builtin_calls == 1
+        assert BrokenCardSkin.calls == 3  # not consulted again
+
+    def test_card_success_resets_strikes(self):
+        """A successful card render clears accumulated strikes (mirroring
+        _render_game) — 2 failures + a success + 1 failure leaves the skin
+        enabled with a single strike, instead of disabling it."""
+        card_img = Image.new("RGB", (96, 32), (0, 0, 255))
+
+        class FlakyCardSkin(ScoreboardSkin):
+            fail = True
+
+            def render_vegas_card(self, ctx, game):
+                if FlakyCardSkin.fail:
+                    raise ValueError("kaboom")
+                return card_img
+
+        probe = self._probe(FlakyCardSkin({}, {}))
+        FlakyCardSkin.fail = True
+        probe.render_skin_card({}, (96, 32))
+        probe.render_skin_card({}, (96, 32))
+        assert probe._skin_failures == 2
+
+        FlakyCardSkin.fail = False
+        assert probe.render_skin_card({}, (96, 32)) is card_img
+        assert probe._skin_failures == 0  # success cleared the strikes
+
+        FlakyCardSkin.fail = True
+        probe.render_skin_card({}, (96, 32))
+        assert probe._skin_failures == 1  # counting from the reset state
+        FlakyCardSkin.fail = False
+        assert probe.render_skin_card({}, (96, 32)) is card_img  # still enabled
+
+    def test_card_success_via_mode_renderer_also_resets_strikes(self):
+        """The fallthrough path (render_vegas_card None -> mode renderer
+        True) resets the counter as well."""
+        class ModeOnlySkin(ScoreboardSkin):
+            def render_live(self, ctx, game):
+                ctx.draw.rectangle([0, 0, 5, 5], fill=(255, 0, 0))
+                return True
+
+        probe = self._probe(ModeOnlySkin({}, {}))
+        probe._skin_failures = 2
+        assert probe.render_skin_card({}, (96, 32)) is not None
+        assert probe._skin_failures == 0
+
+    def test_render_game_success_also_resets_strikes(self):
+        """Same reset contract on the display path, for symmetry."""
+        class GoodSkin(ScoreboardSkin):
+            def render_live(self, ctx, game):
+                return True
+
+        probe = _FallbackProbe(GoodSkin({}, {}))
+        probe._skin_failures = 2
+        probe._render_game({"status_text": "Q1"})
+        assert probe._skin_failures == 0

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import stat
 import zipfile
 from pathlib import Path
 
@@ -39,6 +40,13 @@ def _make_project(root: Path) -> Path:
     )
     (root / "config" / "wifi_config.json").write_text(
         json.dumps({"ap_mode": {"ssid": "LEDMatrix"}}),
+        encoding="utf-8",
+    )
+    # Device-local auth that lives in config/ like the three above. It was
+    # omitted from backups, so a restore silently signed the user out of
+    # YouTube Music and they had to re-authenticate by hand.
+    (root / "config" / "ytm_auth.json").write_text(
+        json.dumps({"token": "YTM-TOKEN"}),
         encoding="utf-8",
     )
 
@@ -240,6 +248,10 @@ def test_restore_roundtrip(project: Path, empty_project: Path, tmp_path: Path) -
     restored_secrets = json.loads((empty_project / "config" / "config_secrets.json").read_text())
     assert restored_secrets["ledmatrix-weather"]["api_key"] == "SECRET"
 
+    assert "ytm_auth" in result.restored
+    restored_ytm = json.loads((empty_project / "config" / "ytm_auth.json").read_text())
+    assert restored_ytm["token"] == "YTM-TOKEN"
+
     # User font restored, bundled font untouched.
     assert (empty_project / "assets" / "fonts" / "my-custom-font.ttf").read_bytes() == b"\x00\x01USER"
     assert (empty_project / "assets" / "fonts" / "5x7.bdf").read_text() == "BUNDLED"
@@ -271,6 +283,10 @@ def test_restore_honors_options(project: Path, empty_project: Path, tmp_path: Pa
     assert result.plugins_to_install == []
     assert "secrets" in result.skipped
     assert "wifi" in result.skipped
+    # ytm_auth rides on restore_wifi rather than its own flag -- disabling
+    # wifi restore must not leave a stale session token behind.
+    assert "ytm_auth" in result.skipped
+    assert not (empty_project / "config" / "ytm_auth.json").exists()
 
 
 def test_restore_rejects_malicious_zip(empty_project: Path, tmp_path: Path) -> None:
@@ -282,3 +298,39 @@ def test_restore_rejects_malicious_zip(empty_project: Path, tmp_path: Path) -> N
     # validate_backup catches it before extraction.
     assert not result.success
     assert any("unsafe" in e.lower() for e in result.errors)
+
+
+def test_restore_over_a_file_the_user_cannot_write(
+    project: Path, empty_project: Path, tmp_path: Path
+) -> None:
+    """Restore must not need write permission on the destination *file*.
+
+    Reproduces what a fresh install leaves behind: config files owned by root
+    and only group-readable, while the web interface that performs the restore
+    runs as a non-root user. shutil.copy2 opens the destination for writing and
+    failed with EACCES; writing alongside and renaming needs only directory
+    permission, which that account has.
+
+    Simulated here by making the destination read-only — the owner cannot
+    open it for writing either, but can still replace it within its directory.
+    """
+    zip_path = create_backup(project, output_dir=tmp_path / "exports")
+
+    # Pre-existing, read-only destinations.
+    (empty_project / "config").mkdir(parents=True, exist_ok=True)
+    for name in ("config.json", "config_secrets.json", "wifi_config.json", "ytm_auth.json"):
+        target = empty_project / "config" / name
+        target.write_text("{}", encoding="utf-8")
+        target.chmod(0o444)
+
+    result = restore_backup(zip_path, empty_project, RestoreOptions())
+
+    assert result.success, result.errors
+    for section in ("config", "secrets", "wifi", "ytm_auth"):
+        assert section in result.restored, f"{section} not restored: {result.errors}"
+
+    restored = json.loads((empty_project / "config" / "config.json").read_text())
+    assert restored["my-plugin"]["favorites"] == ["A", "B"]
+
+    # The destination's mode is preserved rather than widened to the umask.
+    assert stat.S_IMODE((empty_project / "config" / "config_secrets.json").stat().st_mode) == 0o444

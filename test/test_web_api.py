@@ -393,6 +393,9 @@ class TestSystemAPI:
     @patch('web_interface.blueprints.api_v3.subprocess')
     def test_get_system_status(self, mock_subprocess, client):
         """Test getting system status."""
+        # The endpoint returns 503 without psutil, which is an optional
+        # runtime dependency (requirements-test.txt installs it for CI).
+        pytest.importorskip("psutil")
         mock_result = MagicMock()
         mock_result.stdout = 'active\n'
         mock_result.returncode = 0

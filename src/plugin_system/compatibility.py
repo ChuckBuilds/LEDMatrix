@@ -180,6 +180,45 @@ def declared_min_version(manifest: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+def is_update_available(installed_version: str, latest_version: str) -> bool:
+    """Return True when the registry's ``latest_version`` is strictly newer
+    than the installed version.
+
+    THE shared comparator for "should this plugin be updated?" — used by both
+    the web UI's update badge (`api_v3._is_plugin_update_available`) and the
+    store's `update_plugin` reinstall decision, so the two can never disagree.
+
+    Uses PEP 440-aware comparison (``packaging``), which also normalizes
+    equivalent spellings: ``v1.2.0`` == ``1.2.0`` and ``1.2`` == ``1.2.0``, so
+    cosmetic differences never trigger a reinstall — and a locally modified
+    plugin whose version is *ahead* of the registry is never "updated"
+    (downgraded). If either version string can't be parsed the mismatch is
+    surfaced (True) so the user can reconcile, rather than silently hiding a
+    potential update.
+    """
+    if not installed_version or not latest_version:
+        return False
+    if not isinstance(installed_version, str) or not isinstance(latest_version, str):
+        # A malformed manifest/registry can carry a number (1.2) or worse;
+        # packaging would raise TypeError. Surface the mismatch instead.
+        return True
+    if installed_version == latest_version:
+        return False
+    try:
+        from packaging.version import parse as _parse_version, InvalidVersion
+    except ImportError:
+        # packaging is a core dependency, but if it's somehow unavailable we
+        # can't compare semantically — surface the mismatch we already know
+        # exists (the two strings differ).
+        return True
+    try:
+        return _parse_version(latest_version) > _parse_version(installed_version)
+    except InvalidVersion:
+        # Unparseable version string: we can't tell direction, so surface the
+        # mismatch rather than silently hiding a potential update.
+        return True
+
+
 def check(manifest: Dict[str, Any], core_version: str) -> Tuple[bool, Optional[str]]:
     """Return ``(compatible, reason)``.
 

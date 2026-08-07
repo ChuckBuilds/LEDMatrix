@@ -124,28 +124,13 @@ def _is_plugin_update_available(installed_version: str, latest_version: str) -> 
     """Return True when the registry's ``latest_version`` is strictly newer
     than the installed version.
 
-    Uses PEP 440 / semver-aware comparison so a locally modified plugin whose
-    version is *ahead* of the published registry is not flagged as needing an
-    update. If either version string can't be parsed, falls back to a plain
-    inequality check (any difference is surfaced so the user can reconcile).
+    Thin alias for the shared comparator in
+    `src.plugin_system.compatibility.is_update_available` — the store's
+    `update_plugin` uses the same function, so the UI badge and the actual
+    reinstall decision can never disagree.
     """
-    if not installed_version or not latest_version:
-        return False
-    if installed_version == latest_version:
-        return False
-    try:
-        from packaging.version import parse as _parse_version, InvalidVersion
-    except ImportError:
-        # packaging is a core dependency, but if it's somehow unavailable we
-        # can't compare semantically — surface the mismatch we already know
-        # exists (the two strings differ).
-        return True
-    try:
-        return _parse_version(latest_version) > _parse_version(installed_version)
-    except InvalidVersion:
-        # Unparseable version string: we can't tell direction, so surface the
-        # mismatch rather than silently hiding a potential update.
-        return True
+    from src.plugin_system.compatibility import is_update_available
+    return is_update_available(installed_version, latest_version)
 
 def _ensure_cache_manager():
     """Ensure cache manager is initialized."""
@@ -7848,7 +7833,35 @@ def clear_old_errors():
 # Backup / Restore
 # ---------------------------------------------------------------------------
 
-_BACKUP_EXPORT_DIR = PROJECT_ROOT / "config" / "backups" / "exports"
+def _resolve_backup_export_dir() -> Path:
+    """Where exported backups live: beside the install, not inside it.
+
+    They used to be written to ``<project>/config/backups/exports``. That is
+    inside the directory a reinstall deletes, so the documented recovery path
+    -- export a backup, then reinstall -- destroyed the backup it had just
+    told the user to make. Anyone who downloaded the ZIP was fine; anyone
+    relying on the on-device copy was not.
+
+    Falls back to the old location when the parent directory is not writable,
+    so an unusual layout degrades to previous behaviour instead of failing to
+    export at all.
+    """
+    preferred = PROJECT_ROOT.parent / "ledmatrix-backups"
+    fallback = PROJECT_ROOT / "config" / "backups" / "exports"
+    try:
+        preferred.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=preferred, prefix=".writetest-"):
+            pass
+        return preferred
+    except OSError as e:
+        logger.warning(
+            f"[Backup] Export dir {preferred} is not writable ({e}); "
+            f"falling back to {fallback}, which a reinstall will delete"
+        )
+        return fallback
+
+
+_BACKUP_EXPORT_DIR = _resolve_backup_export_dir()
 
 
 def _safe_backup_path(filename: str) -> Path:
@@ -7998,11 +8011,36 @@ def backup_restore():
                     else:
                         result.plugins_failed.append({'plugin_id': pid, 'error': 'Store manager unavailable'})
                 except Exception as pe:
-                    result.plugins_failed.append({'plugin_id': pid, 'error': str(pe)})
+                    logger.error(
+                        "[Backup] Failed to reinstall plugin %r: %s", pid, pe, exc_info=True
+                    )
+                    result.plugins_failed.append({'plugin_id': pid, 'error': 'Installation failed; see server logs'})
+
+        # A restore that dropped files can still report success if the only
+        # failures were plugin reinstalls, since those don't touch result.errors.
+        if result.plugins_failed:
+            result.success = False
 
         data = result.to_dict()
         if not result.success:
-            return jsonify({'status': 'error', 'message': 'Restore had errors', 'data': data}), 500
+            # Name what failed, and what nonetheless landed. A restore is
+            # partial far more often than it is total -- a fresh install can
+            # leave config_secrets.json unwritable by the web service, so
+            # config restores and secrets do not. "Restore had errors" alone
+            # left the user unable to tell a wholly failed restore from one
+            # that quietly dropped their API keys.
+            failed_plugins = [
+                str(p.get('plugin_id')) for p in (result.plugins_failed or []) if p.get('plugin_id')
+            ]
+            parts = []
+            if result.restored:
+                parts.append(f"restored: {', '.join(result.restored)}")
+            if result.errors:
+                parts.append(f"failed: {'; '.join(result.errors)}")
+            if failed_plugins:
+                parts.append(f"plugins not reinstalled: {', '.join(failed_plugins)}")
+            message = 'Restore incomplete — ' + ('. '.join(parts) if parts else 'see logs')
+            return jsonify({'status': 'error', 'message': message, 'data': data}), 500
         return jsonify({'status': 'success', 'data': data})
     except Exception as e:
         logger.error("backup_restore failed: %s", e, exc_info=True)

@@ -1,0 +1,31 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "CI Fixture Plugin",
+    "type": "object",
+    "properties": {
+        "enabled": {
+            "type": "boolean",
+            "default": true
+        },
+        "display_duration": {
+            "type": "number",
+            "default": 5
+        },
+        "border_color": {
+            "type": "array",
+            "items": {"type": "integer", "minimum": 0, "maximum": 255},
+            "minItems": 3,
+            "maxItems": 3,
+            "default": [0, 255, 0],
+            "description": "RGB color of the border rectangle."
+        },
+        "diagonal_color": {
+            "type": "array",
+            "items": {"type": "integer", "minimum": 0, "maximum": 255},
+            "minItems": 3,
+            "maxItems": 3,
+            "default": [255, 0, 0],
+            "description": "RGB color of the diagonals."
+        }
+    }
+}
