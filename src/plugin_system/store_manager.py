@@ -1143,7 +1143,7 @@ class PluginStoreManager:
         """
         registry = self.fetch_registry()
         plugins = registry.get('plugins', []) or []
-        plugin_info = next((p for p in plugins if p['id'] == plugin_id), None)
+        plugin_info = self._match_registry_entry(plugins, plugin_id)
 
         if not plugin_info:
             return None
@@ -1183,6 +1183,37 @@ class PluginStoreManager:
 
         return plugin_info
 
+    @staticmethod
+    def _match_registry_entry(plugins: List[Dict], plugin_id: str) -> Optional[Dict]:
+        """Find a registry entry by its id, or by the directory it installs to.
+
+        Four shipped plugins have a registry ``id`` that differs from the ``id``
+        in their own manifest: ``weather`` installs to ``plugins/ledmatrix-weather``,
+        and likewise stocks, music and leaderboard. Installation already prefers
+        the manifest id for the directory name, so on disk, in ``config.json``
+        and in a backup manifest those plugins are called ``ledmatrix-weather``.
+
+        Only the registry calls them ``weather``, and nothing resolved that in
+        reverse: restoring a backup asked the store for ``ledmatrix-weather``
+        and got "Plugin not found in registry", silently dropping four enabled
+        plugins from a restored device.
+
+        Matching ``plugin_path`` fixes it without renaming any published id,
+        which would orphan ``plugin_state.json`` entries keyed on the old ones.
+        Exact id always wins, so an entry whose *path* happens to collide with
+        another entry's id cannot shadow it.
+        """
+        if not plugin_id:
+            return None
+        exact = next((p for p in plugins if p.get('id') == plugin_id), None)
+        if exact is not None:
+            return exact
+        for entry in plugins:
+            path = (entry.get('plugin_path') or '').rstrip('/')
+            if path and path.rsplit('/', 1)[-1] == plugin_id:
+                return entry
+        return None
+
     def get_registry_info(self, plugin_id: str) -> Optional[Dict]:
         """
         Get plugin information from the registry cache only (no GitHub API calls).
@@ -1198,7 +1229,7 @@ class PluginStoreManager:
         """
         registry = self.fetch_registry()
         plugins = registry.get('plugins', []) or []
-        return next((p for p in plugins if p.get('id') == plugin_id), None)
+        return self._match_registry_entry(plugins, plugin_id)
     
     def install_plugin(self, plugin_id: str, branch: Optional[str] = None) -> bool:
         """Install a plugin, keeping any existing install until the new one is

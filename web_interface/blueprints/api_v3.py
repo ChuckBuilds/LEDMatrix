@@ -7833,7 +7833,35 @@ def clear_old_errors():
 # Backup / Restore
 # ---------------------------------------------------------------------------
 
-_BACKUP_EXPORT_DIR = PROJECT_ROOT / "config" / "backups" / "exports"
+def _resolve_backup_export_dir() -> Path:
+    """Where exported backups live: beside the install, not inside it.
+
+    They used to be written to ``<project>/config/backups/exports``. That is
+    inside the directory a reinstall deletes, so the documented recovery path
+    -- export a backup, then reinstall -- destroyed the backup it had just
+    told the user to make. Anyone who downloaded the ZIP was fine; anyone
+    relying on the on-device copy was not.
+
+    Falls back to the old location when the parent directory is not writable,
+    so an unusual layout degrades to previous behaviour instead of failing to
+    export at all.
+    """
+    preferred = PROJECT_ROOT.parent / "ledmatrix-backups"
+    fallback = PROJECT_ROOT / "config" / "backups" / "exports"
+    try:
+        preferred.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=preferred, prefix=".writetest-"):
+            pass
+        return preferred
+    except OSError as e:
+        logger.warning(
+            f"[Backup] Export dir {preferred} is not writable ({e}); "
+            f"falling back to {fallback}, which a reinstall will delete"
+        )
+        return fallback
+
+
+_BACKUP_EXPORT_DIR = _resolve_backup_export_dir()
 
 
 def _safe_backup_path(filename: str) -> Path:
@@ -7983,11 +8011,36 @@ def backup_restore():
                     else:
                         result.plugins_failed.append({'plugin_id': pid, 'error': 'Store manager unavailable'})
                 except Exception as pe:
-                    result.plugins_failed.append({'plugin_id': pid, 'error': str(pe)})
+                    logger.error(
+                        "[Backup] Failed to reinstall plugin %r: %s", pid, pe, exc_info=True
+                    )
+                    result.plugins_failed.append({'plugin_id': pid, 'error': 'Installation failed; see server logs'})
+
+        # A restore that dropped files can still report success if the only
+        # failures were plugin reinstalls, since those don't touch result.errors.
+        if result.plugins_failed:
+            result.success = False
 
         data = result.to_dict()
         if not result.success:
-            return jsonify({'status': 'error', 'message': 'Restore had errors', 'data': data}), 500
+            # Name what failed, and what nonetheless landed. A restore is
+            # partial far more often than it is total -- a fresh install can
+            # leave config_secrets.json unwritable by the web service, so
+            # config restores and secrets do not. "Restore had errors" alone
+            # left the user unable to tell a wholly failed restore from one
+            # that quietly dropped their API keys.
+            failed_plugins = [
+                str(p.get('plugin_id')) for p in (result.plugins_failed or []) if p.get('plugin_id')
+            ]
+            parts = []
+            if result.restored:
+                parts.append(f"restored: {', '.join(result.restored)}")
+            if result.errors:
+                parts.append(f"failed: {'; '.join(result.errors)}")
+            if failed_plugins:
+                parts.append(f"plugins not reinstalled: {', '.join(failed_plugins)}")
+            message = 'Restore incomplete — ' + ('. '.join(parts) if parts else 'see logs')
+            return jsonify({'status': 'error', 'message': message, 'data': data}), 500
         return jsonify({'status': 'success', 'data': data})
     except Exception as e:
         logger.error("backup_restore failed: %s", e, exc_info=True)
