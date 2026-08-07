@@ -124,28 +124,13 @@ def _is_plugin_update_available(installed_version: str, latest_version: str) -> 
     """Return True when the registry's ``latest_version`` is strictly newer
     than the installed version.
 
-    Uses PEP 440 / semver-aware comparison so a locally modified plugin whose
-    version is *ahead* of the published registry is not flagged as needing an
-    update. If either version string can't be parsed, falls back to a plain
-    inequality check (any difference is surfaced so the user can reconcile).
+    Thin alias for the shared comparator in
+    `src.plugin_system.compatibility.is_update_available` — the store's
+    `update_plugin` uses the same function, so the UI badge and the actual
+    reinstall decision can never disagree.
     """
-    if not installed_version or not latest_version:
-        return False
-    if installed_version == latest_version:
-        return False
-    try:
-        from packaging.version import parse as _parse_version, InvalidVersion
-    except ImportError:
-        # packaging is a core dependency, but if it's somehow unavailable we
-        # can't compare semantically — surface the mismatch we already know
-        # exists (the two strings differ).
-        return True
-    try:
-        return _parse_version(latest_version) > _parse_version(installed_version)
-    except InvalidVersion:
-        # Unparseable version string: we can't tell direction, so surface the
-        # mismatch rather than silently hiding a potential update.
-        return True
+    from src.plugin_system.compatibility import is_update_available
+    return is_update_available(installed_version, latest_version)
 
 def _ensure_cache_manager():
     """Ensure cache manager is initialized."""

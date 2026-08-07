@@ -15,13 +15,6 @@ class TestDisplayControllerInitialization:
         assert test_display_controller.plugin_manager is not None
         assert test_display_controller.available_modes == []
 
-    @pytest.mark.skip(reason="No assertions; init logic is covered by test_init_success and fixture setup")
-    def test_plugin_discovery_and_loading(self, test_display_controller):
-        """Test plugin discovery and loading during initialization."""
-        pm = test_display_controller.plugin_manager
-        pm.discover_plugins.return_value = ["plugin1", "plugin2"]
-        pm.get_plugin.return_value = MagicMock()
-
 
 class TestDisplayControllerModeRotation:
     """Test display mode rotation logic."""

@@ -106,18 +106,13 @@ class ConfigManager:
         Returns:
             SaveResult with status and details
         """
-        # Load current secrets to preserve them
-        secrets_content = {}
-        if os.path.exists(self.secrets_path):
-            try:
-                with open(self.secrets_path, 'r') as f_secrets:
-                    secrets_content = json.load(f_secrets)
-            except Exception as e:
-                self.logger.warning(f"Could not load secrets file {self.secrets_path} during save: {e}")
-        
+        # Load current secrets to preserve them (raises if unreadable — see
+        # _load_secrets_for_save)
+        secrets_content = self._load_secrets_for_save()
+
         # Strip secrets from main config before saving
         config_to_write = self._strip_secrets_recursive(new_config_data, secrets_content)
-        
+
         # Use atomic manager to save
         atomic_mgr = self._get_atomic_manager()
         result = atomic_mgr.save_config_atomic(
@@ -290,19 +285,43 @@ class ConfigManager:
                 result[key] = value
         return result
 
+    def _load_secrets_for_save(self) -> Dict[str, Any]:
+        """Load config_secrets.json for stripping before a save.
+
+        A missing secrets file is fine (nothing to strip). But a file that
+        EXISTS and cannot be read or parsed means stripping is impossible —
+        and the in-memory config being saved has secrets deep-merged into it,
+        so proceeding would write them into config.json in plaintext. That
+        was the historical behavior; it is now a hard refusal. The save
+        raises so the caller (and user) fixes the secrets file instead of
+        silently leaking its contents into the world-readable main config.
+        """
+        if not os.path.exists(self.secrets_path):
+            return {}
+        try:
+            with open(self.secrets_path, 'r') as f_secrets:
+                return json.load(f_secrets)
+        # Only the expected read/parse failures — an unexpected implementation
+        # error should propagate as itself, not masquerade as a secrets-file
+        # problem. (JSONDecodeError and UnicodeDecodeError are ValueErrors.)
+        except (OSError, ValueError, RecursionError) as e:
+            error_msg = (
+                f"Refusing to save config: secrets file {self.secrets_path} exists "
+                f"but could not be loaded ({e}). Saving without it would write "
+                f"merged secret values into config.json in plaintext. Fix or "
+                f"remove the secrets file, then retry."
+            )
+            self.logger.error("[Config] %s", error_msg, exc_info=True)
+            raise ConfigError(error_msg, config_path=self.secrets_path) from e
+
     def save_config(self, new_config_data: Dict[str, Any]) -> None:
-        """Save configuration to the main JSON file, stripping out secrets."""
-        secrets_content = {}
-        if os.path.exists(self.secrets_path):
-            try:
-                with open(self.secrets_path, 'r') as f_secrets:
-                    secrets_content = json.load(f_secrets)
-            except Exception as e:
-                self.logger.warning(f"Could not load secrets file {self.secrets_path} during save: {e}")
-                # Continue without stripping if secrets can't be loaded, or handle as critical error
-                # For now, we'll proceed cautiously and save the full new_config_data if secrets are unreadable
-                # to prevent accidental data loss if the secrets file is temporarily corrupt.
-                # A more robust approach might be to fail the save or use a cached version of secrets.
+        """Save configuration to the main JSON file, stripping out secrets.
+
+        Raises ConfigError when the secrets file exists but cannot be loaded,
+        because stripping would be impossible and secrets would leak into
+        config.json.
+        """
+        secrets_content = self._load_secrets_for_save()
 
         config_to_write = self._strip_secrets_recursive(new_config_data, secrets_content)
 

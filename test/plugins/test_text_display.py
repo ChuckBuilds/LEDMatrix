@@ -1,5 +1,10 @@
 """
 Integration tests for text-display plugin.
+
+Requires the real plugin to be installed (plugins/ or plugin-repos/,
+or the dir named by LEDMATRIX_PLUGINS_DIR) — on machines without it,
+every test here skips by design. CI covers plugin safety with the
+bundled fixture plugin via test_plugin_matrix.py instead.
 """
 
 import pytest

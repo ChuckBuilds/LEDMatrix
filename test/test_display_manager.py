@@ -1,6 +1,15 @@
+import os
 import pytest
 from unittest.mock import MagicMock, patch
 from PIL import ImageDraw
+
+# display_manager imports the hardware rgbmatrix module at import time unless
+# EMULATOR=true. Use the emulator (same convention as
+# test_display_dirty_tracking.py) so this file collects standalone instead of
+# relying on collection order — the tests below patch RGBMatrix/
+# RGBMatrixOptions explicitly, so the underlying binding doesn't matter here.
+os.environ.setdefault("EMULATOR", "true")
+
 from src.display_manager import DisplayManager
 
 @pytest.fixture
@@ -77,18 +86,26 @@ class TestDisplayManagerDrawing:
             assert dm.matrix.Clear.called
             
     def test_draw_text(self, test_config, mock_rgb_matrix):
-        """Test text drawing."""
+        """Text drawn through draw_text must actually light pixels."""
+        from PIL import Image, ImageDraw, ImageFont
+        import src.display_manager as dm_mod
         with patch.dict('os.environ', {'EMULATOR': 'false'}):
-            dm = DisplayManager(test_config)
-            
-            # Mock font
-            font = MagicMock()
-            
-            dm.draw_text("Test", 0, 0, font)
-            
-            # Verify draw_text was called (DisplayManager uses freetype/PIL)
-            # The actual implementation uses freetype or PIL, not graphics module
-            assert True  # draw_text should execute without error
+            DisplayManager._instance = None
+            dm = DisplayManager(test_config, suppress_test_pattern=True)
+            # The fixture replaces the module's freetype with a MagicMock,
+            # which breaks draw_text's isinstance(font, freetype.Face) check
+            # (and silently swallows the draw). Give the mock a real class so
+            # isinstance works and the PIL path is taken.
+            dm_mod.freetype.Face = type("_FakeFace", (), {})
+            # Start from a known-black canvas so the assertion below can only
+            # pass if draw_text itself lit something.
+            dm.image = Image.new('RGB', (dm.width, dm.height))
+            dm.draw = ImageDraw.Draw(dm.image)
+
+            dm.draw_text("Test", 0, 0, font=ImageFont.load_default())
+
+            assert dm.image.convert("L").getbbox() is not None, \
+                "draw_text lit no pixels"
             
     def test_draw_image(self, test_config, mock_rgb_matrix):
         """Test image drawing."""
