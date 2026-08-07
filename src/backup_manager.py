@@ -577,7 +577,8 @@ def restore_backup(
         try:
             _extract_zip_safe(Path(zip_path), tmp_dir)
         except (ValueError, zipfile.BadZipFile, OSError) as e:
-            result.errors.append(f"Failed to extract backup: {e}")
+            logger.error("[Backup] Failed to extract backup: %s", e, exc_info=True)
+            result.errors.append("Failed to extract backup")
             return result
 
         # Main config.
@@ -586,7 +587,8 @@ def restore_backup(
                 _copy_file(tmp_dir / _CONFIG_REL, project_root / _CONFIG_REL)
                 result.restored.append("config")
             except OSError as e:
-                result.errors.append(f"Failed to restore config.json: {e}")
+                logger.error("[Backup] Failed to restore config.json: %s", e, exc_info=True)
+                result.errors.append("Failed to restore config.json")
         elif (tmp_dir / _CONFIG_REL).exists():
             result.skipped.append("config")
 
@@ -596,7 +598,10 @@ def restore_backup(
                 _copy_file(tmp_dir / _SECRETS_REL, project_root / _SECRETS_REL)
                 result.restored.append("secrets")
             except OSError as e:
-                result.errors.append(f"Failed to restore config_secrets.json: {e}")
+                logger.error(
+                    "[Backup] Failed to restore config_secrets.json: %s", e, exc_info=True
+                )
+                result.errors.append("Failed to restore config_secrets.json")
         elif (tmp_dir / _SECRETS_REL).exists():
             result.skipped.append("secrets")
 
@@ -606,7 +611,10 @@ def restore_backup(
                 _copy_file(tmp_dir / _WIFI_REL, project_root / _WIFI_REL)
                 result.restored.append("wifi")
             except OSError as e:
-                result.errors.append(f"Failed to restore wifi_config.json: {e}")
+                logger.error(
+                    "[Backup] Failed to restore wifi_config.json: %s", e, exc_info=True
+                )
+                result.errors.append("Failed to restore wifi_config.json")
         elif (tmp_dir / _WIFI_REL).exists():
             result.skipped.append("wifi")
 
@@ -618,7 +626,8 @@ def restore_backup(
                 _copy_file(tmp_dir / _YTM_REL, project_root / _YTM_REL)
                 result.restored.append("ytm_auth")
             except OSError as e:
-                result.errors.append(f"Failed to restore ytm_auth.json: {e}")
+                logger.error("[Backup] Failed to restore ytm_auth.json: %s", e, exc_info=True)
+                result.errors.append("Failed to restore ytm_auth.json")
         elif (tmp_dir / _YTM_REL).exists():
             result.skipped.append("ytm_auth")
 
@@ -636,7 +645,10 @@ def restore_backup(
                     _copy_file(font, project_root / _FONTS_REL / font.name)
                     restored_count += 1
                 except OSError as e:
-                    result.errors.append(f"Failed to restore font {font.name}: {e}")
+                    logger.error(
+                        "[Backup] Failed to restore font %s: %s", font.name, e, exc_info=True
+                    )
+                    result.errors.append(f"Failed to restore font {font.name}")
             if restored_count:
                 result.restored.append(f"fonts ({restored_count})")
         elif tmp_fonts.exists():
@@ -657,7 +669,8 @@ def restore_backup(
                         _copy_file(src, project_root / rel)
                         count += 1
                     except OSError as e:
-                        result.errors.append(f"Failed to restore {rel}: {e}")
+                        logger.error("[Backup] Failed to restore %s: %s", rel, e, exc_info=True)
+                        result.errors.append(f"Failed to restore {rel}")
             if count:
                 result.restored.append(f"plugin_uploads ({count})")
         elif tmp_uploads.exists():
@@ -675,7 +688,8 @@ def restore_backup(
                         if isinstance(p, dict) and p.get("plugin_id")
                     ]
             except (OSError, json.JSONDecodeError) as e:
-                result.errors.append(f"Could not read plugins.json: {e}")
+                logger.error("[Backup] Could not read plugins.json: %s", e, exc_info=True)
+                result.errors.append("Could not read plugins.json")
 
     result.success = not result.errors
     return result

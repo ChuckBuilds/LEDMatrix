@@ -283,6 +283,10 @@ def test_restore_honors_options(project: Path, empty_project: Path, tmp_path: Pa
     assert result.plugins_to_install == []
     assert "secrets" in result.skipped
     assert "wifi" in result.skipped
+    # ytm_auth rides on restore_wifi rather than its own flag -- disabling
+    # wifi restore must not leave a stale session token behind.
+    assert "ytm_auth" in result.skipped
+    assert not (empty_project / "config" / "ytm_auth.json").exists()
 
 
 def test_restore_rejects_malicious_zip(empty_project: Path, tmp_path: Path) -> None:
