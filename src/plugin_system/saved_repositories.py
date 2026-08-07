@@ -57,6 +57,18 @@ class SavedRepositoriesManager:
             self.logger.error(f"Error saving repositories: {e}")
             return False
     
+    @staticmethod
+    def _clean_url(repo_url: str) -> str:
+        """Normalize a repo URL: strip whitespace, trailing slashes, and a
+        trailing ``.git`` suffix ONLY. (The old ``.replace('.git', '')``
+        was an unanchored substring replace that mangled URLs merely
+        containing ``.git``, e.g. ``https://github.com/user/my.github.io``.)
+        """
+        repo_url = repo_url.strip().rstrip('/')
+        if repo_url.endswith('.git'):
+            repo_url = repo_url[:-4]
+        return repo_url
+
     def get_all(self) -> List[Dict[str, str]]:
         """Get all saved repositories."""
         return self.repositories.copy()
@@ -72,15 +84,14 @@ class SavedRepositoriesManager:
         Returns:
             True if added successfully
         """
-        # Clean URL
-        repo_url = repo_url.strip().rstrip('/').replace('.git', '')
-        
+        repo_url = self._clean_url(repo_url)
+
         # Check if already exists
         for repo in self.repositories:
             if repo.get('url') == repo_url:
                 self.logger.warning(f"Repository already exists: {repo_url}")
                 return False
-        
+
         # Extract name from URL if not provided
         if not name:
             parts = repo_url.split('/')
@@ -88,15 +99,20 @@ class SavedRepositoriesManager:
                 name = parts[-1]
             else:
                 name = repo_url
-        
+
         # Add repository
         self.repositories.append({
             'url': repo_url,
             'name': name,
             'type': 'registry' if 'plugins.json' in repo_url or 'ledmatrix-plugins' in repo_url.lower() else 'single'
         })
-        
-        return self._save_repositories()
+
+        if not self._save_repositories():
+            # Keep memory consistent with disk: a failed save must not leave
+            # a phantom entry that only this process can see.
+            self.repositories.pop()
+            return False
+        return True
     
     def remove(self, repo_url: str) -> bool:
         """
@@ -108,21 +124,25 @@ class SavedRepositoriesManager:
         Returns:
             True if removed successfully
         """
-        # Clean URL
-        repo_url = repo_url.strip().rstrip('/').replace('.git', '')
-        
-        original_count = len(self.repositories)
-        self.repositories = [r for r in self.repositories if r.get('url') != repo_url]
-        
-        if len(self.repositories) < original_count:
-            return self._save_repositories()
+        repo_url = self._clean_url(repo_url)
+
+        previous = self.repositories
+        remaining = [r for r in previous if r.get('url') != repo_url]
+
+        if len(remaining) < len(previous):
+            self.repositories = remaining
+            if not self._save_repositories():
+                # Failed save: restore so memory matches disk.
+                self.repositories = previous
+                return False
+            return True
         else:
             self.logger.warning(f"Repository not found: {repo_url}")
             return False
     
     def has(self, repo_url: str) -> bool:
         """Check if a repository is already saved."""
-        repo_url = repo_url.strip().rstrip('/').replace('.git', '')
+        repo_url = self._clean_url(repo_url)
         return any(r.get('url') == repo_url for r in self.repositories)
     
     def get_registry_repositories(self) -> List[Dict[str, str]]:

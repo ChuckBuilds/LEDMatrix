@@ -78,10 +78,20 @@ class TestInstanceVariable:
                              instance_duration=[30])
         assert plugin.get_display_duration() == 20.0
 
-    def test_bool_true_is_one_second(self):
-        # Characterized quirk: bool is an int subclass, so display_duration =
-        # True passes the isinstance((int, float)) branch and returns 1.0.
-        assert make_plugin(instance_duration=True).get_display_duration() == 1.0
+    def test_bool_true_falls_through_like_any_non_number(self):
+        # bool is an int subclass, but a boolean is not a duration: True
+        # must NOT read as 1 second — it falls through to config/default.
+        assert make_plugin(instance_duration=True).get_display_duration() == 15.0
+
+    def test_bool_true_falls_through_to_config(self):
+        plugin = make_plugin(config={"display_duration": 20},
+                             instance_duration=True)
+        assert plugin.get_display_duration() == 20.0
+
+    def test_bool_false_still_falls_through(self):
+        plugin = make_plugin(config={"display_duration": 20},
+                             instance_duration=False)
+        assert plugin.get_display_duration() == 20.0
 
 
 class TestConfigFallback:
@@ -108,3 +118,7 @@ class TestConfigFallback:
 
     def test_config_none_uses_default(self):
         assert make_plugin({"display_duration": None}).get_display_duration() == 15.0
+
+    def test_config_bool_uses_default(self):
+        assert make_plugin({"display_duration": True}).get_display_duration() == 15.0
+        assert make_plugin({"display_duration": False}).get_display_duration() == 15.0

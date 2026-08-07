@@ -37,7 +37,12 @@ class StartupValidator:
             Tuple of (is_valid, errors, warnings)
         """
         self.logger.info("Starting startup validation...")
-        
+
+        # Fresh lists each run — without this, calling validate_all() twice
+        # duplicated every message.
+        self.errors = []
+        self.warnings = []
+
         # Validate configuration
         self._validate_config()
         

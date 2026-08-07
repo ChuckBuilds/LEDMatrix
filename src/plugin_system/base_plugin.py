@@ -364,8 +364,10 @@ class BasePlugin(ABC):
                 # Handle None case
                 if duration is None:
                     pass  # Fall through to config
-                # Try to convert to float if it's a number or numeric string
-                elif isinstance(duration, (int, float)):
+                # Try to convert to float if it's a number or numeric string.
+                # bool is excluded: it's an int subclass, and True would
+                # otherwise read as a 1-second duration.
+                elif isinstance(duration, (int, float)) and not isinstance(duration, bool):
                     if duration > 0:
                         return float(duration)
                     else:
@@ -403,8 +405,9 @@ class BasePlugin(ABC):
         # Fall back to config
         config_duration = self.config.get("display_duration", 15.0)
         try:
-            # Ensure config value is also a valid float
-            if isinstance(config_duration, (int, float)):
+            # Ensure config value is also a valid float (bool excluded — an
+            # int subclass that would otherwise read True as 1 second)
+            if isinstance(config_duration, (int, float)) and not isinstance(config_duration, bool):
                 if config_duration > 0:
                     return float(config_duration)
                 else:
