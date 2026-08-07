@@ -5,6 +5,7 @@ Provides consistent logging configuration across the LEDMatrix application.
 Supports structured logging with context information and appropriate log levels.
 """
 
+import copy
 import logging
 import sys
 import os
@@ -65,24 +66,29 @@ class ContextualFormatter(logging.Formatter):
         self.include_context = include_context
     
     def format(self, record: logging.LogRecord) -> str:
-        """Format log record with context."""
-        # Add context to message if present
+        """Format log record with context.
+
+        Works on a shallow copy of the record: a record is formatted once
+        PER HANDLER, so mutating record.msg in place (the old behavior)
+        prepended the context prefix again for every additional handler.
+        """
         if self.include_context:
             context_parts = []
-            
+
             if hasattr(record, 'plugin_id'):
                 context_parts.append(f"[Plugin: {record.plugin_id}]")
-            
+
             if hasattr(record, 'operation_id'):
                 context_parts.append(f"[Op: {record.operation_id}]")
-            
+
             if hasattr(record, 'context') and isinstance(record.context, dict):
                 for key, value in record.context.items():
                     context_parts.append(f"[{key}: {value}]")
-            
+
             if context_parts:
+                record = copy.copy(record)
                 record.msg = ' '.join(context_parts) + ' ' + str(record.msg)
-        
+
         return super().format(record)
 
 
@@ -224,8 +230,11 @@ def log_warning(logger: logging.Logger, message: str, **kwargs) -> None:
 
 
 def log_error(logger: logging.Logger, message: str, **kwargs) -> None:
-    """Log error message with context."""
-    log_with_context(logger, logging.ERROR, message, **kwargs, exc_info=True)
+    """Log error message with context. Defaults exc_info=True; a caller
+    passing exc_info explicitly wins (the old hardcoded keyword raised
+    TypeError on that duplicate)."""
+    kwargs.setdefault('exc_info', True)
+    log_with_context(logger, logging.ERROR, message, **kwargs)
 
 
 def log_debug(logger: logging.Logger, message: str, **kwargs) -> None:

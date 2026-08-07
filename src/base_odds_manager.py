@@ -163,19 +163,25 @@ class BaseOddsManager:
             item = data["items"][0]
             self.logger.debug(f"First item keys: {list(item.keys())}")
             
-            # The ESPN API returns odds data directly in the item, not in a providers array
-            # Extract the odds data directly from the item
+            # The ESPN API returns odds data directly in the item, not in a
+            # providers array. ESPN sends explicit JSON nulls for absent
+            # sides ("homeTeamOdds": null), so every level uses `or {}` —
+            # .get's default only applies when the key is missing entirely.
+            home = item.get("homeTeamOdds") or {}
+            away = item.get("awayTeamOdds") or {}
             extracted_data = {
                 "details": item.get("details"),
                 "over_under": item.get("overUnder"),
                 "spread": item.get("spread"),
                 "home_team_odds": {
-                    "money_line": item.get("homeTeamOdds", {}).get("moneyLine"),
-                    "spread_odds": item.get("homeTeamOdds", {}).get("current", {}).get("pointSpread", {}).get("value")
+                    "money_line": home.get("moneyLine"),
+                    "spread_odds": ((home.get("current") or {})
+                                    .get("pointSpread") or {}).get("value")
                 },
                 "away_team_odds": {
-                    "money_line": item.get("awayTeamOdds", {}).get("moneyLine"),
-                    "spread_odds": item.get("awayTeamOdds", {}).get("current", {}).get("pointSpread", {}).get("value")
+                    "money_line": away.get("moneyLine"),
+                    "spread_odds": ((away.get("current") or {})
+                                    .get("pointSpread") or {}).get("value")
                 }
             }
             self.logger.debug(f"Returning extracted odds data: {json.dumps(extracted_data, indent=2)}")
@@ -260,9 +266,13 @@ class BaseOddsManager:
         Returns:
             Formatted odds summary string
         """
-        if not self.is_odds_available(odds_data):
+        # Gate only on truly-empty / negative-cached data. is_odds_available
+        # deliberately ignores money lines (its callers decide whether to
+        # RENDER an odds widget), but a summary of money-line-only odds is
+        # still meaningful — the parts loop below handles them.
+        if not odds_data or odds_data.get('no_odds'):
             return "No odds available"
-        
+
         parts = []
         
         # Add spread information
