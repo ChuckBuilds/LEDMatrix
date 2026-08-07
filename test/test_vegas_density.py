@@ -781,6 +781,20 @@ class TestNewConfigKeys:
         assert cfg.render_width_pct == 100
         assert cfg.min_content_separation == 24
 
+    def test_width_cap_is_off_by_default(self):
+        # Capping made wide plugins resume mid-content on every appearance and
+        # emit runt final windows; it is now opt-in per plugin instead.
+        assert VegasModeConfig().max_plugin_width_ratio == 0.0
+        assert VegasModeConfig.from_config({}).max_plugin_width_ratio == 0.0
+
+    def test_width_cap_is_still_available_when_asked_for(self):
+        # Defaulting the cap off must not remove it: a user who sets a ratio
+        # still gets one, and 0 still means uncapped.
+        cfg = VegasModeConfig.from_config(
+            {'display': {'vegas_scroll': {'max_plugin_width_ratio': 3.0}}})
+        assert cfg.max_plugin_width_ratio == 3.0
+        assert cfg.validate() == []
+
     @pytest.mark.parametrize('overrides,bad_key', [
         ({'render_width_pct': 5}, 'render_width_pct'),
         ({'render_width_pct': 101}, 'render_width_pct'),

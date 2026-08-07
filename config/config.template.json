@@ -149,7 +149,7 @@
             "min_plugin_width": 8,
             "lead_in_width": 0,
             "plugins_per_cycle": 6,
-            "max_plugin_width_ratio": 3.0,
+            "max_plugin_width_ratio": 0.0,
             "overflow_mode": "rotate",
             "dynamic_duration_enabled": true,
             "min_cycle_duration": 60,

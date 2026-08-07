@@ -104,10 +104,22 @@ class VegasModeConfig:
     overflow_mode: str = "rotate"
 
     # Cap on one plugin's share of a cycle, as a multiple of display width.
-    # A single ticker returning 7,000px would otherwise hold the panel for over
-    # two minutes. Overflow is deferred to later cycles rather than discarded.
-    # 0 disables the cap.
-    max_plugin_width_ratio: float = 3.0
+    # 0 (the default) disables the cap, so every plugin contributes all of its
+    # content and is always entered at its beginning.
+    #
+    # Capping was the default until it proved to cost more than it bought.
+    # Measured over a 17-plugin fleet on a 512px panel, only four plugins were
+    # ever wide enough to hit a 3.0 cap; for those four it produced two visible
+    # faults. Content resumed mid-item on each appearance (a news ticker entered
+    # at column 6027 of its own strip), and the final window of a rotation was
+    # whatever happened to be left — 348px of a 1840px stocks ticker, seven
+    # seconds of panel time. Both read as the display being broken rather than
+    # as deferral working.
+    #
+    # A wide plugin does hold the panel for a long time uncapped: set the cap
+    # per plugin with vegas_max_width_screens where that matters, rather than
+    # globally where it mostly hurts plugins that were never the problem.
+    max_plugin_width_ratio: float = 0.0
 
     # Plugin management
     plugin_order: List[str] = field(default_factory=list)
@@ -159,7 +171,7 @@ class VegasModeConfig:
             lead_in_width=int(vegas_config.get('lead_in_width', 0)),
             plugins_per_cycle=int(vegas_config.get('plugins_per_cycle', 6)),
             max_plugin_width_ratio=float(
-                vegas_config.get('max_plugin_width_ratio', 3.0)),
+                vegas_config.get('max_plugin_width_ratio', 0.0)),
             overflow_mode=str(vegas_config.get('overflow_mode', 'rotate')),
             plugin_order=list(vegas_config.get('plugin_order', [])),
             excluded_plugins=set(vegas_config.get('excluded_plugins', [])),

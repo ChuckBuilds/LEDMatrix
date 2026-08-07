@@ -127,7 +127,7 @@ Read by `src/vegas_mode/config.py` (`VegasScrollConfig.from_config`). See
 | `min_plugin_width` | int, `8` |
 | `lead_in_width` | int, `0` |
 | `plugins_per_cycle` | int, `6` |
-| `max_plugin_width_ratio` | float, `3.0` |
+| `max_plugin_width_ratio` | float, `0.0` |
 | `overflow_mode` | string, `"rotate"` |
 | `dynamic_duration_enabled` | bool, `true` |
 | `min_cycle_duration` | int, `60` |
