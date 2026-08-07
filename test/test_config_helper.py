@@ -139,6 +139,16 @@ class TestMergeConfigs:
         assert base == {'a': {'b': 1}}
         assert override == {'a': {'c': 2}}
 
+    def test_no_aliasing_of_override_values(self, helper):
+        # The non-recursive branch must deep-copy the override value too:
+        # mutating a merged-in list or dict must not reach back into
+        # override_config.
+        override = {'teams': ['A', 'B'], 'nested': {'x': [1]}}
+        merged = helper.merge_configs({}, override)
+        merged['teams'].append('C')
+        merged['nested']['x'].append(2)
+        assert override == {'teams': ['A', 'B'], 'nested': {'x': [1]}}
+
 
 class TestValidateConfig:
     def test_no_schema_dict_is_valid(self, helper):

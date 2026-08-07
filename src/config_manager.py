@@ -402,10 +402,13 @@ class ConfigManager:
                 tlist = target[key]
                 for i, s_item in enumerate(value):
                     if i >= len(tlist):
+                        # Interpolate only config-side data here — nothing
+                        # iterated out of the secrets dict (not even the key
+                        # name) may reach the log.
                         self.logger.warning(
-                            "Secrets list for %r is longer than the config list "
-                            "(%d > %d); ignoring the extra entries",
-                            key, len(value), len(tlist))
+                            "A secrets list is longer than the config list it "
+                            "parallels (config has %d item(s)); ignoring the "
+                            "extra entries", len(tlist))
                         break
                     if not s_item:
                         continue  # {} placeholder: item i has no secrets

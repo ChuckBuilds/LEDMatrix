@@ -172,8 +172,9 @@ class ConfigHelper:
                 # Recursively merge nested dictionaries
                 merged[key] = self.merge_configs(merged[key], value)
             else:
-                # Override with new value
-                merged[key] = value
+                # Override with new value — deep-copied so mutating the
+                # merged result can't reach back into override_config.
+                merged[key] = copy.deepcopy(value)
         
         return merged
     

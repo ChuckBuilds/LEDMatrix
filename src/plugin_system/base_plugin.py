@@ -797,10 +797,12 @@ class BasePlugin(ABC):
                 self.logger.error("'enabled' must be a boolean")
                 return False
 
-        # Check display_duration if present
+        # Check display_duration if present. bool is excluded explicitly:
+        # it's an int subclass, and get_display_duration rejects it too.
         if "display_duration" in self.config:
             duration = self.config["display_duration"]
-            if not isinstance(duration, (int, float)) or duration <= 0:
+            if (not isinstance(duration, (int, float))
+                    or isinstance(duration, bool) or duration <= 0):
                 self.logger.error("'display_duration' must be a positive number")
                 return False
 

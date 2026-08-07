@@ -122,3 +122,25 @@ class TestConfigFallback:
     def test_config_bool_uses_default(self):
         assert make_plugin({"display_duration": True}).get_display_duration() == 15.0
         assert make_plugin({"display_duration": False}).get_display_duration() == 15.0
+
+
+class TestValidateConfigDuration:
+    # validate_config must agree with get_display_duration about what a
+    # valid duration is — a config it accepts must not then be rejected
+    # (or silently defaulted) when the duration is actually read.
+
+    def test_positive_number_valid(self):
+        assert make_plugin({"display_duration": 20}).validate_config() is True
+
+    def test_zero_and_negative_invalid(self):
+        assert make_plugin({"display_duration": 0}).validate_config() is False
+        assert make_plugin({"display_duration": -5}).validate_config() is False
+
+    def test_bool_invalid(self):
+        # bool is an int subclass; True would otherwise pass as "positive
+        # number" here while get_display_duration rejects it.
+        assert make_plugin({"display_duration": True}).validate_config() is False
+        assert make_plugin({"display_duration": False}).validate_config() is False
+
+    def test_missing_duration_valid(self):
+        assert make_plugin({}).validate_config() is True

@@ -6,6 +6,7 @@ Manages saved GitHub repository URLs for easy plugin discovery and installation.
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import List, Dict, Optional
 
@@ -43,18 +44,31 @@ class SavedRepositoriesManager:
             return []
     
     def _save_repositories(self) -> bool:
-        """Save repositories to file."""
+        """Save repositories to file atomically.
+
+        Writes to a temp file in the same directory and os.replace()s it
+        over the target, so a failed write can never truncate or
+        half-overwrite an existing saved_repositories.json.
+        """
+        tmp_path = self.config_path.with_suffix(self.config_path.suffix + '.tmp')
         try:
             # Ensure directory exists
             self.config_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            with open(self.config_path, 'w') as f:
+
+            with open(tmp_path, 'w') as f:
                 json.dump(self.repositories, f, indent=2)
-            
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, self.config_path)
+
             self.logger.info(f"Saved {len(self.repositories)} repositories to {self.config_path}")
             return True
         except Exception as e:
             self.logger.error(f"Error saving repositories: {e}")
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
             return False
     
     @staticmethod

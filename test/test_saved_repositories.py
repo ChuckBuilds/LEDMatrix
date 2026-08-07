@@ -207,6 +207,23 @@ class TestSaveFailureRollback:
         # Disk still has the entry too — memory and disk stay in sync.
         assert len(json.loads(path.read_text())) == 1
 
+    def test_failed_write_leaves_existing_file_intact(self, tmp_path, monkeypatch):
+        # The save is atomic (temp file + os.replace): a write that dies
+        # mid-serialization must neither truncate the existing file nor
+        # leave a stray .tmp behind.
+        path = tmp_path / "repos.json"
+        manager = make_manager(path)
+        manager.add("https://github.com/user/repo")  # real save
+        before = path.read_text()
+
+        def boom(*args, **kwargs):
+            raise OSError("disk full")
+        monkeypatch.setattr(json, "dump", boom)
+        assert manager.add("https://github.com/user/other") is False
+
+        assert path.read_text() == before
+        assert list(tmp_path.glob("*.tmp")) == []
+
 
 class TestGetAllCopy:
     def test_get_all_is_shallow_copy(self, tmp_path):

@@ -299,3 +299,37 @@ class TestArraySecretStripAndMerge:
             {"name": "a", "token": "s3cret-a"},
             {"name": "b", "token": "s3cret-b"},
         ]
+
+    def test_whole_item_secret_list_never_leaks_values(self, tmp_path):
+        # When the ENTIRE array item is secret (schema marks both key[]
+        # and key[].field), separate_secrets stores the full item dicts in
+        # the secrets file. That shape also matches the parallel-list
+        # discriminator — which is safe: strip drops every leaf key that
+        # appears in the secret item, so only empty {} skeletons (item
+        # count, no values) can reach config.json, and merge-on-load
+        # restores the full items from those skeletons.
+        from src.web_interface.secret_helpers import (
+            find_secret_fields, separate_secrets)
+        schema_props = {"accounts": {
+            "type": "array",
+            "items": {"type": "object", "x-secret": True, "properties": {
+                "id": {"type": "string"},
+                "token": {"type": "string", "x-secret": True},
+            }},
+        }}
+        paths = find_secret_fields(schema_props)
+        assert paths == {"accounts[]", "accounts[].token"}
+        full = {"accounts": [{"id": "i1", "token": "s3cret-a"},
+                             {"id": "i2", "token": "s3cret-b"}]}
+        _, secrets = separate_secrets(full, paths)
+        assert secrets == full  # whole items are secret
+
+        manager = make_manager(tmp_path)
+        stripped = manager._strip_secrets_recursive(full, secrets)
+        assert stripped == {"accounts": [{}, {}]}
+
+        raw = json.dumps(stripped)
+        assert "s3cret" not in raw and "i1" not in raw
+
+        manager._deep_merge(stripped, secrets)
+        assert stripped == full  # round trip restores the items
