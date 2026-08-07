@@ -161,6 +161,24 @@
     // ─── Cell rendering ─────────────────────────────────────────────────────
 
     /**
+     * Visible text for one enum option.
+     *
+     * Mirrors the server-rendered table in plugin_config.html: a schema may
+     * supply x-options.labels, and anything unlabelled falls back to the raw
+     * value. Rows added here must match rows rendered by the template, or the
+     * same column would read differently before and after a page reload.
+     *
+     * @param {Object} colDef  column (or property) schema
+     * @param {*}      opt     the enum value
+     * @returns {string} label to display
+     */
+    function enumOptionLabel(colDef, opt) {
+        const options = (colDef && (colDef['x-options'] || colDef['x_options'])) || {};
+        const labels = options.labels || {};
+        return Object.prototype.hasOwnProperty.call(labels, opt) ? labels[opt] : opt;
+    }
+
+    /**
      * Create one <td> for a display column.
      */
     function createCell(fullKey, index, colName, colDef, colValue, pluginId) {
@@ -219,7 +237,7 @@
                 if (opt === null) return;
                 const o = document.createElement('option');
                 o.value    = opt;
-                o.textContent = opt;
+                o.textContent = enumOptionLabel(colDef, opt);
                 if (String(colValue) === String(opt)) o.selected = true;
                 sel.appendChild(o);
             });
@@ -646,7 +664,7 @@
             enumVals.forEach(opt => {
                 if (opt === null) return;
                 const o = document.createElement('option');
-                o.value = opt; o.textContent = opt;
+                o.value = opt; o.textContent = enumOptionLabel(schema, opt);
                 if (String(currentVal) === String(opt)) o.selected = true;
                 sel.appendChild(o);
             });

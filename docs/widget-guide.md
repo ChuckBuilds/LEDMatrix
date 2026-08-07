@@ -243,7 +243,9 @@ plugin can ship labels without requiring a core upgrade.
 Array-table columns (`x-widget: array-table`) accept the same
 `x-options.labels` on a column definition, but their fallback is the **raw
 value** rather than the humanised one, because those columns hold values such
-as ticker symbols where `aapl` → "Aapl" would be wrong.
+as ticker symbols where `aapl` → "Aapl" would be wrong. Rows added in the
+browser use the labels too (`array-table.js`), so a column reads the same
+before and after a page reload.
 
 ## Marking Fields as Advanced (`x-advanced`)
 
