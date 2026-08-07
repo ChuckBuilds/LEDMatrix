@@ -301,14 +301,17 @@ class ConfigManager:
         try:
             with open(self.secrets_path, 'r') as f_secrets:
                 return json.load(f_secrets)
-        except Exception as e:
+        # Only the expected read/parse failures — an unexpected implementation
+        # error should propagate as itself, not masquerade as a secrets-file
+        # problem. (JSONDecodeError and UnicodeDecodeError are ValueErrors.)
+        except (OSError, ValueError, RecursionError) as e:
             error_msg = (
                 f"Refusing to save config: secrets file {self.secrets_path} exists "
                 f"but could not be loaded ({e}). Saving without it would write "
                 f"merged secret values into config.json in plaintext. Fix or "
                 f"remove the secrets file, then retry."
             )
-            self.logger.error(error_msg)
+            self.logger.error("[Config] %s", error_msg, exc_info=True)
             raise ConfigError(error_msg, config_path=self.secrets_path) from e
 
     def save_config(self, new_config_data: Dict[str, Any]) -> None:

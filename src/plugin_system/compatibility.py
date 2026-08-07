@@ -198,6 +198,10 @@ def is_update_available(installed_version: str, latest_version: str) -> bool:
     """
     if not installed_version or not latest_version:
         return False
+    if not isinstance(installed_version, str) or not isinstance(latest_version, str):
+        # A malformed manifest/registry can carry a number (1.2) or worse;
+        # packaging would raise TypeError. Surface the mismatch instead.
+        return True
     if installed_version == latest_version:
         return False
     try:

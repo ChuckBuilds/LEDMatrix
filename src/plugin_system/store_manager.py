@@ -2981,8 +2981,12 @@ class PluginStoreManager:
                     local_version = local_manifest.get('version', '')
                     remote_version = plugin_info_remote.get('latest_version', '')
                     from src.plugin_system.compatibility import is_update_available
-                    if (local_version and remote_version
-                            and not is_update_available(local_version, remote_version)):
+                    # No truthiness gate: the shared comparator already treats
+                    # a missing version on either side as "no update", and the
+                    # store must agree with the UI badge in that case too. A
+                    # missing manifest (not just a missing version field)
+                    # still falls through to the reinstall recovery path.
+                    if not is_update_available(local_version, remote_version):
                         self.logger.info(
                             f"Plugin {plugin_id} already at latest version "
                             f"(installed {local_version}, registry {remote_version})")

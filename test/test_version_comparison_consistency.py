@@ -40,6 +40,19 @@ CASES = [
 ]
 
 
+class TestSharedComparatorMalformedInputs:
+    def test_truthy_non_string_surfaces_mismatch(self):
+        # A malformed manifest can carry version as a number; packaging would
+        # raise TypeError on it. The comparator must not raise.
+        assert is_update_available(1.2, "1.2.0") is True
+        assert is_update_available("1.2.0", 1.3) is True
+
+    def test_falsy_non_string_means_nothing_to_do(self):
+        assert is_update_available(None, "1.0.0") is False
+        assert is_update_available("1.0.0", None) is False
+        assert is_update_available(0, "1.0.0") is False
+
+
 class TestSharedComparator:
     @pytest.mark.parametrize("pair,expected", CASES)
     def test_is_update_available(self, pair, expected):
@@ -113,6 +126,20 @@ class TestStoreManagerUsesSharedComparator:
         result, reinstall = self._run_update(store, info)
         reinstall.assert_called_once()
         assert result is True
+
+    def test_empty_local_version_follows_comparator_no_reinstall(self, tmp_path):
+        # The comparator says "nothing to do" for a missing version, and the
+        # store must agree with the UI badge — no reinstall.
+        store, info = self._store(tmp_path, "", "1.0.0")
+        result, reinstall = self._run_update(store, info)
+        assert result is True
+        reinstall.assert_not_called()
+
+    def test_empty_registry_version_follows_comparator_no_reinstall(self, tmp_path):
+        store, info = self._store(tmp_path, "1.0.0", "")
+        result, reinstall = self._run_update(store, info)
+        assert result is True
+        reinstall.assert_not_called()
 
 
 class TestSkinRuntimeMajor:
