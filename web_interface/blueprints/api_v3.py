@@ -1631,6 +1631,161 @@ def get_health():
             'data': {'status': 'unhealthy'}
         }), 500
 
+def _git_current_branch(project_dir):
+    """Current branch name, or '' when detached or git fails."""
+    try:
+        r = subprocess.run(['git', 'branch', '--show-current'],
+                           capture_output=True, text=True, timeout=10, cwd=str(project_dir))
+        return r.stdout.strip() if r.returncode == 0 else ''
+    except (subprocess.TimeoutExpired, OSError):
+        return ''
+
+
+def _git_upstream(project_dir):
+    """Configured upstream for the current branch (e.g. 'origin/main'), or ''."""
+    try:
+        r = subprocess.run(['git', 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'],
+                           capture_output=True, text=True, timeout=10, cwd=str(project_dir))
+        return r.stdout.strip() if r.returncode == 0 else ''
+    except (subprocess.TimeoutExpired, OSError):
+        return ''
+
+
+def _git_remote_branch_exists(project_dir, branch):
+    """True when origin/<branch> exists locally as a remote-tracking ref."""
+    if not branch:
+        return False
+    try:
+        r = subprocess.run(
+            ['git', 'show-ref', '--verify', '--quiet', f'refs/remotes/origin/{branch}'],
+            capture_output=True, text=True, timeout=10, cwd=str(project_dir))
+        return r.returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def resolve_pull_command(project_dir):
+    """Work out how to pull, for branches with and without an upstream.
+
+    A plain ``git pull --rebase`` fails outright on a branch that has no
+    upstream ("There is no tracking information for the current branch"),
+    which is easy to end up on: checking out a branch by name, restoring a
+    backup, or following an install guide that names one. The update button
+    then reports a failure the user cannot act on.
+
+    Returns ``(args, note, error)``. When ``origin/<branch>`` exists the pull
+    is made explicit against it, so the update proceeds and the branch is
+    given tracking information afterwards.
+    """
+    upstream = _git_upstream(project_dir)
+    if upstream:
+        return ['git', 'pull', '--rebase'], '', None
+
+    branch = _git_current_branch(project_dir)
+    if not branch:
+        return None, '', (
+            "This checkout is in a detached HEAD state, so there is no branch "
+            "to update. Switch to a branch first (Tools -> Switch branch)."
+        )
+    if _git_remote_branch_exists(project_dir, branch):
+        return (
+            ['git', 'pull', '--rebase', 'origin', branch],
+            f"Branch '{branch}' had no upstream; pulled from origin/{branch} and set it as the upstream.",
+            None,
+        )
+    return None, '', (
+        f"Branch '{branch}' has no upstream and there is no origin/{branch} to "
+        f"pull from. Use Switch branch to move to a branch that exists on the "
+        f"remote, or push this one first."
+    )
+
+
+_BRANCH_NAME_RE = re.compile(r'[A-Za-z0-9._/-]{1,200}')
+
+
+def is_valid_branch_name(name):
+    """Accept only plain branch names.
+
+    This value becomes a subprocess argument, so anything exotic is refused
+    rather than escaped. '..' is excluded because it is range syntax to git.
+    """
+    if not name or not _BRANCH_NAME_RE.fullmatch(name):
+        return False
+    return '..' not in name and not name.startswith('-')
+
+
+def checkout_branch(project_dir, target, stash=False):
+    """Switch the checkout to `target`, returning (payload, http_status).
+
+    Split out of the route so it can be tested against real repositories.
+    Attaches tracking when the branch exists on origin, so the next
+    Pull Latest is a plain `git pull` rather than the no-upstream fallback.
+    """
+    target = (target or '').strip()
+    if not target:
+        return {'status': 'error', 'message': 'Branch name required'}, 400
+    if not is_valid_branch_name(target):
+        return {'status': 'error', 'message': 'Invalid branch name'}, 400
+
+    try:
+        subprocess.run(['git', 'fetch', 'origin', '--prune'],
+                       capture_output=True, text=True, timeout=60, cwd=project_dir)
+
+        local_exists = subprocess.run(
+            ['git', 'show-ref', '--verify', '--quiet', f'refs/heads/{target}'],
+            capture_output=True, text=True, timeout=10, cwd=project_dir).returncode == 0
+        remote_exists = _git_remote_branch_exists(project_dir, target)
+        if not local_exists and not remote_exists:
+            return {'status': 'error',
+                    'message': f"No branch '{target}' locally or on origin"}, 404
+
+        # Local edits block a checkout. Pull Latest already stashes for the
+        # same reason, so offer it here too -- but only when asked, never
+        # silently: putting someone's edits away unasked is worse than
+        # refusing the switch.
+        stash_note = ''
+        if stash:
+            stashed = subprocess.run(['git', 'stash', 'push', '-m', f'switch to {target}'],
+                                     capture_output=True, text=True, timeout=60, cwd=project_dir)
+            if stashed.returncode == 0 and 'No local changes' not in stashed.stdout:
+                stash_note = ' Local changes were stashed (recover them with git stash list).'
+
+        if local_exists:
+            co = subprocess.run(['git', 'checkout', target],
+                                capture_output=True, text=True, timeout=60, cwd=project_dir)
+        else:
+            # -B so a stale local ref does not block the checkout.
+            co = subprocess.run(['git', 'checkout', '-B', target, f'origin/{target}'],
+                                capture_output=True, text=True, timeout=60, cwd=project_dir)
+
+        if co.returncode != 0:
+            logger.warning("git checkout %s failed: %s", target, co.stderr)
+            return {
+                'status': 'error',
+                'message': f"Could not switch to '{target}'.",
+                # Keep git's full list of blocking files: naming them is the
+                # difference between an error the user can act on and one they
+                # cannot.
+                'detail': (co.stderr or '').strip(),
+                'can_retry_with_stash': 'would be overwritten by checkout' in (co.stderr or ''),
+            }, 200
+
+        if remote_exists:
+            subprocess.run(['git', 'branch', f'--set-upstream-to=origin/{target}', target],
+                           capture_output=True, text=True, timeout=10, cwd=project_dir)
+
+        logger.info("Switched checkout to branch %s", target)
+        return {
+            'status': 'success',
+            'message': f"Now on '{target}'.{stash_note} Use Pull Latest to fetch its newest code.",
+        }, 200
+    except subprocess.TimeoutExpired:
+        return {'status': 'error', 'message': 'Timed out talking to git'}, 504
+    except OSError as exc:
+        logger.error("checkout_branch failed: %s", exc, exc_info=True)
+        return {'status': 'error', 'message': 'Could not switch branch'}, 500
+
+
 def get_git_version(project_dir=None):
     """Get git version information from the repository"""
     if project_dir is None:
@@ -1795,6 +1950,14 @@ def execute_system_action():
             # Use PROJECT_ROOT instead of hardcoded path
             project_dir = str(PROJECT_ROOT)
 
+            # Decide how to pull BEFORE stashing. If this checkout cannot be
+            # updated at all, stashing first would put the user's local changes
+            # away for an update that was never going to run.
+            pull_args, upstream_note, pull_error = resolve_pull_command(project_dir)
+            if pull_error:
+                logger.warning("git pull not attempted: %s", pull_error)
+                return jsonify({'status': 'error', 'message': pull_error})
+
             # Check if there are local changes that need to be stashed
             # Exclude plugins directory - plugins are separate repos and shouldn't be stashed with base project
             # Use --untracked-files=no to skip untracked files check (much faster with symlinked plugins)
@@ -1849,14 +2012,27 @@ def execute_system_action():
             except subprocess.TimeoutExpired:
                 logger.warning("git rev-parse timed out before pull")
 
-            # Perform the git pull
+            # Perform the git pull. Branches without an upstream were given
+            # an explicit "origin <branch>" above so the update still works.
             result = subprocess.run(
-                ['git', 'pull', '--rebase'],
+                pull_args,
                 capture_output=True,
                 text=True,
                 timeout=60,
                 cwd=project_dir
             )
+
+            # Give the branch tracking information so the next pull is a plain
+            # `git pull` — otherwise every update repeats the fallback.
+            if result.returncode == 0 and upstream_note:
+                branch = _git_current_branch(project_dir)
+                if branch:
+                    try:
+                        subprocess.run(
+                            ['git', 'branch', f'--set-upstream-to=origin/{branch}', branch],
+                            capture_output=True, text=True, timeout=10, cwd=project_dir)
+                    except (subprocess.TimeoutExpired, OSError) as exc:
+                        logger.debug("could not set upstream for %s: %s", branch, exc)
 
             # Return custom response for git_pull
             if result.returncode == 0:
@@ -1865,6 +2041,8 @@ def execute_system_action():
                     pull_message = f"Code updated successfully. Local changes were automatically stashed.{stash_info}"
                 if result.stdout and "Already up to date" not in result.stdout:
                     pull_message = f"Code updated successfully.{stash_info}"
+                if upstream_note:
+                    pull_message = f"{pull_message} {upstream_note}"
 
                 # Keep Python dependencies in sync automatically: if the pull
                 # changed a requirements file, install it now — users updating
@@ -1929,12 +2107,25 @@ def execute_system_action():
                         logger.warning("Post-update plugin purge failed: %s", purge_err)
             else:
                 logger.warning("git pull failed (returncode=%d): %s", result.returncode, result.stderr)
-                pull_message = "Update failed; check logs for details"
+                # Show git's own first line: "check logs" leaves the user with
+                # nothing to act on, and these failures are usually actionable
+                # (conflicting local commits, no upstream, network).
+                detail = next((ln.strip() for ln in (result.stderr or '').splitlines()
+                               if ln.strip()), '')
+                pull_message = f"Update failed: {detail}" if detail else "Update failed; check logs for details"
 
             return jsonify({
                 'status': 'success' if result.returncode == 0 else 'error',
                 'message': pull_message,
             })
+        elif action == 'checkout_branch':
+            # Switch branches from the Tools tab. Needed because a checkout
+            # that predates tracking (or a restored backup) can leave the pi
+            # on a branch the update button cannot pull.
+            result_payload, http_status = checkout_branch(
+                str(PROJECT_ROOT), data.get('branch') or '', stash=bool(data.get('stash')))
+            return jsonify(result_payload), http_status
+
         elif action == 'restart_display_service':
             result = subprocess.run(['sudo', 'systemctl', 'restart', 'ledmatrix.service'],
                                  capture_output=True, text=True, timeout=10)
@@ -2078,16 +2269,62 @@ def get_git_info():
 
         log    = subprocess.run([_GIT, 'log', '--oneline', '-5'], capture_output=True, text=True, timeout=10, cwd=d)
         remote = subprocess.run([_GIT, 'remote', 'get-url', 'origin'], capture_output=True, text=True, timeout=10, cwd=d)
+        branch_name = branch.stdout.strip()
+        upstream = _git_upstream(d)
         return jsonify({
-            'branch': branch.stdout.strip(),
+            'branch': branch_name,
             'dirty': bool(status.stdout.strip()),
             'status': status.stdout.strip(),
             'recent_commits': log.stdout.strip() if log.returncode == 0 else '',
             'remote_url': _scrub_git_remote_url(remote.stdout.strip()) if remote.returncode == 0 else '',
+            # Surfaced so the Tools tab can warn before the user clicks Pull
+            # Latest, rather than after it fails.
+            'upstream': upstream,
+            'can_pull': bool(upstream) or _git_remote_branch_exists(d, branch_name),
         })
     except Exception as e:
         logger.error("get_git_info failed: %s", e, exc_info=True)
         return jsonify({'status': 'error', 'message': 'Failed to get git info'}), 500
+
+
+@api_v3.route('/system/git-branches', methods=['GET'])
+def get_git_branches():
+    """List branches available to switch to, for the Tools tab picker."""
+    if not _GIT:
+        return jsonify({'status': 'error', 'message': 'git not found on this system'}), 503
+    d = str(PROJECT_ROOT)
+    try:
+        # Refresh remote refs so a branch created since the last fetch shows up.
+        subprocess.run([_GIT, 'fetch', 'origin', '--prune'],
+                       capture_output=True, text=True, timeout=60, cwd=d)
+
+        local = subprocess.run([_GIT, 'for-each-ref', '--format=%(refname:short)', 'refs/heads'],
+                               capture_output=True, text=True, timeout=15, cwd=d)
+        remote = subprocess.run([_GIT, 'for-each-ref', '--format=%(refname:short)', 'refs/remotes/origin'],
+                                capture_output=True, text=True, timeout=15, cwd=d)
+        if local.returncode != 0:
+            return jsonify({'status': 'error', 'message': 'Could not list branches'}), 500
+
+        local_names = [b for b in local.stdout.split() if b]
+        remote_names = []
+        for ref in remote.stdout.split() if remote.returncode == 0 else []:
+            name = ref.split('origin/', 1)[-1]
+            # origin/HEAD is a symbolic alias, not a branch a user can pick.
+            if name and name != 'HEAD' and name not in local_names:
+                remote_names.append(name)
+
+        return jsonify({
+            'status': 'success',
+            'current': _git_current_branch(d),
+            'upstream': _git_upstream(d),
+            'local': sorted(local_names),
+            'remote_only': sorted(remote_names),
+        })
+    except subprocess.TimeoutExpired:
+        return jsonify({'status': 'error', 'message': 'Timed out talking to the remote'}), 504
+    except OSError as e:
+        logger.error("get_git_branches failed: %s", e, exc_info=True)
+        return jsonify({'status': 'error', 'message': 'Failed to list branches'}), 500
 
 
 @api_v3.route('/hardware/status', methods=['GET'])
