@@ -68,6 +68,21 @@ class PluginAdapter:
         # always the same opening items.
         self._item_offsets: dict = {}
 
+        # What the matching entry in _item_offsets is an offset *into*, as
+        # (kind, size). An offset only means anything against the content it
+        # was derived from, and there are three incompatible kinds:
+        #
+        #   ('rows', n)  index into a list of n images
+        #   ('cuts', n)  index into the n item boundaries of one image
+        #   ('cols', w)  pixel column in a w-wide image with no item boundaries
+        #
+        # Without this the offsets were reused across kinds — a plugin that
+        # returned one wide image on one fetch and several rows on the next had
+        # a pixel column of 1400 read back as a row index — and across content
+        # changes, where a column recorded against a 9,793px news strip pointed
+        # into unrelated headlines once the strip refreshed to 9,505px.
+        self._offset_shapes: dict = {}
+
         logger.info(
             "PluginAdapter initialized: display=%dx%d",
             self.display_width, self.display_height
@@ -398,6 +413,88 @@ class PluginAdapter:
             return 0
         return int(self.display_width * ratio)
 
+    def _resume_offset(self, plugin_id: str, shape: Tuple[str, int]) -> int:
+        """
+        The plugin's stored rotation offset, if it still applies.
+
+        An offset is only meaningful against content shaped the way it was
+        when the offset was recorded. When the shape has changed — a different
+        number of rows, a re-rendered strip with different item boundaries —
+        the stored value points somewhere arbitrary, so rotation restarts.
+
+        Args:
+            plugin_id: Plugin identifier
+            shape: (kind, size) describing what an offset would index into now
+
+        Returns:
+            The stored offset, or 0 when it no longer applies
+        """
+        if self._offset_shapes.get(plugin_id) != shape:
+            if plugin_id in self._item_offsets:
+                logger.info(
+                    "[%s] Content is %s now, was %s — restarting the rotation "
+                    "rather than resuming at a position that no longer means "
+                    "anything", plugin_id, shape,
+                    self._offset_shapes.get(plugin_id))
+            self._item_offsets.pop(plugin_id, None)
+            self._offset_shapes[plugin_id] = shape
+            return 0
+        return self._item_offsets.get(plugin_id, 0)
+
+    def _record_offset(
+        self, plugin_id: str, offset: int, shape: Tuple[str, int]
+    ) -> None:
+        """Store where the next window should resume, with what it indexes."""
+        if offset:
+            self._item_offsets[plugin_id] = offset
+            self._offset_shapes[plugin_id] = shape
+        else:
+            # A wrapped-to-zero rotation is the same as no state at all, and
+            # keeping the key would report a window as active when the next
+            # pass starts from the top anyway.
+            self._item_offsets.pop(plugin_id, None)
+            self._offset_shapes.pop(plugin_id, None)
+
+    def _clear_offset(self, plugin_id: str) -> None:
+        """Forget any rotation state for a plugin."""
+        self._item_offsets.pop(plugin_id, None)
+        self._offset_shapes.pop(plugin_id, None)
+
+    def _merge_trailing_runt(self, end: int, width: int, budget: int) -> int:
+        """
+        Extend a window to the end of the content when what would be left over
+        is too small to be worth its own pass.
+
+        Windows were placed by walking forward from the last one, which makes
+        the final window whatever happens to remain. Measured on a live panel
+        that produced a 1,840px stocks ticker splitting 1,492 + 348 — the
+        second pass showing seven seconds of content before cutting, which
+        reads as the display failing rather than as a rotation.
+
+        Absorbing the remainder overruns the budget by less than one window
+        floor, which is a better trade than a fragment: the budget is a guard
+        against one plugin holding the panel for minutes, not a hard limit.
+
+        Args:
+            end: Column the window would otherwise end at
+            width: Full content width
+            budget: Width budget being applied
+
+        Returns:
+            ``end``, or ``width`` when the remainder is below the floor
+        """
+        remainder = width - end
+        # Measured against the budget rather than the panel: snapping to item
+        # boundaries means an ordinary window already lands short of the budget
+        # (a 512px budget over 182px-pitch items yields 348px windows), so an
+        # absolute floor would merge windows that were never fragments. Half a
+        # budget separates "a short last pass" from "a sliver", and caps the
+        # overrun this can cause at 1.5 budgets.
+        floor = budget // 2
+        if 0 < remainder < floor:
+            return width
+        return end
+
     def _apply_width_budget(
         self, images: List[Image.Image], plugin_id: str,
         plugin: Optional['BasePlugin'] = None
@@ -435,19 +532,20 @@ class PluginAdapter:
 
         if not budget or total <= budget:
             # Fits, so reset rotation — the whole segment is being shown.
-            self._item_offsets.pop(plugin_id, None)
+            self._clear_offset(plugin_id)
             return images
 
         if len(images) == 1:
             return [self._crop_to_budget(images[0], budget, plugin_id, mode)]
 
+        shape = ('rows', len(images))
         if mode == 'truncate':
             # Ordered content: always show from the top. Deliberately does not
             # advance the offset, so the same opening items appear every time
             # rather than the viewer being shown the middle of a ranked list.
             start = 0
         else:
-            start = self._item_offsets.get(plugin_id, 0) % len(images)
+            start = self._resume_offset(plugin_id, shape) % len(images)
         selected: List[Image.Image] = []
         used = 0
         consumed = 0
@@ -472,7 +570,8 @@ class PluginAdapter:
                 plugin_id, budget, len(selected), len(images), used
             )
         else:
-            self._item_offsets[plugin_id] = (start + consumed) % len(images)
+            self._record_offset(
+                plugin_id, (start + consumed) % len(images), shape)
             logger.info(
                 "[%s] Width budget %dpx: showing %d of %d row(s) (%dpx incl. gaps) "
                 "from offset %d; remainder deferred to a later cycle",
@@ -490,16 +589,13 @@ class PluginAdapter:
 
         The cut is snapped to the nearest blank column so it does not slice
         through a glyph or logo and leave half a character at the panel edge.
-        """
-        if mode == 'truncate':
-            # Always the start of the strip, so a ranked table is never entered
-            # from the middle.
-            offset = 0
-        else:
-            offset = self._item_offsets.get(plugin_id, 0)
-            if offset >= img.width:
-                offset = 0
 
+        Rotation is tracked as an index into the strip's item boundaries rather
+        than as a pixel column, because a ticker re-renders between fetches. A
+        column recorded against one render points at unrelated content in the
+        next as soon as anything ahead of it changes width — a digit in a
+        price, a shorter headline. The Nth boundary stays the Nth boundary.
+        """
         # Cut only where the plugin left a real gap between items. Snapping to
         # any blank column used to pick the single-column gaps between
         # characters, splitting a word and orphaning its tail into the next
@@ -514,9 +610,17 @@ class PluginAdapter:
             # budget exactly. The gap rule exists to protect discrete items
             # (words, ticker entries); it would be wrong to let a solid image
             # escape the cap in its name.
-            end = min(offset + budget, img.width)
+            #
+            # With no items to index, the offset here has to stay a column, so
+            # it is only reusable while the image keeps its width.
+            shape = ('cols', img.width)
+            offset = 0 if mode == 'truncate' else self._resume_offset(
+                plugin_id, shape)
+            end = self._merge_trailing_runt(
+                min(offset + budget, img.width), img.width, budget)
             if mode != 'truncate':
-                self._item_offsets[plugin_id] = 0 if end >= img.width else end
+                self._record_offset(
+                    plugin_id, 0 if end >= img.width else end, shape)
             logger.info(
                 "[%s] Width budget %dpx: cropped continuous %dpx image to "
                 "[%d:%d] (no item gaps of %dpx+ to align to)%s",
@@ -528,8 +632,15 @@ class PluginAdapter:
         # Cut mid-gap so the content either side keeps some breathing room.
         cuts = sorted({0, img.width} | {(a + b) // 2 for a, b in gaps})
 
-        start = max((c for c in cuts if c <= offset), default=0)
-        later = [c for c in cuts if c > start]
+        shape = ('cuts', len(cuts))
+        index = 0 if mode == 'truncate' else self._resume_offset(
+            plugin_id, shape)
+        # Clamped rather than wrapped: a stale index past the end means the
+        # strip shrank, and restarting reads better than landing near the end.
+        start_index = index if 0 <= index < len(cuts) - 1 else 0
+        start = cuts[start_index]
+
+        later = cuts[start_index + 1:]
         if not later:
             end = img.width
         else:
@@ -537,15 +648,22 @@ class PluginAdapter:
             # No boundary inside the budget: take the next one and overrun,
             # because the alternative is cutting through an item.
             end = max(within) if within else min(later)
+        end = self._merge_trailing_runt(end, img.width, budget)
+        # Every candidate for `end` came from `cuts` (which includes img.width),
+        # so this always resolves; the fallback is defensive only.
+        end_index = cuts.index(end) if end in cuts else len(cuts) - 1
 
         if mode != 'truncate':
-            # Next cycle resumes where this one stopped; wrap when the strip ends.
-            self._item_offsets[plugin_id] = 0 if end >= img.width else end
+            # Next cycle resumes at the boundary this one stopped on; wrap when
+            # the strip ends.
+            self._record_offset(
+                plugin_id, 0 if end >= img.width else end_index, shape)
 
         logger.info(
             "[%s] Width budget %dpx: cropped single %dpx image to [%d:%d] "
-            "(%dpx) at item boundaries, %s",
+            "(%dpx) at item boundaries %d-%d of %d, %s",
             plugin_id, budget, img.width, start, end, end - start,
+            start_index, end_index, len(cuts) - 1,
             "showing the start only (overflow=truncate)"
             if mode == 'truncate' else "window advances next cycle"
         )

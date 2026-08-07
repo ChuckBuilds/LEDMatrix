@@ -1643,3 +1643,178 @@ class TestPerPluginWidthBudget:
         strip = canvas([(0, 5000)], width=5000)
         adapter.get_content(NativePlugin([strip]), 'ticker')
         assert adapter._item_offsets.get('ticker', 0) > 0
+
+
+def ticker(item_widths, gap=32, height=DISPLAY_H):
+    """
+    A strip of discrete items separated by real gaps, like a news or stocks
+    ticker. Wide enough gaps that blank_runs() sees item boundaries, which is
+    what puts _crop_to_budget on its item-aligned path rather than treating the
+    strip as one continuous block.
+    """
+    width = sum(item_widths) + gap * (len(item_widths) - 1)
+    spans, x = [], 0
+    for w in item_widths:
+        spans.append((x, x + w))
+        x += w + gap
+    return canvas(spans, width=width, height=height)
+
+
+class TestTrailingRuntWindow:
+    """
+    A rotation's last window used to be whatever happened to be left over.
+    Measured on a live 512px panel, a 1,840px stocks ticker against a 1,536px
+    budget split 1,492 + 348 — the second pass showed seven seconds and cut.
+    """
+
+    def test_a_barely_oversized_strip_is_shown_whole(self):
+        adapter = adapter_with(content_padding=0, max_plugin_width_ratio=1.0)
+        # 1.2 budgets wide: splitting it can only ever produce a fragment.
+        strip = ticker([180] * 12)  # 2160 + 352 gaps = 2512px vs 512 budget
+        assert strip.width > DISPLAY_W
+
+        adapter = adapter_with(content_padding=0,
+                               max_plugin_width_ratio=strip.width / DISPLAY_W * 0.9)
+        shown = adapter.get_content(NativePlugin([strip]), 'stocks')[0]
+        assert shown.width == strip.width, "should absorb the runt, not split"
+        assert 'stocks' not in adapter._item_offsets
+
+    def test_no_window_in_a_rotation_is_a_fragment(self):
+        # Walk a long ticker all the way round; every pass must be worth
+        # showing rather than one of them being a leftover sliver.
+        adapter = adapter_with(content_padding=0, max_plugin_width_ratio=1.0)
+        strip = ticker([150] * 40)
+        plugin = NativePlugin([strip])
+
+        widths, seen_offsets = [], set()
+        for _ in range(20):
+            adapter.invalidate_cache('news')
+            widths.append(adapter.get_content(plugin, 'news')[0].width)
+            offset = adapter._item_offsets.get('news', 0)
+            if offset in seen_offsets:
+                break
+            seen_offsets.add(offset)
+
+        assert len(widths) > 1, "a strip this long must take several passes"
+        # Item snapping means an ordinary window lands short of the budget, so
+        # the bar is "not a sliver" rather than "a full budget".
+        assert min(widths) >= DISPLAY_W // 2, (
+            "no window should be a fragment, got %r" % widths)
+        assert max(widths) <= DISPLAY_W * 1.5, (
+            "absorbing a runt must stay bounded, got %r" % widths)
+
+    def test_a_continuous_image_also_absorbs_its_runt(self):
+        # The no-item-gaps path had the same leftover problem.
+        adapter = adapter_with(content_padding=0, max_plugin_width_ratio=1.0)
+        solid = canvas([(0, 700)], width=700)  # 512 budget -> 512 + 188 runt
+        first = adapter.get_content(NativePlugin([solid]), 'chart')[0]
+        assert first.width == 700, "188px tail is not worth its own pass"
+        assert 'chart' not in adapter._item_offsets
+
+    def test_the_reported_stocks_case(self):
+        # The exact numbers logged on a 512px panel: an 1,840px stocks ticker
+        # against a 1,536px budget split 1,492 + 348, so every other appearance
+        # showed seven seconds of stocks and cut. It should now come through in
+        # one piece, 20% over budget being the better of the two outcomes.
+        adapter = adapter_with(content_padding=0, max_plugin_width_ratio=3.0)
+        # 10 items of 152px with 32px gaps = 1520 + 288 = 1808, near enough.
+        strip = ticker([152] * 10)
+        assert DISPLAY_W * 3 < strip.width < DISPLAY_W * 4
+
+        widths = []
+        for _ in range(3):
+            adapter.invalidate_cache('stocks')
+            widths.append(adapter.get_content(
+                NativePlugin([strip]), 'stocks')[0].width)
+
+        assert widths == [strip.width] * 3, (
+            "a strip this close to the budget should be shown whole every "
+            "time, not split into a big pass and a sliver; got %r" % widths)
+
+    def test_a_genuinely_long_strip_still_gets_capped(self):
+        # Absorbing runts must not become "never cap anything".
+        adapter = adapter_with(content_padding=0, max_plugin_width_ratio=1.0)
+        strip = ticker([150] * 60)
+        shown = adapter.get_content(NativePlugin([strip]), 'long')[0]
+        assert shown.width < strip.width
+        assert shown.width <= DISPLAY_W * 2
+
+
+class TestOffsetOutlivesItsContent:
+    """
+    A rotation offset only means something against the content it was recorded
+    against. news re-rendered 9,793px -> 9,505px mid-rotation while its stored
+    column kept advancing, so the window pointed into unrelated headlines.
+    """
+
+    def test_rotation_survives_items_changing_width(self):
+        # Same items, each a little wider — a price gaining a digit. The window
+        # should resume at the same *item*, not at a now-meaningless column.
+        adapter = adapter_with(content_padding=0, max_plugin_width_ratio=1.0)
+        adapter.get_content(NativePlugin([ticker([150] * 40)]), 'stocks')
+        first = adapter._item_offsets.get('stocks')
+        assert first, "the first pass should leave a resume point"
+
+        adapter.invalidate_cache('stocks')
+        adapter.get_content(NativePlugin([ticker([158] * 40)]), 'stocks')
+        assert adapter._item_offsets.get('stocks', 0) > first, (
+            "same item count means the offset still applies and should advance")
+
+    def test_rotation_restarts_when_the_item_count_changes(self):
+        adapter = adapter_with(content_padding=0, max_plugin_width_ratio=1.0)
+        adapter.get_content(NativePlugin([ticker([150] * 40)]), 'news')
+        assert adapter._item_offsets.get('news', 0) > 0
+
+        # A fresh headline set with fewer entries: the old position is
+        # meaningless, so the next pass starts at the top.
+        adapter.invalidate_cache('news')
+        shown = adapter.get_content(NativePlugin([ticker([150] * 25)]), 'news')[0]
+        expected = adapter.get_content(
+            NativePlugin([ticker([150] * 25)]), 'fresh')[0]
+        assert shown.width == expected.width
+
+    def test_a_row_index_is_never_read_back_as_a_pixel_column(self):
+        # The unit collision: _apply_width_budget stores an index into a list
+        # of rows, _crop_to_budget a column in one image, under the same key.
+        adapter = adapter_with(content_padding=0, max_plugin_width_ratio=1.0,
+                               intra_plugin_gap=0, min_content_separation=0)
+        rows = [canvas([(0, 200)], width=200) for _ in range(8)]
+        adapter.get_content(NativePlugin(rows), 'mixed')
+        assert adapter._item_offsets.get('mixed', 0) > 0
+        assert adapter._offset_shapes['mixed'][0] == 'rows'
+
+        # Now the same plugin returns one wide strip instead. The row index
+        # must not be read as a column into it: the strip is entered at the
+        # top, exactly as it would be for a plugin with no history at all.
+        strip = ticker([150] * 40)
+        adapter.invalidate_cache('mixed')
+        carried = adapter.get_content(NativePlugin([strip]), 'mixed')[0]
+        assert adapter._offset_shapes['mixed'][0] == 'cuts'
+
+        clean = adapter_with(content_padding=0, max_plugin_width_ratio=1.0,
+                             intra_plugin_gap=0, min_content_separation=0)
+        assert carried.tobytes() == clean.get_content(
+            NativePlugin([strip]), 'clean')[0].tobytes()
+
+    def test_a_stale_index_past_the_end_restarts(self):
+        adapter = adapter_with(content_padding=0, max_plugin_width_ratio=1.0)
+        strip = ticker([150] * 40)
+        adapter.get_content(NativePlugin([strip]), 'news')
+        # Force an index far beyond anything the current strip has, keeping the
+        # shape intact so the guard does not catch it first.
+        shape = adapter._offset_shapes['news']
+        adapter._item_offsets['news'] = 10_000
+        adapter.invalidate_cache('news')
+        shown = adapter.get_content(NativePlugin([strip]), 'news')[0]
+        assert shown.width > 0
+        assert adapter._offset_shapes['news'] == shape
+
+    def test_content_that_fits_clears_both_offset_and_shape(self):
+        adapter = adapter_with(content_padding=0, max_plugin_width_ratio=1.0)
+        adapter.get_content(NativePlugin([ticker([150] * 40)]), 'shrink')
+        assert 'shrink' in adapter._offset_shapes
+
+        adapter.invalidate_cache('shrink')
+        adapter.get_content(NativePlugin([canvas([(0, 100)], width=100)]), 'shrink')
+        assert 'shrink' not in adapter._item_offsets
+        assert 'shrink' not in adapter._offset_shapes
