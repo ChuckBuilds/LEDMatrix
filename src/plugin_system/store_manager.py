@@ -2969,7 +2969,10 @@ class PluginStoreManager:
             remote_branch = plugin_info_remote.get('branch') or plugin_info_remote.get('default_branch')
 
             # Compare local manifest version against registry latest_version
-            # to avoid unnecessary reinstalls for monorepo plugins
+            # to avoid unnecessary reinstalls for monorepo plugins. Uses the
+            # same semantic comparator as the web UI's update badge, so
+            # equivalent spellings ("v1.2.0" vs "1.2.0") never trigger a
+            # reinstall and a locally-ahead version is never downgraded.
             try:
                 local_manifest_path = plugin_path / "manifest.json"
                 if local_manifest_path.exists():
@@ -2977,8 +2980,16 @@ class PluginStoreManager:
                         local_manifest = json.load(f)
                     local_version = local_manifest.get('version', '')
                     remote_version = plugin_info_remote.get('latest_version', '')
-                    if local_version and remote_version and local_version == remote_version:
-                        self.logger.info(f"Plugin {plugin_id} already at latest version {local_version}")
+                    from src.plugin_system.compatibility import is_update_available
+                    # No truthiness gate: the shared comparator already treats
+                    # a missing version on either side as "no update", and the
+                    # store must agree with the UI badge in that case too. A
+                    # missing manifest (not just a missing version field)
+                    # still falls through to the reinstall recovery path.
+                    if not is_update_available(local_version, remote_version):
+                        self.logger.info(
+                            f"Plugin {plugin_id} already at latest version "
+                            f"(installed {local_version}, registry {remote_version})")
                         return True
             except Exception as e:
                 self.logger.debug(f"Could not compare versions for {plugin_id}: {e}")

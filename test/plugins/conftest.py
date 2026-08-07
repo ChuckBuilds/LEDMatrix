@@ -23,9 +23,17 @@ os.environ['EMULATOR'] = 'true'
 def plugins_dir() -> Path:
     """Get the plugins directory path.
 
-    Checks plugins/ first, then falls back to plugin-repos/
-    for monorepo development environments.
+    Honors LEDMATRIX_PLUGINS_DIR (first entry) when set — the same override
+    test_plugin_matrix.py uses, so CI can point every plugin suite at the
+    bundled fixture plugins. Otherwise checks plugins/ first, then falls
+    back to plugin-repos/ for monorepo development environments.
     """
+    env = os.environ.get('LEDMATRIX_PLUGINS_DIR')
+    if env:
+        first = env.split(os.pathsep)[0]
+        if first:
+            return Path(first)
+
     plugins_path = project_root / 'plugins'
     plugin_repos_path = project_root / 'plugin-repos'
 
