@@ -28,6 +28,22 @@ _REDACT_CREDENTIAL = re.compile(
     re.IGNORECASE,
 )
 
+# `Authorization: Bearer <token>`. The scheme is kept because it says which
+# kind of credential failed; only the token goes. Not covered by the pattern
+# above, whose value part stops at whitespace and so would keep the token when
+# a space follows the scheme.
+_REDACT_AUTH_HEADER = re.compile(
+    r'((?:proxy-)?authorization["\']?\s*[=:]\s*["\']?\s*'
+    r'(?:bearer|basic|digest|token)\s+)([^\s,"\'<>}]+)',
+    re.IGNORECASE,
+)
+
+# Credentials embedded in a URL: https://user:password@host. requests quotes
+# the full URL in its exceptions, so this is a realistic leak. The username is
+# kept -- it identifies which account failed without being the secret.
+_REDACT_URL_USERINFO = re.compile(r'([a-z][a-z0-9+.-]*://[^/\s:@]+:)([^/\s@]+)(@)',
+                                  re.IGNORECASE)
+
 # Long enough for an errno string with a path, short enough not to dump a
 # parser's worth of context into a JSON field.
 _MAX_DETAIL_LENGTH = 400
@@ -57,6 +73,10 @@ def describe_exception(exc: BaseException,
     """
     message = str(exc).strip()
     text = f"{type(exc).__name__}: {message}" if message else type(exc).__name__
+    # Order matters: the URL and header forms are more specific than the
+    # generic key=value pattern, which would otherwise chew the scheme.
+    text = _REDACT_URL_USERINFO.sub(r'\1<redacted>\3', text)
+    text = _REDACT_AUTH_HEADER.sub(r'\1<redacted>', text)
     text = _REDACT_CREDENTIAL.sub(r'\1<redacted>', text)
     # Collapse newlines/tabs so the detail stays one line in a JSON field.
     text = ' '.join(text.split())

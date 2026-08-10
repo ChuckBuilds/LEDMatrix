@@ -42,6 +42,12 @@ class TestCredentialRedaction:
         ("connect failed password=hunter2", "hunter2"),
         ("GET /?access_token=zzz999", "zzz999"),
         ('{"secret": "topsecret"}', "topsecret"),
+        # requests quotes the URL it failed on, and both of these forms turn
+        # up in real client exceptions.
+        ("401 for https://user:hunter2@example.com/api", "hunter2"),
+        ("headers: {'Authorization': 'Bearer eyJ.SECRET.sig'}", "eyJ.SECRET.sig"),
+        ("Authorization: Basic dXNlcjpwYXNzd29yZA==", "dXNlcjpwYXNzd29yZA=="),
+        ("Proxy-Authorization: Bearer ptok999", "ptok999"),
     ])
     def test_credentials_never_reach_the_response(self, secret_text, leaked):
         detail = describe_exception(RuntimeError(secret_text))
@@ -52,6 +58,13 @@ class TestCredentialRedaction:
         # Knowing *which* credential was involved is part of the diagnosis.
         detail = describe_exception(RuntimeError("https://x/y?api_key=SEC123"))
         assert "api_key" in detail
+
+    def test_auth_scheme_and_username_survive(self):
+        # Which kind of credential, and whose, without the credential itself.
+        assert "Bearer" in describe_exception(
+            RuntimeError("Authorization: Bearer eyJ.SECRET.sig"))
+        assert "user" in describe_exception(
+            RuntimeError("https://user:hunter2@example.com"))
 
     def test_non_secret_context_is_preserved(self):
         detail = describe_exception(RuntimeError("https://api.x.com/v1?city=Tampa"))
@@ -77,25 +90,65 @@ class TestHandlersCarryDetail:
     """The response shape callers actually see."""
 
     def test_no_api_v3_handler_discards_its_exception(self):
-        # Nine of them bound `e` and never used it, so the promised log entry
-        # was never written either.
+        """Every generic-message handler must log a traceback and return detail.
+
+        Nine of them bound `e` and never used it, so the promised log entry was
+        never written either. Checking merely that *something* was logged is
+        too weak -- a `logger.info("failed")` would satisfy it while throwing
+        the exception away just as completely, so this asserts the two things
+        that actually make the failure diagnosable: an error-level record with
+        the traceback, and the sanitized detail in the response.
+        """
         import ast
-        import re
 
         src = open("web_interface/blueprints/api_v3.py").read()
         tree = ast.parse(src)
         generic = "An error occurred; see logs for details"
-        silent = []
+
+        def logs_a_traceback(handler):
+            """An error/exception-level log call carrying exc_info."""
+            for call in [n for n in ast.walk(handler) if isinstance(n, ast.Call)]:
+                func = call.func
+                if not isinstance(func, ast.Attribute):
+                    continue
+                if func.attr == "exception":       # implies exc_info
+                    return True
+                if func.attr not in ("error", "critical"):
+                    continue
+                if any(kw.arg == "exc_info" and getattr(kw.value, "value", False) is True
+                       for kw in call.keywords):
+                    return True
+            return False
+
+        def returns_the_detail(handler):
+            """describe_exception() called on this handler's bound exception."""
+            for call in [n for n in ast.walk(handler) if isinstance(n, ast.Call)]:
+                name = call.func.id if isinstance(call.func, ast.Name) else None
+                if name != "describe_exception":
+                    continue
+                if handler.name is None:
+                    return True     # bare `except:` cannot name it; accept
+                if any(isinstance(a, ast.Name) and a.id == handler.name
+                       for a in call.args):
+                    return True
+            return False
+
+        offenders = []
         for h in [n for n in ast.walk(tree) if isinstance(n, ast.ExceptHandler)]:
             seg = ast.get_source_segment(src, h) or ""
             if generic not in seg:
                 continue
-            if not re.search(
-                    r"\b(logger|logging|current_app\.logger)\s*\.\s*"
-                    r"(error|exception|warning|critical|info)\b", seg):
-                silent.append(h.lineno)
-        assert not silent, (
-            "handlers returning the generic message without logging: %r" % silent)
+            missing = []
+            if not logs_a_traceback(h):
+                missing.append("error-level log with exc_info")
+            if not returns_the_detail(h):
+                missing.append("describe_exception(e) in the response")
+            if missing:
+                offenders.append((h.lineno, missing))
+
+        assert not offenders, (
+            "handlers returning the generic message without %s: %r"
+            % ("both a traceback log and the detail", offenders))
 
     def test_global_handler_reports_the_underlying_error(self):
         from flask import Flask, jsonify
