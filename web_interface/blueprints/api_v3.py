@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 from src.web_interface.api_helpers import success_response, error_response, validate_request_json
 from src.web_interface.errors import ErrorCode
 from src.web_interface.secret_helpers import find_secret_fields, separate_secrets
+from src.web_interface.error_handler import describe_exception
 from src.plugin_system.operation_types import OperationType
 from src.web_interface.validators import (
     validate_file_upload
@@ -290,9 +291,11 @@ def get_schedule_config():
 
         return success_response(data=schedule_config)
     except Exception as e:
+        logger.error("%s failed", request.path, exc_info=True)
         return error_response(
             ErrorCode.CONFIG_LOAD_FAILED,
             "An error occurred; see logs for details",
+            details=describe_exception(e),
             status_code=500
         )
 
@@ -1596,9 +1599,11 @@ def get_health():
 
         return jsonify({'status': 'success', 'data': health_status})
     except Exception as e:
+        logger.error("%s failed", request.path, exc_info=True)
         return jsonify({
             'status': 'error',
             'message': 'An error occurred; see logs for details',
+            'details': describe_exception(e),
             'data': {'status': 'unhealthy'}
         }), 500
 
@@ -6473,7 +6478,10 @@ def get_fonts_catalog():
 
         return jsonify({'status': 'success', 'data': {'catalog': catalog}})
     except Exception as e:
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        logger.error("%s failed", request.path, exc_info=True)
+        return jsonify({'status': 'error',
+                        'message': 'An error occurred; see logs for details',
+                        'details': describe_exception(e)}), 500
 
 @api_v3.route('/fonts/tokens', methods=['GET'])
 def get_font_tokens():
@@ -7432,9 +7440,11 @@ def get_logs():
             'message': 'Timeout while fetching logs'
         }), 500
     except Exception as e:
+        logger.error("%s failed", request.path, exc_info=True)
         return jsonify({
             'status': 'error',
-            'message': 'An error occurred; see logs for details'
+            'message': 'An error occurred; see logs for details',
+            'details': describe_exception(e)
         }), 500
 
 # Multi-Display Sync Endpoints
@@ -7499,9 +7509,11 @@ def get_wifi_status():
             }
         })
     except Exception as e:
+        logger.error("%s failed", request.path, exc_info=True)
         return jsonify({
             'status': 'error',
-            'message': 'An error occurred; see logs for details'
+            'message': 'An error occurred; see logs for details',
+            'details': describe_exception(e)
         }), 500
 
 @api_v3.route('/wifi/scan', methods=['GET'])
@@ -7674,9 +7686,11 @@ def enable_ap_mode():
                 'message': message
             }), 400
     except Exception as e:
+        logger.error("%s failed", request.path, exc_info=True)
         return jsonify({
             'status': 'error',
-            'message': 'An error occurred; see logs for details'
+            'message': 'An error occurred; see logs for details',
+            'details': describe_exception(e)
         }), 500
 
 @api_v3.route('/wifi/ap/disable', methods=['POST'])
@@ -7699,9 +7713,11 @@ def disable_ap_mode():
                 'message': message
             }), 400
     except Exception as e:
+        logger.error("%s failed", request.path, exc_info=True)
         return jsonify({
             'status': 'error',
-            'message': 'An error occurred; see logs for details'
+            'message': 'An error occurred; see logs for details',
+            'details': describe_exception(e)
         }), 500
 
 @api_v3.route('/wifi/ap/auto-enable', methods=['GET'])
@@ -7720,9 +7736,11 @@ def get_auto_enable_ap_mode():
             }
         })
     except Exception as e:
+        logger.error("%s failed", request.path, exc_info=True)
         return jsonify({
             'status': 'error',
-            'message': 'An error occurred; see logs for details'
+            'message': 'An error occurred; see logs for details',
+            'details': describe_exception(e)
         }), 500
 
 @api_v3.route('/wifi/ap/auto-enable', methods=['POST'])
@@ -7752,9 +7770,11 @@ def set_auto_enable_ap_mode():
             }
         })
     except Exception as e:
+        logger.error("%s failed", request.path, exc_info=True)
         return jsonify({
             'status': 'error',
-            'message': 'An error occurred; see logs for details'
+            'message': 'An error occurred; see logs for details',
+            'details': describe_exception(e)
         }), 500
 
 @api_v3.route('/wifi/radio', methods=['GET'])

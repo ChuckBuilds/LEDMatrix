@@ -4,6 +4,7 @@ Centralized error handling for web interface.
 Provides helpers for consistent error responses across API endpoints.
 """
 
+import re
 from typing import Any, Optional
 from flask import jsonify
 
@@ -14,6 +15,54 @@ from src.logging_config import get_logger
 
 
 logger = get_logger(__name__)
+
+
+# Credentials that turn up inside exception text. A requests error quotes the
+# URL it failed on, and plugins that authenticate by query string put their key
+# there, so echoing an exception verbatim can hand out an API key. Redact the
+# value, keep the parameter name -- knowing *which* credential was involved is
+# part of the diagnosis.
+_REDACT_CREDENTIAL = re.compile(
+    r'((?:api[_-]?key|access[_-]?token|auth|apikey|key|passwd|password|pwd|'
+    r'secret|sig|signature|token)["\']?\s*[=:]\s*["\']?)([^\s&"\'<>,}]+)',
+    re.IGNORECASE,
+)
+
+# Long enough for an errno string with a path, short enough not to dump a
+# parser's worth of context into a JSON field.
+_MAX_DETAIL_LENGTH = 400
+
+
+def describe_exception(exc: BaseException,
+                       max_length: int = _MAX_DETAIL_LENGTH) -> str:
+    """
+    One-line, safe-to-return description of an exception.
+
+    The generic "an error occurred; see logs for details" tells a user nothing
+    and, when the failure is bad enough, the logs are unreachable too: a device
+    whose storage was failing returned that message from every endpoint
+    *including* the log viewer, because journalctl could not be executed. The
+    underlying `[Errno 5] Input/output error` named the fault immediately.
+
+    Returns "TypeName: message", credentials redacted and length capped. The
+    type alone is worth carrying -- a bare PermissionError says more than any
+    generic sentence.
+
+    Args:
+        exc: The exception to describe
+        max_length: Truncate beyond this many characters
+
+    Returns:
+        A single-line description, never empty
+    """
+    message = str(exc).strip()
+    text = f"{type(exc).__name__}: {message}" if message else type(exc).__name__
+    text = _REDACT_CREDENTIAL.sub(r'\1<redacted>', text)
+    # Collapse newlines/tabs so the detail stays one line in a JSON field.
+    text = ' '.join(text.split())
+    if len(text) > max_length:
+        text = text[:max_length - 1].rstrip() + '…'
+    return text
 
 
 def create_error_response(
