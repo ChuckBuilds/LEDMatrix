@@ -150,6 +150,54 @@ class TestHandlersCarryDetail:
             "handlers returning the generic message without %s: %r"
             % ("both a traceback log and the detail", offenders))
 
+    def test_client_errors_keep_their_own_status(self):
+        """A 405 must not be reported as a server-side UNKNOWN_ERROR.
+
+        Werkzeug's HTTPExceptions subclass Exception, so the catch-all saw them
+        too: a GET on a POST-only route came back 500 "an error occurred",
+        which tells the caller nothing and blames the wrong side. Found while
+        probing a device whose POST-only config endpoints answered every GET
+        with UNKNOWN_ERROR.
+        """
+        from flask import Flask, jsonify
+        from werkzeug.exceptions import HTTPException
+
+        app = Flask(__name__)
+
+        @app.errorhandler(Exception)
+        def handle(error):
+            if isinstance(error, HTTPException):
+                return jsonify({
+                    "status": "error",
+                    "error_code": (error.name or "HTTP_ERROR").upper().replace(" ", "_"),
+                    "message": error.description,
+                }), error.code or 500
+            return jsonify({
+                "status": "error",
+                "error_code": "UNKNOWN_ERROR",
+                "message": "An error occurred; see logs for details",
+                "details": describe_exception(error),
+            }), 500
+
+        @app.route("/only-post", methods=["POST"])
+        def only_post():
+            return jsonify({"ok": True})
+
+        @app.route("/boom")
+        def boom():
+            raise OSError(5, "Input/output error", "systemctl")
+
+        client = app.test_client()
+
+        resp = client.get("/only-post")
+        assert resp.status_code == 405, "a wrong method must stay a 405"
+        assert resp.get_json()["error_code"] == "METHOD_NOT_ALLOWED"
+
+        # A genuine server fault still reports as one, with its detail.
+        resp = client.get("/boom")
+        assert resp.status_code == 500
+        assert "Input/output error" in resp.get_json()["details"]
+
     def test_global_handler_reports_the_underlying_error(self):
         from flask import Flask, jsonify
 
