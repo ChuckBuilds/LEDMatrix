@@ -1731,6 +1731,56 @@ class TestTrailingRuntWindow:
             "a strip this close to the budget should be shown whole every "
             "time, not split into a big pass and a sliver; got %r" % widths)
 
+    def test_a_short_final_row_window_is_not_left_alone(self):
+        # The multi-row path has the same fault as the single-image one, and
+        # wrapping does not save it: rows of 450/450/100 against a 512px budget
+        # gave the 100 a pass of its own, two seconds against nine, because the
+        # row it wrapped to did not fit either.
+        adapter = adapter_with(content_padding=0, max_plugin_width_ratio=1.0,
+                               intra_plugin_gap=0, min_content_separation=0)
+        rows = [canvas([(0, 450)], width=450),
+                canvas([(0, 450)], width=450),
+                canvas([(0, 100)], width=100)]
+
+        widths = []
+        for _ in range(6):
+            adapter.invalidate_cache('rows')
+            shown = adapter.get_content(NativePlugin(list(rows)), 'rows')
+            widths.append(sum(img.width for img in shown))
+
+        assert min(widths) >= DISPLAY_W // 2, (
+            "a row window should not be a sliver, got %r" % widths)
+        assert max(widths) <= DISPLAY_W * 1.5, (
+            "absorbing a short row must stay bounded, got %r" % widths)
+
+    def test_row_rotation_still_covers_every_row(self):
+        # Absorbing a short tail must not drop rows from the rotation.
+        adapter = adapter_with(content_padding=0, max_plugin_width_ratio=1.0,
+                               intra_plugin_gap=0, min_content_separation=0)
+        rows = [canvas([(0, 450)], width=450),
+                canvas([(0, 450)], width=450),
+                canvas([(0, 100)], width=100)]
+
+        seen = set()
+        for _ in range(8):
+            adapter.invalidate_cache('rows')
+            for img in adapter.get_content(NativePlugin(list(rows)), 'rows'):
+                seen.add(img.width)
+        assert seen == {450, 100}, "rotation never showed every row: %r" % seen
+
+    def test_a_row_too_wide_to_absorb_still_bounds_the_overrun(self):
+        # When the next row cannot be taken without blowing past 1.5 budgets,
+        # a short window is the lesser evil — the same trade the always-show-
+        # the-first-row rule already makes.
+        adapter = adapter_with(content_padding=0, max_plugin_width_ratio=1.0,
+                               intra_plugin_gap=0, min_content_separation=0)
+        rows = [canvas([(0, 900)], width=900), canvas([(0, 100)], width=100)]
+        for _ in range(4):
+            adapter.invalidate_cache('wide')
+            shown = adapter.get_content(NativePlugin(list(rows)), 'wide')
+            assert sum(i.width for i in shown) <= 900, (
+                "must not merge a row that overruns the cap")
+
     def test_a_genuinely_long_strip_still_gets_capped(self):
         # Absorbing runts must not become "never cap anything".
         adapter = adapter_with(content_padding=0, max_plugin_width_ratio=1.0)

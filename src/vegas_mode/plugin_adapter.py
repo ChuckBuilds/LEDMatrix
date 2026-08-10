@@ -552,13 +552,28 @@ class PluginAdapter:
 
         # Walk forward from the rotation offset, taking whole items only, so a
         # cut never lands in the middle of one.
+        #
+        # A window may overrun the budget while it is still shorter than the
+        # runt floor, for the same reason _merge_trailing_runt exists on the
+        # single-image path: a pass far shorter than its neighbours reads as
+        # the display failing rather than as a rotation. Rows of 450, 450 and
+        # 100 against a 512px budget used to give the 100 a pass of its own --
+        # two seconds against nine. Wrapping does not prevent that, because it
+        # only helps when the row wrapped to actually fits.
+        floor = budget // 2
         for step in range(len(images)):
             img = images[(start + step) % len(images)]
             cost = img.width
             if selected:
                 cost += self._row_gap(selected[-1], img)
             if selected and used + cost > budget:
-                break
+                # Keep the overrun bounded at the same 1.5 budgets the
+                # single-image path allows. A next row too wide to absorb
+                # leaves a short window standing -- better than a window of
+                # 1.9 budgets, and the same trade the always-take-the-first
+                # rule below already makes.
+                if used >= floor or used + cost > budget + floor:
+                    break
             selected.append(img)
             used += cost
             consumed += 1
