@@ -594,8 +594,10 @@ class CacheManager:
         Args:
             key: Cache key
             data: Data to cache
-            ttl: Optional time-to-live in seconds (stored for compatibility but
-                 expiration is still controlled via max_age when reading)
+            ttl: Time-to-live in seconds for this entry. Takes precedence over
+                 the max_age a reader would otherwise apply, which is inferred
+                 from the key and is only a fallback for entries that did not
+                 say. Omit it to keep that inferred behaviour.
         """
         cache_data = {
             'data': data,

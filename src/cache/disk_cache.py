@@ -112,6 +112,22 @@ class DiskCache:
                     record_ts = None
             
             now = time.time()
+
+            # An explicit per-entry ttl wins over the caller's max_age. The
+            # caller that wrote the record knows what its data is; max_age is
+            # inferred from substrings in the key ("live", "odds", "stock") and
+            # is only a fallback for records that never said. Until now the ttl
+            # was stored and ignored, so `set(key, data, ttl=...)` did nothing
+            # at all -- 48 plugin call sites and 4 in the core were writing a
+            # number no read path consulted.
+            effective_max_age = max_age
+            if isinstance(record, dict):
+                stored_ttl = record.get('ttl')
+                if isinstance(stored_ttl, (int, float)) and not isinstance(stored_ttl, bool) \
+                        and stored_ttl >= 0:
+                    effective_max_age = stored_ttl
+            max_age = effective_max_age
+
             # max_age=None means "never expires" (mirrors MemoryCache and the
             # cache_manager docstring). Guard it explicitly — otherwise the
             # comparison below raises TypeError and the record is treated as a
