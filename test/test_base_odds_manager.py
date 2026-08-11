@@ -8,7 +8,9 @@ is_odds_available's ML-blind truth table, the fixed format_odds_summary
 gate (money-line-only odds now format), get_odds_for_games, and
 configuration loading.
 
-No real network: src.base_odds_manager.requests.get is always patched.
+No real network: requests.Session.get is always patched. The odds path sends
+its requests through a session so it can identify itself to ESPN, so patching
+the module-level requests.get would no longer intercept anything.
 """
 
 from unittest.mock import MagicMock, patch
@@ -59,7 +61,7 @@ def manager(cache_manager):
 
 @pytest.fixture
 def mock_get():
-    with patch('src.base_odds_manager.requests.get') as m:
+    with patch('src.base_odds_manager.requests.Session.get') as m:
         m.return_value = _make_response({'items': [dict(FULL_ITEM)]})
         yield m
 

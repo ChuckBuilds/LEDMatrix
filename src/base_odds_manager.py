@@ -44,6 +44,24 @@ class BaseOddsManager:
         self.config_manager = config_manager
         self.logger = logging.getLogger(__name__)
         self.base_url = "https://sports.core.api.espn.com/v2/sports"
+
+        # This path used a bare requests.get, so it identified itself as
+        # python-requests/x.y -- the one thing ESPN is known to reject. Around
+        # 2026-08-04 it began 403ing browser strings and bare custom tokens
+        # alike; what it accepts is a token with a URL that says who is
+        # calling. Every other ESPN caller in the tree already sends this
+        # (src/common/api_helper.py, src/base_classes/data_sources.py); the
+        # odds path was simply missed, and it is the one whose failures cost
+        # the caller its whole update budget.
+        #
+        # Deliberately no retry adapter, unlike api_helper: retries multiply
+        # request_timeout, which is set to 5s precisely to stay inside that
+        # budget. One try, then the cooldown below.
+        self.session = requests.Session()
+        self.session.headers.update({
+            'User-Agent': 'LEDMatrix/1.0 (+https://github.com/ChuckBuilds/LEDMatrix)',
+            'Accept': 'application/json',
+        })
         
         # Configuration with defaults
         self.update_interval = 3600  # 1 hour default
@@ -144,7 +162,7 @@ class BaseOddsManager:
             url = f"{self.base_url}/{sport}/leagues/{espn_league}/events/{event_id}/competitions/{event_id}/odds"
             self.logger.info(f"Requesting odds from URL: {url}")
             
-            response = requests.get(url, timeout=self.request_timeout)
+            response = self.session.get(url, timeout=self.request_timeout)
             response.raise_for_status()
             raw_data = response.json()
 
