@@ -28,13 +28,17 @@ _REDACT_CREDENTIAL = re.compile(
     re.IGNORECASE,
 )
 
-# `Authorization: Bearer <token>`. The scheme is kept because it says which
-# kind of credential failed; only the token goes. Not covered by the pattern
-# above, whose value part stops at whitespace and so would keep the token when
-# a space follows the scheme.
+# `Authorization: <scheme> <credential>`. The scheme name is kept because it
+# says which kind of credential failed; the credential goes. Any scheme
+# matches, not a fixed list: ApiKey, Negotiate, NTLM, AWS4-HMAC-SHA256 and
+# whatever a plugin's API invents next are all credentials, and a list would
+# silently leak the ones nobody thought of. Not covered by the generic pattern
+# above, whose value part stops at whitespace and so would keep the credential
+# once a space follows the scheme.
 _REDACT_AUTH_HEADER = re.compile(
     r'((?:proxy-)?authorization["\']?\s*[=:]\s*["\']?\s*'
-    r'(?:bearer|basic|digest|token)\s+)([^\s,"\'<>}]+)',
+    r'(?:[A-Za-z][\w.+-]*[ \t]+)?)'          # optional scheme name, kept
+    r'([^\s,"\'<>}]+)',                       # the credential, redacted
     re.IGNORECASE,
 )
 

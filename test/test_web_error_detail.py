@@ -48,6 +48,12 @@ class TestCredentialRedaction:
         ("headers: {'Authorization': 'Bearer eyJ.SECRET.sig'}", "eyJ.SECRET.sig"),
         ("Authorization: Basic dXNlcjpwYXNzd29yZA==", "dXNlcjpwYXNzd29yZA=="),
         ("Proxy-Authorization: Bearer ptok999", "ptok999"),
+        # Any scheme, not a fixed list -- a list silently leaks whatever it
+        # does not name, and plugin APIs invent their own.
+        ("Authorization: ApiKey SECRET123", "SECRET123"),
+        ("Authorization: Negotiate YIIZnegotiateblob", "YIIZnegotiateblob"),
+        ("Authorization: NTLM TlRMTVNTUAAB", "TlRMTVNTUAAB"),
+        ("authorization: barecredential", "barecredential"),
     ])
     def test_credentials_never_reach_the_response(self, secret_text, leaked):
         detail = describe_exception(RuntimeError(secret_text))
@@ -58,6 +64,13 @@ class TestCredentialRedaction:
         # Knowing *which* credential was involved is part of the diagnosis.
         detail = describe_exception(RuntimeError("https://x/y?api_key=SEC123"))
         assert "api_key" in detail
+
+    def test_unknown_schemes_keep_their_name(self):
+        for scheme in ("ApiKey", "Negotiate", "NTLM", "AWS4-HMAC-SHA256"):
+            detail = describe_exception(
+                RuntimeError("Authorization: %s SECRETVALUE" % scheme))
+            assert scheme in detail, detail
+            assert "SECRETVALUE" not in detail, detail
 
     def test_auth_scheme_and_username_survive(self):
         # Which kind of credential, and whose, without the credential itself.
@@ -120,18 +133,31 @@ class TestHandlersCarryDetail:
                     return True
             return False
 
-        def returns_the_detail(handler):
-            """describe_exception() called on this handler's bound exception."""
-            for call in [n for n in ast.walk(handler) if isinstance(n, ast.Call)]:
-                name = call.func.id if isinstance(call.func, ast.Name) else None
-                if name != "describe_exception":
+        def describes_this_exception(node, bound):
+            """A describe_exception(<bound>) call anywhere under `node`."""
+            for call in [n for n in ast.walk(node) if isinstance(n, ast.Call)]:
+                if not (isinstance(call.func, ast.Name)
+                        and call.func.id == "describe_exception"):
                     continue
-                if handler.name is None:
+                if bound is None:
                     return True     # bare `except:` cannot name it; accept
-                if any(isinstance(a, ast.Name) and a.id == handler.name
+                if any(isinstance(a, ast.Name) and a.id == bound
                        for a in call.args):
                     return True
             return False
+
+        def returns_the_detail(handler):
+            """The detail must be inside what the handler actually returns.
+
+            Looking anywhere in the handler is too weak: a handler could
+            compute describe_exception(e), drop it on the floor, and return the
+            generic message with no details field, while still passing. So the
+            call has to appear within a `return` expression.
+            """
+            returns = [n for n in ast.walk(handler) if isinstance(n, ast.Return)]
+            if not returns:
+                return False
+            return all(describes_this_exception(r, handler.name) for r in returns)
 
         offenders = []
         for h in [n for n in ast.walk(tree) if isinstance(n, ast.ExceptHandler)]:
