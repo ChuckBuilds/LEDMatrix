@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 from src.web_interface.api_helpers import success_response, error_response, validate_request_json
 from src.web_interface.errors import ErrorCode
 from src.web_interface.secret_helpers import find_secret_fields, separate_secrets
+from src.web_interface.error_handler import describe_exception
 from src.plugin_system.operation_types import OperationType
 from src.web_interface.validators import (
     validate_file_upload
@@ -272,7 +273,7 @@ def get_main_config():
         return jsonify({'status': 'success', 'data': config})
     except Exception as e:
         logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/config/schedule', methods=['GET'])
 def get_schedule_config():
@@ -290,9 +291,11 @@ def get_schedule_config():
 
         return success_response(data=schedule_config)
     except Exception as e:
+        logger.error("%s failed", request.path, exc_info=True)
         return error_response(
             ErrorCode.CONFIG_LOAD_FAILED,
             "An error occurred; see logs for details",
+            details=describe_exception(e),
             status_code=500
         )
 
@@ -468,7 +471,7 @@ def save_schedule_config():
             ErrorCode.CONFIG_SAVE_FAILED,
             "An error occurred; see logs for details",
 
-            status_code=500
+            status_code=500, details=describe_exception(e)
         )
 
 @api_v3.route('/config/dim-schedule', methods=['GET'])
@@ -516,14 +519,14 @@ def get_dim_schedule_config():
         return error_response(
             ErrorCode.CONFIG_LOAD_FAILED,
             "An error occurred; see logs for details",
-            status_code=500
+            status_code=500, details=describe_exception(e)
         )
     except Exception as e:
         logging.error(f"[DIM SCHEDULE] Unexpected error loading config: {e}", exc_info=True)
         return error_response(
             ErrorCode.CONFIG_LOAD_FAILED,
             "An error occurred; see logs for details",
-            status_code=500
+            status_code=500, details=describe_exception(e)
         )
 
 @api_v3.route('/config/dim-schedule', methods=['POST'])
@@ -687,7 +690,7 @@ def save_dim_schedule_config():
             ErrorCode.CONFIG_SAVE_FAILED,
             "An error occurred; see logs for details",
 
-            status_code=500
+            status_code=500, details=describe_exception(e)
         )
 
 @api_v3.route('/config/main', methods=['POST'])
@@ -1314,7 +1317,7 @@ def save_main_config():
         return error_response(
             ErrorCode.CONFIG_SAVE_FAILED,
             "An error occurred; see logs for details",
-            status_code=500
+            status_code=500, details=describe_exception(e)
         )
 
 @api_v3.route('/config/secrets', methods=['GET'])
@@ -1328,7 +1331,7 @@ def get_secrets_config():
         return jsonify({'status': 'success', 'data': config})
     except Exception as e:
         logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/config/raw/main', methods=['POST'])
 def save_raw_main_config():
@@ -1361,6 +1364,7 @@ def save_raw_main_config():
             return error_response(
                 ErrorCode.CONFIG_SAVE_FAILED,
                 error_message,
+                details=describe_exception(e),
 
                 context={'config_path': e.config_path} if hasattr(e, 'config_path') and e.config_path else None,
                 status_code=500
@@ -1370,6 +1374,7 @@ def save_raw_main_config():
             return error_response(
                 ErrorCode.UNKNOWN_ERROR,
                 error_message,
+                details=describe_exception(e),
 
                 status_code=500
             )
@@ -1409,7 +1414,8 @@ def save_raw_secrets_config():
         else:
             error_message = 'An error occurred; see logs for details'
 
-        return jsonify({'status': 'error', 'message': error_message}), 500
+        return jsonify({'status': 'error', 'message': error_message,
+                        'details': describe_exception(e)}), 500
 
 @api_v3.route('/system/status', methods=['GET'])
 def get_system_status():
@@ -1497,7 +1503,7 @@ def get_system_status():
         return jsonify({'status': 'success', 'data': status})
     except Exception as e:
         logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/health', methods=['GET'])
 def get_health():
@@ -1596,9 +1602,11 @@ def get_health():
 
         return jsonify({'status': 'success', 'data': health_status})
     except Exception as e:
+        logger.error("%s failed", request.path, exc_info=True)
         return jsonify({
             'status': 'error',
             'message': 'An error occurred; see logs for details',
+            'details': describe_exception(e),
             'data': {'status': 'unhealthy'}
         }), 500
 
@@ -2368,7 +2376,7 @@ def get_display_current():
         return jsonify({'status': 'success', 'data': display_data})
     except Exception as e:
         logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/display/on-demand/status', methods=['GET'])
 def get_on_demand_status():
@@ -2392,7 +2400,7 @@ def get_on_demand_status():
         })
     except Exception as exc:
         logger.error('Error in get_on_demand_status', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(exc)}), 500
 
 @api_v3.route('/display/on-demand/start', methods=['POST'])
 def start_on_demand_display():
@@ -2495,7 +2503,7 @@ def start_on_demand_display():
         return jsonify({'status': 'success', 'data': response_data})
     except Exception as exc:
         logger.error('Error in start_on_demand_display', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(exc)}), 500
 
 @api_v3.route('/display/on-demand/stop', methods=['POST'])
 def stop_on_demand_display():
@@ -2531,7 +2539,7 @@ def stop_on_demand_display():
         })
     except Exception as exc:
         logger.error('Error in stop_on_demand_display', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(exc)}), 500
 
 @api_v3.route('/plugins/installed', methods=['GET'])
 def get_installed_plugins():
@@ -2679,7 +2687,7 @@ def get_installed_plugins():
         return jsonify({'status': 'success', 'data': {'plugins': plugins}})
     except Exception as e:
         logger.error('Error in get_installed_plugins', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 def _installed_plugin_ids():
     """Best-effort list of installed plugin IDs for the web process.
@@ -2745,7 +2753,7 @@ def get_plugin_health():
         })
     except Exception as e:
         logger.error('Error in get_plugin_health', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/health/<plugin_id>', methods=['GET'])
 def get_plugin_health_single(plugin_id):
@@ -2770,7 +2778,7 @@ def get_plugin_health_single(plugin_id):
         })
     except Exception as e:
         logger.error('Error in get_plugin_health_single', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/health/<plugin_id>/reset', methods=['POST'])
 def reset_plugin_health(plugin_id):
@@ -2795,7 +2803,7 @@ def reset_plugin_health(plugin_id):
         })
     except Exception as e:
         logger.error('Error in reset_plugin_health', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/metrics', methods=['GET'])
 def get_plugin_metrics():
@@ -2835,7 +2843,7 @@ def get_plugin_metrics():
         })
     except Exception as e:
         logger.error('Error in get_plugin_metrics', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/metrics/<plugin_id>', methods=['GET'])
 def get_plugin_metrics_single(plugin_id):
@@ -2860,7 +2868,7 @@ def get_plugin_metrics_single(plugin_id):
         })
     except Exception as e:
         logger.error('Error in get_plugin_metrics_single', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/metrics/<plugin_id>/reset', methods=['POST'])
 def reset_plugin_metrics(plugin_id):
@@ -2885,7 +2893,7 @@ def reset_plugin_metrics(plugin_id):
         })
     except Exception as e:
         logger.error('Error in reset_plugin_metrics', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/limits/<plugin_id>', methods=['GET', 'POST'])
 def manage_plugin_limits(plugin_id):
@@ -2940,7 +2948,7 @@ def manage_plugin_limits(plugin_id):
             })
     except Exception as e:
         logger.error('Error in manage_plugin_limits', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/toggle', methods=['POST'])
 def toggle_plugin():
@@ -3949,7 +3957,7 @@ def install_plugin():
 
     except Exception as e:
         logger.error('Error in install_plugin', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/install-from-url', methods=['POST'])
 def install_plugin_from_url():
@@ -4004,7 +4012,7 @@ def install_plugin_from_url():
 
     except Exception as e:
         logger.error('Error in install_plugin_from_url', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/registry-from-url', methods=['POST'])
 def get_registry_from_url():
@@ -4036,7 +4044,7 @@ def get_registry_from_url():
 
     except Exception as e:
         logger.error('Error in get_registry_from_url', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/saved-repositories', methods=['GET'])
 def get_saved_repositories():
@@ -4049,7 +4057,7 @@ def get_saved_repositories():
         return jsonify({'status': 'success', 'data': {'repositories': repositories}})
     except Exception as e:
         logger.error('Error in get_saved_repositories', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/saved-repositories', methods=['POST'])
 def add_saved_repository():
@@ -4080,7 +4088,7 @@ def add_saved_repository():
             }), 400
     except Exception as e:
         logger.error('Error in add_saved_repository', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/saved-repositories', methods=['DELETE'])
 def remove_saved_repository():
@@ -4110,7 +4118,7 @@ def remove_saved_repository():
             }), 404
     except Exception as e:
         logger.error('Error in remove_saved_repository', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/store/list', methods=['GET'])
 def list_plugin_store():
@@ -4163,7 +4171,7 @@ def list_plugin_store():
         return jsonify({'status': 'success', 'data': {'plugins': formatted_plugins}})
     except Exception as e:
         logger.error('Error in list_plugin_store', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/store/github-status', methods=['GET'])
 def get_github_auth_status():
@@ -4214,7 +4222,7 @@ def get_github_auth_status():
             })
     except Exception as e:
         logger.error('Error in get_github_auth_status', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/store/refresh', methods=['POST'])
 def refresh_plugin_store():
@@ -4241,7 +4249,7 @@ def refresh_plugin_store():
         })
     except Exception as e:
         logger.error('Error in refresh_plugin_store', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 def deep_merge(base_dict, update_dict):
     """
@@ -5763,7 +5771,7 @@ def get_plugin_schema():
         return jsonify({'status': 'success', 'data': {'schema': default_schema}})
     except Exception as e:
         logger.error('Error in get_plugin_schema', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/skins', methods=['GET'])
 def list_skins():
@@ -5798,9 +5806,9 @@ def list_skins():
                 'has_preview': bool(preview and (skin_dir / preview).is_file()),
             })
         return jsonify({'status': 'success', 'data': {'skins': payload}})
-    except Exception:
+    except Exception as e:
         logger.error('Error in list_skins', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/config/reset', methods=['POST'])
 def reset_plugin_config():
@@ -5880,7 +5888,7 @@ def reset_plugin_config():
         })
     except Exception as e:
         logger.error('Error in reset_plugin_config', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/action', methods=['POST'])
 def execute_plugin_action():
@@ -6140,7 +6148,7 @@ sys.exit(proc.returncode)
                             logger.error("Error executing action step 1", exc_info=True)
                             return jsonify({
                                 'status': 'error',
-                                'message': 'An error occurred; see logs for details'
+                                'message': 'An error occurred; see logs for details', 'details': describe_exception(e)
                             }), 500
                     else:
                         # Simple script execution
@@ -6190,7 +6198,7 @@ sys.exit(proc.returncode)
         return jsonify({'status': 'error', 'message': 'Action timed out'}), 408
     except Exception as e:
         logger.error('Error in execute_plugin_action', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/authenticate/spotify', methods=['POST'])
 def authenticate_spotify():
@@ -6323,12 +6331,12 @@ sys.exit(proc.returncode)
                 logger.error("Error getting Spotify auth URL", exc_info=True)
                 return jsonify({
                     'status': 'error',
-                    'message': 'An error occurred; see logs for details'
+                    'message': 'An error occurred; see logs for details', 'details': describe_exception(e)
                 }), 500
 
     except Exception as e:
         logger.error('Error in authenticate_spotify', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/authenticate/ytm', methods=['POST'])
 def authenticate_ytm():
@@ -6378,7 +6386,7 @@ def authenticate_ytm():
         return jsonify({'status': 'error', 'message': 'Authentication timed out'}), 408
     except Exception as e:
         logger.error('Error in authenticate_ytm', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/fonts/catalog', methods=['GET'])
 def get_fonts_catalog():
@@ -6473,7 +6481,10 @@ def get_fonts_catalog():
 
         return jsonify({'status': 'success', 'data': {'catalog': catalog}})
     except Exception as e:
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        logger.error("%s failed", request.path, exc_info=True)
+        return jsonify({'status': 'error',
+                        'message': 'An error occurred; see logs for details',
+                        'details': describe_exception(e)}), 500
 
 @api_v3.route('/fonts/tokens', methods=['GET'])
 def get_font_tokens():
@@ -6492,7 +6503,7 @@ def get_font_tokens():
         return jsonify({'status': 'success', 'data': {'tokens': tokens}})
     except Exception as e:
         logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/fonts/overrides', methods=['GET'])
 def get_fonts_overrides():
@@ -6504,7 +6515,7 @@ def get_fonts_overrides():
         return jsonify({'status': 'success', 'data': {'overrides': overrides}})
     except Exception as e:
         logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/fonts/overrides', methods=['POST'])
 def save_fonts_overrides():
@@ -6518,7 +6529,7 @@ def save_fonts_overrides():
         return jsonify({'status': 'success', 'message': 'Font overrides saved'})
     except Exception as e:
         logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/fonts/overrides/<element_key>', methods=['DELETE'])
 def delete_font_override(element_key):
@@ -6528,7 +6539,7 @@ def delete_font_override(element_key):
         return jsonify({'status': 'success', 'message': f'Font override for {element_key} deleted'})
     except Exception as e:
         logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/fonts/upload', methods=['POST'])
 def upload_font():
@@ -6593,7 +6604,7 @@ def upload_font():
         })
     except Exception as e:
         logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 
 @api_v3.route('/fonts/preview', methods=['GET'])
@@ -6738,7 +6749,7 @@ def get_font_preview() -> tuple[Response, int] | Response:
         })
     except Exception as e:
         logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 
 @api_v3.route('/fonts/<font_family>', methods=['DELETE'])
@@ -6826,7 +6837,7 @@ def delete_font(font_family: str) -> tuple[Response, int] | Response:
         })
     except Exception as e:
         logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 
 @api_v3.route('/plugins/assets/upload', methods=['POST'])
@@ -6974,7 +6985,7 @@ def upload_plugin_asset():
 
     except Exception as e:
         logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/of-the-day/json/upload', methods=['POST'])
 def upload_of_the_day_json():
@@ -7124,7 +7135,7 @@ def upload_of_the_day_json():
 
     except Exception as e:
         logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/of-the-day/json/delete', methods=['POST'])
 def delete_of_the_day_json():
@@ -7171,7 +7182,7 @@ def delete_of_the_day_json():
 
     except Exception as e:
         logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/<plugin_id>/static/<path:file_path>', methods=['GET'])
 def serve_plugin_static(plugin_id, file_path):
@@ -7217,7 +7228,7 @@ def serve_plugin_static(plugin_id, file_path):
 
     except Exception as e:
         logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 
 @api_v3.route('/plugins/calendar/upload-credentials', methods=['POST'])
@@ -7299,7 +7310,7 @@ def upload_calendar_credentials():
 
     except Exception as e:
         logger.error('Error in upload_calendar_credentials', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/assets/delete', methods=['POST'])
 def delete_plugin_asset():
@@ -7342,7 +7353,7 @@ def delete_plugin_asset():
 
     except Exception as e:
         logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/assets/list', methods=['GET'])
 def list_plugin_assets():
@@ -7370,7 +7381,7 @@ def list_plugin_assets():
 
     except Exception as e:
         logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/display/current-status', methods=['GET'])
 def get_current_display_status():
@@ -7391,9 +7402,9 @@ def get_current_display_status():
                 'last_updated': None,
             }
         return jsonify({'status': 'success', 'data': state})
-    except Exception:
+    except Exception as e:
         logger.error('Error in get_current_display_status', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/logs', methods=['GET'])
 def get_logs():
@@ -7432,9 +7443,11 @@ def get_logs():
             'message': 'Timeout while fetching logs'
         }), 500
     except Exception as e:
+        logger.error("%s failed", request.path, exc_info=True)
         return jsonify({
             'status': 'error',
-            'message': 'An error occurred; see logs for details'
+            'message': 'An error occurred; see logs for details',
+            'details': describe_exception(e)
         }), 500
 
 # Multi-Display Sync Endpoints
@@ -7499,9 +7512,11 @@ def get_wifi_status():
             }
         })
     except Exception as e:
+        logger.error("%s failed", request.path, exc_info=True)
         return jsonify({
             'status': 'error',
-            'message': 'An error occurred; see logs for details'
+            'message': 'An error occurred; see logs for details',
+            'details': describe_exception(e)
         }), 500
 
 @api_v3.route('/wifi/scan', methods=['GET'])
@@ -7623,7 +7638,7 @@ def connect_wifi():
         logger.error("Error connecting to WiFi", exc_info=True)
         return jsonify({
             'status': 'error',
-            'message': 'An error occurred; see logs for details'
+            'message': 'An error occurred; see logs for details', 'details': describe_exception(e)
         }), 500
 
 @api_v3.route('/wifi/disconnect', methods=['POST'])
@@ -7649,7 +7664,7 @@ def disconnect_wifi():
         logger.error("Error disconnecting from WiFi", exc_info=True)
         return jsonify({
             'status': 'error',
-            'message': 'An error occurred; see logs for details'
+            'message': 'An error occurred; see logs for details', 'details': describe_exception(e)
         }), 500
 
 @api_v3.route('/wifi/ap/enable', methods=['POST'])
@@ -7674,9 +7689,11 @@ def enable_ap_mode():
                 'message': message
             }), 400
     except Exception as e:
+        logger.error("%s failed", request.path, exc_info=True)
         return jsonify({
             'status': 'error',
-            'message': 'An error occurred; see logs for details'
+            'message': 'An error occurred; see logs for details',
+            'details': describe_exception(e)
         }), 500
 
 @api_v3.route('/wifi/ap/disable', methods=['POST'])
@@ -7699,9 +7716,11 @@ def disable_ap_mode():
                 'message': message
             }), 400
     except Exception as e:
+        logger.error("%s failed", request.path, exc_info=True)
         return jsonify({
             'status': 'error',
-            'message': 'An error occurred; see logs for details'
+            'message': 'An error occurred; see logs for details',
+            'details': describe_exception(e)
         }), 500
 
 @api_v3.route('/wifi/ap/auto-enable', methods=['GET'])
@@ -7720,9 +7739,11 @@ def get_auto_enable_ap_mode():
             }
         })
     except Exception as e:
+        logger.error("%s failed", request.path, exc_info=True)
         return jsonify({
             'status': 'error',
-            'message': 'An error occurred; see logs for details'
+            'message': 'An error occurred; see logs for details',
+            'details': describe_exception(e)
         }), 500
 
 @api_v3.route('/wifi/ap/auto-enable', methods=['POST'])
@@ -7752,9 +7773,11 @@ def set_auto_enable_ap_mode():
             }
         })
     except Exception as e:
+        logger.error("%s failed", request.path, exc_info=True)
         return jsonify({
             'status': 'error',
-            'message': 'An error occurred; see logs for details'
+            'message': 'An error occurred; see logs for details',
+            'details': describe_exception(e)
         }), 500
 
 @api_v3.route('/wifi/radio', methods=['GET'])
@@ -7774,7 +7797,7 @@ def get_wifi_radio():
         logger.error("Error getting WiFi radio state", exc_info=True)
         return jsonify({
             'status': 'error',
-            'message': 'An error occurred; see logs for details'
+            'message': 'An error occurred; see logs for details', 'details': describe_exception(e)
         }), 500
 
 @api_v3.route('/wifi/radio', methods=['POST'])
@@ -7822,7 +7845,7 @@ def set_wifi_radio():
         logger.error("Error setting WiFi radio state", exc_info=True)
         return jsonify({
             'status': 'error',
-            'message': 'An error occurred; see logs for details'
+            'message': 'An error occurred; see logs for details', 'details': describe_exception(e)
         }), 500
 
 @api_v3.route('/cache/list', methods=['GET'])
@@ -7847,7 +7870,7 @@ def list_cache_files():
         })
     except Exception as e:
         logger.error('Error in list_cache_files', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/cache/delete', methods=['POST'])
 def delete_cache_file():
@@ -7873,7 +7896,7 @@ def delete_cache_file():
         })
     except Exception as e:
         logger.error('Error in delete_cache_file', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 
 # =============================================================================

@@ -16,6 +16,8 @@ from datetime import datetime, timedelta
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.config_manager import ConfigManager
+from src.web_interface.error_handler import describe_exception
+from werkzeug.exceptions import HTTPException
 from src.exceptions import ConfigError
 from src.plugin_system.plugin_manager import PluginManager
 from src.plugin_system.store_manager import PluginStoreManager
@@ -391,15 +393,42 @@ def internal_error(error):
     import logging
     logger = logging.getLogger('web_interface')
     logger.error("Internal server error", exc_info=True)
-    return jsonify({
+    payload = {
         'status': 'error',
         'error_code': 'INTERNAL_ERROR',
         'message': 'An internal error occurred; see logs for details',
-    }), 500
+    }
+    # Flask hands the original exception over as `error.original_exception`
+    # when propagation is off; without it there is nothing to describe.
+    original = getattr(error, 'original_exception', None) or (
+        error if isinstance(error, BaseException) else None)
+    if original is not None:
+        payload['details'] = describe_exception(original)
+    return jsonify(payload), 500
 
 @app.errorhandler(Exception)
 def handle_exception(error):
-    """Handle all unhandled exceptions."""
+    """Handle all unhandled exceptions.
+
+    Returning only "see logs for details" is fine until the logs are exactly
+    what you cannot reach. A device with failing storage answered every
+    endpoint with that sentence -- including the log viewer, because journalctl
+    could not be executed -- while the exception underneath said
+    `[Errno 5] Input/output error`. Naming the error costs nothing here and is
+    frequently the whole diagnosis, so include it alongside the log pointer.
+    """
+    # Werkzeug's HTTPExceptions subclass Exception, so this catch-all sees
+    # them too and was reporting every 405, 400, 413 and 415 as a server-side
+    # UNKNOWN_ERROR 500. A GET on a POST-only route came back as "an error
+    # occurred" rather than "method not allowed", which tells the caller
+    # nothing and blames the wrong side. Hand those back as themselves.
+    if isinstance(error, HTTPException):
+        return jsonify({
+            'status': 'error',
+            'error_code': (error.name or 'HTTP_ERROR').upper().replace(' ', '_'),
+            'message': error.description,
+        }), error.code or 500
+
     import logging
     logger = logging.getLogger('web_interface')
     logger.error("Unhandled exception", exc_info=True)
@@ -407,6 +436,7 @@ def handle_exception(error):
         'status': 'error',
         'error_code': 'UNKNOWN_ERROR',
         'message': 'An error occurred; see logs for details',
+        'details': describe_exception(error),
     }), 500
 
 # Captive portal redirect middleware
