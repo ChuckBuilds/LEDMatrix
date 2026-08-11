@@ -423,6 +423,10 @@ class DiskCache:
             # directory, the oldest six months old.
             stats['orphan_temp_files_deleted'] = 0
             for filename in (f for f in entries if self._is_orphaned_temp(f)):
+                # Counted as scanned like any other candidate, so files_deleted
+                # can never exceed files_scanned and the summary line reads
+                # honestly ("77/8864", not "77/0").
+                stats['files_scanned'] += 1
                 path = os.path.join(self.cache_dir, filename)
                 try:
                     # An in-flight write lives for milliseconds, so anything

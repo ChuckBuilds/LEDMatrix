@@ -152,6 +152,19 @@ class TestTheSweep:
         assert stats['orphan_temp_files_deleted'] == 76
         assert keep.exists()
         assert not list(tmp_path.glob('.sched_*'))
+        # The summary line is "<deleted>/<scanned>", so an orphan that is
+        # deleted but never counted as scanned renders as "76/1".
+        assert stats['files_scanned'] == 77
+        assert stats['files_deleted'] <= stats['files_scanned']
+
+    def test_deleted_never_exceeds_scanned(self, cache, tmp_path):
+        p = _write(tmp_path, '.only.json.a1b2c3d4')
+        _age(p, _ORPHAN_TEMP_MAX_AGE_SECONDS + 60)
+
+        stats = cache.cleanup_expired_files(FakeStrategy(), POLICIES)
+
+        assert stats['files_deleted'] == 1
+        assert stats['files_scanned'] == 1
 
     def test_a_missing_file_mid_sweep_is_not_an_error(self, cache, tmp_path):
         p = _write(tmp_path, '.weather.json.a1b2c3d4')
