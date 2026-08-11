@@ -12,6 +12,8 @@ Follows LEDMatrix configuration management patterns:
 """
 
 import logging
+import time
+
 import requests
 import json
 from typing import Dict, Any, Optional, List
@@ -45,7 +47,14 @@ class BaseOddsManager:
         
         # Configuration with defaults
         self.update_interval = 3600  # 1 hour default
-        self.request_timeout = 30    # 30 seconds default
+        # Well under the plugin executor's 30s operation budget. At 30s a
+        # single stalled ESPN request consumed the entire budget and the whole
+        # update() was killed -- and odds are fetched per live game, inside the
+        # live update loop, with show_odds defaulting on. Losing one game's
+        # odds beats losing the update that carries every game's score.
+        self.request_timeout = 5
+        # Set when a request fails; until then, skip the network entirely.
+        self._skip_network_until = 0.0
         self.cache_ttl = 1800       # 30 minutes default
         
         # Load configuration if available
@@ -73,6 +82,14 @@ class BaseOddsManager:
         except Exception as e:
             self.logger.warning(f"Failed to load BaseOddsManager configuration: {e}")
     
+    # After a network failure, stop trying for this long and serve cache only.
+    # A short per-request timeout bounds one stall, but a full Sunday slate is
+    # ~16 games fetched in a loop, so 16 consecutive timeouts still blow the
+    # budget. When ESPN is unreachable it is unreachable for all of them, so
+    # the first failure is enough to know: skip the rest of this pass and try
+    # again shortly.
+    _FAILURE_COOLDOWN = 60.0
+
     def get_odds(self, sport: str | None, league: str | None, event_id: str,
                  update_interval_seconds: int = None) -> Optional[Dict[str, Any]]:
         """
@@ -101,8 +118,18 @@ class BaseOddsManager:
             self.logger.info(f"Using cached odds from ESPN for {cache_key}")
             return cached_data
 
+        if time.monotonic() < self._skip_network_until:
+            # A recent request failed, so ESPN is very likely still unreachable.
+            # Returning now keeps the caller's update inside its time budget
+            # instead of paying the timeout again for every remaining game.
+            self.logger.debug(
+                "Skipping odds fetch for %s: a recent request failed, holding off "
+                "for another %.0fs", cache_key,
+                self._skip_network_until - time.monotonic())
+            return None
+
         self.logger.info(f"Cache miss - fetching fresh odds from ESPN for {cache_key}")
-        
+
         try:
             # Map league names to ESPN API format
             league_mapping = {
@@ -120,6 +147,8 @@ class BaseOddsManager:
             response = requests.get(url, timeout=self.request_timeout)
             response.raise_for_status()
             raw_data = response.json()
+
+            self._skip_network_until = 0.0   # reachable again
 
             self.logger.debug(f"Received raw odds data from ESPN: {json.dumps(raw_data, indent=2)}")
             
@@ -140,7 +169,11 @@ class BaseOddsManager:
             return odds_data
 
         except requests.exceptions.RequestException as e:
-            self.logger.error(f"Error fetching odds from ESPN API for {cache_key}: {e}")
+            self._skip_network_until = time.monotonic() + self._FAILURE_COOLDOWN
+            self.logger.error(
+                "Error fetching odds from ESPN API for %s: %s. Holding off on odds "
+                "for %.0fs so a slate of games does not pay this timeout each.",
+                cache_key, e, self._FAILURE_COOLDOWN)
         except json.JSONDecodeError:
             self.logger.error(f"Error decoding JSON response from ESPN API for {cache_key}.")
         

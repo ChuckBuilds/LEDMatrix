@@ -87,7 +87,11 @@ class TestGetOdds:
         assert '/events/401/competitions/401/odds' in url
         assert url == ('https://sports.core.api.espn.com/v2/sports/football/'
                        'leagues/nfl/events/401/competitions/401/odds')
-        assert mock_get.call_args.kwargs['timeout'] == 30
+        # The number matters less than the property: a single stalled request
+        # must not be able to consume the plugin executor's 30s operation
+        # budget, since odds are fetched per live game inside update().
+        assert mock_get.call_args.kwargs['timeout'] == 5
+        assert mock_get.call_args.kwargs['timeout'] < 30
 
     def test_ncaa_fb_maps_to_college_football(self, manager, mock_get):
         manager.get_odds('football', 'ncaa_fb', '401')
@@ -355,5 +359,5 @@ class TestLoadConfiguration:
         manager = BaseOddsManager(cache_manager, config_manager=config_manager)
 
         assert manager.update_interval == 3600
-        assert manager.request_timeout == 30
+        assert manager.request_timeout == 5
         assert manager.cache_ttl == 1800
