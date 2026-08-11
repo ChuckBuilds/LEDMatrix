@@ -57,6 +57,16 @@ class MemoryCache:
             if timestamp is None:
                 return None
             
+            # An explicit per-entry ttl wins over the caller's max_age, matching
+            # DiskCache. max_age is inferred from substrings in the key and is
+            # only a fallback for records that did not say what they wanted.
+            record = self._cache[key]
+            if isinstance(record, dict):
+                stored_ttl = record.get('ttl')
+                if isinstance(stored_ttl, (int, float)) and not isinstance(stored_ttl, bool) \
+                        and stored_ttl >= 0:
+                    max_age = stored_ttl
+
             # Check expiration
             if max_age is not None and (now - timestamp) > max_age:
                 # Expired - remove it
