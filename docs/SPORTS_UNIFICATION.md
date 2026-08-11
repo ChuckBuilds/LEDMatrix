@@ -408,8 +408,8 @@ measure. Consolidate what is already committed; revisit when B6 does.
 
 Steps 1–5 of the original plan are **done**: 3.2.0 is tagged and published with
 a version number CI now asserts (#428), the compatibility gate is in
-`install_plugin` and reads `compatible_versions` as well as the floor (#431,
-#433), the newest manifest entry is required to use `ledmatrix_min_version`
+`install_plugin` and reads `compatible_versions` as well as the floor
+(#431, #433), the newest manifest entry is required to use `ledmatrix_min_version`
 (plugins #244), and all eight plugins have adopted the scroll orchestration
 (plugins #245–#249, repaired in #251, tidied in #252).
 
