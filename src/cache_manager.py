@@ -46,7 +46,21 @@ from src.cache.disk_cache import DateTimeEncoder  # noqa: F401 - deliberate re-e
 
 class CacheManager:
     """Manages caching of API responses to reduce API calls."""
-    
+
+    # Which cache directories already have a cleanup thread in this process.
+    #
+    # The sweep is directory-scoped work -- it lists a directory and deletes
+    # from it -- so one per directory is the right number no matter how many
+    # managers exist. Nothing enforced that before: every instance started its
+    # own, and because the loop closes over `self`, a discarded manager could
+    # never be collected and its thread woke to re-scan the same directory
+    # every 24 hours for the life of the process. Startup validation runs
+    # twice and built a throwaway manager each time, so a display process
+    # carried three threads for one cache.
+    _cleanup_owners: Dict[str, 'CacheManager'] = {}
+    _cleanup_owners_lock = threading.Lock()
+
+
     def __init__(self) -> None:
         # Initialize logger first
         self.logger: logging.Logger = get_logger(__name__)
@@ -718,11 +732,29 @@ class CacheManager:
             }
     
     def start_cleanup_thread(self) -> None:
-        """Start background thread for periodic disk cache cleanup."""
+        """Start background thread for periodic disk cache cleanup.
+
+        At most one thread per cache directory per process: the sweep is
+        directory-scoped, so a second one only duplicates the scan.
+        """
         if self._cleanup_thread and self._cleanup_thread.is_alive():
             self.logger.debug("Cleanup thread already running")
             return
-        
+
+        with CacheManager._cleanup_owners_lock:
+            owner = CacheManager._cleanup_owners.get(self.cache_dir)
+            if owner is not None and owner is not self:
+                thread = owner._cleanup_thread
+                if thread is not None and thread.is_alive():
+                    self.logger.debug(
+                        "Cleanup thread for %s already owned by another cache "
+                        "manager in this process; not starting a second",
+                        self.cache_dir)
+                    return
+                # The owner's thread died or was stopped -- take over.
+            CacheManager._cleanup_owners[self.cache_dir] = self
+
+
         def cleanup_loop():
             """Background loop that runs cleanup periodically."""
             self.logger.info("Disk cache cleanup thread started (interval: %d hours)", 
@@ -770,10 +802,17 @@ class CacheManager:
         Signals the thread to stop and waits for it to finish (with timeout).
         This allows for clean shutdown during testing or application termination.
         """
+        # Release ownership first and unconditionally, so a manager that never
+        # started a thread (or whose thread already exited) cannot keep the
+        # directory claimed and block a live manager from sweeping it.
+        with CacheManager._cleanup_owners_lock:
+            if CacheManager._cleanup_owners.get(self.cache_dir) is self:
+                del CacheManager._cleanup_owners[self.cache_dir]
+
         if not self._cleanup_thread or not self._cleanup_thread.is_alive():
             self.logger.debug("Cleanup thread not running")
             return
-        
+
         self.logger.info("Stopping disk cache cleanup thread...")
         self._cleanup_stop_event.set()  # Signal thread to stop
         
