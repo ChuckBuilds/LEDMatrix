@@ -44,6 +44,20 @@ from src.common.sync_manager import DisplaySyncManager, SyncRole
 # Get logger with consistent configuration
 logger = get_logger(__name__)
 
+# How long startup will wait for plugins to fetch their first data before
+# showing anything. Each plugin's update blocks for up to the executor's 30s
+# timeout and they run one after another, so the uncapped total is the sum of
+# every slow plugin: 82 seconds on the worst boot measured, with a blank panel
+# throughout. Whatever does not finish in time is picked up by the scheduled
+# update tick moments later, with the display already running.
+_INITIAL_UPDATE_BUDGET_SECONDS = 20.0
+
+# The least budget worth starting a plugin with. Below this the plugin is
+# deferred instead: granting it a floor would let the pass run past its
+# deadline, and granting it the true remainder would record a timeout for a
+# slot it never had a chance to use.
+_MIN_INITIAL_UPDATE_TIMEOUT_SECONDS = 2.0
+
 # Vegas mode import (lazy loaded to avoid circular imports)
 _vegas_mode_imported = False
 VegasModeCoordinator = None
@@ -463,7 +477,7 @@ class DisplayController:
         # Initial data update for plugins (ensures data available on first display)
         logger.info("Performing initial plugin data update...")
         update_start = time.time()
-        self._update_modules()
+        self._update_modules(deadline=update_start + _INITIAL_UPDATE_BUDGET_SECONDS)
         logger.info("Initial plugin update completed in %.3f seconds", time.time() - update_start)
 
         # Initialize Vegas mode coordinator
@@ -819,14 +833,42 @@ class DisplayController:
             self._cached_target_brightness = normal_brightness  # persist for minute-gate
             return normal_brightness
 
-    def _update_modules(self):
-        """Update all plugin modules."""
+    def _update_modules(self, deadline: Optional[float] = None):
+        """Update all plugin modules.
+
+        Args:
+            deadline: Wall-clock time after which remaining plugins are left
+                for the scheduled update tick instead of being waited on. Each
+                update blocks this thread for up to the executor's timeout, and
+                they run one after another, so without a bound the total is the
+                sum of every slow plugin on the system. Measured at startup on
+                a live rig: 82 seconds, 55 and 26 on the two boots before -- all
+                of it with nothing on the panel.
+        """
         if not self.plugin_manager:
             return
-            
+
         # Update all loaded plugins
         plugins_dict = getattr(self.plugin_manager, 'loaded_plugins', None) or getattr(self.plugin_manager, 'plugins', {})
+        deferred = []
         for plugin_id, plugin_instance in plugins_dict.items():
+            update_timeout = None
+            if deadline is not None:
+                update_timeout = deadline - time.time()
+                if update_timeout < _MIN_INITIAL_UPDATE_TIMEOUT_SECONDS:
+                    # Too little left to be worth starting. Deferring rather
+                    # than granting a floor keeps the budget a real ceiling --
+                    # clamping up to a minimum let a plugin that began with a
+                    # sliver left run on past the deadline -- and a plugin
+                    # handed a slot it cannot use would just be recorded as
+                    # having timed out.
+                    #
+                    # Nothing is lost either way: a plugin that has never
+                    # updated is immediately due, so run_scheduled_updates()
+                    # picks it up within seconds, with the display already
+                    # running.
+                    deferred.append(plugin_id)
+                    continue
             # Check circuit breaker before attempting update
             if hasattr(self.plugin_manager, 'health_tracker') and self.plugin_manager.health_tracker:
                 if self.plugin_manager.health_tracker.should_skip_plugin(plugin_id):
@@ -835,7 +877,13 @@ class DisplayController:
             
             # Use PluginExecutor if available for safe execution
             if hasattr(self.plugin_manager, 'plugin_executor'):
-                success = self.plugin_manager.plugin_executor.execute_update(plugin_instance, plugin_id)
+                # The remaining budget is the timeout, so the pass cannot
+                # run past its deadline. Bounding the loop alone did not do
+                # it: the last plugin to start could still block for the
+                # executor's full 30s, which turned a 20s budget into a 31.8s
+                # pass on the rig.
+                success = self.plugin_manager.plugin_executor.execute_update(
+                    plugin_instance, plugin_id, timeout=update_timeout)
                 if success and hasattr(self.plugin_manager, 'plugin_last_update'):
                     self.plugin_manager.plugin_last_update[plugin_id] = time.time()
             else:
@@ -853,6 +901,12 @@ class DisplayController:
                     # Record failure
                     if hasattr(self.plugin_manager, 'health_tracker') and self.plugin_manager.health_tracker:
                         self.plugin_manager.health_tracker.record_failure(plugin_id, exc)
+
+        if deferred:
+            logger.info(
+                "Initial update budget spent; %d plugin(s) left to the update "
+                "tick so the display can start: %s",
+                len(deferred), ", ".join(deferred))
 
     def _tick_plugin_updates_for_vegas(self) -> None:
         """Run scheduled plugin updates and tell Vegas mode which plugins
