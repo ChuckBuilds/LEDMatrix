@@ -12,6 +12,7 @@ Supports three display modes per plugin:
 """
 
 import logging
+import math
 import time
 import threading
 from typing import Optional, Dict, Any, List, Callable, TYPE_CHECKING
@@ -28,6 +29,21 @@ if TYPE_CHECKING:
     from src.display_manager import DisplayManager
 
 logger = logging.getLogger(__name__)
+
+
+def _percentile(ordered: List[float], fraction: float) -> float:
+    """Nearest-rank percentile of an already-sorted list.
+
+    Index ceil(n * fraction) - 1, so 100 samples at 0.99 give the 99th-ranked
+    value. The obvious int(n * fraction) is off by one and, at exactly 100
+    samples, lands on the maximum -- which is the number already reported
+    alongside this one as the worst frame, so the two columns would agree
+    precisely when the sample was smallest.
+    """
+    if not ordered:
+        return 0.0
+    index = math.ceil(len(ordered) * fraction) - 1
+    return ordered[min(len(ordered) - 1, max(0, index))]
 
 
 class VegasModeCoordinator:
@@ -382,6 +398,12 @@ class VegasModeCoordinator:
         fps_log_interval = 5.0  # Log FPS every 5 seconds
         last_fps_log_time = start_time
         fps_frame_count = 0
+        # A mean hides stutter completely. At 120fps a five-second window is
+        # ~600 frames, so a 200ms freeze -- plainly visible on a marquee --
+        # moves the average from 120.0 to 115.4 and reads as healthy. What a
+        # viewer actually notices is the worst frame, so track that too.
+        frame_worst = 0.0
+        frame_times: List[float] = []
 
         logger.info("Starting Vegas iteration for %.1fs", duration)
 
@@ -417,6 +439,11 @@ class VegasModeCoordinator:
             frame_elapsed = time.time() - frame_started
             time.sleep(max(0.0, frame_interval - frame_elapsed))
 
+            # Measured before the sleep: time spent working, not pacing.
+            if frame_elapsed > frame_worst:
+                frame_worst = frame_elapsed
+            frame_times.append(frame_elapsed)
+
             # Increment frame count and check for interrupt periodically
             frame_count += 1
             fps_frame_count += 1
@@ -425,12 +452,16 @@ class VegasModeCoordinator:
             current_time = time.time()
             if current_time - last_fps_log_time >= fps_log_interval:
                 fps = fps_frame_count / (current_time - last_fps_log_time)
+                p99 = _percentile(sorted(frame_times), 0.99)
                 logger.info(
-                    "Vegas FPS: %.1f (target: %d, frames: %d)",
-                    fps, self.vegas_config.target_fps, fps_frame_count
+                    "Vegas FPS: %.1f (target: %d, frames: %d) p99 %.1fms worst %.1fms",
+                    fps, self.vegas_config.target_fps, fps_frame_count,
+                    p99 * 1000.0, frame_worst * 1000.0
                 )
                 last_fps_log_time = current_time
                 fps_frame_count = 0
+                frame_worst = 0.0
+                frame_times.clear()
 
             if (self._interrupt_check and
                     frame_count % self._interrupt_check_interval == 0):
