@@ -406,6 +406,8 @@ class StreamManager:
         )
         logger.info("Ordered plugins: %s", ordered_plugins)
 
+        ordered_plugins = self._apply_priority_weights(ordered_plugins)
+
         # Atomically update shared state under lock to avoid races with prefetchers
         with self._buffer_lock:
             self._ordered_plugins = ordered_plugins
@@ -416,6 +418,75 @@ class StreamManager:
                 self._prefetch_index = 0
 
         logger.info("=" * 60)
+
+    def _plugin_weight(self, plugin_id: str) -> int:
+        """Slots per cycle for one plugin.
+
+        A plugin may answer for itself via get_vegas_priority_weight() -- the
+        only way favorite-team awareness can reach here, since the core can see
+        that a game is live but not whose. When it declines (returns None, the
+        default), live content earns ``live_weight`` and everything else 1.
+        """
+        plugin = None
+        try:
+            plugin = self.plugin_manager.plugins.get(plugin_id)
+        except (AttributeError, TypeError):
+            return 1
+        if plugin is None:
+            return 1
+
+        try:
+            if hasattr(plugin, 'get_vegas_priority_weight'):
+                declared = plugin.get_vegas_priority_weight()
+                if declared is not None:
+                    return max(1, min(10, int(declared)))
+        except Exception:
+            logger.exception("[%s] get_vegas_priority_weight() failed", plugin_id)
+
+        try:
+            if (hasattr(plugin, 'has_live_priority')
+                    and hasattr(plugin, 'has_live_content')
+                    and plugin.has_live_priority()
+                    and plugin.has_live_content()):
+                return self.config.live_weight
+        except Exception:
+            logger.exception("[%s] live-content check failed", plugin_id)
+        return 1
+
+    def _apply_priority_weights(self, ordered: List[str]) -> List[str]:
+        """Expand the rotation so weighted plugins take several turns per cycle.
+
+        Smooth Weighted Round-Robin, the same scheduler the sports plugins use
+        to rotate their own games: a plugin of weight N appears N times per
+        cycle, and the repeats are spaced through the cycle rather than
+        clumped, so a live score is never three-in-a-row followed by a long
+        silence.
+
+        Returns the input unchanged when nothing is weighted, which is both the
+        common case and the pre-existing behaviour.
+        """
+        if not ordered or not self.config.live_in_ticker:
+            return ordered
+
+        weights = {pid: self._plugin_weight(pid) for pid in ordered}
+        total = sum(weights.values())
+        if total <= len(ordered):
+            return ordered          # nothing boosted; plain round robin
+
+        current = {pid: 0 for pid in ordered}
+        schedule: List[str] = []
+        for _ in range(total):
+            for pid in ordered:
+                current[pid] += weights[pid]
+            picked = max(current, key=lambda p: current[p])
+            current[picked] -= total
+            schedule.append(picked)
+
+        boosted = {p: w for p, w in weights.items() if w > 1}
+        logger.info(
+            "Vegas rotation weighted: %d slots for %d plugins (boosted: %s)",
+            len(schedule), len(ordered), boosted)
+        return schedule
 
     def _prefetch_content(self, count: int = 1) -> None:
         """

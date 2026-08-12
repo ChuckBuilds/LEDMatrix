@@ -497,6 +497,12 @@ class VegasModeCoordinator:
         if not self._live_priority_check:
             return False
 
+        if self.vegas_config.live_in_ticker:
+            # The ticker keeps live content rather than yielding to it; the
+            # extra turns are arranged in the rotation itself, so there is
+            # nothing to pause for.
+            return False
+
         try:
             live_mode = self._live_priority_check()
             if live_mode:

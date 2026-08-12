@@ -64,9 +64,91 @@ JSON is optional.
 | `target_fps` | `125` | Target frame rate |
 | `buffer_ahead` | `2` | Number of plugins buffered ahead |
 
-This table is a subset — `display.vegas_scroll` supports 26 keys in
+This table is a subset — `display.vegas_scroll` supports 29 keys in
 total. See the full list in
 [CONFIG_REFERENCE.md](CONFIG_REFERENCE.md#displayvegas_scroll--continuous-scroll-mode).
+
+### Live Content in the Ticker
+
+By default, live content **preempts** Vegas mode: while any plugin reports
+live priority, the display controller refuses to run the ticker and shows
+that plugin's full-screen display instead. You get a big readable scoreboard,
+but the marquee stops entirely for the duration of the game.
+
+Set `live_in_ticker` to keep the ticker running and let live content take
+**extra turns inside it** instead:
+
+```json
+"vegas_scroll": {
+  "live_in_ticker": true,
+  "live_weight": 3,
+  "favorite_live_weight": 5
+}
+```
+
+#### Why weights exist
+
+The rotation is otherwise a strict round robin — every plugin appears exactly
+once per cycle. With a dozen plugins enabled, a live score comes round once a
+lap and can be minutes old by the time you see it. A weight of *N* gives a
+plugin *N* slots per cycle.
+
+The slots are placed by **Smooth Weighted Round-Robin**, the same scheduler
+the sports plugins use internally to rotate their own games. The important
+property is that repeats are *spread through the cycle* rather than clumped:
+three appearances in a row followed by a long silence would be worse than not
+boosting at all.
+
+Twelve plugins, with a favorite's baseball game and an ordinary live hockey
+game (`live_weight: 3`, `favorite_live_weight: 5`):
+
+```
+baseball > hockey > weather  > clock  > baseball
+stocks   > news   > flights  > baseball > hockey
+calendar > f1     > music    > baseball > tides
+birds    > hockey > baseball
+```
+
+18 slots for 12 plugins. Baseball appears 5 times, hockey 3, everything else
+once, and no plugin ever appears twice in a row.
+
+#### Where the weight comes from
+
+For each plugin in the rotation, in order:
+
+1. **The plugin's own answer.** If it implements
+   `get_vegas_priority_weight()` and returns a number, that wins. This is the
+   only route for favorite-team awareness — the core can see *that* a game is
+   live, but not *whose*, so a scoreboard has to say so itself.
+2. **The core's default.** When the plugin returns `None` (the base-class
+   default), a plugin where both `has_live_priority()` and `has_live_content()`
+   are true gets `live_weight`.
+3. **Everything else** gets 1.
+
+Because of step 2, **existing plugins need no changes** — any scoreboard with
+`live_priority` enabled already gets extra turns. Step 1 is opt-in, for
+plugins that want to distinguish a favorite's game from any other live game.
+
+Weights are clamped to 1–10. A weight of 1 is no boost; a weight below 1 would
+drop the plugin from the rotation entirely, which is never what is meant.
+
+#### Things worth knowing
+
+- **Weights are per plugin, not per game.** A scoreboard showing four live
+  games still occupies one slot at a time, rotating its own games within that
+  slot using its own `favorite_live_boost`. This controls how often the
+  *plugin* comes round.
+- **The ticker is zero-sum.** Giving baseball 5 slots does not make the cycle
+  faster; it makes the cycle *longer* and everything else proportionally
+  rarer. If you want live scores sooner in wall-clock terms, pair this with a
+  smaller `plugins_per_cycle`.
+- **Frequency is not freshness.** Each appearance redraws from the plugin's
+  current data (`refresh_updated_plugins()` drops cached content when a
+  plugin's data changes), but how current that data is depends on the
+  plugin's own `live_update_interval`. Showing a stale score five times a lap
+  is no better than showing it once.
+- **Everything still appears.** A boost never starves another plugin out of
+  the cycle; low-weight plugins keep their single slot.
 
 ### Per-Plugin Configuration
 

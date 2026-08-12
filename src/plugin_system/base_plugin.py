@@ -555,6 +555,44 @@ class BasePlugin(ABC):
         """
         return False
 
+    def get_vegas_priority_weight(self) -> Optional[int]:
+        """How many slots per Vegas cycle this plugin should get, or None.
+
+        The Vegas ticker is otherwise a strict round robin: every plugin
+        appears exactly once per cycle. With a dozen plugins enabled that puts
+        minutes between a live score and its next appearance. A weight of N
+        gives the plugin N slots per cycle, spread evenly through it rather
+        than clumped together.
+
+        Return ``None`` (the default) to let the core decide. It gives a
+        plugin ``vegas_scroll.live_weight`` when ``has_live_priority()`` and
+        ``has_live_content()`` are both true, and 1 otherwise -- so live sports
+        already get extra turns without implementing this at all.
+
+        Implement it only when the plugin knows something the core cannot. The
+        motivating case is favorite teams: the core can see *that* a game is
+        live but not *whose*, so a scoreboard that wants its favorite's game
+        shown more often than other live games has to say so::
+
+            def get_vegas_priority_weight(self):
+                if not (self.has_live_priority() and self.has_live_content()):
+                    return None                      # let the core decide
+                cfg = self.global_config.get('display', {}).get('vegas_scroll', {})
+                if self._favorite_is_live():
+                    return cfg.get('favorite_live_weight', 5)
+                return cfg.get('live_weight', 3)
+
+        The weight is per *plugin*, not per game. A scoreboard showing four
+        live games still occupies one slot at a time and rotates its own games
+        within that slot; this controls how often the plugin itself comes
+        round.
+
+        Returns:
+            Slots per cycle (clamped to 1..10 by the caller), or None to
+            defer to the core's own live-content weighting.
+        """
+        return None
+
     def get_live_modes(self) -> List[str]:
         """
         Get list of display modes that should be used during live priority takeover.

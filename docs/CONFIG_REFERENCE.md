@@ -103,7 +103,8 @@ logical image to multiple chained physical panels.
 ## `display.vegas_scroll` — continuous scroll mode
 
 Read by `src/vegas_mode/config.py` (`VegasScrollConfig.from_config`). See
-[ADVANCED_FEATURES.md](ADVANCED_FEATURES.md) for behavior details.
+[ADVANCED_FEATURES.md](ADVANCED_FEATURES.md) for behavior details, including
+[live content in the ticker](ADVANCED_FEATURES.md#live-content-in-the-ticker).
 
 | Key | Type / default |
 |---|---|
@@ -134,6 +135,9 @@ Read by `src/vegas_mode/config.py` (`VegasScrollConfig.from_config`). See
 | `max_cycle_duration` | int, `240` |
 | `frame_based_scrolling` | bool, `true` — frame-count-based scroll stepping |
 | `scroll_delay` | float, `0.02` — seconds between scroll updates (~50 FPS) |
+| `live_in_ticker` | bool, `false` — keep scrolling during live games instead of handing the display to a full-screen scoreboard |
+| `live_weight` | int, `3` (1–10) — slots per cycle for a plugin with live content |
+| `favorite_live_weight` | int, `5` (1–10) — slots per cycle when a plugin reports a favorite team is live |
 
 ## `sync` — multi-display synchronization
 

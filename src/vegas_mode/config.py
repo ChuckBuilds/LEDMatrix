@@ -125,6 +125,32 @@ class VegasModeConfig:
     plugin_order: List[str] = field(default_factory=list)
     excluded_plugins: Set[str] = field(default_factory=set)
 
+    # --- Live content in the ticker -------------------------------------
+    #
+    # By default a live game preempts Vegas entirely: the display controller
+    # refuses to run the ticker while any plugin reports live priority, and you
+    # get the full-screen scoreboard instead. Set live_in_ticker to keep the
+    # marquee running and let live content take extra turns within it.
+    #
+    # The rotation is otherwise a strict round robin -- every plugin appears
+    # exactly once per cycle -- so with a dozen plugins enabled a live score
+    # comes round once a lap and can be minutes old on screen. Weighting lets a
+    # plugin claim several slots per cycle instead.
+    #
+    # Weights are per plugin, not per game: a scoreboard showing four live
+    # games still occupies one slot at a time, and rotates its own games within
+    # that slot using its own favorite_live_boost.
+    live_in_ticker: bool = False
+
+    # Slots per cycle for a plugin reporting live content. 1 disables the boost
+    # and restores the plain round robin.
+    live_weight: int = 3
+
+    # Slots per cycle for a plugin whose live content involves a favorite team.
+    # Only plugins implementing get_vegas_priority_weight() can claim this --
+    # the core cannot tell whose game is on, so the plugin reports it.
+    favorite_live_weight: int = 5
+
     # Performance settings
     target_fps: int = 125  # Target frame rate
     buffer_ahead: int = 2  # Number of plugins to buffer ahead
@@ -175,6 +201,12 @@ class VegasModeConfig:
             overflow_mode=str(vegas_config.get('overflow_mode', 'rotate')),
             plugin_order=list(vegas_config.get('plugin_order', [])),
             excluded_plugins=set(vegas_config.get('excluded_plugins', [])),
+            live_in_ticker=bool(vegas_config.get('live_in_ticker', False)),
+            # Clamped: a weight below 1 would drop the plugin from the rotation
+            # entirely, and a very large one starves everything else.
+            live_weight=max(1, min(10, int(vegas_config.get('live_weight', 3)))),
+            favorite_live_weight=max(
+                1, min(10, int(vegas_config.get('favorite_live_weight', 5)))),
             target_fps=int(vegas_config.get('target_fps', 125)),
             buffer_ahead=int(vegas_config.get('buffer_ahead', 2)),
             frame_based_scrolling=vegas_config.get('frame_based_scrolling', True),
