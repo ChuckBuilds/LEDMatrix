@@ -487,10 +487,60 @@ class StreamManager:
             current[picked] -= total
             schedule.append(picked)
 
+        schedule = self._unclump_seam(schedule)
+
         boosted = {p: w for p, w in weights.items() if w > 1}
         logger.info(
             "Vegas rotation weighted: %d slots for %d plugins (boosted: %s)",
             len(schedule), len(ordered), boosted)
+        return schedule
+
+    @staticmethod
+    def _unclump_seam(schedule: List[str]) -> List[str]:
+        """Stop the heaviest plugin sitting on both ends of the cycle.
+
+        Smooth Weighted Round-Robin spaces repeats well *within* a pass, but
+        it schedules the heaviest item first and often last too. The strip
+        loops, so those two are neighbours: the one place the marquee shows
+        the same plugin twice running is the seam between cycles.
+
+        Rotating the list cannot fix this. Rotation preserves the cyclic order
+        exactly, so it only moves where the seam is drawn, not the adjacency
+        itself. The trailing entry has to be swapped with one from the middle
+        whose neighbours differ from it, which breaks the pair without
+        creating another.
+
+        Left alone when no such position exists -- a rotation short enough or
+        lopsided enough to have none is one where the plugin is unavoidably
+        adjacent to itself anyway.
+        """
+        if len(schedule) < 3 or schedule[0] != schedule[-1]:
+            return schedule
+
+        repeated = schedule[-1]
+        size = len(schedule)
+        elsewhere = [i for i, p in enumerate(schedule[:-1]) if p == repeated]
+
+        def clearance(j: int) -> int:
+            """Cyclic distance from j to the nearest other appearance."""
+            return min(min((i - j) % size, (j - i) % size) for i in elsewhere)
+
+        candidates = [
+            j for j in range(1, size - 1)
+            if schedule[j] != repeated
+            and schedule[j - 1] != repeated
+            and schedule[j + 1] != repeated
+        ]
+        if not candidates:
+            return schedule
+
+        # Drop it into the widest gap rather than the first slot that fits.
+        # Taking the first one undoes the spacing this whole function exists
+        # to protect: on a 28-slot rotation it moved a repeat from a gap of 7
+        # to a gap of 2, which is more clumped than the seam ever was.
+        best = max(candidates, key=clearance) if elsewhere else candidates[0]
+        schedule = list(schedule)
+        schedule[best], schedule[-1] = schedule[-1], schedule[best]
         return schedule
 
     def _prefetch_content(self, count: int = 1) -> None:

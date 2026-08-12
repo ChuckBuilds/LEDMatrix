@@ -160,6 +160,68 @@ class TestTheSchedule:
         schedule = sm._apply_priority_weights(order)
         assert set(schedule) == set(order), set(order) - set(schedule)
 
+    def test_nothing_doubles_across_the_cycle_seam(self):
+        # The strip loops, so the last slot neighbours the first. Smooth
+        # Weighted Round-Robin schedules the heaviest item first and often
+        # last too, which put the one clump the algorithm exists to avoid at
+        # the one place a within-cycle check cannot see.
+        order = ['baseball', 'weather', 'geochron', 'flights', 'stocks',
+                 'oftheday', 'youtube', 'stocknews', 'leaderboard',
+                 'countdown', 'odds', 'f1', 'football', 'music']
+        plugins = {p: FakePlugin() for p in order}
+        plugins['baseball'] = FakePlugin(live=True, declared=5)
+        plugins['football'] = FakePlugin(live=True, declared=3)
+        schedule = _manager(plugins)._apply_priority_weights(order)
+
+        n = len(schedule)
+        doubles = [schedule[i] for i in range(n)
+                   if schedule[i] == schedule[(i + 1) % n]]
+        assert not doubles, "%r repeats across the seam in %r" % (doubles, schedule)
+
+    def test_the_seam_repair_keeps_every_slot(self):
+        order = ['a', 'b', 'c', 'd', 'e', 'f']
+        plugins = {p: FakePlugin() for p in order}
+        plugins['a'] = FakePlugin(live=True, declared=4)
+        schedule = _manager(plugins)._apply_priority_weights(order)
+        assert _counts(schedule)['a'] == 4, _counts(schedule)
+        assert sorted(schedule) == sorted(
+            ['a'] * 4 + ['b', 'c', 'd', 'e', 'f']), schedule
+
+    def test_the_repair_uses_the_widest_gap(self):
+        # Moving the trailing repeat into the first slot that merely fits
+        # undoes the spacing: on a 28-slot rotation that turned a gap of 7
+        # into a gap of 2, which is more clumped than the seam ever was.
+        order = ['a'] + ['p%d' % i for i in range(13)]
+        plugins = {p: FakePlugin() for p in order}
+        plugins['a'] = FakePlugin(live=True, declared=4)
+        schedule = _manager(plugins)._apply_priority_weights(order)
+        at = [i for i, p in enumerate(schedule) if p == 'a']
+        gaps = [b - a for a, b in zip(at, at[1:])]
+        gaps.append(len(schedule) - at[-1] + at[0])
+        ideal = len(schedule) / len(at)
+        assert min(gaps) >= ideal / 2, "gaps %r for ideal %.1f" % (gaps, ideal)
+
+    def test_an_unavoidable_double_is_left_alone(self):
+        # Five of seven slots are the same plugin, so it must neighbour
+        # itself. Better to schedule it than to refuse or loop forever.
+        order = ['a', 'b', 'c']
+        plugins = {p: FakePlugin() for p in order}
+        plugins['a'] = FakePlugin(live=True, declared=5)
+        schedule = _manager(plugins)._apply_priority_weights(order)
+        assert _counts(schedule) == {'a': 5, 'b': 1, 'c': 1}, _counts(schedule)
+        assert set(schedule) == {'a', 'b', 'c'}
+
+    def test_a_schedule_too_short_to_repair_is_returned_as_is(self):
+        sm = _manager({})
+        assert sm._unclump_seam(['a', 'a']) == ['a', 'a']
+        assert sm._unclump_seam(['a']) == ['a']
+        assert sm._unclump_seam([]) == []
+
+    def test_a_schedule_with_no_seam_clash_is_untouched(self):
+        sm = _manager({})
+        plain = ['a', 'b', 'c', 'a', 'd']
+        assert sm._unclump_seam(plain) == plain
+
     def test_repeats_are_spread_not_clumped(self):
         # The point of Smooth Weighted Round-Robin. Three-in-a-row followed by
         # a long silence would be worse than not boosting at all.

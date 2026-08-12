@@ -110,7 +110,13 @@ birds    > hockey > baseball
 ```
 
 18 slots for 12 plugins. Baseball appears 5 times, hockey 3, everything else
-once, and no plugin ever appears twice in a row.
+once, and no plugin ever appears twice in a row — **including across the seam**
+where the cycle loops back on itself. Smooth Weighted Round-Robin schedules the
+heaviest item first and usually last as well, so the strip would otherwise show
+it twice running at exactly the one join a within-cycle check cannot see. The
+trailing repeat is moved into the widest remaining gap. Where a double is
+unavoidable — a plugin holding most of the slots has to neighbour itself — the
+schedule is left as it is.
 
 #### Where the weight comes from
 
