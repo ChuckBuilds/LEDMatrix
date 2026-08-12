@@ -90,7 +90,8 @@ class DisplayController:
         # Validate startup configuration
         try:
             from src.startup_validator import StartupValidator
-            validator = StartupValidator(self.config_manager)
+            validator = StartupValidator(self.config_manager,
+                                         cache_manager=self.cache_manager)
             is_valid, errors, warnings = validator.validate_all()
             
             if warnings:
@@ -258,7 +259,8 @@ class DisplayController:
             # Validate plugins after plugin manager is created
             try:
                 from src.startup_validator import StartupValidator
-                validator = StartupValidator(self.config_manager, self.plugin_manager)
+                validator = StartupValidator(self.config_manager, self.plugin_manager,
+                                             cache_manager=self.cache_manager)
                 is_valid, errors, warnings = validator.validate_all()
                 
                 if warnings:

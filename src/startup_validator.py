@@ -15,16 +15,23 @@ from src.logging_config import get_logger
 class StartupValidator:
     """Validates system state on startup."""
     
-    def __init__(self, config_manager: Any, plugin_manager: Optional[Any] = None) -> None:
+    def __init__(self, config_manager: Any, plugin_manager: Optional[Any] = None,
+                 cache_manager: Optional[Any] = None) -> None:
         """
         Initialize the startup validator.
-        
+
         Args:
             config_manager: ConfigManager instance
             plugin_manager: Optional PluginManager instance
+            cache_manager: The CacheManager the application will actually use.
+                Pass it. Without one this validator builds its own just to read
+                a directory path, which reports on a cache the app does not
+                use and leaves behind a cleanup thread that nothing stops --
+                validation runs twice per startup, so that was two of them.
         """
         self.config_manager = config_manager
         self.plugin_manager = plugin_manager
+        self.cache_manager = cache_manager
         self.logger = get_logger(__name__)
         self.errors: List[str] = []
         self.warnings: List[str] = []
@@ -91,9 +98,21 @@ class StartupValidator:
     def _validate_cache_directory(self) -> None:
         """Validate cache directory permissions."""
         try:
-            from src.cache_manager import CacheManager
-            cache_manager = CacheManager()
-            cache_dir = cache_manager.get_cache_dir()
+            cache_manager = self.cache_manager
+            if cache_manager is None:
+                # No caller supplied one (older embedders, direct use in a
+                # script). Build one, but do not leave its cleanup thread
+                # running behind us -- this instance is discarded on the next
+                # line but the thread is a closure over it, so it would never
+                # be collected.
+                from src.cache_manager import CacheManager
+                cache_manager = CacheManager()
+                try:
+                    cache_dir = cache_manager.get_cache_dir()
+                finally:
+                    cache_manager.stop_cleanup_thread()
+            else:
+                cache_dir = cache_manager.get_cache_dir()
             
             if not cache_dir:
                 self.warnings.append("Cache directory not available - caching will be disabled")
