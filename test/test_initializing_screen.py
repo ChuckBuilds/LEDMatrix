@@ -160,12 +160,28 @@ class TestItIsActuallyReadable:
             green, width, height)
 
     @pytest.mark.parametrize("width,height", SIZES)
-    def test_the_text_is_drawn_bright(self, width, height):
+    def test_the_text_stays_pure_blue(self, width, height):
+        # Not a style choice. The pattern lights one channel per element --
+        # red border, green diagonal, blue text -- so a glance says whether
+        # led_rgb_sequence is right: wire it BGR and the border comes up blue
+        # and this text red. White text would light all three and destroy the
+        # only blue reference on the screen.
         dm = _render_over_pattern(width, height, ["Initializing", "10.0.20.104"])
         px = dm.image.load()
+        blue = sum(1 for y in range(height) for x in range(width)
+                   if px[x, y] == (0, 0, 255))
+        assert blue > 20, "only %d blue pixels at %dx%d" % (blue, width, height)
         white = sum(1 for y in range(height) for x in range(width)
                     if px[x, y] == (255, 255, 255))
-        assert white > 20, "only %d lit pixels at %dx%d" % (white, width, height)
+        assert white == 0, "%d white pixels would muddy the channel check" % white
+
+    def test_each_element_lights_one_channel(self):
+        # The whole point of the pattern: three pure primaries on screen.
+        dm = _render_over_pattern(128, 64, ["Initializing", "10.0.20.104"])
+        seen = set(dm.image.getdata())
+        assert (255, 0, 0) in seen, "no pure red border"
+        assert (0, 255, 0) in seen, "no pure green diagonal"
+        assert (0, 0, 255) in seen, "no pure blue text"
 
     def test_nothing_is_drawn_for_no_lines(self):
         dm = _manager(128, 64)

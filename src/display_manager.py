@@ -542,18 +542,26 @@ class DisplayManager:
         return self.font
 
     def _draw_startup_banner(self, lines, width: int, height: int) -> None:
-        """Centre `lines` legibly over whatever the test pattern already drew.
+        """Centre `lines` over whatever the test pattern already drew.
 
         This screen stays on the panel for the whole initial plugin update, and
         on a headless Pi it is the only place the device's address appears
         without going looking for it -- so it has to be readable off a wall,
         not merely present.
 
-        Two things follow from that. The font is chosen to fit rather than
-        fixed at 8px: "Initializing" is 96px in PressStart2P, which ran off the
-        side of a 64px panel even before an address was added. And the pattern
-        is punched out behind the text, because the diagonal runs through the
-        middle of the panel, which is exactly where this sits.
+        The font is chosen to fit rather than fixed at 8px: "Initializing" is
+        96px in PressStart2P, which ran off the side of a 64px panel even
+        before an address was added. And the pattern is punched out behind the
+        text, because the diagonal runs through the middle of the panel, which
+        is exactly where this sits.
+
+        The text stays blue. It is not decoration: the pattern draws one pure
+        channel per element -- red border, green diagonal, blue text -- so that
+        a glance at the panel says whether led_rgb_sequence is right. Swap the
+        wiring to BGR and the border comes up blue and this text red. Drawing
+        it white would light all three channels and destroy the only blue
+        reference on the screen, which is why it is worth a comment rather
+        than a quiet preference.
         """
         if not lines:
             return
@@ -569,13 +577,11 @@ class DisplayManager:
              block_left + block_width + 1, block_top + block_height],
             fill=(0, 0, 0))
 
-        # White, not the old blue: blue on black reads fine on a monitor and
-        # is marginal on a dim panel.
         for row, line in enumerate(lines):
             line_width = self.draw.textlength(line, font=font)
             self.draw.text(
                 (max(0, (width - line_width) // 2), block_top + row * line_height),
-                line, font=font, fill=(255, 255, 255))
+                line, font=font, fill=(0, 0, 255))
 
     def _draw_test_pattern(self):
         """Draw a test pattern to verify the display is working."""
