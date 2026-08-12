@@ -24,6 +24,8 @@ import os
 import time
 from unittest.mock import Mock
 
+import pytest
+
 # display_controller imports display_manager, which binds the hardware
 # rgbmatrix module unless EMULATOR=true is set before import (same convention
 # as test_display_controller_vegas_tick.py).
@@ -47,6 +49,13 @@ class FakeExecutor:
         if plugin_id in self.slow:
             time.sleep(self.cost)
         return True
+
+
+@pytest.fixture
+def tiny_floor(monkeypatch):
+    """Shrink the "worth starting" floor so timing tests stay quick."""
+    import src.display_controller as mod
+    monkeypatch.setattr(mod, "_MIN_INITIAL_UPDATE_TIMEOUT_SECONDS", 0.01)
 
 
 def _controller(plugin_ids, executor):
@@ -73,7 +82,7 @@ class TestTheBudgetIsRespected:
         _controller(['a', 'b', 'c'], ex)._update_modules(deadline=time.time() - 1)
         assert ex.updated == [], "updated %r after the deadline" % ex.updated
 
-    def test_slow_plugins_do_not_drag_in_the_rest(self):
+    def test_slow_plugins_do_not_drag_in_the_rest(self, tiny_floor):
         # One plugin burns the whole budget; the remainder must be left alone
         # rather than each adding its own wait.
         ex = FakeExecutor(cost=0.3, slow={'slow'})
@@ -92,7 +101,7 @@ class TestTheBudgetIsRespected:
         c._update_modules(deadline=time.time() + 30)
         assert ex.updated == ['a', 'b', 'c']
 
-    def test_the_deadline_is_checked_before_each_plugin(self):
+    def test_the_deadline_is_checked_before_each_plugin(self, tiny_floor):
         # Not just once up front: the budget can be spent partway through.
         ex = FakeExecutor(cost=0.15, slow={'a', 'b', 'c', 'd'})
         c = _controller(['a', 'b', 'c', 'd'], ex)
@@ -119,8 +128,9 @@ class TestThePassIsBoundedInPractice:
 
         assert seen and all(t is not None for t in seen), seen
         assert all(t <= 5.01 for t in seen), seen
-        # Never zero or negative, which would record a timeout for a plugin
-        # that was never really given a slot.
+        # The exact remainder, never clamped up: clamping would let the pass
+        # run past its deadline. Anything below the floor is deferred instead,
+        # so what does start always has a usable slot.
         assert all(t >= _MIN_INITIAL_UPDATE_TIMEOUT_SECONDS for t in seen), seen
 
     def test_without_a_deadline_the_executor_default_is_left_alone(self):
@@ -173,3 +183,42 @@ class TestItDoesNotBreakTheOrdinaryPaths:
         ex = FakeExecutor()
         _controller([], ex)._update_modules(deadline=time.time() + 5)
         assert ex.updated == []
+
+
+class TestTooLittleBudgetDefersRatherThanClamps:
+    def test_a_plugin_starting_below_the_floor_is_deferred(self):
+        ex = FakeExecutor()
+        c = _controller(['a'], ex)
+        # Just under the floor: previously this was clamped up to the floor and
+        # run anyway, which pushed the pass past its deadline.
+        c._update_modules(
+            deadline=time.time() + _MIN_INITIAL_UPDATE_TIMEOUT_SECONDS - 0.05)
+        assert ex.updated == [], "started a plugin it could not give a slot to"
+
+    def test_a_plugin_starting_above_the_floor_still_runs(self):
+        ex = FakeExecutor()
+        c = _controller(['a'], ex)
+        c._update_modules(
+            deadline=time.time() + _MIN_INITIAL_UPDATE_TIMEOUT_SECONDS + 1)
+        assert ex.updated == ['a']
+
+    def test_the_timeout_is_the_remainder_not_the_floor(self):
+        seen = []
+
+        class Executor:
+            def execute_update(self, plugin, plugin_id, timeout=None):
+                seen.append(timeout)
+                return True
+
+        c = _controller(['a'], Executor())
+        c._update_modules(deadline=time.time() + 9)
+        assert seen and 8.5 <= seen[0] <= 9.01, seen
+
+    def test_the_pass_cannot_outlast_its_deadline(self, tiny_floor):
+        # Every plugin sleeps well past the budget; the deferral keeps the
+        # whole pass inside it rather than overrunning by a floor's worth.
+        ex = FakeExecutor(cost=0.4, slow={'a', 'b', 'c', 'd', 'e'})
+        c = _controller(['a', 'b', 'c', 'd', 'e'], ex)
+        started = time.time()
+        c._update_modules(deadline=started + 0.5)
+        assert time.time() - started < 1.2, "%.2fs" % (time.time() - started)

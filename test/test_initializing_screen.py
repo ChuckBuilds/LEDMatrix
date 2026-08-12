@@ -101,7 +101,7 @@ class TestItFitsEveryPanel:
     @pytest.mark.parametrize("width,height", SIZES)
     def test_it_still_fits_with_no_address(self, width, height):
         dm = _manager(width, height)
-        _font, widths, top, bottom = _layout(dm, ["Initializing"])
+        _font, widths, _top, bottom = _layout(dm, ["Initializing"])
         assert all(w <= width - 2 for w in widths), (width, widths)
         assert bottom <= height, (bottom, height)
 

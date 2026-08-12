@@ -52,10 +52,10 @@ logger = get_logger(__name__)
 # update tick moments later, with the display already running.
 _INITIAL_UPDATE_BUDGET_SECONDS = 20.0
 
-# Floor for a single plugin's share of that budget. Without one, a plugin
-# starting with a hair of budget left would be given ~0s and always be
-# recorded as timing out, which trips its health tracker for a slot it never
-# really had.
+# The least budget worth starting a plugin with. Below this the plugin is
+# deferred instead: granting it a floor would let the pass run past its
+# deadline, and granting it the true remainder would record a timeout for a
+# slot it never had a chance to use.
 _MIN_INITIAL_UPDATE_TIMEOUT_SECONDS = 2.0
 
 # Vegas mode import (lazy loaded to avoid circular imports)
@@ -850,12 +850,23 @@ class DisplayController:
         plugins_dict = getattr(self.plugin_manager, 'loaded_plugins', None) or getattr(self.plugin_manager, 'plugins', {})
         deferred = []
         for plugin_id, plugin_instance in plugins_dict.items():
-            if deadline is not None and time.time() >= deadline:
-                # Nothing is lost by stopping: a plugin that has never updated
-                # is immediately due, so run_scheduled_updates() picks it up
-                # within seconds -- while the display is already running.
-                deferred.append(plugin_id)
-                continue
+            update_timeout = None
+            if deadline is not None:
+                update_timeout = deadline - time.time()
+                if update_timeout < _MIN_INITIAL_UPDATE_TIMEOUT_SECONDS:
+                    # Too little left to be worth starting. Deferring rather
+                    # than granting a floor keeps the budget a real ceiling --
+                    # clamping up to a minimum let a plugin that began with a
+                    # sliver left run on past the deadline -- and a plugin
+                    # handed a slot it cannot use would just be recorded as
+                    # having timed out.
+                    #
+                    # Nothing is lost either way: a plugin that has never
+                    # updated is immediately due, so run_scheduled_updates()
+                    # picks it up within seconds, with the display already
+                    # running.
+                    deferred.append(plugin_id)
+                    continue
             # Check circuit breaker before attempting update
             if hasattr(self.plugin_manager, 'health_tracker') and self.plugin_manager.health_tracker:
                 if self.plugin_manager.health_tracker.should_skip_plugin(plugin_id):
@@ -864,14 +875,11 @@ class DisplayController:
             
             # Use PluginExecutor if available for safe execution
             if hasattr(self.plugin_manager, 'plugin_executor'):
-                # Cap the wait by what is left of the budget as well as
-                # checking it beforehand. Checking alone still lets the last
-                # plugin to start block for the executor's full 30s -- on the
-                # rig that turned a 20s budget into a 31.8s pass.
-                update_timeout = None
-                if deadline is not None:
-                    update_timeout = max(_MIN_INITIAL_UPDATE_TIMEOUT_SECONDS,
-                                         deadline - time.time())
+                # The remaining budget is the timeout, so the pass cannot
+                # run past its deadline. Bounding the loop alone did not do
+                # it: the last plugin to start could still block for the
+                # executor's full 30s, which turned a 20s budget into a 31.8s
+                # pass on the rig.
                 success = self.plugin_manager.plugin_executor.execute_update(
                     plugin_instance, plugin_id, timeout=update_timeout)
                 if success and hasattr(self.plugin_manager, 'plugin_last_update'):
