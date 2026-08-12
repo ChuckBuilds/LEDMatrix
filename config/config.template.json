@@ -112,6 +112,7 @@
             "led_rgb_sequence": "RGB",
             "limit_refresh_rate_hz": 100,
             "pixel_mapper_config": "",
+            "orientation": "normal",
             "row_address_type": 0,
             "multiplexing": 0,
             "panel_type": ""

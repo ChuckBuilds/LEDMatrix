@@ -66,6 +66,7 @@ in `DisplayManager` (`src/display_manager.py`, ~lines 270–295).
 | `led_rgb_sequence` | string, `"RGB"` |
 | `limit_refresh_rate_hz` | int, `100` (code default 90) |
 | `pixel_mapper_config` | string, `""` — e.g. `"U-mapper"` / `"Rotate:90"` |
+| `orientation` | string, `"normal"` — `"180"` rotates the rendered image 180° for panels physically mounted upside down (e.g. to move the Pi/wiring to a more convenient side); composed onto `pixel_mapper_config` as a trailing `Rotate:180` mapper, so it stays independent of any custom `pixel_mapper_config` value |
 | `row_address_type` | int, `0` — non-standard panel row addressing |
 | `multiplexing` | int, `0` — panel multiplexing scheme |
 | `panel_type` | string, `""` — set to `"FM6126A"` or `"FM6127"` for panels needing init |

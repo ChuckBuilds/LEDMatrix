@@ -117,6 +117,14 @@
                     </select>
                 </div>
 
+                <div class="form-group" id="setting-display-orientation" data-setting-key="display.hardware.orientation">
+                    <label for="orientation" class="block text-sm font-medium text-gray-700">Panel Orientation{{ ui.help_tip('Rotates the rendered image to match how the panel is physically mounted.\nUse "Upside Down" if you flipped the panel 180° to move the Raspberry Pi / wiring to a more convenient side.', 'Panel Orientation') }}</label>
+                    <select id="orientation" name="orientation" class="form-control">
+                        <option value="normal" {% if main_config.display.hardware.get('orientation', 'normal') == "normal" %}selected{% endif %}>Normal</option>
+                        <option value="180" {% if main_config.display.hardware.get('orientation', 'normal') == "180" %}selected{% endif %}>Upside Down (180°)</option>
+                    </select>
+                </div>
+
                 <div class="form-group" id="setting-display-led_rgb_sequence" data-setting-key="display.hardware.led_rgb_sequence">
                     <label for="led_rgb_sequence" class="block text-sm font-medium text-gray-700">LED RGB Sequence{{ ui.help_tip('Order the panel expects color channels in.\nChange this only if reds/greens/blues look swapped. Default: RGB.', 'LED RGB Sequence') }}</label>
                     <select id="led_rgb_sequence" name="led_rgb_sequence" class="form-control">
