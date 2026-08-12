@@ -71,11 +71,30 @@ class _StallWatchdog:
         self._stop.set()
 
     def _watch(self) -> None:
-        while not self._stop.wait(self.threshold / 4.0):
+        poll = self.threshold / 4.0
+        while True:
+            woke_at = time.time()
+            if self._stop.wait(poll):
+                break
             with self._lock:
                 last = self._beat
-            stalled = time.time() - last
-            if stalled < self.threshold or last == self._dumped_for:
+            now = time.time()
+            stalled = now - last
+            # A stall inside a C call that holds the GIL never shows up as a
+            # late beat: this thread cannot run during it, and by the time it
+            # does the loop has already checked in. What it can see is that
+            # its own sleep ran long. Treat a badly overshot wait as a stall
+            # in its own right -- the stacks are stale by then, but knowing
+            # the freeze is GIL-holding is itself the diagnosis.
+            overshoot = (now - woke_at) - poll
+            if overshoot > self.threshold:
+                logger.warning(
+                    "render loop stalled %.2fs holding the GIL -- no Python "
+                    "frames ran, so the stacks below are from after it ended; "
+                    "look for one long C call (a large PIL operation, a "
+                    "compress, a big allocation)", overshoot)
+                stalled = overshoot
+            elif stalled < self.threshold or last == self._dumped_for:
                 continue
             self._dumped_for = last          # one dump per stall, not per poll
             frames = sys._current_frames()
