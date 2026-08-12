@@ -12,8 +12,11 @@ Supports three display modes per plugin:
 """
 
 import logging
-import time
+import os
+import sys
 import threading
+import time
+import traceback
 from typing import Optional, Dict, Any, List, Callable, TYPE_CHECKING
 
 from src.vegas_mode.config import VegasModeConfig
@@ -28,6 +31,62 @@ if TYPE_CHECKING:
     from src.display_manager import DisplayManager
 
 logger = logging.getLogger(__name__)
+
+# A frame is a "hitch" once it takes this many times the typical frame. Two
+# is deliberately forgiving: one dropped frame at 120fps is 8ms and invisible,
+# whereas a marquee moving a steady few pixels per frame shows a stall of
+# twice that as a visible jerk.
+_HITCH_FACTOR = 2.0
+
+# How many recent frames define "typical". Big enough to ride out noise, small
+# enough to track a genuine change in what the loop costs.
+_TYPICAL_SAMPLE = 60
+
+# A stall long enough that a viewer sees the marquee stop dead. Frame-time
+# statistics say one happened but not what did it, and by the time the numbers
+# are logged the stack is long gone -- so a watchdog samples every thread while
+# the loop is still wedged. Off unless LEDMATRIX_STALL_WATCHDOG is set, since
+# it dumps a lot of text.
+_STALL_DUMP_SECONDS = float(os.environ.get('LEDMATRIX_STALL_WATCHDOG', '0') or 0)
+
+
+class _StallWatchdog:
+    """Dumps every thread's stack when the render loop stops checking in."""
+
+    def __init__(self, threshold: float):
+        self.threshold = threshold
+        self._beat = time.time()
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._dumped_for = 0.0
+        self._thread = threading.Thread(
+            target=self._watch, name="VegasStallWatchdog", daemon=True)
+        self._thread.start()
+
+    def beat(self) -> None:
+        with self._lock:
+            self._beat = time.time()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def _watch(self) -> None:
+        while not self._stop.wait(self.threshold / 4.0):
+            with self._lock:
+                last = self._beat
+            stalled = time.time() - last
+            if stalled < self.threshold or last == self._dumped_for:
+                continue
+            self._dumped_for = last          # one dump per stall, not per poll
+            frames = sys._current_frames()
+            names = {t.ident: t.name for t in threading.enumerate()}
+            lines = ["render loop stalled %.2fs -- thread stacks:" % stalled]
+            for ident, frame in frames.items():
+                lines.append("  --- %s (%s) ---" % (names.get(ident, "?"), ident))
+                for fn, lineno, func, _text in traceback.extract_stack(frame)[-8:]:
+                    lines.append("    %s:%d in %s" % (fn, lineno, func))
+            logger.warning("\n".join(lines))
+
 
 
 class VegasModeCoordinator:
@@ -119,6 +178,7 @@ class VegasModeCoordinator:
             'static_pauses': 0,
         }
         self._start_time: Optional[float] = None
+        self._stall_watchdog: Optional['_StallWatchdog'] = None
 
         logger.info(
             "VegasModeCoordinator initialized: enabled=%s, fps=%d, buffer_ahead=%d",
@@ -382,6 +442,20 @@ class VegasModeCoordinator:
         fps_log_interval = 5.0  # Log FPS every 5 seconds
         last_fps_log_time = start_time
         fps_frame_count = 0
+        # Stutter is invisible in a mean. At 120fps a 5s window covers ~600
+        # frames, so a 200ms freeze -- plainly visible on a marquee -- moves
+        # the average from 120.0 to 115.4 and reads as healthy. What a viewer
+        # notices is the worst frame, so track that separately.
+        frame_worst = 0.0
+        frame_hitches = 0
+        frame_times: List[float] = []
+        frame_typical = 0.0
+
+        # One per coordinator, not per iteration -- run_iteration is called
+        # repeatedly, so building one here would leak a thread each time.
+        if _STALL_DUMP_SECONDS > 0 and self._stall_watchdog is None:
+            self._stall_watchdog = _StallWatchdog(_STALL_DUMP_SECONDS)
+        watchdog = self._stall_watchdog
 
         logger.info("Starting Vegas iteration for %.1fs", duration)
 
@@ -417,6 +491,25 @@ class VegasModeCoordinator:
             frame_elapsed = time.time() - frame_started
             time.sleep(max(0.0, frame_interval - frame_elapsed))
 
+            # Measured before the sleep, so this is time spent working rather
+            # than time spent pacing. A frame that overruns the budget is one
+            # the viewer sees as a jerk in otherwise smooth motion.
+            if frame_elapsed > frame_worst:
+                frame_worst = frame_elapsed
+            # Measured against what frames actually cost here, not against
+            # the configured target. The target is routinely set above what
+            # the panel can hold so vsync does the pacing -- against that
+            # budget every ordinary frame looks like a hitch, which is how
+            # the first version of this counter reported 250 per window on a
+            # display that was running perfectly smoothly.
+            if frame_typical and frame_elapsed > _HITCH_FACTOR * frame_typical:
+                frame_hitches += 1
+            if len(frame_times) >= _TYPICAL_SAMPLE:
+                frame_typical = sorted(frame_times[-_TYPICAL_SAMPLE:])[_TYPICAL_SAMPLE // 2]
+            frame_times.append(frame_elapsed)
+            if watchdog:
+                watchdog.beat()
+
             # Increment frame count and check for interrupt periodically
             frame_count += 1
             fps_frame_count += 1
@@ -425,12 +518,22 @@ class VegasModeCoordinator:
             current_time = time.time()
             if current_time - last_fps_log_time >= fps_log_interval:
                 fps = fps_frame_count / (current_time - last_fps_log_time)
+                p99 = 0.0
+                if frame_times:
+                    ordered = sorted(frame_times)
+                    p99 = ordered[min(len(ordered) - 1,
+                                      int(len(ordered) * 0.99))]
                 logger.info(
-                    "Vegas FPS: %.1f (target: %d, frames: %d)",
-                    fps, self.vegas_config.target_fps, fps_frame_count
+                    "Vegas FPS: %.1f (target: %d, frames: %d) "
+                    "p99 %.1fms worst %.1fms hitches %d",
+                    fps, self.vegas_config.target_fps, fps_frame_count,
+                    p99 * 1000.0, frame_worst * 1000.0, frame_hitches
                 )
                 last_fps_log_time = current_time
                 fps_frame_count = 0
+                frame_worst = 0.0
+                frame_hitches = 0
+                frame_times.clear()
 
             if (self._interrupt_check and
                     frame_count % self._interrupt_check_interval == 0):
