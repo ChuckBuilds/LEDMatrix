@@ -201,8 +201,10 @@ def get_vegas_priority_weight(self):
 
 The weight is per *plugin*, not per game: a scoreboard showing four live games
 still occupies one slot at a time and rotates its own games within it. Values
-are clamped to 1–10 by the caller, and an exception here is caught and
-treated as weight 1 rather than breaking the rotation.
+are clamped to 1–10 by the caller. An exception here is caught and logged, and
+the core then falls back to its own live-content check — so a plugin whose
+weight calculation is broken still gets `live_weight` for a game that really
+is live, rather than being demoted to 1.
 
 Only consulted when the user has set `vegas_scroll.live_in_ticker`. With the
 default (`false`) live content preempts Vegas entirely and there is no ticker

@@ -587,6 +587,10 @@ class BasePlugin(ABC):
         within that slot; this controls how often the plugin itself comes
         round.
 
+        Raising is safe: the core logs it and falls back to its own
+        live-content check, so a broken weight calculation costs the plugin
+        the favorite distinction but not the live boost.
+
         Returns:
             Slots per cycle (clamped to 1..10 by the caller), or None to
             defer to the core's own live-content weighting.

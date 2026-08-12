@@ -64,7 +64,7 @@ JSON is optional.
 | `target_fps` | `125` | Target frame rate |
 | `buffer_ahead` | `2` | Number of plugins buffered ahead |
 
-This table is a subset — `display.vegas_scroll` supports 29 keys in
+This table is a subset — `display.vegas_scroll` supports 30 keys in
 total. See the full list in
 [CONFIG_REFERENCE.md](CONFIG_REFERENCE.md#displayvegas_scroll--continuous-scroll-mode).
 

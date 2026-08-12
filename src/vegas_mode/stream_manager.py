@@ -441,6 +441,11 @@ class StreamManager:
                 if declared is not None:
                     return max(1, min(10, int(declared)))
         except Exception:
+            # Deliberately falls through to the core's own live check rather
+            # than demoting to 1. The plugin's weight calculation is broken,
+            # but has_live_priority() and has_live_content() are separate
+            # methods guarded separately below -- a plugin that genuinely has
+            # a live game should still get live_weight for it.
             logger.exception("[%s] get_vegas_priority_weight() failed", plugin_id)
 
         try:

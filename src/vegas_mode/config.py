@@ -236,6 +236,9 @@ class VegasModeConfig:
             'lead_in_width': self.lead_in_width,
             'plugins_per_cycle': self.plugins_per_cycle,
             'max_plugin_width_ratio': self.max_plugin_width_ratio,
+            'live_in_ticker': self.live_in_ticker,
+            'live_weight': self.live_weight,
+            'favorite_live_weight': self.favorite_live_weight,
             'overflow_mode': self.overflow_mode,
             'plugin_order': self.plugin_order,
             'excluded_plugins': list(self.excluded_plugins),
@@ -403,6 +406,15 @@ class VegasModeConfig:
 
         if 'enabled' in vegas_config:
             self.enabled = vegas_config['enabled']
+        if 'live_in_ticker' in vegas_config:
+            self.live_in_ticker = bool(vegas_config['live_in_ticker'])
+        # Clamped exactly as from_config does: a weight below 1 would drop the
+        # plugin from the rotation, and a huge one starves everything else.
+        if 'live_weight' in vegas_config:
+            self.live_weight = max(1, min(10, int(vegas_config['live_weight'])))
+        if 'favorite_live_weight' in vegas_config:
+            self.favorite_live_weight = max(
+                1, min(10, int(vegas_config['favorite_live_weight'])))
         if 'scroll_speed' in vegas_config:
             self.scroll_speed = float(vegas_config['scroll_speed'])
         if 'separator_width' in vegas_config:

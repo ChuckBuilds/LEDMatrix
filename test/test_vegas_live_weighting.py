@@ -23,23 +23,33 @@ from src.vegas_mode.stream_manager import StreamManager
 
 
 class FakePlugin:
-    def __init__(self, live=False, declared=None, raises=False):
+    """A plugin that can fail in each place independently.
+
+    hook_raises and live_raises are separate because they mean different
+    things: a broken weight calculation should still leave the core's own
+    live-content check usable, while a plugin that cannot answer whether it is
+    live at all has nothing left to fall back on.
+    """
+
+    def __init__(self, live=False, declared=None, raises=False,
+                 hook_raises=False, live_raises=False):
         self._live = live
         self._declared = declared
-        self._raises = raises
+        self._hook_raises = hook_raises or raises
+        self._live_raises = live_raises or raises
         self.enabled = True
 
     def has_live_priority(self):
-        if self._raises:
-            raise RuntimeError("plugin blew up")
+        if self._live_raises:
+            raise RuntimeError("cannot say whether I am live")
         return self._live
 
     def has_live_content(self):
         return self._live
 
     def get_vegas_priority_weight(self):
-        if self._raises:
-            raise RuntimeError("plugin blew up")
+        if self._hook_raises:
+            raise RuntimeError("weight calculation blew up")
         return self._declared
 
 
@@ -91,9 +101,28 @@ class TestWeightsComeFromTheRightPlace:
         assert sm._plugin_weight('a') == 10
         assert sm._plugin_weight('b') == 1
 
-    def test_a_plugin_that_raises_does_not_break_the_rotation(self):
+    def test_a_plugin_that_raises_everywhere_weighs_one(self):
         sm = _manager({'bad': FakePlugin(raises=True)})
         assert sm._plugin_weight('bad') == 1
+
+    def test_a_broken_hook_still_earns_the_live_boost(self):
+        # The hook is only how a plugin asks for *more* than live_weight.
+        # Losing it should cost the favorite distinction, not the live boost:
+        # has_live_priority/has_live_content are separate and still work.
+        sm = _manager({'mlb': FakePlugin(live=True, hook_raises=True)},
+                      live_weight=4)
+        assert sm._plugin_weight('mlb') == 4
+
+    def test_a_broken_hook_on_a_quiet_plugin_weighs_one(self):
+        sm = _manager({'clock': FakePlugin(live=False, hook_raises=True)},
+                      live_weight=4)
+        assert sm._plugin_weight('clock') == 1
+
+    def test_a_plugin_that_cannot_say_whether_it_is_live_weighs_one(self):
+        # Nothing left to fall back on, so no boost.
+        sm = _manager({'mlb': FakePlugin(live=True, live_raises=True)},
+                      live_weight=4)
+        assert sm._plugin_weight('mlb') == 1
 
     def test_an_unknown_plugin_weighs_one(self):
         assert _manager({})._plugin_weight('ghost') == 1
