@@ -258,6 +258,26 @@ class DisplayManager:
         # Initialize managers
         # Calendar manager is now initialized by DisplayController
         
+    # Orientation setting -> rpi-rgb-led-matrix "Rotate:<deg>" pixel-mapper suffix.
+    # "normal" needs no suffix since 0 degrees is the identity transform.
+    _ORIENTATION_ROTATE_DEGREES = {'normal': None, '90': 90, '180': 180, '270': 270}
+
+    def _build_pixel_mapper_config(self, hardware_config: dict) -> str:
+        """Compose the raw pixel_mapper_config string with the orientation setting.
+
+        `pixel_mapper_config` stays available as a free-form advanced field (e.g.
+        for "U-mapper" chain layouts); `orientation` is the user-facing dropdown
+        for physical mounting (e.g. panels mounted upside down) and is appended as
+        a "Rotate:<deg>" mapper rather than overwriting any existing config.
+        """
+        base_mapper = (hardware_config.get('pixel_mapper_config') or '').strip()
+        orientation = hardware_config.get('orientation', 'normal')
+        degrees = self._ORIENTATION_ROTATE_DEGREES.get(orientation)
+        if degrees is None:
+            return base_mapper
+        rotate_mapper = f'Rotate:{degrees}'
+        return f'{base_mapper};{rotate_mapper}' if base_mapper else rotate_mapper
+
     def _setup_matrix(self):
         """Initialize the RGB matrix with configuration settings."""
         _init_error_str = None
@@ -283,7 +303,7 @@ class DisplayManager:
             options.pwm_bits = hardware_config.get('pwm_bits', 10)
             options.pwm_lsb_nanoseconds = hardware_config.get('pwm_lsb_nanoseconds', 150)
             options.led_rgb_sequence = hardware_config.get('led_rgb_sequence', 'RGB')
-            options.pixel_mapper_config = hardware_config.get('pixel_mapper_config', '')
+            options.pixel_mapper_config = self._build_pixel_mapper_config(hardware_config)
             options.row_address_type = hardware_config.get('row_address_type', 0)
             options.multiplexing = hardware_config.get('multiplexing', 0)
             options.panel_type = hardware_config.get('panel_type', '')

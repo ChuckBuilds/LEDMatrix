@@ -237,3 +237,45 @@ class TestDisplayManagerDoubleSided:
                                 suppress_test_pattern=True)
             assert dm.set_brightness(70) is True
             assert mock_rgb_matrix['matrix_instance'].brightness == 70
+
+
+class TestDisplayManagerOrientation:
+    """The orientation setting composes onto pixel_mapper_config for panels
+    mounted upside down, without disturbing a custom pixel_mapper_config."""
+
+    def _config(self, **hardware_overrides):
+        config = {
+            'display': {
+                'hardware': {
+                    'rows': 32, 'cols': 64, 'chain_length': 2, 'parallel': 1,
+                    'hardware_mapping': 'adafruit-hat-pwm', 'brightness': 90,
+                },
+                'runtime': {'gpio_slowdown': 2},
+            },
+            'timezone': 'UTC',
+            'plugin_system': {'plugins_directory': 'plugins'},
+        }
+        config['display']['hardware'].update(hardware_overrides)
+        return config
+
+    def test_default_orientation_leaves_pixel_mapper_config_untouched(self, mock_rgb_matrix):
+        DisplayManager._instance = None
+        with patch.dict('os.environ', {'EMULATOR': 'false'}):
+            DisplayManager(self._config(), suppress_test_pattern=True)
+            options = mock_rgb_matrix['options_class'].return_value
+            assert options.pixel_mapper_config == ''
+
+    def test_orientation_180_appends_rotate_mapper(self, mock_rgb_matrix):
+        DisplayManager._instance = None
+        with patch.dict('os.environ', {'EMULATOR': 'false'}):
+            DisplayManager(self._config(orientation='180'), suppress_test_pattern=True)
+            options = mock_rgb_matrix['options_class'].return_value
+            assert options.pixel_mapper_config == 'Rotate:180'
+
+    def test_orientation_180_composes_with_existing_pixel_mapper_config(self, mock_rgb_matrix):
+        DisplayManager._instance = None
+        with patch.dict('os.environ', {'EMULATOR': 'false'}):
+            DisplayManager(self._config(orientation='180', pixel_mapper_config='U-mapper'),
+                           suppress_test_pattern=True)
+            options = mock_rgb_matrix['options_class'].return_value
+            assert options.pixel_mapper_config == 'U-mapper;Rotate:180'

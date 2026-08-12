@@ -600,6 +600,14 @@ These settings are typically only needed for non-standard panels or custom confi
   - Leave empty unless you need custom mapping
   - See rpi-rgb-led-matrix documentation for full options
 
+- **`orientation`** (string, default: "normal")
+  - Rotates the rendered image to match how the panel is physically mounted
+  - Set to `"180"` (or use the "Upside Down" option in the web UI's Display
+    settings) if the panel is mounted upside down — useful for optimizing
+    where the Raspberry Pi and wiring sit relative to the mounting location
+  - Applied independently of `pixel_mapper_config` (appended as a trailing
+    `Rotate:180` mapper), so custom mapper configs keep working alongside it
+
 - **`row_address_type`** (integer, default: 0)
   - How rows are addressed on the panel
   - Most panels use 0 (direct addressing)
