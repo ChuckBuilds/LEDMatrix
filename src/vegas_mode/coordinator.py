@@ -12,6 +12,7 @@ Supports three display modes per plugin:
 """
 
 import logging
+import math
 import time
 import threading
 from typing import Optional, Dict, Any, List, Callable, TYPE_CHECKING
@@ -28,6 +29,21 @@ if TYPE_CHECKING:
     from src.display_manager import DisplayManager
 
 logger = logging.getLogger(__name__)
+
+
+def _percentile(ordered: List[float], fraction: float) -> float:
+    """Nearest-rank percentile of an already-sorted list.
+
+    Index ceil(n * fraction) - 1, so 100 samples at 0.99 give the 99th-ranked
+    value. The obvious int(n * fraction) is off by one and, at exactly 100
+    samples, lands on the maximum -- which is the number already reported
+    alongside this one as the worst frame, so the two columns would agree
+    precisely when the sample was smallest.
+    """
+    if not ordered:
+        return 0.0
+    index = math.ceil(len(ordered) * fraction) - 1
+    return ordered[min(len(ordered) - 1, max(0, index))]
 
 
 class VegasModeCoordinator:
@@ -436,10 +452,7 @@ class VegasModeCoordinator:
             current_time = time.time()
             if current_time - last_fps_log_time >= fps_log_interval:
                 fps = fps_frame_count / (current_time - last_fps_log_time)
-                p99 = 0.0
-                if frame_times:
-                    ordered = sorted(frame_times)
-                    p99 = ordered[min(len(ordered) - 1, int(len(ordered) * 0.99))]
+                p99 = _percentile(sorted(frame_times), 0.99)
                 logger.info(
                     "Vegas FPS: %.1f (target: %d, frames: %d) p99 %.1fms worst %.1fms",
                     fps, self.vegas_config.target_fps, fps_frame_count,
