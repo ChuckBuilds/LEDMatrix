@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 from src.web_interface.api_helpers import success_response, error_response, validate_request_json
 from src.web_interface.errors import ErrorCode
 from src.web_interface.secret_helpers import find_secret_fields, separate_secrets
-from src.web_interface.error_handler import describe_exception
+from src.web_interface.error_handler import describe_exception, redact_text
 from src.plugin_system.operation_types import OperationType
 from src.web_interface.validators import (
     validate_file_upload
@@ -7312,6 +7312,11 @@ def upload_calendar_credentials():
         logger.error('Error in upload_calendar_credentials', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
+# calendarList.list pages at 250 entries maximum. Ten pages is far past any
+# real account and exists only so a malformed nextPageToken cannot spin here.
+_CALENDAR_LIST_MAX_PAGES = 10
+
+
 def _calendar_plugin_dir() -> Optional[Path]:
     """Where the calendar plugin is installed, or None if it is not."""
     if api_v3.plugin_manager:
@@ -7363,9 +7368,15 @@ def _run_calendar_registration(plugin_dir: Path, stdin_payload: str):
         if isinstance(payload, dict):
             return payload, None
 
-    detail = (result.stderr or result.stdout or '').strip()[:300]
+    raw = (result.stderr or result.stdout or '').strip()
+    # The unredacted text goes to the log, where it is worth having in full.
+    # What comes back over HTTP is redacted: this is a script that handles
+    # OAuth client secrets, and its stderr can quote them.
+    if raw:
+        logger.error('calendar_registration.py failed (exit %s): %s',
+                     result.returncode, raw)
     return None, 'Authentication script produced no result%s' % (
-        ': %s' % detail if detail else '')
+        ': %s' % redact_text(raw) if raw else '')
 
 
 @api_v3.route('/plugins/calendar/authenticate', methods=['POST'])
@@ -7404,8 +7415,14 @@ def authenticate_calendar():
             return jsonify({'status': 'error', 'message': error}), 500
         if payload.get('status') != 'success':
             # The script's own diagnosis is more useful than anything that
-            # could be reconstructed here.
-            return jsonify(payload), 400
+            # could be reconstructed here -- but it interpolates exceptions
+            # into its messages, so it reaches the client redacted and the
+            # original goes to the log.
+            logger.error('calendar authentication failed: %s', payload)
+            safe = dict(payload)
+            safe['message'] = redact_text(str(payload.get('message', '')
+                                              or 'Authentication failed'))
+            return jsonify(safe), 400
         return jsonify(payload)
 
     except Exception as e:
@@ -7469,7 +7486,26 @@ def list_calendar_calendars():
             }), 400
 
         service = build_google_service('calendar', 'v3', credentials=creds)
-        entries = service.calendarList().list().execute().get('items', [])
+
+        # calendarList.list returns 100 entries per page by default and caps at
+        # 250, handing back a nextPageToken when there are more. Taking only
+        # the first page would silently hide calendars from the picker, and the
+        # user would have no way to tell the list was truncated.
+        entries = []
+        page_token = None
+        for _ in range(_CALENDAR_LIST_MAX_PAGES):
+            response = service.calendarList().list(
+                maxResults=250, pageToken=page_token).execute()
+            entries.extend(response.get('items', []))
+            page_token = response.get('nextPageToken')
+            if not page_token:
+                break
+        else:
+            # 2500 calendars in, something is wrong with the account or the
+            # token is looping; show what was collected rather than spin.
+            logger.warning(
+                'calendarList paging stopped at %d pages with more remaining',
+                _CALENDAR_LIST_MAX_PAGES)
 
         calendars = [{
             'id': entry.get('id'),

@@ -77,6 +77,25 @@ def describe_exception(exc: BaseException,
     """
     message = str(exc).strip()
     text = f"{type(exc).__name__}: {message}" if message else type(exc).__name__
+    return redact_text(text, max_length)
+
+
+def redact_text(text: str, max_length: int = _MAX_DETAIL_LENGTH) -> str:
+    """Make arbitrary text safe to hand back over HTTP.
+
+    Split out of describe_exception because exceptions are not the only thing
+    worth returning: a subprocess's stderr, or a message a helper script
+    printed, is just as useful to a user and just as capable of carrying a
+    token or a password in it.
+
+    Args:
+        text: The text to redact
+        max_length: Truncate beyond this many characters
+
+    Returns:
+        A single line, credentials replaced, length capped.
+    """
+    text = text or ''
     # Order matters: the URL and header forms are more specific than the
     # generic key=value pattern, which would otherwise chew the scheme.
     text = _REDACT_URL_USERINFO.sub(r'\1<redacted>\3', text)

@@ -189,10 +189,21 @@ class TestListingShape:
 
         import types
         fake_pickle = types.SimpleNamespace(load=lambda f: creds, dump=lambda *a: None)
-        fake_build = lambda *a, **k: types.SimpleNamespace(
-            calendarList=lambda: types.SimpleNamespace(
-                list=lambda: types.SimpleNamespace(
-                    execute=lambda: {'items': items})))
+        pages = items if isinstance(items, list) and items and isinstance(items[0], dict) \
+            else items
+        if isinstance(pages, list):
+            pages = [{'items': pages}]
+
+        state = {'i': 0}
+
+        def fake_list(**kwargs):
+            page = pages[min(state['i'], len(pages) - 1)]
+            state['i'] += 1
+            return types.SimpleNamespace(execute=lambda: page)
+
+        def fake_build(*args, **kwargs):
+            return types.SimpleNamespace(
+                calendarList=lambda: types.SimpleNamespace(list=fake_list))
 
         real_import = __builtins__['__import__'] if isinstance(__builtins__, dict) \
             else __builtins__.__import__
@@ -239,3 +250,95 @@ class TestListingShape:
         self._authenticate(client, monkeypatch, [{'summary': 'ghost'}, {'id': 'real@x'}])
         body = client.get('/api/v3/plugins/calendar/list-calendars').get_json()
         assert [c['id'] for c in body['calendars']] == ['real@x']
+
+
+class TestPagination:
+    """calendarList.list pages at 250 and defaults to 100."""
+
+    def _paged(self, client, monkeypatch, pages):
+        import types
+        creds = type('C', (), {'expired': False, 'refresh_token': None, 'valid': True})()
+        (client.plugin_dir / 'token.pickle').write_bytes(b'x')
+        state = {'i': 0}
+        seen = []
+
+        def fake_list(**kwargs):
+            seen.append(kwargs)
+            page = pages[min(state['i'], len(pages) - 1)]
+            state['i'] += 1
+            return types.SimpleNamespace(execute=lambda: page)
+
+        def fake_build(*args, **kwargs):
+            return types.SimpleNamespace(
+                calendarList=lambda: types.SimpleNamespace(list=fake_list))
+
+        real_import = __builtins__['__import__'] if isinstance(__builtins__, dict) \
+            else __builtins__.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == 'pickle':
+                return types.SimpleNamespace(load=lambda f: creds, dump=lambda *a: None)
+            if name == 'google.auth.transport.requests':
+                return types.SimpleNamespace(Request=object)
+            if name == 'googleapiclient.discovery':
+                return types.SimpleNamespace(build=fake_build)
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr('builtins.__import__', fake_import)
+        return seen
+
+    def test_every_page_is_collected(self, client, monkeypatch):
+        # Taking only the first page would hide calendars from the picker with
+        # nothing to say the list was cut short.
+        self._paged(client, monkeypatch, [
+            {'items': [{'id': 'a@x', 'summary': 'A'}], 'nextPageToken': 't1'},
+            {'items': [{'id': 'b@x', 'summary': 'B'}], 'nextPageToken': 't2'},
+            {'items': [{'id': 'c@x', 'summary': 'C'}]},
+        ])
+        body = client.get('/api/v3/plugins/calendar/list-calendars').get_json()
+        assert [c['id'] for c in body['calendars']] == ['a@x', 'b@x', 'c@x']
+
+    def test_the_page_token_is_passed_back(self, client, monkeypatch):
+        seen = self._paged(client, monkeypatch, [
+            {'items': [{'id': 'a@x', 'summary': 'A'}], 'nextPageToken': 'tok'},
+            {'items': [{'id': 'b@x', 'summary': 'B'}]},
+        ])
+        client.get('/api/v3/plugins/calendar/list-calendars')
+        assert seen[0]['pageToken'] is None
+        assert seen[1]['pageToken'] == 'tok'
+        assert all(k['maxResults'] == 250 for k in seen)
+
+    def test_a_looping_token_cannot_spin_forever(self, client, monkeypatch):
+        # Every page claims another follows.
+        self._paged(client, monkeypatch, [
+            {'items': [{'id': 'a@x', 'summary': 'A'}], 'nextPageToken': 'same'},
+        ])
+        body = client.get('/api/v3/plugins/calendar/list-calendars').get_json()
+        assert body['status'] == 'success'
+        assert len(body['calendars']) <= mod._CALENDAR_LIST_MAX_PAGES
+
+
+class TestDiagnosticsAreRedacted:
+    def test_script_stderr_is_redacted_on_the_way_out(self, tmp_path):
+        script = tmp_path / 'calendar_registration.py'
+        script.write_text(
+            'import sys\n'
+            'sys.stderr.write("boom client_secret=hunter2 more\\n")\n',
+            encoding='utf-8')
+        payload, error = mod._run_calendar_registration(tmp_path, '')
+        assert payload is None
+        assert 'hunter2' not in error, error
+        assert '<redacted>' in error, error
+
+    def test_a_failing_script_payload_is_redacted(self, client):
+        (client.plugin_dir / 'credentials.json').write_text('{}', encoding='utf-8')
+        (client.plugin_dir / 'calendar_registration.py').write_text(
+            'import json\n'
+            'print(json.dumps({"status": "error", '
+            '"message": "Failed: client_secret=topsecret"}))\n',
+            encoding='utf-8')
+        body = client.post('/api/v3/plugins/calendar/authenticate',
+                           json={}).get_json()
+        assert body['status'] == 'error'
+        assert 'topsecret' not in json.dumps(body), body
+        assert '<redacted>' in body['message'], body
