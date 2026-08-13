@@ -8181,7 +8181,16 @@ def backup_restore():
         try:
             opts_dict = json.loads(options_raw)
         except json.JSONDecodeError:
-            opts_dict = {}
+            opts_dict = None
+        if not isinstance(opts_dict, dict):
+            # Every option defaults to True, so falling back to {} on a
+            # parse failure would silently perform a FULL restore —
+            # secrets and all — for a caller who asked for a narrow one
+            # and mis-serialized it. Refuse instead of guessing.
+            return jsonify({
+                'status': 'error',
+                'message': 'Invalid options: expected a JSON object',
+            }), 400
         options = RestoreOptions(
             restore_config=bool(opts_dict.get('restore_config', True)),
             restore_secrets=bool(opts_dict.get('restore_secrets', True)),
