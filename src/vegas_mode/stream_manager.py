@@ -519,29 +519,42 @@ class StreamManager:
 
         repeated = schedule[-1]
         size = len(schedule)
-        elsewhere = [i for i, p in enumerate(schedule[:-1]) if p == repeated]
 
-        def clearance(j: int) -> int:
-            """Cyclic distance from j to the nearest other appearance."""
-            return min(min((i - j) % size, (j - i) % size) for i in elsewhere)
+        def cyclic_doubles(seq) -> int:
+            return sum(1 for i in range(size) if seq[i] == seq[(i + 1) % size])
 
-        candidates = [
-            j for j in range(1, size - 1)
-            if schedule[j] != repeated
-            and schedule[j - 1] != repeated
-            and schedule[j + 1] != repeated
-        ]
-        if not candidates:
-            return schedule
+        def clearance(seq, value) -> int:
+            """Smallest cyclic gap between appearances of `value`."""
+            at = [i for i, v in enumerate(seq) if v == value]
+            if len(at) < 2:
+                return size
+            return min(min((b - a) % size, (a - b) % size)
+                       for i, a in enumerate(at) for b in at[i + 1:])
 
-        # Drop it into the widest gap rather than the first slot that fits.
-        # Taking the first one undoes the spacing this whole function exists
-        # to protect: on a 28-slot rotation it moved a repeat from a gap of 7
-        # to a gap of 2, which is more clumped than the seam ever was.
-        best = max(candidates, key=clearance) if elsewhere else candidates[0]
-        schedule = list(schedule)
-        schedule[best], schedule[-1] = schedule[-1], schedule[best]
-        return schedule
+        # Try each swap and judge the result, rather than reasoning about which
+        # neighbours the two moved elements will end up with. That reasoning is
+        # where the first version went wrong: it guarded the slot `repeated`
+        # moves into but not the one the displaced element lands in, so
+        # ['a','b','c','d','x','y','x','a'] came back ending ['x','x'] -- the
+        # seam duplicate traded for a fresh one.
+        best = None
+        best_clearance = -1
+        for j in range(1, size - 1):
+            candidate = list(schedule)
+            candidate[j], candidate[-1] = candidate[-1], candidate[j]
+            if cyclic_doubles(candidate):
+                continue
+            # Among the repairs that work, prefer the one that leaves the
+            # boosted plugin most evenly spread; taking the first that merely
+            # fits moved a repeat from a gap of 7 into a gap of 2.
+            spread = clearance(candidate, repeated)
+            if spread > best_clearance:
+                best, best_clearance = candidate, spread
+
+        # None exists when the value is unavoidably adjacent to itself -- a
+        # plugin holding most of the slots has to be. Schedule it as it is
+        # rather than refuse.
+        return best if best is not None else schedule
 
     def _prefetch_content(self, count: int = 1) -> None:
         """

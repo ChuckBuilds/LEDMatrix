@@ -211,6 +211,44 @@ class TestTheSchedule:
         assert _counts(schedule) == {'a': 5, 'b': 1, 'c': 1}, _counts(schedule)
         assert set(schedule) == {'a', 'b', 'c'}
 
+    def test_the_repair_never_creates_a_new_double(self):
+        # The first version guarded the slot the repeated value moves *into*
+        # but not the one the displaced element lands in, so this traded the
+        # seam duplicate for a fresh one and came back ending ['x', 'x'].
+        sm = _manager({})
+        out = sm._unclump_seam(['a', 'b', 'c', 'd', 'x', 'y', 'x', 'a'])
+        n = len(out)
+        doubles = [out[i] for i in range(n) if out[i] == out[(i + 1) % n]]
+        assert not doubles, "%r in %r" % (doubles, out)
+        assert sorted(out) == sorted(['a', 'b', 'c', 'd', 'x', 'y', 'x', 'a'])
+
+    def test_the_last_two_slots_are_a_usable_swap(self):
+        # Reasoning about indices said this candidate was unsafe because
+        # schedule[j] is schedule[-2]; after the swap its neighbour is the
+        # repeated value, not itself. Refusing it left the only repair this
+        # schedule has on the table.
+        assert _manager({})._unclump_seam(['a', 'b', 'c', 'a']) == ['a', 'b', 'a', 'c']
+
+    def test_no_seam_schedule_is_ever_made_worse(self):
+        import random
+        sm = _manager({})
+        random.seed(11)
+        checked = 0
+        for size in range(3, 10):
+            for _ in range(400):
+                original = [random.choice('abcd') for _ in range(size)]
+                if original[0] != original[-1]:
+                    continue
+                checked += 1
+                out = sm._unclump_seam(list(original))
+                n = len(out)
+                before = sum(1 for i in range(n)
+                             if original[i] == original[(i + 1) % n])
+                after = sum(1 for i in range(n) if out[i] == out[(i + 1) % n])
+                assert after <= before, (original, out)
+                assert sorted(out) == sorted(original), (original, out)
+        assert checked > 100, "the generator stopped producing seam cases"
+
     def test_a_schedule_too_short_to_repair_is_returned_as_is(self):
         sm = _manager({})
         assert sm._unclump_seam(['a', 'a']) == ['a', 'a']
