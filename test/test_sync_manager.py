@@ -804,8 +804,10 @@ class TestLoopbackHandshake:
         monkeypatch.setattr(sync_manager, "HELLO_INTERVAL", 0.02)
         monkeypatch.setattr(sync_manager, "HEARTBEAT_INTERVAL", 0.02)
 
+        # Pick a free port by binding one on loopback and releasing it.
+        # Loopback, not "", so this test never opens a port to the network.
         probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        probe.bind(("", 0))
+        probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
         probe.close()
 
