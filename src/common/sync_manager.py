@@ -101,6 +101,7 @@ class DisplaySyncManager:
         self._peer_chain: int = 0
         self._last_heartbeat_time: float = 0.0
         self._leader_width: int = 0  # set by display_controller after init
+        self._oversized_frame_warned: bool = False
 
         # Follower state
         self._follower_state = FollowerState.STANDALONE
@@ -174,6 +175,10 @@ class DisplaySyncManager:
                 continue
             except Exception as exc:
                 self.logger.debug("Sync leader recv error: %s", exc)
+                # Brief backoff: a socket left in a bad state raises
+                # immediately, which would otherwise spin this thread at
+                # 100% CPU logging the same error.
+                time.sleep(0.1)
 
     def _handle_hello(self, msg: dict, sender_ip: str) -> None:
         hw = self._hw_config
@@ -396,7 +401,7 @@ class DisplaySyncManager:
             data = header + arr.tobytes()
             if len(data) <= 65000:
                 self._send_sock.sendto(data, (self._peer_ip, self.port))
-            elif not getattr(self, '_oversized_frame_warned', False):
+            elif not self._oversized_frame_warned:
                 self._oversized_frame_warned = True
                 self.logger.warning(
                     "Sync: frame too large for UDP (%d bytes, max 65000) — "
@@ -451,41 +456,44 @@ class DisplaySyncManager:
         )
         self.write_status_file()
 
+    def _handle_received_frame(self, img: Image.Image, sender_ip: str) -> None:
+        """Record a decoded leader frame and enter follower mode if needed."""
+        with self._frame_lock:
+            self._latest_frame = img
+        self._last_leader_frame_time = time.time()
+        self._leader_ip = sender_ip
+
+        if self._follower_state == FollowerState.STANDALONE:
+            self._follower_state = FollowerState.FOLLOWER
+            self.logger.info(
+                "Sync: leader active at %s — switching to follower mode",
+                sender_ip,
+            )
+            self.write_status_file()
+
     def _follower_recv_loop(self) -> None:
         while self._running:
             try:
                 data, addr = self._recv_sock.recvfrom(65535)
                 sender_ip = addr[0]
 
-                if data[:8] == _RAW_MAGIC or len(data) > 512:
-                    # Frame data: prefer magic-tagged raw RGB; fall back to legacy PNG
+                if data[:8] == _RAW_MAGIC:
+                    # Magic-tagged raw RGB frame — self-describing, no guessing.
                     try:
-                        if data[:8] == _RAW_MAGIC:
-                            w, h = _RAW_HEADER.unpack(data[8:12])
-                            raw = data[12:]
-                            img = Image.frombuffer(
-                                "RGB", (w, h), raw, "raw", "RGB", 0, 1
-                            )
-                        else:
-                            # Fallback: try legacy PNG
-                            img = Image.open(io.BytesIO(data))
-                            img.load()
-                        with self._frame_lock:
-                            self._latest_frame = img
-                        self._last_leader_frame_time = time.time()
-                        self._leader_ip = sender_ip
-
-                        if self._follower_state == FollowerState.STANDALONE:
-                            self._follower_state = FollowerState.FOLLOWER
-                            self.logger.info(
-                                "Sync: leader active at %s — switching to follower mode",
-                                sender_ip,
-                            )
-                            self.write_status_file()
+                        w, h = _RAW_HEADER.unpack(data[8:12])
+                        raw = data[12:]
+                        img = Image.frombuffer(
+                            "RGB", (w, h), raw, "raw", "RGB", 0, 1
+                        )
+                        self._handle_received_frame(img, sender_ip)
                     except Exception as exc:
                         self.logger.debug("Sync: frame decode error: %s", exc)
                 else:
-                    # Control message
+                    # No magic prefix: try control-message JSON, and treat a
+                    # parse failure as a legacy (pre-magic) PNG frame. Both
+                    # wire formats are self-describing, so no size heuristic
+                    # is needed — a >512-byte control message used to be
+                    # misrouted into image decode and silently dropped.
                     try:
                         msg = json.loads(data.decode("utf-8"))
                         t = msg.get("t")
@@ -518,12 +526,19 @@ class DisplaySyncManager:
                             if self._on_new_cycle:
                                 self._on_new_cycle()
                     except (json.JSONDecodeError, UnicodeDecodeError, KeyError):
-                        pass
+                        # Not a control message — try legacy PNG frame.
+                        try:
+                            img = Image.open(io.BytesIO(data))
+                            img.load()
+                            self._handle_received_frame(img, sender_ip)
+                        except Exception as exc:
+                            self.logger.debug("Sync: frame decode error: %s", exc)
 
             except socket.timeout:
                 continue
             except Exception as exc:
                 self.logger.debug("Sync follower recv error: %s", exc)
+                time.sleep(0.1)
 
     def _follower_announce_loop(self) -> None:
         hw = self._hw_config
