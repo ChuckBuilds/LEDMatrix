@@ -81,6 +81,35 @@ class TestTheRoutesExistAtAll:
         assert "'/plugins/calendar/list-calendars'" in source
         assert "'/plugins/calendar/authenticate'" in source
 
+    def test_the_oauth_widget_is_dispatched_not_rendered_as_a_text_box(self):
+        # The string branch of the config template dispatches on an allow-list
+        # of widget names; anything missing from it silently falls through to a
+        # plain <input type="text">. That produced two boxes on the calendar
+        # page -- the widget's own, and a stray one for the same field -- and
+        # no way to tell which to paste into.
+        template = (Path(project_root)
+                    / 'web_interface/templates/v3/partials/plugin_config.html'
+                    ).read_text(encoding='utf-8')
+        allow_list_line = [ln for ln in template.splitlines()
+                           if "str_widget in [" in ln]
+        assert allow_list_line, "the string widget allow-list moved"
+        assert "'google-oauth'" in allow_list_line[0], allow_list_line[0]
+
+    def test_the_widget_script_is_served(self):
+        base = (Path(project_root) / 'web_interface/templates/v3/base.html'
+                ).read_text(encoding='utf-8')
+        assert 'widgets/google-oauth.js' in base
+
+    def test_the_failed_page_is_called_out_loudly(self):
+        # The loopback redirect lands on a browser error page at exactly the
+        # moment the user has to act. In small grey text it gets missed and the
+        # flow reads as broken while it is working.
+        widget = (Path(project_root)
+                  / 'web_interface/static/v3/js/widgets/google-oauth.js'
+                  ).read_text(encoding='utf-8')
+        assert 'expected' in widget.lower()
+        assert 'amber' in widget, "the warning is not visually distinguished"
+
 
 class TestItSaysWhatIsWrong:
     def test_listing_without_a_token_asks_for_step_2(self, client):

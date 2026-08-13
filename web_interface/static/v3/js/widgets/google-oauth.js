@@ -66,12 +66,28 @@
             link.className = 'text-blue-400 underline text-sm break-all';
             link.textContent = 'Open the Google consent screen';
 
-            const hint = document.createElement('p');
-            hint.className = 'text-xs text-gray-400 mt-2';
-            hint.textContent =
-                'After approving, your browser will try to open a page that fails '
-                + 'to load. That is expected. Copy its full address from the bar '
-                + 'and paste it below.';
+            // Deliberately loud. After consent the browser is redirected to a
+            // loopback address nothing is listening on, so it lands on a
+            // browser error page -- which reads as a failure at exactly the
+            // moment the user has to act on it. Said quietly in grey it gets
+            // missed, and the flow looks broken when it is working.
+            const hint = document.createElement('div');
+            hint.className =
+                'mt-3 p-3 rounded-md border border-amber-500/60 bg-amber-500/10';
+            hint.innerHTML =
+                '<p class="text-sm text-amber-300 font-semibold">'
+                + '<i class="fas fa-triangle-exclamation"></i> '
+                + 'The next page will fail to load. That is expected.</p>'
+                + '<p class="text-xs text-amber-200/90 mt-1">'
+                + 'After you approve access, Google sends your browser to '
+                + '<code>127.0.0.1</code>, where nothing is running \u2014 so you will see '
+                + '"This site can\u2019t be reached" or similar. Nothing has gone wrong. '
+                + 'Copy the <strong>entire address</strong> out of the address bar '
+                + '(it contains <code>?code=...</code>) and paste it in the box below.</p>';
+
+            const codeLabel = document.createElement('label');
+            codeLabel.className = 'block text-xs text-gray-300 mt-3';
+            codeLabel.textContent = 'Paste the address from that failed page here:';
 
             const codeInput = document.createElement('input');
             codeInput.type = 'text';
@@ -150,6 +166,7 @@
 
             step2.appendChild(link);
             step2.appendChild(hint);
+            step2.appendChild(codeLabel);
             step2.appendChild(codeInput);
             step2.appendChild(finishBtn);
 
