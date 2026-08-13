@@ -342,3 +342,37 @@ class TestDiagnosticsAreRedacted:
         assert body['status'] == 'error'
         assert 'topsecret' not in json.dumps(body), body
         assert '<redacted>' in body['message'], body
+
+    def test_an_unrunnable_script_is_reported_without_raw_exception_text(self,
+                                                                        tmp_path,
+                                                                        monkeypatch):
+        # OSError from the spawn carries the interpreter path and whatever the
+        # OS chose to say; it reaches the client through the redactor like
+        # everything else.
+        script = tmp_path / 'calendar_registration.py'
+        script.write_text('', encoding='utf-8')
+
+        def boom(*a, **k):
+            raise OSError("Exec format error: token=abcd1234 /usr/bin/python3")
+
+        monkeypatch.setattr(mod.subprocess, 'run', boom)
+        payload, error = mod._run_calendar_registration(tmp_path, '')
+        assert payload is None
+        assert 'abcd1234' not in error, error
+        assert 'OSError' in error, error
+
+    def test_a_missing_google_library_is_reported_without_raw_exception_text(
+            self, client, monkeypatch):
+        (client.plugin_dir / 'token.pickle').write_bytes(b'x')
+        real_import = __builtins__['__import__'] if isinstance(__builtins__, dict) \
+            else __builtins__.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name.startswith('google'):
+                raise ImportError("No module named 'google' password=hunter2")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr('builtins.__import__', fake_import)
+        body = client.get('/api/v3/plugins/calendar/list-calendars').get_json()
+        assert 'hunter2' not in json.dumps(body), body
+        assert 'requirements.txt' in body['message']

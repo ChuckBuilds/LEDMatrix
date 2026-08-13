@@ -7355,7 +7355,8 @@ def _run_calendar_registration(plugin_dir: Path, stdin_payload: str):
     except subprocess.TimeoutExpired:
         return None, 'Authentication timed out after 120s'
     except OSError as e:
-        return None, 'Could not run the authentication script: %s' % e
+        logger.error('Could not run calendar_registration.py', exc_info=True)
+        return None, 'Could not run the authentication script: %s' % describe_exception(e)
 
     for line in reversed((result.stdout or '').splitlines()):
         line = line.strip()
@@ -7463,8 +7464,12 @@ def list_calendar_calendars():
         except ImportError as e:
             return jsonify({
                 'status': 'error',
+                # The name of the missing module is the whole diagnosis, but it
+                # arrives as an exception, so it goes through the redactor like
+                # any other -- an ImportError can quote a path.
                 'message': ('The Google API libraries are not installed. Install '
-                            "the calendar plugin's requirements.txt. (%s)" % e)
+                            "the calendar plugin's requirements.txt. (%s)"
+                            % describe_exception(e))
             }), 500
 
         with open(token_file, 'rb') as handle:
