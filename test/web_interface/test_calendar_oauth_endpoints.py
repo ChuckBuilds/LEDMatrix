@@ -106,8 +106,11 @@ class TestTheRoutesExistAtAll:
         widget = (Path(project_root)
                   / 'web_interface/static/v3/js/widgets/google-oauth.js'
                   ).read_text(encoding='utf-8')
-        assert "role', 'status'" in widget or 'role="status"' in widget
-        assert 'aria-live' in widget
+        # Both attributes must be on the *status* element. Searching for them
+        # separately would pass with each on a different node, which announces
+        # nothing.
+        assert "status.setAttribute('role', 'status')" in widget, widget[:0]
+        assert "status.setAttribute('aria-live', 'polite')" in widget
 
     def test_the_paste_box_has_an_accessible_name(self):
         # A visible label is not enough on its own: without the association the
@@ -116,8 +119,16 @@ class TestTheRoutesExistAtAll:
         widget = (Path(project_root)
                   / 'web_interface/static/v3/js/widgets/google-oauth.js'
                   ).read_text(encoding='utf-8')
-        assert "codeLabel.setAttribute('for'" in widget
-        assert 'codeInput.id = ' in widget
+        # The binding is what matters, not that both lines exist: a `for` and
+        # an `id` that disagree leave the input just as anonymous. Both must
+        # go through the same identifier.
+        import re as _re
+        for_target = _re.search(r"codeLabel\.setAttribute\('for',\s*(\w+)\)", widget)
+        id_source = _re.search(r"codeInput\.id\s*=\s*(\w+)", widget)
+        assert for_target and id_source, (for_target, id_source)
+        assert for_target.group(1) == id_source.group(1), (
+            "label points at %r but the input is %r"
+            % (for_target.group(1), id_source.group(1)))
 
     def test_the_failed_page_is_called_out_loudly(self):
         # The loopback redirect lands on a browser error page at exactly the
