@@ -6272,7 +6272,6 @@ sys.exit(proc.returncode)
                     timeout=120,
                     env=env
                 )
-                os.unlink(wrapper_path)
 
                 if result.returncode == 0:
                     return jsonify({
@@ -6287,9 +6286,13 @@ sys.exit(proc.returncode)
                         'output': result.stdout + result.stderr
                     }), 400
             except subprocess.TimeoutExpired:
+                return jsonify({'status': 'error', 'message': 'Authentication timed out'}), 408
+            finally:
+                # The wrapper carries the user's redirect URL, so it must not
+                # survive the request on any path — including a failure to
+                # launch, which the previous per-branch unlinks missed.
                 if os.path.exists(wrapper_path):
                     os.unlink(wrapper_path)
-                return jsonify({'status': 'error', 'message': 'Authentication timed out'}), 408
         else:
             # Step 1: Get authorization URL
             # Import the script's functions directly to get the auth URL
