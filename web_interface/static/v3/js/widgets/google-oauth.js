@@ -56,6 +56,11 @@
 
             const status = document.createElement('p');
             status.className = 'text-xs text-gray-400 mt-2';
+            // Every message this widget gives -- the consent link is ready,
+            // the exchange failed -- arrives here after an async call, so a
+            // screen reader is told nothing unless it is a live region.
+            status.setAttribute('role', 'status');
+            status.setAttribute('aria-live', 'polite');
 
             const step2 = document.createElement('div');
             step2.className = 'mt-3 hidden';
@@ -85,12 +90,19 @@
                 + 'Copy the <strong>entire address</strong> out of the address bar '
                 + '(it contains <code>?code=...</code>) and paste it in the box below.</p>';
 
+            const codeInputId = fieldId + '_redirect_url';
+
             const codeLabel = document.createElement('label');
             codeLabel.className = 'block text-xs text-gray-300 mt-3';
             codeLabel.textContent = 'Paste the address from that failed page here:';
+            // The label was visible but not associated, so the input still had
+            // no accessible name -- a placeholder is not one, and it vanishes
+            // on focus, which is exactly when the value is being pasted.
+            codeLabel.setAttribute('for', codeInputId);
 
             const codeInput = document.createElement('input');
             codeInput.type = 'text';
+            codeInput.id = codeInputId;
             codeInput.placeholder = 'http://127.0.0.1/?code=...';
             codeInput.className =
                 'mt-2 block w-full px-3 py-2 text-sm border border-gray-600 '

@@ -100,6 +100,25 @@ class TestTheRoutesExistAtAll:
                 ).read_text(encoding='utf-8')
         assert 'widgets/google-oauth.js' in base
 
+    def test_the_status_line_is_announced(self):
+        # Every message the widget gives arrives after an async call, so a
+        # screen reader hears nothing unless the element is a live region.
+        widget = (Path(project_root)
+                  / 'web_interface/static/v3/js/widgets/google-oauth.js'
+                  ).read_text(encoding='utf-8')
+        assert "role', 'status'" in widget or 'role="status"' in widget
+        assert 'aria-live' in widget
+
+    def test_the_paste_box_has_an_accessible_name(self):
+        # A visible label is not enough on its own: without the association the
+        # input's only name is a placeholder, which vanishes on focus -- which
+        # is exactly when the value is being pasted.
+        widget = (Path(project_root)
+                  / 'web_interface/static/v3/js/widgets/google-oauth.js'
+                  ).read_text(encoding='utf-8')
+        assert "codeLabel.setAttribute('for'" in widget
+        assert 'codeInput.id = ' in widget
+
     def test_the_failed_page_is_called_out_loudly(self):
         # The loopback redirect lands on a browser error page at exactly the
         # moment the user has to act. In small grey text it gets missed and the
@@ -189,10 +208,10 @@ class TestListingShape:
 
         import types
         fake_pickle = types.SimpleNamespace(load=lambda f: creds, dump=lambda *a: None)
-        pages = items if isinstance(items, list) and items and isinstance(items[0], dict) \
-            else items
-        if isinstance(pages, list):
-            pages = [{'items': pages}]
+        # Callers pass a flat list of calendars; the API returns them wrapped
+        # in a page. One page is all these cases need -- TestPagination builds
+        # its own multi-page sequences.
+        pages = [{'items': items}]
 
         state = {'i': 0}
 
