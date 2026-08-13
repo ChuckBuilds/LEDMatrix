@@ -43,10 +43,15 @@ def validate_image_url(url: str) -> Tuple[bool, Optional[str]]:
     if any(handler in url_lower for handler in ['onerror=', 'onload=', 'onclick=']):
         return False, "Event handlers not allowed in URLs"
     
+    # Reject directory traversal anywhere, not only in relative paths:
+    # http://host/../secret is as much a traversal attempt as /../secret.
+    if '..' in url:
+        return False, "Invalid path: directory traversal not allowed"
+
     # Allow relative paths starting with /
     if url.startswith('/'):
-        # Validate it's a safe relative path (no directory traversal)
-        if '..' in url or url.startswith('//'):
+        # // would be a protocol-relative URL, not a local path
+        if url.startswith('//'):
             return False, "Invalid relative path"
         return True, None
     
@@ -104,10 +109,11 @@ def validate_file_upload(filename: str, max_size_mb: int = 10,
     if '..' in filename or '/' in filename or '\\' in filename:
         return False, "Filename contains invalid characters"
     
-    # Check extension if specified
+    # Check extension if specified. Both sides are lowercased: the caller's
+    # list is as likely to hold '.TTF' as the filename is.
     if allowed_extensions:
         file_ext = Path(filename).suffix.lower()
-        if file_ext not in allowed_extensions:
+        if file_ext not in [ext.lower() for ext in allowed_extensions]:
             return False, f"File extension must be one of: {', '.join(allowed_extensions)}"
     
     return True, None
@@ -147,7 +153,8 @@ def validate_numeric_range(value: float, min_val: Optional[float] = None,
     Returns:
         Tuple of (is_valid, error_message)
     """
-    if not isinstance(value, (int, float)):
+    # bool is an int subclass, so True would otherwise validate as 1.
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
         return False, "Value must be a number"
     
     if min_val is not None and value < min_val:
@@ -183,11 +190,19 @@ def validate_string_length(text: str, min_length: Optional[int] = None,
 
 def sanitize_plugin_config(config: dict) -> dict:
     """
-    Sanitize plugin configuration input to prevent injection.
-    
+    Restrict a plugin config to safe key names and value types.
+
+    Drops keys that are not plain identifiers and values that are not
+    JSON-ish scalars, lists, or dicts, recursing into the latter two.
+
+    String values are returned **unescaped**: output escaping is the
+    template layer's job, and escaping here would store the escaped form
+    in config.json. Do not read this function as XSS protection for
+    rendered output.
+
     Args:
         config: Configuration dictionary
-    
+
     Returns:
         Sanitized configuration dictionary
     """
