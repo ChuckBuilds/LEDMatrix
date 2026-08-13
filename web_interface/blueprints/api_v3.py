@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 from src.web_interface.api_helpers import success_response, error_response, validate_request_json
 from src.web_interface.errors import ErrorCode
 from src.web_interface.secret_helpers import find_secret_fields, separate_secrets
-from src.web_interface.error_handler import describe_exception
+from src.web_interface.error_handler import describe_exception, redact_text
 from src.plugin_system.operation_types import OperationType
 from src.web_interface.validators import (
     validate_file_upload
@@ -7316,6 +7316,227 @@ def upload_calendar_credentials():
     except Exception as e:
         logger.error('Error in upload_calendar_credentials', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
+
+# calendarList.list pages at 250 entries maximum. Ten pages is far past any
+# real account and exists only so a malformed nextPageToken cannot spin here.
+_CALENDAR_LIST_MAX_PAGES = 10
+
+
+def _calendar_plugin_dir() -> Optional[Path]:
+    """Where the calendar plugin is installed, or None if it is not."""
+    if api_v3.plugin_manager:
+        plugin_dir = api_v3.plugin_manager.get_plugin_directory('calendar')
+    else:
+        plugin_dir = PROJECT_ROOT / 'plugins' / 'calendar'
+    if not plugin_dir:
+        return None
+    plugin_dir = Path(plugin_dir)
+    return plugin_dir if plugin_dir.exists() else None
+
+
+def _run_calendar_registration(plugin_dir: Path, stdin_payload: str):
+    """Run the plugin's OAuth script and return the JSON object it prints.
+
+    The script decides between web and terminal mode by whether stdin is a
+    tty, so it must be given a pipe. It emits one JSON object on stdout; the
+    last parsable line is taken, because an import warning or a library's
+    stderr redirection can land in front of it.
+
+    Returns (payload, error_message). Exactly one is None.
+    """
+    script = plugin_dir / 'calendar_registration.py'
+    if not script.exists():
+        return None, 'Authentication script not found in the calendar plugin'
+
+    try:
+        result = subprocess.run(  # nosec B603 - fixed script path inside the plugin dir
+            [sys.executable, str(script)],
+            input=stdin_payload,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            cwd=str(plugin_dir),
+        )
+    except subprocess.TimeoutExpired:
+        return None, 'Authentication timed out after 120s'
+    except OSError as e:
+        logger.error('Could not run calendar_registration.py', exc_info=True)
+        return None, 'Could not run the authentication script: %s' % describe_exception(e)
+
+    for line in reversed((result.stdout or '').splitlines()):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return payload, None
+
+    raw = (result.stderr or result.stdout or '').strip()
+    # The unredacted text goes to the log, where it is worth having in full.
+    # What comes back over HTTP is redacted: this is a script that handles
+    # OAuth client secrets, and its stderr can quote them.
+    if raw:
+        logger.error('calendar_registration.py failed (exit %s): %s',
+                     result.returncode, raw)
+    return None, 'Authentication script produced no result%s' % (
+        ': %s' % redact_text(raw) if raw else '')
+
+
+@api_v3.route('/plugins/calendar/authenticate', methods=['POST'])
+def authenticate_calendar():
+    """Google OAuth for the calendar plugin, in the two steps it requires.
+
+    Step 1 (no body) returns the consent URL to open. Step 2 posts back the
+    URL Google redirected to -- it fails to load, because the redirect points
+    at a loopback address nothing is listening on, but the address bar carries
+    the authorization code -- and the script exchanges it for a token.
+
+    Two calls rather than one because the user has to visit Google in between.
+    The script persists the PKCE verifier from step 1 for step 2 to reuse; the
+    exchange fails with "Missing code verifier" otherwise.
+    """
+    try:
+        plugin_dir = _calendar_plugin_dir()
+        if plugin_dir is None:
+            return jsonify({
+                'status': 'error',
+                'message': 'The calendar plugin is not installed'
+            }), 404
+
+        if not (plugin_dir / 'credentials.json').exists():
+            return jsonify({
+                'status': 'error',
+                'message': ('No credentials.json yet. Upload your Google OAuth '
+                            'client file first (Step 1).')
+            }), 400
+
+        data = request.get_json(silent=True) or {}
+        redirect_url = (data.get('redirect_url') or data.get('code') or '').strip()
+
+        payload, error = _run_calendar_registration(plugin_dir, redirect_url)
+        if error:
+            return jsonify({'status': 'error', 'message': error}), 500
+        if payload.get('status') != 'success':
+            # The script's own diagnosis is more useful than anything that
+            # could be reconstructed here -- but it interpolates exceptions
+            # into its messages, so it reaches the client redacted and the
+            # original goes to the log.
+            logger.error('calendar authentication failed: %s', payload)
+            safe = dict(payload)
+            safe['message'] = redact_text(str(payload.get('message', '')
+                                              or 'Authentication failed'))
+            return jsonify(safe), 400
+        return jsonify(payload)
+
+    except Exception as e:
+        logger.error('Error in authenticate_calendar', exc_info=True)
+        return jsonify({'status': 'error',
+                        'message': 'An error occurred; see logs for details',
+                        'details': describe_exception(e)}), 500
+
+
+@api_v3.route('/plugins/calendar/list-calendars', methods=['GET'])
+def list_calendar_calendars():
+    """The calendars this account can see, for the config picker.
+
+    Reads the token the OAuth flow wrote rather than shelling out again: the
+    picker is used interactively and a subprocess per click is slower than the
+    API call it would be wrapping.
+    """
+    try:
+        plugin_dir = _calendar_plugin_dir()
+        if plugin_dir is None:
+            return jsonify({
+                'status': 'error',
+                'message': 'The calendar plugin is not installed'
+            }), 404
+
+        token_file = plugin_dir / 'token.pickle'
+        if not token_file.exists():
+            return jsonify({
+                'status': 'error',
+                'message': ('Not authenticated with Google yet. Complete Step 2 '
+                            'first, then load your calendars.')
+            }), 400
+
+        try:
+            import pickle
+            from google.auth.transport.requests import Request as GoogleRequest
+            from googleapiclient.discovery import build as build_google_service
+        except ImportError as e:
+            return jsonify({
+                'status': 'error',
+                # The name of the missing module is the whole diagnosis, but it
+                # arrives as an exception, so it goes through the redactor like
+                # any other -- an ImportError can quote a path.
+                'message': ('The Google API libraries are not installed. Install '
+                            "the calendar plugin's requirements.txt. (%s)"
+                            % describe_exception(e))
+            }), 500
+
+        with open(token_file, 'rb') as handle:
+            # Written only by this plugin's own OAuth flow, into its own
+            # directory, and read here exactly as the plugin itself reads it.
+            creds = pickle.load(handle)  # nosec B301 - locally generated token
+
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(GoogleRequest())
+            with open(token_file, 'wb') as handle:
+                pickle.dump(creds, handle)
+            os.chmod(token_file, 0o600)
+
+        if not creds or not creds.valid:
+            return jsonify({
+                'status': 'error',
+                'message': ('Stored Google credentials are no longer valid. '
+                            'Run Step 2 again to re-authenticate.')
+            }), 400
+
+        service = build_google_service('calendar', 'v3', credentials=creds)
+
+        # calendarList.list returns 100 entries per page by default and caps at
+        # 250, handing back a nextPageToken when there are more. Taking only
+        # the first page would silently hide calendars from the picker, and the
+        # user would have no way to tell the list was truncated.
+        entries = []
+        page_token = None
+        for _ in range(_CALENDAR_LIST_MAX_PAGES):
+            response = service.calendarList().list(
+                maxResults=250, pageToken=page_token).execute()
+            entries.extend(response.get('items', []))
+            page_token = response.get('nextPageToken')
+            if not page_token:
+                break
+        else:
+            # 2500 calendars in, something is wrong with the account or the
+            # token is looping; show what was collected rather than spin.
+            logger.warning(
+                'calendarList paging stopped at %d pages with more remaining',
+                _CALENDAR_LIST_MAX_PAGES)
+
+        calendars = [{
+            'id': entry.get('id'),
+            # The picker labels each row with summary and falls back to the id
+            # only in its own display, so send something either way.
+            'summary': entry.get('summary') or entry.get('id'),
+            'primary': bool(entry.get('primary', False)),
+        } for entry in entries if entry.get('id')]
+
+        # Primary first, then alphabetically: the list is usually short but the
+        # one the user wants is almost always their own calendar.
+        calendars.sort(key=lambda c: (not c['primary'], c['summary'].lower()))
+
+        return jsonify({'status': 'success', 'calendars': calendars})
+
+    except Exception as e:
+        logger.error('Error in list_calendar_calendars', exc_info=True)
+        return jsonify({'status': 'error',
+                        'message': 'An error occurred; see logs for details',
+                        'details': describe_exception(e)}), 500
+
 
 @api_v3.route('/plugins/assets/delete', methods=['POST'])
 def delete_plugin_asset():
