@@ -170,6 +170,47 @@ Default returns `False`.
 List of display modes to show during a live takeover. Default returns the
 plugin's `display_modes` from its manifest.
 
+#### `get_vegas_priority_weight() -> Optional[int]`
+
+How many slots per Vegas cycle this plugin should get. Default returns
+`None`, which defers to the core.
+
+The Vegas ticker is otherwise a strict round robin — every plugin appears
+exactly once per cycle — so with a dozen plugins enabled a live score can be
+minutes stale by the time it comes round. A weight of *N* gives the plugin
+*N* slots per cycle, spread evenly through it rather than clumped.
+
+**You usually do not need this.** When the hook returns `None`, the core
+already gives a plugin `vegas_scroll.live_weight` whenever
+`has_live_priority()` and `has_live_content()` are both true. Live sports get
+extra turns with no code at all.
+
+Implement it only when the plugin knows something the core cannot. The
+motivating case is favorite teams — the core can see *that* a game is live,
+but not *whose*:
+
+```python
+def get_vegas_priority_weight(self):
+    if not (self.has_live_priority() and self.has_live_content()):
+        return None                       # let the core decide
+    vegas = self.global_config.get('display', {}).get('vegas_scroll', {})
+    if self._favorite_is_live():
+        return vegas.get('favorite_live_weight', 5)
+    return vegas.get('live_weight', 3)
+```
+
+The weight is per *plugin*, not per game: a scoreboard showing four live games
+still occupies one slot at a time and rotates its own games within it. Values
+are clamped to 1–10 by the caller. An exception here is caught and logged, and
+the core then falls back to its own live-content check — so a plugin whose
+weight calculation is broken still gets `live_weight` for a game that really
+is live, rather than being demoted to 1.
+
+Only consulted when the user has set `vegas_scroll.live_in_ticker`. With the
+default (`false`) live content preempts Vegas entirely and there is no ticker
+to be weighted within. See
+[ADVANCED_FEATURES.md](ADVANCED_FEATURES.md#live-content-in-the-ticker).
+
 ### Vegas scroll hooks
 
 Vegas mode shows multiple plugins as a single continuous scroll instead of

@@ -130,6 +130,9 @@
         "plugin_rotation_order": [],
         "use_short_date_format": true,
         "vegas_scroll": {
+      "live_in_ticker": false,
+      "live_weight": 3,
+      "favorite_live_weight": 5,
             "enabled": false,
             "scroll_speed": 50,
             "separator_width": 32,

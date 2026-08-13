@@ -1694,6 +1694,12 @@ class DisplayController:
                 logger.warning("Error checking live priority for %s: %s", mode_name, e)
         return live
 
+    def _vegas_keeps_live_in_ticker(self) -> bool:
+        """Whether live content should stay in the ticker instead of preempting it."""
+        coordinator = getattr(self, 'vegas_coordinator', None)
+        config = getattr(coordinator, 'vegas_config', None)
+        return bool(getattr(config, 'live_in_ticker', False))
+
     def _check_live_priority(self, advance=False):
         """Return the live-priority mode to display, or None if nothing is live.
 
@@ -1907,14 +1913,24 @@ class DisplayController:
                 # Check for live priority content and switch to it immediately.
                 # advance=True so multiple simultaneously-live games take turns
                 # (round-robin) instead of pinning to the first plugin.
-                if not self.on_demand_active and not wifi_status_data:
+                # Skipped when the ticker is keeping live content: switching
+                # the rotation underneath Vegas would move current_mode_index
+                # and stash a resume point for a takeover that never happens.
+                if (not self.on_demand_active and not wifi_status_data
+                        and not (self._is_vegas_mode_active()
+                                 and self._vegas_keeps_live_in_ticker())):
                     live_priority_mode = self._check_live_priority(advance=True)
                     self._apply_live_priority(live_priority_mode)
 
                 # Vegas scroll mode - continuous ticker across all plugins
                 # Priority: on-demand > wifi-status > live-priority > vegas > normal rotation
                 if self._is_vegas_mode_active() and not wifi_status_data:
-                    live_mode = self._check_live_priority()
+                    # Live content normally preempts the ticker entirely. With
+                    # vegas_scroll.live_in_ticker the marquee keeps running and
+                    # the live plugin takes extra turns inside it instead --
+                    # see StreamManager._apply_priority_weights.
+                    live_mode = (None if self._vegas_keeps_live_in_ticker()
+                                 else self._check_live_priority())
                     if not live_mode:
                         try:
                             # Run Vegas mode iteration
