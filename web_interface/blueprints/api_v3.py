@@ -2411,7 +2411,7 @@ def get_on_demand_status():
 def start_on_demand_display():
     """Request the display controller to run a specific plugin on-demand."""
     try:
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
         plugin_id = data.get('plugin_id')
         mode = data.get('mode')
         duration = data.get('duration')
@@ -2935,7 +2935,7 @@ def manage_plugin_limits(plugin_id):
                 })
         else:
             # POST - Set limits
-            data = request.get_json() or {}
+            data = request.get_json(silent=True) or {}
             from src.plugin_system.resource_monitor import ResourceLimits
 
             limits = ResourceLimits(
@@ -4236,7 +4236,7 @@ def refresh_plugin_store():
         if not api_v3.plugin_store_manager:
             return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
 
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
         fetch_commit_info = data.get('fetch_commit_info', data.get('fetch_latest_versions', False))
 
         # Force refresh the registry
@@ -5822,7 +5822,7 @@ def reset_plugin_config():
         if not api_v3.config_manager:
             return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 500
 
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
         plugin_id = data.get('plugin_id')
         preserve_secrets = data.get('preserve_secrets', True)
 
@@ -6209,7 +6209,7 @@ sys.exit(proc.returncode)
 def authenticate_spotify():
     """Run Spotify authentication script"""
     try:
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
         redirect_url = data.get('redirect_url', '').strip()
 
         # Get plugin directory
@@ -7146,7 +7146,7 @@ def upload_of_the_day_json():
 def delete_of_the_day_json():
     """Delete a JSON file from of-the-day plugin"""
     try:
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
         file_id = data.get('file_id')  # This is the category_name
 
         if not file_id:
