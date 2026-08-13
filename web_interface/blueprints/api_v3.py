@@ -7239,6 +7239,29 @@ def serve_plugin_static(plugin_id, file_path):
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 
+_MAX_CREDENTIAL_BACKUPS = 5
+
+
+def _prune_credential_backups(plugin_dir: Path) -> None:
+    """Keep only the newest _MAX_CREDENTIAL_BACKUPS credential backups.
+
+    Every re-upload copies the previous credentials.json aside. Without
+    pruning those accumulate for the life of the install — each one a
+    complete set of OAuth client credentials sitting in the plugin
+    directory.
+    """
+    backups = sorted(
+        plugin_dir.glob('credentials.json.backup.*'),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    for stale in backups[_MAX_CREDENTIAL_BACKUPS:]:
+        try:
+            stale.unlink()
+        except OSError:
+            logger.warning("Could not remove old credential backup %s", stale.name)
+
+
 @api_v3.route('/plugins/calendar/upload-credentials', methods=['POST'])
 def upload_calendar_credentials():
     """Upload credentials.json file for calendar plugin"""
@@ -7270,20 +7293,25 @@ def upload_calendar_credentials():
         except json.JSONDecodeError:
             return jsonify({'status': 'error', 'message': 'File is not valid JSON'}), 400
 
-        # Validate it looks like Google OAuth credentials
+        # Validate it looks like Google OAuth credentials. The content
+        # already parsed as JSON above, so anything raising here means it is
+        # not credentials-shaped — a bare scalar, for instance, where the
+        # membership test raises TypeError. Reject rather than swallow: a
+        # file saved as credentials.json but not usable as credentials only
+        # fails later, somewhere less obvious.
         try:
             file.seek(0)
             creds_data = json.loads(file.read())
             file.seek(0)
-
-            # Check for required Google OAuth fields
-            if 'installed' not in creds_data and 'web' not in creds_data:
-                return jsonify({
-                    'status': 'error',
-                    'message': 'File does not appear to be a valid Google OAuth credentials file'
-                }), 400
+            is_oauth_shaped = 'installed' in creds_data or 'web' in creds_data
         except Exception:
-            pass  # Continue even if validation fails
+            is_oauth_shaped = False
+
+        if not is_oauth_shaped:
+            return jsonify({
+                'status': 'error',
+                'message': 'File does not appear to be a valid Google OAuth credentials file'
+            }), 400
 
         # Get plugin directory
         plugin_id = 'calendar'
@@ -7303,6 +7331,7 @@ def upload_calendar_credentials():
             backup_path = Path(plugin_dir) / f'credentials.json.backup.{int(time.time())}'
             import shutil
             shutil.copy2(credentials_path, backup_path)
+            _prune_credential_backups(Path(plugin_dir))
 
         # Save new file
         file.save(str(credentials_path))
