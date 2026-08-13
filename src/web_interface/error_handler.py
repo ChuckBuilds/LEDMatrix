@@ -142,14 +142,17 @@ def create_success_response(
         "status": "success"
     }
     
+    # All three use `is not None` rather than truthiness: "" and {} are
+    # values a caller chose to send, and dropping them silently would make
+    # the response shape depend on the data.
     if data is not None:
         response["data"] = data
-    
-    if message:
+
+    if message is not None:
         response["message"] = message
-    
-    if metadata:
+
+    if metadata is not None:
         response["metadata"] = metadata
-    
+
     return response
 
