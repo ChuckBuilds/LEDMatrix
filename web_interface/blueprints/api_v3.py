@@ -328,7 +328,7 @@ def save_schedule_config():
         if not api_v3.config_manager:
             return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 500
 
-        data = request.get_json()
+        data = request.get_json(silent=True)
         if not data:
             return jsonify({'status': 'error', 'message': 'No data provided'}), 400
 
@@ -536,7 +536,7 @@ def save_dim_schedule_config():
         if not api_v3.config_manager:
             return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 500
 
-        data = request.get_json()
+        data = request.get_json(silent=True)
         if not data:
             return jsonify({'status': 'error', 'message': 'No data provided'}), 400
 
@@ -1345,7 +1345,7 @@ def save_raw_main_config():
         if not api_v3.config_manager:
             return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 500
 
-        data = request.get_json()
+        data = request.get_json(silent=True)
         if not data:
             return jsonify({'status': 'error', 'message': 'No data provided'}), 400
 
@@ -1391,7 +1391,7 @@ def save_raw_secrets_config():
         if not api_v3.config_manager:
             return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 500
 
-        data = request.get_json()
+        data = request.get_json(silent=True)
         if not data:
             return jsonify({'status': 'error', 'message': 'No data provided'}), 400
 
@@ -2966,7 +2966,7 @@ def toggle_plugin():
         content_type = request.content_type or ''
 
         if 'application/json' in content_type:
-            data = request.get_json()
+            data = request.get_json(silent=True)
             if not data or 'plugin_id' not in data or 'enabled' not in data:
                 return jsonify({'status': 'error', 'message': 'plugin_id and enabled required'}), 400
             plugin_id = data['plugin_id']
@@ -3837,7 +3837,7 @@ def install_plugin():
         if not api_v3.plugin_store_manager:
             return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
 
-        data = request.get_json()
+        data = request.get_json(silent=True)
         if not data or 'plugin_id' not in data:
             return jsonify({'status': 'error', 'message': 'plugin_id required'}), 400
 
@@ -3971,7 +3971,7 @@ def install_plugin_from_url():
         if not api_v3.plugin_store_manager:
             return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
 
-        data = request.get_json()
+        data = request.get_json(silent=True)
         if not data or 'repo_url' not in data:
             return jsonify({'status': 'error', 'message': 'repo_url required'}), 400
 
@@ -4026,7 +4026,7 @@ def get_registry_from_url():
         if not api_v3.plugin_store_manager:
             return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
 
-        data = request.get_json()
+        data = request.get_json(silent=True)
         if not data or 'repo_url' not in data:
             return jsonify({'status': 'error', 'message': 'repo_url required'}), 400
 
@@ -4071,7 +4071,7 @@ def add_saved_repository():
         if not api_v3.saved_repositories_manager:
             return jsonify({'status': 'error', 'message': 'Saved repositories manager not initialized'}), 500
 
-        data = request.get_json()
+        data = request.get_json(silent=True)
         if not data or 'repo_url' not in data:
             return jsonify({'status': 'error', 'message': 'repo_url required'}), 400
 
@@ -4102,7 +4102,7 @@ def remove_saved_repository():
         if not api_v3.saved_repositories_manager:
             return jsonify({'status': 'error', 'message': 'Saved repositories manager not initialized'}), 500
 
-        data = request.get_json()
+        data = request.get_json(silent=True)
         if not data or 'repo_url' not in data:
             return jsonify({'status': 'error', 'message': 'repo_url required'}), 400
 
@@ -6529,7 +6529,7 @@ def get_fonts_overrides():
 def save_fonts_overrides():
     """Save font overrides"""
     try:
-        data = request.get_json()
+        data = request.get_json(silent=True)
         if not data:
             return jsonify({'status': 'error', 'message': 'No data provided'}), 400
 
@@ -7635,7 +7635,7 @@ def connect_wifi():
     try:
         from src.wifi_manager import WiFiManager
 
-        data = request.get_json()
+        data = request.get_json(silent=True)
         if not data:
             return jsonify({
                 'status': 'error',
@@ -7789,7 +7789,7 @@ def set_auto_enable_ap_mode():
     try:
         from src.wifi_manager import WiFiManager
 
-        data = request.get_json()
+        data = request.get_json(silent=True)
         if data is None or 'auto_enable_ap_mode' not in data:
             return jsonify({
                 'status': 'error',
@@ -7918,7 +7918,7 @@ def delete_cache_file():
             from src.cache_manager import CacheManager
             api_v3.cache_manager = CacheManager()
 
-        data = request.get_json()
+        data = request.get_json(silent=True)
         if not data or 'key' not in data:
             return jsonify({'status': 'error', 'message': 'cache key is required'}), 400
 
