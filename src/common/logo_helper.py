@@ -19,6 +19,10 @@ from src.common.permission_utils import (
 )
 
 
+# Well above any real team logo; bounds what a remote URL can write to disk.
+MAX_LOGO_BYTES = 10 * 1024 * 1024
+
+
 class LogoHelper:
     """
     Helper class for logo loading, caching, and resizing.
@@ -226,7 +230,10 @@ class LogoHelper:
         return {
             'cached_logos': len(self._logo_cache),
             'cache_size_limit': self.cache_size,
-            'cache_usage_percent': (len(self._logo_cache) / self.cache_size) * 100
+            'cache_usage_percent': (
+                (len(self._logo_cache) / self.cache_size) * 100
+                if self.cache_size else 0
+            ),
         }
     
     def _resize_logo(self, logo: Image.Image, max_width: Optional[int] = None, 
@@ -258,21 +265,43 @@ class LogoHelper:
         self._cache_order.append(cache_key)
     
     def _download_logo(self, url: str, file_path: Path) -> None:
-        """Download logo from URL."""
+        """Download logo from URL.
+
+        The response size is capped and the saved file is verified as a
+        decodable image before it is left on disk: a logo URL is remote
+        input, and without this an oversized or malformed response would
+        be cached for every later load_logo() call to trip over.
+        """
         # Ensure directory exists with proper permissions
         ensure_directory_permissions(file_path.parent, get_assets_dir_mode())
-        
+
         # Download with timeout
         response = self.session.get(url, timeout=30)
         response.raise_for_status()
-        
+
+        content = response.content
+        if len(content) > MAX_LOGO_BYTES:
+            raise ValueError(
+                f"Logo at {url} is {len(content)} bytes, over the "
+                f"{MAX_LOGO_BYTES}-byte limit; not saved")
+
         # Save to file
         with open(file_path, 'wb') as f:
-            f.write(response.content)
-        
+            f.write(content)
+
+        # Verify it decodes before leaving it on disk. PIL raises
+        # DecompressionBombError past its own pixel limit; a partial or
+        # non-image response raises UnidentifiedImageError/OSError.
+        try:
+            with Image.open(file_path) as probe:
+                probe.load()
+        except Exception:
+            file_path.unlink(missing_ok=True)
+            raise
+
         # Set proper file permissions after saving
         ensure_file_permissions(file_path, get_assets_file_mode())
-        
+
         self.logger.debug(f"Downloaded logo to {file_path}")
     
     def _create_placeholder_logo(self, team_abbr: str, 
