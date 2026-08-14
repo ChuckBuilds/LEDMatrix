@@ -853,29 +853,30 @@ class TestStop:
         make_manager(role=SyncRole.STANDALONE).stop()  # all sockets None
 
 
-def _broadcast_works(port):
-    """True when this environment can actually deliver a UDP broadcast.
+def _broadcast_available(port):
+    """True when a UDP broadcast can be sent at all in this environment.
 
-    The handshake below depends on it: the follower announces itself to
-    ("<broadcast>", port). Sandboxes and some CI networks drop or refuse
-    broadcast, and sync_manager swallows the sendto error, so without
-    this probe the test would just wait out its deadline and fail for a
-    reason that has nothing to do with the code.
+    The handshake below depends on broadcast: the follower announces
+    itself to ("<broadcast>", port), and sync_manager swallows any sendto
+    error. Without this probe, a sandbox or CI network that refuses
+    broadcast would make the test wait out its whole deadline and then
+    fail for a reason that has nothing to do with the code.
+
+    Sending is enough to detect the case that actually occurs — a
+    refusing environment raises here. Confirming *delivery* would mean
+    binding INADDR_ANY to receive, which is a listening socket this suite
+    has no reason to open; a network that accepts the send and silently
+    drops it still reaches the assertion, exactly as before.
     """
-    recv = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    send = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        recv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        recv.bind(("", port))
-        recv.settimeout(0.5)
-        send.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        send.sendto(b"probe", ("<broadcast>", port))
-        return recv.recvfrom(64)[0] == b"probe"
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        sock.sendto(b"probe", ("<broadcast>", port))
+        return True
     except OSError:
         return False
     finally:
-        recv.close()
-        send.close()
+        sock.close()
 
 
 class TestRealSocketHandshake:
@@ -895,13 +896,17 @@ class TestRealSocketHandshake:
         # The free-port probe is inherently racy — the port can be taken
         # between release and rebind — so retry rather than fail on it.
         for attempt in range(5):
+            # Probed on loopback: this only needs a port number, and the
+            # manager's own bind is what has to succeed. If the port turns
+            # out to be taken on another interface, the retry below covers
+            # it — same as for the race.
             probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            probe.bind(("", 0))
+            probe.bind(("127.0.0.1", 0))
             port = probe.getsockname()[1]
             probe.close()
 
-            if not _broadcast_works(port):
-                pytest.skip("environment cannot deliver UDP broadcast")
+            if not _broadcast_available(port):
+                pytest.skip("environment refuses UDP broadcast")
 
             try:
                 leader = DisplaySyncManager("leader", {"port": port}, hw, MagicMock())
