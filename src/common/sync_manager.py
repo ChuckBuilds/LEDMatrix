@@ -19,6 +19,7 @@ Port default: 5765 (UDP). Open this port on both Pis if ufw is active:
 
 import io
 import json
+import math
 import os
 import socket
 import struct
@@ -545,7 +546,17 @@ class DisplaySyncManager:
                             self.write_status_file()
                         elif t == "sx":
                             # Vegas scroll-position sync — tiny message, renders locally
-                            self._latest_scroll_x = float(msg["x"])
+                            scroll_x = float(msg["x"])
+                            if not math.isfinite(scroll_x):
+                                # json.loads accepts the NaN/Infinity literals,
+                                # and float("nan") accepts the strings, so a
+                                # non-finite x reaches here intact. Left alone
+                                # it poisons every offset computed from it —
+                                # NaN comparisons are all false, so the
+                                # follower renders a frame it can never scroll
+                                # back from. Treat it as malformed.
+                                raise ValueError(f"non-finite scroll x: {msg['x']!r}")
+                            self._latest_scroll_x = scroll_x
                             self._last_leader_frame_time = time.time()
                             self._leader_ip = sender_ip
                             if self._follower_state == FollowerState.STANDALONE:

@@ -557,6 +557,33 @@ class TestFollowerRecvLoop:
         self._drive(mgr, b"\x89PNG not really but not JSON either")
         assert mgr.get_latest_frame() is None
 
+    @pytest.mark.parametrize("literal", ["NaN", "Infinity", "-Infinity"])
+    def test_non_finite_scroll_x_is_rejected(self, literal):
+        # json.loads accepts these bare literals, and float() accepts them
+        # as strings, so they arrive as real floats rather than raising.
+        # NaN in particular survives every comparison the scroll code makes
+        # (all false), so the follower would sit on a position it can never
+        # advance past. It has to be treated as a malformed message.
+        for payload in (b'{"t": "sx", "x": ' + literal.encode() + b'}',
+                        json.dumps({"t": "sx", "x": literal}).encode()):
+            mgr = make_manager(role=SyncRole.FOLLOWER)
+            calls = []
+            mgr._on_new_cycle = lambda: calls.append(1)
+            self._drive(mgr, payload)
+            assert mgr.get_latest_scroll_x() is None
+            assert mgr._follower_state is FollowerState.STANDALONE
+            assert calls == []
+
+    def test_non_finite_scroll_x_leaves_a_good_value_in_place(self):
+        # The reject must not clear the last usable position either — a
+        # follower mid-scroll keeps rendering from where it was.
+        mgr = make_manager(role=SyncRole.FOLLOWER)
+        mgr._follower_state = FollowerState.FOLLOWER
+        self._drive(mgr, json.dumps({"t": "sx", "x": 7.5}).encode())
+        assert mgr.get_latest_scroll_x() == 7.5
+        self._drive(mgr, b'{"t": "sx", "x": NaN}')
+        assert mgr.get_latest_scroll_x() == 7.5
+
     def test_scroll_x_missing_key_is_swallowed(self):
         mgr = make_manager(role=SyncRole.FOLLOWER)
         self._drive(mgr, json.dumps({"t": "sx"}).encode())  # no "x"
@@ -884,6 +911,82 @@ class TestStop:
         make_manager(role=SyncRole.STANDALONE).stop()  # all sockets None
 
 
+class TestFollowerAnnounceLoop:
+    """The follower's outbound half of the handshake.
+
+    Covered on mock sockets so it does not depend on the network
+    delivering anything: the real-socket handshake below skips when the
+    environment drops broadcast, and that skip is only safe because a
+    regression in what the follower *sends* is caught here instead.
+    """
+
+    def _run_once(self, monkeypatch, mgr, now=1000.0):
+        fake_clock(monkeypatch, time_fn=lambda: now,
+                   sleep_fn=lambda _: setattr(mgr, "_running", False))
+        mgr._running = True
+        mgr._follower_announce_loop()
+
+    def _sent(self, mgr):
+        return [(json.loads(payload.decode("utf-8")), dest)
+                for payload, dest in
+                (call[0] for call in mgr._send_sock.sendto.call_args_list)]
+
+    def test_hello_carries_this_display_and_goes_to_broadcast(self, monkeypatch):
+        mgr = make_manager(role=SyncRole.FOLLOWER,
+                           hw_config={"rows": 64, "cols": 128, "chain_length": 3})
+        mgr._send_sock = MagicMock()
+        self._run_once(monkeypatch, mgr)
+
+        sent = self._sent(mgr)
+        assert all(dest == ("<broadcast>", mgr.port) for _, dest in sent)
+        assert {"t": "hello", "rows": 64, "cols": 128, "chain": 3} in [m for m, _ in sent]
+
+    def test_heartbeat_is_announced_too(self, monkeypatch):
+        mgr = make_manager(role=SyncRole.FOLLOWER)
+        mgr._send_sock = MagicMock()
+        self._run_once(monkeypatch, mgr)
+        assert {"t": "hb"} in [m for m, _ in self._sent(mgr)]
+
+    def test_hello_defaults_when_hardware_config_is_empty(self, monkeypatch):
+        mgr = make_manager(role=SyncRole.FOLLOWER, hw_config={})
+        mgr._send_sock = MagicMock()
+        self._run_once(monkeypatch, mgr)
+        hello = next(m for m, _ in self._sent(mgr) if m["t"] == "hello")
+        assert (hello["rows"], hello["cols"], hello["chain"]) == (32, 64, 1)
+
+    def test_hello_is_not_resent_before_its_interval(self, monkeypatch):
+        # Heartbeat is the faster of the two, so advancing by one heartbeat
+        # per iteration must produce more heartbeats than hellos.
+        mgr = make_manager(role=SyncRole.FOLLOWER)
+        mgr._send_sock = MagicMock()
+        clock = {"now": 1000.0}
+        ticks = {"n": 0}
+
+        def tick(_):
+            ticks["n"] += 1
+            clock["now"] += sync_manager.HEARTBEAT_INTERVAL
+            if ticks["n"] >= 2:
+                mgr._running = False
+
+        fake_clock(monkeypatch, time_fn=lambda: clock["now"], sleep_fn=tick)
+        mgr._running = True
+        mgr._follower_announce_loop()
+
+        kinds = [m["t"] for m, _ in self._sent(mgr)]
+        assert kinds.count("hello") == 1
+        assert kinds.count("hb") == 2
+
+    def test_send_failure_is_swallowed(self, monkeypatch):
+        # This swallow is why a network that drops broadcast looks like
+        # silence rather than an error — the handshake test's skip exists
+        # for exactly that reason.
+        mgr = make_manager(role=SyncRole.FOLLOWER)
+        mgr._send_sock = MagicMock()
+        mgr._send_sock.sendto.side_effect = OSError("network unreachable")
+        self._run_once(monkeypatch, mgr)  # must not raise
+        assert mgr.logger.debug.called
+
+
 def _broadcast_available(port):
     """True when a UDP broadcast can be sent at all in this environment.
 
@@ -893,11 +996,10 @@ def _broadcast_available(port):
     broadcast would make the test wait out its whole deadline and then
     fail for a reason that has nothing to do with the code.
 
-    Sending is enough to detect the case that actually occurs — a
-    refusing environment raises here. Confirming *delivery* would mean
-    binding INADDR_ANY to receive, which is a listening socket this suite
-    has no reason to open; a network that accepts the send and silently
-    drops it still reaches the assertion, exactly as before.
+    This catches only refusal, not silent drop — confirming delivery
+    would mean binding INADDR_ANY to receive, a listening socket this
+    suite has no business opening. The drop case is handled at the
+    deadline instead; see the skip in the handshake test.
     """
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -961,6 +1063,22 @@ class TestRealSocketHandshake:
                         and follower._peer_compatible):
                     break
                 time.sleep(0.02)
+
+            if (leader._leader_state is LeaderState.NO_PEER
+                    and follower._leader_ip is None):
+                # Not one packet crossed, in either direction. The sendto
+                # succeeded — _broadcast_available checked — so this is a
+                # network that accepts a broadcast and drops it, which no
+                # up-front probe can detect without binding INADDR_ANY to
+                # listen for its own datagram. Skip rather than report a
+                # protocol failure the code did not cause.
+                #
+                # This cannot hide a real regression in the announcing
+                # side: TestFollowerAnnounceLoop covers that on mock
+                # sockets, where delivery is not a variable.
+                pytest.skip(
+                    "environment accepted the broadcast but did not deliver it")
+
             assert leader._leader_state is LeaderState.CONNECTED
             assert follower._peer_compatible is True
             assert follower._leader_ip is not None
