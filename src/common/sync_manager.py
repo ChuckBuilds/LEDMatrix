@@ -495,13 +495,43 @@ class DisplaySyncManager:
                     except Exception as exc:
                         self.logger.debug("Sync: frame decode error: %s", exc)
                 else:
-                    # No magic prefix: try control-message JSON, and treat a
-                    # parse failure as a legacy (pre-magic) PNG frame. Both
-                    # wire formats are self-describing, so no size heuristic
-                    # is needed — a >512-byte control message used to be
-                    # misrouted into image decode and silently dropped.
+                    # No magic prefix. Whether the payload parses as JSON
+                    # decides between a control message and a legacy
+                    # (pre-magic) PNG frame — both wire formats are
+                    # self-describing, so no size heuristic is needed. A
+                    # >512-byte control message used to be misrouted into
+                    # image decode and silently dropped.
                     try:
                         msg = json.loads(data.decode("utf-8"))
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        # Not JSON — try a legacy PNG frame.
+                        try:
+                            img = Image.open(io.BytesIO(data))
+                            if img.width > _MAX_FRAME_W or img.height > _MAX_FRAME_H:
+                                # Same cap the TCP image path applies: decode
+                                # is deferred until load(), so check first.
+                                self.logger.debug(
+                                    "Sync: rejected oversized legacy frame %dx%d from %s",
+                                    img.width, img.height, sender_ip,
+                                )
+                                continue
+                            img.load()
+                            self._handle_received_frame(img, sender_ip)
+                        except Exception as exc:
+                            self.logger.debug("Sync: frame decode error: %s", exc)
+                        continue
+
+                    # It parsed, so it is a control message and never a
+                    # frame. Read and validate its fields under a guard —
+                    # a UDP payload is attacker-shaped, so a non-object
+                    # body makes .get() raise AttributeError and an "sx"
+                    # carrying a non-numeric x raises ValueError/TypeError
+                    # — but dispatch the callback *outside* it. Running
+                    # the callback in here would let a fault in someone
+                    # else's code read as a malformed packet and be
+                    # logged as one.
+                    fire_new_cycle = False
+                    try:
                         t = msg.get("t")
                         if t == "hello_ack":
                             self._leader_ip = sender_ip
@@ -525,36 +555,16 @@ class DisplaySyncManager:
                                     sender_ip,
                                 )
                                 self.write_status_file()
-                                if self._on_new_cycle:
-                                    self._on_new_cycle()  # build initial scroll image
+                                fire_new_cycle = True  # build initial scroll image
                         elif t == "nc":
                             # Leader started a new scroll cycle — rebuild local image
-                            if self._on_new_cycle:
-                                self._on_new_cycle()
-                    except (json.JSONDecodeError, UnicodeDecodeError, KeyError,
-                            AttributeError, TypeError, ValueError):
-                        # Not a control message — try legacy PNG frame.
-                        # The tuple is wide because a UDP payload is
-                        # attacker-shaped: valid-but-non-object JSON makes
-                        # msg.get() raise AttributeError, and an "sx" with a
-                        # non-numeric x raises ValueError/TypeError from
-                        # float(). Those must land here, not in the outer
-                        # handler, which would skip this fallback and pay
-                        # the error backoff for one malformed packet.
-                        try:
-                            img = Image.open(io.BytesIO(data))
-                            if img.width > _MAX_FRAME_W or img.height > _MAX_FRAME_H:
-                                # Same cap the TCP image path applies: decode
-                                # is deferred until load(), so check first.
-                                self.logger.debug(
-                                    "Sync: rejected oversized legacy frame %dx%d from %s",
-                                    img.width, img.height, sender_ip,
-                                )
-                                continue
-                            img.load()
-                            self._handle_received_frame(img, sender_ip)
-                        except Exception as exc:
-                            self.logger.debug("Sync: frame decode error: %s", exc)
+                            fire_new_cycle = True
+                    except (KeyError, AttributeError, TypeError, ValueError) as exc:
+                        self.logger.debug("Sync: malformed control message: %s", exc)
+                        continue
+
+                    if fire_new_cycle and self._on_new_cycle:
+                        self._on_new_cycle()
 
             except socket.timeout:
                 continue

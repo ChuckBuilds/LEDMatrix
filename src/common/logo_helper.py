@@ -7,6 +7,7 @@ Extracted from LEDMatrix core to provide reusable functionality for plugins.
 
 import logging
 import os
+import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 
@@ -283,12 +284,22 @@ class LogoHelper:
         # Ensure directory exists with proper permissions
         ensure_directory_permissions(file_path.parent, get_assets_dir_mode())
 
-        tmp_path = file_path.with_name(file_path.name + '.part')
+        # A unique temp name, not a fixed "<name>.part": two plugins can
+        # ask for the same logo at once, and a shared name would let them
+        # interleave writes into one file, publish the mixture, or delete
+        # each other's partial. Same directory, so os.replace stays atomic.
+        fd, tmp_name = tempfile.mkstemp(
+            dir=str(file_path.parent), prefix=file_path.name + '.', suffix='.part')
+        tmp_path = Path(tmp_name)
         try:
-            with self.session.get(url, timeout=30, stream=True) as response:
-                response.raise_for_status()
-                downloaded = 0
-                with open(tmp_path, 'wb') as f:
+            # fdopen outermost so the descriptor mkstemp handed back is
+            # always adopted and closed, including when the request itself
+            # raises — load_logo_with_download swallows that, so a leak
+            # here would accumulate quietly on a URL that keeps failing.
+            with os.fdopen(fd, 'wb') as f:
+                with self.session.get(url, timeout=30, stream=True) as response:
+                    response.raise_for_status()
+                    downloaded = 0
                     for chunk in response.iter_content(chunk_size=64 * 1024):
                         if not chunk:
                             continue

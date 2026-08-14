@@ -16,6 +16,7 @@ Regression coverage for two fixed bugs:
 """
 
 import logging
+import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -289,6 +290,38 @@ class TestDownloadLogo:
             helper._download_logo("http://x/cut.png", path)
         assert not path.exists()
         assert list(tmp_path.glob("*.part")) == []
+
+    def test_concurrent_downloads_do_not_share_a_temp_file(self, helper, tmp_path):
+        # Two plugins can ask for the same logo at once. A fixed
+        # "<name>.part" would let them interleave writes into one file and
+        # publish the mixture; each download gets its own temp name.
+        path = tmp_path / "PHI.png"
+        seen = []
+        real_mkstemp = tempfile.mkstemp
+
+        def record(*args, **kwargs):
+            fd, name = real_mkstemp(*args, **kwargs)
+            seen.append(name)
+            return fd, name
+
+        with patch("src.common.logo_helper.tempfile.mkstemp", side_effect=record):
+            helper.session.get = MagicMock(return_value=fake_response(png_bytes()))
+            helper._download_logo("http://x/logo.png", path)
+            helper.session.get = MagicMock(return_value=fake_response(png_bytes()))
+            helper._download_logo("http://x/logo.png", path)
+
+        assert len(seen) == 2 and seen[0] != seen[1]
+        assert path.exists()
+        assert list(tmp_path.glob("*.part")) == []  # both cleaned up
+
+    def test_request_failure_leaves_no_temp_file(self, helper, tmp_path):
+        # mkstemp creates the file up front, so an error before any bytes
+        # arrive still has something to clean up.
+        helper.session.get = MagicMock(
+            side_effect=requests.RequestException("connection reset"))
+        with pytest.raises(requests.RequestException):
+            helper._download_logo("http://x/logo.png", tmp_path / "PHI.png")
+        assert list(tmp_path.glob("*")) == []
 
     def test_non_image_response_is_deleted_and_raises(self, helper, tmp_path):
         # Regression: undecodable bytes stayed on disk, so every later

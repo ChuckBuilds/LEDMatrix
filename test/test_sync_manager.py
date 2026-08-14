@@ -511,6 +511,28 @@ class TestFollowerRecvLoop:
             assert mgr.get_latest_scroll_x() is None
             sleeps.assert_not_called()
 
+    def test_callback_failure_is_not_mistaken_for_a_malformed_packet(self, monkeypatch):
+        # A payload that parses is a control message, full stop. If the
+        # callback it triggers raises one of the types the field guard
+        # catches, that fault belongs to the callback: it must not send
+        # the packet to the image decoder, which would report it as a
+        # decode error and bury the real cause. The loop still survives
+        # it — the outer handler catches it like any other fault.
+        mgr = make_manager(role=SyncRole.FOLLOWER)
+        mgr._follower_state = FollowerState.FOLLOWER
+
+        def boom():
+            raise ValueError("callback is broken")
+
+        mgr._on_new_cycle = boom
+        fake_clock(monkeypatch, sleep_fn=MagicMock())
+        self._drive(mgr, json.dumps({"t": "nc"}).encode())
+
+        logged = " | ".join(str(c) for c in mgr.logger.debug.call_args_list)
+        assert "callback is broken" in logged
+        assert "frame decode error" not in logged
+        assert "malformed control message" not in logged
+
     def test_oversized_legacy_frame_is_rejected_before_decode(self, monkeypatch):
         # The UDP path is reachable by any host on the LAN, so it caps
         # dimensions before load() just as the TCP image server does.
@@ -522,7 +544,16 @@ class TestFollowerRecvLoop:
             def load(self):
                 raise AssertionError("load() must not run past the cap")
 
-        monkeypatch.setattr(sync_manager.Image, "open", lambda *a, **kw: Huge())
+        # Rebind the module's reference rather than mutating PIL.Image
+        # itself, which would hand Huge() to every caller in the process
+        # — including daemon threads earlier tests left running. Same
+        # reasoning as fake_clock above. The other names the receive loop
+        # reads off this reference pass through to the real module.
+        monkeypatch.setattr(sync_manager, "Image", SimpleNamespace(
+            open=lambda *a, **kw: Huge(),
+            frombuffer=Image.frombuffer,
+            DecompressionBombError=Image.DecompressionBombError,
+        ))
         self._drive(mgr, b"\x89PNG not really but not JSON either")
         assert mgr.get_latest_frame() is None
 
@@ -895,7 +926,7 @@ class TestRealSocketHandshake:
         leader = follower = None
         # The free-port probe is inherently racy — the port can be taken
         # between release and rebind — so retry rather than fail on it.
-        for attempt in range(5):
+        for _attempt in range(5):
             # Probed on loopback: this only needs a port number, and the
             # manager's own bind is what has to succeed. If the port turns
             # out to be taken on another interface, the retry below covers
