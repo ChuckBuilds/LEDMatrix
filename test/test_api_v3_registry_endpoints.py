@@ -166,9 +166,14 @@ class TestRegistryFromUrl:
         assert body["message"] == "An error occurred; see logs for details"
         assert "Traceback" not in str(body)
 
-    def test_non_string_repo_url_is_a_500_not_a_crash(
-            self, api_v3_client, api_v3_module):
-        # .strip() on a non-string raises; the handler's catch-all turns
-        # that into a 500 rather than propagating.
+    def test_non_string_repo_url_is_rejected(self, api_v3_client, api_v3_module):
+        # Regression: .strip() on a non-string raised, and the catch-all
+        # reported the caller's own mistake as a server fault.
         response = api_v3_client.post(self.URL, json={"repo_url": 12345})
-        assert response.status_code == 500
+        assert response.status_code == 400
+        api_v3_module.api_v3.plugin_store_manager.fetch_registry_from_url.assert_not_called()
+
+    def test_blank_repo_url_is_rejected(self, api_v3_client, api_v3_module):
+        response = api_v3_client.post(self.URL, json={"repo_url": "   "})
+        assert response.status_code == 400
+        api_v3_module.api_v3.plugin_store_manager.fetch_registry_from_url.assert_not_called()

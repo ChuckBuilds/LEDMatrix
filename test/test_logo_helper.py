@@ -21,7 +21,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 
 from src.common.logo_helper import MAX_LOGO_BYTES, LogoHelper
 
@@ -46,10 +46,44 @@ def write_logo(path: Path, size=(20, 20), color=(255, 0, 0), fmt="PNG") -> Path:
     return path
 
 
-def fake_response(content: bytes):
+def fake_response(content: bytes, chunk_size: int = 64 * 1024):
+    """Stand-in for a streamed requests.Response.
+
+    _download_logo opens `with session.get(..., stream=True)` and reads
+    through iter_content(), so the fake has to be a context manager that
+    yields the body in pieces rather than exposing it as .content.
+    Chunking is the fake's own, not the caller's, so a test can dribble a
+    body out in small pieces.
+    """
     response = MagicMock()
-    response.content = content
+    response.__enter__.return_value = response
+    response.__exit__.return_value = False
     response.raise_for_status = MagicMock()
+
+    def _iter_content(*_args, **_kwargs):
+        for i in range(0, len(content), chunk_size):
+            yield content[i:i + chunk_size]
+
+    response.iter_content = _iter_content
+    return response
+
+
+def endless_response(chunk: bytes = b"\x00" * 65536):
+    """A server that declares no length and never stops sending.
+
+    This is the case response.content could not survive: it buffers to
+    completion, so the size check never got a chance to run.
+    """
+    response = MagicMock()
+    response.__enter__.return_value = response
+    response.__exit__.return_value = False
+    response.raise_for_status = MagicMock()
+
+    def _iter_content(*_args, **_kwargs):
+        while True:
+            yield chunk
+
+    response.iter_content = _iter_content
     return response
 
 
@@ -169,7 +203,10 @@ class TestLoadLogoWithDownload:
         logo = helper.load_logo_with_download("PHI", path, "http://x/logo.png")
         assert logo is not None
         assert path.exists()
-        helper.session.get.assert_called_once_with("http://x/logo.png", timeout=30)
+        # stream=True is load-bearing: it is what lets the size cap apply
+        # before the body is buffered.
+        helper.session.get.assert_called_once_with(
+            "http://x/logo.png", timeout=30, stream=True)
 
     def test_download_failure_falls_back_to_placeholder(self, helper, tmp_path):
         helper.session.get = MagicMock(
@@ -215,18 +252,56 @@ class TestDownloadLogo:
         path = tmp_path / "huge.png"
         helper.session.get = MagicMock(
             return_value=fake_response(b"\x00" * (MAX_LOGO_BYTES + 1)))
-        with pytest.raises(ValueError, match="over the"):
+        with pytest.raises(ValueError, match="exceeds the"):
             helper._download_logo("http://x/huge.png", path)
         assert not path.exists()
+
+    def test_unbounded_response_is_aborted_at_the_cap(self, helper, tmp_path):
+        # Regression: the cap used to be checked against response.content,
+        # which buffers the whole body first — so a server that omits
+        # Content-Length and never stops sending exhausted memory before
+        # the check could run. Streaming counts bytes as they arrive, so
+        # this terminates instead of hanging.
+        path = tmp_path / "endless.png"
+        helper.session.get = MagicMock(return_value=endless_response())
+        with pytest.raises(ValueError, match="exceeds the"):
+            helper._download_logo("http://x/endless.png", path)
+        assert not path.exists()
+
+    def test_no_partial_file_is_left_when_the_stream_dies(self, helper, tmp_path):
+        # A transfer that fails midway must not leave a truncated logo
+        # where the real one belongs — load_logo() would cache it.
+        path = tmp_path / "cut.png"
+        real = png_bytes()
+
+        def _dies_midway(*_args, **_kwargs):
+            yield real[:20]
+            raise OSError("connection reset")
+
+        response = MagicMock()
+        response.__enter__.return_value = response
+        response.__exit__.return_value = False
+        response.raise_for_status = MagicMock()
+        response.iter_content = _dies_midway
+        helper.session.get = MagicMock(return_value=response)
+
+        with pytest.raises(OSError):
+            helper._download_logo("http://x/cut.png", path)
+        assert not path.exists()
+        assert list(tmp_path.glob("*.part")) == []
 
     def test_non_image_response_is_deleted_and_raises(self, helper, tmp_path):
         # Regression: undecodable bytes stayed on disk, so every later
         # load_logo() call hit the corrupt file instead of re-downloading.
         path = tmp_path / "bad.png"
         helper.session.get = MagicMock(return_value=fake_response(b"<html>404</html>"))
-        with pytest.raises(Exception):
+        # Specifically Pillow's identify failure, not any OSError: the
+        # point is that the bytes did not decode, and OSError alone would
+        # also admit unrelated filesystem faults.
+        with pytest.raises(UnidentifiedImageError):
             helper._download_logo("http://x/bad.png", path)
         assert not path.exists()
+        assert list(tmp_path.glob("*.part")) == []
 
     def test_decompression_bomb_is_deleted_and_raises(self, helper, tmp_path, monkeypatch):
         path = tmp_path / "bomb.png"

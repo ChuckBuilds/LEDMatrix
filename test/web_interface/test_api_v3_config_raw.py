@@ -112,6 +112,11 @@ class TestSaveRawMain:
         assert response.status_code == 400
         body = response.get_json()
         assert body["status"] == "error"
+        # A body that was sent but does not parse is a distinct mistake
+        # from sending none, and says so. Previously the handler's own
+        # json.JSONDecodeError arm was unreachable — Werkzeug raised
+        # first — so this collapsed into "No data provided".
+        assert "Invalid JSON in request body" in body["message"]
 
     def test_config_error_is_a_500_with_context(self, env, monkeypatch):
         def refuse(kind, data):

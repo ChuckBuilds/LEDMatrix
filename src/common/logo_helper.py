@@ -6,6 +6,7 @@ Extracted from LEDMatrix core to provide reusable functionality for plugins.
 """
 
 import logging
+import os
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 
@@ -271,32 +272,43 @@ class LogoHelper:
         decodable image before it is left on disk: a logo URL is remote
         input, and without this an oversized or malformed response would
         be cached for every later load_logo() call to trip over.
+
+        The body is streamed and counted as it arrives rather than read
+        through response.content, which buffers the whole thing first —
+        a server that omits Content-Length and never stops sending would
+        exhaust memory before any size check could run. Nothing lands at
+        file_path until the download completes and decodes, so a failed
+        download cannot leave a truncated logo behind either.
         """
         # Ensure directory exists with proper permissions
         ensure_directory_permissions(file_path.parent, get_assets_dir_mode())
 
-        # Download with timeout
-        response = self.session.get(url, timeout=30)
-        response.raise_for_status()
-
-        content = response.content
-        if len(content) > MAX_LOGO_BYTES:
-            raise ValueError(
-                f"Logo at {url} is {len(content)} bytes, over the "
-                f"{MAX_LOGO_BYTES}-byte limit; not saved")
-
-        # Save to file
-        with open(file_path, 'wb') as f:
-            f.write(content)
-
-        # Verify it decodes before leaving it on disk. PIL raises
-        # DecompressionBombError past its own pixel limit; a partial or
-        # non-image response raises UnidentifiedImageError/OSError.
+        tmp_path = file_path.with_name(file_path.name + '.part')
         try:
-            with Image.open(file_path) as probe:
+            with self.session.get(url, timeout=30, stream=True) as response:
+                response.raise_for_status()
+                downloaded = 0
+                with open(tmp_path, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=64 * 1024):
+                        if not chunk:
+                            continue
+                        downloaded += len(chunk)
+                        if downloaded > MAX_LOGO_BYTES:
+                            raise ValueError(
+                                f"Logo at {url} exceeds the "
+                                f"{MAX_LOGO_BYTES}-byte limit; not saved")
+                        f.write(chunk)
+
+            # Verify it decodes before it becomes the cached logo. PIL
+            # raises DecompressionBombError past its own pixel limit; a
+            # partial or non-image response raises UnidentifiedImageError
+            # (an OSError subclass).
+            with Image.open(tmp_path) as probe:
                 probe.load()
-        except Exception:
-            file_path.unlink(missing_ok=True)
+
+            os.replace(tmp_path, file_path)
+        except BaseException:
+            tmp_path.unlink(missing_ok=True)
             raise
 
         # Set proper file permissions after saving

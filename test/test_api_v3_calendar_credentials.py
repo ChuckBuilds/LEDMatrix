@@ -22,6 +22,7 @@ import stat
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -192,14 +193,25 @@ class TestBackupPruning:
         upload(api_v3_client, VALID_CREDENTIALS)
         assert len(backups(plugin_dir)) == 3  # 2 seeded + 1 new
 
-    def test_repeated_uploads_stay_bounded(self, api_v3_client, plugin_dir):
+    def test_repeated_uploads_stay_bounded(
+            self, api_v3_client, plugin_dir, api_v3_module, monkeypatch):
+        # The backup filename carries int(time.time()), so uploads inside
+        # the same second all write the same name and overwrite each other.
+        # Advance a fake clock a second per round — otherwise this never
+        # reaches six backups and the bound holds for the wrong reason.
+        clock = {"now": int(time.time())}
+        monkeypatch.setattr(
+            api_v3_module, "time", SimpleNamespace(time=lambda: clock["now"]))
         for i in range(10):
+            clock["now"] += 1
             upload(api_v3_client, {"installed": {"round": i}})
-            # Distinct mtimes so ordering is well-defined between rounds.
-            for path in backups(plugin_dir):
-                os.utime(path, (path.stat().st_mtime, path.stat().st_mtime))
-            time.sleep(0.01)
-        assert len(backups(plugin_dir)) <= 5
+            os.utime(plugin_dir / "credentials.json",
+                     (clock["now"], clock["now"]))
+        remaining = backups(plugin_dir)
+        assert len(remaining) == 5
+        # And they are the five most recent rounds, not an arbitrary five.
+        kept = sorted(int(p.name.rsplit(".", 1)[1]) for p in remaining)
+        assert kept == [clock["now"] - 4 + i for i in range(5)]
 
     def test_unremovable_backup_does_not_fail_the_upload(
             self, api_v3_client, plugin_dir, monkeypatch):

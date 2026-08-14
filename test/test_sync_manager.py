@@ -31,6 +31,7 @@ import socket
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -118,11 +119,27 @@ def raise_n_then_stop(mgr, exc, count):
     return _side_effect
 
 
+def fake_clock(monkeypatch, *, time_fn=None, sleep_fn=None):
+    """Swap sync_manager's own `time` reference for a private stand-in.
+
+    sync_manager.time IS the stdlib module, so patching attributes on it
+    would freeze the clock and no-op sleep for the whole process —
+    including the daemon threads earlier tests left running, which is a
+    hard-to-trace source of cross-test flakiness. Rebinding the module's
+    reference keeps the patch scoped to the code under test. Anything not
+    overridden falls through to the real functions.
+    """
+    monkeypatch.setattr(sync_manager, "time", SimpleNamespace(
+        time=time_fn or time.time,
+        sleep=sleep_fn or time.sleep,
+    ))
+
+
 def run_watchdog_once(monkeypatch, mgr, watchdog, now):
     """Run exactly one watchdog iteration at a frozen wall-clock time."""
-    monkeypatch.setattr(sync_manager.time, "time", lambda: now)
-    monkeypatch.setattr(
-        sync_manager.time, "sleep", lambda _: setattr(mgr, "_running", False))
+    fake_clock(monkeypatch,
+               time_fn=lambda: now,
+               sleep_fn=lambda _: setattr(mgr, "_running", False))
     mgr._running = True
     watchdog()
 
@@ -334,11 +351,11 @@ class TestLeaderRecvLoop:
         assert mgr._leader_state is LeaderState.CONNECTED
         assert mgr._peer_ip == "10.0.0.8"
 
-    def test_heartbeat_from_known_peer_refreshes_timer(self):
+    def test_heartbeat_from_known_peer_refreshes_timer(self, monkeypatch):
         mgr = make_manager(role=SyncRole.LEADER)
         mgr._peer_ip = "10.0.0.8"
-        with patch.object(sync_manager.time, "time", return_value=12345.0):
-            self._drive(mgr, json.dumps({"t": "hb"}).encode())
+        fake_clock(monkeypatch, time_fn=lambda: 12345.0)
+        self._drive(mgr, json.dumps({"t": "hb"}).encode())
         assert mgr._last_heartbeat_time == 12345.0
 
     def test_heartbeat_from_stranger_is_ignored(self):
@@ -370,7 +387,7 @@ class TestLeaderRecvLoop:
         mgr._recv_sock = MagicMock()
         mgr._recv_sock.recvfrom.side_effect = raise_n_then_stop(mgr, OSError("boom"), 3)
         sleeps = MagicMock()
-        monkeypatch.setattr(sync_manager.time, "sleep", sleeps)
+        fake_clock(monkeypatch, sleep_fn=sleeps)
         mgr._running = True
         mgr._leader_recv_loop()
         assert sleeps.call_count == 3
@@ -470,6 +487,45 @@ class TestFollowerRecvLoop:
         self._drive(mgr, json.dumps({"t": "nc"}).encode())
         assert calls == [1]
 
+    def test_non_object_json_does_not_reach_the_outer_handler(self):
+        # A bare JSON scalar parses, then msg.get() raises AttributeError.
+        # That has to be caught here so the payload still gets its shot at
+        # the legacy-PNG fallback; escaping to the outer handler would also
+        # charge one malformed packet the 0.1s error backoff.
+        mgr = make_manager(role=SyncRole.FOLLOWER)
+        sleeps = MagicMock()
+        with patch.object(sync_manager, "time",
+                          SimpleNamespace(time=time.time, sleep=sleeps)):
+            self._drive(mgr, b"12345")
+        assert mgr.get_latest_frame() is None
+        sleeps.assert_not_called()
+
+    def test_non_numeric_scroll_x_does_not_reach_the_outer_handler(self):
+        # float("a") raises ValueError; {"x": null} raises TypeError.
+        for payload in ({"t": "sx", "x": "a"}, {"t": "sx", "x": None}):
+            mgr = make_manager(role=SyncRole.FOLLOWER)
+            sleeps = MagicMock()
+            with patch.object(sync_manager, "time",
+                              SimpleNamespace(time=time.time, sleep=sleeps)):
+                self._drive(mgr, json.dumps(payload).encode())
+            assert mgr.get_latest_scroll_x() is None
+            sleeps.assert_not_called()
+
+    def test_oversized_legacy_frame_is_rejected_before_decode(self, monkeypatch):
+        # The UDP path is reachable by any host on the LAN, so it caps
+        # dimensions before load() just as the TCP image server does.
+        mgr = make_manager(role=SyncRole.FOLLOWER)
+
+        class Huge:
+            width, height = 10, sync_manager._MAX_FRAME_H + 1
+
+            def load(self):
+                raise AssertionError("load() must not run past the cap")
+
+        monkeypatch.setattr(sync_manager.Image, "open", lambda *a, **kw: Huge())
+        self._drive(mgr, b"\x89PNG not really but not JSON either")
+        assert mgr.get_latest_frame() is None
+
     def test_scroll_x_missing_key_is_swallowed(self):
         mgr = make_manager(role=SyncRole.FOLLOWER)
         self._drive(mgr, json.dumps({"t": "sx"}).encode())  # no "x"
@@ -480,7 +536,7 @@ class TestFollowerRecvLoop:
         mgr._recv_sock = MagicMock()
         mgr._recv_sock.recvfrom.side_effect = raise_n_then_stop(mgr, OSError("boom"), 3)
         sleeps = MagicMock()
-        monkeypatch.setattr(sync_manager.time, "sleep", sleeps)
+        fake_clock(monkeypatch, sleep_fn=sleeps)
         mgr._running = True
         mgr._follower_recv_loop()
         assert sleeps.call_count == 3
@@ -797,23 +853,71 @@ class TestStop:
         make_manager(role=SyncRole.STANDALONE).stop()  # all sockets None
 
 
-class TestLoopbackHandshake:
+def _broadcast_works(port):
+    """True when this environment can actually deliver a UDP broadcast.
+
+    The handshake below depends on it: the follower announces itself to
+    ("<broadcast>", port). Sandboxes and some CI networks drop or refuse
+    broadcast, and sync_manager swallows the sendto error, so without
+    this probe the test would just wait out its deadline and fail for a
+    reason that has nothing to do with the code.
+    """
+    recv = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    send = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        recv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        recv.bind(("", port))
+        recv.settimeout(0.5)
+        send.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        send.sendto(b"probe", ("<broadcast>", port))
+        return recv.recvfrom(64)[0] == b"probe"
+    except OSError:
+        return False
+    finally:
+        recv.close()
+        send.close()
+
+
+class TestRealSocketHandshake:
     def test_leader_and_follower_negotiate_over_real_sockets(self, monkeypatch):
         # One end-to-end check that the wire format actually round-trips:
         # every other test drives the loops with mocked sockets.
+        #
+        # Not loopback-only, despite the free-port probe below: the manager
+        # binds UDP and TCP on all interfaces and the follower announces by
+        # broadcast. That is the behaviour under test, so the environment
+        # has to support it.
         monkeypatch.setattr(sync_manager, "HELLO_INTERVAL", 0.02)
         monkeypatch.setattr(sync_manager, "HEARTBEAT_INTERVAL", 0.02)
 
-        # Pick a free port by binding one on loopback and releasing it.
-        # Loopback, not "", so this test never opens a port to the network.
-        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
-        probe.close()
-
         hw = {"rows": 32, "cols": 64, "chain_length": 1}
-        leader = DisplaySyncManager("leader", {"port": port}, hw, MagicMock())
-        follower = DisplaySyncManager("follower", {"port": port}, hw, MagicMock())
+        leader = follower = None
+        # The free-port probe is inherently racy — the port can be taken
+        # between release and rebind — so retry rather than fail on it.
+        for attempt in range(5):
+            probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            probe.bind(("", 0))
+            port = probe.getsockname()[1]
+            probe.close()
+
+            if not _broadcast_works(port):
+                pytest.skip("environment cannot deliver UDP broadcast")
+
+            try:
+                leader = DisplaySyncManager("leader", {"port": port}, hw, MagicMock())
+                follower = DisplaySyncManager("follower", {"port": port}, hw, MagicMock())
+                break
+            except OSError:
+                # Port taken between probe and bind, or the TCP image
+                # server could not bind port+1. Tear down whichever end
+                # came up before retrying with a fresh port.
+                for mgr in (leader, follower):
+                    if mgr is not None:
+                        mgr.stop()
+                leader = follower = None
+        else:
+            pytest.skip("could not obtain a free port pair for the handshake")
+
         try:
             deadline = time.time() + 5.0
             while time.time() < deadline:

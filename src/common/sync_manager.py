@@ -37,6 +37,13 @@ _RAW_MAGIC = b'SYNC_RAW'
 _RAW_HEADER = struct.Struct('<HH')  # width, height (uint16 LE)
 
 
+# Upper bound on a decoded frame/scroll image. Generous for any real scroll
+# image (a leader's full cycle is long but only panel-height tall), and low
+# enough that a crafted image from any host on the LAN cannot force a large
+# allocation on the render thread. Applied on both receive paths — the TCP
+# image server and the follower's legacy-PNG UDP fallback.
+_MAX_FRAME_W, _MAX_FRAME_H = 100_000, 256
+
 SYNC_PORT = 5765
 HELLO_INTERVAL = 5.0       # follower broadcasts hello every 5 s
 HEARTBEAT_INTERVAL = 2.0   # follower sends heartbeat every 2 s
@@ -278,11 +285,10 @@ class DisplaySyncManager:
                             break
                         data.extend(chunk)
                     img = Image.open(io.BytesIO(data))
-                    _MAX_W, _MAX_H = 100_000, 256  # generous for any real scroll image
-                    if img.width > _MAX_W or img.height > _MAX_H:
+                    if img.width > _MAX_FRAME_W or img.height > _MAX_FRAME_H:
                         self.logger.warning(
                             "Sync: rejected oversized scroll image %dx%d (max %dx%d) from %s",
-                            img.width, img.height, _MAX_W, _MAX_H, addr,
+                            img.width, img.height, _MAX_FRAME_W, _MAX_FRAME_H, addr,
                         )
                         continue
                     try:
@@ -525,10 +531,26 @@ class DisplaySyncManager:
                             # Leader started a new scroll cycle — rebuild local image
                             if self._on_new_cycle:
                                 self._on_new_cycle()
-                    except (json.JSONDecodeError, UnicodeDecodeError, KeyError):
+                    except (json.JSONDecodeError, UnicodeDecodeError, KeyError,
+                            AttributeError, TypeError, ValueError):
                         # Not a control message — try legacy PNG frame.
+                        # The tuple is wide because a UDP payload is
+                        # attacker-shaped: valid-but-non-object JSON makes
+                        # msg.get() raise AttributeError, and an "sx" with a
+                        # non-numeric x raises ValueError/TypeError from
+                        # float(). Those must land here, not in the outer
+                        # handler, which would skip this fallback and pay
+                        # the error backoff for one malformed packet.
                         try:
                             img = Image.open(io.BytesIO(data))
+                            if img.width > _MAX_FRAME_W or img.height > _MAX_FRAME_H:
+                                # Same cap the TCP image path applies: decode
+                                # is deferred until load(), so check first.
+                                self.logger.debug(
+                                    "Sync: rejected oversized legacy frame %dx%d from %s",
+                                    img.width, img.height, sender_ip,
+                                )
+                                continue
                             img.load()
                             self._handle_received_frame(img, sender_ip)
                         except Exception as exc:
