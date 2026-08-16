@@ -24,9 +24,20 @@ echo "========================================"
 # Auto-detect latest version if needed
 if [ "$PIXLET_VERSION" = "latest" ]; then
     echo "Detecting latest version..."
-    PIXLET_VERSION=$(curl -s "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
-    if [ -z "$PIXLET_VERSION" ]; then
-        echo "Failed to detect latest version, using fallback"
+    # GitHub returns this JSON on a single line, so `grep '"tag_name"'`
+    # matches the whole document and a greedy `sed 's/.*"([^"]+)".*/\1/'`
+    # captures the LAST quoted token in it rather than the tag. That resolved
+    # to "mentions_count", which built a download URL for a release that does
+    # not exist. Match the field itself and take the value after it.
+    PIXLET_VERSION=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
+        | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' \
+        | head -n1 \
+        | sed -E 's/.*:[[:space:]]*"([^"]*)".*/\1/')
+
+    # A wrong-but-non-empty value is what made the old bug silent, so check
+    # the shape rather than just that something came back.
+    if ! printf '%s' "$PIXLET_VERSION" | grep -qE '^v?[0-9]+\.[0-9]+'; then
+        echo "Could not detect the latest version (got: '${PIXLET_VERSION:-<empty>}'), using fallback"
         PIXLET_VERSION="v0.50.2"
     fi
 fi
@@ -67,8 +78,19 @@ download_binary() {
     temp_dir=$(mktemp -d -p "$PROJECT_ROOT" -t pixlet_download.XXXXXXXXXX)
     local temp_file="$temp_dir/$archive_name"
 
-    if ! curl -L -o "$temp_file" "$url" 2>/dev/null; then
-        echo "✗ Failed to download $arch"
+    # -f so an HTTP error is a failure. Without it curl writes the 404 body
+    # to the file and exits 0, and the first sign of trouble is tar saying
+    # "not in gzip format" about what is actually a page of HTML.
+    if ! curl -fL -o "$temp_file" "$url" 2>/dev/null; then
+        echo "✗ Failed to download $arch from $url"
+        rm -rf "$temp_dir"
+        return 1
+    fi
+
+    # Belt and braces: a mirror or proxy can return 200 with an error page.
+    if ! gzip -t "$temp_file" 2>/dev/null; then
+        echo "✗ Downloaded file is not a gzip archive: $url"
+        echo "  (first bytes: $(head -c 60 "$temp_file" | tr -d '\0' | tr '\n' ' '))"
         rm -rf "$temp_dir"
         return 1
     fi
