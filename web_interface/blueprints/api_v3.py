@@ -8477,58 +8477,50 @@ def backup_delete(filename):
 
 # ─── Starlark Apps API ──────────────────────────────────────────────────────
 
-def _get_tronbyte_repository_class() -> Type[Any]:
-    """Import TronbyteRepository from plugin-repos directory."""
+def _load_starlark_class(module_name: str, filename: str, class_name: str) -> Type[Any]:
+    """Load and cache a class from the bundled Starlark plugin.
+
+    Modules created with ``spec_from_file_location`` are not reliably
+    reloadable because their parent directory is not an importable package.
+    Keep the successfully executed module in ``sys.modules`` and reuse it on
+    subsequent requests instead.
+    """
     import importlib.util
-    import importlib
 
-    module_path = PROJECT_ROOT / 'plugin-repos' / 'starlark-apps' / 'tronbyte_repository.py'
+    module_path = PROJECT_ROOT / 'plugin-repos' / 'starlark-apps' / filename
     if not module_path.exists():
-        raise ImportError(f"TronbyteRepository module not found at {module_path}")
+        raise ImportError(f"Starlark module not found at {module_path}")
 
-    # If already imported, reload to pick up code changes
-    if "tronbyte_repository" in sys.modules:
-        importlib.reload(sys.modules["tronbyte_repository"])
-        return sys.modules["tronbyte_repository"].TronbyteRepository
+    cached_module = sys.modules.get(module_name)
+    if cached_module is not None:
+        return getattr(cached_module, class_name)
 
-    spec = importlib.util.spec_from_file_location("tronbyte_repository", str(module_path))
-    if spec is None:
-        raise ImportError(f"Failed to create module spec for tronbyte_repository at {module_path}")
+    spec = importlib.util.spec_from_file_location(module_name, str(module_path))
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Failed to create module spec for {module_name} at {module_path}")
 
     module = importlib.util.module_from_spec(spec)
-    if module is None:
-        raise ImportError("Failed to create module from spec for tronbyte_repository")
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        sys.modules.pop(module_name, None)
+        raise
+    return getattr(module, class_name)
 
-    sys.modules["tronbyte_repository"] = module
-    spec.loader.exec_module(module)
-    return module.TronbyteRepository
+
+def _get_tronbyte_repository_class() -> Type[Any]:
+    """Import TronbyteRepository from plugin-repos directory."""
+    return _load_starlark_class(
+        'tronbyte_repository', 'tronbyte_repository.py', 'TronbyteRepository'
+    )
 
 
 def _get_pixlet_renderer_class() -> Type[Any]:
     """Import PixletRenderer from plugin-repos directory."""
-    import importlib.util
-    import importlib
-
-    module_path = PROJECT_ROOT / 'plugin-repos' / 'starlark-apps' / 'pixlet_renderer.py'
-    if not module_path.exists():
-        raise ImportError(f"PixletRenderer module not found at {module_path}")
-
-    # If already imported, reload to pick up code changes
-    if "pixlet_renderer" in sys.modules:
-        importlib.reload(sys.modules["pixlet_renderer"])
-        return sys.modules["pixlet_renderer"].PixletRenderer
-
-    spec = importlib.util.spec_from_file_location("pixlet_renderer", str(module_path))
-    if spec is None:
-        raise ImportError(f"Failed to create module spec for pixlet_renderer at {module_path}")
-
-    module = importlib.util.module_from_spec(spec)
-    if module is None:
-        raise ImportError("Failed to create module from spec for pixlet_renderer")
-
-    sys.modules["pixlet_renderer"] = module
-    spec.loader.exec_module(module)
-    return module.PixletRenderer
+    return _load_starlark_class(
+        'pixlet_renderer', 'pixlet_renderer.py', 'PixletRenderer'
+    )
 
 
 def _validate_and_sanitize_app_id(app_id: Optional[str], fallback_source: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:

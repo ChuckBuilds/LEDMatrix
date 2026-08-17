@@ -1,5 +1,7 @@
 """Regression tests for the Starlark API routes used by the v3 plugin UI."""
 
+import sys
+
 import pytest
 from flask import Flask
 
@@ -75,3 +77,18 @@ def test_app_path_traversal_is_rejected(client):
 
     assert response.status_code == 400
     assert "invalid app_id" in response.get_json()["message"].lower()
+
+
+@pytest.mark.parametrize(("module_name", "helper", "class_name"), [
+    ("tronbyte_repository", mod._get_tronbyte_repository_class, "TronbyteRepository"),
+    ("pixlet_renderer", mod._get_pixlet_renderer_class, "PixletRenderer"),
+])
+def test_dynamic_starlark_loaders_can_be_called_repeatedly(
+        module_name, helper, class_name):
+    sys.modules.pop(module_name, None)
+
+    first = helper()
+    second = helper()
+
+    assert first is second
+    assert first is getattr(sys.modules[module_name], class_name)
