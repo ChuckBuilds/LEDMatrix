@@ -2688,6 +2688,7 @@ def get_installed_plugins():
         with ThreadPoolExecutor(max_workers=8) as executor:
             results = list(executor.map(_build_plugin_entry, all_plugin_info))
         plugins = [r for r in results if r is not None]
+        plugins.extend(_get_starlark_plugin_entries())
 
         return jsonify({'status': 'success', 'data': {'plugins': plugins}})
     except Exception as e:
@@ -2993,6 +2994,39 @@ def toggle_plugin():
                 config = api_v3.config_manager.load_config()
                 current_enabled = config.get(plugin_id, {}).get('enabled', False)
                 enabled = not current_enabled
+
+        # Starlark apps are presented as virtual plugins in the installed
+        # list, but their enabled state lives in the Starlark manifest rather
+        # than the main plugin configuration.
+        if plugin_id.startswith('starlark:'):
+            starlark_app_id = plugin_id[len('starlark:'):]
+            starlark_plugin = _get_starlark_plugin()
+            if starlark_plugin and starlark_app_id in starlark_plugin.apps:
+                app = starlark_plugin.apps[starlark_app_id]
+                app.manifest['enabled'] = enabled
+
+                def update_fn(manifest):
+                    manifest['apps'][starlark_app_id]['enabled'] = enabled
+
+                if not starlark_plugin._update_manifest_safe(update_fn):
+                    return jsonify({'status': 'error', 'message': 'Failed to save manifest'}), 500
+            else:
+                manifest = _read_starlark_manifest()
+                app_data = manifest.get('apps', {}).get(starlark_app_id)
+                if not app_data:
+                    return jsonify({
+                        'status': 'error',
+                        'message': f'Starlark app not found: {starlark_app_id}',
+                    }), 404
+                app_data['enabled'] = enabled
+                if not _write_starlark_manifest(manifest):
+                    return jsonify({'status': 'error', 'message': 'Failed to save manifest'}), 500
+
+            return jsonify({
+                'status': 'success',
+                'message': f"Starlark app {'enabled' if enabled else 'disabled'}",
+                'enabled': enabled,
+            })
 
         # Check if plugin exists in manifests (discovered but may not be loaded)
         if plugin_id not in api_v3.plugin_manager.plugin_manifests:
@@ -8523,6 +8557,23 @@ def _get_pixlet_renderer_class() -> Type[Any]:
     )
 
 
+def _get_starlark_github_token() -> Optional[str]:
+    """Return the configured GitHub token for Starlark repository requests."""
+    if not api_v3.config_manager:
+        return None
+
+    config = api_v3.config_manager.load_config()
+    github = config.get('github', {})
+    token = github.get('api_token') if isinstance(github, dict) else None
+    token = token or config.get('github_token')  # Legacy configuration key.
+    if not isinstance(token, str):
+        return None
+    token = token.strip()
+    if not token or token == 'YOUR_GITHUB_PERSONAL_ACCESS_TOKEN':
+        return None
+    return token
+
+
 def _validate_and_sanitize_app_id(app_id: Optional[str], fallback_source: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
     """Validate and sanitize app_id to a safe slug."""
     if not app_id and fallback_source:
@@ -8560,6 +8611,50 @@ def _get_starlark_plugin() -> Optional[Any]:
     if not api_v3.plugin_manager:
         return None
     return api_v3.plugin_manager.get_plugin('starlark-apps')
+
+
+def _get_starlark_plugin_entries() -> list[Dict[str, Any]]:
+    """Build virtual installed-plugin entries for each Starlark app."""
+    entries = []
+    starlark_plugin = _get_starlark_plugin()
+    if starlark_plugin and hasattr(starlark_plugin, 'apps'):
+        apps = (
+            (app_id, app.manifest, app.is_enabled(), True)
+            for app_id, app in starlark_plugin.apps.items()
+        )
+    else:
+        manifest = _read_starlark_manifest()
+        apps = (
+            (app_id, app_data, app_data.get('enabled', True), False)
+            for app_id, app_data in manifest.get('apps', {}).items()
+        )
+
+    for app_id, app_data, enabled, loaded in apps:
+        entries.append({
+            'id': f'starlark:{app_id}',
+            'name': app_data.get('name', app_id),
+            'version': 'starlark',
+            'latest_version': '',
+            'update_available': False,
+            'author': app_data.get('author', 'Tronbyte Community'),
+            'category': 'Starlark App',
+            'description': app_data.get('summary', 'Starlark app'),
+            'tags': ['starlark'],
+            'enabled': enabled,
+            'verified': False,
+            'loaded': loaded,
+            'state': None,
+            'error_info': None,
+            'last_updated': None,
+            'last_commit': None,
+            'last_commit_message': None,
+            'branch': None,
+            'web_ui_actions': [],
+            'vegas_mode': 'fixed',
+            'vegas_content_type': 'multi',
+            'is_starlark_app': True,
+        })
+    return entries
 
 
 def _validate_starlark_app_path(app_id: str) -> Tuple[bool, Optional[str]]:
@@ -9210,9 +9305,7 @@ def browse_tronbyte_repository():
     try:
         TronbyteRepository = _get_tronbyte_repository_class()
 
-        config = api_v3.config_manager.load_config() if api_v3.config_manager else {}
-        github_token = config.get('github_token')
-        repo = TronbyteRepository(github_token=github_token)
+        repo = TronbyteRepository(github_token=_get_starlark_github_token())
 
         result = repo.list_all_apps_cached()
 
@@ -9248,9 +9341,7 @@ def install_from_tronbyte_repository():
         TronbyteRepository = _get_tronbyte_repository_class()
         import tempfile
 
-        config = api_v3.config_manager.load_config() if api_v3.config_manager else {}
-        github_token = config.get('github_token')
-        repo = TronbyteRepository(github_token=github_token)
+        repo = TronbyteRepository(github_token=_get_starlark_github_token())
 
         success, metadata, error = repo.get_app_metadata(data['app_id'])
         if not success:
@@ -9327,8 +9418,7 @@ def get_tronbyte_categories():
     """Get list of available app categories (uses bulk cache)."""
     try:
         TronbyteRepository = _get_tronbyte_repository_class()
-        config = api_v3.config_manager.load_config() if api_v3.config_manager else {}
-        repo = TronbyteRepository(github_token=config.get('github_token'))
+        repo = TronbyteRepository(github_token=_get_starlark_github_token())
 
         result = repo.list_all_apps_cached()
 

@@ -72,6 +72,19 @@ def test_apps_falls_back_to_the_standalone_manifest(client):
     assert apps[0]["enabled"] is True
 
 
+def test_installed_plugin_entries_include_configurable_starlark_apps(client):
+    assert mod._write_starlark_manifest({
+        "apps": {"clock": {"name": "Clock", "enabled": True}}
+    })
+
+    entries = mod._get_starlark_plugin_entries()
+
+    assert len(entries) == 1
+    assert entries[0]["id"] == "starlark:clock"
+    assert entries[0]["is_starlark_app"] is True
+    assert entries[0]["enabled"] is True
+
+
 def test_app_path_traversal_is_rejected(client):
     response = client.get("/api/v3/starlark/apps/..%5Csecret")
 
@@ -92,3 +105,19 @@ def test_dynamic_starlark_loaders_can_be_called_repeatedly(
 
     assert first is second
     assert first is getattr(sys.modules[module_name], class_name)
+
+
+@pytest.mark.parametrize(("config", "expected"), [
+    ({"github": {"api_token": " nested-token "}}, "nested-token"),
+    ({"github_token": "legacy-token"}, "legacy-token"),
+    ({"github": {"api_token": "YOUR_GITHUB_PERSONAL_ACCESS_TOKEN"}}, None),
+])
+def test_starlark_repository_uses_configured_github_secret(
+        monkeypatch, config, expected):
+    class ConfigManager:
+        def load_config(self):
+            return config
+
+    monkeypatch.setattr(mod.api_v3, "config_manager", ConfigManager(), raising=False)
+
+    assert mod._get_starlark_github_token() == expected
