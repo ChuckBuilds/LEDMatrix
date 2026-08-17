@@ -125,6 +125,14 @@ class PluginManager:
         self._plugin_locks: Dict[str, threading.Lock] = {}
         self._plugin_locks_guard = threading.Lock()
         self._update_worker: Optional[threading.Thread] = None
+        # Plugin ids whose update() has finished since the last time anyone
+        # asked. Updates are dispatched to a worker thread, so a caller that
+        # wants to know "whose data just changed" cannot learn it by diffing
+        # plugin_last_update around run_scheduled_updates() -- that call only
+        # enqueues, and the timestamp is stamped later, on the worker. See
+        # run_scheduled_updates_with_changes().
+        self._completed_updates: set = set()
+        self._completed_updates_lock = threading.Lock()
         self._synchronous_updates = False
         if self.config_manager is not None:
             try:
@@ -1025,6 +1033,7 @@ class PluginManager:
                 if success:
                     with self._plugin_last_update_lock:
                         self.plugin_last_update[plugin_id] = scheduled_time
+                    self._note_update_completed(plugin_id)
                     self.state_manager.record_update(plugin_id)
                     self.state_manager.set_state(plugin_id, PluginState.ENABLED)
                     if self.health_tracker:
@@ -1089,28 +1098,41 @@ class PluginManager:
 
     def run_scheduled_updates_with_changes(self, current_time: Optional[float] = None) -> List[str]:
         """
-        Like run_scheduled_updates(), but also returns the plugin_ids whose
-        plugin_last_update timestamp actually advanced during this call.
+        Like run_scheduled_updates(), but also reports which plugins have
+        fresh data -- the ids whose update() has finished since the last
+        call, not necessarily the ones enqueued by this one.
 
-        The before/after snapshots and the update pass itself are each
-        individually lock-protected against concurrent plugin_last_update
-        mutation (Vegas mode calls this from its own background
-        update-tick thread, racing the main render loop's plugin updates),
-        so callers get an atomic "who got fresh data" answer without
-        reaching into plugin_last_update themselves. The lock is not held
-        across the update pass so slow/blocking plugin update() calls don't
-        serialize against other plugin_last_update readers.
+        That distinction is the whole point. This used to snapshot
+        plugin_last_update, call run_scheduled_updates(), and diff. But
+        run_scheduled_updates() only *enqueues*: the work runs on the
+        update worker and the timestamp is stamped there, after this method
+        has already returned. The two snapshots were therefore always
+        identical and the result was always empty, so Vegas never learned
+        that any plugin's data had changed and kept scrolling whatever a
+        segment was first built from -- last night's live game still drawn
+        as live the next morning. The only path that ever worked was the
+        synchronous kill-switch, where update() runs inline.
+
+        Reporting completions instead of enqueues costs a poll's worth of
+        latency (the Vegas tick runs every ~4s) and is correct regardless of
+        which side of the queue the work lands on.
         """
-        with self._plugin_last_update_lock:
-            old_times = dict(self.plugin_last_update)
-
         self.run_scheduled_updates(current_time)
+        return self.drain_completed_updates()
 
-        with self._plugin_last_update_lock:
-            return [
-                plugin_id for plugin_id, new_time in self.plugin_last_update.items()
-                if new_time > old_times.get(plugin_id, 0.0)
-            ]
+    def _note_update_completed(self, plugin_id: str) -> None:
+        """Record that a plugin's update() finished, for the next poll."""
+        with self._completed_updates_lock:
+            self._completed_updates.add(plugin_id)
+
+    def drain_completed_updates(self) -> List[str]:
+        """Return and clear the plugin ids whose update() has since finished."""
+        with self._completed_updates_lock:
+            if not self._completed_updates:
+                return []
+            done = sorted(self._completed_updates)
+            self._completed_updates.clear()
+            return done
 
     def update_all_plugins(self) -> None:
         """
@@ -1135,6 +1157,7 @@ class PluginManager:
                 if success:
                     with self._plugin_last_update_lock:
                         self.plugin_last_update[plugin_id] = time.time()
+                    self._note_update_completed(plugin_id)
                     self.state_manager.record_update(plugin_id)
                     self.state_manager.set_state(plugin_id, PluginState.ENABLED)
                 else:
