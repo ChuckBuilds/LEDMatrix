@@ -119,7 +119,12 @@ def test_timezone_step_carries_the_configured_zone(timezone):
 
 def test_city_does_not_influence_the_timezone_step():
     """The coupling this change removes: city said nothing about the timezone,
-    and OR-ing it let a saved city tick the step off with the zone still wrong."""
+    and OR-ing it let a saved city tick the step off with the zone still wrong.
+
+    timezone_step() returns the opening tag only, so this compares the state
+    the step is in -- data-done and data-tz -- and not the label, which does
+    still show the configured city as context and so differs between the two.
+    """
     tampa = timezone_step(render(config_with(
         location={"city": "Tampa", "state": "Florida", "country": "US"})))
     seattle = timezone_step(render(config_with(
@@ -156,6 +161,67 @@ def test_zone_comparison_asks_for_the_time_of_day():
         "zone comparison must not depend on dateStyle/timeStyle")
     for field in ("hour:", "minute:", "year:", "month:", "day:"):
         assert field in body, f"zone comparison dropped {field!r}"
+
+
+def test_zone_comparison_samples_both_sides_of_dst():
+    """One instant is not enough, and the shortfall is invisible for months.
+
+    America/New_York and America/Lima hold the same offset all winter, so a
+    check against now alone ticks the step in January for a panel that runs an
+    hour off from March. The comparison has to sample instants either side of
+    DST -- mid-January and mid-July, which covers both hemispheres.
+    """
+    template = (PROJECT_ROOT / "web_interface" / "templates" / "v3"
+                / "partials" / "overview.html").read_text()
+    body = template[template.index("function sameZone"):]
+    body = body[:body.index("}())")]
+    code = "\n".join(line for line in body.splitlines()
+                     if not line.lstrip().startswith("//"))
+    assert "Date.UTC" in code, (
+        "zone comparison samples only the current instant, so zones that "
+        "coincide seasonally would read as equal")
+    assert code.count("Date.UTC") >= 2, "expected an instant either side of DST"
+
+
+def _stamp(zone, instant):
+    """The JS comparison's algorithm, for pinning what it must decide.
+
+    There is no JS runtime here (and the repo has no JS test infra), so this
+    mirrors sameZone rather than executing it: same instants, same wall-clock
+    equality. It records the verdicts the shipped code has to reach.
+    """
+    from zoneinfo import ZoneInfo
+    return instant.astimezone(ZoneInfo(zone)).strftime("%m/%d/%Y %H:%M")
+
+
+@pytest.mark.parametrize(
+    "left,right,equivalent",
+    [
+        # Aliases: one zone under two names.
+        ("Asia/Calcutta", "Asia/Kolkata", True),
+        ("Europe/Kiev", "Europe/Kyiv", True),
+        # Same rules year-round: either renders the same times, so a panel set
+        # to one and browsed from the other is correctly configured.
+        ("America/New_York", "America/Toronto", True),
+        # Coincide in winter only -- the case a single-instant check gets wrong.
+        ("America/New_York", "America/Lima", False),
+        ("America/Phoenix", "America/Los_Angeles", False),
+        ("Australia/Sydney", "Pacific/Guadalcanal", False),
+        # Plainly different.
+        ("America/New_York", "America/Chicago", False),
+        ("America/New_York", "Europe/Madrid", False),
+    ],
+)
+def test_which_zone_pairs_must_count_as_the_same(left, right, equivalent):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    year = 2026
+    instants = [datetime(year, 1, 15, 12, tzinfo=ZoneInfo("UTC")),
+                datetime(year, 7, 15, 12, tzinfo=ZoneInfo("UTC"))]
+    matched = all(_stamp(left, at) == _stamp(right, at) for at in instants)
+    assert matched is equivalent, (
+        f"{left} vs {right}: sampling both seasons gave {matched}")
 
 
 @pytest.mark.parametrize(

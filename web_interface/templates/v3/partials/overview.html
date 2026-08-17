@@ -184,13 +184,24 @@
     // the old test ticked it the moment the value stopped being the default.
     function sameZone(a, b) {
         if (a === b) return true;
-        // Compare the wall-clock time each zone yields for one instant, not
-        // the identifiers: aliases (Asia/Calcutta vs Asia/Kolkata,
-        // Europe/Kiev vs Europe/Kyiv) name one zone and must not read as a
-        // mismatch.
+        // Compare the wall-clock time each zone yields, not the identifiers:
+        // aliases (Asia/Calcutta vs Asia/Kolkata, Europe/Kiev vs Europe/Kyiv)
+        // name one zone and must not read as a mismatch.
+        //
+        // Sampled at three instants, all of which have to agree. Checking only
+        // now is not enough: America/New_York and America/Lima hold the same
+        // offset all winter, so a panel set to the wrong one of those would
+        // tick in January and then run an hour off from March. Mid-January and
+        // mid-July sit either side of DST in both hemispheres, so only zones
+        // that agree year-round match -- while Toronto still matches New York,
+        // which is right, since either renders the same times.
         try {
             var now = new Date();
-            var stamp = function (tz) {
+            var year = now.getUTCFullYear();
+            var instants = [now,
+                            new Date(Date.UTC(year, 0, 15, 12)),
+                            new Date(Date.UTC(year, 6, 15, 12))];
+            var stamp = function (tz, at) {
                 // Explicit numeric fields rather than dateStyle/timeStyle:
                 // those are late additions to Intl (Firefox shipped them in
                 // 91), and an implementation that does not know them ignores
@@ -203,9 +214,14 @@
                     timeZone: tz, year: 'numeric', month: '2-digit',
                     day: '2-digit', hour: '2-digit', minute: '2-digit',
                     hour12: false
-                }).format(now);
+                }).format(at);
             };
-            return stamp(a) === stamp(b);
+            for (var i = 0; i < instants.length; i++) {
+                if (stamp(a, instants[i]) !== stamp(b, instants[i])) {
+                    return false;
+                }
+            }
+            return true;
         } catch (e) {
             // An unparseable zone in the config is worth surfacing, not hiding.
             return false;
