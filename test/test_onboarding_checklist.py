@@ -135,6 +135,29 @@ def test_missing_timezone_leaves_the_step_open():
     assert 'data-done="0"' in step
 
 
+def test_zone_comparison_asks_for_the_time_of_day():
+    """Guard on the Intl options, which look like a stylistic choice.
+
+    dateStyle/timeStyle are late additions (Firefox shipped them in 91). An
+    implementation that does not know them ignores them and formats the date
+    alone -- which compares New York, Chicago and Madrid as equal and ticks
+    the step for a timezone that is plainly wrong. Explicit numeric fields
+    have been in Intl since ECMA-402 v1.
+    """
+    template = (PROJECT_ROOT / "web_interface" / "templates" / "v3"
+                / "partials" / "overview.html").read_text()
+    body = template[template.index("function sameZone"):]
+    body = body[:body.index("}())")]
+    # The comment above the options names dateStyle/timeStyle to explain why
+    # they are not used, so match on code only.
+    body = "\n".join(line for line in body.splitlines()
+                     if not line.lstrip().startswith("//"))
+    assert "dateStyle" not in body and "timeStyle" not in body, (
+        "zone comparison must not depend on dateStyle/timeStyle")
+    for field in ("hour:", "minute:", "year:", "month:", "day:"):
+        assert field in body, f"zone comparison dropped {field!r}"
+
+
 @pytest.mark.parametrize(
     "hardware,expected",
     [

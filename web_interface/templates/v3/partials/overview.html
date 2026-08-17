@@ -191,8 +191,18 @@
         try {
             var now = new Date();
             var stamp = function (tz) {
+                // Explicit numeric fields rather than dateStyle/timeStyle:
+                // those are late additions to Intl (Firefox shipped them in
+                // 91), and an implementation that does not know them ignores
+                // them and formats the date alone. That would compare
+                // New York, Chicago and Madrid as equal and tick the step for
+                // a timezone that is plainly wrong -- the exact failure this
+                // check exists to catch. These options have been in Intl
+                // since ECMA-402 v1.
                 return new Intl.DateTimeFormat('en-US', {
-                    timeZone: tz, dateStyle: 'short', timeStyle: 'short'
+                    timeZone: tz, year: 'numeric', month: '2-digit',
+                    day: '2-digit', hour: '2-digit', minute: '2-digit',
+                    hour12: false
                 }).format(now);
             };
             return stamp(a) === stamp(b);
