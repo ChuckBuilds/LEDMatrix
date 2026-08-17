@@ -24,19 +24,28 @@ echo "========================================"
 # Auto-detect latest version if needed
 if [ "$PIXLET_VERSION" = "latest" ]; then
     echo "Detecting latest version..."
-    # GitHub returns this JSON on a single line, so `grep '"tag_name"'`
-    # matches the whole document and a greedy `sed 's/.*"([^"]+)".*/\1/'`
-    # captures the LAST quoted token in it rather than the tag. That resolved
-    # to "mentions_count", which built a download URL for a release that does
-    # not exist. Match the field itself and take the value after it.
+    # When this response arrives on a single line -- as it did on the device
+    # where Starlark apps were failing -- `grep '"tag_name"'` matches the whole
+    # document and a greedy `sed 's/.*"([^"]+)".*/\1/'` captures the LAST
+    # quoted token in it rather than the tag. That resolved to
+    # "mentions_count", which built a download URL for a release that does not
+    # exist. (The API is pretty-printed by default, which is why the old
+    # command looks correct when you try it by hand -- but the formatting is
+    # not something to depend on.) Match the field itself and take the value
+    # after it, which is right for either shape.
     PIXLET_VERSION=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
         | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' \
         | head -n1 \
         | sed -E 's/.*:[[:space:]]*"([^"]*)".*/\1/')
 
-    # A wrong-but-non-empty value is what made the old bug silent, so check
-    # the shape rather than just that something came back.
-    if ! printf '%s' "$PIXLET_VERSION" | grep -qE '^v?[0-9]+\.[0-9]+'; then
+    # A wrong-but-non-empty value is what made the old bug silent, so check the
+    # shape rather than just that something came back. Anchored at both ends: a
+    # partial match would accept "v0.53garbage" or "0.53" and build a URL for a
+    # release that cannot exist, which is the failure this check is here to
+    # stop. Every tronbyt/pixlet release to date is vX.Y.Z; the optional suffix
+    # leaves room for a future -rc.1 or +build tag.
+    if ! printf '%s' "$PIXLET_VERSION" \
+        | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$'; then
         echo "Could not detect the latest version (got: '${PIXLET_VERSION:-<empty>}'), using fallback"
         PIXLET_VERSION="v0.50.2"
     fi
@@ -90,7 +99,14 @@ download_binary() {
     # Belt and braces: a mirror or proxy can return 200 with an error page.
     if ! gzip -t "$temp_file" 2>/dev/null; then
         echo "✗ Downloaded file is not a gzip archive: $url"
-        echo "  (first bytes: $(head -c 60 "$temp_file" | tr -d '\0' | tr '\n' ' '))"
+        # These bytes come from whatever answered the request, so strip
+        # everything non-printable before echoing them: an error page carrying
+        # terminal escapes would otherwise be able to rewrite this output or
+        # bury it in a CI log. Printable characters are kept rather than
+        # hex-encoding the lot, because "<!DOCTYPE html>" is the diagnostic.
+        local first_bytes
+        first_bytes=$(head -c 60 "$temp_file" | tr -cd '[:print:]')
+        printf '  (first bytes: %s)\n' "$first_bytes"
         rm -rf "$temp_dir"
         return 1
     fi
