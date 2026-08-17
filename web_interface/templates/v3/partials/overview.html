@@ -63,13 +63,13 @@
 
 <!-- Getting Started checklist: non-gating, dismissible (localStorage), items
      auto-check from existing config/endpoints — no new persisted state.
-     Known heuristic limits (acceptable, disclosed): values left at legitimate
-     defaults (e.g. a user actually in Tampa) read as "not done". -->
+     The timezone step is verified against the browser's own zone rather than
+     compared to the shipped default; see the data-check="timezone" block below
+     for why. -->
 {% set _hw = main_config.display.hardware if main_config and main_config.display else {} %}
 {% set _hw_done = (_hw.rows or 0) > 0 and (_hw.cols or 0) > 0 and (_hw.chain_length or 0) > 0 %}
 {% set _loc = main_config.location if main_config and main_config.location else {} %}
-{% set _loc_done = (main_config.timezone and main_config.timezone != 'America/New_York')
-                   or (_loc.city and _loc.city != 'Tampa') %}
+{% set _tz = (main_config.timezone if main_config else '') or '' %}
 <div id="getting-started-card" class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4" style="display:none" role="region" aria-label="Getting started checklist">
     <div class="flex items-start justify-between">
         <div class="flex-1">
@@ -78,8 +78,8 @@
             <ul class="space-y-1 text-sm" id="getting-started-items">
                 <li><button type="button" class="gs-item text-left w-full" data-done="{{ '1' if _hw_done else '0' }}" data-tab="display">
                     <i class="far fa-square mr-2"></i>Set your panel size (Display tab)</button></li>
-                <li><button type="button" class="gs-item text-left w-full" data-done="{{ '1' if _loc_done else '0' }}" data-tab="general">
-                    <i class="far fa-square mr-2"></i>Set your timezone and location (General tab)</button></li>
+                <li><button type="button" class="gs-item text-left w-full" data-done="0" data-check="timezone" data-tz="{{ _tz }}" data-tab="general">
+                    <i class="far fa-square mr-2"></i>Set your timezone{% if _tz %} — currently {{ _tz }}{% if _loc.city %}, {{ _loc.city }}{% endif %}{% endif %} (General tab)<span data-gs-tz-note class="text-xs"></span></button></li>
                 <li><button type="button" class="gs-item text-left w-full" data-done="0" data-check="installed" data-tab="plugins">
                     <i class="far fa-square mr-2"></i>Install a plugin from the Plugin Store</button></li>
                 <li><button type="button" class="gs-item text-left w-full" data-done="0" data-check="enabled" data-tab="plugins">
@@ -164,6 +164,65 @@
         });
     });
     maybeAutoHide();
+
+    // Timezone: verified against the browser's own zone.
+    //
+    // This step used to tick when the saved timezone differed from the value
+    // config.template.json ships (America/New_York), with the saved city
+    // OR-ed in. Two things were wrong with that. "Differs from the default"
+    // answers "did somebody edit this?", but what the checklist needs to know
+    // is whether the value is RIGHT — so anyone who genuinely lives in the
+    // default zone could never satisfy it and the card nagged forever. And
+    // the city has no bearing on whether the timezone is set: because the two
+    // were OR-ed, saving a city ticked the step off with the timezone still
+    // wrong, which is the direction that actually breaks displays (event
+    // times render in the wrong zone).
+    //
+    // The browser already knows its zone, so compare against that: no new
+    // persisted state, no network, and it catches the reverse case too — a
+    // panel still set to the old zone after a move now stays unticked, where
+    // the old test ticked it the moment the value stopped being the default.
+    function sameZone(a, b) {
+        if (a === b) return true;
+        // Compare the wall-clock time each zone yields for one instant, not
+        // the identifiers: aliases (Asia/Calcutta vs Asia/Kolkata,
+        // Europe/Kiev vs Europe/Kyiv) name one zone and must not read as a
+        // mismatch.
+        try {
+            var now = new Date();
+            var stamp = function (tz) {
+                return new Intl.DateTimeFormat('en-US', {
+                    timeZone: tz, dateStyle: 'short', timeStyle: 'short'
+                }).format(now);
+            };
+            return stamp(a) === stamp(b);
+        } catch (e) {
+            // An unparseable zone in the config is worth surfacing, not hiding.
+            return false;
+        }
+    }
+
+    (function () {
+        var tzBtn = card.querySelector('[data-check="timezone"]');
+        if (!tzBtn) return;
+        var configured = tzBtn.dataset.tz || '';
+        if (!configured) return;          // nothing saved yet: leave it open
+        var local = '';
+        try {
+            local = (Intl.DateTimeFormat().resolvedOptions().timeZone) || '';
+        } catch (e) {
+            return;                        // no Intl: leave it to the manual tick
+        }
+        if (!local) return;
+        if (sameZone(configured, local)) {
+            markDone(tzBtn);
+            return;
+        }
+        // Unticked on its own says "wrong" without saying why; name the zone
+        // the browser is in so the step is actionable.
+        var note = tzBtn.querySelector('[data-gs-tz-note]');
+        if (note) note.textContent = ' — this browser is in ' + local;
+    }());
 
     // Plugin-derived states from the existing installed-plugins endpoint.
     fetch('/api/v3/plugins/installed')
