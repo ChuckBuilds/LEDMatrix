@@ -20,7 +20,22 @@ The installation script:
 - Installs and configures `dnsmasq` (DHCP server for AP mode)
 - These services can interfere with normal WiFi client mode
 
-### 3. Reboot After Installation
+### 3. The Board Ran Out of Memory
+
+On a 512MB or 1GB board, memory exhaustion stops `sshd` being able to fork a
+session process. The connection is accepted and then closed immediately, before
+any banner:
+
+```
+kex_exchange_identification: Connection closed by remote host
+```
+
+The giveaway is that the board is otherwise healthy — ping is clean and the web
+UI still responds — but nothing that needs to start a new process works, and
+the panel is usually dark. Only a power cycle clears it. See
+[LOW_MEMORY_BOARDS.md](LOW_MEMORY_BOARDS.md).
+
+### 4. Reboot After Installation
 
 If the script reboots the Pi (which it recommends), network services may restart in a different state, potentially triggering AP mode.
 
