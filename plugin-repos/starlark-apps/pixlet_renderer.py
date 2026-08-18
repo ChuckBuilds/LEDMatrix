@@ -5,6 +5,7 @@ Handles execution of Pixlet CLI to render .star files into WebP animations.
 Supports bundled binaries and system-installed Pixlet.
 """
 
+import ast
 import json
 import logging
 import os
@@ -16,6 +17,8 @@ from pathlib import Path
 from typing import Dict, Any, Optional, Tuple, List
 
 logger = logging.getLogger(__name__)
+
+_UNRESOLVED = object()
 
 
 class PixletRenderer:
@@ -373,7 +376,7 @@ class PixletRenderer:
         Returns:
             Schema dict with format {"version": "1", "schema": [...]}, or None
         """
-        # Extract variable definitions (for dropdown options)
+        # Extract statically resolvable constants and option variables.
         var_table = self._extract_variable_definitions(content)
 
         # Extract get_schema() function body
@@ -449,32 +452,181 @@ class PixletRenderer:
             "schema": schema_fields
         }
 
-    def _extract_variable_definitions(self, content: str) -> Dict[str, List[Dict]]:
+    def _extract_variable_definitions(self, content: str) -> Dict[str, Any]:
         """
-        Extract top-level variable assignments (for dropdown options).
+        Extract safe top-level constants and get_schema() local variables.
 
         Args:
             content: .star file content
 
         Returns:
-            Dict mapping variable names to their option lists
+            Dict mapping variable names to statically resolved values
         """
-        var_table = {}
+        values: Dict[str, Any] = {}
+        try:
+            tree = ast.parse(content)
+        except SyntaxError as e:
+            logger.warning("Could not statically parse Starlark schema variables: %s", e)
+            return values
 
-        # Find variable definitions like: variableName = [schema.Option(...), ...]
-        var_pattern = r'^(\w+)\s*=\s*\[(.*?schema\.Option.*?)\]'
-        matches = re.finditer(var_pattern, content, re.MULTILINE | re.DOTALL)
+        def collect_assignment(node: ast.stmt) -> None:
+            if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+                return
+            target = node.targets[0]
+            if not isinstance(target, ast.Name):
+                return
+            value = self._safe_eval_node(node.value, values)
+            if value is _UNRESOLVED:
+                logger.debug("Could not statically resolve Starlark variable %s", target.id)
+                return
+            values[target.id] = value
 
-        for match in matches:
-            var_name = match.group(1)
-            options_text = match.group(2)
+        # Assignment order matters because constants commonly reference an
+        # earlier constant (DEFAULT_ANIMATION = PACMAN_ANIMATION).
+        for node in tree.body:
+            collect_assignment(node)
 
-            # Parse schema.Option entries
-            options = self._parse_schema_options(options_text, {})
-            if options:
-                var_table[var_name] = options
+        # Option variables are generally local to get_schema(). Resolve its
+        # straight-line assignments using the top-level constants above.
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef) and node.name == 'get_schema':
+                for statement in node.body:
+                    collect_assignment(statement)
+                break
 
-        return var_table
+        return values
+
+    def _safe_eval_node(self, node: ast.AST, values: Dict[str, Any]) -> Any:
+        """Resolve the small, data-only expression subset used by schemas."""
+        if isinstance(node, ast.Constant):
+            if isinstance(node.value, (str, int, float, bool)) or node.value is None:
+                return node.value
+            return _UNRESOLVED
+
+        if isinstance(node, ast.Name):
+            return values.get(node.id, _UNRESOLVED)
+
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
+            operand = self._safe_eval_node(node.operand, values)
+            if isinstance(operand, (int, float)) and not isinstance(operand, bool):
+                return -operand if isinstance(node.op, ast.USub) else operand
+            return _UNRESOLVED
+
+        if isinstance(node, ast.Dict):
+            result = {}
+            for key_node, value_node in zip(node.keys, node.values):
+                key = self._safe_eval_node(key_node, values)
+                value = self._safe_eval_node(value_node, values)
+                if key is _UNRESOLVED or value is _UNRESOLVED:
+                    return _UNRESOLVED
+                if not isinstance(key, (str, int, float, bool)):
+                    return _UNRESOLVED
+                result[key] = value
+            return result
+
+        if isinstance(node, (ast.List, ast.Tuple)):
+            result = []
+            for item_node in node.elts:
+                item = self._safe_eval_node(item_node, values)
+                if item is _UNRESOLVED:
+                    return _UNRESOLVED
+                result.append(item)
+            return result
+
+        if isinstance(node, ast.Call) and self._is_schema_option_call(node):
+            if node.args:
+                return _UNRESOLVED
+            kwargs = {keyword.arg: self._safe_eval_node(keyword.value, values)
+                      for keyword in node.keywords if keyword.arg}
+            if set(kwargs) != {'display', 'value'}:
+                return _UNRESOLVED
+            if any(value is _UNRESOLVED for value in kwargs.values()):
+                return _UNRESOLVED
+            return {'display': kwargs['display'], 'value': kwargs['value']}
+
+        if isinstance(node, ast.ListComp):
+            return self._safe_eval_option_comprehension(node, values)
+
+        return _UNRESOLVED
+
+    @staticmethod
+    def _is_schema_option_call(node: ast.AST) -> bool:
+        return (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == 'schema'
+                and node.func.attr == 'Option')
+
+    def _safe_eval_option_comprehension(
+            self, node: ast.ListComp, values: Dict[str, Any]) -> Any:
+        """Resolve ``schema.Option(...) for key, value in DICT.items()``."""
+        if len(node.generators) != 1 or not self._is_schema_option_call(node.elt):
+            return _UNRESOLVED
+        generator = node.generators[0]
+        if generator.ifs or generator.is_async:
+            return _UNRESOLVED
+        if not (isinstance(generator.target, (ast.Tuple, ast.List))
+                and len(generator.target.elts) == 2
+                and all(isinstance(item, ast.Name) for item in generator.target.elts)):
+            return _UNRESOLVED
+        iterator = generator.iter
+        if not (isinstance(iterator, ast.Call) and not iterator.args and not iterator.keywords
+                and isinstance(iterator.func, ast.Attribute)
+                and iterator.func.attr == 'items'):
+            return _UNRESOLVED
+        mapping = self._safe_eval_node(iterator.func.value, values)
+        if not isinstance(mapping, dict):
+            return _UNRESOLVED
+
+        key_name, value_name = (item.id for item in generator.target.elts)
+        options = []
+        for key, value in mapping.items():
+            local_values = dict(values)
+            local_values[key_name] = key
+            local_values[value_name] = value
+            option = self._safe_eval_node(node.elt, local_values)
+            if option is _UNRESOLVED:
+                return _UNRESOLVED
+            options.append(option)
+        return options
+
+    def _resolve_expression(self, expression: str, values: Dict[str, Any]) -> Any:
+        try:
+            node = ast.parse(expression.strip(), mode='eval').body
+        except SyntaxError:
+            return _UNRESOLVED
+        return self._safe_eval_node(node, values)
+
+    @staticmethod
+    def _extract_keyword_expression(params_text: str, keyword: str) -> Optional[str]:
+        """Extract a keyword value while respecting nested brackets and strings."""
+        match = re.search(rf'\b{re.escape(keyword)}\s*=\s*', params_text)
+        if not match:
+            return None
+        start = match.end()
+        stack = []
+        quote = None
+        escaped = False
+        for index in range(start, len(params_text)):
+            char = params_text[index]
+            if quote:
+                if escaped:
+                    escaped = False
+                elif char == '\\':
+                    escaped = True
+                elif char == quote:
+                    quote = None
+                continue
+            if char in ('"', "'"):
+                quote = char
+            elif char in '([{':
+                stack.append(char)
+            elif char in ')]}':
+                if stack:
+                    stack.pop()
+            elif char == ',' and not stack:
+                return params_text[start:index].strip()
+        return params_text[start:].strip()
 
     def _extract_get_schema_body(self, content: str) -> Optional[str]:
         """
@@ -586,50 +738,27 @@ class PixletRenderer:
         if icon_match:
             field_dict['icon'] = icon_match.group(1)
 
-        # default (can be string, bool, or variable reference)
-        # First try to match quoted strings (which may contain commas)
-        default_match = re.search(r'default\s*=\s*"([^"]*)"', params_text)
-        if not default_match:
-            # Try single quotes
-            default_match = re.search(r"default\s*=\s*'([^']*)'", params_text)
-        if not default_match:
-            # Fall back to unquoted value (stop at comma or closing paren)
-            default_match = re.search(r'default\s*=\s*([^,\)]+)', params_text)
-
-        if default_match:
-            default_value = default_match.group(1).strip()
-            # Handle boolean
-            if default_value in ('True', 'False'):
-                field_dict['default'] = default_value.lower()
-            # Handle string literal from first two patterns (already extracted without quotes)
-            elif re.search(r'default\s*=\s*["\']', params_text):
-                # This was a quoted string, use the captured content directly
+        default_expression = self._extract_keyword_expression(params_text, 'default')
+        if default_expression is not None:
+            default_value = self._resolve_expression(default_expression, var_table)
+            if default_value is _UNRESOLVED:
+                logger.warning("Could not statically resolve schema default for %s: %s",
+                               field_dict['id'], default_expression)
+            elif isinstance(default_value, (str, int, float, bool)) or default_value is None:
                 field_dict['default'] = default_value
-            # Handle variable reference (can't resolve, use as-is)
-            else:
-                # Try to extract just the value if it's like options[0].value
-                if '.' in default_value or '[' in default_value:
-                    # Complex expression, skip default
-                    pass
-                else:
-                    field_dict['default'] = default_value
 
         # For dropdown, extract options
         if type_of == 'dropdown':
-            options_match = re.search(r'options\s*=\s*([^,\)]+)', params_text)
-            if options_match:
-                options_ref = options_match.group(1).strip()
-                # Check if it's a variable reference
-                if options_ref in var_table:
-                    field_dict['options'] = var_table[options_ref]
-                # Or inline options
-                elif options_ref.startswith('['):
-                    # Find the full options array (handle nested brackets)
-                    # This is tricky, for now try to extract inline options
-                    inline_match = re.search(r'options\s*=\s*(\[.*?\])', params_text, re.DOTALL)
-                    if inline_match:
-                        options_text = inline_match.group(1)
-                        field_dict['options'] = self._parse_schema_options(options_text, var_table)
+            options_expression = self._extract_keyword_expression(params_text, 'options')
+            if options_expression is not None:
+                options = self._resolve_expression(options_expression, var_table)
+                if (isinstance(options, list)
+                        and all(isinstance(option, dict)
+                                and set(option) == {'display', 'value'} for option in options)):
+                    field_dict['options'] = options
+                else:
+                    logger.warning("Could not statically resolve dropdown options for %s: %s",
+                                   field_dict['id'], options_expression)
 
         return field_dict
 
@@ -646,14 +775,7 @@ class PixletRenderer:
         """
         options = []
 
-        # Match schema.Option(display = "...", value = "...")
-        option_pattern = r'schema\.Option\s*\(\s*display\s*=\s*"([^"]+)"\s*,\s*value\s*=\s*"([^"]+)"\s*\)'
-        matches = re.finditer(option_pattern, options_text)
-
-        for match in matches:
-            options.append({
-                "display": match.group(1),
-                "value": match.group(2)
-            })
-
+        resolved = self._resolve_expression(options_text, var_table)
+        if isinstance(resolved, list):
+            return resolved
         return options
