@@ -1688,6 +1688,43 @@ else
     echo "✗ $CMDLINE_FILE not found; skipping isolcpus optimization"
 fi
 
+# Enable the memory cgroup controller (idempotent).
+# The Pi firmware boots with cgroup_disable=memory, so systemd's MemoryMax= is
+# accepted and silently ignored — the display service then has no ceiling, and
+# a runaway takes the whole board down (sshd can no longer fork, the panel goes
+# dark) rather than just restarting the one service.
+if [ "$SKIP_PERF" != "1" ] && [ -f "$CMDLINE_FILE" ]; then
+    if grep -q 'cgroup_enable=memory' "$CMDLINE_FILE"; then
+        echo "cgroup_enable=memory already present in $CMDLINE_FILE"
+    else
+        echo "Adding cgroup_enable=memory to $CMDLINE_FILE..."
+        cp "$CMDLINE_FILE" "$CMDLINE_FILE.bak" 2>/dev/null || true
+        sed -i '1 s/$/ cgroup_enable=memory cgroup_memory=1/' "$CMDLINE_FILE"
+        echo "  Takes effect after reboot. Verify with:"
+        echo "    grep memory /sys/fs/cgroup/cgroup.controllers"
+    fi
+fi
+
+# Persist the journal (idempotent).
+# These images default to volatile storage: journald keeps everything in /run
+# (tmpfs), so every reboot destroys the logs — including the ones that would
+# explain why the board rebooted. Capped so an SD card is not worn out by logs.
+if [ -d /var/log/journal ] && [ -n "$(ls -A /var/log/journal 2>/dev/null)" ]; then
+    echo "Persistent journald storage already enabled"
+else
+    echo "Enabling persistent journald storage..."
+    mkdir -p /etc/systemd/journald.conf.d
+    cat > /etc/systemd/journald.conf.d/ledmatrix-persistent.conf <<'JOURNALD'
+# Installed by LEDMatrix first_time_install.sh
+[Journal]
+Storage=persistent
+SystemMaxUse=64M
+JOURNALD
+    mkdir -p /var/log/journal
+    systemd-tmpfiles --create --prefix /var/log/journal >/dev/null 2>&1 || true
+    systemctl restart systemd-journald >/dev/null 2>&1 || true
+fi
+
 # Ensure dtparam=audio=off in config.txt (idempotent)
 if [ "$SKIP_PERF" = "1" ]; then
     : # skipped

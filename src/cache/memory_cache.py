@@ -4,10 +4,57 @@ Memory Cache
 Handles in-memory caching with TTL support, size limits, and automatic cleanup.
 """
 
+import os
 import time
 import threading
 import logging
 from typing import Dict, Any, Optional
+
+# Historical fixed ceiling, kept as the fallback when RAM cannot be read.
+DEFAULT_MAX_SIZE = 1000
+
+
+def _total_memory_mb() -> Optional[float]:
+    """Physical RAM in MB, or None where /proc/meminfo is unavailable."""
+    try:
+        with open('/proc/meminfo', 'r', encoding='utf-8') as fh:
+            for line in fh:
+                if line.startswith('MemTotal:'):
+                    return int(line.split()[1]) / 1024
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
+def default_max_size() -> int:
+    """Entry ceiling scaled to this machine's RAM.
+
+    One fixed ceiling cannot serve both a 512 MB Pi Zero 2 W and an 8 GB Pi 5.
+    Entries here are parsed API payloads that routinely run tens of kilobytes
+    each, so a thousand of them is a comfortable cache on a large board and a
+    substantial fraction of total RAM on a small one — where the process
+    competing for that RAM is also driving the panel. Set
+    LEDMATRIX_CACHE_MAX_ENTRIES to override.
+    """
+    override = os.environ.get('LEDMATRIX_CACHE_MAX_ENTRIES')
+    if override:
+        try:
+            value = int(override)
+            if value > 0:
+                return value
+        except ValueError:
+            pass
+
+    total_mb = _total_memory_mb()
+    if total_mb is None:
+        return DEFAULT_MAX_SIZE
+    if total_mb < 1536:      # 512 MB and 1 GB boards
+        return 150
+    if total_mb < 3072:      # 2 GB
+        return 400
+    if total_mb < 6144:      # 4 GB
+        return 800
+    return 1500              # 8 GB and up
 
 
 class MemoryCache:
