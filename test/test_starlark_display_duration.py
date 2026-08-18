@@ -23,6 +23,8 @@ def _app(app_id, duration, frames=None):
     app.frames = frames or [(f"{app_id}-frame", 100)]
     app.current_frame_index = 0
     app.last_frame_time = 0.0
+    app.last_presented_frame_index = None
+    app.animation_total_duration_ms = sum(delay for _, delay in app.frames)
     return app
 
 
@@ -99,12 +101,24 @@ def test_short_frames_catch_up_to_webp_wall_clock(monkeypatch):
     assert arcade.current_frame_index == 3
 
 
-def test_static_starlark_app_does_not_request_high_fps():
+def test_starlark_requests_high_fps_before_controller_selects_mode():
+    manager = _manager(_app("animated", 15, [("f0", 50), ("f1", 50)]))
+
+    assert manager.current_app is None
+    assert manager.needs_high_fps is True
+
+
+def test_static_starlark_app_avoids_redundant_matrix_writes(monkeypatch):
     static_app = _app("weather", 15, [("still", 50)])
     manager = _manager(static_app)
+    times = iter((1.0, 1.1, 1.2))
+    monkeypatch.setattr(manager_module.time, "time", lambda: next(times))
 
     assert manager.display(display_mode="weather") is True
-    assert manager.needs_high_fps is False
+    assert manager.display(display_mode="weather") is True
+    assert manager.display(display_mode="weather") is True
+    assert manager.needs_high_fps is True
+    assert manager.display_manager.update_display.call_count == 1
 
 
 def test_manual_mode_switch_selects_requested_app_immediately():

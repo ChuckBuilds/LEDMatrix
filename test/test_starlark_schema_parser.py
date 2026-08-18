@@ -103,6 +103,30 @@ def get_schema():
     assert "Could not statically resolve" in caplog.text
 
 
+def test_resolves_default_from_static_dictionary_lookup(renderer, tmp_path):
+    fields = _extract(renderer, tmp_path, '''
+FRAME_DELAYS = {"Normal": "100", "Fast": "60"}
+DEFAULT_FRAME_DELAY = FRAME_DELAYS["Normal"]
+def get_schema():
+    return schema.Schema(version = "1", fields = [
+        schema.Dropdown(
+            id = "frame_delay",
+            default = DEFAULT_FRAME_DELAY,
+            options = [
+                schema.Option(display = "Normal", value = "100"),
+                schema.Option(display = "Fast", value = "60"),
+            ],
+        ),
+    ])
+''')
+
+    assert fields["frame_delay"]["default"] == "100"
+    assert fields["frame_delay"]["options"] == [
+        {"display": "Normal", "value": "100"},
+        {"display": "Fast", "value": "60"},
+    ]
+
+
 def test_rebuild_repairs_only_missing_and_symbolic_defaults(tmp_path):
     apps_dir = tmp_path / "starlark-apps"
     app_dir = apps_dir / "sample"

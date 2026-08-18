@@ -56,6 +56,8 @@ class StarlarkApp:
         self.current_frame_index = 0
         self.last_frame_time = 0
         self.last_render_time = 0
+        self.last_presented_frame_index: Optional[int] = None
+        self.animation_total_duration_ms = 0
 
     def _load_config(self) -> Dict[str, Any]:
         """Load app configuration from config.json."""
@@ -303,17 +305,15 @@ class StarlarkAppsPlugin(BasePlugin):
 
     @property
     def needs_high_fps(self) -> bool:
-        """Request frame-rate dispatch only for an active animated app.
+        """Request frame-rate dispatch before the controller selects a mode.
 
-        The controller evaluates this after the first display() call, by which
-        point the selected app's cached WebP has been rendered and extracted.
-        Static Starlark apps remain on the normal low-frequency path.
+        DisplayController reads this property before its first display() call,
+        so ``current_app`` is not available yet.  Starlark owns both static and
+        animated modes; it must enter the fast dispatch path up front so an
+        animated WebP can honor its embedded timings.  _display_frame avoids
+        redundant matrix writes when the selected frame has not changed.
         """
-        return bool(
-            self.current_app
-            and self.current_app.frames
-            and len(self.current_app.frames) > 1
-        )
+        return True
 
     def _calculate_optimal_magnify(self) -> int:
         """
@@ -718,6 +718,7 @@ class StarlarkAppsPlugin(BasePlugin):
                     return False
                 if self.current_app is not requested_app:
                     self.current_app = requested_app
+                    self.current_app.last_presented_frame_index = None
                     self.logger.debug("Selected Starlark app for mode: %s", display_mode)
             elif not self.current_app:
                 self._select_next_app()
@@ -735,6 +736,8 @@ class StarlarkAppsPlugin(BasePlugin):
                     return False
 
             # Display current frame
+            if force_clear:
+                self.current_app.last_presented_frame_index = None
             self._display_frame()
             return True
 
@@ -855,6 +858,8 @@ class StarlarkAppsPlugin(BasePlugin):
             app.frames = frames
             app.current_frame_index = 0
             app.last_frame_time = time.time()
+            app.last_presented_frame_index = None
+            app.animation_total_duration_ms = sum(delay for _, delay in frames)
 
             self.logger.debug(f"Loaded {len(frames)} frames for {app.app_id}")
             return True
@@ -870,11 +875,8 @@ class StarlarkAppsPlugin(BasePlugin):
 
         try:
             current_time = time.time()
-            frame, delay_ms = self.current_app.frames[self.current_app.current_frame_index]
-
-            # Set frame on display manager
-            self.display_manager.image = frame
-            self.display_manager.update_display()
+            frame_count = len(self.current_app.frames)
+            _, delay_ms = self.current_app.frames[self.current_app.current_frame_index]
 
             # Advance against the WebP's wall-clock timeline. The controller
             # may call us less frequently than a very short encoded delay
@@ -884,26 +886,43 @@ class StarlarkAppsPlugin(BasePlugin):
             # rerender; it only changes the in-memory frame index.
             if self.current_app.last_frame_time <= 0:
                 self.current_app.last_frame_time = current_time
-                return
-
-            elapsed_ms = (current_time - self.current_app.last_frame_time) * 1000.0
-            frames_advanced = 0
-            frame_count = len(self.current_app.frames)
-            total_duration_ms = sum(frame_delay for _, frame_delay in self.current_app.frames)
-            if total_duration_ms > 0 and elapsed_ms >= total_duration_ms:
-                # Whole animation loops return to the same frame index.
-                elapsed_ms %= total_duration_ms
-            while elapsed_ms >= delay_ms and frames_advanced < frame_count:
-                elapsed_ms -= delay_ms
-                self.current_app.current_frame_index = (
-                    (self.current_app.current_frame_index + 1) % frame_count
+            else:
+                elapsed_ms = (current_time - self.current_app.last_frame_time) * 1000.0
+                frames_advanced = 0
+                total_duration_ms = getattr(
+                    self.current_app, "animation_total_duration_ms", 0
                 )
-                frames_advanced += 1
-                _, delay_ms = self.current_app.frames[self.current_app.current_frame_index]
+                if total_duration_ms <= 0:
+                    total_duration_ms = sum(
+                        frame_delay for _, frame_delay in self.current_app.frames
+                    )
+                    self.current_app.animation_total_duration_ms = total_duration_ms
+                if total_duration_ms > 0 and elapsed_ms >= total_duration_ms:
+                    # Whole animation loops return to the same frame index.
+                    elapsed_ms %= total_duration_ms
+                while elapsed_ms >= delay_ms and frames_advanced < frame_count:
+                    elapsed_ms -= delay_ms
+                    self.current_app.current_frame_index = (
+                        (self.current_app.current_frame_index + 1) % frame_count
+                    )
+                    frames_advanced += 1
+                    _, delay_ms = self.current_app.frames[
+                        self.current_app.current_frame_index
+                    ]
 
-            # Preserve sub-frame remainder so callback jitter does not
-            # accumulate into progressively slower playback.
-            self.current_app.last_frame_time = current_time - (elapsed_ms / 1000.0)
+                # Preserve sub-frame remainder so callback jitter does not
+                # accumulate into progressively slower playback.
+                self.current_app.last_frame_time = current_time - (elapsed_ms / 1000.0)
+
+            # The controller dispatches Starlark at high FPS before it knows
+            # whether the selected mode is animated.  Only touch the matrix
+            # when frame progression (or a mode switch/clear) requires it.
+            frame_index = self.current_app.current_frame_index
+            if getattr(self.current_app, "last_presented_frame_index", None) != frame_index:
+                frame, _ = self.current_app.frames[frame_index]
+                self.display_manager.image = frame
+                self.display_manager.update_display()
+                self.current_app.last_presented_frame_index = frame_index
 
         except Exception as e:
             self.logger.error(f"Error displaying frame: {e}")

@@ -506,6 +506,24 @@ class PixletRenderer:
         if isinstance(node, ast.Name):
             return values.get(node.id, _UNRESOLVED)
 
+        # Static constant lookup, e.g.
+        # DEFAULT_FRAME_DELAY = FRAME_DELAYS["Normal"].  Resolve only a
+        # previously evaluated data container and a primitive literal key;
+        # never invoke user code or Python's general eval machinery.
+        if isinstance(node, ast.Subscript):
+            container = self._safe_eval_node(node.value, values)
+            key = self._safe_eval_node(node.slice, values)
+            if container is _UNRESOLVED or key is _UNRESOLVED:
+                return _UNRESOLVED
+            if isinstance(container, dict) and isinstance(
+                    key, (str, int, float, bool)):
+                return container.get(key, _UNRESOLVED)
+            if (isinstance(container, list)
+                    and isinstance(key, int) and not isinstance(key, bool)
+                    and -len(container) <= key < len(container)):
+                return container[key]
+            return _UNRESOLVED
+
         if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
             operand = self._safe_eval_node(node.operand, values)
             if isinstance(operand, (int, float)) and not isinstance(operand, bool):
