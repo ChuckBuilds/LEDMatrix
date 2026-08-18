@@ -9,7 +9,11 @@ User=root
 WorkingDirectory=__PROJECT_ROOT_DIR__
 Environment=PYTHONDONTWRITEBYTECODE=1
 ExecStart=/usr/bin/python3 __PROJECT_ROOT_DIR__/run.py
-Restart=on-failure
+# Restart=always, not on-failure: run.py exiting 0 (a clean shutdown path taken
+# for a reason that no longer applies, e.g. a config reload) would otherwise leave
+# the service stopped and the panel dark indefinitely, with systemd considering
+# that a successful outcome and never bringing it back.
+Restart=always
 RestartSec=10
 StandardOutput=journal
 StandardError=journal

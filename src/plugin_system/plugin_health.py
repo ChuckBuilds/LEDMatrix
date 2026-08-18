@@ -64,8 +64,19 @@ class PluginHealthTracker:
             cache_key, max_age=None, memory_ttl=0 if force_reload else None
         )
 
-        if cached:
+        if isinstance(cached, dict) and cached:
             return cached
+
+        # A cache entry that is not a dict means the persisted state was written
+        # by something other than _save_health_state (a key collision, a partial
+        # write, a restored backup). Returning it verbatim makes every caller
+        # blow up on .get(), which takes the display down in a restart loop that
+        # survives reboots because the bad entry is on disk. Discard and rebuild.
+        if cached is not None and not isinstance(cached, dict):
+            self.logger.warning(
+                f"Discarding malformed health state for {plugin_id}: expected "
+                f"dict, got {type(cached).__name__}. Falling back to defaults."
+            )
         
         # Default state
         return {
