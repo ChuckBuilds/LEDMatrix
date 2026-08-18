@@ -681,7 +681,7 @@ class StarlarkAppsPlugin(BasePlugin):
                 if app.is_enabled() and app.should_render(current_time):
                     self._render_app(app, force=False)
 
-    def display(self, force_clear: bool = False) -> None:
+    def display(self, display_mode: Optional[str] = None, force_clear: bool = False) -> bool:
         """
         Display current Starlark app.
 
@@ -692,27 +692,41 @@ class StarlarkAppsPlugin(BasePlugin):
             if force_clear:
                 self.display_manager.clear()
 
-            # If no current app, try to select one
-            if not self.current_app:
+            # Every installed app is registered as its own DisplayController
+            # mode. Select that exact app when the controller dispatches a
+            # mode, including manual switches. Do not reset its frame index or
+            # frame timestamp: WebP animation timing is independent from the
+            # amount of time this mode remains in the central rotation.
+            if display_mode is not None:
+                requested_app = self.apps.get(display_mode)
+                if requested_app is None or not requested_app.is_enabled():
+                    self.logger.warning("Starlark display mode is unavailable: %s", display_mode)
+                    return False
+                if self.current_app is not requested_app:
+                    self.current_app = requested_app
+                    self.logger.debug("Selected Starlark app for mode: %s", display_mode)
+            elif not self.current_app:
                 self._select_next_app()
 
             if not self.current_app:
                 # No apps available
                 self.logger.debug("No Starlark apps to display")
-                return
+                return False
 
             # Render app if needed
             if not self.current_app.frames:
                 success = self._render_app(self.current_app, force=True)
                 if not success:
                     self.logger.error(f"Failed to render app: {self.current_app.app_id}")
-                    return
+                    return False
 
             # Display current frame
             self._display_frame()
+            return True
 
         except Exception as e:
             self.logger.error(f"Error displaying Starlark app: {e}")
+            return False
 
     def _select_next_app(self) -> None:
         """Select the next enabled app for display."""
@@ -1009,6 +1023,13 @@ class StarlarkAppsPlugin(BasePlugin):
         if self.current_app:
             return float(self.current_app.get_display_duration())
         return self.config.get('display_duration', 15.0)
+
+    def get_mode_display_duration(self, display_mode: str) -> float:
+        """Return the effective central-rotation duration for one app mode."""
+        app = self.apps.get(display_mode)
+        if app is not None and app.is_enabled():
+            return float(app.get_display_duration())
+        return float(self.config.get('display_duration', 15.0))
 
     # ─── Vegas Mode Integration ──────────────────────────────────────
 
