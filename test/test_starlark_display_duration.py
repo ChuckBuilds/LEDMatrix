@@ -70,16 +70,41 @@ def test_non_starlark_plugin_duration_contract_is_unchanged(test_display_control
 def test_webp_frames_continue_advancing_within_mode_duration(monkeypatch):
     aquarium = _app("aquarium", 15, [("frame-1", 100), ("frame-2", 100)])
     manager = _manager(aquarium)
-    times = iter((0.05, 0.11, 0.22))
+    times = iter((0.05, 0.16, 0.27))
     monkeypatch.setattr(manager_module.time, "time", lambda: next(times))
 
     assert manager.display(display_mode="aquarium") is True
     assert aquarium.current_frame_index == 0
+    assert manager.needs_high_fps is True
     assert manager.display(display_mode="aquarium") is True
     assert aquarium.current_frame_index == 1
     assert manager.display(display_mode="aquarium") is True
     assert aquarium.current_frame_index == 0
     assert manager.get_mode_display_duration("aquarium") == 15
+
+
+def test_short_frames_catch_up_to_webp_wall_clock(monkeypatch):
+    arcade = _app("arcade", 15, [("f0", 5), ("f1", 5), ("f2", 5), ("f3", 5)])
+    manager = _manager(arcade)
+    times = iter((1.000, 1.008, 1.016))
+    monkeypatch.setattr(manager_module.time, "time", lambda: next(times))
+
+    manager.display(display_mode="arcade")
+    assert arcade.current_frame_index == 0
+
+    manager.display(display_mode="arcade")
+    assert arcade.current_frame_index == 1
+
+    manager.display(display_mode="arcade")
+    assert arcade.current_frame_index == 3
+
+
+def test_static_starlark_app_does_not_request_high_fps():
+    static_app = _app("weather", 15, [("still", 50)])
+    manager = _manager(static_app)
+
+    assert manager.display(display_mode="weather") is True
+    assert manager.needs_high_fps is False
 
 
 def test_manual_mode_switch_selects_requested_app_immediately():

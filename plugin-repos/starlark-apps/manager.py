@@ -301,6 +301,20 @@ class StarlarkAppsPlugin(BasePlugin):
 
         return True
 
+    @property
+    def needs_high_fps(self) -> bool:
+        """Request frame-rate dispatch only for an active animated app.
+
+        The controller evaluates this after the first display() call, by which
+        point the selected app's cached WebP has been rendered and extracted.
+        Static Starlark apps remain on the normal low-frequency path.
+        """
+        return bool(
+            self.current_app
+            and self.current_app.frames
+            and len(self.current_app.frames) > 1
+        )
+
     def _calculate_optimal_magnify(self) -> int:
         """
         Calculate optimal magnification factor based on display dimensions.
@@ -862,13 +876,34 @@ class StarlarkAppsPlugin(BasePlugin):
             self.display_manager.image = frame
             self.display_manager.update_display()
 
-            # Check if it's time to advance to next frame
-            delay_seconds = delay_ms / 1000.0
-            if (current_time - self.current_app.last_frame_time) >= delay_seconds:
-                self.current_app.current_frame_index = (
-                    (self.current_app.current_frame_index + 1) % len(self.current_app.frames)
-                )
+            # Advance against the WebP's wall-clock timeline. The controller
+            # may call us less frequently than a very short encoded delay
+            # (Arcade Classics contains 5ms frames), so advance through as
+            # many elapsed frames as necessary instead of stretching every
+            # frame to one controller callback. This never triggers a Pixlet
+            # rerender; it only changes the in-memory frame index.
+            if self.current_app.last_frame_time <= 0:
                 self.current_app.last_frame_time = current_time
+                return
+
+            elapsed_ms = (current_time - self.current_app.last_frame_time) * 1000.0
+            frames_advanced = 0
+            frame_count = len(self.current_app.frames)
+            total_duration_ms = sum(frame_delay for _, frame_delay in self.current_app.frames)
+            if total_duration_ms > 0 and elapsed_ms >= total_duration_ms:
+                # Whole animation loops return to the same frame index.
+                elapsed_ms %= total_duration_ms
+            while elapsed_ms >= delay_ms and frames_advanced < frame_count:
+                elapsed_ms -= delay_ms
+                self.current_app.current_frame_index = (
+                    (self.current_app.current_frame_index + 1) % frame_count
+                )
+                frames_advanced += 1
+                _, delay_ms = self.current_app.frames[self.current_app.current_frame_index]
+
+            # Preserve sub-frame remainder so callback jitter does not
+            # accumulate into progressively slower playback.
+            self.current_app.last_frame_time = current_time - (elapsed_ms / 1000.0)
 
         except Exception as e:
             self.logger.error(f"Error displaying frame: {e}")

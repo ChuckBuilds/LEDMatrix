@@ -66,17 +66,25 @@ class FrameExtractor:
                     try:
                         img.seek(frame_index)
 
+                        # Pillow populates animated WebP timestamp/duration
+                        # metadata while decoding the sought frame. Reading
+                        # img.info before load() returns the previous frame's
+                        # duration (and no duration for frame zero).
+                        img.load()
+
                         # Get frame duration (in milliseconds)
                         # WebP stores duration in milliseconds
-                        duration = img.info.get("duration", self.default_frame_delay)
-
-                        # Ensure minimum frame delay (prevent too-fast animations)
-                        if duration < 16:  # Less than ~60fps
-                            duration = 16
+                        embedded_duration = img.info.get("duration")
+                        if (isinstance(embedded_duration, (int, float))
+                                and not isinstance(embedded_duration, bool)
+                                and embedded_duration > 0):
+                            duration = embedded_duration
+                        else:
+                            duration = self.default_frame_delay
 
                         # Convert frame to RGB (LED matrix needs RGB)
                         frame = img.convert("RGB")
-                        frames.append((frame.copy(), duration))
+                        frames.append((frame.copy(), int(duration)))
 
                     except EOFError:
                         logger.warning(f"Reached end of frames at index {frame_index}")
