@@ -296,7 +296,27 @@
                 {% set enum_items = items_schema.get('enum') or [] %}
                 {% set x_options = prop.get('x-options') or {} %}
                 {% set labels = x_options.get('labels') or {} %}
-                
+                {# A saved value that is no longer one of the options -- a team
+                   code the league retired, an option dropped from the schema --
+                   has no checkbox to render, so it would sit unseen in the
+                   hidden input below and be posted back on save. The schema
+                   rejects it and the save endpoint returns 400, which blocks
+                   editing any other field on the plugin until the stale entry
+                   is found and removed. Drop them here instead, and say which,
+                   so the value is not lost silently. Only when the widget
+                   actually has options: an empty enum means nothing to check
+                   against, and filtering on it would wipe the field. #}
+                {% set stale_values = (array_value | reject('in', enum_items) | list) if enum_items else [] %}
+                {% set array_value = (array_value | select('in', enum_items) | list) if enum_items else array_value %}
+
+                {% if stale_values %}
+                <div class="mt-1 mb-2 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800"
+                     data-stale-options="{{ field_id }}">
+                    No longer offered, and will be removed when you save:
+                    <span class="font-mono">{{ stale_values | join(', ') }}</span>.
+                </div>
+                {% endif %}
+
                 <div class="mt-1 space-y-2">
                     {% for option in enum_items %}
                     {% set is_checked = option in array_value %}
