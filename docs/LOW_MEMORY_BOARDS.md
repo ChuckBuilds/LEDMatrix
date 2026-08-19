@@ -57,7 +57,10 @@ grep memory /sys/fs/cgroup/cgroup.controllers
 ```
 
 If that prints nothing, add `cgroup_enable=memory cgroup_memory=1` to the
-single line in `/boot/firmware/cmdline.txt` and reboot.
+kernel command line and reboot. Edit whichever file your image uses —
+`/boot/firmware/cmdline.txt` on current Raspberry Pi OS, `/boot/cmdline.txt` on
+older layouts (the installer checks the first and falls back to the second).
+Everything must stay on a single line.
 
 This changes the failure mode from "the board becomes unreachable" to "the
 display service restarts". It is a safety net, not a fix.
@@ -74,6 +77,14 @@ plugins that poll infrequently.
 # /etc/systemd/system/ledmatrix.service.d/override.conf
 [Service]
 Environment=LEDMATRIX_CACHE_MAX_ENTRIES=75
+```
+
+Writing the file does not change the running service. Reload systemd and
+restart it:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart ledmatrix
 ```
 
 Fewer entries means more API calls, so lower this only while you are actually

@@ -91,3 +91,77 @@ def test_force_reload_refreshes_stale_in_memory_snapshot():
 
     # and it asked the cache to bypass the in-memory tier (memory_ttl=0).
     assert any(c.kwargs.get("memory_ttl") == 0 for c in cache.get.call_args_list)
+
+
+# --- persisted state that does not match the current schema -------------------
+#
+# A record on disk can be missing fields the callers index directly: a partial
+# write, a restored backup, or a state written by an older schema. Returning it
+# verbatim raises KeyError inside record_success / record_failure, which takes
+# the display down in a restart loop that survives reboots, because the bad
+# entry is on disk and gets read again on the way back up. Observed in the wild
+# as `plugin clock-simple operation failed: 'circuit_state'`, repeating ~50x a
+# minute with the panel frozen.
+
+_INDEXED_FIELDS = (
+    "consecutive_failures", "total_failures", "total_successes",
+    "last_success_time", "last_failure_time", "circuit_state",
+    "circuit_opened_time", "half_open_start_time", "last_error",
+)
+
+
+def _tracker_reading(persisted):
+    cache = _cache()
+    cache.get.return_value = persisted
+    return PluginHealthTracker(cache)
+
+
+def test_partial_state_is_completed_not_returned_raw():
+    """The shape seen in the wild: one field, everything else absent."""
+    state = _tracker_reading({"circuit_state": "closed"}).get_health_state("p")
+    for field in _INDEXED_FIELDS:
+        assert field in state, f"{field} missing; callers index it directly"
+
+
+def test_repair_keeps_real_failure_history():
+    """A record with genuine counts must not be reset to healthy just because
+    an optional field is absent -- that would clear a tripped breaker."""
+    state = _tracker_reading({
+        "consecutive_failures": 5,
+        "total_failures": 5,
+        "circuit_state": "open",
+    }).get_health_state("p")
+    assert state["consecutive_failures"] == 5
+    assert state["total_failures"] == 5
+    assert state["circuit_state"] == "open"
+
+
+def test_wrong_types_fall_back_per_field():
+    """A counter persisted as a string would pass a membership check and then
+    fail on the first += 1; an unknown circuit_state would take a branch the
+    breaker has no handling for."""
+    state = _tracker_reading({
+        "consecutive_failures": "3",
+        "circuit_state": "melted",
+        "total_failures": 7,
+    }).get_health_state("p")
+    assert state["consecutive_failures"] == 0
+    assert state["circuit_state"] == CircuitState.CLOSED.value
+    assert state["total_failures"] == 7, "valid neighbours must survive"
+
+
+def test_newer_fields_are_carried_through():
+    """degraded/degraded_reason are read with .get() and are not part of the
+    indexed set; repairing must not drop them."""
+    state = _tracker_reading({
+        "circuit_state": "closed", "degraded": True, "degraded_reason": "x",
+    }).get_health_state("p")
+    assert state["degraded"] is True
+    assert state["degraded_reason"] == "x"
+
+
+def test_recording_against_a_repaired_state_does_not_raise():
+    """The actual failure: record_failure indexing a field that was not there."""
+    tracker = _tracker_reading({"circuit_state": "closed"})
+    tracker.record_failure("p", Exception("boom"))
+    tracker.record_success("p")

@@ -134,6 +134,32 @@ class MemoryCache:
         with self._lock:
             self._cache[key] = value
             self._timestamps[key] = time.time()
+            # Enforce the ceiling here rather than leaving it to the periodic
+            # cleanup, which only runs every cleanup_interval seconds (300 by
+            # default). A burst of inserts between two sweeps could otherwise
+            # take the cache far past _max_size, which is the memory growth this
+            # limit exists to prevent -- and on a 1GB board that is the
+            # difference between a bounded cache and an unreachable Pi.
+            self._evict_over_limit_locked()
+
+    def _evict_over_limit_locked(self) -> int:
+        """Drop oldest entries until the cache is within _max_size.
+
+        Caller must hold self._lock. Returns the number of entries removed.
+        """
+        excess = len(self._cache) - self._max_size
+        if excess <= 0:
+            return 0
+        oldest = sorted(
+            self._timestamps.items(),
+            key=lambda item: float(item[1]) if isinstance(item[1], (int, float)) else 0.0
+        )
+        removed = 0
+        for key, _ in oldest[:excess]:
+            self._cache.pop(key, None)
+            self._timestamps.pop(key, None)
+            removed += 1
+        return removed
     
     def clear(self, key: Optional[str] = None) -> None:
         """
@@ -190,22 +216,8 @@ class MemoryCache:
                 self._timestamps.pop(key, None)
                 removed_count += 1
             
-            # Enforce size limit by removing oldest entries if cache is too large
-            if len(self._cache) > self._max_size:
-                # Sort by timestamp (oldest first)
-                sorted_entries = sorted(
-                    self._timestamps.items(),
-                    key=lambda x: float(x[1]) if isinstance(x[1], (int, float)) else 0
-                )
-                
-                # Remove oldest entries until we're under the limit
-                excess_count = len(self._cache) - self._max_size
-                for i in range(excess_count):
-                    if i < len(sorted_entries):
-                        key = sorted_entries[i][0]
-                        self._cache.pop(key, None)
-                        self._timestamps.pop(key, None)
-                        removed_count += 1
+            # Same ceiling enforcement set() uses, so the two cannot drift.
+            removed_count += self._evict_over_limit_locked()
             
             self._last_cleanup = current_time
             

@@ -458,3 +458,26 @@ class TestDiskCacheWriteEconomy:
         cache = DiskCache(cache_dir=str(tmp_path))
         cache.set("k", {"when": datetime(2026, 7, 12, 10, 30)})
         assert cache.get("k") == {"when": "2026-07-12T10:30:00"}
+
+
+# --- the ceiling has to hold between cleanup sweeps ---------------------------
+
+def test_memory_cache_enforces_ceiling_on_every_write():
+    """_cleanup_memory_cache only runs every cleanup_interval seconds (300 by
+    default). If set() accepted entries without bound in between, a burst could
+    take the cache far past max_size -- which is the unbounded growth the limit
+    exists to prevent, and on a 1GB board the difference between a bounded cache
+    and a Pi that cannot fork.
+    """
+    from src.cache.memory_cache import MemoryCache
+
+    cache = MemoryCache(max_size=150, cleanup_interval=300.0)
+    for i in range(1000):
+        cache.set(f"k{i}", {"v": i})
+
+    assert len(cache._cache) <= 150
+    # The timestamp map has to be evicted alongside the values, or it becomes
+    # the leak instead.
+    assert len(cache._timestamps) <= 150
+    assert cache.get("k999") is not None, "the newest write must survive"
+    assert cache.get("k0") is None, "the oldest must be the one evicted"

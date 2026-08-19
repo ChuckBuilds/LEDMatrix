@@ -7,7 +7,7 @@ and circuit breaker state. Provides automatic recovery mechanisms.
 
 import time
 import logging
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, Tuple
 from enum import Enum
 
 
@@ -65,20 +65,47 @@ class PluginHealthTracker:
         )
 
         if isinstance(cached, dict) and cached:
-            return cached
+            # Complete it rather than trusting it: a persisted record can be
+            # missing fields the callers index directly (a partial write, a
+            # restored backup, an older schema), and returning it verbatim makes
+            # record_success / record_failure raise KeyError, which takes the
+            # display down in a restart loop that survives reboots because the
+            # bad entry is on disk.
+            state, repaired = self._repair_health_state(cached)
+            if repaired:
+                self.logger.warning(
+                    f"Repaired health state for {plugin_id}: "
+                    f"{sorted(repaired)} missing or invalid, using defaults for those."
+                )
+            return state
 
-        # A cache entry that is not a dict means the persisted state was written
-        # by something other than _save_health_state (a key collision, a partial
-        # write, a restored backup). Returning it verbatim makes every caller
-        # blow up on .get(), which takes the display down in a restart loop that
-        # survives reboots because the bad entry is on disk. Discard and rebuild.
+        # Not a dict at all: written by something other than
+        # _save_health_state (a key collision, a corrupted entry). Nothing to
+        # salvage.
         if cached is not None and not isinstance(cached, dict):
             self.logger.warning(
                 f"Discarding malformed health state for {plugin_id}: expected "
                 f"dict, got {type(cached).__name__}. Falling back to defaults."
             )
-        
-        # Default state
+
+        return self._default_health_state()
+    
+    def _save_health_state(self, plugin_id: str, state: Dict[str, Any]) -> None:
+        """Save health state to cache."""
+        cache_key = self._get_health_key(plugin_id)
+        self.cache_manager.set(cache_key, state)  # Persist indefinitely
+        self._health_state[plugin_id] = state
+    
+    # The fields callers index directly (state['circuit_state'] and friends).
+    # A cached dict missing any of them raises KeyError deep in record_success /
+    # record_failure, so the value is completed before it is handed out.
+    _COUNTER_FIELDS = ('consecutive_failures', 'total_failures', 'total_successes')
+    _TIMESTAMP_FIELDS = ('last_success_time', 'last_failure_time',
+                         'circuit_opened_time', 'half_open_start_time')
+
+    @staticmethod
+    def _default_health_state() -> Dict[str, Any]:
+        """A fresh state with every field the callers expect."""
         return {
             'consecutive_failures': 0,
             'total_failures': 0,
@@ -88,15 +115,46 @@ class PluginHealthTracker:
             'circuit_state': CircuitState.CLOSED.value,
             'circuit_opened_time': None,
             'half_open_start_time': None,
-            'last_error': None
+            'last_error': None,
         }
-    
-    def _save_health_state(self, plugin_id: str, state: Dict[str, Any]) -> None:
-        """Save health state to cache."""
-        cache_key = self._get_health_key(plugin_id)
-        self.cache_manager.set(cache_key, state)  # Persist indefinitely
-        self._health_state[plugin_id] = state
-    
+
+    @classmethod
+    def _repair_health_state(cls, cached: Dict[str, Any]) -> Tuple[Dict[str, Any], list]:
+        """Return `cached` completed against the defaults, plus what was repaired.
+
+        Per-field rather than all-or-nothing: a record that has real failure
+        counts but is missing `last_error` should keep the counts, not be reset
+        to healthy. Only values that are absent or the wrong type fall back to
+        the default, so a partial or older-schema record survives with whatever
+        it does carry, while every field the callers index is guaranteed present
+        and of a usable type.
+        """
+        state = cls._default_health_state()
+        repaired = []
+        for field, default in state.items():
+            if field not in cached:
+                repaired.append(field)
+                continue
+            value = cached[field]
+            if field in cls._COUNTER_FIELDS:
+                ok = isinstance(value, int) and not isinstance(value, bool) and value >= 0
+            elif field in cls._TIMESTAMP_FIELDS:
+                ok = value is None or isinstance(value, (int, float))
+            elif field == 'circuit_state':
+                ok = value in {member.value for member in CircuitState}
+            else:  # last_error
+                ok = value is None or isinstance(value, str)
+            if ok:
+                state[field] = value
+            else:
+                repaired.append(field)
+        # Anything the schema has since grown (degraded, degraded_reason) is
+        # read with .get() by its callers, so carry it through untouched.
+        for field, value in cached.items():
+            if field not in state:
+                state[field] = value
+        return state, repaired
+
     def get_health_state(self, plugin_id: str, force_reload: bool = False) -> Dict[str, Any]:
         """Get current health state for a plugin.
 

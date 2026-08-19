@@ -1694,12 +1694,24 @@ fi
 # a runaway takes the whole board down (sshd can no longer fork, the panel goes
 # dark) rather than just restarting the one service.
 if [ "$SKIP_PERF" != "1" ] && [ -f "$CMDLINE_FILE" ]; then
-    if grep -q 'cgroup_enable=memory' "$CMDLINE_FILE"; then
-        echo "cgroup_enable=memory already present in $CMDLINE_FILE"
+    # Both parameters are required for the memory controller, and they can get
+    # separated -- an image, another tool or a half-applied earlier run can
+    # leave one without the other. Checking only cgroup_enable=memory would
+    # report success while MemoryMax= silently does nothing, so each is checked
+    # and appended independently.
+    cgroup_missing=""
+    for cgroup_param in cgroup_enable=memory cgroup_memory=1; do
+        if ! grep -qw "$cgroup_param" "$CMDLINE_FILE"; then
+            cgroup_missing="$cgroup_missing $cgroup_param"
+        fi
+    done
+    if [ -z "$cgroup_missing" ]; then
+        echo "cgroup memory parameters already present in $CMDLINE_FILE"
     else
-        echo "Adding cgroup_enable=memory to $CMDLINE_FILE..."
+        echo "Adding${cgroup_missing} to $CMDLINE_FILE..."
         cp "$CMDLINE_FILE" "$CMDLINE_FILE.bak" 2>/dev/null || true
-        sed -i '1 s/$/ cgroup_enable=memory cgroup_memory=1/' "$CMDLINE_FILE"
+        # The kernel command line must stay on one line.
+        sed -i "1 s|\$|${cgroup_missing}|" "$CMDLINE_FILE"
         echo "  Takes effect after reboot. Verify with:"
         echo "    grep memory /sys/fs/cgroup/cgroup.controllers"
     fi
@@ -1709,17 +1721,41 @@ fi
 # These images default to volatile storage: journald keeps everything in /run
 # (tmpfs), so every reboot destroys the logs — including the ones that would
 # explain why the board rebooted. Capped so an SD card is not worn out by logs.
-if [ -d /var/log/journal ] && [ -n "$(ls -A /var/log/journal 2>/dev/null)" ]; then
-    echo "Persistent journald storage already enabled"
+# A non-empty /var/log/journal does not prove journald is configured the way
+# this needs: the directory survives a switch back to volatile storage, and it
+# says nothing about whether a size cap is set. Read the effective
+# configuration instead, and only write the keys the user has not set
+# themselves so an explicit local limit is preserved.
+journald_effective() {
+    # systemd-analyze merges journald.conf with every drop-in; grep is the
+    # fallback for images that ship without it.
+    if command -v systemd-analyze >/dev/null 2>&1 &&
+       systemd-analyze cat-config systemd/journald.conf >/dev/null 2>&1; then
+        systemd-analyze cat-config systemd/journald.conf 2>/dev/null
+    else
+        cat /etc/systemd/journald.conf /etc/systemd/journald.conf.d/*.conf 2>/dev/null
+    fi
+}
+journald_conf="$(journald_effective)"
+journald_storage="$(printf '%s\n' "$journald_conf" | grep -E '^[[:space:]]*Storage=' | tail -n1 | cut -d= -f2 | tr -d '[:space:]')"
+journald_cap="$(printf '%s\n' "$journald_conf" | grep -E '^[[:space:]]*SystemMaxUse=' | tail -n1 | cut -d= -f2 | tr -d '[:space:]')"
+
+if [ "$journald_storage" = "persistent" ] && [ -n "$journald_cap" ]; then
+    echo "Persistent journald storage already configured (SystemMaxUse=$journald_cap)"
 else
     echo "Enabling persistent journald storage..."
     mkdir -p /etc/systemd/journald.conf.d
-    cat > /etc/systemd/journald.conf.d/ledmatrix-persistent.conf <<'JOURNALD'
-# Installed by LEDMatrix first_time_install.sh
-[Journal]
-Storage=persistent
-SystemMaxUse=64M
-JOURNALD
+    {
+        echo "# Installed by LEDMatrix first_time_install.sh"
+        echo "[Journal]"
+        echo "Storage=persistent"
+        if [ -n "$journald_cap" ]; then
+            echo "# SystemMaxUse left to your existing setting ($journald_cap)"
+        else
+            # Capped so logs cannot wear out or fill an SD card.
+            echo "SystemMaxUse=64M"
+        fi
+    } > /etc/systemd/journald.conf.d/ledmatrix-persistent.conf
     mkdir -p /var/log/journal
     systemd-tmpfiles --create --prefix /var/log/journal >/dev/null 2>&1 || true
     systemctl restart systemd-journald >/dev/null 2>&1 || true

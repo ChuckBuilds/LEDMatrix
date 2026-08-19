@@ -75,14 +75,30 @@ def _extra_dependencies(dist_name: str, extras) -> Optional[List[Requirement]]:
     return gated
 
 
-def _extras_are_satisfied(req: Requirement) -> bool:
+def _extras_are_satisfied(req: Requirement, _visited: Optional[set] = None) -> bool:
     """Check the dependencies pulled in by req's extras are installed.
 
-    One level deep, not transitive: enough to tell "the extra was installed"
-    from "the extra was never installed", which is all the caller needs to
-    decide whether pip has work to do. Anything unreadable returns False, so
-    the caller still falls through to pip.
+    Follows extras through nested extras. A gated dependency can itself request
+    one (`requests[socks]`), and checking only that `requests` is installed at
+    an acceptable version says nothing about whether the socks extra's own
+    dependency is there -- so the caller would skip pip and the plugin would
+    fail at import instead. Plain dependencies are still checked one level
+    deep, which is all that is needed to tell "the extra was installed" from
+    "the extra was never installed".
+
+    `_visited` carries the (distribution, extras) pairs already seen, so a
+    dependency cycle between extras terminates instead of recursing forever.
+    Anything unreadable returns False, so the caller still falls through to pip.
     """
+    if _visited is None:
+        _visited = set()
+    marker = (req.name.lower(), frozenset(e.lower() for e in req.extras))
+    if marker in _visited:
+        # Already accounted for higher up the chain; treating a cycle as
+        # satisfied here is safe because the outer frame still has to pass.
+        return True
+    _visited.add(marker)
+
     gated = _extra_dependencies(req.name, req.extras)
     if gated is None:
         return False
@@ -93,6 +109,8 @@ def _extras_are_satisfied(req: Requirement) -> bool:
         except importlib.metadata.PackageNotFoundError:
             return False
         if dep.specifier and not dep.specifier.contains(dep_version, prereleases=True):
+            return False
+        if dep.extras and not _extras_are_satisfied(dep, _visited):
             return False
     return True
 
