@@ -139,9 +139,19 @@ class PluginHealthTracker:
             if field in cls._COUNTER_FIELDS:
                 ok = isinstance(value, int) and not isinstance(value, bool) and value >= 0
             elif field in cls._TIMESTAMP_FIELDS:
-                ok = value is None or isinstance(value, (int, float))
+                # bool is a subclass of int, so True would pass as a timestamp
+                # and then compare as 1.0 -- expiring a cooldown the instant it
+                # opens, or (False) making the elapsed check never fire.
+                ok = value is None or (
+                    isinstance(value, (int, float)) and not isinstance(value, bool)
+                )
             elif field == 'circuit_state':
-                ok = value in {member.value for member in CircuitState}
+                # Membership first requires the value to be hashable: a list or
+                # dict here would raise TypeError out of the repair itself,
+                # which is the crash this whole path exists to prevent.
+                ok = isinstance(value, str) and value in {
+                    member.value for member in CircuitState
+                }
             else:  # last_error
                 ok = value is None or isinstance(value, str)
             if ok:

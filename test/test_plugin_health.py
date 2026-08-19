@@ -161,7 +161,31 @@ def test_newer_fields_are_carried_through():
 
 
 def test_recording_against_a_repaired_state_does_not_raise():
-    """The actual failure: record_failure indexing a field that was not there."""
-    tracker = _tracker_reading({"circuit_state": "closed"})
+    """The actual failure: record_failure indexing a field that was not there.
+
+    The seed deliberately omits circuit_state. Seeding a record that *has* it
+    would pass against the old raw-return behaviour too -- the counters are
+    read with .get(), so circuit_state is the only field whose absence used to
+    raise.
+    """
+    tracker = _tracker_reading({"total_failures": 2, "total_successes": 1})
     tracker.record_failure("p", Exception("boom"))
     tracker.record_success("p")
+
+
+def test_unhashable_or_boolean_values_are_repaired():
+    """Values that break the repair itself rather than a later caller.
+
+    An unhashable circuit_state raises TypeError inside a set membership test,
+    and bool is a subclass of int, so True would pass as a timestamp and then
+    compare as 1.0 -- expiring a cooldown the moment it opens.
+    """
+    for bad_state in ({"circuit_state": []}, {"circuit_state": {}}):
+        state = _tracker_reading(bad_state).get_health_state("p")
+        assert state["circuit_state"] == CircuitState.CLOSED.value
+
+    state = _tracker_reading({
+        "circuit_opened_time": True, "last_success_time": False,
+    }).get_health_state("p")
+    assert state["circuit_opened_time"] is None
+    assert state["last_success_time"] is None

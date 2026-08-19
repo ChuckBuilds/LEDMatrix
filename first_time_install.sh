@@ -1759,6 +1759,21 @@ else
     mkdir -p /var/log/journal
     systemd-tmpfiles --create --prefix /var/log/journal >/dev/null 2>&1 || true
     systemctl restart systemd-journald >/dev/null 2>&1 || true
+
+    # Drop-ins are applied in lexical order, so a locally added file that sorts
+    # after ledmatrix-persistent.conf (zz-local.conf and friends) still wins.
+    # Writing the file is not evidence it took effect -- re-read and say so
+    # plainly rather than reporting success we cannot confirm.
+    journald_now="$(journald_effective | grep -E '^[[:space:]]*Storage=' | tail -n1 | cut -d= -f2 | tr -d '[:space:]')"
+    if [ "$journald_now" = "persistent" ]; then
+        echo "  Persistent journald storage active"
+    else
+        echo "  WARNING: journald storage is still '${journald_now:-unset}' after"
+        echo "  writing /etc/systemd/journald.conf.d/ledmatrix-persistent.conf."
+        echo "  Another drop-in that sorts later is overriding it. Check:"
+        echo "    systemd-analyze cat-config systemd/journald.conf | grep -n Storage="
+        echo "  Logs will not survive a reboot until that is resolved."
+    fi
 fi
 
 # Ensure dtparam=audio=off in config.txt (idempotent)
