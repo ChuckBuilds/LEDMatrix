@@ -328,7 +328,7 @@ class ScrollHelper:
             elapsed_time = current_time - (self.scroll_start_time or current_time)
             # The image already includes display_width padding, so we only need total_scroll_width
             required_total_distance = self.total_scroll_width
-            self.logger.info(
+            self.logger.debug(
                 "Scroll progress: elapsed=%.2fs, target=%.2fs, total_scrolled=%.0f/%d px (%.1f%%)",
                 elapsed_time,
                 self.calculated_duration,
