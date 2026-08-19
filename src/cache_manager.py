@@ -33,7 +33,7 @@ import logging
 import threading
 import tempfile
 from src.exceptions import CacheError
-from src.cache.memory_cache import MemoryCache
+from src.cache.memory_cache import MemoryCache, default_max_size
 from src.cache.disk_cache import DiskCache
 from src.cache.cache_strategy import CacheStrategy
 from src.cache.cache_metrics import CacheMetrics
@@ -84,7 +84,9 @@ class CacheManager:
             self.logger.warning("ConfigManager not available, using default cache intervals")
         
         # Initialize cache components using composition
-        self._memory_cache_component = MemoryCache(max_size=1000, cleanup_interval=300.0)
+        self._memory_cache_component = MemoryCache(
+            max_size=default_max_size(), cleanup_interval=300.0
+        )
         self._disk_cache_component = DiskCache(cache_dir=self.cache_dir, logger=self.logger)
         self._strategy_component = CacheStrategy(config_manager=self.config_manager, logger=self.logger)
         self._metrics_component = CacheMetrics(logger=self.logger)

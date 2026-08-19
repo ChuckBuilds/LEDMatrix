@@ -9,8 +9,25 @@ User=root
 WorkingDirectory=__PROJECT_ROOT_DIR__
 Environment=PYTHONDONTWRITEBYTECODE=1
 ExecStart=/usr/bin/python3 __PROJECT_ROOT_DIR__/run.py
-Restart=on-failure
+# Restart=always, not on-failure: run.py exiting 0 (a clean shutdown path taken
+# for a reason that no longer applies, e.g. a config reload) would otherwise leave
+# the service stopped and the panel dark indefinitely, with systemd considering
+# that a successful outcome and never bringing it back.
+Restart=always
 RestartSec=10
+# Memory ceiling as a share of physical RAM, so one unit file suits a 512 MB
+# Pi Zero 2 W and an 8 GB Pi 5 alike. This is a backstop, not a tuning knob: it
+# turns "the board runs out of memory, stops being able to fork, and takes sshd
+# and the panel down together until someone pulls the plug" into "this one
+# service restarts".
+#
+# NOTE: Raspberry Pi firmware boots the kernel with cgroup_disable=memory, and
+# systemd accepts this setting and then silently ignores it. Verify with:
+#     grep memory /sys/fs/cgroup/cgroup.controllers
+# If that prints nothing, add "cgroup_enable=memory cgroup_memory=1" to
+# /boot/firmware/cmdline.txt (all on line 1) and reboot. first_time_install.sh
+# does this for you.
+MemoryMax=85%
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=ledmatrix

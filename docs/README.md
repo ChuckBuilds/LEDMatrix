@@ -14,6 +14,7 @@ the one-shot installer. The pages here go deeper.
 5. [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — common issues and fixes
 6. [SSH_UNAVAILABLE_AFTER_INSTALL.md](SSH_UNAVAILABLE_AFTER_INSTALL.md) — recovering SSH after install
 7. [CONFIG_DEBUGGING.md](CONFIG_DEBUGGING.md) — diagnosing config problems
+8. [LOW_MEMORY_BOARDS.md](LOW_MEMORY_BOARDS.md) — Pi Zero 2 W / 3B+ / 1GB Pi 4 memory limits
 
 ## I want to write a plugin
 
