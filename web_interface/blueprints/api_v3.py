@@ -21,7 +21,8 @@ logger = logging.getLogger(__name__)
 # Import new infrastructure
 from src.web_interface.api_helpers import success_response, error_response, validate_request_json
 from src.web_interface.errors import ErrorCode
-from src.web_interface.secret_helpers import find_secret_fields, separate_secrets
+from src.web_interface.secret_helpers import (find_secret_fields, remove_empty_secrets,
+                                              separate_secrets)
 from src.web_interface.error_handler import describe_exception, redact_text
 from src.plugin_system.operation_types import OperationType
 from src.web_interface.validators import (
@@ -1216,6 +1217,11 @@ def save_main_config():
 
                 # Separate secrets from regular config (same logic as save_plugin_config)
                 regular_config, secrets_config = separate_secrets(plugin_config, secret_fields)
+                # The config form renders secrets masked, so every save posts
+                # them back blank. Without this the blank is merged over the
+                # stored value and the credential is destroyed by the act of
+                # changing an unrelated setting. A blank means "unchanged".
+                secrets_config = remove_empty_secrets(secrets_config)
 
                 # PRE-PROCESSING: Preserve 'enabled' state if not in regular_config
                 # This prevents overwriting the enabled state when saving config from a form that doesn't include the toggle
@@ -5599,6 +5605,11 @@ def save_plugin_config():
         # Separate secrets from regular config (handles nested configs and
         # array-item secrets — see src/web_interface/secret_helpers.py)
         regular_config, secrets_config = separate_secrets(plugin_config, secret_fields)
+        # The config form renders secrets masked, so every save posts
+        # them back blank. Without this the blank is merged over the
+        # stored value and the credential is destroyed by the act of
+        # changing an unrelated setting. A blank means "unchanged".
+        secrets_config = remove_empty_secrets(secrets_config)
 
         # Get current configs
         current_config = api_v3.config_manager.load_config()
