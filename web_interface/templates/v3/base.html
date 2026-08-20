@@ -1107,15 +1107,29 @@
         fetch('/api/v3/system/check-update')
             .then(function(r) { return r.json(); })
             .then(function(data) {
+                var banner = document.getElementById('update-banner');
+                var btn = document.getElementById('update-banner-btn');
+                if (data.check_failed) {
+                    // A check that could not run is not the same as being up
+                    // to date. Hiding the banner here made a checkout git
+                    // refuses to touch look permanently current, with no
+                    // route to the update button and nothing to act on.
+                    document.getElementById('update-banner-text').textContent =
+                        data.error || 'Could not check for updates.';
+                    if (btn) btn.style.display = 'none';
+                    banner.style.display = '';
+                    return;
+                }
+                if (btn) btn.style.display = '';
                 if (data.update_available && getDismissedSha() !== data.remote_sha) {
                     var n = data.commits_behind || 0;
                     var msg = 'A new LEDMatrix update is available';
                     if (n > 0) msg += ' (' + n + ' commit' + (n > 1 ? 's' : '') + ')';
                     document.getElementById('update-banner-text').textContent = msg;
-                    document.getElementById('update-banner').style.display = '';
+                    banner.style.display = '';
                     try { sessionStorage.setItem('update-sha', data.remote_sha); } catch(e) {}
                 } else {
-                    document.getElementById('update-banner').style.display = 'none';
+                    banner.style.display = 'none';
                 }
             })
             .catch(function() {});
