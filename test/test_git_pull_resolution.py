@@ -58,7 +58,7 @@ def repos(tmp_path):
 def test_branch_with_upstream_uses_a_plain_pull(repos):
     args, note, error = resolve_pull_command(str(repos))
     assert error is None
-    assert args == ['git', 'pull', '--rebase']
+    assert args == ['git', 'pull', '--rebase', '--autostash']
     assert note == ''
 
 
@@ -73,7 +73,7 @@ def test_branch_without_upstream_falls_back_to_origin_branch(repos):
 
     args, note, error = resolve_pull_command(str(repos))
     assert error is None
-    assert args == ['git', 'pull', '--rebase', 'origin', 'audit']
+    assert args == ['git', 'pull', '--rebase', '--autostash', 'origin', 'audit']
     assert 'audit' in note
 
 
@@ -155,7 +155,7 @@ def test_switching_attaches_tracking_so_pull_needs_no_fallback(repos):
 
     args, note, error = resolve_pull_command(str(repos))
     assert error is None
-    assert args == ['git', 'pull', '--rebase']
+    assert args == ['git', 'pull', '--rebase', '--autostash']
     assert note == ''
 
 
@@ -200,3 +200,37 @@ def test_stash_option_lets_the_switch_through_and_keeps_the_work(repos):
     assert _git('branch', '--show-current', cwd=repos).stdout.strip() == 'other'
     # The edit is not lost — it is on the stash.
     assert 'switch to other' in _git('stash', 'list', cwd=repos).stdout
+
+
+class TestInstallerDoesNotBlockTheUpdateButton:
+    """first_time_install.sh chmods scripts that git tracked as 644.
+
+    With core.fileMode true -- the default on Linux -- that leaves five
+    permanently modified tracked files on every machine that ran the
+    installer, and `git pull --rebase` refuses to start:
+
+        error: cannot pull with rebase: You have unstaged changes.
+
+    Tracking them as executable makes the installer's chmod a no-op.
+    """
+
+    CHMODDED = [
+        'first_time_install.sh',
+        'start_display.sh',
+        'stop_display.sh',
+        'scripts/install/install_service.sh',
+        'scripts/install/install_web_service.sh',
+    ]
+
+    def test_scripts_the_installer_chmods_are_tracked_executable(self):
+        import subprocess
+        from pathlib import Path
+        root = Path(__file__).resolve().parent.parent
+        out = subprocess.run(['git', 'ls-files', '-s', *self.CHMODDED],
+                             capture_output=True, text=True, cwd=str(root)).stdout
+        modes = {line.split()[3]: line.split()[0] for line in out.strip().split('\n') if line}
+        non_exec = sorted(f for f, m in modes.items() if m != '100755')
+        assert not non_exec, (
+            f"{non_exec} are chmodded by the installer but tracked non-executable, "
+            "so every install leaves the working tree dirty and the update "
+            "button cannot pull")

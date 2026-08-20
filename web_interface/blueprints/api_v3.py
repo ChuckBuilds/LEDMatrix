@@ -1704,13 +1704,22 @@ def resolve_pull_command(project_dir):
     backup, or following an install guide that names one. The update button
     then reports a failure the user cannot act on.
 
+    ``--autostash`` is passed for the same reason. Rebase refuses to start
+    when any tracked file is modified, and on these installs something always
+    is: first_time_install.sh chmods five scripts that git tracked as 644, so
+    every machine that ran the installer carries five permanent mode changes
+    and the update button reports "cannot pull with rebase: You have unstaged
+    changes". Those modes are corrected in this commit, but a user cannot pull
+    the correction while the pull is what is blocked, and any other local edit
+    would reproduce it anyway. Autostash reapplies the changes afterwards.
+
     Returns ``(args, note, error)``. When ``origin/<branch>`` exists the pull
     is made explicit against it, so the update proceeds and the branch is
     given tracking information afterwards.
     """
     upstream = _git_upstream(project_dir)
     if upstream:
-        return ['git', 'pull', '--rebase'], '', None
+        return ['git', 'pull', '--rebase', '--autostash'], '', None
 
     branch = _git_current_branch(project_dir)
     if not branch:
@@ -1720,7 +1729,7 @@ def resolve_pull_command(project_dir):
         )
     if _git_remote_branch_exists(project_dir, branch):
         return (
-            ['git', 'pull', '--rebase', 'origin', branch],
+            ['git', 'pull', '--rebase', '--autostash', 'origin', branch],
             f"Branch '{branch}' had no upstream; pulled from origin/{branch} and set it as the upstream.",
             None,
         )
