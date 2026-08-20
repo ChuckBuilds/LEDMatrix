@@ -413,7 +413,8 @@
             <div class="flex items-center justify-between">
                 <div class="flex items-center space-x-3">
                     <i class="fas fa-rotate text-lg"></i>
-                    <span class="text-sm font-medium" aria-live="polite">
+                    <span class="text-sm font-medium" aria-live="polite"
+                          id="restart-pending-text">
                         Configuration saved &mdash; restart the display to apply the changes
                     </span>
                 </div>
@@ -1146,6 +1147,13 @@
             if (data.status === 'success') {
                 document.getElementById('update-banner').style.display = 'none';
                 try { sessionStorage.removeItem('update-sha-dismissed'); } catch(e) {}
+                // The pull replaced files on disk; the running services still
+                // hold the code they loaded at boot. Ask for the restart that
+                // makes the update actually take effect.
+                if (data.restart_required && typeof window.showRestartPending === 'function') {
+                    window.showRestartPending(
+                        'Update installed \u2014 restart the display to run the new code');
+                }
             }
             if (typeof showNotification === 'function') {
                 showNotification(data.message || 'Update complete', data.status || 'success');
