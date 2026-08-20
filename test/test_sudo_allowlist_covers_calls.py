@@ -1,23 +1,32 @@
-"""Every sudo the code runs must be granted by an installer allow-list.
+"""The captive portal's fixed-argument sudo calls must be granted.
 
-The installers write two files -- /etc/sudoers.d/ledmatrix_web and
-/etc/sudoers.d/ledmatrix_wifi -- each an explicit allow-list. Anything the code
-calls with sudo that is not in one of them needs a password, which a service
-cannot supply, so the call fails.
+The installers write two allow-lists, /etc/sudoers.d/ledmatrix_web and
+ledmatrix_wifi. A sudo call absent from both needs a password, which a service
+cannot supply, so it fails.
 
-That failure is invisible on a stock Raspberry Pi image, because
-/etc/sudoers.d/010_pi-nopasswd grants the default user
+Four such calls were ungranted, all of them captive-portal teardown/setup:
 
-    <user> ALL=(ALL) NOPASSWD: ALL
+    sysctl -w net.ipv4.ip_forward=0|1     wifi_manager.py:788, 883
+    nft add|delete table ip ledmatrix     wifi_manager.py:835, 895
+    rfkill unblock wifi                   wifi_manager.py:1811
+    mkdir -p .../dnsmasq-shared.d         wifi_manager.py:922
 
-which masks every gap in both files. It only surfaces on a system where that
-blanket rule has been removed, or where the service runs as a different user --
-so a missing entry can sit there for a long time before anyone hits it.
+It goes unnoticed because a stock Raspberry Pi image ships
+/etc/sudoers.d/010_pi-nopasswd granting the default user
+`ALL=(ALL) NOPASSWD: ALL`, which satisfies every gap in both files. It only
+bites once that blanket rule is removed or the service runs as another user.
 
-One was: wifi_manager turns IP forwarding on while the captive portal's access
-point is up and restores it afterwards, calling `sudo sysctl -w
-net.ipv4.ip_forward=...`. Neither allow-list granted sysctl. On such a system
-clients would associate to the AP and then fail to route.
+Scope, deliberately narrow: this pins the four commands above, each of which
+can be written out literally. The portal makes further sudo calls whose
+arguments are built at runtime -- iptables and nft rules carrying an interface
+name and a port, `ip addr`, `ip link` -- and those cannot be granted safely
+here. A rule covering them needs a trailing wildcard, and
+`iptables --modprobe=/path/to/anything` runs that path as root, so
+`NOPASSWD: iptables *` is a root shell for the web user by another name.
+Closing that half needs a privileged helper that builds the rules itself and
+takes only an interface and a port, granted the way safe_plugin_rm.sh already
+is. That is a design decision, not a one-line grant, and belongs in its own
+change.
 """
 import re
 from pathlib import Path
@@ -29,63 +38,24 @@ INSTALLERS = (
     ROOT / "first_time_install.sh",
     ROOT / "scripts" / "install" / "configure_wifi_permissions.sh",
 )
-SOURCES = (ROOT / "src", ROOT / "web_interface")
 
-# argv-style sudo calls: ["sudo", <binary-or-var>, "arg", ...]
-CALL = re.compile(r"""\[\s*["']sudo["']\s*,\s*(?P<rest>[^\]]+)\]""")
+#: Commands this change grants, each fully literal in the source.
+REQUIRED = (
+    ("sysctl", "-w", "net.ipv4.ip_forward=0"),
+    ("sysctl", "-w", "net.ipv4.ip_forward=1"),
+    ("nft", "add", "table", "ip", "ledmatrix"),
+    ("nft", "delete", "table", "ip", "ledmatrix"),
+    ("rfkill", "unblock", "wifi"),
+    ("mkdir", "-p", "/etc/NetworkManager/dnsmasq-shared.d"),
+)
 
-
-def _first_two_args(rest):
-    """The binary and its first argument, as written."""
-    parts = [p.strip() for p in rest.split(",")]
-    # Drop sudo's own flags: `sudo -n <tool>` is a call to <tool>, and
-    # treating "-n" as the binary reports a gap that does not exist.
-    flag = re.compile(r'[\'"]-[a-zA-Z]+[\'"]')
-    while parts and flag.fullmatch(parts[0]):
-        parts = parts[1:]
-    # Always two entries: `["sudo", "reboot"]` has no subcommand, and the
-    # caller unpacks a fixed pair.
-    out = []
-    for part in (parts + ["", ""])[:2]:
-        if not part:
-            out.append("")
-            continue
-        literal = re.fullmatch(r"""["'](.+)["']""", part)
-        if literal:
-            out.append(literal.group(1))
-        else:
-            # A variable such as sysctl_bin: reduce to the tool it resolves to.
-            out.append(part.split(".")[-1].replace("_bin", "").replace("_path", ""))
-    return out
+#: Tools with an option that executes a program of the caller's choosing.
+#: A trailing wildcard on any of these is a privilege escalation.
+EXEC_CAPABLE = ("iptables", "ip6tables", "nft", "tcpdump", "find", "awk",
+                "sed", "perl", "python", "python3", "env")
 
 
-def _sudo_calls():
-    found = {}
-    for base in SOURCES:
-        for path in base.rglob("*.py"):
-            text = path.read_text(encoding="utf-8", errors="replace")
-            for match in CALL.finditer(text):
-                args = _first_two_args(match.group("rest"))
-                if not args:
-                    continue
-                line = text[:match.start()].count("\n") + 1
-                found.setdefault(tuple(args), f"{path.relative_to(ROOT)}:{line}")
-    return found
-
-
-def _allowlisted_text():
-    """The allow-list rules, with binary-path variables reduced to tool names.
-
-    The installers write rules like `$SYSTEMCTL_PATH enable ledmatrix.service`,
-    so matching on the literal "systemctl" finds nothing and every systemctl
-    rule looks absent. Normalise $FOO_PATH and /usr/bin/foo down to foo before
-    comparing, or the check reports gaps that are not there -- which it did on
-    the first run.
-    """
-    # NOPASSWD lines only. Taking the whole script would let a variable
-    # definition such as NFT_PATH=$(command -v nft) satisfy the check on its
-    # own, which is how an earlier version of this test passed while the grant
-    # itself had been deleted.
+def _grant_lines():
     lines = []
     for installer in INSTALLERS:
         if not installer.is_file():
@@ -93,11 +63,22 @@ def _allowlisted_text():
         for line in installer.read_text(encoding="utf-8", errors="replace").splitlines():
             if "NOPASSWD:" in line:
                 lines.append(line.split("NOPASSWD:", 1)[1])
-    text = "\n".join(lines)
-    text = re.sub(r"\$\{?([A-Z][A-Z0-9_]*)_PATH\}?",
-                  lambda m: m.group(1).lower(), text)
-    text = re.sub(r"/usr/(?:s?bin)/", "", text)
-    return text
+    return lines
+
+
+def _normalised_grants():
+    """Grants with binary-path variables reduced to tool names.
+
+    Rules are written as `$SYSCTL_PATH -w ...`, so matching the literal
+    "sysctl" finds nothing and every rule looks absent -- which is exactly how
+    an earlier version of this test reported six gaps that did not exist.
+    Only NOPASSWD lines are considered, because taking the whole script let a
+    variable definition such as NFT_PATH=$(command -v nft) satisfy the check on
+    its own while the grant itself had been deleted.
+    """
+    text = "\n".join(_grant_lines())
+    text = re.sub(r"\$\{?([A-Z][A-Z0-9_]*)_PATH\}?", lambda m: m.group(1).lower(), text)
+    return re.sub(r"/usr/(?:s?bin)/", "", text)
 
 
 def test_the_installers_are_present():
@@ -105,30 +86,35 @@ def test_the_installers_are_present():
     assert not missing, f"installer(s) missing: {missing}"
 
 
-def test_every_sudo_call_is_granted():
-    allow = _allowlisted_text()
-    calls = _sudo_calls()
-    assert calls, "no sudo calls found; the matcher has stopped working"
+@pytest.mark.parametrize("command", REQUIRED, ids=lambda c: " ".join(c))
+def test_the_command_is_granted(command):
+    """Whole command, not just the binary.
 
-    ungranted = []
-    for (binary, first_arg), where in sorted(calls.items()):
-        # A rule mentions the tool and, where it takes a subcommand, that too.
-        if binary not in allow:
-            ungranted.append(f"{binary} ({where})")
+    Checking only the binary made this far weaker than it looked: with
+    `sysctl` present anywhere, deleting the ip_forward=0 grant still passed,
+    and the portal would then be unable to restore forwarding on teardown.
+    """
+    pattern = r"\s+".join(re.escape(word) for word in command)
+    assert re.search(pattern, _normalised_grants()), (
+        f"no installer grants `{' '.join(command)}`")
+
+
+def test_no_wildcard_on_a_tool_that_can_exec():
+    """`NOPASSWD: iptables *` hands the web user root.
+
+    iptables --modprobe=/path runs that path as root. This caught a grant added
+    in this very change, which is why it is here.
+    """
+    offenders = []
+    for rule in _grant_lines():
+        rule = rule.strip()
+        if not rule.endswith("*"):
             continue
-        if first_arg and not first_arg.startswith("-"):
-            pattern = rf"{re.escape(binary)}\s+{re.escape(first_arg)}"
-            if binary in ("systemctl",) and not re.search(pattern, allow):
-                ungranted.append(f"{binary} {first_arg} ({where})")
-
-    assert not ungranted, (
-        "these run under sudo but no installer grants them; on a stock Pi the "
-        "blanket 010_pi-nopasswd rule hides this:\n  " + "\n  ".join(ungranted))
-
-
-@pytest.mark.parametrize("needle", ["ip_forward"])
-def test_the_captive_portal_forwarding_rule_is_granted(needle):
-    """The specific gap this test was written for."""
-    assert needle in _allowlisted_text(), (
-        "no allow-list entry for sysctl ip_forward; the captive portal enables "
-        "forwarding while its AP is up and cannot without one")
+        haystack = rule.replace("_PATH", "").lower()
+        for tool in EXEC_CAPABLE:
+            if re.search(rf"(^|/|\s|\$){tool}(\s|$)", haystack):
+                offenders.append(rule)
+                break
+    assert not offenders, (
+        "wildcard grant on a tool that can execute another program:\n  "
+        + "\n  ".join(offenders))

@@ -40,7 +40,6 @@ SUDOERS_FILE="/etc/sudoers.d/ledmatrix_wifi"
 SYSCTL_PATH=$(command -v sysctl || echo /usr/sbin/sysctl)
 NFT_PATH=$(command -v nft || echo /usr/sbin/nft)
 RFKILL_PATH=$(command -v rfkill || echo /usr/sbin/rfkill)
-IPTABLES_PATH=$(command -v iptables || echo /usr/sbin/iptables)
 MKDIR_PATH=$(command -v mkdir || echo /usr/bin/mkdir)
 
 # Create a temporary sudoers file using mktemp (handles permissions better)
@@ -84,11 +83,19 @@ $WEB_USER ALL=(ALL) NOPASSWD: $SYSCTL_PATH -w net.ipv4.ip_forward=1
 $WEB_USER ALL=(ALL) NOPASSWD: $NFT_PATH add table ip ledmatrix
 $WEB_USER ALL=(ALL) NOPASSWD: $NFT_PATH delete table ip ledmatrix
 $WEB_USER ALL=(ALL) NOPASSWD: $RFKILL_PATH unblock wifi
-# The portal also inserts and removes its own iptables rules and creates
-# NetworkManager's dnsmasq drop-in directory. Wildcards rather than exact
-# argument lists: those rules are built from the live interface name and port.
-$WEB_USER ALL=(ALL) NOPASSWD: $IPTABLES_PATH *
+# NetworkManager's dnsmasq drop-in directory, exact path.
 $WEB_USER ALL=(ALL) NOPASSWD: $MKDIR_PATH -p /etc/NetworkManager/dnsmasq-shared.d
+#
+# iptables is deliberately NOT granted here. Its rules are built from the live
+# interface name and port, so a rule covering them needs a trailing wildcard --
+# and `iptables --modprobe=/path/to/anything` runs that path as root, so
+# `NOPASSWD: iptables *` is a root shell for the web user by another name. That
+# is a worse outcome than the gap it would close, which today is masked anyway
+# by the blanket NOPASSWD rule on stock Pi images.
+#
+# Closing it safely means a wrapper script that builds the rules itself and
+# takes only an interface and a port, granted the way safe_plugin_rm.sh already
+# is. That belongs in its own change rather than being smuggled into this one.
 
 # Allow copying hostapd and dnsmasq config files into place
 $WEB_USER ALL=(ALL) NOPASSWD: /usr/bin/cp /tmp/hostapd.conf /etc/hostapd/hostapd.conf
