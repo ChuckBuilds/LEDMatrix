@@ -2081,6 +2081,11 @@ def execute_system_action():
             except subprocess.TimeoutExpired:
                 logger.warning("git rev-parse timed out before pull")
 
+            # Whether the pull actually brought new code in. "Already up to
+            # date" is a success too, and prompting for a restart then would
+            # train users to ignore the prompt.
+            code_changed = False
+
             # Perform the git pull. Branches without an upstream were given
             # an explicit "origin <branch>" above so the update still works.
             result = subprocess.run(
@@ -2124,6 +2129,7 @@ def execute_system_action():
                                            capture_output=True, text=True, timeout=10, cwd=project_dir)
                     new_head = _post.stdout.strip() if _post.returncode == 0 else None
                     if old_head and new_head and old_head != new_head:
+                        code_changed = True
                         diff = subprocess.run(
                             ['git', 'diff', '--name-only', f'{old_head}..{new_head}'],
                             capture_output=True, text=True, timeout=15, cwd=project_dir)
@@ -2183,9 +2189,14 @@ def execute_system_action():
                                if ln.strip()), '')
                 pull_message = f"Update failed: {detail}" if detail else "Update failed; check logs for details"
 
+            # Nothing here restarts anything: the pull replaces files on
+            # disk while the display and web services keep running the code
+            # they loaded at boot. Without this the user is told the update
+            # succeeded and sees no change until they happen to reboot.
             return jsonify({
                 'status': 'success' if result.returncode == 0 else 'error',
                 'message': pull_message,
+                'restart_required': bool(result.returncode == 0 and code_changed),
             })
         elif action == 'checkout_branch':
             # Switch branches from the Tools tab. Needed because a checkout
