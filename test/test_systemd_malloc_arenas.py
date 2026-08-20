@@ -31,6 +31,11 @@ import pytest
 
 UNIT = (Path(__file__).resolve().parent.parent / "systemd" / "ledmatrix.service")
 
+#: The value the unit is expected to carry. 2 is the usual choice for a
+#: threaded Python process; 1-4 all keep some of the saving, but only one of
+#: them is what this project ships.
+EXPECTED_ARENA_MAX = 2
+
 
 def _environment(unit_text):
     return dict(
@@ -51,9 +56,16 @@ def test_malloc_arena_max_is_capped():
         "ceiling is 24 and a measured rig held 23 of them, 920 MB"
     )
     value = int(env["MALLOC_ARENA_MAX"])
-    assert 1 <= value <= 4, (
-        f"MALLOC_ARENA_MAX={value} is outside the useful range: 1-4 keeps the "
-        "resident saving, and anything larger gives most of it back"
+    # Pinned, not a range. A range let a change to 4 -- which hands most of the
+    # saving back -- pass unnoticed, which was the point of the finding that
+    # prompted this. Raising it is a legitimate response to a frame-time
+    # regression, but it should be a visible edit here rather than a silent
+    # drift, so the number lives in one place and changing it shows up in
+    # review.
+    assert value == EXPECTED_ARENA_MAX, (
+        f"MALLOC_ARENA_MAX={value}, expected {EXPECTED_ARENA_MAX}. If this was "
+        "raised deliberately because frame times regressed, update "
+        "EXPECTED_ARENA_MAX here and say so in the commit."
     )
 
 
