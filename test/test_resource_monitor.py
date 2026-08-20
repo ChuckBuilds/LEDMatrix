@@ -127,3 +127,50 @@ class TestForceReload:
         fresh = mon.get_metrics_summary("p", force_reload=True)
         assert fresh["call_count"] == 7
         assert any(c.kwargs.get("memory_ttl") == 0 for c in cache.get.call_args_list)
+
+
+class TestMetricsPersistenceChurn:
+    """Metrics are telemetry; writing them on every call wore the SD card.
+
+    Each write is a ~350-byte file, which on ext4 costs a 4KB block plus a
+    journal entry. At roughly nine calls a minute per plugin across fourteen
+    plugins it dominated the device's write volume.
+    """
+
+    def test_repeated_calls_persist_once_per_interval(self):
+        cache = _cache()
+        mon = PluginResourceMonitor(cache, enable_monitoring=False)
+        for _ in range(50):
+            mon.monitor_call("p", lambda: None)
+        writes = [c for c in cache.set.call_args_list
+                  if c.args and str(c.args[0]).startswith("plugin_metrics:")]
+        assert len(writes) == 1, (
+            f"50 calls produced {len(writes)} metric writes; expected 1")
+
+    def test_the_interval_elapsing_allows_the_next_write(self, monkeypatch):
+        import src.plugin_system.resource_monitor as rm
+        cache = _cache()
+        mon = PluginResourceMonitor(cache, enable_monitoring=False)
+        mon.monitor_call("p", lambda: None)
+        # pretend the interval has passed
+        mon._metrics_persisted_at["p"] -= rm._METRICS_PERSIST_INTERVAL + 1
+        mon.monitor_call("p", lambda: None)
+        writes = [c for c in cache.set.call_args_list
+                  if c.args and str(c.args[0]).startswith("plugin_metrics:")]
+        assert len(writes) == 2
+
+    def test_in_memory_metrics_stay_exact_while_writes_are_skipped(self):
+        mon = PluginResourceMonitor(_cache(), enable_monitoring=False)
+        for _ in range(20):
+            mon.monitor_call("p", lambda: None)
+        assert mon.get_metrics("p").call_count == 20
+
+    def test_reset_lets_the_next_call_persist_immediately(self):
+        cache = _cache()
+        mon = PluginResourceMonitor(cache, enable_monitoring=False)
+        mon.monitor_call("p", lambda: None)
+        mon.reset_metrics("p")
+        mon.monitor_call("p", lambda: None)
+        writes = [c for c in cache.set.call_args_list
+                  if c.args and str(c.args[0]).startswith("plugin_metrics:")]
+        assert len(writes) == 2, "reset should clear the throttle timestamp"
