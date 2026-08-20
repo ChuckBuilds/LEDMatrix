@@ -194,15 +194,46 @@ class TestSavePluginConfig:
 
     def test_secret_count_message_counts_top_level_keys(self, env):
         # Pinned: the "(N secret field(s))" message counts TOP-LEVEL keys of
-        # the separated secrets dict. Here that is 2: the posted accounts
-        # array (all its item tokens count as ONE key) plus the schema's
-        # api_key default ("") that merge_with_defaults adds before
-        # separation.
+        # the separated secrets dict. Here that is 1: the posted accounts
+        # array, whose item tokens all count as ONE key.
+        #
+        # It was 2 before blank secrets were dropped, the second being the
+        # schema's api_key default (""), which merge_with_defaults adds to
+        # every save. Counting it was the visible edge of a real bug: that
+        # injected blank was merged over the stored api_key, so saving any
+        # unrelated field destroyed the credential. See
+        # test_an_unrelated_edit_does_not_erase_a_stored_secret.
         resp = self._save(env, {
             "accounts": [{"name": "a", "token": "t"}],
         })
         message = resp.get_json()["message"]
-        assert "(2 secret field(s) saved to config_secrets.json)" in message
+        assert "(1 secret field(s) saved to config_secrets.json)" in message
+
+    def test_an_unrelated_edit_does_not_erase_a_stored_secret(self, env):
+        """Editing one field must not wipe the plugin's API key.
+
+        The config form renders secrets masked, so the browser posts them
+        back blank; merge_with_defaults injects a blank api_key even when
+        the client omits it entirely. Either way a "" reached the secrets
+        file and deep_merge wrote it over the stored credential.
+        """
+        assert self._save(env, {"api_key": "REAL-KEY-0123456789",
+                                "city": "Austin"}).status_code == 200
+        assert _on_disk(env.secrets_file)[PLUGIN_ID]["api_key"] == \
+            "REAL-KEY-0123456789"
+
+        # the user changes the city; the masked api_key rides along blank
+        assert self._save(env, {"api_key": "", "city": "Dallas"}).status_code == 200
+
+        assert _on_disk(env.secrets_file)[PLUGIN_ID]["api_key"] == \
+            "REAL-KEY-0123456789", "an unrelated edit destroyed the API key"
+        assert env.fresh_load()[PLUGIN_ID]["city"] == "Dallas"
+
+    def test_a_secret_can_still_be_changed(self, env):
+        """Dropping blanks must not stop a real new value from being saved."""
+        self._save(env, {"api_key": "first-key"})
+        self._save(env, {"api_key": "second-key"})
+        assert _on_disk(env.secrets_file)[PLUGIN_ID]["api_key"] == "second-key"
 
     def test_resave_replaces_stored_secrets_list_wholesale(self, env):
         # Characterized: api_v3's deep_merge intentionally replaces lists,
