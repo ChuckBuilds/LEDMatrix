@@ -8,6 +8,18 @@ Type=simple
 User=root
 WorkingDirectory=__PROJECT_ROOT_DIR__
 Environment=PYTHONDONTWRITEBYTECODE=1
+# glibc gives each allocating thread its own malloc arena, up to 8 x CPU count,
+# and an arena that has grown is never handed back to the OS. This process runs
+# 9 threads on a 3-core Pi, so the ceiling is 24 arenas -- and a rig measured at
+# 1030 MB resident held 23 large anonymous mappings on 64 MB-aligned addresses,
+# 920 MB of them, while the live data it was actually holding (widest scroll
+# strip seen: 35,746 x 64) accounts for roughly 15 MB. That gap is arena bloat,
+# not leaked objects: RSS was flat across repeated sampling, not climbing.
+#
+# Capping the arenas trades a little allocator concurrency for a large amount of
+# resident memory on a device that has neither to spare. 2 is the usual value;
+# raise it if frame times regress.
+Environment=MALLOC_ARENA_MAX=2
 ExecStart=/usr/bin/python3 __PROJECT_ROOT_DIR__/run.py
 # Restart=always, not on-failure: run.py exiting 0 (a clean shutdown path taken
 # for a reason that no longer applies, e.g. a config reload) would otherwise leave
