@@ -83,7 +83,7 @@ class PluginAdapter:
         # into unrelated headlines once the strip refreshed to 9,505px.
         self._offset_shapes: dict = {}
 
-        logger.info(
+        logger.debug(
             "PluginAdapter initialized: display=%dx%d",
             self.display_width, self.display_height
         )
@@ -109,7 +109,7 @@ class PluginAdapter:
         Returns:
             List of PIL Images representing plugin content, or None if no content
         """
-        logger.info(
+        logger.debug(
             "[%s] Getting content (class=%s)",
             plugin_id, plugin.__class__.__name__
         )
@@ -118,7 +118,7 @@ class PluginAdapter:
         cached = self._get_cached(plugin_id)
         if cached is not None:
             total_width = sum(img.width for img in cached)
-            logger.info(
+            logger.debug(
                 "[%s] Using cached content: %d images, %dpx total",
                 plugin_id, len(cached), total_width
             )
@@ -126,46 +126,46 @@ class PluginAdapter:
 
         # Try native Vegas content method first
         has_native = hasattr(plugin, 'get_vegas_content')
-        logger.info("[%s] Has get_vegas_content: %s", plugin_id, has_native)
+        logger.debug("[%s] Has get_vegas_content: %s", plugin_id, has_native)
         if has_native:
             content = self._get_native_content(plugin, plugin_id, offscreen_only)
             if content:
                 total_width = sum(img.width for img in content)
-                logger.info(
+                logger.debug(
                     "[%s] Native content SUCCESS: %d images, %dpx total",
                     plugin_id, len(content), total_width
                 )
                 return self._finalize(content, plugin_id, 'native', plugin)
-            logger.info("[%s] Native content returned None", plugin_id)
+            logger.debug("[%s] Native content returned None", plugin_id)
 
         # Try to get scroll_helper's cached image (for scrolling plugins like stocks/odds)
         has_scroll_helper = hasattr(plugin, 'scroll_helper')
-        logger.info("[%s] Has scroll_helper: %s", plugin_id, has_scroll_helper)
+        logger.debug("[%s] Has scroll_helper: %s", plugin_id, has_scroll_helper)
         content = self._get_scroll_helper_content(plugin, plugin_id, offscreen_only)
         if content:
             total_width = sum(img.width for img in content)
-            logger.info(
+            logger.debug(
                 "[%s] ScrollHelper content SUCCESS: %d images, %dpx total",
                 plugin_id, len(content), total_width
             )
             return self._finalize(content, plugin_id, 'scroll_helper', plugin)
         if has_scroll_helper:
-            logger.info("[%s] ScrollHelper content returned None", plugin_id)
+            logger.debug("[%s] ScrollHelper content returned None", plugin_id)
 
         if offscreen_only:
             # Display capture needs the shared canvas; leave it to the caller.
-            logger.info(
+            logger.debug(
                 "[%s] Needs display capture, deferring to the render thread",
                 plugin_id
             )
             return None
 
         # Fall back to display capture
-        logger.info("[%s] Trying fallback display capture...", plugin_id)
+        logger.debug("[%s] Trying fallback display capture...", plugin_id)
         content = self._capture_display_content(plugin, plugin_id)
         if content:
             total_width = sum(img.width for img in content)
-            logger.info(
+            logger.debug(
                 "[%s] Fallback capture SUCCESS: %d images, %dpx total",
                 plugin_id, len(content), total_width
             )
@@ -226,7 +226,7 @@ class PluginAdapter:
             kept.append(result.image)
 
         if not kept:
-            logger.info(
+            logger.debug(
                 "[%s] All %d image(s) from %s were blank — contributing nothing",
                 plugin_id, len(images), source
             )
@@ -235,14 +235,14 @@ class PluginAdapter:
         trimmed_width = sum(img.width for img in kept)
 
         if trimmed_width < self.config.min_plugin_width:
-            logger.info(
+            logger.debug(
                 "[%s] Trimmed content %dpx is below min_plugin_width %dpx — skipping",
                 plugin_id, trimmed_width, self.config.min_plugin_width
             )
             return None
 
         if trimmed_width != original_width or dropped_blank:
-            logger.info(
+            logger.debug(
                 "[%s] Trimmed %s content: %dpx -> %dpx (%.0f%% reclaimed), "
                 "%d image(s) kept, %d blank dropped",
                 plugin_id, source, original_width, trimmed_width,
@@ -431,7 +431,7 @@ class PluginAdapter:
         """
         if self._offset_shapes.get(plugin_id) != shape:
             if plugin_id in self._item_offsets:
-                logger.info(
+                logger.debug(
                     "[%s] Content is %s now, was %s — restarting the rotation "
                     "rather than resuming at a position that no longer means "
                     "anything", plugin_id, shape,
@@ -579,7 +579,7 @@ class PluginAdapter:
             consumed += 1
 
         if mode == 'truncate':
-            logger.info(
+            logger.debug(
                 "[%s] Width budget %dpx: showing the first %d of %d row(s) "
                 "(%dpx incl. gaps); the rest are not shown (overflow=truncate)",
                 plugin_id, budget, len(selected), len(images), used
@@ -587,7 +587,7 @@ class PluginAdapter:
         else:
             self._record_offset(
                 plugin_id, (start + consumed) % len(images), shape)
-            logger.info(
+            logger.debug(
                 "[%s] Width budget %dpx: showing %d of %d row(s) (%dpx incl. gaps) "
                 "from offset %d; remainder deferred to a later cycle",
                 plugin_id, budget, len(selected), len(images), used, start
@@ -636,7 +636,7 @@ class PluginAdapter:
             if mode != 'truncate':
                 self._record_offset(
                     plugin_id, 0 if end >= img.width else end, shape)
-            logger.info(
+            logger.debug(
                 "[%s] Width budget %dpx: cropped continuous %dpx image to "
                 "[%d:%d] (no item gaps of %dpx+ to align to)%s",
                 plugin_id, budget, img.width, offset, end, min_run,
@@ -674,7 +674,7 @@ class PluginAdapter:
             self._record_offset(
                 plugin_id, 0 if end >= img.width else end_index, shape)
 
-        logger.info(
+        logger.debug(
             "[%s] Width budget %dpx: cropped single %dpx image to [%d:%d] "
             "(%dpx) at item boundaries %d-%d of %d, %s",
             plugin_id, budget, img.width, start, end, end - start,
@@ -698,7 +698,7 @@ class PluginAdapter:
             List of images or None
         """
         try:
-            logger.info("[%s] Native: calling get_vegas_content()", plugin_id)
+            logger.debug("[%s] Native: calling get_vegas_content()", plugin_id)
 
             # Tell the plugin how much width the ticker wants it to use, and
             # narrow the canvas for the duration of the call. A plugin that
@@ -707,7 +707,7 @@ class PluginAdapter:
             # be explicit can read get_vegas_render_width().
             render_width = self.resolve_render_width(plugin, plugin_id)
             if render_width != self.display_width:
-                logger.info(
+                logger.debug(
                     "[%s] Native: requesting %dpx instead of %dpx",
                     plugin_id, render_width, self.display_width
                 )
@@ -735,19 +735,19 @@ class PluginAdapter:
                 plugin._vegas_render_width = None
 
             if result is None:
-                logger.info("[%s] Native: get_vegas_content() returned None", plugin_id)
+                logger.debug("[%s] Native: get_vegas_content() returned None", plugin_id)
                 return None
 
             # Normalize to list
             if isinstance(result, Image.Image):
                 images = [result]
-                logger.info(
+                logger.debug(
                     "[%s] Native: got single Image %dx%d",
                     plugin_id, result.width, result.height
                 )
             elif isinstance(result, (list, tuple)):
                 images = list(result)
-                logger.info(
+                logger.debug(
                     "[%s] Native: got %d items in list/tuple",
                     plugin_id, len(images)
                 )
@@ -768,14 +768,14 @@ class PluginAdapter:
                     )
                     continue
 
-                logger.info(
+                logger.debug(
                     "[%s] Native: item[%d] is %dx%d, mode=%s",
                     plugin_id, i, img.width, img.height, img.mode
                 )
 
                 # Ensure correct height
                 if img.height != self.display_height:
-                    logger.info(
+                    logger.debug(
                         "[%s] Native: resizing item[%d]: %dx%d -> %dx%d",
                         plugin_id, i, img.width, img.height,
                         img.width, self.display_height
@@ -793,13 +793,13 @@ class PluginAdapter:
 
             if valid_images:
                 total_width = sum(img.width for img in valid_images)
-                logger.info(
+                logger.debug(
                     "[%s] Native: SUCCESS - %d images, %dpx total width",
                     plugin_id, len(valid_images), total_width
                 )
                 return valid_images
 
-            logger.info("[%s] Native: no valid images after validation", plugin_id)
+            logger.debug("[%s] Native: no valid images after validation", plugin_id)
             return None
 
         except (AttributeError, TypeError, ValueError, OSError) as e:
@@ -833,20 +833,20 @@ class PluginAdapter:
                 logger.debug("[%s] No scroll_helper attribute", plugin_id)
                 return None
 
-            logger.info(
+            logger.debug(
                 "[%s] Found scroll_helper: %s",
                 plugin_id, type(scroll_helper).__name__
             )
 
             cached_image = getattr(scroll_helper, 'cached_image', None)
             if cached_image is None:
-                logger.info(
+                logger.debug(
                     "[%s] scroll_helper.cached_image is None, triggering content generation",
                     plugin_id
                 )
                 if offscreen_only:
                     # Generating it calls display(), which needs the canvas.
-                    logger.info(
+                    logger.debug(
                         "[%s] scroll_helper cache empty; deferring generation "
                         "to the render thread", plugin_id
                     )
@@ -859,13 +859,13 @@ class PluginAdapter:
                     return None
 
             if not isinstance(cached_image, Image.Image):
-                logger.info(
+                logger.debug(
                     "[%s] scroll_helper.cached_image is not an Image: %s",
                     plugin_id, type(cached_image).__name__
                 )
                 return None
 
-            logger.info(
+            logger.debug(
                 "[%s] scroll_helper.cached_image found: %dx%d, mode=%s",
                 plugin_id, cached_image.width, cached_image.height, cached_image.mode
             )
@@ -888,7 +888,7 @@ class PluginAdapter:
 
             # Ensure correct height
             if img.height != self.display_height:
-                logger.info(
+                logger.debug(
                     "[%s] Resizing scroll_helper content: %dx%d -> %dx%d",
                     plugin_id, img.width, img.height,
                     img.width, self.display_height
@@ -902,7 +902,7 @@ class PluginAdapter:
             if img.mode != 'RGB':
                 img = img.convert('RGB')
 
-            logger.info(
+            logger.debug(
                 "[%s] ScrollHelper content ready: %dx%d",
                 plugin_id, img.width, img.height
             )
@@ -1002,7 +1002,7 @@ class PluginAdapter:
             with self._capture():
                 # Method 1: Try _create_scrolling_display (stocks pattern)
                 if hasattr(plugin, '_create_scrolling_display'):
-                    logger.info(
+                    logger.debug(
                         "[%s] Triggering via _create_scrolling_display()",
                         plugin_id
                     )
@@ -1010,7 +1010,7 @@ class PluginAdapter:
                         plugin._create_scrolling_display()
                         cached_image = getattr(scroll_helper, 'cached_image', None)
                         if cached_image is not None and isinstance(cached_image, Image.Image):
-                            logger.info(
+                            logger.debug(
                                 "[%s] _create_scrolling_display() SUCCESS: %dx%d",
                                 plugin_id, cached_image.width, cached_image.height
                             )
@@ -1022,7 +1022,7 @@ class PluginAdapter:
 
                 # Method 2: Try display(force_clear=True) which typically builds scroll content
                 if hasattr(plugin, 'display'):
-                    logger.info(
+                    logger.debug(
                         "[%s] Triggering via display(force_clear=True)",
                         plugin_id
                     )
@@ -1031,12 +1031,12 @@ class PluginAdapter:
                         plugin.display(force_clear=True)
                         cached_image = getattr(scroll_helper, 'cached_image', None)
                         if cached_image is not None and isinstance(cached_image, Image.Image):
-                            logger.info(
+                            logger.debug(
                                 "[%s] display(force_clear=True) SUCCESS: %dx%d",
                                 plugin_id, cached_image.width, cached_image.height
                             )
                             return cached_image
-                        logger.info(
+                        logger.debug(
                             "[%s] display(force_clear=True) did not populate cached_image",
                             plugin_id
                         )
@@ -1045,7 +1045,7 @@ class PluginAdapter:
                             "[%s] display(force_clear=True) failed", plugin_id
                         )
 
-            logger.info(
+            logger.debug(
                 "[%s] Could not trigger scroll content generation",
                 plugin_id
             )
@@ -1077,15 +1077,15 @@ class PluginAdapter:
         try:
             # Save current display state
             original_image = self.display_manager.image.copy()
-            logger.info("[%s] Fallback: saved original display state", plugin_id)
+            logger.debug("[%s] Fallback: saved original display state", plugin_id)
 
             # Ensure plugin has fresh data before capturing
             has_update_data = hasattr(plugin, 'update_data')
-            logger.info("[%s] Fallback: has update_data=%s", plugin_id, has_update_data)
+            logger.debug("[%s] Fallback: has update_data=%s", plugin_id, has_update_data)
             if has_update_data:
                 try:
                     plugin.update_data()
-                    logger.info("[%s] Fallback: update_data() called", plugin_id)
+                    logger.debug("[%s] Fallback: update_data() called", plugin_id)
                 except (AttributeError, RuntimeError, OSError):
                     logger.exception("[%s] Fallback: update_data() failed", plugin_id)
 
@@ -1097,41 +1097,41 @@ class PluginAdapter:
             # arrangement rather than one that has to be cropped afterwards.
             render_width = self.resolve_render_width(plugin, plugin_id)
             if render_width != self.display_width:
-                logger.info(
+                logger.debug(
                     "[%s] Fallback: rendering at %dpx instead of %dpx",
                     plugin_id, render_width, self.display_width
                 )
 
             with self._capture(), self._render_at(render_width):
                 self.display_manager.clear()
-                logger.info("[%s] Fallback: display cleared, calling display()", plugin_id)
+                logger.debug("[%s] Fallback: display cleared, calling display()", plugin_id)
 
                 # First try without force_clear (some plugins behave better this way)
                 try:
                     plugin.display()
-                    logger.info("[%s] Fallback: display() called successfully", plugin_id)
+                    logger.debug("[%s] Fallback: display() called successfully", plugin_id)
                 except TypeError:
                     # Plugin may require force_clear argument
-                    logger.info("[%s] Fallback: display() failed, trying with force_clear=True", plugin_id)
+                    logger.debug("[%s] Fallback: display() failed, trying with force_clear=True", plugin_id)
                     plugin.display(force_clear=True)
 
                 # Capture the result
                 captured = self.display_manager.image.copy()
 
-            logger.info(
+            logger.debug(
                 "[%s] Fallback: captured frame %dx%d, mode=%s",
                 plugin_id, captured.width, captured.height, captured.mode
             )
 
             # Check if captured image has content (not all black)
             is_blank, bright_ratio = self._is_blank_image(captured, return_ratio=True)
-            logger.info(
+            logger.debug(
                 "[%s] Fallback: brightness check - %.3f%% bright pixels (threshold=0.5%%)",
                 plugin_id, bright_ratio * 100
             )
 
             if is_blank:
-                logger.info(
+                logger.debug(
                     "[%s] Fallback: first capture blank, retrying with force_clear",
                     plugin_id
                 )
@@ -1142,7 +1142,7 @@ class PluginAdapter:
                     captured = self.display_manager.image.copy()
 
                 is_blank, bright_ratio = self._is_blank_image(captured, return_ratio=True)
-                logger.info(
+                logger.debug(
                     "[%s] Fallback: retry brightness - %.3f%% bright pixels",
                     plugin_id, bright_ratio * 100
                 )
@@ -1159,7 +1159,7 @@ class PluginAdapter:
             if captured.mode != 'RGB':
                 captured = captured.convert('RGB')
 
-            logger.info(
+            logger.debug(
                 "[%s] Fallback: SUCCESS - captured %dx%d",
                 plugin_id, captured.width, captured.height
             )
