@@ -1821,6 +1821,33 @@ def get_system_version():
 _update_check_cache: Dict[str, Any] = {'result': None, 'ts': 0.0}
 _UPDATE_CHECK_TTL = 300  # 5 minutes — avoids a git fetch on every page load
 
+def _update_check_failed(detail: str) -> Dict[str, Any]:
+    """A check that could not run is not the same as being up to date.
+
+    Reporting update_available=False on a git failure hides the banner, and
+    the banner is the only route to the update button -- so a checkout git
+    refuses to touch looks exactly like a current one, permanently. The most
+    common cause is an install performed as root: git then reports "dubious
+    ownership" and every command fails, including the fetch here.
+    """
+    return {'update_available': False, 'remote_sha': 'unknown',
+            'commits_behind': 0, 'check_failed': True, 'error': detail}
+
+
+def _describe_git_failure(stderr: str) -> str:
+    """Turn git's stderr into something the user can act on."""
+    text = (stderr or '').strip()
+    if 'dubious ownership' in text or 'detected dubious ownership' in text:
+        return ("This checkout is owned by a different user than the one "
+                "running the web interface, so git refuses to use it. It is "
+                "usually the result of installing as root. Fix the ownership "
+                "and the update will work: sudo chown -R $USER:$USER "
+                + str(PROJECT_ROOT))
+    if 'could not resolve host' in text.lower() or 'network is unreachable' in text.lower():
+        return "Could not reach GitHub to check for updates."
+    return "Could not check for updates: " + (text.splitlines()[0] if text else "git failed")
+
+
 @api_v3.route('/system/check-update', methods=['GET'])
 def check_for_update():
     """Check whether a newer LEDMatrix commit is available on origin/main."""
@@ -1836,12 +1863,13 @@ def check_for_update():
             capture_output=True, timeout=10, cwd=cwd,
         )
         if fetch_result.returncode != 0:
+            stderr = fetch_result.stderr.decode(errors='replace').strip()
             logger.warning("check-update: git fetch failed (rc=%d): %s",
-                           fetch_result.returncode,
-                           fetch_result.stderr.decode(errors='replace').strip())
-            _update_check_cache['result'] = _safe
+                           fetch_result.returncode, stderr)
+            failed = _update_check_failed(_describe_git_failure(stderr))
+            _update_check_cache['result'] = failed
             _update_check_cache['ts'] = now
-            return jsonify(_safe)
+            return jsonify(failed)
         local = subprocess.run(
             ['git', 'rev-parse', 'HEAD'],
             capture_output=True, text=True, timeout=5, cwd=cwd,
@@ -1869,7 +1897,8 @@ def check_for_update():
         return jsonify(result)
     except Exception as e:
         logger.warning("check-update failed: %s", e)
-        return jsonify(_safe)
+        return jsonify(_update_check_failed(
+            "Could not check for updates; see logs for details."))
 
 @api_v3.route('/system/action', methods=['POST'])
 def execute_system_action():
