@@ -9,7 +9,7 @@ import time
 import logging
 import threading
 from typing import Dict, Optional, Any, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 
 try:
     import psutil
@@ -102,6 +102,50 @@ class PluginResourceMonitor:
                 "psutil not available - resource monitoring will be limited to execution time only"
             )
     
+    def _metrics_from_cache(self, plugin_id: str, cached: Any) -> "ResourceMetrics":
+        """Build metrics from a cached record, ignoring anything unrecognised.
+
+        ResourceMetrics(**cached) raises TypeError on a single unexpected key,
+        and that exception escapes into plugin_manager, which reports it as
+        "plugin <id> operation failed". Every plugin fails, and the plugin
+        system never finishes initialising.
+
+        Seen on a live rig: every plugin failing with
+
+            ResourceMetrics.__init__() got an unexpected keyword argument
+            'consecutive_failures'
+
+        which is a plugin_health field, not a metrics one. How a health-shaped
+        record came to sit under a plugin_metrics key on that machine is not
+        established -- a restored backup that mixed two machines' caches is the
+        likeliest explanation -- but the loader should not be brittle enough for
+        it to matter. plugin_health already repairs its records field by field
+        rather than trusting whatever is on disk; this does the same.
+
+        Unknown keys are dropped and named once, so a genuine schema change is
+        visible in the log instead of silently discarded.
+        """
+        if not isinstance(cached, dict):
+            self.logger.warning(
+                "Ignoring cached metrics for %s: expected a mapping, got %s",
+                plugin_id, type(cached).__name__)
+            return ResourceMetrics()
+
+        known = {f.name for f in fields(ResourceMetrics)}
+        unknown = sorted(set(cached) - known)
+        if unknown:
+            self.logger.warning(
+                "Dropping unrecognised field(s) from cached metrics for %s: %s",
+                plugin_id, ", ".join(unknown))
+        usable = {k: v for k, v in cached.items() if k in known}
+        try:
+            return ResourceMetrics(**usable)
+        except (TypeError, ValueError) as e:
+            self.logger.warning(
+                "Cached metrics for %s unusable (%s); starting fresh",
+                plugin_id, e)
+            return ResourceMetrics()
+
     def _get_metrics_key(self, plugin_id: str) -> str:
         """Get cache key for plugin metrics."""
         return f"plugin_metrics:{plugin_id}"
@@ -126,7 +170,7 @@ class PluginResourceMonitor:
                     cache_key, max_age=None, memory_ttl=0 if force_reload else None
                 )
                 if cached:
-                    metrics = ResourceMetrics(**cached)
+                    metrics = self._metrics_from_cache(plugin_id, cached)
                 else:
                     metrics = ResourceMetrics()
                 self._metrics[plugin_id] = metrics
