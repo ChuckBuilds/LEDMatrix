@@ -174,3 +174,20 @@ class TestMetricsPersistenceChurn:
         writes = [c for c in cache.set.call_args_list
                   if c.args and str(c.args[0]).startswith("plugin_metrics:")]
         assert len(writes) == 2, "reset should clear the throttle timestamp"
+
+    def test_a_failed_write_does_not_buy_the_next_interval_of_silence(self):
+        """A set() that raises must not count as having persisted.
+
+        Marking the timestamp before the write would leave no snapshot in the
+        cache and still suppress the next 30 seconds of attempts.
+        """
+        cache = _cache()
+        cache.set.side_effect = [OSError("disk full"), None]
+        mon = PluginResourceMonitor(cache, enable_monitoring=False)
+        with pytest.raises(OSError):
+            mon.monitor_call("p", lambda: None)
+        # the very next call must try again rather than skip the interval
+        mon.monitor_call("p", lambda: None)
+        writes = [c for c in cache.set.call_args_list
+                  if c.args and str(c.args[0]).startswith("plugin_metrics:")]
+        assert len(writes) == 2, "a failed write should be retried, not skipped"

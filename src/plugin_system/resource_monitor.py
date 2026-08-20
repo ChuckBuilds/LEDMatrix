@@ -377,11 +377,14 @@ class PluginResourceMonitor:
 
         Caller must hold ``self._lock``.
         """
-        now = time.time()
+        # Monotonic, not wall clock: these devices have no RTC, so the clock
+        # jumps by however far off boot-time was the moment NTP first syncs.
+        # A forward jump would allow an early write, a backward one would
+        # stall the snapshot well past the interval.
+        now = time.monotonic()
         if not force and now - self._metrics_persisted_at.get(plugin_id, 0.0) \
                 < _METRICS_PERSIST_INTERVAL:
             return
-        self._metrics_persisted_at[plugin_id] = now
         cache_key = self._get_metrics_key(plugin_id)
         self.cache_manager.set(cache_key, {
             'memory_mb': metrics.memory_mb,
@@ -395,6 +398,9 @@ class PluginResourceMonitor:
                                    else 0.0),
             'last_update_time': metrics.last_update_time,
         })
+        # Only after the write lands. Marking it first would mean a failed
+        # set() bought the next interval's silence without leaving a snapshot.
+        self._metrics_persisted_at[plugin_id] = now
 
     def reset_metrics(self, plugin_id: str) -> None:
         """Reset metrics for a plugin."""
