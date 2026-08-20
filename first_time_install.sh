@@ -1419,9 +1419,16 @@ $ACTUAL_USER ALL=(ALL) NOPASSWD: $BASH_PATH $PROJECT_ROOT_DIR/scripts/fix_perms/
 EOF
 if [ -n "$JOURNALCTL_PATH" ]; then
     cat >> /tmp/ledmatrix_web_sudoers << EOF
-$ACTUAL_USER ALL=(ALL) NOPASSWD: $JOURNALCTL_PATH -u ledmatrix.service *
-$ACTUAL_USER ALL=(ALL) NOPASSWD: $JOURNALCTL_PATH -u ledmatrix *
-$ACTUAL_USER ALL=(ALL) NOPASSWD: $JOURNALCTL_PATH -t ledmatrix *
+# NOEXEC, because these rules end in a wildcard and journalctl starts a pager
+# when its output is a terminal. From that pager (less) a "!sh" is a root
+# shell -- the standard journalctl escalation. The web interface always passes
+# --no-pager, so nothing here needs it, but the rule cannot require a flag that
+# sits in the middle of the command line. NOEXEC stops the command executing
+# another program at all, which closes the hole without depending on wildcard
+# matching subtleties.
+$ACTUAL_USER ALL=(ALL) NOPASSWD:NOEXEC: $JOURNALCTL_PATH -u ledmatrix.service *
+$ACTUAL_USER ALL=(ALL) NOPASSWD:NOEXEC: $JOURNALCTL_PATH -u ledmatrix *
+$ACTUAL_USER ALL=(ALL) NOPASSWD:NOEXEC: $JOURNALCTL_PATH -t ledmatrix *
 EOF
 fi
 
