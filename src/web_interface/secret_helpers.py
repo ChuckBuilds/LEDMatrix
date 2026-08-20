@@ -143,6 +143,12 @@ def mask_secret_fields(config: Dict[str, Any], schema_properties: Dict[str, Any]
     return result
 
 
+#: What a masked secret looks like on the wire. Named because the write path
+#: has to recognise it coming back: a client that renders the mask and posts
+#: it unchanged must not store the mask as if it were the secret.
+SECRET_MASK = '\u2022' * 8
+
+
 def mask_all_secret_values(config: Dict[str, Any]) -> Dict[str, Any]:
     """Blanket-mask every non-empty value in a secrets config dict.
 
@@ -161,7 +167,7 @@ def mask_all_secret_values(config: Dict[str, Any]) -> Dict[str, Any]:
         if isinstance(v, dict):
             masked[k] = mask_all_secret_values(v)
         elif v not in (None, '') and not (isinstance(v, str) and v.startswith('YOUR_')):
-            masked[k] = '••••••••'
+            masked[k] = SECRET_MASK
         else:
             masked[k] = v
     return masked
@@ -187,5 +193,32 @@ def remove_empty_secrets(secrets: Dict[str, Any]) -> Dict[str, Any]:
             if nested:
                 result[k] = nested
         elif v is not None and not (isinstance(v, str) and v.strip() == ''):
+            result[k] = v
+    return result
+
+
+def strip_masked_values(secrets: Dict[str, Any]) -> Dict[str, Any]:
+    """Remove values a client echoed back rather than changed.
+
+    The counterpart to :func:`mask_all_secret_values`. A client that GETs the
+    masked secrets, edits one field and POSTs the whole object back is sending
+    ``SECRET_MASK`` for every field it did not touch. Storing those would
+    replace each untouched credential with eight bullet characters.
+
+    Drops the mask and, like :func:`remove_empty_secrets`, blank values -- so
+    the caller can merge the result onto what is already stored and have
+    "unchanged" mean unchanged. Empty nested dicts are pruned.
+    """
+    result: Dict[str, Any] = {}
+    for k, v in secrets.items():
+        if isinstance(v, dict):
+            nested = strip_masked_values(v)
+            if nested:
+                result[k] = nested
+        elif v is None:
+            continue
+        elif isinstance(v, str) and (v.strip() == '' or v == SECRET_MASK):
+            continue
+        else:
             result[k] = v
     return result
