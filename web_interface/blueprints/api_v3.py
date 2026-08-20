@@ -755,10 +755,12 @@ def save_main_config():
         if not data:
             return jsonify({'status': 'error', 'message': 'No data provided'}), 400
 
-        import logging
-        logging.error(f"DEBUG: save_main_config received data: {data}")
-        logging.error(f"DEBUG: Content-Type header: {request.content_type}")
-        logging.error(f"DEBUG: Headers: {dict(request.headers)}")
+        # What arrives here is the config itself, and the headers carry the
+        # session cookie -- neither belongs in the journal, least of all at
+        # ERROR on every save. The shape of the request is the part with
+        # diagnostic value, so log that, at the level it deserves.
+        logger.debug("save_main_config: %s, %d top-level key(s)",
+                     request.content_type or 'no content-type', len(data))
 
         # Merge with existing config (similar to original implementation)
         current_config = api_v3.config_manager.load_config()
