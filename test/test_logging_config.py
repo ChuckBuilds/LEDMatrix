@@ -183,15 +183,27 @@ class TestSetupLogging:
         setup_logging()
         assert len(logging.getLogger().handlers) == 1
 
+    @staticmethod
+    def _selected_formatter():
+        """The formatter setup_logging() chose, past any journald wrapper.
+
+        Under systemd the console handler's formatter is wrapped so each line
+        carries its syslog priority. That wrapper is applied only when
+        JOURNAL_STREAM is set, which is true in CI and false in a terminal, so
+        asserting on the handler's formatter directly passes locally and fails
+        on the runner. These tests are about which formatter format_type
+        selects, so they look through the wrapper.
+        """
+        formatter = logging.getLogger().handlers[0].formatter
+        return getattr(formatter, "inner", formatter)
+
     def test_json_format_selects_structured_formatter(self):
         setup_logging(format_type="json")
-        assert isinstance(
-            logging.getLogger().handlers[0].formatter, StructuredFormatter)
+        assert isinstance(self._selected_formatter(), StructuredFormatter)
 
     def test_readable_format_selects_contextual_formatter(self):
         setup_logging(format_type="readable")
-        assert isinstance(
-            logging.getLogger().handlers[0].formatter, ContextualFormatter)
+        assert isinstance(self._selected_formatter(), ContextualFormatter)
 
     def test_log_file_adds_file_handler(self, tmp_path):
         log_file = tmp_path / "test.log"

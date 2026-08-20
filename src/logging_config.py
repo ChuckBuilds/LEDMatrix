@@ -182,6 +182,18 @@ class JournalPriorityFormatter(logging.Formatter):
         super().__init__()
         self._inner = inner
 
+    @property
+    def inner(self) -> logging.Formatter:
+        """The formatter doing the actual work.
+
+        Whether journald tagging is applied depends on JOURNAL_STREAM, so it is
+        on under systemd and off in a terminal -- and anything asserting which
+        formatter setup_logging() selected would otherwise get a different
+        answer in CI than on a developer's machine. Exposing the inner one lets
+        those checks stay about format_type, which is what they mean.
+        """
+        return self._inner
+
     def format(self, record: logging.LogRecord) -> str:
         text = self._inner.format(record)
         prefix = f"<{_SYSLOG_PRIORITY.get(record.levelno, 6)}>"
