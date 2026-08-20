@@ -4622,15 +4622,17 @@ window.loadGithubToken = function() {
                 // Handle empty data (secrets file doesn't exist) - API returns {} in this case
                 const secrets = data.data || {};
                 const token = secrets.github?.api_token || '';
+                const configured = token && token !== 'YOUR_GITHUB_PERSONAL_ACCESS_TOKEN';
 
                 if (input) {
-                    if (token && token !== 'YOUR_GITHUB_PERSONAL_ACCESS_TOKEN') {
-                        // Token exists and is valid
-                        input.value = token;
-                        showNotification('GitHub token loaded successfully', 'success');
+                    // The endpoint masks what it returns, so this never holds
+                    // the real token -- and the field is deliberately left
+                    // empty rather than filled with the mask, which would be
+                    // saved verbatim the next time the user pressed Save.
+                    input.value = '';
+                    if (configured) {
+                        showNotification('A GitHub token is saved. Enter a new one to replace it.', 'success');
                     } else {
-                        // No token configured or placeholder value
-                        input.value = '';
                         showNotification('No GitHub token configured. Enter a new token to save.', 'info');
                     }
                 }

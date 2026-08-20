@@ -21,7 +21,8 @@ logger = logging.getLogger(__name__)
 # Import new infrastructure
 from src.web_interface.api_helpers import success_response, error_response, validate_request_json
 from src.web_interface.errors import ErrorCode
-from src.web_interface.secret_helpers import find_secret_fields, separate_secrets
+from src.web_interface.secret_helpers import (find_secret_fields, mask_all_secret_values,
+                                              separate_secrets, strip_masked_values)
 from src.web_interface.error_handler import describe_exception, redact_text
 from src.plugin_system.operation_types import OperationType
 from src.web_interface.validators import (
@@ -1333,7 +1334,12 @@ def get_secrets_config():
             return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 500
 
         config = api_v3.config_manager.get_raw_file_content('secrets')
-        return jsonify({'status': 'success', 'data': config})
+        # This interface has no authentication, and this file is nothing but
+        # credentials. It was handing all of them to anyone who could reach
+        # the port. Values are masked; empty and YOUR_* placeholders are left
+        # alone so a client can still tell "set" from "not set".
+        return jsonify({'status': 'success',
+                        'data': mask_all_secret_values(config)})
     except Exception as e:
         logger.error('Unhandled exception', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
@@ -1395,8 +1401,19 @@ def save_raw_secrets_config():
         if not data:
             return jsonify({'status': 'error', 'message': 'No data provided'}), 400
 
-        # Save the secrets config
-        api_v3.config_manager.save_raw_file_content('secrets', data)
+        # The GET above masks what it returns, and this endpoint's only client
+        # reads the whole file, edits one field and posts all of it back. So
+        # most of what arrives here is the mask, echoed rather than changed --
+        # storing it verbatim would replace every untouched credential with
+        # eight bullets. Strip those, then merge onto what is already stored,
+        # which makes "unchanged" mean unchanged.
+        #
+        # The cost is that a secret can no longer be cleared by blanking it.
+        # That needs its own affordance; a control that erases credentials as
+        # a side effect of saving an unrelated one is not it.
+        current = api_v3.config_manager.get_raw_file_content('secrets') or {}
+        merged = deep_merge(current, strip_masked_values(data))
+        api_v3.config_manager.save_raw_file_content('secrets', merged)
 
         # Reload GitHub token in plugin store manager if it exists
         if api_v3.plugin_store_manager:
