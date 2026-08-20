@@ -262,15 +262,54 @@ def _stop_display_service():
     result['status'] = status
     return result
 
+#: Field names whose value is a credential. Matched by name because this
+#: endpoint returns the whole config, core keys included, and core config has
+#: no schema to carry x-secret markers.
+_CREDENTIAL_NAME_PARTS = ("password", "passwd", "secret", "token", "api_key",
+                          "apikey", "access_key", "private_key", "client_secret")
+
+
+def _looks_like_a_credential(name: str) -> bool:
+    lowered = name.lower()
+    return any(part in lowered for part in _CREDENTIAL_NAME_PARTS)
+
+
+def _redact_credentials(value):
+    """A copy of `value` with credential-named fields blanked.
+
+    /config/main returned the raw config to anyone who could reach the port,
+    and this interface has no authentication. On one rig that meant a 40-char
+    GitHub token, a 183-char Home Assistant token and five API keys were
+    readable by anything on the LAN.
+
+    The x-secret masking used by the plugin config endpoints does not help
+    here: this endpoint never consults a schema, and core keys such as
+    github.api_token have no schema to mark. Matching on the field name is
+    blunt, but for a whole-config dump the right default is that anything
+    named like a credential does not leave the process.
+
+    Blanked rather than removed, and safe to blank: POST /config/main merges
+    into the loaded config and only writes the keys it was given, so a client
+    that round-trips this response cannot erase a secret it never saw.
+    """
+    if isinstance(value, dict):
+        return {k: ("" if _looks_like_a_credential(k) and not isinstance(v, (dict, list))
+                    else _redact_credentials(v))
+                for k, v in value.items()}
+    if isinstance(value, list):
+        return [_redact_credentials(item) for item in value]
+    return value
+
+
 @api_v3.route('/config/main', methods=['GET'])
 def get_main_config():
-    """Get main configuration"""
+    """Get main configuration, with credentials redacted."""
     try:
         if not api_v3.config_manager:
             return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 500
 
         config = api_v3.config_manager.load_config()
-        return jsonify({'status': 'success', 'data': config})
+        return jsonify({'status': 'success', 'data': _redact_credentials(config)})
     except Exception as e:
         logger.error('Unhandled exception', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
