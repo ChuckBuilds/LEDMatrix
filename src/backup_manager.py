@@ -111,6 +111,12 @@ class RestoreOptions:
     """Which sections of a backup should be restored."""
 
     restore_config: bool = True
+    #: Whether to take the backup's display.hardware block as well.
+    #: Off by default: that block describes the panel physically wired to
+    #: *this* device -- its size, chain length, mapping, multiplexing and
+    #: refresh cap. A backup carries the panel of the machine it was taken
+    #: on, and restoring one onto a different rig drives the wrong geometry.
+    restore_hardware: bool = False
     restore_secrets: bool = True
     restore_wifi: bool = True
     restore_fonts: bool = True
@@ -549,6 +555,60 @@ def _copy_file(src: Path, dst: Path) -> None:
         raise
 
 
+_HARDWARE_PATH = ("display", "hardware")
+
+
+def _restore_config_preserving_hardware(src: Path, dst: Path, keep_hardware: bool) -> None:
+    """Copy a backed-up config.json, optionally keeping the local panel block.
+
+    display.hardware describes the panel physically attached to this device:
+    cols, rows, chain_length, hardware_mapping, panel_type, multiplexing and
+    the refresh-rate cap. None of that travels with a configuration -- it is a
+    property of the machine. Restoring a backup taken on a 512x64 rig onto a
+    128x32 one used to overwrite the smaller panel's geometry with the larger
+    one's, which is not a setting the user can see going wrong; the display
+    simply stops being right.
+
+    Falls back to a plain copy when either file cannot be parsed, so a restore
+    never fails because of this.
+    """
+    if not keep_hardware:
+        _copy_file(src, dst)
+        return
+    try:
+        incoming = json.loads(src.read_text(encoding="utf-8"))
+        local = json.loads(dst.read_text(encoding="utf-8")) if dst.exists() else {}
+    except (OSError, ValueError) as exc:
+        logger.warning(
+            "[Backup] Could not merge local panel config (%s); restoring the "
+            "backup's config.json as-is", exc)
+        _copy_file(src, dst)
+        return
+
+    section, key = _HARDWARE_PATH
+    local_hw = (local.get(section) or {}).get(key)
+    if not isinstance(local_hw, dict) or not local_hw:
+        _copy_file(src, dst)
+        return
+
+    if not isinstance(incoming.get(section), dict):
+        incoming[section] = {}
+    incoming_hw = incoming[section].get(key)
+    incoming[section][key] = local_hw
+    if isinstance(incoming_hw, dict) and incoming_hw != local_hw:
+        logger.info(
+            "[Backup] Kept this device's display.hardware; the backup's panel "
+            "was %sx%s chain %s, this one is %sx%s chain %s",
+            incoming_hw.get("cols"), incoming_hw.get("rows"),
+            incoming_hw.get("chain_length"),
+            local_hw.get("cols"), local_hw.get("rows"),
+            local_hw.get("chain_length"))
+
+    tmp_path = dst.with_suffix(dst.suffix + ".restore-tmp")
+    tmp_path.write_text(json.dumps(incoming, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp_path, dst)
+
+
 def restore_backup(
     zip_path: Path,
     project_root: Path,
@@ -584,7 +644,9 @@ def restore_backup(
         # Main config.
         if options.restore_config and (tmp_dir / _CONFIG_REL).exists():
             try:
-                _copy_file(tmp_dir / _CONFIG_REL, project_root / _CONFIG_REL)
+                _restore_config_preserving_hardware(
+                    tmp_dir / _CONFIG_REL, project_root / _CONFIG_REL,
+                    keep_hardware=not options.restore_hardware)
                 result.restored.append("config")
             except OSError as e:
                 logger.error("[Backup] Failed to restore config.json: %s", e, exc_info=True)
