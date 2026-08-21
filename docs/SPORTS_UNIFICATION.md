@@ -204,7 +204,7 @@ legacy compatibility rather than the mechanism.
 B0–B3 are merged and shipping in core 3.2.0. Everything that remains is
 **rollout**, and it splits into three phases with very different risk profiles.
 The original plan folded the last two together; they are separated here because
-one of them is safe by construction and the other is not.
+one of them cannot break a user on an old core and the other can.
 
 | Phase | Scope | Status | Gate |
 |---|---|---|---|
@@ -262,13 +262,18 @@ default is the more restrictive.
 `compatible_versions`. No manifest still carries it, so there is nothing to
 migrate there.)
 
-### B5 — adoption is safe by construction
+### B5 — the *fallback* is safe by construction; the modern path is not
+
+The heading matters, because the unqualified version of this claim is false and
+this document proves it two sections down: four of the eight adopted plugins
+shipped with scroll mode broken on a 3.2.0 core. What is safe by construction is
+narrower than "adoption".
 
 A plugin adopting core imports keeps its bundled copy and reaches it through the
 guarded import (see the Upgradability table above). On a core that doesn't ship
 the module the plugin falls back and behaves exactly as it does today. That
-fallback compatibility is safe by construction. On a core that *does* ship the
-module, correctness is not automatic — object-level and scroll-mode validation
+fallback compatibility — and only that — is safe by construction. On a core that
+*does* ship the module, correctness is not automatic — object-level and scroll-mode validation
 (building both classes and comparing, per the retrospective below) is required
 to prove full behavior. There is no version of this step that breaks a user *on
 an old core*, which is why it does not wait for B6's gate.
