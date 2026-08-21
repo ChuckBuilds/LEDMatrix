@@ -328,7 +328,7 @@ def save_schedule_config():
         if not api_v3.config_manager:
             return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 500
 
-        data = request.get_json()
+        data = request.get_json(silent=True)
         if not data:
             return jsonify({'status': 'error', 'message': 'No data provided'}), 400
 
@@ -536,7 +536,7 @@ def save_dim_schedule_config():
         if not api_v3.config_manager:
             return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 500
 
-        data = request.get_json()
+        data = request.get_json(silent=True)
         if not data:
             return jsonify({'status': 'error', 'message': 'No data provided'}), 400
 
@@ -1345,18 +1345,20 @@ def save_raw_main_config():
         if not api_v3.config_manager:
             return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 500
 
-        data = request.get_json()
+        # silent=True so a malformed body returns None instead of raising
+        # Werkzeug's own BadRequest, which would answer in a different
+        # shape than this API's. Distinguish the two causes: a body that
+        # was sent but does not parse is a different mistake from no body.
+        data = request.get_json(silent=True)
+        if data is None and request.get_data():
+            return jsonify({'status': 'error', 'message': 'Invalid JSON in request body'}), 400
         if not data:
             return jsonify({'status': 'error', 'message': 'No data provided'}), 400
 
-        # Validate that it's valid JSON (already parsed by request.get_json())
         # Save the raw config file
         api_v3.config_manager.save_raw_file_content('main', data)
 
         return jsonify({'status': 'success', 'message': 'Main configuration saved successfully'})
-    except json.JSONDecodeError as e:
-        logger.error('Invalid JSON', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'Invalid JSON in request body'}), 400
     except Exception as e:
         from src.exceptions import ConfigError
         logger.error("Error saving raw main config", exc_info=True)
@@ -1391,7 +1393,11 @@ def save_raw_secrets_config():
         if not api_v3.config_manager:
             return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 500
 
-        data = request.get_json()
+        # See save_raw_main_config: silent parsing, with a sent-but-broken
+        # body reported separately from a missing one.
+        data = request.get_json(silent=True)
+        if data is None and request.get_data():
+            return jsonify({'status': 'error', 'message': 'Invalid JSON in request body'}), 400
         if not data:
             return jsonify({'status': 'error', 'message': 'No data provided'}), 400
 
@@ -1403,9 +1409,6 @@ def save_raw_secrets_config():
             api_v3.plugin_store_manager.github_token = api_v3.plugin_store_manager._load_github_token()
 
         return jsonify({'status': 'success', 'message': 'Secrets configuration saved successfully'})
-    except json.JSONDecodeError as e:
-        logger.error('Invalid JSON', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'Invalid JSON in request body'}), 400
     except Exception as e:
         from src.exceptions import ConfigError
         logger.error("Error saving raw secrets config", exc_info=True)
@@ -2411,7 +2414,7 @@ def get_on_demand_status():
 def start_on_demand_display():
     """Request the display controller to run a specific plugin on-demand."""
     try:
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
         plugin_id = data.get('plugin_id')
         mode = data.get('mode')
         duration = data.get('duration')
@@ -2935,7 +2938,7 @@ def manage_plugin_limits(plugin_id):
                 })
         else:
             # POST - Set limits
-            data = request.get_json() or {}
+            data = request.get_json(silent=True) or {}
             from src.plugin_system.resource_monitor import ResourceLimits
 
             limits = ResourceLimits(
@@ -2966,7 +2969,7 @@ def toggle_plugin():
         content_type = request.content_type or ''
 
         if 'application/json' in content_type:
-            data = request.get_json()
+            data = request.get_json(silent=True)
             if not data or 'plugin_id' not in data or 'enabled' not in data:
                 return jsonify({'status': 'error', 'message': 'plugin_id and enabled required'}), 400
             plugin_id = data['plugin_id']
@@ -3837,7 +3840,7 @@ def install_plugin():
         if not api_v3.plugin_store_manager:
             return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
 
-        data = request.get_json()
+        data = request.get_json(silent=True)
         if not data or 'plugin_id' not in data:
             return jsonify({'status': 'error', 'message': 'plugin_id required'}), 400
 
@@ -3971,9 +3974,14 @@ def install_plugin_from_url():
         if not api_v3.plugin_store_manager:
             return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
 
-        data = request.get_json()
+        data = request.get_json(silent=True)
         if not data or 'repo_url' not in data:
             return jsonify({'status': 'error', 'message': 'repo_url required'}), 400
+
+        # A non-string repo_url is a client mistake, not a server fault:
+        # .strip() would raise and the catch-all would report it as a 500.
+        if not isinstance(data['repo_url'], str) or not data['repo_url'].strip():
+            return jsonify({'status': 'error', 'message': 'repo_url must be a non-empty string'}), 400
 
         repo_url = data['repo_url'].strip()
         plugin_id = data.get('plugin_id')  # Optional, for monorepo installations
@@ -4026,9 +4034,14 @@ def get_registry_from_url():
         if not api_v3.plugin_store_manager:
             return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
 
-        data = request.get_json()
+        data = request.get_json(silent=True)
         if not data or 'repo_url' not in data:
             return jsonify({'status': 'error', 'message': 'repo_url required'}), 400
+
+        # A non-string repo_url is a client mistake, not a server fault:
+        # .strip() would raise and the catch-all would report it as a 500.
+        if not isinstance(data['repo_url'], str) or not data['repo_url'].strip():
+            return jsonify({'status': 'error', 'message': 'repo_url must be a non-empty string'}), 400
 
         repo_url = data['repo_url'].strip()
 
@@ -4071,9 +4084,14 @@ def add_saved_repository():
         if not api_v3.saved_repositories_manager:
             return jsonify({'status': 'error', 'message': 'Saved repositories manager not initialized'}), 500
 
-        data = request.get_json()
+        data = request.get_json(silent=True)
         if not data or 'repo_url' not in data:
             return jsonify({'status': 'error', 'message': 'repo_url required'}), 400
+
+        # A non-string repo_url is a client mistake, not a server fault:
+        # .strip() would raise and the catch-all would report it as a 500.
+        if not isinstance(data['repo_url'], str) or not data['repo_url'].strip():
+            return jsonify({'status': 'error', 'message': 'repo_url must be a non-empty string'}), 400
 
         repo_url = data['repo_url'].strip()
         name = data.get('name')
@@ -4102,7 +4120,7 @@ def remove_saved_repository():
         if not api_v3.saved_repositories_manager:
             return jsonify({'status': 'error', 'message': 'Saved repositories manager not initialized'}), 500
 
-        data = request.get_json()
+        data = request.get_json(silent=True)
         if not data or 'repo_url' not in data:
             return jsonify({'status': 'error', 'message': 'repo_url required'}), 400
 
@@ -4236,7 +4254,7 @@ def refresh_plugin_store():
         if not api_v3.plugin_store_manager:
             return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
 
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
         fetch_commit_info = data.get('fetch_commit_info', data.get('fetch_latest_versions', False))
 
         # Force refresh the registry
@@ -5822,7 +5840,7 @@ def reset_plugin_config():
         if not api_v3.config_manager:
             return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 500
 
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
         plugin_id = data.get('plugin_id')
         preserve_secrets = data.get('preserve_secrets', True)
 
@@ -6209,7 +6227,7 @@ sys.exit(proc.returncode)
 def authenticate_spotify():
     """Run Spotify authentication script"""
     try:
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
         redirect_url = data.get('redirect_url', '').strip()
 
         # Get plugin directory
@@ -6272,7 +6290,6 @@ sys.exit(proc.returncode)
                     timeout=120,
                     env=env
                 )
-                os.unlink(wrapper_path)
 
                 if result.returncode == 0:
                     return jsonify({
@@ -6287,9 +6304,13 @@ sys.exit(proc.returncode)
                         'output': result.stdout + result.stderr
                     }), 400
             except subprocess.TimeoutExpired:
+                return jsonify({'status': 'error', 'message': 'Authentication timed out'}), 408
+            finally:
+                # The wrapper carries the user's redirect URL, so it must not
+                # survive the request on any path — including a failure to
+                # launch, which the previous per-branch unlinks missed.
                 if os.path.exists(wrapper_path):
                     os.unlink(wrapper_path)
-                return jsonify({'status': 'error', 'message': 'Authentication timed out'}), 408
         else:
             # Step 1: Get authorization URL
             # Import the script's functions directly to get the auth URL
@@ -6526,7 +6547,7 @@ def get_fonts_overrides():
 def save_fonts_overrides():
     """Save font overrides"""
     try:
-        data = request.get_json()
+        data = request.get_json(silent=True)
         if not data:
             return jsonify({'status': 'error', 'message': 'No data provided'}), 400
 
@@ -7146,7 +7167,7 @@ def upload_of_the_day_json():
 def delete_of_the_day_json():
     """Delete a JSON file from of-the-day plugin"""
     try:
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
         file_id = data.get('file_id')  # This is the category_name
 
         if not file_id:
@@ -7236,6 +7257,29 @@ def serve_plugin_static(plugin_id, file_path):
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 
+_MAX_CREDENTIAL_BACKUPS = 5
+
+
+def _prune_credential_backups(plugin_dir: Path) -> None:
+    """Keep only the newest _MAX_CREDENTIAL_BACKUPS credential backups.
+
+    Every re-upload copies the previous credentials.json aside. Without
+    pruning those accumulate for the life of the install — each one a
+    complete set of OAuth client credentials sitting in the plugin
+    directory.
+    """
+    backups = sorted(
+        plugin_dir.glob('credentials.json.backup.*'),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    for stale in backups[_MAX_CREDENTIAL_BACKUPS:]:
+        try:
+            stale.unlink()
+        except OSError:
+            logger.warning("Could not remove old credential backup %s", stale.name)
+
+
 @api_v3.route('/plugins/calendar/upload-credentials', methods=['POST'])
 def upload_calendar_credentials():
     """Upload credentials.json file for calendar plugin"""
@@ -7263,24 +7307,20 @@ def upload_calendar_credentials():
         try:
             file_content = file.read()
             file.seek(0)
-            json.loads(file_content)
+            creds_data = json.loads(file_content)
         except json.JSONDecodeError:
             return jsonify({'status': 'error', 'message': 'File is not valid JSON'}), 400
 
-        # Validate it looks like Google OAuth credentials
-        try:
-            file.seek(0)
-            creds_data = json.loads(file.read())
-            file.seek(0)
-
-            # Check for required Google OAuth fields
-            if 'installed' not in creds_data and 'web' not in creds_data:
-                return jsonify({
-                    'status': 'error',
-                    'message': 'File does not appear to be a valid Google OAuth credentials file'
-                }), 400
-        except Exception:
-            pass  # Continue even if validation fails
+        # Validate it looks like Google OAuth credentials. A bare scalar, a
+        # list, true/null — all valid JSON, none of them credentials. Reject
+        # rather than save: a file written as credentials.json but unusable
+        # as credentials only fails later, somewhere less obvious.
+        if not isinstance(creds_data, dict) or not (
+                'installed' in creds_data or 'web' in creds_data):
+            return jsonify({
+                'status': 'error',
+                'message': 'File does not appear to be a valid Google OAuth credentials file'
+            }), 400
 
         # Get plugin directory
         plugin_id = 'calendar'
@@ -7300,6 +7340,7 @@ def upload_calendar_credentials():
             backup_path = Path(plugin_dir) / f'credentials.json.backup.{int(time.time())}'
             import shutil
             shutil.copy2(credentials_path, backup_path)
+            _prune_credential_backups(Path(plugin_dir))
 
         # Save new file
         file.save(str(credentials_path))
@@ -7824,7 +7865,7 @@ def connect_wifi():
     try:
         from src.wifi_manager import WiFiManager
 
-        data = request.get_json()
+        data = request.get_json(silent=True)
         if not data:
             return jsonify({
                 'status': 'error',
@@ -7978,7 +8019,7 @@ def set_auto_enable_ap_mode():
     try:
         from src.wifi_manager import WiFiManager
 
-        data = request.get_json()
+        data = request.get_json(silent=True)
         if data is None or 'auto_enable_ap_mode' not in data:
             return jsonify({
                 'status': 'error',
@@ -8107,7 +8148,7 @@ def delete_cache_file():
             from src.cache_manager import CacheManager
             api_v3.cache_manager = CacheManager()
 
-        data = request.get_json()
+        data = request.get_json(silent=True)
         if not data or 'key' not in data:
             return jsonify({'status': 'error', 'message': 'cache key is required'}), 400
 
@@ -8370,7 +8411,16 @@ def backup_restore():
         try:
             opts_dict = json.loads(options_raw)
         except json.JSONDecodeError:
-            opts_dict = {}
+            opts_dict = None
+        if not isinstance(opts_dict, dict):
+            # Every option defaults to True, so falling back to {} on a
+            # parse failure would silently perform a FULL restore —
+            # secrets and all — for a caller who asked for a narrow one
+            # and mis-serialized it. Refuse instead of guessing.
+            return jsonify({
+                'status': 'error',
+                'message': 'Invalid options: expected a JSON object',
+            }), 400
         options = RestoreOptions(
             restore_config=bool(opts_dict.get('restore_config', True)),
             restore_secrets=bool(opts_dict.get('restore_secrets', True)),

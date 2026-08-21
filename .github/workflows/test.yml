@@ -72,4 +72,4 @@ jobs:
             --ignore=test/plugins \
             --cov=src --cov=web_interface \
             --cov-report=term \
-            --cov-fail-under=48
+            --cov-fail-under=52
