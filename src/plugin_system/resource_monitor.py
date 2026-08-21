@@ -155,7 +155,23 @@ class PluginResourceMonitor:
             self.logger.warning(
                 "Dropping unrecognised field(s) from cached metrics for %s: %s",
                 plugin_id, ", ".join(unknown))
-        usable = {k: v for k, v in cached.items() if k in known}
+        # A dataclass does not enforce its annotations, so
+        # ResourceMetrics(call_count="not a number") builds happily and only
+        # blows up later, deep inside monitor_call ("can only concatenate str
+        # (not \"int\") to str"). Coerce here, where there is still a cache
+        # key to name in the warning.
+        declared = {f.name: f.type for f in fields(ResourceMetrics)}
+        usable = {}
+        for key, value in cached.items():
+            if key not in known:
+                continue
+            try:
+                usable[key] = int(value) if declared[key] in ('int', int) else float(value)
+            except (TypeError, ValueError):
+                self.logger.warning(
+                    "Cached metrics for %s have a bad %s (%r); starting fresh",
+                    plugin_id, key, value)
+                return ResourceMetrics()
         try:
             return ResourceMetrics(**usable)
         except (TypeError, ValueError) as e:
@@ -425,9 +441,16 @@ class PluginResourceMonitor:
         # jumps by however far off boot-time was the moment NTP first syncs.
         # A forward jump would allow an early write, a backward one would
         # stall the snapshot well past the interval.
+        #
+        # The sentinel for "never written" is None, not 0.0. monotonic() is
+        # time since boot on Linux, and systemd starts this service *at* boot,
+        # so `now - 0.0 < 30` was true for the first half-minute of every
+        # single run -- the throttle swallowed the very first snapshot, which
+        # is the one that matters most after a restart.
         now = time.monotonic()
-        if not force and now - self._metrics_persisted_at.get(plugin_id, 0.0) \
-                < _METRICS_PERSIST_INTERVAL:
+        last_written = self._metrics_persisted_at.get(plugin_id)
+        if (not force and last_written is not None
+                and now - last_written < _METRICS_PERSIST_INTERVAL):
             return
         cache_key = self._get_metrics_key(plugin_id)
         self.cache_manager.set(cache_key, {

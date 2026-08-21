@@ -11,7 +11,7 @@ Focus areas:
 import time
 
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from src.plugin_system.resource_monitor import (
     PluginResourceMonitor,
@@ -136,6 +136,26 @@ class TestMetricsPersistenceChurn:
     journal entry. At roughly nine calls a minute per plugin across fourteen
     plugins it dominated the device's write volume.
     """
+
+    def test_the_first_snapshot_is_written_even_seconds_after_boot(self):
+        """The throttle must key off "have we written?", not process uptime.
+
+        time.monotonic() is time since boot on Linux, and systemd starts this
+        service at boot. With 0.0 as the missing-timestamp default,
+        `now - 0.0 < 30` was true for the first half-minute of every run, so
+        the very first metrics write -- the one that matters most after a
+        restart -- was silently skipped.
+        """
+        import src.plugin_system.resource_monitor as rm
+        cache = _cache()
+        mon = PluginResourceMonitor(cache, enable_monitoring=False)
+        # 12 seconds after boot: inside the interval, but nothing written yet.
+        with patch.object(rm.time, "monotonic", return_value=12.0):
+            mon.monitor_call("p", lambda: None)
+        writes = [c for c in cache.set.call_args_list
+                  if "plugin_metrics:" in str(c)]
+        assert writes, \
+            "the first snapshot was dropped because the process was young"
 
     def test_repeated_calls_persist_once_per_interval(self):
         cache = _cache()

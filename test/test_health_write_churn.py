@@ -16,13 +16,22 @@ circuit opening, or a recovery must still be written the moment it happens.
 """
 import time
 
+import copy
+
 import pytest
 
 from src.plugin_system.plugin_health import PluginHealthTracker, CircuitState
 
 
 class _Cache:
-    """Counts writes; serves back whatever was last written."""
+    """Counts writes; serves back whatever was last written.
+
+    Both directions deep-copy, so this behaves like a real cache that
+    serialises through a file. Storing by reference let the tracker keep
+    mutating the object already in the store, so a record could appear to
+    have been persisted when no write ever happened -- which is precisely
+    what test_durable_state_survives_a_restart is supposed to detect.
+    """
 
     def __init__(self):
         self.store = {}
@@ -30,10 +39,10 @@ class _Cache:
 
     def set(self, key, data, ttl=None, **kwargs):
         self.writes += 1
-        self.store[key] = data
+        self.store[key] = copy.deepcopy(data)
 
     def get(self, key, max_age=None, memory_ttl=None, **kwargs):
-        return self.store.get(key)
+        return copy.deepcopy(self.store.get(key))
 
 
 @pytest.fixture

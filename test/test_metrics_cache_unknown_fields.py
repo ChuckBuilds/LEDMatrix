@@ -94,7 +94,35 @@ def test_a_non_mapping_cache_entry_does_not_raise(payload):
     assert isinstance(metrics, ResourceMetrics)
 
 
-def test_values_of_the_wrong_type_do_not_raise():
-    """A dataclass will accept these, but a later float() on them would not."""
-    metrics = _monitor({"call_count": "not a number"}).get_metrics("plugin-f")
+@pytest.mark.parametrize("bad", [
+    {"call_count": "not a number"},
+    {"memory_mb": None},
+    {"execution_time": {"nested": "junk"}},
+    {"min_execution_time": ["a", "list"]},
+])
+def test_values_of_the_wrong_type_fall_back_to_usable_defaults(bad):
+    """isinstance() alone was not enough.
+
+    A dataclass does not enforce its annotations, so the bad value was simply
+    stored and the old assertion passed -- then monitor_call() raised
+    "can only concatenate str (not \"int\") to str" on the next call. The
+    metrics must come back *usable*, not merely constructed.
+    """
+    monitor = _monitor(bad)
+    metrics = monitor.get_metrics("plugin-f")
     assert isinstance(metrics, ResourceMetrics)
+
+    field_name = next(iter(bad))
+    assert isinstance(getattr(metrics, field_name), (int, float)), \
+        f"{field_name} came back as {getattr(metrics, field_name)!r}"
+
+    # The real proof: arithmetic on the loaded metrics must not explode.
+    metrics.call_count += 1
+    metrics.total_execution_time += 0.5
+    metrics.update_average_execution_time()
+
+
+def test_a_numeric_string_is_accepted_rather_than_discarded():
+    """JSON round-trips can widen an int to a string; that is recoverable."""
+    metrics = _monitor({"call_count": "7"}).get_metrics("plugin-g")
+    assert metrics.call_count == 7

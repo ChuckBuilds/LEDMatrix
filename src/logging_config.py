@@ -201,13 +201,31 @@ class JournalPriorityFormatter(logging.Formatter):
 
 
 def _under_systemd() -> bool:
-    """True when stdout is the journal.
+    """True when stdout really is the journal.
 
-    systemd sets JOURNAL_STREAM for services whose output it captures. Without
-    this check the "<N>" prefixes would show up as literal noise when the
-    program is run from a terminal, in the emulator, or in tests.
+    systemd sets JOURNAL_STREAM to "dev:ino" for services whose output it
+    captures. Presence alone is not enough to act on: the variable is
+    inherited by child processes and survives redirection, so a subprocess
+    whose stdout is a pipe or a file still sees it and would emit the "<N>"
+    priority prefixes as literal noise into that output. systemd's own
+    guidance is to fstat the descriptor and compare st_dev/st_ino, which is
+    what distinguishes "the journal is somewhere in my ancestry" from "my
+    stdout is the journal".
     """
-    return bool(os.environ.get("JOURNAL_STREAM"))
+    declared = os.environ.get("JOURNAL_STREAM")
+    if not declared:
+        return False
+    try:
+        dev_text, ino_text = declared.split(":", 1)
+        declared_ids = (int(dev_text), int(ino_text))
+    except (ValueError, AttributeError):
+        return False
+    try:
+        stat_result = os.fstat(sys.stdout.fileno())
+    except (OSError, ValueError, AttributeError):
+        # No usable stdout: captured by pytest, detached, or already closed.
+        return False
+    return (stat_result.st_dev, stat_result.st_ino) == declared_ids
 
 
 class PluginLoggerAdapter(logging.LoggerAdapter):

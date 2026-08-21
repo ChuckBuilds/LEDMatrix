@@ -19,6 +19,7 @@ in a terminal, the emulator, and test output.
 """
 import logging
 import os
+import sys
 from unittest.mock import patch
 
 import pytest
@@ -77,18 +78,53 @@ def test_an_unknown_level_falls_back_to_info():
     assert out.startswith("<6>")
 
 
+def _stdout_ids():
+    """The dev:ino systemd would publish for this process's stdout."""
+    st = os.fstat(sys.stdout.fileno())
+    return f"{st.st_dev}:{st.st_ino}"
+
+
 def test_prefixing_is_off_outside_systemd():
     """Otherwise a terminal run, the emulator and pytest all show `<6>`."""
     with patch.dict(os.environ, {}, clear=True):
         assert not _under_systemd()
-    with patch.dict(os.environ, {"JOURNAL_STREAM": "8:12345"}):
+    with patch.dict(os.environ, {"JOURNAL_STREAM": _stdout_ids()}):
         assert _under_systemd()
+
+
+def test_an_inherited_journal_stream_does_not_count():
+    """The variable outlives the descriptor it describes.
+
+    systemd sets JOURNAL_STREAM for the service, and every child inherits it
+    -- including one whose stdout has been redirected to a pipe or a file.
+    Trusting the variable alone put literal "<6>" prefixes into that captured
+    output. Only a descriptor whose dev:ino actually matches is the journal.
+    """
+    with patch.dict(os.environ, {"JOURNAL_STREAM": "8:12345"}):
+        assert not _under_systemd(), \
+            "a stale inherited JOURNAL_STREAM was treated as the journal"
+
+
+@pytest.mark.parametrize("value", ["", "not-a-pair", "8", "8:", ":12345",
+                                   "eight:12345", "8:12345:9"])
+def test_a_malformed_journal_stream_is_not_the_journal(value):
+    with patch.dict(os.environ, {"JOURNAL_STREAM": value}):
+        assert not _under_systemd()
+
+
+def test_a_closed_stdout_is_not_the_journal():
+    """os.fstat raises rather than answers; that must not propagate."""
+    with patch.dict(os.environ, {"JOURNAL_STREAM": "8:12345"}), \
+            patch("src.logging_config.sys.stdout") as fake_stdout:
+        fake_stdout.fileno.side_effect = ValueError("I/O operation on closed file")
+        assert not _under_systemd()
 
 
 def test_setup_uses_the_wrapper_only_under_systemd():
     from src.logging_config import setup_logging
 
-    for env, expect_wrapped in (({}, False), ({"JOURNAL_STREAM": "8:1"}, True)):
+    for env, expect_wrapped in (({}, False),
+                                ({"JOURNAL_STREAM": _stdout_ids()}, True)):
         with patch.dict(os.environ, env, clear=True):
             setup_logging()
             handlers = [h for h in logging.getLogger().handlers

@@ -27,17 +27,22 @@ ADAPTER = (Path(__file__).resolve().parent.parent / "src" / "vegas_mode"
            / "plugin_adapter.py")
 
 
-def _info_calls(path):
-    """Direct logger.info(...) call sites in a module."""
+def _logger_calls(path, *levels):
+    """Direct logger.<level>(...) call sites in a module."""
     tree = ast.parse(path.read_text(encoding="utf-8"))
     found = []
     for node in ast.walk(tree):
         if (isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Attribute)
-                and node.func.attr == "info"
+                and node.func.attr in levels
                 and getattr(node.func.value, "id", None) == "logger"):
             found.append(node.lineno)
     return found
+
+
+def _info_calls(path):
+    """Direct logger.info(...) call sites in a module."""
+    return _logger_calls(path, "info")
 
 
 def test_the_content_path_does_not_trace_at_info():
@@ -50,11 +55,16 @@ def test_the_content_path_does_not_trace_at_info():
 
 
 def test_real_failures_still_have_a_level_of_their_own():
-    """Demoting the trace must not have swept up the error reporting."""
-    source = ADAPTER.read_text(encoding="utf-8")
-    loud = sum(source.count(f"logger.{level}(")
-               for level in ("warning", "error", "exception"))
-    assert loud >= 15, f"only {loud} warning/error/exception calls remain"
+    """Demoting the trace must not have swept up the error reporting.
+
+    Counted from the AST rather than with source.count(): the text form also
+    matches comments, docstrings and string literals -- including this
+    module's own docstring, which names these levels -- so a real
+    logger.error() could be demoted while the tally stayed put.
+    """
+    loud = _logger_calls(ADAPTER, "warning", "error", "exception")
+    assert len(loud) >= 15, \
+        f"only {len(loud)} warning/error/exception calls remain: {loud}"
 
 
 def test_the_deliberate_runtime_chosen_level_survives():
