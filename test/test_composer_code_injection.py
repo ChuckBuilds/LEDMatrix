@@ -115,3 +115,57 @@ def test_the_generated_module_still_has_no_top_level_statements():
     src = _generated(_payload(elements=[el]))
     assert not _module_level_code(src)
     assert "(1, 2, 3)" in src
+
+
+# --- config variable keys ---------------------------------------------------
+
+def _with_key(key):
+    return {"metadata": dict(BASE_META), "elements": [],
+            "dataModel": {"configVars": [{"key": key, "type": "string",
+                                          "default": "x", "label": "L"}]}}
+
+
+@pytest.mark.parametrize("key", ["class", "def", "import", "None", "True",
+                                 "lambda", "pass", "match", "case"])
+def test_a_keyword_config_key_is_named_in_the_error(key):
+    """ast.parse already rejected these, but as an unhelpful line number.
+
+    "Generated code has a syntax error: invalid syntax (line 17)" tells the
+    user nothing about which field to fix.
+    """
+    with pytest.raises(C.ComposerInputError) as exc:
+        _generated(_with_key(key))
+    assert key in str(exc.value) and "keyword" in str(exc.value).lower()
+
+
+@pytest.mark.parametrize("key", ["config", "logger", "display_manager",
+                                 "cache_manager", "plugin_id", "enabled",
+                                 "self", "update", "display"])
+def test_a_reserved_attribute_config_key_is_refused(key):
+    """These generate *valid* Python that silently clobbers plugin state.
+
+    The worst is `config`: the assignment lands right after super().__init__(),
+    so `self.config = config.get("config", "x")` replaces the plugin's config
+    dict with a string and every later self.config.get(...) fails at runtime.
+    """
+    with pytest.raises(C.ComposerInputError) as exc:
+        _generated(_with_key(key))
+    assert key in str(exc.value) and "reserved" in str(exc.value).lower()
+
+
+@pytest.mark.parametrize("key", ["brightness", "my_var", "_private", "x1",
+                                 "update_interval_seconds"])
+def test_ordinary_config_keys_are_still_accepted(key):
+    src = _generated(_with_key(key))
+    assert f"self.{key} = config.get(" in src
+
+
+def test_the_generated_config_assignment_does_not_precede_super_init():
+    """Guards the reasoning behind the reserved list, not just the list."""
+    src = _generated(_with_key("brightness"))
+    body = src.splitlines()
+    super_at = next(i for i, l in enumerate(body) if "super().__init__(" in l)
+    assign_at = next(i for i, l in enumerate(body) if "self.brightness = config.get(" in l)
+    assert assign_at > super_at, (
+        "config vars are assigned before super().__init__(); the reserved-name "
+        "list assumes they land after it")

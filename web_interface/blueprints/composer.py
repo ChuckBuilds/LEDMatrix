@@ -11,6 +11,7 @@ Routes:
 import ast
 import io
 import json
+import keyword
 import logging
 import os
 import re
@@ -67,8 +68,16 @@ def _get_jinja_env() -> jinja2.Environment:
     global _jinja_env
     if _jinja_env is None:
         template_dir = Path(__file__).parent.parent / 'templates' / 'v3' / 'composer'
-        _jinja_env = jinja2.Environment(
+        _jinja_env = jinja2.Environment(  # nosec B701 - see below
             loader=jinja2.FileSystemLoader(str(template_dir)),
+            # These templates emit Python source, not HTML. Autoescaping would
+            # turn a quote in a plugin name into &#34; inside generated code
+            # and break it, so it stays off deliberately -- and the safety has
+            # to come from the values instead. It does: every numeric value is
+            # coerced by _safe_int/_rgb_expr, and text that could terminate a
+            # string literal is rejected by _reject_source_breaking. Both are
+            # covered by test/test_composer_code_injection.py, which is where
+            # to look before relaxing any of it.
             autoescape=False,
             trim_blocks=True,
             lstrip_blocks=True,
@@ -99,6 +108,16 @@ def _to_class_name(name: str) -> str:
     words = re.sub(r'[^a-zA-Z0-9]', ' ', name).split()
     base = ''.join(w.capitalize() for w in words)
     return base if base.endswith('Plugin') else base + 'Plugin'
+
+
+#: Attribute names BasePlugin (or the generated __init__) already owns. A
+#: config var using one of these produces valid Python that quietly clobbers
+#: the plugin's own state instead of failing loudly.
+_RESERVED_ATTRS = frozenset({
+    'config', 'logger', 'display_manager', 'cache_manager', 'plugin_manager',
+    'plugin_id', 'enabled', 'global_config', 'self', 'update', 'display',
+    'validate_config', 'get_info', 'cleanup',
+})
 
 
 def _reject_source_breaking(value: str, field: str) -> None:
@@ -518,6 +537,22 @@ def _generate_plugin_files(data: dict) -> dict:
         key = cv.get('key', '')
         if not _PYTHON_IDENT_RE.match(key):
             raise ComposerInputError(f'Config variable key "{key}" is not a valid Python identifier.')
+        # A keyword produces `self.class = ...`, which the ast.parse check
+        # below does catch -- but as "Generated code has a syntax error:
+        # invalid syntax (line 17)", which tells the user nothing about which
+        # field to fix.
+        if keyword.iskeyword(key) or keyword.issoftkeyword(key):
+            raise ComposerInputError(
+                f'Config variable key "{key}" is a Python keyword.')
+        # These generate *valid* code that silently shadows the plugin's own
+        # state. "config" is the worst: the assignment runs immediately after
+        # super().__init__(), so
+        #     self.config = config.get("config", "x")
+        # replaces the plugin's config dict with a string and every later
+        # self.config.get(...) fails at runtime.
+        if key in _RESERVED_ATTRS:
+            raise ComposerInputError(
+                f'Config variable key "{key}" is reserved by BasePlugin.')
 
     class_name = _to_class_name(plugin_name)
     # Only consider visible elements for code generation flags
@@ -742,7 +777,10 @@ def generate_zip():
         logger.exception('Unexpected error generating plugin files: %s', exc)
         return jsonify({'status': 'error', 'message': 'Could not generate plugin files'}), 422
 
-    plugin_id = data.get('metadata', {}).get('id', 'plugin')
+    # .strip() to match _generate_plugin_files, which strips before it
+    # validates. Without it " my-plugin " generates successfully and then
+    # fails the id check here, which reads as a bug in the generator.
+    plugin_id = data.get('metadata', {}).get('id', 'plugin').strip() or 'plugin'
     files['_composer_state.json'] = json.dumps(data, indent=2, ensure_ascii=False)
     zip_buf = _pack_zip(files, plugin_id)
     return send_file(
@@ -772,7 +810,7 @@ def install_locally():
         logger.exception('Unexpected error generating plugin files: %s', exc)
         return jsonify({'status': 'error', 'message': 'Could not generate plugin files'}), 422
 
-    plugin_id = data.get('metadata', {}).get('id', '')
+    plugin_id = data.get('metadata', {}).get('id', '').strip()
     # _generate_plugin_files() above already validates metadata.id via this
     # same regex before it will return, but that guarantee lives in a
     # different function -- re-check here, at the point the path is actually
@@ -855,6 +893,12 @@ def list_plugins():
     if not composer_bp.plugins_dir:
         return jsonify([])
     plugins_dir = Path(composer_bp.plugins_dir)
+    if not plugins_dir.is_dir():
+        # Configured but not created yet -- a fresh install, or a bad path.
+        # iterdir() raises FileNotFoundError/NotADirectoryError here, which
+        # surfaced as a 500 rather than "no plugins".
+        logger.warning("Plugin directory %s does not exist", plugins_dir)
+        return jsonify([])
     results = []
     for entry in sorted(plugins_dir.iterdir()):
         if not entry.is_dir():
@@ -964,8 +1008,10 @@ def load_plugin(plugin_id):
     if manifest_path.exists():
         try:
             manifest = json.loads(manifest_path.read_text())
-        except Exception:
-            pass
+        except (OSError, ValueError) as exc:
+            # Swallowing this left "partial import produced nothing" with no
+            # way to tell a malformed manifest from an absent one.
+            logger.warning("Failed to parse manifest.json for %s: %s", plugin_id, exc)
 
     partial_state = {
         'composer_version': '1.0',
