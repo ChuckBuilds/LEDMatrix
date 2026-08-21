@@ -52,14 +52,57 @@ def _innermost_loop_iterable(lineno):
     return None if best is None else ast.unparse(best.iter)
 
 
-def _guards_above(lineno):
-    """Source of every `if` test enclosing this line."""
-    out = []
+def _spans(body, lineno):
+    """True when `lineno` falls inside this list of statements."""
+    return any(n.lineno <= lineno <= (n.end_lineno or n.lineno) for n in body)
+
+
+def _parents(tree):
+    table = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            table[child] = node
+    return table
+
+
+PARENTS = _parents(TREE)
+
+
+def _mentions_positively(test, names):
+    """True when `test` references every name, none of them under a `not`.
+
+    Structural, not textual. Matching the unparsed source would accept
+    `not (details["is_live"] or details["is_halftime"])` -- which selects
+    exactly the non-live games this guard exists to exclude -- because the
+    names still appear in the text.
+    """
+    found = set()
+    for node in ast.walk(test):
+        if not (isinstance(node, ast.Constant) and node.value in names):
+            continue
+        negated = False
+        cursor = node
+        while cursor is not test and cursor in PARENTS:
+            cursor = PARENTS[cursor]
+            if isinstance(cursor, ast.UnaryOp) and isinstance(cursor.op, ast.Not):
+                negated = True
+                break
+        if not negated:
+            found.add(node.value)
+    return found >= set(names)
+
+
+def _guarded_by_positive(lineno, names):
+    """True when some enclosing `if` runs this line only if `names` hold.
+
+    Only the TRUE branch counts: an `if` whose `else` contains the call would
+    otherwise look like a guard while doing the opposite.
+    """
     for node in ast.walk(TREE):
-        if isinstance(node, ast.If) and \
-                node.lineno <= lineno <= (node.end_lineno or node.lineno):
-            out.append(ast.unparse(node.test))
-    return out
+        if isinstance(node, ast.If) and _spans(node.body, lineno) \
+                and _mentions_positively(node.test, names):
+            return True
+    return False
 
 
 def test_every_fetch_site_is_accounted_for():
@@ -86,8 +129,8 @@ def test_live_only_fetches_for_games_actually_in_progress():
     for cls, _fn, lineno in _fetch_sites():
         if cls != "SportsLive":
             continue
-        guards = " ".join(_guards_above(lineno))
-        assert "is_live" in guards and "is_halftime" in guards, (
-            f"SportsLive._fetch_odds at line {lineno} is not gated on a game "
-            f"being in progress; guards were: {guards!r}. Without that test it "
-            "fans out across the whole event list.")
+        assert _guarded_by_positive(lineno, {"is_live", "is_halftime"}), (
+            f"SportsLive._fetch_odds at line {lineno} does not sit in the true "
+            "branch of a test requiring the game to be in progress. Without "
+            "that, it fans out across the whole event list -- one sequential "
+            "ESPN request per game.")
