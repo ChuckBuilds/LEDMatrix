@@ -101,13 +101,62 @@ def _to_class_name(name: str) -> str:
     return base if base.endswith('Plugin') else base + 'Plugin'
 
 
-def _compute_pos_expr(val: int, anchor: str | None, dim_var: str) -> str:
+def _reject_source_breaking(value: str, field: str) -> None:
+    """Refuse text that could terminate a string literal in generated source.
+
+    Anything interpolated into manager.py inside quotes has to survive being
+    read back as Python. A quote, a backslash or a newline can end the literal
+    early and turn the remainder into executable statements.
+    """
+    for bad, label in (('"', 'a double quote'), ("'", 'a single quote'),
+                       ('\\', 'a backslash'), ('\n', 'a newline'),
+                       ('\r', 'a carriage return')):
+        if bad in value:
+            raise ComposerInputError(
+                f'{field} cannot contain {label}.')
+
+
+def _safe_int(value, default: int = 0, lo: int | None = None,
+              hi: int | None = None) -> int:
+    """Coerce a payload value to int, falling back rather than raising.
+
+    Everything this module interpolates into generated Python has to go
+    through here first. The payload is JSON from the browser, so a field
+    annotated `int` can arrive as any string, and these values are formatted
+    straight into `manager.py` -- which /api/install writes to disk and the
+    plugin loader then imports and executes. An x of
+
+        '0 or __import__("os").system("id")'
+
+    produced `x=0 or __import__("os").system("id")` in the generated source,
+    which is valid Python and so passed the ast.parse check.
+    """
+    try:
+        out = int(value)
+    except (TypeError, ValueError):
+        return default
+    if lo is not None:
+        out = max(lo, out)
+    if hi is not None:
+        out = min(hi, out)
+    return out
+
+
+def _rgb_expr(el: dict, dr: int = 255, dg: int = 255, db: int = 255) -> str:
+    """A colour tuple literal built from coerced, clamped channel values."""
+    return (f"({_safe_int(el.get('r'), dr, 0, 255)}, "
+            f"{_safe_int(el.get('g'), dg, 0, 255)}, "
+            f"{_safe_int(el.get('b'), db, 0, 255)})")
+
+
+def _compute_pos_expr(val, anchor: str | None, dim_var: str) -> str:
     """Produce a Python expression string for an anchored or fixed position.
 
     anchor=None/'left'/'top' → fixed pixel value
     anchor='center'          → dim_var // 2 ± offset
     anchor='right'/'bottom'  → dim_var - offset
     """
+    val = _safe_int(val, 0)
     if not anchor or anchor in ('left', 'top'):
         return str(val)
     if anchor in ('center', 'middle'):
@@ -170,7 +219,7 @@ def _preprocess_elements(elements: list) -> list:
         if t in ('text', 'clock'):
             font_key = el.get('font', 'press_start')
             p['font_attr'] = _FONT_ATTR_MAP.get(font_key, 'regular_font')
-            p['rgb_tuple'] = f"({el.get('r', 255)}, {el.get('g', 255)}, {el.get('b', 255)})"
+            p['rgb_tuple'] = _rgb_expr(el, 255, 255, 255)
             text_align = el.get('textAlign', 'left')
             raw_x = el.get('x', 0)
             x_base_expr = _compute_pos_expr(raw_x, x_anchor, 'width')
@@ -206,7 +255,7 @@ def _preprocess_elements(elements: list) -> list:
             p['binding_format'] = binding.get('format')
             font_key = el.get('font', 'press_start')
             p['font_attr'] = _FONT_ATTR_MAP.get(font_key, 'regular_font')
-            p['rgb_tuple'] = f"({el.get('r', 255)}, {el.get('g', 200)}, {el.get('b', 100)})"
+            p['rgb_tuple'] = _rgb_expr(el, 255, 200, 100)
             x_base_expr = _compute_pos_expr(el.get('x', 0), x_anchor, 'width')
             p['x_expr'] = x_base_expr  # dynamic text: runtime content determines width; use raw pos
             p['y_expr'] = _compute_pos_expr(el.get('y', 0), y_anchor, 'height')
@@ -248,10 +297,10 @@ def _preprocess_elements(elements: list) -> list:
             else:
                 p['x0_expr'] = _compute_pos_expr(el.get('x0', 0), x_anchor, 'width')
                 p['y0_expr'] = _compute_pos_expr(el.get('y0', 0), y_anchor, 'height')
-                p['x1_expr'] = str(el.get('x1', 127))
-                p['y1_expr'] = str(el.get('y1', 0))
-            p['rgb_tuple'] = f"({el.get('r', 180)}, {el.get('g', 180)}, {el.get('b', 180)})"
-            p['line_width'] = el.get('lineWidth', 1)
+                p['x1_expr'] = str(_safe_int(el.get('x1'), 127))
+                p['y1_expr'] = str(_safe_int(el.get('y1'), 0))
+            p['rgb_tuple'] = _rgb_expr(el, 180, 180, 180)
+            p['line_width'] = _safe_int(el.get('lineWidth'), 1, 1, 64)
             p['blink'] = bool(el.get('blink', False))
 
         elif t == 'progress_bar':
@@ -285,8 +334,8 @@ def _preprocess_elements(elements: list) -> list:
             p['y2_expr'] = f"({y_expr}) + {h}"
             p['start_angle'] = int(el.get('startAngle', 0))
             p['end_angle'] = int(el.get('endAngle', 270))
-            p['line_width'] = max(1, int(el.get('lineWidth', 2)))
-            p['rgb_tuple'] = f"({el.get('r', 255)}, {el.get('g', 200)}, {el.get('b', 0)})"
+            p['line_width'] = _safe_int(el.get('lineWidth'), 2, 1, 64)
+            p['rgb_tuple'] = _rgb_expr(el, 255, 200, 0)
             p['blink'] = bool(el.get('blink', False))
 
         elif t == 'ellipse':
@@ -313,7 +362,7 @@ def _preprocess_elements(elements: list) -> list:
         elif t == 'pixel':
             p['x_expr'] = _compute_pos_expr(el.get('x', 0), x_anchor, 'width')
             p['y_expr'] = _compute_pos_expr(el.get('y', 0), y_anchor, 'height')
-            p['rgb_tuple'] = f"({el.get('r', 255)}, {el.get('g', 255)}, {el.get('b', 255)})"
+            p['rgb_tuple'] = _rgb_expr(el, 255, 255, 255)
             p['blink'] = bool(el.get('blink', False))
 
         elif t == 'rounded_rectangle':
@@ -341,7 +390,7 @@ def _preprocess_elements(elements: list) -> list:
         elif t == 'countdown':
             font_key = el.get('font', 'four_by_six')
             p['font_attr'] = _FONT_ATTR_MAP.get(font_key, 'extra_small_font')
-            p['rgb_tuple'] = f"({el.get('r', 255)}, {el.get('g', 180)}, {el.get('b', 0)})"
+            p['rgb_tuple'] = _rgb_expr(el, 255, 180, 0)
             binding = el.get('binding', {})
             p['binding_key'] = binding.get('key', '')
             p['countdown_format'] = el.get('countdownFormat', 'dh')
@@ -390,8 +439,8 @@ def _preprocess_elements(elements: list) -> list:
             p['y2_expr'] = f"({y_expr}) + {h}"
             p['start_angle'] = int(el.get('startAngle', 135))
             p['end_angle'] = int(el.get('endAngle', 45))
-            p['line_width'] = max(1, int(el.get('lineWidth', 3)))
-            p['rgb_tuple'] = f"({el.get('r', 80)}, {el.get('g', 220)}, {el.get('b', 80)})"
+            p['line_width'] = _safe_int(el.get('lineWidth'), 3, 1, 64)
+            p['rgb_tuple'] = _rgb_expr(el, 80, 220, 80)
             track = (
                 [el.get('trackR', 40), el.get('trackG', 40), el.get('trackB', 40)]
                 if el.get('hasTrack', True) else None
@@ -408,7 +457,7 @@ def _preprocess_elements(elements: list) -> list:
         elif t == 'marquee':
             font_key = el.get('font', 'press_start')
             p['font_attr'] = _FONT_ATTR_MAP.get(font_key, 'regular_font')
-            p['rgb_tuple'] = f"({el.get('r', 255)}, {el.get('g', 255)}, {el.get('b', 255)})"
+            p['rgb_tuple'] = _rgb_expr(el, 255, 255, 255)
             p['y_expr'] = _compute_pos_expr(el.get('y', 0), y_anchor, 'height')
             p['text'] = el.get('text', 'Scrolling text')
             p['char_w'] = _FONT_CHAR_W.get(font_key, 8)
@@ -446,6 +495,17 @@ def _generate_plugin_files(data: dict) -> dict:
     plugin_name = metadata.get('name', '').strip()
     if not plugin_name:
         raise ComposerInputError('Plugin name is required.')
+    # The template drops this straight into manager.py's module docstring. A
+    # name carrying a triple quote closes that docstring and everything after
+    # it becomes module-level code, which /api/install writes to disk and the
+    # loader imports and runs:
+    #
+    #     Clock"""\nimport os; PWNED = os.getuid()\n"""
+    #       -> import os          <- executed on load
+    #          PWNED = os.getuid()
+    #
+    # ast.parse further down only rejects invalid syntax, and that is valid.
+    _reject_source_breaking(plugin_name, 'Plugin name')
 
     author = metadata.get('author', '').strip()
     if not author:
