@@ -22,6 +22,7 @@ from pathlib import Path
 import jinja2
 import jsonschema
 from flask import Blueprint, jsonify, render_template, request, send_file
+from werkzeug.utils import secure_filename
 
 logger = logging.getLogger(__name__)
 
@@ -618,12 +619,24 @@ def _plugin_dir(plugin_id: str) -> Optional[Path]:
     """
     if not _PLUGIN_ID_RE.match(plugin_id or ''):
         return None
+    # secure_filename strips path separators and traversal. Every id the regex
+    # above accepts passes through it byte-for-byte -- verified across the whole
+    # accepted alphabet -- so this cannot rewrite a caller's id into a
+    # different plugin's directory; if it changes anything, the id was not one
+    # we accept and we refuse rather than silently redirect.
+    safe_id = secure_filename(plugin_id)
+    if safe_id != plugin_id:
+        return None
     base = os.path.realpath(str(composer_bp.plugins_dir))
-    candidate = os.path.realpath(os.path.join(base, plugin_id))
+    candidate = os.path.realpath(os.path.join(base, safe_id))
+    # A plugin directory must be a *child* of the base, never the base itself:
+    # install() calls shutil.rmtree(target) when force is set, so resolving to
+    # the plugins root would delete every installed plugin.
+    #
     # commonpath, not startswith: "/plugins-evil" starts with "/plugins" but is
     # a different directory. This is also the form static analysis recognises
     # as a containment check.
-    if candidate != base and os.path.commonpath([base, candidate]) != base:
+    if candidate == base or os.path.commonpath([base, candidate]) != base:
         return None
     return Path(candidate)
 

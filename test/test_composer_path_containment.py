@@ -94,8 +94,64 @@ def test_a_sibling_directory_with_a_shared_prefix_is_not_inside(tmp_path, monkey
     (tmp_path / "plugins-evil").mkdir()
     monkeypatch.setattr(C.composer_bp, "plugins_dir", str(base), raising=False)
     import re
+    # Neutralise the two layers in front so this exercises the containment
+    # check itself; otherwise secure_filename rejects the payload first and a
+    # startswith regression would go unnoticed here.
     monkeypatch.setattr(C, "_PLUGIN_ID_RE", re.compile(r"\A[\w./\\~-]+\Z"))
+    monkeypatch.setattr(C, "secure_filename", lambda v: v)
     assert C._plugin_dir("../plugins-evil") is None
+
+
+def test_containment_still_holds_if_the_sanitiser_is_defeated(plugins_dir, monkeypatch):
+    """Each layer is tested on its own, not just the stack.
+
+    secure_filename's equality guard rejects every traversal payload before the
+    containment check sees it, so removing containment does not fail the other
+    tests -- which would make it look load-bearing when it is not. Neutralise
+    the regex *and* the sanitiser, and the realpath/commonpath check must still
+    refuse everything on its own.
+    """
+    import re
+    monkeypatch.setattr(C, "_PLUGIN_ID_RE", re.compile(r"\A[\w./\\~-]+\Z"))
+    monkeypatch.setattr(C, "secure_filename", lambda v: v)
+    import os
+    base = os.path.realpath(str(plugins_dir))
+    escaped = []
+    for payload in TRAVERSAL:
+        resolved = C._plugin_dir(payload)
+        if resolved is None:
+            continue
+        real = os.path.realpath(str(resolved))
+        # Inside the base is fine -- "...." and "~" are ordinary directory
+        # names on Linux, so they are not escapes. What must never happen is
+        # landing outside the base, or on the base itself: install() rmtrees
+        # its target, so the plugins root resolving to a "plugin" would wipe
+        # every installed plugin.
+        if real == base or os.path.commonpath([base, real]) != base:
+            escaped.append((payload, real))
+    assert not escaped, f"containment alone let these through: {escaped}"
+
+
+def test_secure_filename_never_rewrites_an_accepted_id(plugins_dir):
+    """The sanitiser must be a no-op on everything the regex accepts.
+
+    If secure_filename ever altered an accepted id, _plugin_dir would resolve
+    to a *different* plugin's directory than the caller asked for -- a silent
+    redirect, which is worse than a refusal. The guard turns that into a
+    refusal; this proves the guard never has to fire in practice.
+    """
+    import random
+    from werkzeug.utils import secure_filename
+    random.seed(1)
+    alphabet = "abcdefghijklmnopqrstuvwxyz0123456789-"
+    altered = []
+    for _ in range(2000):
+        n = random.randint(1, 63)
+        cand = random.choice("abcdefghijklmnopqrstuvwxyz") + "".join(
+            random.choice(alphabet) for _ in range(n - 1))
+        if C._PLUGIN_ID_RE.match(cand) and secure_filename(cand) != cand:
+            altered.append((cand, secure_filename(cand)))
+    assert not altered, f"secure_filename rewrote accepted ids: {altered[:5]}"
 
 
 def test_a_trailing_newline_is_not_a_valid_id():
