@@ -204,7 +204,7 @@ legacy compatibility rather than the mechanism.
 B0–B3 are merged and shipping in core 3.2.0. Everything that remains is
 **rollout**, and it splits into three phases with very different risk profiles.
 The original plan folded the last two together; they are separated here because
-one of them is safe by construction and the other is not.
+one of them cannot break a user on an old core and the other can.
 
 | Phase | Scope | Status | Gate |
 |---|---|---|---|
@@ -212,9 +212,9 @@ one of them is safe by construction and the other is not.
 | **B1** | Promote the nine universal methods; convert `sports.py` → package | ✅ | Characterization suite green; no behavior change intended |
 | **B2** | `CelebrationMixin` + rotation strategies as opt-in capabilities | ✅ | Non-adopters have zero new code in their MRO; strategies checked against verbatim plugin transcriptions |
 | **B3** | Upstream the scroll **orchestration** layer as `src/common/sports_scroll.py`, reading `global_config['target_fps']` natively | ✅ | Content building stays per-sport |
-| **B4** | Ship 3.2.0 *and* make version reporting trustworthy | ⏳ **next** | Tag, release, and `src.__version__` agree; compatibility gate merged |
-| **B5** | Adoption — guarded core imports: three pilots, then the remaining six. **Bundled copies stay.** | after B4 | Per plugin: harness + goldens byte-identical, then a device soak |
-| **B6** | Sunset — delete the bundled copies | **blocked** | B4's gate shipped *and* in users' hands (see below) |
+| **B4** | Ship 3.2.0 *and* make version reporting trustworthy | ✅ | Released 2026-08-03; tag, release and `src.__version__` agree; compatibility gate merged (#428, #431, #433) |
+| **B5** | Adoption — guarded core imports, all eight. **Bundled copies stay.** | ✅ | All eight adopted; harness byte-identical; see the B5 retrospective below — four shipped broken and were repaired in plugins #251 |
+| **B6** | Sunset — delete the bundled copies | **blocked, deliberately** | 3.2.0 *in users' hands*. Released 2026-08-03; there is no adoption data yet. See "B6 — the decision as of 2026-08-05" |
 
 ### B4 — what "ship 3.2.0" actually requires
 
@@ -262,13 +262,21 @@ default is the more restrictive.
 `compatible_versions`. No manifest still carries it, so there is nothing to
 migrate there.)
 
-### B5 — adoption is safe by construction
+### B5 — the *fallback* is safe by construction; the modern path is not
+
+The heading matters, because the unqualified version of this claim is false and
+this document proves it two sections down: four of the eight adopted plugins
+shipped with scroll mode broken on a 3.2.0 core. What is safe by construction is
+narrower than "adoption".
 
 A plugin adopting core imports keeps its bundled copy and reaches it through the
-guarded import (see the Upgradability table above). On a core that ships the
-module the plugin uses core code; on one that doesn't it falls back and behaves
-exactly as it does today. There is no version of this step that breaks a user,
-which is why it does not wait for B6's gate.
+guarded import (see the Upgradability table above). On a core that doesn't ship
+the module the plugin falls back and behaves exactly as it does today. That
+fallback compatibility — and only that — is safe by construction. On a core that
+*does* ship the module, correctness is not automatic — object-level and scroll-mode validation
+(building both classes and comparing, per the retrospective below) is required
+to prove full behavior. There is no version of this step that breaks a user *on
+an old core*, which is why it does not wait for B6's gate.
 
 The hockey scroll-display pilot is **already validated**: adopted against a core
 carrying 3.2.0, `scroll_display.py` went from 691 to 289 lines and all 16 harness
@@ -321,35 +329,115 @@ gate rather than trusting the failure to be noticed.
 The same suite should exercise the install/update gate, since it is the other
 half of the guarantee.
 
+### B6 — the decision as of 2026-08-05
+
+**Do not run B6 yet. Do not abandon it either.** The blocker is no longer
+technical; it is calendar time, and it is the one thing here that cannot be
+worked around by writing more code.
+
+**Why not yet.** 3.2.0 was published **2026-08-03**. Its predecessor 3.1.0 ran
+for nine months. B6's entire safety argument is "cores without
+`src.common.sports_scroll` are gone", and two days after release that is not
+close to true. There are no release assets to count and no install telemetry, so
+we cannot demonstrate otherwise — and that absence of evidence *is* the answer.
+Executing B6 now would strand essentially the whole user base on their current
+plugin versions.
+
+**What is already done and waiting.** The hard part is built and tested. The
+install gate refuses a plugin whose floor exceeds the core's version, and
+refuses one whose floor is above 2.0.0 when the core reports an untrustworthy
+version — so a v3.1.0-release user (who reports `1.0.0`) keeps a working plugin
+instead of receiving one that cannot load. Every adopted plugin has a
+`test_core_fallback.py` covering both paths.
+
+**What would unblock it.** Evidence of 3.2.0 uptake — a few months of it being
+the default download, or store-side install data if that is ever added. Revisit
+then, not on a schedule.
+
+**When it happens, remember:** four plugins declare their floor top-level, where
+editing `versions[0]` is a silent no-op, and the floor has three live spellings
+(`min_ledmatrix_version`, `requires.min_ledmatrix_version`,
+`versions[].ledmatrix_min_version`, plus deprecated `ledmatrix_min`). See
+`src/plugin_system/compatibility.py:declared_min_version` for the resolution
+order any floor-raising tool must reproduce.
+
+### B5 retrospective — what the adoption actually cost
+
+Recorded because it is the evidence behind the two decisions above, and because
+"the adoption went fine" is not what happened.
+
+**Four of the eight shipped with scroll mode broken** on a 3.2.0 core, and were
+repaired in plugins-repo #251. The restructure lifted the content methods
+verbatim but left the state they read off `self` behind: separator-icon
+constants (hockey, basketball, lacrosse) and the game-renderer cache (afl).
+hockey/basketball/lacrosse could not construct the scroll display at all; afl
+raised inside `prepare_scroll_content`, which the core base *catches*, so its
+only symptom was scroll mode silently drawing nothing.
+
+Three things are worth carrying forward:
+
+- **The bundled fallback did not protect anyone from this.** The break was on
+  the modern path, which the fallback never touches. Carrying the second copy
+  bought nothing against the actual defect while creating the divergence that
+  produced it. That is an argument *for* B6, not against it.
+- **Every gate was green.** The safety harness renders the scoreboard screens,
+  not scroll mode; `test_core_fallback.py` checked that methods existed and that
+  their *globals* resolved, and `self.NHL_SEPARATOR_ICON` is an attribute read,
+  invisible to an AST scan for `Name` loads. The fix was to stop reasoning about
+  source and **build the object**: construct both classes on both paths, compare
+  the separator icons they end up with, and assert the adopted class ends up
+  with every instance attribute the bundled one sets.
+- **Test what the change touches, not what is convenient to render.** Scroll
+  mode had no coverage because the harness could not reach it. A comparison
+  harness that renders the same games through both paths and diffs the pixels
+  needs no per-sport knowledge of the right answer, only that adopting core code
+  did not change it.
+
+**The ledger.** Before adoption, eight duplicated copies totalled 5,685 lines.
+After adoption plus the frozen legacy copies it was 10,610; removing the dead
+inline duplication (plugins #252) brought it to roughly 8,620. B6 would take it
+to about 3,300 including the shared core module — some 2,400 fewer than before
+this project started. **Until B6 runs, the adoption is net negative on disk**,
+and its one delivered user-visible gain is that adopted plugins honour the
+global `target_fps` instead of hardcoding ~100 FPS.
+
+### Decision: stop adopting further modules until B6 closes
+
+`data_sources.py` (9 copies), `game_renderer.py` (8) and `base_odds_manager.py`
+are the obvious next candidates. **Do not adopt them yet.** Each adoption adds
+carrying cost — a second copy to keep in step — against a payoff that is
+contingent on B6, and B6 is gated on an installed base we cannot currently
+measure. Consolidate what is already committed; revisit when B6 does.
+
 ## What's next
 
-In order. Each step is independently useful and independently revertible.
+Steps 1–5 of the original plan are **done**: 3.2.0 is tagged and published with
+a version number CI now asserts (#428), the compatibility gate is in
+`install_plugin` and reads `compatible_versions` as well as the floor
+(#431, #433), the newest manifest entry is required to use `ledmatrix_min_version`
+(plugins #244), and all eight plugins have adopted the scroll orchestration
+(plugins #245–#249, repaired in #251, tidied in #252).
 
-1. **Tag and publish v3.2.0.** The code is already on `main` (`21825cbf`).
-   Nothing else blocks this, and it is what makes `ledmatrix_min_version:
-   "3.2.0"` refer to something real.
-2. **Make the version number honest.** Have the release process assert that the
-   tag, the GitHub release, and `src.__version__` agree — a check in CI is
-   cheaper than the confusion of the last two releases. Then revisit the
-   `< 2.0.0` skip in `_warn_if_incompatible`, which currently silences the
-   warning for the users who most need it.
-3. **Add the compatibility gate** to `StoreManager.install_plugin` and
-   `.update_plugin`: refuse a plugin whose declared floor exceeds
-   `src.__version__`, and surface the reason in the store UI rather than only
-   the log. This is the single change that turns the floor from documentation
-   into a guarantee, and B6 depends on it.
-4. **Migrate the manifests** to `ledmatrix_min_version`, and reconcile them with
-   `compatible_versions` (see above — that field is the required, canonical one,
-   and the gate does not read it yet). Currently 28 plugins spell the floor both
-   ways across their `versions[]` entries, 12 use only the old spelling, and 2
-   only the new. Scope the sweep to the nine sports plugins if a 42-plugin
-   version-bump wave isn't worth it — but the `compatible_versions` half has to
-   cover every manifest the gate can refuse, or define explicit legacy handling,
-   before the gate is allowed to block anything.
-5. **Run B5 adoption** — hockey, soccer, football, then the remaining six.
-   Bundled copies stay. Byte-identical harness output per plugin, then a soak.
-6. **Only then plan B6**, with the compatibility regression test described above
-   in CI first.
+What actually remains, smallest first:
+
+1. **Nothing on the critical path.** B6 is the only remaining phase and it is
+   waiting on calendar time, not on work. Resist the urge to fill the gap by
+   adopting more modules — see the decision above.
+2. **The stale plugin-test tranche** — 5 failures across baseball, hockey and
+   basketball, all pre-existing API drift in the plugins' own older tests
+   (`plugin.initialized`, `CacheManager(config_manager=...)`, a bare
+   `cache_manager` import, `MockLogger.setLevel`, `BasketballPluginManager`).
+   None are scroll-related. They make the suite noisy, which is how a real
+   failure gets ignored.
+3. **Soak the remaining adoptions on hardware.** Only baseball has been watched
+   through a live game, and hockey has been loaded on devpi. The other six are
+   proven by harness, unit tests and pixel comparison — not by a live match.
+   Out-of-season sports cannot be soaked until their season starts.
+4. **`CLAUDE.md` in the plugins repo says four panel sizes; the harness renders
+   eight.** A one-line doc fix, and the discrepancy has already produced one
+   false review finding.
+5. **Then, when the evidence supports it, B6** — with the four-case
+   compatibility regression test above in CI first.
 
 ## How to keep this project healthy
 
