@@ -585,6 +585,19 @@ def _restore_config_preserving_hardware(src: Path, dst: Path, keep_hardware: boo
         _copy_file(src, dst)
         return
 
+    # json.loads accepts any JSON value, so a file holding null, [] or "text"
+    # parses fine and then raises AttributeError on the first .get() below.
+    # restore_backup() only catches OSError around this call, so that escaped
+    # as an unhandled error and aborted the whole restore -- the opposite of
+    # the plain-copy fallback this function promises.
+    if not isinstance(incoming, dict) or not isinstance(local, dict):
+        logger.warning(
+            "[Backup] config.json is valid JSON but not an object (backup: %s, "
+            "local: %s); restoring the backup's config.json as-is",
+            type(incoming).__name__, type(local).__name__)
+        _copy_file(src, dst)
+        return
+
     section, key = _HARDWARE_PATH
     local_hw = (local.get(section) or {}).get(key)
     if not isinstance(local_hw, dict) or not local_hw:
