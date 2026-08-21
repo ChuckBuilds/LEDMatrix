@@ -195,18 +195,36 @@ class PluginManager:
                     continue
 
                 manifest_path = item / "manifest.json"
-                if manifest_path.exists():
-                    try:
-                        with open(manifest_path, 'r', encoding='utf-8') as f:
-                            manifest = json.load(f)
-                            plugin_id = manifest.get('id')
-                            if plugin_id:
-                                plugin_ids.append(plugin_id)
-                                new_manifests[plugin_id] = manifest
-                                new_directories[plugin_id] = item
-                    except (json.JSONDecodeError, PermissionError, OSError) as e:
-                        self.logger.warning("Error reading manifest from %s: %s", manifest_path, e, exc_info=True)
-                        continue
+                if not manifest_path.exists():
+                    # A directory here that carries no manifest is not a
+                    # plugin. Said once, because the alternative is a plugin
+                    # that is enabled in config, enabled in plugin state,
+                    # present on disk, and simply absent from the running
+                    # process with nothing anywhere to say why. Working that
+                    # out afterwards means reading cache-file mtimes.
+                    self.logger.warning(
+                        "Skipping %s: no manifest.json, so it cannot be loaded "
+                        "as a plugin", item.name)
+                    continue
+                try:
+                    with open(manifest_path, 'r', encoding='utf-8') as f:
+                        manifest = json.load(f)
+                except (json.JSONDecodeError, PermissionError, OSError) as e:
+                    self.logger.warning("Error reading manifest from %s: %s", manifest_path, e, exc_info=True)
+                    continue
+
+                plugin_id = manifest.get('id')
+                if not plugin_id:
+                    # Parsed but unusable. This was the quietest path of all:
+                    # the manifest is read successfully and then dropped.
+                    self.logger.warning(
+                        "Skipping %s: its manifest.json has no \"id\", so there "
+                        "is nothing to register it under", item.name)
+                    continue
+
+                plugin_ids.append(plugin_id)
+                new_manifests[plugin_id] = manifest
+                new_directories[plugin_id] = item
         except (OSError, PermissionError) as e:
             self.logger.error("Error scanning directory %s: %s", directory, e, exc_info=True)
 
