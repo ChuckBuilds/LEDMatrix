@@ -229,6 +229,13 @@ class TestInstallerDoesNotBlockTheUpdateButton:
         out = subprocess.run(['git', 'ls-files', '-s', *self.CHMODDED],
                              capture_output=True, text=True, cwd=str(root)).stdout
         modes = {line.split()[3]: line.split()[0] for line in out.strip().split('\n') if line}
+        # git ls-files says nothing about a path it does not track, so a
+        # renamed or deleted script would simply be absent here and the mode
+        # check below would pass over it silently.
+        untracked = sorted(set(self.CHMODDED) - set(modes))
+        assert not untracked, (
+            f"{untracked} are chmodded by the installer but not tracked by "
+            "git, so their mode cannot be asserted at all")
         non_exec = sorted(f for f, m in modes.items() if m != '100755')
         assert not non_exec, (
             f"{non_exec} are chmodded by the installer but tracked non-executable, "

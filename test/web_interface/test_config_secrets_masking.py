@@ -67,7 +67,10 @@ def test_the_clients_read_modify_write_preserves_every_other_secret(env):
 
 def test_a_mask_echoed_back_is_never_stored(env):
     _seed(env)
-    env.client.post("/api/v3/config/raw/secrets", json=_get(env))
+    # Assert the write succeeded. A 500 leaves the old file in place, so the
+    # assertions below would hold without the write path running at all.
+    resp = env.client.post("/api/v3/config/raw/secrets", json=_get(env))
+    assert resp.status_code == 200, resp.get_data(as_text=True)[:200]
     on_disk = _on_disk(env.secrets_file)
     assert SECRET_MASK not in json.dumps(on_disk), "the mask was stored as a secret"
     assert on_disk["github"]["api_token"] == "ghp_" + "x" * 36
@@ -80,3 +83,41 @@ def test_a_brand_new_secret_can_still_be_added(env):
     on_disk = _on_disk(env.secrets_file)
     assert on_disk["new-plugin"]["api_key"] == "brand-new"
     assert on_disk["github"]["api_token"] == "ghp_" + "x" * 36
+
+
+def test_a_list_of_secrets_keeps_its_shape(env):
+    """A list must not be masked as though it were one scalar.
+
+    accounts: [{...}, {...}] came back as a single '••••••••', so a caller
+    could not see how many entries existed, and the raw editor was shown a
+    string where the file holds an array.
+    """
+    env.secrets_file.write_text(json.dumps({
+        "myplugin": {"accounts": [{"name": "a", "token": "tok-a"},
+                                  {"name": "b", "token": "tok-b"}]}}))
+    accounts = _get(env)["myplugin"]["accounts"]
+    assert isinstance(accounts, list), "the list was flattened to a scalar"
+    assert len(accounts) == 2, "entries were lost"
+    assert all(isinstance(a, dict) for a in accounts), "entry shape was lost"
+    assert "tok-a" not in json.dumps(accounts), "a token survived masking"
+
+
+def test_a_list_posted_back_unchanged_is_left_alone(env):
+    """Lists merge by replacement, so a half-masked list must not be stored."""
+    original = {"myplugin": {"accounts": [{"name": "a", "token": "tok-a"},
+                                          {"name": "b", "token": "tok-b"}]}}
+    env.secrets_file.write_text(json.dumps(original))
+    resp = env.client.post("/api/v3/config/raw/secrets", json=_get(env))
+    assert resp.status_code == 200, resp.get_data(as_text=True)[:200]
+    assert _on_disk(env.secrets_file)["myplugin"]["accounts"] == \
+        original["myplugin"]["accounts"], "round-tripping the mask damaged the list"
+
+
+def test_a_fully_supplied_list_still_saves(env):
+    env.secrets_file.write_text(json.dumps(
+        {"myplugin": {"accounts": [{"name": "a", "token": "old"}]}}))
+    body = _get(env)
+    body["myplugin"]["accounts"] = [{"name": "a", "token": "new"}]
+    resp = env.client.post("/api/v3/config/raw/secrets", json=body)
+    assert resp.status_code == 200, resp.get_data(as_text=True)[:200]
+    assert _on_disk(env.secrets_file)["myplugin"]["accounts"][0]["token"] == "new"
