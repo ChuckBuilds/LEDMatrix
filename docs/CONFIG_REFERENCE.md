@@ -18,7 +18,7 @@ tooling against it.
 | `web_display_autostart` | bool, `true` | Whether the web interface service starts with the system | `scripts/utils/start_web_conditionally.py` |
 | `timezone` | string, `"America/New_York"` | IANA timezone for schedules and displays | `ConfigManager.get_timezone()` |
 | `target_fps` | int, `100` | Frame-rate ceiling for plugin rendering | `src/plugin_system/base_plugin.py`, `src/common/sports_scroll.py` |
-| `location` | object | `city` / `state` / `country`, offered to plugins that need a location (weather, etc.) | plugins via merged config |
+| `location` | object | `city` / `state` / `country`. Supplies the **default** for a plugin's own `location_city` / `location_state` / `location_country` setting, so weather, radar and friends follow this device without being configured twice. A value saved on the plugin itself still overrides it. | `SchemaManager.apply_device_location()`, then plugins via merged config |
 
 ## `schedule` — display on/off hours
 
