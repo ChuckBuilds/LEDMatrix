@@ -160,3 +160,66 @@ def test_a_trailing_newline_is_not_a_valid_id():
     name ends in one. \Z does not."""
     assert C._PLUGIN_ID_RE.match("myplugin") is not None
     assert C._PLUGIN_ID_RE.match("myplugin\n") is None
+
+
+# --- font serving -----------------------------------------------------------
+
+FONT_TRAVERSAL = [
+    "../../../etc/passwd", "../config/config.json", "..%2f..%2fetc%2fpasswd",
+    "PressStart2P-Regular.ttf/../../../etc/passwd", "/etc/passwd", "",
+    "PressStart2P-Regular.TTF",          # case differs -> not the allowlisted name
+    "PressStart2P-Regular.ttf ",         # trailing space
+]
+
+
+def test_serve_font_refuses_a_file_that_exists_but_is_not_allowlisted(monkeypatch, tmp_path):
+    """The allowlist must be what refuses it, not a missing file.
+
+    Asserting 404 on traversal payloads proves nothing here: Flask's router
+    will not match a path segment containing '/', and everything else 404s
+    simply because no such file exists. Put a real, readable file next to the
+    fonts and confirm it is still refused -- that is the allowlist working.
+    """
+    fonts = tmp_path / "assets" / "fonts"
+    fonts.mkdir(parents=True)
+    (fonts / "id_rsa.ttf").write_bytes(b"PRIVATE KEY")
+    monkeypatch.setattr(C.composer_bp, "project_root", str(tmp_path), raising=False)
+    app = __import__("flask").Flask(__name__)
+    app.register_blueprint(C.composer_bp)
+    with app.test_client() as client:
+        resp = client.get("/api/fonts/id_rsa.ttf")
+    assert resp.status_code == 404, (
+        "a readable non-allowlisted file was served; the allowlist is not gating")
+    assert b"PRIVATE KEY" not in resp.data
+
+
+@pytest.mark.parametrize("payload", FONT_TRAVERSAL)
+def test_serve_font_refuses_anything_not_allowlisted(payload, monkeypatch, tmp_path):
+    """The name reaching the filesystem must come from the allowlist constant.
+
+    _ALLOWED_FONTS gates this endpoint, so nothing here was ever exploitable.
+    Building the path from the matched constant rather than the request value
+    is what makes that provable -- and it is why CodeQL reported two
+    high-severity py/path-injection alerts on an endpoint that was already
+    safe.
+    """
+    monkeypatch.setattr(C.composer_bp, "project_root", str(tmp_path), raising=False)
+    app = C.composer_bp.name and __import__("flask").Flask(__name__)
+    app.register_blueprint(C.composer_bp)
+    with app.test_client() as client:
+        resp = client.get(f"/api/fonts/{payload}")
+    assert resp.status_code in (404, 405, 308), (
+        f"{payload!r} was not refused (status {resp.status_code})")
+
+
+def test_serve_font_still_serves_each_allowlisted_font(monkeypatch, tmp_path):
+    fonts = tmp_path / "assets" / "fonts"
+    fonts.mkdir(parents=True)
+    monkeypatch.setattr(C.composer_bp, "project_root", str(tmp_path), raising=False)
+    app = __import__("flask").Flask(__name__)
+    app.register_blueprint(C.composer_bp)
+    for name in C._ALLOWED_FONTS:
+        (fonts / name).write_bytes(b"\x00\x01ttf")
+        with app.test_client() as client:
+            resp = client.get(f"/api/fonts/{name}")
+        assert resp.status_code == 200, f"{name} should be served, got {resp.status_code}"

@@ -758,11 +758,17 @@ def install_locally():
 @composer_bp.route('/api/fonts/<font_name>')
 def serve_font(font_name):
     """Serve an allowlisted font file for canvas FontFace loading."""
-    if font_name not in _ALLOWED_FONTS:
+    # Build the path from the allowlist entry, not from the request value.
+    # They are equal strings, so this changes nothing at runtime -- but the
+    # name that reaches the filesystem now provably originates in a module
+    # constant, which is the difference between "guarded" and "not derived
+    # from user input at all".
+    allowed_name = next((f for f in sorted(_ALLOWED_FONTS) if f == font_name), None)
+    if allowed_name is None:
         return '', 404
     if not composer_bp.project_root:
         return '', 503
-    font_path = Path(composer_bp.project_root) / 'assets' / 'fonts' / font_name
+    font_path = Path(composer_bp.project_root) / 'assets' / 'fonts' / allowed_name
     if not font_path.exists():
         return '', 404
     return send_file(str(font_path), mimetype='font/ttf')
