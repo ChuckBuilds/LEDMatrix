@@ -68,11 +68,27 @@ def test_a_changed_directive_is_drift():
     assert StartupValidator._unit_body(a) != StartupValidator._unit_body(b)
 
 
-def test_reordered_directives_are_not_drift():
-    """systemd does not care about order within a section, so neither should this."""
-    a = "[Service]\nExecStart=/x\nRestart=always\n"
-    b = "[Service]\nRestart=always\nExecStart=/x\n"
-    assert StartupValidator._unit_body(a) == StartupValidator._unit_body(b)
+def test_reordered_directives_are_drift():
+    """Order is not noise in a systemd unit.
+
+    Repeated directives -- ExecStartPre=, ExecStartPost= -- run in the order
+    they appear, and a directive that moves between [Unit], [Service] and
+    [Install] means something different, or nothing, where it lands. This
+    check used to sort the lines before comparing, which reported no drift for
+    a unit that had genuinely changed.
+    """
+    a = "[Service]\nExecStartPre=/first\nExecStartPre=/second\n"
+    b = "[Service]\nExecStartPre=/second\nExecStartPre=/first\n"
+    assert StartupValidator._unit_body(a) != StartupValidator._unit_body(b), (
+        "swapping two ExecStartPre= lines changes what runs first, and was "
+        "being normalised away")
+
+
+def test_a_directive_moved_between_sections_is_drift():
+    a = "[Unit]\nDescription=x\n[Service]\nExecStart=/x\n"
+    b = "[Unit]\nDescription=x\nExecStart=/x\n[Service]\n"
+    assert StartupValidator._unit_body(a) != StartupValidator._unit_body(b), (
+        "ExecStart= in [Unit] is not the same unit, and sorting hid it")
 
 
 def test_cosmetic_differences_do_not_warn(validator, tmp_path):
@@ -93,11 +109,14 @@ def test_cosmetic_differences_do_not_warn(validator, tmp_path):
     substituted = (template.read_text(encoding="utf-8")
                    .replace("__PROJECT_ROOT_DIR__", str(project_root))
                    .replace("__USER__", "root"))
-    # Same directives, stripped of comments and blank lines and reordered.
-    directives = sorted(line.strip() for line in substituted.splitlines()
-                        if line.strip() and not line.strip().startswith("#"))
+    # Cosmetic means comments, blank lines and stray indentation -- the things
+    # the installer really does drop. Not reordering: that changes the unit,
+    # and is asserted as drift above.
+    directives = [line.strip() for line in substituted.splitlines()
+                  if line.strip() and not line.strip().startswith("#")]
     installed = tmp_path / "ledmatrix.service"
-    installed.write_text("\n".join(reversed(directives)) + "\n", encoding="utf-8")
+    installed.write_text(
+        "\n\n".join("   " + d for d in directives) + "\n", encoding="utf-8")
 
     validator._UNITS = ((template_rel, str(installed)),)
     validator._validate_systemd_units()

@@ -134,13 +134,22 @@ class StartupValidator:
 
     @staticmethod
     def _unit_body(text: str) -> str:
-        """A unit's meaningful lines: no comments, no blanks, no ordering noise."""
+        """A unit's meaningful lines, in order: no comments, no blanks.
+
+        Order is preserved deliberately. This used to sort, which made the
+        comparison insensitive to two changes that matter in a systemd unit:
+        repeated directives such as ExecStartPre= and ExecStartPost= run in
+        the order they appear, and a directive that moves between [Unit],
+        [Service] and [Install] means something different -- or nothing --
+        where it lands. A drift check that normalises those away reports no
+        drift for a unit that has genuinely changed.
+        """
         lines = []
         for line in text.splitlines():
             line = line.strip()
             if line and not line.startswith("#"):
                 lines.append(line)
-        return "\n".join(sorted(lines))
+        return "\n".join(lines)
 
     def _validate_config(self) -> None:
         """Validate configuration files."""

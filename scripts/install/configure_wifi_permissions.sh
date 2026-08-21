@@ -25,9 +25,44 @@ if [ "$EUID" -eq 0 ]; then
     exit 1
 fi
 
+# Resolve command paths against a fixed PATH, and check what we resolved.
+#
+# Every path found here is written into a sudoers file as a NOPASSWD grant, so
+# whoever controls the binary at that path controls root. first_time_install.sh
+# re-execs itself with `sudo -E`, which preserves the invoking user's
+# environment -- PATH included -- so without pinning it, `which nmcli` can
+# resolve to anything on that PATH: a writable directory early in it turns a
+# compromise of the low-privilege web user into permanent root.
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+# A binary named in a sudoers rule must be root-owned and writable by nobody
+# else, or the grant hands root to whoever can rewrite it.
+require_trusted_binary() {
+    local label="$1" path="$2"
+    if [ ! -x "$path" ]; then
+        echo "✗ $label: $path is not an executable file"
+        exit 1
+    fi
+    local owner perms
+    owner=$(stat -c '%u' "$path") || exit 1
+    perms=$(stat -c '%a' "$path") || exit 1
+    if [ "$owner" != "0" ]; then
+        echo "✗ $label: $path is not owned by root (uid $owner); refusing to"
+        echo "  grant it NOPASSWD sudo."
+        exit 1
+    fi
+    # Group- or world-writable means someone other than root can replace it.
+    case "$perms" in
+        *[2367]) echo "✗ $label: $path is writable by group or other ($perms);"
+                 echo "  refusing to grant it NOPASSWD sudo."
+                 exit 1 ;;
+    esac
+}
+
 # Get the full paths to commands
-NMCLI_PATH=$(which nmcli || echo "/usr/bin/nmcli")
-SYSTEMCTL_PATH=$(which systemctl)
+NMCLI_PATH=$(command -v nmcli || echo "/usr/bin/nmcli")
+SYSTEMCTL_PATH=$(command -v systemctl)
 
 echo "Command paths:"
 echo "  nmcli: $NMCLI_PATH"
@@ -41,6 +76,14 @@ SYSCTL_PATH=$(command -v sysctl || echo /usr/sbin/sysctl)
 NFT_PATH=$(command -v nft || echo /usr/sbin/nft)
 RFKILL_PATH=$(command -v rfkill || echo /usr/sbin/rfkill)
 MKDIR_PATH=$(command -v mkdir || echo /usr/bin/mkdir)
+
+# Checked before any of them reaches the sudoers file.
+require_trusted_binary "nmcli"     "$NMCLI_PATH"
+require_trusted_binary "systemctl" "$SYSTEMCTL_PATH"
+require_trusted_binary "sysctl"    "$SYSCTL_PATH"
+require_trusted_binary "nft"       "$NFT_PATH"
+require_trusted_binary "rfkill"    "$RFKILL_PATH"
+require_trusted_binary "mkdir"     "$MKDIR_PATH"
 
 # Create a temporary sudoers file using mktemp (handles permissions better)
 TEMP_SUDOERS=$(mktemp) || {

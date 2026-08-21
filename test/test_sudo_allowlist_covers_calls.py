@@ -66,19 +66,37 @@ def _grant_lines():
     return lines
 
 
-def _normalised_grants():
-    """Grants with binary-path variables reduced to tool names.
+def _normalise(rule):
+    """One rule with binary-path variables reduced to bare tool names.
 
-    Rules are written as `$SYSCTL_PATH -w ...`, so matching the literal
-    "sysctl" finds nothing and every rule looks absent -- which is exactly how
-    an earlier version of this test reported six gaps that did not exist.
-    Only NOPASSWD lines are considered, because taking the whole script let a
-    variable definition such as NFT_PATH=$(command -v nft) satisfy the check on
-    its own while the grant itself had been deleted.
+    Rules are written as `$SYSCTL_PATH -w ...` or `${NFT_PATH} ...`, so
+    matching the literal "sysctl" finds nothing and every rule looks absent --
+    which is exactly how an earlier version of this test reported six gaps
+    that did not exist. Both spellings are handled: shell expands them
+    identically, and a check that understood only one silently skipped the
+    other.
     """
-    text = "\n".join(_grant_lines())
-    text = re.sub(r"\$\{?([A-Z][A-Z0-9_]*)_PATH\}?", lambda m: m.group(1).lower(), text)
-    return re.sub(r"/usr/(?:s?bin)/", "", text)
+    rule = re.sub(r"\$\{?([A-Z][A-Z0-9_]*)_PATH\}?",
+                  lambda m: m.group(1).lower(), rule)
+    return re.sub(r"/usr/(?:s?bin)/", "", rule)
+
+
+def _granted_commands():
+    """The command each NOPASSWD rule actually grants, normalised.
+
+    _grant_lines() already returns everything after "NOPASSWD:", so what
+    arrives here is the command, possibly preceded by the NOEXEC tag and
+    possibly still carrying the closing quote of an `echo "..."` that wrote
+    it. Both are stripped so the result is comparable to a plain command.
+    """
+    commands = []
+    for rule in _grant_lines():
+        command = _normalise(rule).strip()
+        command = re.sub(r"^NOEXEC:\s*", "", command)
+        command = command.rstrip('"').rstrip("'").strip()
+        if command:
+            commands.append(" ".join(command.split()))
+    return commands
 
 
 def test_the_installers_are_present():
@@ -94,9 +112,15 @@ def test_the_command_is_granted(command):
     `sysctl` present anywhere, deleting the ip_forward=0 grant still passed,
     and the portal would then be unable to restore forwarding on teardown.
     """
-    pattern = r"\s+".join(re.escape(word) for word in command)
-    assert re.search(pattern, _normalised_grants()), (
-        f"no installer grants `{' '.join(command)}`")
+    wanted = " ".join(command)
+    granted = _granted_commands()
+    # Exact match, not a prefix. A substring search was satisfied by
+    # `sysctl -w net.ipv4.ip_forward=0 *`, and that trailing wildcard lets the
+    # caller append whatever they like to a command running as root -- a far
+    # wider grant than the one this test is meant to be confirming.
+    assert wanted in granted, (
+        f"no installer grants exactly `{wanted}`; closest matches: "
+        + str([g for g in granted if g.startswith(command[0])])[:200])
 
 
 def test_no_wildcard_on_a_tool_that_can_exec():
@@ -110,7 +134,10 @@ def test_no_wildcard_on_a_tool_that_can_exec():
         rule = rule.strip()
         if not rule.endswith("*"):
             continue
-        haystack = rule.replace("_PATH", "").lower()
+        # Normalised the same way as everything else: `${NFT_PATH} *` left a
+        # brace before the tool name, and the word-boundary check below does
+        # not treat "{" as a boundary, so that spelling slipped through.
+        haystack = _normalise(rule).lower()
         for tool in EXEC_CAPABLE:
             if re.search(rf"(^|/|\s|\$){tool}(\s|$)", haystack):
                 offenders.append(rule)
