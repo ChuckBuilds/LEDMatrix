@@ -21,7 +21,9 @@ logger = logging.getLogger(__name__)
 # Import new infrastructure
 from src.web_interface.api_helpers import success_response, error_response, validate_request_json
 from src.web_interface.errors import ErrorCode
-from src.web_interface.secret_helpers import find_secret_fields, separate_secrets
+from src.web_interface.secret_helpers import (find_secret_fields, mask_all_secret_values,
+                                              remove_empty_secrets, separate_secrets,
+                                              strip_masked_values)
 from src.web_interface.error_handler import describe_exception, redact_text
 from src.plugin_system.operation_types import OperationType
 from src.web_interface.validators import (
@@ -262,15 +264,54 @@ def _stop_display_service():
     result['status'] = status
     return result
 
+#: Field names whose value is a credential. Matched by name because this
+#: endpoint returns the whole config, core keys included, and core config has
+#: no schema to carry x-secret markers.
+_CREDENTIAL_NAME_PARTS = ("password", "passwd", "secret", "token", "api_key",
+                          "apikey", "access_key", "private_key", "client_secret")
+
+
+def _looks_like_a_credential(name: str) -> bool:
+    lowered = name.lower()
+    return any(part in lowered for part in _CREDENTIAL_NAME_PARTS)
+
+
+def _redact_credentials(value):
+    """A copy of `value` with credential-named fields blanked.
+
+    /config/main returned the raw config to anyone who could reach the port,
+    and this interface has no authentication. On one rig that meant a 40-char
+    GitHub token, a 183-char Home Assistant token and five API keys were
+    readable by anything on the LAN.
+
+    The x-secret masking used by the plugin config endpoints does not help
+    here: this endpoint never consults a schema, and core keys such as
+    github.api_token have no schema to mark. Matching on the field name is
+    blunt, but for a whole-config dump the right default is that anything
+    named like a credential does not leave the process.
+
+    Blanked rather than removed, and safe to blank: POST /config/main merges
+    into the loaded config and only writes the keys it was given, so a client
+    that round-trips this response cannot erase a secret it never saw.
+    """
+    if isinstance(value, dict):
+        return {k: ("" if _looks_like_a_credential(k) and not isinstance(v, (dict, list))
+                    else _redact_credentials(v))
+                for k, v in value.items()}
+    if isinstance(value, list):
+        return [_redact_credentials(item) for item in value]
+    return value
+
+
 @api_v3.route('/config/main', methods=['GET'])
 def get_main_config():
-    """Get main configuration"""
+    """Get main configuration, with credentials redacted."""
     try:
         if not api_v3.config_manager:
             return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 500
 
         config = api_v3.config_manager.load_config()
-        return jsonify({'status': 'success', 'data': config})
+        return jsonify({'status': 'success', 'data': _redact_credentials(config)})
     except Exception as e:
         logger.error('Unhandled exception', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
@@ -715,10 +756,12 @@ def save_main_config():
         if not data:
             return jsonify({'status': 'error', 'message': 'No data provided'}), 400
 
-        import logging
-        logging.error(f"DEBUG: save_main_config received data: {data}")
-        logging.error(f"DEBUG: Content-Type header: {request.content_type}")
-        logging.error(f"DEBUG: Headers: {dict(request.headers)}")
+        # What arrives here is the config itself, and the headers carry the
+        # session cookie -- neither belongs in the journal, least of all at
+        # ERROR on every save. The shape of the request is the part with
+        # diagnostic value, so log that, at the level it deserves.
+        logger.debug("save_main_config: %s, %d top-level key(s)",
+                     request.content_type or 'no content-type', len(data))
 
         # Merge with existing config (similar to original implementation)
         current_config = api_v3.config_manager.load_config()
@@ -1216,6 +1259,11 @@ def save_main_config():
 
                 # Separate secrets from regular config (same logic as save_plugin_config)
                 regular_config, secrets_config = separate_secrets(plugin_config, secret_fields)
+                # The config form renders secrets masked, so every save posts
+                # them back blank. Without this the blank is merged over the
+                # stored value and the credential is destroyed by the act of
+                # changing an unrelated setting. A blank means "unchanged".
+                secrets_config = remove_empty_secrets(secrets_config)
 
                 # PRE-PROCESSING: Preserve 'enabled' state if not in regular_config
                 # This prevents overwriting the enabled state when saving config from a form that doesn't include the toggle
@@ -1333,7 +1381,12 @@ def get_secrets_config():
             return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 500
 
         config = api_v3.config_manager.get_raw_file_content('secrets')
-        return jsonify({'status': 'success', 'data': config})
+        # This interface has no authentication, and this file is nothing but
+        # credentials. It was handing all of them to anyone who could reach
+        # the port. Values are masked; empty and YOUR_* placeholders are left
+        # alone so a client can still tell "set" from "not set".
+        return jsonify({'status': 'success',
+                        'data': mask_all_secret_values(config)})
     except Exception as e:
         logger.error('Unhandled exception', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
@@ -1401,8 +1454,19 @@ def save_raw_secrets_config():
         if not data:
             return jsonify({'status': 'error', 'message': 'No data provided'}), 400
 
-        # Save the secrets config
-        api_v3.config_manager.save_raw_file_content('secrets', data)
+        # The GET above masks what it returns, and this endpoint's only client
+        # reads the whole file, edits one field and posts all of it back. So
+        # most of what arrives here is the mask, echoed rather than changed --
+        # storing it verbatim would replace every untouched credential with
+        # eight bullets. Strip those, then merge onto what is already stored,
+        # which makes "unchanged" mean unchanged.
+        #
+        # The cost is that a secret can no longer be cleared by blanking it.
+        # That needs its own affordance; a control that erases credentials as
+        # a side effect of saving an unrelated one is not it.
+        current = api_v3.config_manager.get_raw_file_content('secrets') or {}
+        merged = deep_merge(current, strip_masked_values(data))
+        api_v3.config_manager.save_raw_file_content('secrets', merged)
 
         # Reload GitHub token in plugin store manager if it exists
         if api_v3.plugin_store_manager:
@@ -1660,13 +1724,22 @@ def resolve_pull_command(project_dir):
     backup, or following an install guide that names one. The update button
     then reports a failure the user cannot act on.
 
+    ``--autostash`` is passed for the same reason. Rebase refuses to start
+    when any tracked file is modified, and on these installs something always
+    is: first_time_install.sh chmods five scripts that git tracked as 644, so
+    every machine that ran the installer carries five permanent mode changes
+    and the update button reports "cannot pull with rebase: You have unstaged
+    changes". Those modes are corrected in this commit, but a user cannot pull
+    the correction while the pull is what is blocked, and any other local edit
+    would reproduce it anyway. Autostash reapplies the changes afterwards.
+
     Returns ``(args, note, error)``. When ``origin/<branch>`` exists the pull
     is made explicit against it, so the update proceeds and the branch is
     given tracking information afterwards.
     """
     upstream = _git_upstream(project_dir)
     if upstream:
-        return ['git', 'pull', '--rebase'], '', None
+        return ['git', 'pull', '--rebase', '--autostash'], '', None
 
     branch = _git_current_branch(project_dir)
     if not branch:
@@ -1676,7 +1749,7 @@ def resolve_pull_command(project_dir):
         )
     if _git_remote_branch_exists(project_dir, branch):
         return (
-            ['git', 'pull', '--rebase', 'origin', branch],
+            ['git', 'pull', '--rebase', '--autostash', 'origin', branch],
             f"Branch '{branch}' had no upstream; pulled from origin/{branch} and set it as the upstream.",
             None,
         )
@@ -1824,6 +1897,33 @@ def get_system_version():
 _update_check_cache: Dict[str, Any] = {'result': None, 'ts': 0.0}
 _UPDATE_CHECK_TTL = 300  # 5 minutes — avoids a git fetch on every page load
 
+def _update_check_failed(detail: str) -> Dict[str, Any]:
+    """A check that could not run is not the same as being up to date.
+
+    Reporting update_available=False on a git failure hides the banner, and
+    the banner is the only route to the update button -- so a checkout git
+    refuses to touch looks exactly like a current one, permanently. The most
+    common cause is an install performed as root: git then reports "dubious
+    ownership" and every command fails, including the fetch here.
+    """
+    return {'update_available': False, 'remote_sha': 'unknown',
+            'commits_behind': 0, 'check_failed': True, 'error': detail}
+
+
+def _describe_git_failure(stderr: str) -> str:
+    """Turn git's stderr into something the user can act on."""
+    text = (stderr or '').strip()
+    if 'dubious ownership' in text or 'detected dubious ownership' in text:
+        return ("This checkout is owned by a different user than the one "
+                "running the web interface, so git refuses to use it. It is "
+                "usually the result of installing as root. Fix the ownership "
+                "and the update will work: sudo chown -R $USER:$USER "
+                + str(PROJECT_ROOT))
+    if 'could not resolve host' in text.lower() or 'network is unreachable' in text.lower():
+        return "Could not reach GitHub to check for updates."
+    return "Could not check for updates: " + (text.splitlines()[0] if text else "git failed")
+
+
 @api_v3.route('/system/check-update', methods=['GET'])
 def check_for_update():
     """Check whether a newer LEDMatrix commit is available on origin/main."""
@@ -1839,12 +1939,13 @@ def check_for_update():
             capture_output=True, timeout=10, cwd=cwd,
         )
         if fetch_result.returncode != 0:
+            stderr = fetch_result.stderr.decode(errors='replace').strip()
             logger.warning("check-update: git fetch failed (rc=%d): %s",
-                           fetch_result.returncode,
-                           fetch_result.stderr.decode(errors='replace').strip())
-            _update_check_cache['result'] = _safe
+                           fetch_result.returncode, stderr)
+            failed = _update_check_failed(_describe_git_failure(stderr))
+            _update_check_cache['result'] = failed
             _update_check_cache['ts'] = now
-            return jsonify(_safe)
+            return jsonify(failed)
         local = subprocess.run(
             ['git', 'rev-parse', 'HEAD'],
             capture_output=True, text=True, timeout=5, cwd=cwd,
@@ -1872,7 +1973,8 @@ def check_for_update():
         return jsonify(result)
     except Exception as e:
         logger.warning("check-update failed: %s", e)
-        return jsonify(_safe)
+        return jsonify(_update_check_failed(
+            "Could not check for updates; see logs for details."))
 
 @api_v3.route('/system/action', methods=['POST'])
 def execute_system_action():
@@ -1999,6 +2101,11 @@ def execute_system_action():
             except subprocess.TimeoutExpired:
                 logger.warning("git rev-parse timed out before pull")
 
+            # Whether the pull actually brought new code in. "Already up to
+            # date" is a success too, and prompting for a restart then would
+            # train users to ignore the prompt.
+            code_changed = False
+
             # Perform the git pull. Branches without an upstream were given
             # an explicit "origin <branch>" above so the update still works.
             result = subprocess.run(
@@ -2042,6 +2149,7 @@ def execute_system_action():
                                            capture_output=True, text=True, timeout=10, cwd=project_dir)
                     new_head = _post.stdout.strip() if _post.returncode == 0 else None
                     if old_head and new_head and old_head != new_head:
+                        code_changed = True
                         diff = subprocess.run(
                             ['git', 'diff', '--name-only', f'{old_head}..{new_head}'],
                             capture_output=True, text=True, timeout=15, cwd=project_dir)
@@ -2101,9 +2209,14 @@ def execute_system_action():
                                if ln.strip()), '')
                 pull_message = f"Update failed: {detail}" if detail else "Update failed; check logs for details"
 
+            # Nothing here restarts anything: the pull replaces files on
+            # disk while the display and web services keep running the code
+            # they loaded at boot. Without this the user is told the update
+            # succeeded and sees no change until they happen to reboot.
             return jsonify({
                 'status': 'success' if result.returncode == 0 else 'error',
                 'message': pull_message,
+                'restart_required': bool(result.returncode == 0 and code_changed),
             })
         elif action == 'checkout_branch':
             # Switch branches from the Tools tab. Needed because a checkout
@@ -5617,6 +5730,11 @@ def save_plugin_config():
         # Separate secrets from regular config (handles nested configs and
         # array-item secrets — see src/web_interface/secret_helpers.py)
         regular_config, secrets_config = separate_secrets(plugin_config, secret_fields)
+        # The config form renders secrets masked, so every save posts
+        # them back blank. Without this the blank is merged over the
+        # stored value and the credential is destroyed by the act of
+        # changing an unrelated setting. A blank means "unchanged".
+        secrets_config = remove_empty_secrets(secrets_config)
 
         # Get current configs
         current_config = api_v3.config_manager.load_config()
