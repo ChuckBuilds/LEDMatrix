@@ -30,6 +30,10 @@ ROOT = Path(__file__).resolve().parent.parent
 INSTALLERS = (
     ROOT / "first_time_install.sh",
     ROOT / "scripts" / "install" / "configure_wifi_permissions.sh",
+    # Writes the same journalctl grants as first_time_install.sh. It was
+    # missing here, and because of that this suite passed while three
+    # ungranted wildcard rules sat in it.
+    ROOT / "scripts" / "install" / "configure_web_sudo.sh",
 )
 
 #: Commands that will start another program of their own accord -- a pager, an
@@ -44,8 +48,14 @@ def _grant_lines():
             continue
         for line in installer.read_text(encoding="utf-8", errors="replace").splitlines():
             stripped = line.strip()
-            if "NOPASSWD" in stripped and not stripped.startswith("#"):
-                lines.append(stripped)
+            if "NOPASSWD" not in stripped or stripped.startswith("#"):
+                continue
+            # Installers emit rules two ways: written literally into a heredoc,
+            # or echoed into a file. An echoed rule ends in a quote, so the
+            # trailing-wildcard check below would skip it and the rule would
+            # never be examined at all.
+            echoed = re.fullmatch(r"""echo\s+(['"])(.*)\1""", stripped)
+            lines.append(echoed.group(2) if echoed else stripped)
     return lines
 
 
@@ -78,10 +88,12 @@ def test_journalctl_is_granted_at_all():
         "no journalctl grant remains; the web interface reads logs through it")
 
 
-@pytest.mark.parametrize("unit", ["ledmatrix.service", "ledmatrix"])
-def test_each_journalctl_rule_is_tagged(unit):
+@pytest.mark.parametrize("selector", ["-u ledmatrix.service", "-u ledmatrix",
+                                      "-t ledmatrix"])
+def test_each_journalctl_rule_is_tagged(selector):
+    """Every selector, so removing one cannot pass by the others' presence."""
     matching = [r for r in _grant_lines()
-                if "JOURNALCTL_PATH" in r and f"-u {unit} " in r]
-    assert matching, f"no journalctl rule for -u {unit}"
+                if "JOURNALCTL_PATH" in r and f"{selector} " in r]
+    assert matching, f"no journalctl rule for {selector}"
     untagged = [r for r in matching if "NOEXEC" not in r]
     assert not untagged, f"untagged journalctl rule(s): {untagged}"
