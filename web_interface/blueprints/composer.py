@@ -48,7 +48,11 @@ _FONT_SIZE_MAP = {
     'five_by_seven': 7,
 }
 
-_PLUGIN_ID_RE = re.compile(r'^[a-z][a-z0-9-]{0,62}$')
+_PLUGIN_ID_RE = re.compile(r'\A[a-z][a-z0-9-]{0,62}\Z')
+#: \Z, not $. Python's $ also matches just before a trailing newline,
+#: so '$' would accept "myplugin\\n" and create a directory whose name
+#: ends in one. Not traversal, but not a name anything should have to
+#: handle either.
 _PYTHON_IDENT_RE = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')
 
 # ── Jinja2 environment (separate from Flask's; autoescape=False for code gen) ──
@@ -431,18 +435,18 @@ def _generate_plugin_files(data: dict) -> dict:
 
     plugin_id = metadata.get('id', '').strip()
     if not _PLUGIN_ID_RE.match(plugin_id):
-        raise ValueError(
+        raise ComposerInputError(
             'Plugin ID must start with a lowercase letter and contain only '
             'lowercase letters, numbers, and hyphens (max 63 chars).'
         )
 
     plugin_name = metadata.get('name', '').strip()
     if not plugin_name:
-        raise ValueError('Plugin name is required.')
+        raise ComposerInputError('Plugin name is required.')
 
     author = metadata.get('author', '').strip()
     if not author:
-        raise ValueError('Author is required.')
+        raise ComposerInputError('Author is required.')
 
     version = metadata.get('version', '1.0.0').strip()
 
@@ -450,7 +454,7 @@ def _generate_plugin_files(data: dict) -> dict:
     for cv in config_vars:
         key = cv.get('key', '')
         if not _PYTHON_IDENT_RE.match(key):
-            raise ValueError(f'Config variable key "{key}" is not a valid Python identifier.')
+            raise ComposerInputError(f'Config variable key "{key}" is not a valid Python identifier.')
 
     class_name = _to_class_name(plugin_name)
     # Only consider visible elements for code generation flags
@@ -481,7 +485,7 @@ def _generate_plugin_files(data: dict) -> dict:
     try:
         tmpl = env.get_template('manager.py.j2')
     except jinja2.TemplateNotFound:
-        raise ValueError('Code generation template not found. This is a server configuration issue.')
+        raise ComposerInputError('Code generation template not found. This is a server configuration issue.')
 
     manager_py = tmpl.render(
         plugin_name=plugin_name,
@@ -501,7 +505,7 @@ def _generate_plugin_files(data: dict) -> dict:
     try:
         ast.parse(manager_py)
     except SyntaxError as exc:
-        raise ValueError(f'Generated code has a syntax error: {exc}') from exc
+        raise ComposerInputError(f'Generated code has a syntax error: {exc}') from exc
 
     # Build manifest
     manifest = {
@@ -533,7 +537,7 @@ def _generate_plugin_files(data: dict) -> dict:
             errors = list(validator.iter_errors(manifest))
             if errors:
                 msgs = '; '.join(e.message for e in errors[:3])
-                raise ValueError(f'Manifest validation failed: {msgs}')
+                raise ComposerInputError(f'Manifest validation failed: {msgs}')
 
     # Build config_schema
     type_map = {
@@ -585,6 +589,37 @@ def _generate_plugin_files(data: dict) -> dict:
     }
 
 
+class ComposerInputError(ValueError):
+    """A validation failure whose message is safe to show the caller.
+
+    _generate_plugin_files raises this for input the user can fix. Anything
+    else reaching the handlers is unexpected, and its text may name internal
+    paths or library internals, so it is logged and answered generically.
+    """
+
+
+def _plugin_dir(plugin_id: str) -> Path:
+    """Resolve a plugin directory, refusing anything outside plugins_dir.
+
+    _PLUGIN_ID_RE already rejects '/', '.' and '..', so this cannot currently
+    fail -- every traversal payload is blocked before it gets here. It exists
+    anyway for two reasons: the guarantee then lives with the path building
+    rather than in a regex several hundred lines away, so loosening that regex
+    later cannot silently open a traversal; and it is the form static analysis
+    recognises, which is why CodeQL reported sixteen path-injection alerts
+    against code that was already safe.
+
+    Raises ComposerInputError if the id is malformed or escapes the base.
+    """
+    if not _PLUGIN_ID_RE.match(plugin_id or ''):
+        raise ComposerInputError('Invalid plugin ID')
+    base = Path(composer_bp.plugins_dir).resolve()
+    candidate = (base / plugin_id).resolve()
+    if candidate != base and base not in candidate.parents:
+        raise ComposerInputError('Invalid plugin ID')
+    return candidate
+
+
 def _save_composer_state(target_dir: Path, payload: dict) -> None:
     """Persist the raw composer payload alongside the generated plugin files."""
     (target_dir / '_composer_state.json').write_text(
@@ -618,8 +653,13 @@ def generate_zip():
         return jsonify({'status': 'error', 'message': 'No JSON body'}), 400
     try:
         files = _generate_plugin_files(data)
-    except ValueError as exc:
+    except ComposerInputError as exc:
         return jsonify({'status': 'error', 'message': str(exc)}), 422
+    except ValueError as exc:
+        # Not one of ours: the text may name internal paths or library
+        # internals, so log it and answer generically.
+        logger.exception('Unexpected error generating plugin files: %s', exc)
+        return jsonify({'status': 'error', 'message': 'Could not generate plugin files'}), 422
 
     plugin_id = data.get('metadata', {}).get('id', 'plugin')
     files['_composer_state.json'] = json.dumps(data, indent=2, ensure_ascii=False)
@@ -643,8 +683,13 @@ def install_locally():
 
     try:
         files = _generate_plugin_files(data)
-    except ValueError as exc:
+    except ComposerInputError as exc:
         return jsonify({'status': 'error', 'message': str(exc)}), 422
+    except ValueError as exc:
+        # Not one of ours: the text may name internal paths or library
+        # internals, so log it and answer generically.
+        logger.exception('Unexpected error generating plugin files: %s', exc)
+        return jsonify({'status': 'error', 'message': 'Could not generate plugin files'}), 422
 
     plugin_id = data.get('metadata', {}).get('id', '')
     # _generate_plugin_files() above already validates metadata.id via this
@@ -652,9 +697,10 @@ def install_locally():
     # different function -- re-check here, at the point the path is actually
     # built, so this route stays safe on its own if that call is ever
     # reordered or changed.
-    if not _PLUGIN_ID_RE.match(plugin_id):
-        return jsonify({'status': 'error', 'message': 'Invalid plugin ID'}), 400
-    target = Path(composer_bp.plugins_dir) / plugin_id
+    try:
+        target = _plugin_dir(plugin_id)
+    except ComposerInputError as exc:
+        return jsonify({'status': 'error', 'message': str(exc)}), 400
     force = bool(data.get('_force', False))
 
     if target.exists() and not force:
@@ -708,7 +754,10 @@ def validate_id(plugin_id):
     if not _PLUGIN_ID_RE.match(plugin_id):
         return jsonify({'valid': False, 'available': False, 'reason': 'Invalid format'})
     if composer_bp.plugins_dir:
-        taken = (Path(composer_bp.plugins_dir) / plugin_id).exists()
+        try:
+            taken = _plugin_dir(plugin_id).exists()
+        except ComposerInputError:
+            return jsonify({'valid': False, 'available': False, 'reason': 'Invalid format'})
         if taken:
             return jsonify({'valid': True, 'available': False, 'reason': 'Already installed'})
     return jsonify({'valid': True, 'available': True})
@@ -751,8 +800,13 @@ def preview_code():
         return jsonify({'status': 'error', 'message': 'No JSON body'}), 400
     try:
         files = _generate_plugin_files(data)
-    except ValueError as exc:
+    except ComposerInputError as exc:
         return jsonify({'status': 'error', 'message': str(exc)}), 422
+    except ValueError as exc:
+        # Not one of ours: the text may name internal paths or library
+        # internals, so log it and answer generically.
+        logger.exception('Unexpected error generating plugin files: %s', exc)
+        return jsonify({'status': 'error', 'message': 'Could not generate plugin files'}), 422
     return jsonify({
         'status': 'ok',
         'files': {
@@ -772,10 +826,10 @@ def load_plugin(plugin_id):
     """
     if not composer_bp.plugins_dir:
         return jsonify({'status': 'error', 'message': 'Plugin directory not configured'}), 503
-    if not _PLUGIN_ID_RE.match(plugin_id):
-        return jsonify({'status': 'error', 'message': 'Invalid plugin ID'}), 400
-
-    plugin_dir = Path(composer_bp.plugins_dir) / plugin_id
+    try:
+        plugin_dir = _plugin_dir(plugin_id)
+    except ComposerInputError as exc:
+        return jsonify({'status': 'error', 'message': str(exc)}), 400
     if not plugin_dir.exists():
         return jsonify({'status': 'error', 'message': 'Plugin not found'}), 404
 
