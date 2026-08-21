@@ -28,6 +28,7 @@ def _manager(tmp_path):
     pm.plugin_manifests = {}
     pm.plugin_directories = {}
     pm._discovery_lock = __import__("threading").RLock()
+    pm._skip_reported = set()
     pm.schema_manager = MagicMock()
     return pm
 
@@ -62,3 +63,19 @@ def test_a_good_plugin_still_registers(tmp_path, caplog):
     pm = _manager(tmp_path)
     pm._scan_directory_for_plugins(tmp_path)
     assert "real-plugin" in pm.plugin_manifests, "a valid plugin was not registered"
+
+
+def test_the_warning_does_not_repeat_on_every_scan(tmp_path, caplog):
+    """Discovery runs on every web UI page load and every config reconcile.
+
+    Warning unconditionally would put a line in the journal each time someone
+    opened a page -- the same log-volume problem this is meant to help
+    diagnose.
+    """
+    (tmp_path / "not-a-plugin").mkdir()
+    pm = _manager(tmp_path)
+    with caplog.at_level(logging.WARNING, logger="test.discovery"):
+        for _ in range(5):
+            pm._scan_directory_for_plugins(tmp_path)
+    hits = [r for r in caplog.records if "not-a-plugin" in r.message]
+    assert len(hits) == 1, f"warned {len(hits)} times across 5 scans"

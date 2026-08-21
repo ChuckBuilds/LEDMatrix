@@ -76,6 +76,9 @@ class PluginManager:
         # Lock protecting plugin_manifests and plugin_directories from
         # concurrent mutation (background reconciliation) and reads (requests).
         self._discovery_lock = threading.RLock()
+        #: Directories already reported as unloadable, so the warning is
+        #: emitted once rather than on every discovery scan.
+        self._skip_reported: set = set()
 
         # Lock protecting plugin_last_update from concurrent mutation/iteration.
         # It's written from run_scheduled_updates()/update_all_plugins() (main
@@ -196,15 +199,22 @@ class PluginManager:
 
                 manifest_path = item / "manifest.json"
                 if not manifest_path.exists():
+                    # Once per directory per process. Discovery runs on every
+                    # web UI page load and every config reconcile, so warning
+                    # unconditionally would put a line in the journal each
+                    # time someone opened a page -- the same log-volume
+                    # problem this is meant to help diagnose.
                     # A directory here that carries no manifest is not a
                     # plugin. Said once, because the alternative is a plugin
                     # that is enabled in config, enabled in plugin state,
                     # present on disk, and simply absent from the running
                     # process with nothing anywhere to say why. Working that
                     # out afterwards means reading cache-file mtimes.
-                    self.logger.warning(
-                        "Skipping %s: no manifest.json, so it cannot be loaded "
-                        "as a plugin", item.name)
+                    if item.name not in self._skip_reported:
+                        self._skip_reported.add(item.name)
+                        self.logger.warning(
+                            "Skipping %s: no manifest.json, so it cannot be "
+                            "loaded as a plugin", item.name)
                     continue
                 try:
                     with open(manifest_path, 'r', encoding='utf-8') as f:
@@ -217,9 +227,11 @@ class PluginManager:
                 if not plugin_id:
                     # Parsed but unusable. This was the quietest path of all:
                     # the manifest is read successfully and then dropped.
-                    self.logger.warning(
-                        "Skipping %s: its manifest.json has no \"id\", so there "
-                        "is nothing to register it under", item.name)
+                    if item.name not in self._skip_reported:
+                        self._skip_reported.add(item.name)
+                        self.logger.warning(
+                            "Skipping %s: its manifest.json has no \"id\", so "
+                            "there is nothing to register it under", item.name)
                     continue
 
                 plugin_ids.append(plugin_id)
