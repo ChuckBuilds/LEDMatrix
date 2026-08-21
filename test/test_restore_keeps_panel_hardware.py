@@ -73,3 +73,32 @@ def test_unparseable_local_config_still_restores(tmp_path):
     _restore_config_preserving_hardware(src, dst, keep_hardware=True)
     assert json.loads(dst.read_text())["timezone"] == "America/New_York", (
         "a restore must never fail because of this merge")
+
+
+def test_the_destination_mode_is_preserved(tmp_path):
+    """config.json is installed with a deliberate mode; a merge must not widen it.
+
+    _copy_file preserves the destination's mode and owner on purpose -- these
+    files are root-owned while the web interface running the restore is not.
+    Writing the merged result directly would have replaced that with whatever
+    the umask allowed.
+    """
+    import os
+    import stat as statmod
+    src = tmp_path / "b.json"; src.write_text(json.dumps(BIG))
+    dst = tmp_path / "c.json"; dst.write_text(json.dumps(SMALL))
+    os.chmod(dst, 0o600)
+
+    _restore_config_preserving_hardware(src, dst, keep_hardware=True)
+
+    mode = statmod.S_IMODE(os.stat(dst).st_mode)
+    assert mode == 0o600, f"restore widened config.json from 0600 to {oct(mode)}"
+    assert json.loads(dst.read_text())["display"]["hardware"]["cols"] == 64
+
+
+def test_no_scratch_file_is_left_behind(tmp_path):
+    src = tmp_path / "b.json"; src.write_text(json.dumps(BIG))
+    dst = tmp_path / "c.json"; dst.write_text(json.dumps(SMALL))
+    _restore_config_preserving_hardware(src, dst, keep_hardware=True)
+    leftovers = [p.name for p in tmp_path.iterdir() if "tmp" in p.name]
+    assert not leftovers, f"scratch files left in place: {leftovers}"

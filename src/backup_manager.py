@@ -604,9 +604,21 @@ def _restore_config_preserving_hardware(src: Path, dst: Path, keep_hardware: boo
             local_hw.get("cols"), local_hw.get("rows"),
             local_hw.get("chain_length"))
 
-    tmp_path = dst.with_suffix(dst.suffix + ".restore-tmp")
-    tmp_path.write_text(json.dumps(incoming, indent=2) + "\n", encoding="utf-8")
-    os.replace(tmp_path, dst)
+    # Write the merged result to a scratch file and hand it to _copy_file
+    # rather than renaming it into place here. _copy_file preserves the
+    # destination's mode and owner on purpose -- these config files are
+    # installed root-owned while the web interface that runs a restore is not
+    # root -- and a bare write would have replaced a root-owned config.json
+    # with one owned by the web user at whatever the umask allows.
+    scratch = dst.with_suffix(dst.suffix + ".merged-tmp")
+    try:
+        scratch.write_text(json.dumps(incoming, indent=2) + "\n", encoding="utf-8")
+        _copy_file(scratch, dst)
+    finally:
+        try:
+            scratch.unlink()
+        except OSError:
+            pass
 
 
 def restore_backup(
