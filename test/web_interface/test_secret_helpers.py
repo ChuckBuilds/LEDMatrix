@@ -17,6 +17,7 @@ from src.web_interface.secret_helpers import (
     separate_secrets,
     mask_secret_fields,
     mask_all_secret_values,
+    merge_secrets,
     remove_empty_secrets,
 )
 
@@ -239,3 +240,67 @@ class TestRemoveEmptySecrets:
     def test_keeps_falsey_non_string_values(self):
         # 0 and False are neither None nor blank strings — they are kept.
         assert remove_empty_secrets({"a": 0, "b": False}) == {"a": 0, "b": False}
+
+
+class TestArrayItemSecrets:
+    """Lists merge by replacement, so a blanked array wipes stored credentials.
+
+    remove_empty_secrets recursed into dicts but let a list through untouched,
+    so [{"token": ""}] went straight into deep_merge and overwrote the stored
+    list. Saving any unrelated setting destroyed every token in the array.
+    """
+
+    STORED = {"accounts": [{"name": "a", "token": "REAL-A"},
+                           {"name": "b", "token": "REAL-B"}]}
+
+    def test_an_unrelated_save_keeps_every_stored_token(self):
+        posted = {"accounts": [{"name": "a", "token": ""},
+                               {"name": "b", "token": ""}]}
+        merged = merge_secrets(self.STORED, remove_empty_secrets(posted))
+        assert [a["token"] for a in merged["accounts"]] == ["REAL-A", "REAL-B"]
+
+    def test_editing_one_entry_leaves_the_others_alone(self):
+        posted = {"accounts": [{"name": "a", "token": ""},
+                               {"name": "b", "token": "NEW-B"}]}
+        merged = merge_secrets(self.STORED, remove_empty_secrets(posted))
+        assert [a["token"] for a in merged["accounts"]] == ["REAL-A", "NEW-B"]
+
+    def test_a_new_entry_is_appended(self):
+        posted = {"accounts": [{"name": "a", "token": ""},
+                               {"name": "b", "token": ""},
+                               {"name": "c", "token": "NEW-C"}]}
+        merged = merge_secrets(self.STORED, remove_empty_secrets(posted))
+        assert [a["token"] for a in merged["accounts"]] == \
+            ["REAL-A", "REAL-B", "NEW-C"]
+
+    def test_a_list_of_bare_strings_merges_by_index(self):
+        merged = merge_secrets({"keys": ["K1", "K2", "K3"]},
+                               remove_empty_secrets({"keys": ["", "K2-NEW", ""]}))
+        assert merged["keys"] == ["K1", "K2-NEW", "K3"]
+
+    def test_an_all_blank_list_is_dropped_entirely(self):
+        posted = {"accounts": [{"token": ""}, {"token": ""}]}
+        assert "accounts" not in remove_empty_secrets(posted)
+
+    def test_plain_dict_secrets_are_unaffected(self):
+        merged = merge_secrets({"api_key": "OLD", "other": "keep"},
+                               remove_empty_secrets({"api_key": "", "other": "changed"}))
+        assert merged == {"api_key": "OLD", "other": "changed"}
+
+    def test_a_removed_entry_takes_its_secret_with_it(self):
+        """The regular config's list is authoritative about how many items
+        exist, and the secrets list runs parallel to it -- see
+        ConfigManager._strip_secrets_recursive. So a shorter incoming list
+        must shorten the stored secrets too, or the two fall out of step."""
+        posted = {"accounts": [{"name": "a", "token": "NEW-A"}]}
+        merged = merge_secrets(self.STORED, remove_empty_secrets(posted))
+        assert [a["token"] for a in merged["accounts"]] == ["NEW-A"]
+
+    def test_an_emptied_item_stays_a_dict_not_none(self):
+        """None there stops the list looking parallel, and
+        _strip_secrets_recursive then drops the whole key from the main
+        config -- deleting the item's non-secret fields as well."""
+        pruned = remove_empty_secrets(
+            {"accounts": [{"token": "real"}, {"token": ""}]})
+        assert pruned["accounts"] == [{"token": "real"}, {}]
+        assert None not in pruned["accounts"]

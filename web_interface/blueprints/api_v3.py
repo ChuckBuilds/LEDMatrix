@@ -22,7 +22,8 @@ logger = logging.getLogger(__name__)
 from src.web_interface.api_helpers import success_response, error_response, validate_request_json
 from src.web_interface.errors import ErrorCode
 from src.web_interface.secret_helpers import (find_secret_fields, mask_all_secret_values,
-                                              remove_empty_secrets, separate_secrets,
+                                              merge_secrets, remove_empty_secrets,
+                                              separate_secrets,
                                               strip_masked_values)
 from src.web_interface.error_handler import describe_exception, redact_text
 from src.plugin_system.operation_types import OperationType
@@ -1296,7 +1297,10 @@ def save_main_config():
                 if secrets_config:
                     if plugin_id not in current_secrets:
                         current_secrets[plugin_id] = {}
-                    current_secrets[plugin_id] = deep_merge(current_secrets[plugin_id], secrets_config)
+                    # Lists merge by replacement, so deep_merge here wrote a
+                    # blanked array straight over the stored credentials.
+                    current_secrets[plugin_id] = merge_secrets(
+                        current_secrets[plugin_id], secrets_config)
                     # Save secrets file
                     api_v3.config_manager.save_raw_file_content('secrets', current_secrets)
 
@@ -5675,8 +5679,10 @@ def save_plugin_config():
         if schema:
             # Log what we're validating for debugging
             logger.info(f"Validating config for {plugin_id}")
+            # Only the shape. plugin_config still holds the submitted secret
+            # values at this point -- separate_secrets does not run until
+            # below -- so logging it wrote live credentials to the journal.
             logger.info(f"Config keys being validated: {list(plugin_config.keys())}")
-            logger.info(f"Full config: {plugin_config}")
 
             # Get enhanced schema keys (including injected core properties)
             # We need to create an enhanced schema to get the actual allowed keys
@@ -5699,7 +5705,8 @@ def save_plugin_config():
                 # Log validation errors for debugging
                 logger.error(f"Config validation failed for {plugin_id}")
                 logger.error(f"Validation errors: {validation_errors}")
-                logger.error(f"Config that failed: {plugin_config}")
+                # Keys only, for the same reason as above.
+                logger.error(f"Config keys that failed: {list(plugin_config.keys())}")
                 logger.error(f"Schema properties: {list(enhanced_schema.get('properties', {}).keys())}")
 
                 # Also print to console for immediate visibility
@@ -5750,7 +5757,9 @@ def save_plugin_config():
         if secrets_config:
             if plugin_id not in current_secrets:
                 current_secrets[plugin_id] = {}
-            current_secrets[plugin_id] = deep_merge(current_secrets[plugin_id], secrets_config)
+            # See above -- secrets lists must merge element-wise.
+            current_secrets[plugin_id] = merge_secrets(
+                current_secrets[plugin_id], secrets_config)
             # Save secrets file
             try:
                 api_v3.config_manager.save_raw_file_content('secrets', current_secrets)

@@ -5,7 +5,7 @@ Provides functions for identifying, masking, separating, and filtering
 secret fields in plugin configurations based on JSON Schema x-secret markers.
 """
 
-from typing import Any, Dict, Set, Tuple
+from typing import Any, Dict, Optional, Set, Tuple
 
 
 def find_secret_fields(properties: Dict[str, Any], prefix: str = '') -> Set[str]:
@@ -202,9 +202,87 @@ def remove_empty_secrets(secrets: Dict[str, Any]) -> Dict[str, Any]:
             nested = remove_empty_secrets(v)
             if nested:
                 result[k] = nested
+        elif isinstance(v, list):
+            # Lists used to fall through to the scalar branch below and be
+            # kept verbatim, blanks and all. Because lists merge by
+            # *replacement*, saving any unrelated setting then wrote
+            # [{"token": ""}, ...] straight over the stored list and
+            # destroyed every credential in it.
+            pruned = _prune_secret_list(v)
+            if pruned is not None:
+                result[k] = pruned
         elif v is not None and not (isinstance(v, str) and v.strip() == ''):
             result[k] = v
     return result
+
+
+def _prune_secret_list(items: list) -> Optional[list]:
+    """Strip blanks from inside a list of secrets, preserving every index.
+
+    The rest of the system treats a secrets list as *parallel* to the regular
+    one -- ``sec[i]`` holds the secret fields of item ``i``, and ``{}`` means
+    "item i has none" (see ConfigManager._strip_secrets_recursive). So an
+    emptied dict item stays ``{}``: putting ``None`` there makes that list stop
+    looking parallel, and the stripper then drops the whole key from the main
+    config, taking the non-secret fields with it.
+
+    A blank *scalar* becomes ``None``, meaning "no update at this index" --
+    :func:`merge_secrets` substitutes whatever is stored there. Returns
+    ``None`` when nothing in the list carries a real value, so the caller drops
+    the key and leaves the stored list untouched.
+    """
+    pruned: list = []
+    has_real_value = False
+    for item in items:
+        if isinstance(item, dict):
+            kept = remove_empty_secrets(item)
+            pruned.append(kept)
+            has_real_value = has_real_value or bool(kept)
+        elif isinstance(item, list):
+            sub = _prune_secret_list(item)
+            pruned.append(sub if sub is not None else [])
+            has_real_value = has_real_value or sub is not None
+        elif item is not None and not (isinstance(item, str) and item.strip() == ''):
+            pruned.append(item)
+            has_real_value = True
+        else:
+            pruned.append(None)
+    return pruned if has_real_value else None
+
+
+def merge_secrets(stored: Any, incoming: Any) -> Any:
+    """Merge submitted secrets over stored ones, element-wise inside lists.
+
+    ``deep_merge`` replaces a list wholesale. For secrets that is destructive:
+    an incoming list that carries a real value for one entry and ``None`` for
+    the rest would drop the stored credentials of every other entry. Here a
+    list merges by index, and ``None`` means "keep what is stored".
+
+    Entries are matched by *position*, which is what the config form gives us
+    -- there is no schema-declared identity to key on, and it is the same
+    contract ConfigManager._strip_secrets_recursive already relies on. The
+    incoming list's length wins, so deleting an item deletes its secrets;
+    an item the client left blank keeps whatever is stored at that index.
+    """
+    if isinstance(stored, dict) and isinstance(incoming, dict):
+        merged = dict(stored)
+        for key, value in incoming.items():
+            merged[key] = (merge_secrets(stored[key], value)
+                           if key in stored else value)
+        return merged
+    if isinstance(stored, list) and isinstance(incoming, list):
+        # The incoming list sets the length -- the regular config's list is
+        # authoritative about how many items exist, and this one runs parallel
+        # to it. Removing an entry must therefore remove its secrets too.
+        merged_list = []
+        for index, item in enumerate(incoming):
+            stored_item = stored[index] if index < len(stored) else None
+            merged_list.append(stored_item if item is None
+                               else merge_secrets(stored_item, item))
+        return merged_list
+    if incoming is None:
+        return stored
+    return incoming
 
 
 def strip_masked_values(secrets: Dict[str, Any]) -> Dict[str, Any]:
