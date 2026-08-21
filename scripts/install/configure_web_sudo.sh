@@ -100,10 +100,15 @@ TEMP_SUDOERS="/tmp/ledmatrix_web_sudoers_$$"
     echo "$WEB_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH restart ledmatrix-web.service"
 
     # Optional: journalctl (non-critical — skip if not found)
+    #
+    # NOEXEC, matching first_time_install.sh. These rules end in a wildcard and
+    # journalctl starts a pager, so without it the caller can reach a shell:
+    # less runs "!command" as the user the pager belongs to, which here is
+    # root. NOEXEC stops the granted command executing anything of its own.
     if [ -n "$JOURNALCTL_PATH" ]; then
-        echo "$WEB_USER ALL=(ALL) NOPASSWD: $JOURNALCTL_PATH -u ledmatrix.service *"
-        echo "$WEB_USER ALL=(ALL) NOPASSWD: $JOURNALCTL_PATH -u ledmatrix *"
-        echo "$WEB_USER ALL=(ALL) NOPASSWD: $JOURNALCTL_PATH -t ledmatrix *"
+        echo "$WEB_USER ALL=(ALL) NOPASSWD:NOEXEC: $JOURNALCTL_PATH -u ledmatrix.service *"
+        echo "$WEB_USER ALL=(ALL) NOPASSWD:NOEXEC: $JOURNALCTL_PATH -u ledmatrix *"
+        echo "$WEB_USER ALL=(ALL) NOPASSWD:NOEXEC: $JOURNALCTL_PATH -t ledmatrix *"
     fi
 
     # Required: python3, bash
