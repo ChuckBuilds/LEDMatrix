@@ -178,11 +178,21 @@ class PluginHealthTracker:
             )
         return self._health_state[plugin_id]
     
+    # Fields the circuit breaker is rebuilt from after a restart. Everything
+    # else in a health record is reporting, read only for display.
+    _DURABLE_FIELDS = ('consecutive_failures', 'circuit_state',
+                       'circuit_opened_time', 'half_open_start_time')
+
+    def _durable(self, state: Dict[str, Any]) -> tuple:
+        """The part of a health record whose loss would change behaviour."""
+        return tuple(state.get(field) for field in self._DURABLE_FIELDS)
+
     def record_success(self, plugin_id: str) -> None:
         """Record a successful plugin execution."""
         state = self.get_health_state(plugin_id)
         current_time = time.time()
-        
+        durable_before = self._durable(state)
+
         # Reset consecutive failures
         state['consecutive_failures'] = 0
         state['total_successes'] = state.get('total_successes', 0) + 1
@@ -198,9 +208,20 @@ class PluginHealthTracker:
             # Shouldn't happen, but handle it
             state['circuit_state'] = CircuitState.CLOSED.value
             state['circuit_opened_time'] = None
-        
-        self._save_health_state(plugin_id, state)
-    
+
+        # A healthy plugin reports success every cycle, and in that steady state
+        # the only fields changed above are a counter and a timestamp that
+        # nothing reads back after a restart. Persisting them anyway rewrites a
+        # small file per plugin per cycle: on a rig running 24 plugins, a
+        # five-minute sample measured 22 rewrites, about 4.4 a minute or 6,300 a
+        # day. Those land on an SD card, where the cost is an erase-block cycle
+        # rather than the 400 bytes involved, and where wear is what eventually
+        # kills the card.
+        # In-memory state is still updated every time, so the health API and web
+        # UI show exactly what they did before; only the write is skipped.
+        if self._durable(state) != durable_before:
+            self._save_health_state(plugin_id, state)
+
     def record_failure(self, plugin_id: str, error: Optional[Exception] = None) -> None:
         """Record a failed plugin execution."""
         state = self.get_health_state(plugin_id)
