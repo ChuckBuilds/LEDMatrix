@@ -76,6 +76,9 @@ class PluginManager:
         # Lock protecting plugin_manifests and plugin_directories from
         # concurrent mutation (background reconciliation) and reads (requests).
         self._discovery_lock = threading.RLock()
+        #: Directories already reported as unloadable, so the warning is
+        #: emitted once rather than on every discovery scan.
+        self._skip_reported: set = set()
 
         # Lock protecting plugin_last_update from concurrent mutation/iteration.
         # It's written from run_scheduled_updates()/update_all_plugins() (main
@@ -195,18 +198,59 @@ class PluginManager:
                     continue
 
                 manifest_path = item / "manifest.json"
-                if manifest_path.exists():
-                    try:
-                        with open(manifest_path, 'r', encoding='utf-8') as f:
-                            manifest = json.load(f)
-                            plugin_id = manifest.get('id')
-                            if plugin_id:
-                                plugin_ids.append(plugin_id)
-                                new_manifests[plugin_id] = manifest
-                                new_directories[plugin_id] = item
-                    except (json.JSONDecodeError, PermissionError, OSError) as e:
-                        self.logger.warning("Error reading manifest from %s: %s", manifest_path, e, exc_info=True)
-                        continue
+                if not manifest_path.exists():
+                    # Once per directory per process. Discovery runs on every
+                    # web UI page load and every config reconcile, so warning
+                    # unconditionally would put a line in the journal each
+                    # time someone opened a page -- the same log-volume
+                    # problem this is meant to help diagnose.
+                    # A directory here that carries no manifest is not a
+                    # plugin. Said once, because the alternative is a plugin
+                    # that is enabled in config, enabled in plugin state,
+                    # present on disk, and simply absent from the running
+                    # process with nothing anywhere to say why. Working that
+                    # out afterwards means reading cache-file mtimes.
+                    if item.name not in self._skip_reported:
+                        self._skip_reported.add(item.name)
+                        self.logger.warning(
+                            "Skipping %s: no manifest.json, so it cannot be "
+                            "loaded as a plugin", item.name)
+                    continue
+                try:
+                    with open(manifest_path, 'r', encoding='utf-8') as f:
+                        manifest = json.load(f)
+                except (json.JSONDecodeError, PermissionError, OSError) as e:
+                    self.logger.warning("Error reading manifest from %s: %s", manifest_path, e, exc_info=True)
+                    continue
+
+                # json.load accepts any JSON value, so a manifest holding
+                # null, [] or "text" parses and then raises AttributeError on
+                # .get(). Nothing here catches that -- the outer handler takes
+                # OSError/PermissionError only -- so a single malformed
+                # manifest aborted the whole scan and every other plugin on
+                # disk, however healthy, silently failed to register.
+                if not isinstance(manifest, dict):
+                    if item.name not in self._skip_reported:
+                        self._skip_reported.add(item.name)
+                        self.logger.warning(
+                            "Skipping %s: its manifest.json is %s, not a JSON "
+                            "object", item.name, type(manifest).__name__)
+                    continue
+
+                plugin_id = manifest.get('id')
+                if not plugin_id:
+                    # Parsed but unusable. This was the quietest path of all:
+                    # the manifest is read successfully and then dropped.
+                    if item.name not in self._skip_reported:
+                        self._skip_reported.add(item.name)
+                        self.logger.warning(
+                            "Skipping %s: its manifest.json has no \"id\", so "
+                            "there is nothing to register it under", item.name)
+                    continue
+
+                plugin_ids.append(plugin_id)
+                new_manifests[plugin_id] = manifest
+                new_directories[plugin_id] = item
         except (OSError, PermissionError) as e:
             self.logger.error("Error scanning directory %s: %s", directory, e, exc_info=True)
 
