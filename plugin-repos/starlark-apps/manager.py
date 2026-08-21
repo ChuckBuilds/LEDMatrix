@@ -56,6 +56,8 @@ class StarlarkApp:
         self.current_frame_index = 0
         self.last_frame_time = 0
         self.last_render_time = 0
+        self.last_presented_frame_index: Optional[int] = None
+        self.animation_total_duration_ms = 0
 
     def _load_config(self) -> Dict[str, Any]:
         """Load app configuration from config.json."""
@@ -299,6 +301,18 @@ class StarlarkAppsPlugin(BasePlugin):
                 self.logger.error("default_frame_delay must be a number between 16 and 1000")
                 return False
 
+        return True
+
+    @property
+    def needs_high_fps(self) -> bool:
+        """Request frame-rate dispatch before the controller selects a mode.
+
+        DisplayController reads this property before its first display() call,
+        so ``current_app`` is not available yet.  Starlark owns both static and
+        animated modes; it must enter the fast dispatch path up front so an
+        animated WebP can honor its embedded timings.  _display_frame avoids
+        redundant matrix writes when the selected frame has not changed.
+        """
         return True
 
     def _calculate_optimal_magnify(self) -> int:
@@ -681,7 +695,7 @@ class StarlarkAppsPlugin(BasePlugin):
                 if app.is_enabled() and app.should_render(current_time):
                     self._render_app(app, force=False)
 
-    def display(self, force_clear: bool = False) -> None:
+    def display(self, display_mode: Optional[str] = None, force_clear: bool = False) -> bool:
         """
         Display current Starlark app.
 
@@ -692,27 +706,44 @@ class StarlarkAppsPlugin(BasePlugin):
             if force_clear:
                 self.display_manager.clear()
 
-            # If no current app, try to select one
-            if not self.current_app:
+            # Every installed app is registered as its own DisplayController
+            # mode. Select that exact app when the controller dispatches a
+            # mode, including manual switches. Do not reset its frame index or
+            # frame timestamp: WebP animation timing is independent from the
+            # amount of time this mode remains in the central rotation.
+            if display_mode is not None:
+                requested_app = self.apps.get(display_mode)
+                if requested_app is None or not requested_app.is_enabled():
+                    self.logger.warning("Starlark display mode is unavailable: %s", display_mode)
+                    return False
+                if self.current_app is not requested_app:
+                    self.current_app = requested_app
+                    self.current_app.last_presented_frame_index = None
+                    self.logger.debug("Selected Starlark app for mode: %s", display_mode)
+            elif not self.current_app:
                 self._select_next_app()
 
             if not self.current_app:
                 # No apps available
                 self.logger.debug("No Starlark apps to display")
-                return
+                return False
 
             # Render app if needed
             if not self.current_app.frames:
                 success = self._render_app(self.current_app, force=True)
                 if not success:
                     self.logger.error(f"Failed to render app: {self.current_app.app_id}")
-                    return
+                    return False
 
             # Display current frame
+            if force_clear:
+                self.current_app.last_presented_frame_index = None
             self._display_frame()
+            return True
 
         except Exception as e:
             self.logger.error(f"Error displaying Starlark app: {e}")
+            return False
 
     def _select_next_app(self) -> None:
         """Select the next enabled app for display."""
@@ -827,6 +858,8 @@ class StarlarkAppsPlugin(BasePlugin):
             app.frames = frames
             app.current_frame_index = 0
             app.last_frame_time = time.time()
+            app.last_presented_frame_index = None
+            app.animation_total_duration_ms = sum(delay for _, delay in frames)
 
             self.logger.debug(f"Loaded {len(frames)} frames for {app.app_id}")
             return True
@@ -842,19 +875,54 @@ class StarlarkAppsPlugin(BasePlugin):
 
         try:
             current_time = time.time()
-            frame, delay_ms = self.current_app.frames[self.current_app.current_frame_index]
+            frame_count = len(self.current_app.frames)
+            _, delay_ms = self.current_app.frames[self.current_app.current_frame_index]
 
-            # Set frame on display manager
-            self.display_manager.image = frame
-            self.display_manager.update_display()
-
-            # Check if it's time to advance to next frame
-            delay_seconds = delay_ms / 1000.0
-            if (current_time - self.current_app.last_frame_time) >= delay_seconds:
-                self.current_app.current_frame_index = (
-                    (self.current_app.current_frame_index + 1) % len(self.current_app.frames)
-                )
+            # Advance against the WebP's wall-clock timeline. The controller
+            # may call us less frequently than a very short encoded delay
+            # (Arcade Classics contains 5ms frames), so advance through as
+            # many elapsed frames as necessary instead of stretching every
+            # frame to one controller callback. This never triggers a Pixlet
+            # rerender; it only changes the in-memory frame index.
+            if self.current_app.last_frame_time <= 0:
                 self.current_app.last_frame_time = current_time
+            else:
+                elapsed_ms = (current_time - self.current_app.last_frame_time) * 1000.0
+                frames_advanced = 0
+                total_duration_ms = getattr(
+                    self.current_app, "animation_total_duration_ms", 0
+                )
+                if total_duration_ms <= 0:
+                    total_duration_ms = sum(
+                        frame_delay for _, frame_delay in self.current_app.frames
+                    )
+                    self.current_app.animation_total_duration_ms = total_duration_ms
+                if total_duration_ms > 0 and elapsed_ms >= total_duration_ms:
+                    # Whole animation loops return to the same frame index.
+                    elapsed_ms %= total_duration_ms
+                while elapsed_ms >= delay_ms and frames_advanced < frame_count:
+                    elapsed_ms -= delay_ms
+                    self.current_app.current_frame_index = (
+                        (self.current_app.current_frame_index + 1) % frame_count
+                    )
+                    frames_advanced += 1
+                    _, delay_ms = self.current_app.frames[
+                        self.current_app.current_frame_index
+                    ]
+
+                # Preserve sub-frame remainder so callback jitter does not
+                # accumulate into progressively slower playback.
+                self.current_app.last_frame_time = current_time - (elapsed_ms / 1000.0)
+
+            # The controller dispatches Starlark at high FPS before it knows
+            # whether the selected mode is animated.  Only touch the matrix
+            # when frame progression (or a mode switch/clear) requires it.
+            frame_index = self.current_app.current_frame_index
+            if getattr(self.current_app, "last_presented_frame_index", None) != frame_index:
+                frame, _ = self.current_app.frames[frame_index]
+                self.display_manager.image = frame
+                self.display_manager.update_display()
+                self.current_app.last_presented_frame_index = frame_index
 
         except Exception as e:
             self.logger.error(f"Error displaying frame: {e}")
@@ -1009,6 +1077,13 @@ class StarlarkAppsPlugin(BasePlugin):
         if self.current_app:
             return float(self.current_app.get_display_duration())
         return self.config.get('display_duration', 15.0)
+
+    def get_mode_display_duration(self, display_mode: str) -> float:
+        """Return the effective central-rotation duration for one app mode."""
+        app = self.apps.get(display_mode)
+        if app is not None and app.is_enabled():
+            return float(app.get_display_duration())
+        return float(self.config.get('display_duration', 15.0))
 
     # ─── Vegas Mode Integration ──────────────────────────────────────
 
