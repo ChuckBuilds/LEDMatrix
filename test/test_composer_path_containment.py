@@ -45,19 +45,18 @@ def plugins_dir(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("payload", TRAVERSAL)
 def test_traversal_payloads_are_refused(plugins_dir, payload):
-    with pytest.raises(C.ComposerInputError):
-        C._plugin_dir(payload)
+    assert C._plugin_dir(payload) is None
 
 
 @pytest.mark.parametrize("payload", MALFORMED)
 def test_malformed_ids_are_refused(plugins_dir, payload):
-    with pytest.raises(C.ComposerInputError):
-        C._plugin_dir(payload)
+    assert C._plugin_dir(payload) is None
 
 
 @pytest.mark.parametrize("payload", ["a", "my-plugin", "x9", "a" * 63])
 def test_valid_ids_resolve_inside_the_base(plugins_dir, payload):
     resolved = C._plugin_dir(payload)
+    assert resolved is not None, f"{payload!r} was rejected but is valid"
     assert resolved.parent == plugins_dir.resolve(), (
         f"{payload!r} resolved to {resolved}, outside {plugins_dir}")
 
@@ -71,16 +70,32 @@ def test_no_payload_can_escape_even_if_the_regex_is_loosened(plugins_dir, monkey
     """
     import re
     monkeypatch.setattr(C, "_PLUGIN_ID_RE", re.compile(r"\A[\w./\\~-]+\Z"))
+    import os
     escaped = []
+    base = os.path.realpath(str(plugins_dir))
     for payload in TRAVERSAL:
-        try:
-            resolved = C._plugin_dir(payload)
-        except C.ComposerInputError:
+        resolved = C._plugin_dir(payload)
+        if resolved is None:
             continue
-        base = plugins_dir.resolve()
-        if resolved != base and base not in resolved.parents:
-            escaped.append((payload, str(resolved)))
+        real = os.path.realpath(str(resolved))
+        if real != base and os.path.commonpath([base, real]) != base:
+            escaped.append((payload, real))
     assert not escaped, f"these escaped the base with a loosened regex: {escaped}"
+
+
+def test_a_sibling_directory_with_a_shared_prefix_is_not_inside(tmp_path, monkeypatch):
+    """commonpath, not startswith.
+
+    "/x/plugins-evil" starts with "/x/plugins" but is a different directory, so
+    a prefix test would accept it.
+    """
+    base = tmp_path / "plugins"
+    base.mkdir()
+    (tmp_path / "plugins-evil").mkdir()
+    monkeypatch.setattr(C.composer_bp, "plugins_dir", str(base), raising=False)
+    import re
+    monkeypatch.setattr(C, "_PLUGIN_ID_RE", re.compile(r"\A[\w./\\~-]+\Z"))
+    assert C._plugin_dir("../plugins-evil") is None
 
 
 def test_a_trailing_newline_is_not_a_valid_id():

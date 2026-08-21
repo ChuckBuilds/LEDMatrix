@@ -421,6 +421,9 @@ a, button, input, select, textarea {
     .md\:grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
     .md\:flex { display: flex; }
     .md\:hidden { display: none; }
+    /* composer.html labels its toolbar buttons `hidden md:inline`, so without
+       this the label is hidden at every width and the buttons stay icon-only. */
+    .md\:inline { display: inline; }
 }
 
 @media (min-width: 1024px) {

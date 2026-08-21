@@ -12,7 +12,9 @@ import ast
 import io
 import json
 import logging
+import os
 import re
+from typing import Optional
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -598,7 +600,7 @@ class ComposerInputError(ValueError):
     """
 
 
-def _plugin_dir(plugin_id: str) -> Path:
+def _plugin_dir(plugin_id: str) -> Optional[Path]:
     """Resolve a plugin directory, refusing anything outside plugins_dir.
 
     _PLUGIN_ID_RE already rejects '/', '.' and '..', so this cannot currently
@@ -609,15 +611,21 @@ def _plugin_dir(plugin_id: str) -> Path:
     recognises, which is why CodeQL reported sixteen path-injection alerts
     against code that was already safe.
 
-    Raises ComposerInputError if the id is malformed or escapes the base.
+    Returns None for a malformed id or one that escapes the base. It returns
+    rather than raises so the handlers answer with a fixed literal: routing a
+    caught exception's text into a response is what py/stack-trace-exposure
+    flags, and there is nothing here a caller needs beyond "that id is not ok".
     """
     if not _PLUGIN_ID_RE.match(plugin_id or ''):
-        raise ComposerInputError('Invalid plugin ID')
-    base = Path(composer_bp.plugins_dir).resolve()
-    candidate = (base / plugin_id).resolve()
-    if candidate != base and base not in candidate.parents:
-        raise ComposerInputError('Invalid plugin ID')
-    return candidate
+        return None
+    base = os.path.realpath(str(composer_bp.plugins_dir))
+    candidate = os.path.realpath(os.path.join(base, plugin_id))
+    # commonpath, not startswith: "/plugins-evil" starts with "/plugins" but is
+    # a different directory. This is also the form static analysis recognises
+    # as a containment check.
+    if candidate != base and os.path.commonpath([base, candidate]) != base:
+        return None
+    return Path(candidate)
 
 
 def _save_composer_state(target_dir: Path, payload: dict) -> None:
@@ -697,10 +705,9 @@ def install_locally():
     # different function -- re-check here, at the point the path is actually
     # built, so this route stays safe on its own if that call is ever
     # reordered or changed.
-    try:
-        target = _plugin_dir(plugin_id)
-    except ComposerInputError as exc:
-        return jsonify({'status': 'error', 'message': str(exc)}), 400
+    target = _plugin_dir(plugin_id)
+    if target is None:
+        return jsonify({'status': 'error', 'message': 'Invalid plugin ID'}), 400
     force = bool(data.get('_force', False))
 
     if target.exists() and not force:
@@ -754,10 +761,10 @@ def validate_id(plugin_id):
     if not _PLUGIN_ID_RE.match(plugin_id):
         return jsonify({'valid': False, 'available': False, 'reason': 'Invalid format'})
     if composer_bp.plugins_dir:
-        try:
-            taken = _plugin_dir(plugin_id).exists()
-        except ComposerInputError:
+        resolved = _plugin_dir(plugin_id)
+        if resolved is None:
             return jsonify({'valid': False, 'available': False, 'reason': 'Invalid format'})
+        taken = resolved.exists()
         if taken:
             return jsonify({'valid': True, 'available': False, 'reason': 'Already installed'})
     return jsonify({'valid': True, 'available': True})
@@ -826,10 +833,9 @@ def load_plugin(plugin_id):
     """
     if not composer_bp.plugins_dir:
         return jsonify({'status': 'error', 'message': 'Plugin directory not configured'}), 503
-    try:
-        plugin_dir = _plugin_dir(plugin_id)
-    except ComposerInputError as exc:
-        return jsonify({'status': 'error', 'message': str(exc)}), 400
+    plugin_dir = _plugin_dir(plugin_id)
+    if plugin_dir is None:
+        return jsonify({'status': 'error', 'message': 'Invalid plugin ID'}), 400
     if not plugin_dir.exists():
         return jsonify({'status': 'error', 'message': 'Plugin not found'}), 404
 
