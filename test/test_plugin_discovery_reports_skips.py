@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.plugin_system.plugin_manager import PluginManager  # noqa: E402
@@ -79,3 +81,46 @@ def test_the_warning_does_not_repeat_on_every_scan(tmp_path, caplog):
             pm._scan_directory_for_plugins(tmp_path)
     hits = [r for r in caplog.records if "not-a-plugin" in r.message]
     assert len(hits) == 1, f"warned {len(hits)} times across 5 scans"
+
+
+def _plugin(tmp_path, name, body):
+    d = tmp_path / name
+    d.mkdir()
+    (d / "manifest.json").write_text(json.dumps(body))
+    return d
+
+
+VALID = {"name": "V", "version": "1.0.0", "class_name": "X", "display_modes": ["m"]}
+
+
+@pytest.mark.parametrize("body", [None, [1, 2], "not an object", 42, True])
+def test_a_manifest_that_is_not_an_object_is_skipped_not_fatal(tmp_path, caplog, body):
+    """json.load accepts any JSON value, not just objects.
+
+    manifest.get('id') then raised AttributeError, which nothing here caught --
+    the outer handler takes OSError/PermissionError only. A single malformed
+    manifest aborted the entire scan, so every other plugin on disk, however
+    healthy, silently failed to register.
+    """
+    _plugin(tmp_path, "aaa-good", dict(VALID, id="aaa-good"))
+    _plugin(tmp_path, "mmm-bad", body)
+    _plugin(tmp_path, "zzz-good", dict(VALID, id="zzz-good"))
+
+    pm = _manager(tmp_path)
+    with caplog.at_level(logging.WARNING, logger="test.discovery"):
+        found = pm._scan_directory_for_plugins(tmp_path)
+
+    assert sorted(found) == ["aaa-good", "zzz-good"], (
+        "one unusable manifest took the healthy plugins down with it")
+    joined = " ".join(r.message for r in caplog.records)
+    assert "mmm-bad" in joined, f"the skip was silent; log said: {joined!r}"
+
+
+def test_the_bad_manifest_is_named_with_what_it_actually_was(tmp_path, caplog):
+    _plugin(tmp_path, "listy", [1, 2])
+    pm = _manager(tmp_path)
+    with caplog.at_level(logging.WARNING, logger="test.discovery"):
+        pm._scan_directory_for_plugins(tmp_path)
+    joined = " ".join(r.message for r in caplog.records)
+    assert "listy" in joined and "list" in joined, (
+        f"the warning does not say what the manifest was: {joined!r}")

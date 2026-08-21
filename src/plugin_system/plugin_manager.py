@@ -223,6 +223,20 @@ class PluginManager:
                     self.logger.warning("Error reading manifest from %s: %s", manifest_path, e, exc_info=True)
                     continue
 
+                # json.load accepts any JSON value, so a manifest holding
+                # null, [] or "text" parses and then raises AttributeError on
+                # .get(). Nothing here catches that -- the outer handler takes
+                # OSError/PermissionError only -- so a single malformed
+                # manifest aborted the whole scan and every other plugin on
+                # disk, however healthy, silently failed to register.
+                if not isinstance(manifest, dict):
+                    if item.name not in self._skip_reported:
+                        self._skip_reported.add(item.name)
+                        self.logger.warning(
+                            "Skipping %s: its manifest.json is %s, not a JSON "
+                            "object", item.name, type(manifest).__name__)
+                    continue
+
                 plugin_id = manifest.get('id')
                 if not plugin_id:
                     # Parsed but unusable. This was the quietest path of all:
