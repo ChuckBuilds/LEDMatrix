@@ -145,8 +145,7 @@ class SportsUpcoming(SportsCore):
                     if (game['home_abbr'] in self.favorite_teams or 
                         game['away_abbr'] in self.favorite_teams):
                         favorite_games_found += 1
-                    if self.show_odds:
-                        self._fetch_odds(game)
+                    # Odds are NOT fetched here -- see after selection below.
 
             # Enhanced logging for debugging
             self.logger.info(f"Found {all_upcoming_games} total upcoming games in data")
@@ -189,6 +188,20 @@ class SportsUpcoming(SportsCore):
                 team_games.sort(key=lambda g: g.get('start_time_utc') or datetime.max.replace(tzinfo=timezone.utc))
                 # Limit to the specified number of upcoming games
                 team_games = team_games[:self.upcoming_games_to_show]
+
+            # Odds are fetched here, for the games that survived selection,
+            # rather than in the loop that collects them. That loop walks every
+            # upcoming game in the schedule window, and for a college league
+            # the window is enormous -- a live rig logged 946 upcoming games in
+            # one cycle and displayed 1 of them. The comment up there claimed
+            # odds were fetched "only for games that will be displayed", but
+            # the only narrowing it applied was show_favorite_teams_only, which
+            # is not the default; in the usual case nothing narrowed it at all
+            # and every game cost a separate ESPN request on a Pi that is also
+            # driving the panel.
+            if self.show_odds:
+                for game in team_games:
+                    self._fetch_odds(game)
 
             # Log changes or periodically
             should_log = (
