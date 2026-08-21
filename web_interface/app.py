@@ -118,7 +118,8 @@ saved_repositories_manager = SavedRepositoriesManager()
 schema_manager = SchemaManager(
     plugins_dir=plugins_dir,
     project_root=project_root,
-    logger=None
+    logger=None,
+    config_manager=config_manager
 )
 
 # Initialize operation queue for plugin operations

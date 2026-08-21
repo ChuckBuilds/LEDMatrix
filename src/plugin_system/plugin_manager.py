@@ -71,7 +71,8 @@ class PluginManager:
         self.plugin_loader = PluginLoader(logger=self.logger)
         self.plugin_executor = PluginExecutor(default_timeout=30.0, logger=self.logger)
         self.state_manager = PluginStateManager(logger=self.logger)
-        self.schema_manager = SchemaManager(plugins_dir=self.plugins_dir, logger=self.logger)
+        self.schema_manager = SchemaManager(plugins_dir=self.plugins_dir, logger=self.logger,
+                                           config_manager=self.config_manager)
         
         # Lock protecting plugin_manifests and plugin_directories from
         # concurrent mutation (background reconciliation) and reads (requests).
