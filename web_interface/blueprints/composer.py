@@ -213,6 +213,16 @@ def _aligned_x_expr(x_base_expr: str, text_align: str, char_count: int, char_w: 
     return x_base_expr
 
 
+#: Element types manager.py.j2 has a drawing branch for. Kept next to the
+#: preprocessor because the two must agree: a type here with no branch emits an
+#: empty block, and a type with a branch but missing here is silently dropped.
+_RENDERABLE_ELEMENT_TYPES = frozenset({
+    'text', 'dynamic_text', 'clock', 'countdown', 'rectangle', 'arc',
+    'ellipse', 'pixel', 'rounded_rectangle', 'pips', 'sparkline', 'gauge',
+    'marquee', 'progress_bar',
+})
+
+
 def _preprocess_elements(elements: list) -> list:
     """Expand raw element dicts into template-ready dicts with anchor expressions.
 
@@ -229,6 +239,16 @@ def _preprocess_elements(elements: list) -> list:
 
         # Section elements are layer-list annotations only — no canvas output
         if t == 'section':
+            continue
+
+        # A type the template has no branch for still gets its breakpoint and
+        # blink wrappers emitted, and those would open an `if` with nothing in
+        # it -- ast.parse then fails and the caller is told only "Generated
+        # code has a syntax error". Drop it here instead. The template also
+        # emits a `pass` fallback, so a type added to the canvas before its
+        # branch exists degrades to a no-op rather than a broken plugin.
+        if t not in _RENDERABLE_ELEMENT_TYPES:
+            logger.info("composer: skipping element type %r with no template branch", t)
             continue
 
         x_anchor = el.get('xAnchor') or None

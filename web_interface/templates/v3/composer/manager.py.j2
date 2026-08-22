@@ -288,6 +288,8 @@ class {{ class_name }}(BasePlugin):
 {{ pi }}        [_pb_x, _pb_y, _pb_x + _pb_fill_w, _pb_y + {{ el.bar_height }}],
 {{ pi }}        fill={{ el.fill_tuple }},
 {{ pi }}    )
+{% else %}
+{{ pi }}pass  # element type "{{ el.type }}" draws nothing
 {% endif %}
 {% endfor %}
             # ── End elements ───────────────────────────────────────────────
