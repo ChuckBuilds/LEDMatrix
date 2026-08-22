@@ -597,7 +597,7 @@ def save_dim_schedule_config():
                 dim_brightness = 30
             else:
                 dim_brightness = int(dim_brightness_raw)
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, OverflowError):
             return error_response(
                 ErrorCode.VALIDATION_ERROR,
                 "dim_brightness must be an integer between 0 and 100",
@@ -797,7 +797,7 @@ def save_main_config():
                 }), 400
             try:
                 target_fps = int(raw_target_fps)
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, OverflowError):
                 return jsonify({
                     'status': 'error',
                     'message': "Invalid value for target_fps: must be an integer"
@@ -867,7 +867,7 @@ def save_main_config():
                     mux_val = int(data['multiplexing'])
                     if mux_val < 0 or mux_val > 22:
                         return jsonify({'status': 'error', 'message': f"Invalid multiplexing value '{data['multiplexing']}'. Must be an integer from 0 to 22."}), 400
-                except (ValueError, TypeError):
+                except (ValueError, TypeError, OverflowError):
                     return jsonify({'status': 'error', 'message': f"Invalid multiplexing value '{data['multiplexing']}'. Must be an integer from 0 to 22."}), 400
 
             # Validate pixel_mapper_config (free-form mapper string, e.g. "U-mapper;Rotate:90")
@@ -885,7 +885,7 @@ def save_main_config():
                     rat_val = int(data['row_address_type'])
                     if rat_val < 0 or rat_val > 4:
                         return jsonify({'status': 'error', 'message': f"Invalid row_address_type '{data['row_address_type']}'. Must be an integer from 0 to 4."}), 400
-                except (ValueError, TypeError):
+                except (ValueError, TypeError, OverflowError):
                     return jsonify({'status': 'error', 'message': f"Invalid row_address_type '{data['row_address_type']}'. Must be an integer from 0 to 4."}), 400
 
             # Handle hardware settings
@@ -910,7 +910,7 @@ def save_main_config():
                     if rp1_val not in (0, 1):
                         return jsonify({'status': 'error', 'message': "rp1_rio must be 0 (PIO) or 1 (RIO)"}), 400
                     current_config['display']['runtime']['rp1_rio'] = rp1_val
-                except (ValueError, TypeError):
+                except (ValueError, TypeError, OverflowError):
                     return jsonify({'status': 'error', 'message': "rp1_rio must be 0 or 1"}), 400
 
             # Handle checkboxes - coerce to bool to ensure proper JSON types
@@ -963,7 +963,7 @@ def save_main_config():
                 copies = None
                 try:
                     copies = int(data['double_sided_copies'])
-                except (ValueError, TypeError):
+                except (ValueError, TypeError, OverflowError):
                     if enabled:
                         return jsonify({'status': 'error', 'message': "Double-sided copies must be an integer"}), 400
                 if copies is not None and not (2 <= copies <= 8):
@@ -1036,7 +1036,7 @@ def save_main_config():
             if data.get('vegas_extend_threshold_screens') not in ('', None):
                 try:
                     screens = float(data['vegas_extend_threshold_screens'])
-                except (ValueError, TypeError):
+                except (ValueError, TypeError, OverflowError):
                     return jsonify({
                         'status': 'error',
                         'message': "Invalid value for vegas_extend_threshold_screens: "
@@ -1053,7 +1053,7 @@ def save_main_config():
             if data.get('vegas_max_plugin_width_ratio') not in ('', None):
                 try:
                     ratio = float(data['vegas_max_plugin_width_ratio'])
-                except (ValueError, TypeError):
+                except (ValueError, TypeError, OverflowError):
                     return jsonify({
                         'status': 'error',
                         'message': "Invalid value for vegas_max_plugin_width_ratio: "
@@ -1101,7 +1101,7 @@ def save_main_config():
                         continue
                     try:
                         int_value = int(raw_value)
-                    except (ValueError, TypeError):
+                    except (ValueError, TypeError, OverflowError):
                         return jsonify({
                             'status': 'error',
                             'message': f"Invalid value for {field_name}: must be an integer"
@@ -1153,7 +1153,7 @@ def save_main_config():
                     if not (1024 <= port_val <= 65535):
                         return jsonify({'status': 'error', 'message': "sync_port must be between 1024 and 65535"}), 400
                     current_config['sync']['port'] = port_val
-                except (ValueError, TypeError):
+                except (ValueError, TypeError, OverflowError):
                     return jsonify({'status': 'error', 'message': "sync_port must be an integer"}), 400
 
             if "sync_follower_position" in data:
@@ -1197,7 +1197,7 @@ def save_main_config():
                 raw_value = data.pop(field)
                 try:
                     int_value = int(raw_value)
-                except (ValueError, TypeError):
+                except (ValueError, TypeError, OverflowError):
                     return jsonify({'status': 'error',
                                     'message': f"Invalid duration for {field}: must be an integer"}), 400
                 current_config['display']['display_durations'][field] = int_value
@@ -1220,7 +1220,7 @@ def save_main_config():
                     continue
                 try:
                     int_value = int(raw_value)
-                except (ValueError, TypeError):
+                except (ValueError, TypeError, OverflowError):
                     return jsonify({'status': 'error',
                                     'message': f"Invalid duration for mode '{mode_key}': must be an integer"}), 400
                 current_config['display']['display_durations'][mode_key] = int_value
@@ -5118,7 +5118,7 @@ def save_plugin_config():
                                                                 converted_array.append(int(v))
                                                             else:
                                                                 converted_array.append(float(v))
-                                                        except (ValueError, TypeError):
+                                                        except (ValueError, TypeError, OverflowError):
                                                             converted_array.append(v)
                                                     else:
                                                         converted_array.append(v)
@@ -5143,7 +5143,7 @@ def save_plugin_config():
                                                         converted_array.append(int(v))
                                                     else:
                                                         converted_array.append(float(v))
-                                                except (ValueError, TypeError):
+                                                except (ValueError, TypeError, OverflowError):
                                                     converted_array.append(v)
                                             else:
                                                 converted_array.append(v)
@@ -5180,7 +5180,7 @@ def save_plugin_config():
                                                                 converted_array.append(int(v))
                                                             else:
                                                                 converted_array.append(float(v))
-                                                        except (ValueError, TypeError):
+                                                        except (ValueError, TypeError, OverflowError):
                                                             converted_array.append(v)
                                                     else:
                                                         converted_array.append(v)
@@ -5204,7 +5204,7 @@ def save_plugin_config():
                                                         converted_array.append(int(v))
                                                     else:
                                                         converted_array.append(float(v))
-                                                except (ValueError, TypeError):
+                                                except (ValueError, TypeError, OverflowError):
                                                     converted_array.append(v)
                                             else:
                                                 converted_array.append(v)
@@ -5371,7 +5371,7 @@ def save_plugin_config():
                                         if isinstance(v, str):
                                             try:
                                                 converted.append(int(v) if item_type == 'integer' else float(v))
-                                            except (ValueError, TypeError):
+                                            except (ValueError, TypeError, OverflowError):
                                                 converted.append(v)
                                         else:
                                             converted.append(v)
@@ -5496,7 +5496,7 @@ def save_plugin_config():
                             try:
                                 normalized[key] = int(value_stripped)
                                 continue
-                            except (ValueError, TypeError):
+                            except (ValueError, TypeError, OverflowError):
                                 pass
                         elif isinstance(value, (int, float)):
                             normalized[key] = int(value)
@@ -5514,7 +5514,7 @@ def save_plugin_config():
                             try:
                                 normalized[key] = float(value_stripped)
                                 continue
-                            except (ValueError, TypeError):
+                            except (ValueError, TypeError, OverflowError):
                                 pass
                         elif isinstance(value, (int, float)):
                             normalized[key] = float(value)
@@ -5569,7 +5569,7 @@ def save_plugin_config():
                                     try:
                                         normalized_array.append(int(v))
                                         continue
-                                    except (ValueError, TypeError):
+                                    except (ValueError, TypeError, OverflowError):
                                         pass
                                 elif isinstance(v, (int, float)):
                                     normalized_array.append(int(v))
@@ -5579,7 +5579,7 @@ def save_plugin_config():
                                     try:
                                         normalized_array.append(float(v))
                                         continue
-                                    except (ValueError, TypeError):
+                                    except (ValueError, TypeError, OverflowError):
                                         pass
                                 elif isinstance(v, (int, float)):
                                     normalized_array.append(float(v))
@@ -5595,7 +5595,7 @@ def save_plugin_config():
                             if isinstance(v, str):
                                 try:
                                     normalized_array.append(int(v))
-                                except (ValueError, TypeError):
+                                except (ValueError, TypeError, OverflowError):
                                     normalized_array.append(v)
                             elif isinstance(v, (int, float)):
                                 normalized_array.append(int(v))
@@ -5609,7 +5609,7 @@ def save_plugin_config():
                             if isinstance(v, str):
                                 try:
                                     normalized_array.append(float(v))
-                                except (ValueError, TypeError):
+                                except (ValueError, TypeError, OverflowError):
                                     normalized_array.append(v)
                             else:
                                 normalized_array.append(v)
@@ -5632,7 +5632,7 @@ def save_plugin_config():
                     if isinstance(value, str):
                         try:
                             normalized[key] = int(value)
-                        except (ValueError, TypeError):
+                        except (ValueError, TypeError, OverflowError):
                             normalized[key] = value
                     else:
                         normalized[key] = value
@@ -5641,7 +5641,7 @@ def save_plugin_config():
                     if isinstance(value, str):
                         try:
                             normalized[key] = float(value)
-                        except (ValueError, TypeError):
+                        except (ValueError, TypeError, OverflowError):
                             normalized[key] = value
                     else:
                         normalized[key] = value
@@ -6779,7 +6779,7 @@ def get_font_preview() -> tuple[Response, int] | Response:
         # Safe integer parsing for size
         try:
             size = int(request.args.get('size', 12))
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, OverflowError):
             return jsonify({'status': 'error', 'message': 'Invalid font size'}), 400
 
         if not font_filename:
@@ -8360,7 +8360,7 @@ def clear_old_errors():
                     context={'provided_value': raw_max_age},
                     status_code=400
                 )
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, OverflowError):
             return error_response(
                 error_code=ErrorCode.INVALID_INPUT,
                 message="max_age_hours must be a valid integer",
