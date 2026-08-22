@@ -480,7 +480,11 @@ function composerApp() {
       this.currentPreset = `${w}×${h}`;
       this.SCALE = w <= 64 ? 6 : w <= 128 ? 4 : 2;
       this._applyScale();
-      if (!opts.silent) this.render();
+      if (!opts.silent) {
+        this.isDirty = true;
+        this._snapshot();
+        this.render();
+      }
     },
 
     changePreset(presetLabel, opts = {}) {
@@ -496,7 +500,11 @@ function composerApp() {
         canvas.style.width  = (this.MATRIX_W * this.SCALE) + 'px';
         canvas.style.height = (this.MATRIX_H * this.SCALE) + 'px';
       }
-      if (!opts.silent) this.render();
+      if (!opts.silent) {
+        this.isDirty = true;
+        this._snapshot();
+        this.render();
+      }
     },
 
     // ── Rendering ─────────────────────────────────────────────────────
@@ -626,6 +634,10 @@ function composerApp() {
       this.currentPreset = `${w}×${h}`;
       this.SCALE = w <= 64 ? 6 : w <= 128 ? 4 : 2;
       this._applyScale();
+      // currentPreset is part of the snapshot; a custom size set here was
+      // otherwise dropped on reload and could not be undone.
+      this.isDirty = true;
+      this._snapshot();
       this._setStatus(`Canvas set to ${w}×${h}`, 'info');
     },
     zoomFit() {
@@ -645,6 +657,11 @@ function composerApp() {
         g: parseInt(hex.slice(3, 5), 16),
         b: parseInt(hex.slice(5, 7), 16),
       };
+      // _snapshot serialises metadata and is the only caller of
+      // _debouncedAutosave, so without this the background colour was lost on
+      // reload and could not be undone. Same defect as onColorChange.
+      this.isDirty = true;
+      this._snapshot();
       this.render();
     },
 

@@ -208,12 +208,16 @@ window.ComposerCanvas = (() => {
         return { x: ax, y: ay, w: el.width, h: el.height };
       case 'pixel':
         return { x: ax, y: ay, w: 1, h: 1 };
-      case 'line':
+      case 'line': {
+        // Same anchor offset the draw path applies, or the hit box sits where
+        // the line used to be.
+        const dx = ax - el.x0, dy = ay - el.y0;
         return {
-          x: Math.min(el.x0, el.x1), y: Math.min(el.y0, el.y1),
+          x: Math.min(el.x0, el.x1) + dx, y: Math.min(el.y0, el.y1) + dy,
           w: Math.max(1, Math.abs(el.x1 - el.x0)),
           h: Math.max(1, Math.abs(el.y1 - el.y0)),
         };
+      }
       case 'divider':
         return el.orientation === 'horizontal'
           ? { x: 0,  y: ay, w: matrixW, h: 1 }
@@ -384,7 +388,9 @@ window.ComposerCanvas = (() => {
           }
           if (el.hasOutline) {
             ctx.strokeStyle = `rgb(${el.outR},${el.outG},${el.outB})`;
-            ctx.lineWidth = 1;
+            // 1 LED pixel, not 1 canvas pixel: at SCALE>1 an unscaled stroke
+            // renders thinner than the geometry it outlines.
+            ctx.lineWidth = s;
             ctx.strokeRect(rx, ry, rw, rh);
           }
           break;
@@ -393,8 +399,11 @@ window.ComposerCanvas = (() => {
         case 'ellipse': {
           const cx = (ax + el.width / 2) * s;
           const cy = (ay + el.height / 2) * s;
-          const rx = (el.width / 2) * s;
-          const ry = (el.height / 2) * s;
+          const lwPx = s;  // 1 LED pixel
+          // Inset by half the stroke, which straddles the path, so the outline
+          // stays within the element's bounds.
+          const rx = Math.max(0, (el.width / 2) * s - (el.hasOutline ? lwPx / 2 : 0));
+          const ry = Math.max(0, (el.height / 2) * s - (el.hasOutline ? lwPx / 2 : 0));
           ctx.beginPath();
           ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
           if (el.hasFill) {
@@ -403,7 +412,7 @@ window.ComposerCanvas = (() => {
           }
           if (el.hasOutline) {
             ctx.strokeStyle = `rgb(${el.outR},${el.outG},${el.outB})`;
-            ctx.lineWidth = 1;
+            ctx.lineWidth = lwPx;
             ctx.stroke();
           }
           break;
@@ -412,15 +421,16 @@ window.ComposerCanvas = (() => {
         case 'arc': {
           const cx = (ax + el.width / 2) * s;
           const cy = (ay + el.height / 2) * s;
-          const rx = (el.width / 2) * s;
-          const ry = (el.height / 2) * s;
+          const lwPx = Math.max(1, el.lineWidth || 2) * s;
+          const rx = Math.max(0, (el.width / 2) * s - lwPx / 2);
+          const ry = Math.max(0, (el.height / 2) * s - lwPx / 2);
           // PIL: 0°=right, clockwise. Canvas: same with anticlockwise=false
           const startRad = (el.startAngle ?? 0) * Math.PI / 180;
           const endRad = (el.endAngle ?? 270) * Math.PI / 180;
           ctx.beginPath();
           ctx.ellipse(cx, cy, rx, ry, 0, startRad, endRad, false);
           ctx.strokeStyle = `rgb(${el.r},${el.g},${el.b})`;
-          ctx.lineWidth = Math.max(1, el.lineWidth || 2);
+          ctx.lineWidth = lwPx;
           ctx.stroke();
           break;
         }
@@ -443,18 +453,21 @@ window.ComposerCanvas = (() => {
           }
           if (el.hasOutline) {
             ctx.strokeStyle = `rgb(${el.outR},${el.outG},${el.outB})`;
-            ctx.lineWidth = 1;
+            ctx.lineWidth = s;
             ctx.stroke();
           }
           break;
         }
 
         case 'line': {
+          // ax/ay resolve from el.x0 for a line, so this is the anchor offset.
+          // Without it a line stayed put while every other type moved.
+          const dx = ax - el.x0, dy = ay - el.y0;
           ctx.strokeStyle = `rgb(${el.r},${el.g},${el.b})`;
-          ctx.lineWidth = Math.max(1, el.lineWidth || 1);
+          ctx.lineWidth = Math.max(1, el.lineWidth || 1) * s;
           ctx.beginPath();
-          ctx.moveTo(el.x0 * s, el.y0 * s);
-          ctx.lineTo(el.x1 * s, el.y1 * s);
+          ctx.moveTo((el.x0 + dx) * s, (el.y0 + dy) * s);
+          ctx.lineTo((el.x1 + dx) * s, (el.y1 + dy) * s);
           ctx.stroke();
           break;
         }
@@ -462,7 +475,7 @@ window.ComposerCanvas = (() => {
         case 'divider': {
           const isH = (el.orientation || 'horizontal') === 'horizontal';
           ctx.strokeStyle = `rgb(${el.r},${el.g},${el.b})`;
-          ctx.lineWidth = 1;
+          ctx.lineWidth = s;
           ctx.beginPath();
           if (isH) {
             ctx.moveTo(0, ay * s + 0.5);
@@ -614,7 +627,7 @@ window.ComposerCanvas = (() => {
           }
           if (el.hasOutline) {
             ctx.strokeStyle = `rgb(${el.outR ?? 100},${el.outG ?? 100},${el.outB ?? 100})`;
-            ctx.lineWidth = 1;
+            ctx.lineWidth = s;
             ctx.strokeRect(rx, ry, bw * s, bh * s);
           }
           break;
