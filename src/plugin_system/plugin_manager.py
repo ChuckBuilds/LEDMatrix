@@ -631,6 +631,17 @@ class PluginManager:
         
         return self.load_plugin(plugin_id)
     
+    def discovered_plugin_ids(self) -> set:
+        """Snapshot of the discovered plugin ids, taken under the discovery lock.
+
+        Callers on other threads (the config watcher) must not iterate
+        ``plugin_manifests`` directly: discovery rebuilds it entry by entry, so
+        an unsynchronised reader can see a half-populated mapping or raise
+        "dictionary changed size during iteration".
+        """
+        with self._discovery_lock:
+            return set(self.plugin_manifests)
+
     def get_plugin(self, plugin_id: str) -> Optional[Any]:
         """
         Get a loaded plugin instance by ID.
