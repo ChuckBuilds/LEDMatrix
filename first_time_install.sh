@@ -152,6 +152,8 @@ ASSUME_YES=${LEDMATRIX_ASSUME_YES:-0}
 SKIP_SOUND=${LEDMATRIX_SKIP_SOUND:-0}
 SKIP_PERF=${LEDMATRIX_SKIP_PERF:-0}
 SKIP_REBOOT_PROMPT=${LEDMATRIX_SKIP_REBOOT_PROMPT:-0}
+SKIP_SWAP=${LEDMATRIX_SKIP_SWAP:-0}
+BUILD_JOBS_OVERRIDE=${LEDMATRIX_BUILD_JOBS:-}
 
 usage() {
     cat <<USAGE
@@ -163,11 +165,21 @@ Options:
       --skip-sound          Skip sound module configuration
       --skip-perf           Skip performance tweaks (isolcpus/audio)
       --no-reboot-prompt    Do not prompt for reboot at the end
+      --skip-swap           Never add temporary swap for the C++ build
+      --build-jobs N        Compile the C++ library with N parallel jobs
+                            (default: scaled to available RAM)
   -h, --help                Show this help message and exit
 
 Environment variables (same effect as flags):
   LEDMATRIX_ASSUME_YES=1, RPI_RGB_FORCE_REBUILD=1, LEDMATRIX_SKIP_SOUND=1,
-  LEDMATRIX_SKIP_PERF=1, LEDMATRIX_SKIP_REBOOT_PROMPT=1
+  LEDMATRIX_SKIP_PERF=1, LEDMATRIX_SKIP_REBOOT_PROMPT=1,
+  LEDMATRIX_SKIP_SWAP=1, LEDMATRIX_BUILD_JOBS=N
+
+Low-memory devices:
+  On a Pi with under 2GB of RAM the C++ build is limited to fewer parallel
+  jobs and a temporary swapfile is added for the duration of the build, then
+  removed. Without this the compiler is killed by the kernel out-of-memory
+  killer on 512MB and 1GB models.
 USAGE
 }
 
@@ -178,11 +190,37 @@ while [ $# -gt 0 ]; do
         --skip-sound) SKIP_SOUND=1 ;;
         --skip-perf) SKIP_PERF=1 ;;
         --no-reboot-prompt) SKIP_REBOOT_PROMPT=1 ;;
+        --skip-swap) SKIP_SWAP=1 ;;
+        --build-jobs)
+            shift
+            if [ $# -eq 0 ]; then echo "--build-jobs requires a number"; usage; exit 1; fi
+            BUILD_JOBS_OVERRIDE="$1"
+            ;;
         -h|--help) usage; exit 0 ;;
         *) echo "Unknown option: $1"; usage; exit 1 ;;
     esac
     shift
 done
+
+# Low-memory build helpers (job sizing, temporary swap, OOM detection).
+# Sourced rather than inlined so the sizing logic can be unit-tested; if the
+# file is missing we fall back to the historical behaviour rather than failing
+# the install.
+LOWMEM_LIB="$PROJECT_ROOT_DIR/scripts/install/lib_lowmem.sh"
+LOWMEM_AVAILABLE=0
+if [ -f "$LOWMEM_LIB" ]; then
+    # shellcheck source=scripts/install/lib_lowmem.sh
+    . "$LOWMEM_LIB"
+    LOWMEM_AVAILABLE=1
+else
+    echo "⚠ $LOWMEM_LIB not found; skipping low-memory build protections."
+    lm_remove_build_swap() { return 0; }
+fi
+
+# Remove the temporary build swapfile no matter how the script ends. Step 6
+# tears it down itself; this is the backstop for the error path, since
+# on_error ends in `exit` and EXIT traps still run.
+trap 'lm_remove_build_swap' EXIT
 
 # Helpers
 retry() {
@@ -263,15 +301,144 @@ check_disk_space() {
     fi
 }
 
+# Decide how much memory Step 6's C++ build may use, and say so up front.
+#
+# Sets TOTAL_RAM_MB, TOTAL_SWAP_MB, BUILD_JOBS and LOW_RAM for later steps.
+check_memory() {
+    command -v nproc >/dev/null 2>&1 && CPU_CORES=$(nproc) || CPU_CORES=1
+
+    # Validated up front rather than trusted: a non-numeric value would other-
+    # wise survive as far as an arithmetic test in Step 6 and fail there with a
+    # generic error. This must precede the fallback return below, which also
+    # honours the override.
+    if [ -n "$BUILD_JOBS_OVERRIDE" ]; then
+        if ! echo "$BUILD_JOBS_OVERRIDE" | grep -qE '^[1-9][0-9]*$'; then
+            echo "✗ Invalid build job count: '$BUILD_JOBS_OVERRIDE' (expected a positive integer)"
+            exit 1
+        fi
+    fi
+
+    if [ "$LOWMEM_AVAILABLE" != "1" ]; then
+        TOTAL_RAM_MB=0
+        TOTAL_SWAP_MB=0
+        LOW_RAM=0
+        BUILD_JOBS=${BUILD_JOBS_OVERRIDE:-$CPU_CORES}
+        return 0
+    fi
+
+    TOTAL_RAM_MB=$(lm_total_ram_mb)
+    TOTAL_SWAP_MB=$(lm_total_swap_mb)
+
+    # Test hook: exercise the low-memory path on a machine that has plenty.
+    if [ -n "${LEDMATRIX_FORCE_LOW_RAM:-}" ] && [ "${LEDMATRIX_FORCE_LOW_RAM}" != "0" ]; then
+        TOTAL_RAM_MB="${LEDMATRIX_FORCE_LOW_RAM}"
+        echo "⚠ LEDMATRIX_FORCE_LOW_RAM set: pretending this device has ${TOTAL_RAM_MB}MB of RAM"
+    fi
+
+    LOW_RAM=0
+    if [ "$TOTAL_RAM_MB" -gt 0 ] && [ "$TOTAL_RAM_MB" -lt 2048 ]; then
+        LOW_RAM=1
+    fi
+
+    if [ -n "$BUILD_JOBS_OVERRIDE" ]; then
+        BUILD_JOBS="$BUILD_JOBS_OVERRIDE"
+    else
+        BUILD_JOBS=$(lm_build_jobs "$TOTAL_RAM_MB" "$CPU_CORES")
+    fi
+
+    echo "System memory: ${TOTAL_RAM_MB}MB RAM, ${TOTAL_SWAP_MB}MB swap, ${CPU_CORES} core(s)"
+    if [ "$LOW_RAM" = "1" ]; then
+        echo "⚠ Low-memory device detected."
+        echo "  The rpi-rgb-led-matrix C++ build in Step 6 will use ${BUILD_JOBS} parallel job(s)"
+        echo "  instead of all cores, and a temporary swapfile will be added for the build"
+        echo "  and removed afterwards. Without this the compiler is killed by the kernel"
+        echo "  out-of-memory killer. Expect Step 6 to take 15-25 minutes."
+        if [ "$SKIP_SWAP" = "1" ]; then
+            echo "  Temporary swap is disabled (--skip-swap); the build may still run out of memory."
+        fi
+    else
+        echo "✓ Memory sufficient for the rpi-rgb-led-matrix build (${BUILD_JOBS} parallel job(s))"
+    fi
+}
+
+# Compile and install the rgbmatrix Python package.
+#
+# CMAKE_BUILD_PARALLEL_LEVEL is the setting that actually caps the compile:
+# upstream's pyproject.toml declares no [tool.scikit-build] options, so
+# scikit-build-core drives Ninja through `cmake --build`, which reads this
+# variable. Ninja's own default is nproc+2, i.e. six concurrent cc1plus
+# processes on a 4-core Pi. MAKEFLAGS is ignored by Ninja and is set only to
+# cover the Makefile-generator fallback if ninja-build is somehow absent.
+#
+# BUILD_TMPDIR redirects pip's build tree off tmpfs where applicable — see
+# where it is computed in Step 6.
+run_rgbmatrix_build() {
+    local jobs="$1" out="$2"
+    local pid elapsed=0
+
+    TMPDIR="${BUILD_TMPDIR:-${TMPDIR:-/tmp}}" \
+    CMAKE_BUILD_PARALLEL_LEVEL="$jobs" \
+    MAKEFLAGS="-j${jobs}" \
+        python3 -m pip install --break-system-packages . > "$out" 2>&1 &
+    pid=$!
+
+    # The build's output is captured to a file, so without a heartbeat a serial
+    # compile on a 1GB Pi looks like a 20-minute hang and invites a Ctrl-C.
+    #
+    # Polled at a short interval but reported every 30s: polling at the report
+    # interval instead would add most of that interval to the wall time of
+    # every build, including fast ones on a Pi 4/5.
+    while kill -0 "$pid" 2>/dev/null; do
+        sleep 2
+        elapsed=$((elapsed + 2))
+        if [ "$((elapsed % 30))" -eq 0 ] && kill -0 "$pid" 2>/dev/null; then
+            printf '  ... still compiling (%dm%02ds elapsed)\n' "$((elapsed / 60))" "$((elapsed % 60))"
+        fi
+    done
+
+    wait "$pid"
+}
+
+# Explain a failed rgbmatrix build. The kernel OOM killer writes nothing to the
+# build's own output, which is why this used to be reported as a missing
+# build-tools problem and sent users chasing packages they already had.
+print_rgbmatrix_build_failure() {
+    local out="$1"
+
+    if [ "$LOWMEM_AVAILABLE" = "1" ] && lm_build_failed_on_oom "$out"; then
+        echo "✗ The rpi-rgb-led-matrix build was killed: the system ran out of memory."
+        echo "  This is NOT a missing build-tools problem — the C++ compiler ran out of RAM."
+        echo "  RAM: ${TOTAL_RAM_MB}MB   Swap: $(lm_total_swap_mb)MB   Parallel jobs used: ${BUILD_JOBS}"
+        if [ -n "${LM_SWAP_SKIP_REASON:-}" ]; then
+            echo "  No temporary swap was added: ${LM_SWAP_SKIP_REASON}"
+        fi
+        echo ""
+        echo "  Try one of these, then re-run this script (it resumes at Step 6):"
+        echo "    1. Force a single compile job:"
+        echo "       sudo ./first_time_install.sh --build-jobs 1"
+        echo "    2. Add permanent swap, if the temporary swapfile could not be created:"
+        echo "       sudo apt install -y dphys-swapfile"
+        echo "       sudo sed -i 's/^#\\?CONF_SWAPSIZE=.*/CONF_SWAPSIZE=2048/' /etc/dphys-swapfile"
+        echo "       sudo sed -i 's/^#\\?CONF_MAXSWAP=.*/CONF_MAXSWAP=2048/' /etc/dphys-swapfile"
+        echo "       sudo dphys-swapfile swapoff && sudo dphys-swapfile setup && sudo dphys-swapfile swapon"
+        echo "    3. Free up disk space so a larger swapfile fits: sudo apt clean"
+    else
+        echo "✗ Failed to install rpi-rgb-led-matrix Python package"
+        echo "  Ensure build tools are installed:"
+        echo "  sudo apt install -y python-dev-is-python3 cmake build-essential"
+    fi
+}
+
 echo ""
 echo "This script will perform the following steps:"
-echo "1. Install system dependencies"
+echo "1. Check prerequisites (network, disk, memory) and install system dependencies"
 echo "2. Fix cache permissions"
 echo "3. Fix assets directory permissions"
 echo "3.1. Fix plugin directory permissions"
 echo "4. Ensure configuration files exist"
 echo "5. Install Python project dependencies (requirements.txt)"
 echo "6. Build and install rpi-rgb-led-matrix and test import"
+echo "   (compiles C++; low-memory Pis get temporary swap and a serial build)"
 echo "7. Install web interface dependencies"
 echo "7.5. Install main LED Matrix service"
 echo "8. Install web interface service"
@@ -315,9 +482,16 @@ echo "----------------------------------------"
 # Pre-flight checks before APT operations
 check_network
 check_disk_space
+check_memory
 
-# Update package list
-apt_update
+# Update package list. The one-shot installer refreshes the lists moments
+# before invoking this script and exports LEDMATRIX_APT_UPDATED=1, so skip the
+# duplicate refresh on that path.
+if [ "${LEDMATRIX_APT_UPDATED:-0}" = "1" ]; then
+    echo "Package lists already refreshed by the one-shot installer; skipping apt update."
+else
+    apt_update
+fi
 
 # Install required system packages
 echo "Installing Python packages and dependencies..."
@@ -647,10 +821,6 @@ if [ ! -f "$PROJECT_ROOT_DIR/config/config_secrets.json" ]; then
         echo "⚠ Template config/config_secrets.template.json not found; creating a minimal secrets file"
         cat > "$PROJECT_ROOT_DIR/config/config_secrets.json" <<'EOF'
 {
-    "youtube": {
-        "api_key": "YOUR_YOUTUBE_API_KEY",
-        "channel_id": "YOUR_YOUTUBE_CHANNEL_ID"
-    },
     "github": {
         "api_token": "YOUR_GITHUB_PERSONAL_ACCESS_TOKEN"
     }
@@ -902,29 +1072,66 @@ else
             fi
         fi
 
+        # Add temporary swap on low-memory devices so the compiler survives.
+        CURRENT_STEP="Prepare the low-memory build environment"
+        if [ "$LOWMEM_AVAILABLE" = "1" ] && [ "$SKIP_SWAP" != "1" ]; then
+            lm_ensure_build_swap "$(lm_swap_needed_mb "$TOTAL_RAM_MB" "$TOTAL_SWAP_MB")"
+        elif [ "$SKIP_SWAP" = "1" ]; then
+            LM_SWAP_SKIP_REASON="disabled with --skip-swap"
+        fi
+
+        # pip builds in $TMPDIR. Debian 13 mounts /tmp as tmpfs, so the default
+        # would hold the entire C++ build tree in RAM — competing with the very
+        # compiler we are trying to keep under the memory limit.
+        BUILD_TMPDIR=""
+        if [ "$LOWMEM_AVAILABLE" = "1" ]; then
+            _disk_tmp=$(lm_disk_backed_tmpdir)
+            if [ -n "$_disk_tmp" ]; then
+                BUILD_TMPDIR="$_disk_tmp/ledmatrix-build"
+                # If this fails (a nearly-full disk being the likely cause on
+                # exactly the devices this targets), fall back to the default
+                # rather than pointing the build at a path that does not exist.
+                if mkdir -p "$BUILD_TMPDIR" 2>/dev/null; then
+                    echo "Building in $BUILD_TMPDIR (TMPDIR is memory-backed; keeping the build tree on disk)"
+                else
+                    echo "⚠ Could not create $BUILD_TMPDIR; falling back to the default TMPDIR"
+                    BUILD_TMPDIR=""
+                fi
+            fi
+        fi
+
+        CURRENT_STEP="Build and install rpi-rgb-led-matrix"
         pushd "$PROJECT_ROOT_DIR/rpi-rgb-led-matrix-master" >/dev/null
         echo "Installing rpi-rgb-led-matrix Python package (scikit-build-core + cmake)..."
         echo "  Build deps required: python-dev-is-python3 cmake"
-        echo "  This compiles C++ — may take 2-5 minutes on Pi 4/5..."
+        echo "  Compiling C++ with ${BUILD_JOBS} parallel job(s)..."
+        if [ "$BUILD_JOBS" -le 1 ]; then
+            echo "  Deliberately serial to stay within this device's memory — expect 15-25 minutes."
+        else
+            echo "  This may take 2-5 minutes on a Pi 4/5..."
+        fi
         BUILD_OUTPUT=$(mktemp)
         BUILD_SUCCESS=false
-        if python3 -m pip install --break-system-packages . > "$BUILD_OUTPUT" 2>&1; then
+        if run_rgbmatrix_build "$BUILD_JOBS" "$BUILD_OUTPUT"; then
             BUILD_SUCCESS=true
         fi
         cat "$BUILD_OUTPUT" >> "$LOG_FILE"
         if [ "$BUILD_SUCCESS" != true ]; then
-            echo "✗ Failed to install rpi-rgb-led-matrix Python package"
-            echo "  Ensure build tools are installed:"
-            echo "  sudo apt install -y python-dev-is-python3 cmake build-essential"
+            print_rgbmatrix_build_failure "$BUILD_OUTPUT"
             echo ""
             echo "-- Last 50 lines of build output --"
             tail -n 50 "$BUILD_OUTPUT"
             rm -f "$BUILD_OUTPUT"
+            if [ -n "$BUILD_TMPDIR" ]; then rm -rf "$BUILD_TMPDIR"; fi
             popd >/dev/null
+            lm_remove_build_swap
             exit 1
         fi
         rm -f "$BUILD_OUTPUT"
+        if [ -n "$BUILD_TMPDIR" ]; then rm -rf "$BUILD_TMPDIR"; fi
         popd >/dev/null
+        # Hand the memory back well before Step 14's reboot.
+        lm_remove_build_swap
     else
         echo "✗ rpi-rgb-led-matrix-master directory not found at $PROJECT_ROOT_DIR"
         echo "Failed to initialize submodule or clone repository"
@@ -976,25 +1183,26 @@ else
     cd "$PROJECT_ROOT_DIR"
 
     # Try to install dependencies using the smart installer if available
+    WEB_DEPS_OK=true
     if [ -f "$PROJECT_ROOT_DIR/scripts/install_dependencies_apt.py" ]; then
         echo "Using smart dependency installer..."
         # -u: unbuffered stdout/stderr so output is captured in $LOG_FILE in
         # real time and in order relative to this script's own echo statements
-        python3 -u "$PROJECT_ROOT_DIR/scripts/install_dependencies_apt.py"
-    else
-        echo "Using pip to install dependencies..."
-        if [ -f "$PROJECT_ROOT_DIR/requirements_web_v2.txt" ]; then
-            # --ignore-installed: see the Step 5 web_interface/requirements.txt
-            # install above — same apt/pip RECORD-file conflict applies here.
-            python3 -m pip install --break-system-packages --prefer-binary --ignore-installed -r requirements_web_v2.txt
-        else
-            echo "⚠ requirements_web_v2.txt not found; skipping web dependency install"
+        if ! python3 -u "$PROJECT_ROOT_DIR/scripts/install_dependencies_apt.py"; then
+            WEB_DEPS_OK=false
         fi
+    else
+        echo "Web dependencies already installed from web_interface/requirements.txt in Step 5"
     fi
 
-    # Create marker file to indicate dependencies are installed
-    touch "$PROJECT_ROOT_DIR/.web_deps_installed"
-    echo "✓ Web interface dependencies installed"
+    # Create the marker only when installation actually succeeded, so a
+    # re-run retries instead of silently skipping missing dependencies.
+    if [ "$WEB_DEPS_OK" = true ]; then
+        touch "$PROJECT_ROOT_DIR/.web_deps_installed"
+        echo "✓ Web interface dependencies installed"
+    else
+        echo "⚠ Web interface dependency install reported errors; not creating .web_deps_installed (will retry on next run)"
+    fi
 fi
 echo ""
 
@@ -1211,9 +1419,16 @@ $ACTUAL_USER ALL=(ALL) NOPASSWD: $BASH_PATH $PROJECT_ROOT_DIR/scripts/fix_perms/
 EOF
 if [ -n "$JOURNALCTL_PATH" ]; then
     cat >> /tmp/ledmatrix_web_sudoers << EOF
-$ACTUAL_USER ALL=(ALL) NOPASSWD: $JOURNALCTL_PATH -u ledmatrix.service *
-$ACTUAL_USER ALL=(ALL) NOPASSWD: $JOURNALCTL_PATH -u ledmatrix *
-$ACTUAL_USER ALL=(ALL) NOPASSWD: $JOURNALCTL_PATH -t ledmatrix *
+# NOEXEC, because these rules end in a wildcard and journalctl starts a pager
+# when its output is a terminal. From that pager (less) a "!sh" is a root
+# shell -- the standard journalctl escalation. The web interface always passes
+# --no-pager, so nothing here needs it, but the rule cannot require a flag that
+# sits in the middle of the command line. NOEXEC stops the command executing
+# another program at all, which closes the hole without depending on wildcard
+# matching subtleties.
+$ACTUAL_USER ALL=(ALL) NOPASSWD:NOEXEC: $JOURNALCTL_PATH -u ledmatrix.service *
+$ACTUAL_USER ALL=(ALL) NOPASSWD:NOEXEC: $JOURNALCTL_PATH -u ledmatrix *
+$ACTUAL_USER ALL=(ALL) NOPASSWD:NOEXEC: $JOURNALCTL_PATH -t ledmatrix *
 EOF
 fi
 
@@ -1272,27 +1487,54 @@ if [ -f "$PROJECT_ROOT_DIR/config/config.json" ]; then
 fi
 
 # Set proper permissions for secrets file (restrictive: owner rw, group r)
-# If service runs as root, set ownership to root so it can read as owner
-# Otherwise, use ACTUAL_USER and rely on group membership
+# Owned by whoever WRITES the file, which is the web interface.
+#
+# This used to read the User= of ledmatrix.service — the display service —
+# and, finding root, hand the file to root:ledmatrix 640. But the display
+# service only ever reads secrets, and root can read any file regardless of
+# mode. The account that *writes* them is the web interface: it saves config
+# edits and performs backup restores, and it deliberately does not run as root
+# (a web server should not). So a root-owned, group-read-only file left the web
+# UI unable to write its own secrets, and restoring a backup failed with
+# "Permission denied: config_secrets.json" while every other file in the same
+# backup restored fine.
+#
+# Owning by the writer keeps the tighter 640 rather than loosening to
+# group-writable, and root still reads it as superuser.
 if [ -f "$PROJECT_ROOT_DIR/config/config_secrets.json" ]; then
-    # Check if service runs as root (from service file or template)
-    SERVICE_USER="root"
-    if [ -f "/etc/systemd/system/ledmatrix.service" ]; then
-        SERVICE_USER=$(grep "^User=" /etc/systemd/system/ledmatrix.service | cut -d'=' -f2 || echo "root")
-    elif [ -f "$PROJECT_ROOT_DIR/systemd/ledmatrix.service" ]; then
-        SERVICE_USER=$(grep "^User=" "$PROJECT_ROOT_DIR/systemd/ledmatrix.service" | cut -d'=' -f2 || echo "root")
+    # The web service is the writer; fall back to the display service, then to
+    # the installing user, so an unusual layout still lands somewhere sensible.
+    SECRETS_OWNER=""
+    for unit in "/etc/systemd/system/ledmatrix-web.service" \
+                "$PROJECT_ROOT_DIR/systemd/ledmatrix-web.service"; do
+        if [ -f "$unit" ]; then
+            SECRETS_OWNER=$(grep -m1 "^User=" "$unit" | cut -d'=' -f2)
+            [ -n "$SECRETS_OWNER" ] && break
+        fi
+    done
+    if [ -z "$SECRETS_OWNER" ]; then
+        SECRETS_OWNER="$ACTUAL_USER"
     fi
-    
-    if [ "$SERVICE_USER" = "root" ]; then
-        # Service runs as root - set ownership to root so it can read as owner
-        chown "root:$LEDMATRIX_GROUP" "$PROJECT_ROOT_DIR/config/config_secrets.json" || true
-        echo "✓ Secrets file permissions set (root:ledmatrix for root service)"
-    else
-        # Service runs as regular user - use ACTUAL_USER and rely on group membership
-        chown "$ACTUAL_USER:$LEDMATRIX_GROUP" "$PROJECT_ROOT_DIR/config/config_secrets.json" || true
-        echo "✓ Secrets file permissions set ($ACTUAL_USER:ledmatrix)"
+    SECRETS_FILE="$PROJECT_ROOT_DIR/config/config_secrets.json"
+    # A root-owned file is only correct when the writer really is root.
+    if ! chown "$SECRETS_OWNER:$LEDMATRIX_GROUP" "$SECRETS_FILE"; then
+        echo "✗ ERROR: Failed to set ownership on $SECRETS_FILE to $SECRETS_OWNER:$LEDMATRIX_GROUP" >&2
+        echo "  Try: sudo chown $SECRETS_OWNER:$LEDMATRIX_GROUP $SECRETS_FILE" >&2
+        exit 1
     fi
-    chmod 640 "$PROJECT_ROOT_DIR/config/config_secrets.json"
+    if ! chmod 640 "$SECRETS_FILE"; then
+        echo "✗ ERROR: Failed to set permissions on $SECRETS_FILE to 640" >&2
+        echo "  Try: sudo chmod 640 $SECRETS_FILE" >&2
+        exit 1
+    fi
+    ACTUAL_OWNERSHIP=$(stat -c '%U:%G' "$SECRETS_FILE" 2>/dev/null || echo "unknown")
+    ACTUAL_MODE=$(stat -c '%a' "$SECRETS_FILE" 2>/dev/null || echo "unknown")
+    if [ "$ACTUAL_OWNERSHIP" != "$SECRETS_OWNER:$LEDMATRIX_GROUP" ] || [ "$ACTUAL_MODE" != "640" ]; then
+        echo "✗ ERROR: $SECRETS_FILE ended up as $ACTUAL_OWNERSHIP mode $ACTUAL_MODE, expected $SECRETS_OWNER:$LEDMATRIX_GROUP mode 640" >&2
+        echo "  The web interface may be unable to read or write config_secrets.json." >&2
+        exit 1
+    fi
+    echo "✓ Secrets file owned by the web service user ($SECRETS_OWNER:$LEDMATRIX_GROUP, mode 640)"
 fi
 
 # Set proper permissions for YTM auth file (readable by all users including root service)
@@ -1451,6 +1693,94 @@ elif [ -f "$CMDLINE_FILE" ]; then
     fi
 else
     echo "✗ $CMDLINE_FILE not found; skipping isolcpus optimization"
+fi
+
+# Enable the memory cgroup controller (idempotent).
+# The Pi firmware boots with cgroup_disable=memory, so systemd's MemoryMax= is
+# accepted and silently ignored — the display service then has no ceiling, and
+# a runaway takes the whole board down (sshd can no longer fork, the panel goes
+# dark) rather than just restarting the one service.
+if [ "$SKIP_PERF" != "1" ] && [ -f "$CMDLINE_FILE" ]; then
+    # Both parameters are required for the memory controller, and they can get
+    # separated -- an image, another tool or a half-applied earlier run can
+    # leave one without the other. Checking only cgroup_enable=memory would
+    # report success while MemoryMax= silently does nothing, so each is checked
+    # and appended independently.
+    cgroup_missing=""
+    for cgroup_param in cgroup_enable=memory cgroup_memory=1; do
+        if ! grep -qw "$cgroup_param" "$CMDLINE_FILE"; then
+            cgroup_missing="$cgroup_missing $cgroup_param"
+        fi
+    done
+    if [ -z "$cgroup_missing" ]; then
+        echo "cgroup memory parameters already present in $CMDLINE_FILE"
+    else
+        echo "Adding${cgroup_missing} to $CMDLINE_FILE..."
+        cp "$CMDLINE_FILE" "$CMDLINE_FILE.bak" 2>/dev/null || true
+        # The kernel command line must stay on one line.
+        sed -i "1 s|\$|${cgroup_missing}|" "$CMDLINE_FILE"
+        echo "  Takes effect after reboot. Verify with:"
+        echo "    grep memory /sys/fs/cgroup/cgroup.controllers"
+    fi
+fi
+
+# Persist the journal (idempotent).
+# These images default to volatile storage: journald keeps everything in /run
+# (tmpfs), so every reboot destroys the logs — including the ones that would
+# explain why the board rebooted. Capped so an SD card is not worn out by logs.
+# A non-empty /var/log/journal does not prove journald is configured the way
+# this needs: the directory survives a switch back to volatile storage, and it
+# says nothing about whether a size cap is set. Read the effective
+# configuration instead, and only write the keys the user has not set
+# themselves so an explicit local limit is preserved.
+journald_effective() {
+    # systemd-analyze merges journald.conf with every drop-in; grep is the
+    # fallback for images that ship without it.
+    if command -v systemd-analyze >/dev/null 2>&1 &&
+       systemd-analyze cat-config systemd/journald.conf >/dev/null 2>&1; then
+        systemd-analyze cat-config systemd/journald.conf 2>/dev/null
+    else
+        cat /etc/systemd/journald.conf /etc/systemd/journald.conf.d/*.conf 2>/dev/null
+    fi
+}
+journald_conf="$(journald_effective)"
+journald_storage="$(printf '%s\n' "$journald_conf" | grep -E '^[[:space:]]*Storage=' | tail -n1 | cut -d= -f2 | tr -d '[:space:]')"
+journald_cap="$(printf '%s\n' "$journald_conf" | grep -E '^[[:space:]]*SystemMaxUse=' | tail -n1 | cut -d= -f2 | tr -d '[:space:]')"
+
+if [ "$journald_storage" = "persistent" ] && [ -n "$journald_cap" ]; then
+    echo "Persistent journald storage already configured (SystemMaxUse=$journald_cap)"
+else
+    echo "Enabling persistent journald storage..."
+    mkdir -p /etc/systemd/journald.conf.d
+    {
+        echo "# Installed by LEDMatrix first_time_install.sh"
+        echo "[Journal]"
+        echo "Storage=persistent"
+        if [ -n "$journald_cap" ]; then
+            echo "# SystemMaxUse left to your existing setting ($journald_cap)"
+        else
+            # Capped so logs cannot wear out or fill an SD card.
+            echo "SystemMaxUse=64M"
+        fi
+    } > /etc/systemd/journald.conf.d/ledmatrix-persistent.conf
+    mkdir -p /var/log/journal
+    systemd-tmpfiles --create --prefix /var/log/journal >/dev/null 2>&1 || true
+    systemctl restart systemd-journald >/dev/null 2>&1 || true
+
+    # Drop-ins are applied in lexical order, so a locally added file that sorts
+    # after ledmatrix-persistent.conf (zz-local.conf and friends) still wins.
+    # Writing the file is not evidence it took effect -- re-read and say so
+    # plainly rather than reporting success we cannot confirm.
+    journald_now="$(journald_effective | grep -E '^[[:space:]]*Storage=' | tail -n1 | cut -d= -f2 | tr -d '[:space:]')"
+    if [ "$journald_now" = "persistent" ]; then
+        echo "  Persistent journald storage active"
+    else
+        echo "  WARNING: journald storage is still '${journald_now:-unset}' after"
+        echo "  writing /etc/systemd/journald.conf.d/ledmatrix-persistent.conf."
+        echo "  Another drop-in that sorts later is overriding it. Check:"
+        echo "    systemd-analyze cat-config systemd/journald.conf | grep -n Storage="
+        echo "  Logs will not survive a reboot until that is resolved."
+    fi
 fi
 
 # Ensure dtparam=audio=off in config.txt (idempotent)

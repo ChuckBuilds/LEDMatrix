@@ -143,6 +143,12 @@ def mask_secret_fields(config: Dict[str, Any], schema_properties: Dict[str, Any]
     return result
 
 
+#: What a masked secret looks like on the wire. Named because the write path
+#: has to recognise it coming back: a client that renders the mask and posts
+#: it unchanged must not store the mask as if it were the secret.
+SECRET_MASK = '\u2022' * 8
+
+
 def mask_all_secret_values(config: Dict[str, Any]) -> Dict[str, Any]:
     """Blanket-mask every non-empty value in a secrets config dict.
 
@@ -156,15 +162,25 @@ def mask_all_secret_values(config: Dict[str, Any]) -> Dict[str, Any]:
     Returns:
         A copy with all real values replaced by ``'••••••••'``.
     """
-    masked: Dict[str, Any] = {}
-    for k, v in config.items():
-        if isinstance(v, dict):
-            masked[k] = mask_all_secret_values(v)
-        elif v not in (None, '') and not (isinstance(v, str) and v.startswith('YOUR_')):
-            masked[k] = '••••••••'
-        else:
-            masked[k] = v
-    return masked
+    return {k: _mask_value(v) for k, v in config.items()}
+
+
+def _mask_value(value: Any) -> Any:
+    """Mask one value, recursing through dicts and lists.
+
+    A list used to be masked as though it were a scalar, so
+    ``accounts: [{"name": "a", "token": "..."}]`` came back as a single
+    ``'••••••••'``. Nothing leaked, but the caller could no longer see how
+    many entries there were or any of their non-secret fields, and the raw
+    editor was shown a string where the file holds an array.
+    """
+    if isinstance(value, dict):
+        return {k: _mask_value(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_mask_value(item) for item in value]
+    if value in (None, '') or (isinstance(value, str) and value.startswith('YOUR_')):
+        return value
+    return SECRET_MASK
 
 
 def remove_empty_secrets(secrets: Dict[str, Any]) -> Dict[str, Any]:
@@ -189,3 +205,52 @@ def remove_empty_secrets(secrets: Dict[str, Any]) -> Dict[str, Any]:
         elif v is not None and not (isinstance(v, str) and v.strip() == ''):
             result[k] = v
     return result
+
+
+def strip_masked_values(secrets: Dict[str, Any]) -> Dict[str, Any]:
+    """Remove values a client echoed back rather than changed.
+
+    The counterpart to :func:`mask_all_secret_values`. A client that GETs the
+    masked secrets, edits one field and POSTs the whole object back is sending
+    ``SECRET_MASK`` for every field it did not touch. Storing those would
+    replace each untouched credential with eight bullet characters.
+
+    Drops the mask and, like :func:`remove_empty_secrets`, blank values -- so
+    the caller can merge the result onto what is already stored and have
+    "unchanged" mean unchanged. Empty nested dicts are pruned.
+    """
+    result: Dict[str, Any] = {}
+    for k, v in secrets.items():
+        if isinstance(v, dict):
+            nested = strip_masked_values(v)
+            if nested:
+                result[k] = nested
+        elif isinstance(v, list):
+            # A list is merged by replacement, not element by element -- there
+            # is no identity to match entries on -- so a list that still holds
+            # a mask cannot be merged safely: keeping it would store bullets,
+            # and keeping the submitted entries alone would drop whichever the
+            # client did not send back. Dropping the key leaves the stored
+            # list untouched, which is what an untouched list should do.
+            #
+            # The consequence, deliberately: editing one secret inside a list
+            # through this endpoint requires sending real values for all of
+            # them. Sending some masks leaves the whole list as it was.
+            if not _contains_mask(v):
+                result[k] = v
+        elif v is None:
+            continue
+        elif isinstance(v, str) and (v.strip() == '' or v == SECRET_MASK):
+            continue
+        else:
+            result[k] = v
+    return result
+
+
+def _contains_mask(value: Any) -> bool:
+    """True when a mask sentinel survives anywhere inside ``value``."""
+    if isinstance(value, dict):
+        return any(_contains_mask(v) for v in value.values())
+    if isinstance(value, list):
+        return any(_contains_mask(item) for item in value)
+    return value == SECRET_MASK

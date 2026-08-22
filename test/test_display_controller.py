@@ -15,13 +15,6 @@ class TestDisplayControllerInitialization:
         assert test_display_controller.plugin_manager is not None
         assert test_display_controller.available_modes == []
 
-    @pytest.mark.skip(reason="No assertions; init logic is covered by test_init_success and fixture setup")
-    def test_plugin_discovery_and_loading(self, test_display_controller):
-        """Test plugin discovery and loading during initialization."""
-        pm = test_display_controller.plugin_manager
-        pm.discover_plugins.return_value = ["plugin1", "plugin2"]
-        pm.get_plugin.return_value = MagicMock()
-
 
 class TestDisplayControllerModeRotation:
     """Test display mode rotation logic."""
@@ -345,31 +338,48 @@ class TestDisplayControllerSchedule:
     """Test schedule management."""
     
     def test_schedule_disabled(self, test_display_controller):
-        """Test when schedule is disabled."""
+        """schedule.enabled=False keeps the display active even outside the
+        configured window. (This test used to patch config_service, which
+        _check_schedule never reads — it asserted the init default.)"""
         controller = test_display_controller
-        schedule_config = {"schedule": {"enabled": False}}
-        with patch.object(controller.config_service, 'get_config', return_value=schedule_config):
+        controller.config['schedule'] = {
+            "enabled": False,
+            "start_time": "09:00",
+            "end_time": "17:00",
+        }
+        controller._schedule_checked_minute = None
+        controller._tz = None
+        controller.is_display_active = False  # prove the method flips it back
+
+        with patch('src.display_controller.datetime') as mock_datetime:
+            mock_datetime.now.return_value.strftime.return_value.lower.return_value = "monday"
+            mock_datetime.now.return_value.time.return_value = datetime.strptime("20:00", "%H:%M").time()
+            mock_datetime.strptime = datetime.strptime
+
             controller._check_schedule()
             assert controller.is_display_active is True
 
     def test_active_hours(self, test_display_controller):
-        """Test active hours check."""
+        """A time inside the window activates the display. (This test used
+        to patch config_service, which _check_schedule never reads — it
+        asserted the init default.)"""
         controller = test_display_controller
+        controller.config['schedule'] = {
+            "enabled": True,
+            "start_time": "09:00",
+            "end_time": "17:00",
+        }
+        controller._schedule_checked_minute = None
+        controller._tz = None
+        controller.is_display_active = False  # prove the method flips it on
+
         with patch('src.display_controller.datetime') as mock_datetime:
             mock_datetime.now.return_value.strftime.return_value.lower.return_value = "monday"
             mock_datetime.now.return_value.time.return_value = datetime.strptime("12:00", "%H:%M").time()
             mock_datetime.strptime = datetime.strptime
 
-            schedule_config = {
-                "schedule": {
-                    "enabled": True,
-                    "start_time": "09:00",
-                    "end_time": "17:00"
-                }
-            }
-            with patch.object(controller.config_service, 'get_config', return_value=schedule_config):
-                controller._check_schedule()
-                assert controller.is_display_active is True
+            controller._check_schedule()
+            assert controller.is_display_active is True
 
     def test_inactive_hours(self, test_display_controller):
         """Test inactive hours check."""

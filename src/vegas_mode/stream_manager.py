@@ -14,7 +14,7 @@ Supports three display modes:
 import logging
 import threading
 import time
-from typing import Optional, List, Dict, Any, Deque, TYPE_CHECKING
+from typing import Optional, List, Dict, Any, Deque, Tuple, TYPE_CHECKING
 from collections import deque
 from dataclasses import dataclass, field
 from PIL import Image
@@ -116,8 +116,11 @@ class StreamManager:
             logger.warning("No plugins available for Vegas scroll")
             return False
 
-        # Prefetch initial content
-        self._prefetch_content(count=min(self.config.buffer_ahead + 1, len(self._ordered_plugins)))
+        # Fill the buffer to a whole cycle's worth of plugins. This used to be
+        # buffer_ahead + 1, which conflated prefetch depth with cycle size and
+        # meant a 20-plugin install only showed 3 plugins before recomposing.
+        self._prefetch_content(
+            count=min(self.config.plugins_per_cycle, len(self._ordered_plugins)))
 
         logger.info(
             "StreamManager initialized with %d plugins, %d segments buffered",
@@ -197,6 +200,47 @@ class StreamManager:
             self._pending_updates[plugin_id] = True
 
         logger.debug("Plugin %s marked for update", plugin_id)
+
+    def invalidate_pending_updates(self) -> List[str]:
+        """
+        Drop cached content for plugins whose data changed, without refetching.
+
+        The continuous-scroll counterpart to :meth:`process_updates`. That method
+        belongs to the swap path: it refetches immediately and merges into the
+        active buffer, which continuous mode bypasses entirely, and doing that
+        work on the render thread would hitch the scroll.
+
+        Here it is enough to clear the caches and let the plugin come round in
+        the rotation, which recomposes it from current data a moment later. Left
+        uncalled, ``_pending_updates`` simply accumulates and no visual ever
+        refreshes — a game that was live last night keeps being drawn as live.
+
+        Returns:
+            The plugin ids whose caches were dropped.
+        """
+        with self._buffer_lock:
+            if not self._pending_updates:
+                return []
+            updated = list(self._pending_updates.keys())
+            self._pending_updates.clear()
+
+        plugins = getattr(self.plugin_manager, 'plugins', {})
+        for plugin_id in updated:
+            try:
+                self.plugin_adapter.invalidate_cache(plugin_id)
+                plugin = plugins.get(plugin_id)
+                if plugin is not None:
+                    self.plugin_adapter.invalidate_plugin_scroll_cache(
+                        plugin, plugin_id)
+            except Exception:  # pylint: disable=broad-except
+                logger.exception(
+                    "[%s] Could not invalidate cached content", plugin_id)
+
+        logger.info(
+            "Vegas: dropped cached content for %d updated plugin(s): %s",
+            len(updated), ', '.join(updated)
+        )
+        return updated
 
     def has_pending_updates(self) -> bool:
         """Check if any plugins have pending updates awaiting processing."""
@@ -362,6 +406,8 @@ class StreamManager:
         )
         logger.info("Ordered plugins: %s", ordered_plugins)
 
+        ordered_plugins = self._apply_priority_weights(ordered_plugins)
+
         # Atomically update shared state under lock to avoid races with prefetchers
         with self._buffer_lock:
             self._ordered_plugins = ordered_plugins
@@ -372,6 +418,143 @@ class StreamManager:
                 self._prefetch_index = 0
 
         logger.info("=" * 60)
+
+    def _plugin_weight(self, plugin_id: str) -> int:
+        """Slots per cycle for one plugin.
+
+        A plugin may answer for itself via get_vegas_priority_weight() -- the
+        only way favorite-team awareness can reach here, since the core can see
+        that a game is live but not whose. When it declines (returns None, the
+        default), live content earns ``live_weight`` and everything else 1.
+        """
+        plugin = None
+        try:
+            plugin = self.plugin_manager.plugins.get(plugin_id)
+        except (AttributeError, TypeError):
+            return 1
+        if plugin is None:
+            return 1
+
+        try:
+            if hasattr(plugin, 'get_vegas_priority_weight'):
+                declared = plugin.get_vegas_priority_weight()
+                if declared is not None:
+                    return max(1, min(10, int(declared)))
+        except Exception:
+            # Deliberately falls through to the core's own live check rather
+            # than demoting to 1. The plugin's weight calculation is broken,
+            # but has_live_priority() and has_live_content() are separate
+            # methods guarded separately below -- a plugin that genuinely has
+            # a live game should still get live_weight for it.
+            logger.exception("[%s] get_vegas_priority_weight() failed", plugin_id)
+
+        try:
+            if (hasattr(plugin, 'has_live_priority')
+                    and hasattr(plugin, 'has_live_content')
+                    and plugin.has_live_priority()
+                    and plugin.has_live_content()):
+                return self.config.live_weight
+        except Exception:
+            logger.exception("[%s] live-content check failed", plugin_id)
+        return 1
+
+    def _apply_priority_weights(self, ordered: List[str]) -> List[str]:
+        """Expand the rotation so weighted plugins take several turns per cycle.
+
+        Smooth Weighted Round-Robin, the same scheduler the sports plugins use
+        to rotate their own games: a plugin of weight N appears N times per
+        cycle, and the repeats are spaced through the cycle rather than
+        clumped, so a live score is never three-in-a-row followed by a long
+        silence.
+
+        Returns the input unchanged when nothing is weighted, which is both the
+        common case and the pre-existing behaviour.
+        """
+        if not ordered or not self.config.live_in_ticker:
+            return ordered
+
+        weights = {pid: self._plugin_weight(pid) for pid in ordered}
+        total = sum(weights.values())
+        if total <= len(ordered):
+            return ordered          # nothing boosted; plain round robin
+
+        current = {pid: 0 for pid in ordered}
+        schedule: List[str] = []
+        for _ in range(total):
+            for pid in ordered:
+                current[pid] += weights[pid]
+            picked = max(current, key=lambda p: current[p])
+            current[picked] -= total
+            schedule.append(picked)
+
+        schedule = self._unclump_seam(schedule)
+
+        boosted = {p: w for p, w in weights.items() if w > 1}
+        logger.info(
+            "Vegas rotation weighted: %d slots for %d plugins (boosted: %s)",
+            len(schedule), len(ordered), boosted)
+        return schedule
+
+    @staticmethod
+    def _unclump_seam(schedule: List[str]) -> List[str]:
+        """Stop the heaviest plugin sitting on both ends of the cycle.
+
+        Smooth Weighted Round-Robin spaces repeats well *within* a pass, but
+        it schedules the heaviest item first and often last too. The strip
+        loops, so those two are neighbours: the one place the marquee shows
+        the same plugin twice running is the seam between cycles.
+
+        Rotating the list cannot fix this. Rotation preserves the cyclic order
+        exactly, so it only moves where the seam is drawn, not the adjacency
+        itself. The trailing entry has to be swapped with one from the middle
+        whose neighbours differ from it, which breaks the pair without
+        creating another.
+
+        Left alone when no such position exists -- a rotation short enough or
+        lopsided enough to have none is one where the plugin is unavoidably
+        adjacent to itself anyway.
+        """
+        if len(schedule) < 3 or schedule[0] != schedule[-1]:
+            return schedule
+
+        repeated = schedule[-1]
+        size = len(schedule)
+
+        def cyclic_doubles(seq) -> int:
+            return sum(1 for i in range(size) if seq[i] == seq[(i + 1) % size])
+
+        def clearance(seq, value) -> int:
+            """Smallest cyclic gap between appearances of `value`."""
+            at = [i for i, v in enumerate(seq) if v == value]
+            if len(at) < 2:
+                return size
+            return min(min((b - a) % size, (a - b) % size)
+                       for i, a in enumerate(at) for b in at[i + 1:])
+
+        # Try each swap and judge the result, rather than reasoning about which
+        # neighbours the two moved elements will end up with. That reasoning is
+        # where the first version went wrong: it guarded the slot `repeated`
+        # moves into but not the one the displaced element lands in, so
+        # ['a','b','c','d','x','y','x','a'] came back ending ['x','x'] -- the
+        # seam duplicate traded for a fresh one.
+        best = None
+        best_clearance = -1
+        for j in range(1, size - 1):
+            candidate = list(schedule)
+            candidate[j], candidate[-1] = candidate[-1], candidate[j]
+            if cyclic_doubles(candidate):
+                continue
+            # Among the repairs that work, prefer the one that leaves the
+            # boosted plugin most evenly spread; taking the first that merely
+            # fits moved a repeat from a gap of 7 into a gap of 2.
+            spread = clearance(candidate, repeated)
+            if spread > best_clearance:
+                best, best_clearance = candidate, spread
+
+        # None exists when the value is unavoidably adjacent to itself -- a
+        # plugin holding most of the slots has to be. Schedule it as it is
+        # rather than refuse.
+        return best if best is not None else schedule
 
     def _prefetch_content(self, count: int = 1) -> None:
         """
@@ -385,7 +568,7 @@ class StreamManager:
                 return
 
             for _ in range(count):
-                if len(self._active_buffer) >= self.config.buffer_ahead + 1:
+                if len(self._active_buffer) >= self.config.plugins_per_cycle:
                     break
 
                 # Ensure index is valid (guard against empty list)
@@ -521,28 +704,117 @@ class StreamManager:
             logger.debug("Refreshed content for %s in staging buffer", plugin_id)
 
     def _ensure_buffer_filled(self) -> None:
-        """Ensure buffer has enough content prefetched."""
-        if len(self._active_buffer) < self.config.buffer_ahead:
-            needed = self.config.buffer_ahead - len(self._active_buffer)
-            self._prefetch_content(count=needed)
+        """
+        Top the buffer back up after segments have been served.
+
+        buffer_ahead is the low-water mark only; plugins_per_cycle is the
+        ceiling and is enforced inside _prefetch_content.
+        """
+        low_water = min(self.config.buffer_ahead, self.config.plugins_per_cycle)
+        if len(self._active_buffer) < low_water:
+            self._prefetch_content(count=low_water - len(self._active_buffer))
 
     def get_all_content_for_composition(self) -> List[Image.Image]:
         """
         Get all buffered content as a flat list of images.
 
-        Used when composing the full scroll image.
         Skips STATIC segments as they don't have images to compose.
+
+        Prefer get_grouped_content_for_composition(): flattening loses the
+        plugin boundaries, which is what tells the compositor where a
+        separator belongs and where it does not.
 
         Returns:
             List of all images in buffer order
         """
         all_images = []
+        for _plugin_id, images in self.get_grouped_content_for_composition():
+            all_images.extend(images)
+        return all_images
+
+    def get_grouped_content_for_composition(self) -> List[Tuple[str, List[Image.Image]]]:
+        """
+        Get buffered content grouped by the plugin that produced it.
+
+        The grouping matters: separator_width is meant to mark the handoff from
+        one plugin to the next, not to sit between every row a single plugin
+        contributes. A per-row ticker like the F1 scoreboard returns over a
+        hundred images that it renders 4px apart internally, so flattening them
+        into one list and applying a uniform gap forced 32px between each of
+        its rows — both inconsistent with how the plugin looks standalone, and
+        a large hidden addition to the width it occupies.
+
+        Skips STATIC segments, which trigger a pause rather than contributing
+        scroll content, and segments left with no images.
+
+        Returns:
+            List of (plugin_id, images) in buffer order
+        """
+        grouped: List[Tuple[str, List[Image.Image]]] = []
         with self._buffer_lock:
             for segment in self._active_buffer:
-                # Skip STATIC segments - they trigger pauses, not scroll content
-                if segment.display_mode != VegasDisplayMode.STATIC:
-                    all_images.extend(segment.images)
-        return all_images
+                if segment.display_mode == VegasDisplayMode.STATIC:
+                    continue
+                if not segment.images:
+                    continue
+                grouped.append((segment.plugin_id, list(segment.images)))
+        return grouped
+
+    def take_next_group(
+        self, count: Optional[int] = None, offscreen_only: bool = False
+    ) -> List[Tuple[str, Optional[List[Image.Image]]]]:
+        """
+        Fetch and hand over the next slice of the rotation.
+
+        For continuous scrolling, where the strip is extended rather than
+        replaced. Advances the rotation index so plugins come round in order
+        across an unbroken strip, and bypasses the active buffer entirely — that
+        buffer exists to stage a *replacement* cycle, which continuous mode has
+        no use for.
+
+        Args:
+            count: Number of plugins to gather, defaulting to plugins_per_cycle
+            offscreen_only: Only use content paths that avoid the shared display
+                canvas, for use off the render thread
+
+        Returns:
+            Ordered list of (plugin_id, images). ``images`` is None when the
+            plugin could not be served under ``offscreen_only``, so the caller
+            can fetch just those on the render thread while keeping the order.
+        """
+        if count is None:
+            count = self.config.plugins_per_cycle
+
+        self.refresh()
+
+        with self._buffer_lock:
+            if not self._ordered_plugins:
+                return []
+            total = len(self._ordered_plugins)
+            ids = []
+            for _ in range(min(max(1, count), total)):
+                ids.append(self._ordered_plugins[self._prefetch_index])
+                self._prefetch_index = (self._prefetch_index + 1) % total
+
+        plugins = getattr(self.plugin_manager, 'plugins', {})
+        group: List[Tuple[str, Optional[List[Image.Image]]]] = []
+
+        for plugin_id in ids:
+            plugin = plugins.get(plugin_id)
+            if not plugin:
+                continue
+            try:
+                images = self.plugin_adapter.get_content(
+                    plugin, plugin_id, offscreen_only=offscreen_only)
+            except Exception:
+                logger.exception("[%s] ERROR fetching content", plugin_id)
+                self.stats['fetch_errors'] += 1
+                continue
+            if images:
+                self.stats['segments_fetched'] += 1
+            group.append((plugin_id, images if images else None))
+
+        return group
 
     def advance_cycle(self) -> None:
         """

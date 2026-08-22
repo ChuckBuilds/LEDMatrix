@@ -13,7 +13,7 @@ import uuid
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from urllib.parse import urlparse, urlunparse
 
 logger = logging.getLogger(__name__)
@@ -21,6 +21,10 @@ logger = logging.getLogger(__name__)
 # Import new infrastructure
 from src.web_interface.api_helpers import success_response, error_response, validate_request_json
 from src.web_interface.errors import ErrorCode
+from src.web_interface.secret_helpers import (find_secret_fields, mask_all_secret_values,
+                                              remove_empty_secrets, separate_secrets,
+                                              strip_masked_values)
+from src.web_interface.error_handler import describe_exception, redact_text
 from src.plugin_system.operation_types import OperationType
 from src.web_interface.validators import (
     validate_file_upload
@@ -119,6 +123,18 @@ def _get_plugin_version(plugin_id: str) -> str:
     except json.JSONDecodeError as e:
         logger.warning("[PluginVersion] Invalid JSON in manifest for %s at %s: %s", plugin_id, manifest_path, e)
     return ''
+
+def _is_plugin_update_available(installed_version: str, latest_version: str) -> bool:
+    """Return True when the registry's ``latest_version`` is strictly newer
+    than the installed version.
+
+    Thin alias for the shared comparator in
+    `src.plugin_system.compatibility.is_update_available` — the store's
+    `update_plugin` uses the same function, so the UI badge and the actual
+    reinstall decision can never disagree.
+    """
+    from src.plugin_system.compatibility import is_update_available
+    return is_update_available(installed_version, latest_version)
 
 def _ensure_cache_manager():
     """Ensure cache manager is initialized."""
@@ -248,18 +264,57 @@ def _stop_display_service():
     result['status'] = status
     return result
 
+#: Field names whose value is a credential. Matched by name because this
+#: endpoint returns the whole config, core keys included, and core config has
+#: no schema to carry x-secret markers.
+_CREDENTIAL_NAME_PARTS = ("password", "passwd", "secret", "token", "api_key",
+                          "apikey", "access_key", "private_key", "client_secret")
+
+
+def _looks_like_a_credential(name: str) -> bool:
+    lowered = name.lower()
+    return any(part in lowered for part in _CREDENTIAL_NAME_PARTS)
+
+
+def _redact_credentials(value):
+    """A copy of `value` with credential-named fields blanked.
+
+    /config/main returned the raw config to anyone who could reach the port,
+    and this interface has no authentication. On one rig that meant a 40-char
+    GitHub token, a 183-char Home Assistant token and five API keys were
+    readable by anything on the LAN.
+
+    The x-secret masking used by the plugin config endpoints does not help
+    here: this endpoint never consults a schema, and core keys such as
+    github.api_token have no schema to mark. Matching on the field name is
+    blunt, but for a whole-config dump the right default is that anything
+    named like a credential does not leave the process.
+
+    Blanked rather than removed, and safe to blank: POST /config/main merges
+    into the loaded config and only writes the keys it was given, so a client
+    that round-trips this response cannot erase a secret it never saw.
+    """
+    if isinstance(value, dict):
+        return {k: ("" if _looks_like_a_credential(k) and not isinstance(v, (dict, list))
+                    else _redact_credentials(v))
+                for k, v in value.items()}
+    if isinstance(value, list):
+        return [_redact_credentials(item) for item in value]
+    return value
+
+
 @api_v3.route('/config/main', methods=['GET'])
 def get_main_config():
-    """Get main configuration"""
+    """Get main configuration, with credentials redacted."""
     try:
         if not api_v3.config_manager:
             return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 500
 
         config = api_v3.config_manager.load_config()
-        return jsonify({'status': 'success', 'data': config})
+        return jsonify({'status': 'success', 'data': _redact_credentials(config)})
     except Exception as e:
         logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/config/schedule', methods=['GET'])
 def get_schedule_config():
@@ -277,9 +332,11 @@ def get_schedule_config():
 
         return success_response(data=schedule_config)
     except Exception as e:
+        logger.error("%s failed", request.path, exc_info=True)
         return error_response(
             ErrorCode.CONFIG_LOAD_FAILED,
             "An error occurred; see logs for details",
+            details=describe_exception(e),
             status_code=500
         )
 
@@ -312,7 +369,7 @@ def save_schedule_config():
         if not api_v3.config_manager:
             return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 500
 
-        data = request.get_json()
+        data = request.get_json(silent=True)
         if not data:
             return jsonify({'status': 'error', 'message': 'No data provided'}), 400
 
@@ -455,7 +512,7 @@ def save_schedule_config():
             ErrorCode.CONFIG_SAVE_FAILED,
             "An error occurred; see logs for details",
 
-            status_code=500
+            status_code=500, details=describe_exception(e)
         )
 
 @api_v3.route('/config/dim-schedule', methods=['GET'])
@@ -503,14 +560,14 @@ def get_dim_schedule_config():
         return error_response(
             ErrorCode.CONFIG_LOAD_FAILED,
             "An error occurred; see logs for details",
-            status_code=500
+            status_code=500, details=describe_exception(e)
         )
     except Exception as e:
         logging.error(f"[DIM SCHEDULE] Unexpected error loading config: {e}", exc_info=True)
         return error_response(
             ErrorCode.CONFIG_LOAD_FAILED,
             "An error occurred; see logs for details",
-            status_code=500
+            status_code=500, details=describe_exception(e)
         )
 
 @api_v3.route('/config/dim-schedule', methods=['POST'])
@@ -520,7 +577,7 @@ def save_dim_schedule_config():
         if not api_v3.config_manager:
             return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 500
 
-        data = request.get_json()
+        data = request.get_json(silent=True)
         if not data:
             return jsonify({'status': 'error', 'message': 'No data provided'}), 400
 
@@ -674,7 +731,7 @@ def save_dim_schedule_config():
             ErrorCode.CONFIG_SAVE_FAILED,
             "An error occurred; see logs for details",
 
-            status_code=500
+            status_code=500, details=describe_exception(e)
         )
 
 @api_v3.route('/config/main', methods=['POST'])
@@ -699,10 +756,12 @@ def save_main_config():
         if not data:
             return jsonify({'status': 'error', 'message': 'No data provided'}), 400
 
-        import logging
-        logging.error(f"DEBUG: save_main_config received data: {data}")
-        logging.error(f"DEBUG: Content-Type header: {request.content_type}")
-        logging.error(f"DEBUG: Headers: {dict(request.headers)}")
+        # What arrives here is the config itself, and the headers carry the
+        # session cookie -- neither belongs in the journal, least of all at
+        # ERROR on every save. The shape of the request is the part with
+        # diagnostic value, so log that, at the level it deserves.
+        logger.debug("save_main_config: %s, %d top-level key(s)",
+                     request.content_type or 'no content-type', len(data))
 
         # Merge with existing config (similar to original implementation)
         current_config = api_v3.config_manager.load_config()
@@ -719,6 +778,36 @@ def save_main_config():
 
         if 'timezone' in data:
             current_config['timezone'] = data['timezone']
+
+        # Device-wide scroll frame rate, read by plugins via
+        # BasePlugin.global_config. Bounds match ScrollHelper.set_target_fps,
+        # which clamps silently -- rejecting here instead means a value that
+        # would have been quietly altered is reported rather than appearing to
+        # save and then behaving differently.
+        if 'target_fps' in data and data['target_fps'] not in ('', None):
+            raw_target_fps = data['target_fps']
+            # A JSON body can carry real floats and bools, where int() would
+            # silently truncate: 90.5 would save as 90, and true as 1. Reject
+            # them rather than storing a value the user did not ask for. Form
+            # posts arrive as strings, so '90.5' still fails in int() below.
+            if isinstance(raw_target_fps, (bool, float)):
+                return jsonify({
+                    'status': 'error',
+                    'message': "Invalid value for target_fps: must be an integer"
+                }), 400
+            try:
+                target_fps = int(raw_target_fps)
+            except (ValueError, TypeError):
+                return jsonify({
+                    'status': 'error',
+                    'message': "Invalid value for target_fps: must be an integer"
+                }), 400
+            if not (30 <= target_fps <= 200):
+                return jsonify({
+                    'status': 'error',
+                    'message': "Invalid value for target_fps: must be between 30 and 200"
+                }), 400
+            current_config['target_fps'] = target_fps
 
         # Handle location settings
         if 'city' in data or 'state' in data or 'country' in data:
@@ -750,7 +839,7 @@ def save_main_config():
                          'gpio_slowdown', 'rp1_rio', 'scan_mode', 'disable_hardware_pulsing', 'inverse_colors', 'show_refresh_rate',
                          'pwm_bits', 'pwm_dither_bits', 'pwm_lsb_nanoseconds', 'limit_refresh_rate_hz', 'use_short_date_format',
                          'max_dynamic_duration_seconds', 'led_rgb_sequence', 'multiplexing', 'panel_type',
-                         'row_address_type']
+                         'row_address_type', 'pixel_mapper_config', 'orientation']
 
         if any(k in data for k in display_fields):
             if 'display' not in current_config:
@@ -781,6 +870,15 @@ def save_main_config():
                 except (ValueError, TypeError):
                     return jsonify({'status': 'error', 'message': f"Invalid multiplexing value '{data['multiplexing']}'. Must be an integer from 0 to 22."}), 400
 
+            # Validate pixel_mapper_config (free-form mapper string, e.g. "U-mapper;Rotate:90")
+            if 'pixel_mapper_config' in data and not isinstance(data['pixel_mapper_config'], str):
+                return jsonify({'status': 'error', 'message': 'pixel_mapper_config must be a string (e.g. "U-mapper;Rotate:90" or empty)'}), 400
+
+            # Validate orientation (physical mounting rotation; composed onto pixel_mapper_config at runtime)
+            ORIENTATION_ALLOWED = {'normal', '180'}
+            if 'orientation' in data and data['orientation'] not in ORIENTATION_ALLOWED:
+                return jsonify({'status': 'error', 'message': f"Invalid orientation '{data['orientation']}'. Allowed values: {', '.join(sorted(ORIENTATION_ALLOWED))}"}), 400
+
             # Validate row_address_type
             if 'row_address_type' in data:
                 try:
@@ -793,7 +891,8 @@ def save_main_config():
             # Handle hardware settings
             for field in ['rows', 'cols', 'chain_length', 'parallel', 'brightness', 'hardware_mapping', 'scan_mode',
                          'pwm_bits', 'pwm_dither_bits', 'pwm_lsb_nanoseconds', 'limit_refresh_rate_hz',
-                         'led_rgb_sequence', 'multiplexing', 'panel_type', 'row_address_type']:
+                         'led_rgb_sequence', 'multiplexing', 'panel_type', 'row_address_type',
+                         'pixel_mapper_config', 'orientation']:
                 if field in data:
                     if field in ['rows', 'cols', 'chain_length', 'parallel', 'brightness', 'scan_mode',
                                'pwm_bits', 'pwm_dither_bits', 'pwm_lsb_nanoseconds', 'limit_refresh_rate_hz',
@@ -837,16 +936,15 @@ def save_main_config():
             ds_config = current_config['display']['double_sided']
 
             # Enabled checkbox: omitted from the form when unchecked.
-            ds_config['enabled'] = _coerce_to_bool(data.get('double_sided_enabled'))
+            # The Display form posts copies/axis on every save regardless of this
+            # checkbox, so when the feature is off we accept the values without
+            # rejecting the whole save — otherwise a stale copies/chain_length
+            # mismatch locks the user out of every other display setting.
+            enabled = _coerce_to_bool(data.get('double_sided_enabled'))
+            ds_config['enabled'] = enabled
 
-            if 'double_sided_copies' in data and data['double_sided_copies'] not in ('', None):
-                try:
-                    copies = int(data['double_sided_copies'])
-                except (ValueError, TypeError):
-                    return jsonify({'status': 'error', 'message': "Double-sided copies must be an integer"}), 400
-                if not (2 <= copies <= 8):
-                    return jsonify({'status': 'error', 'message': "Double-sided copies must be between 2 and 8"}), 400
-                # Validate divisibility against the relevant hardware dimension.
+            def _copies_fits_hardware(copies: int) -> Optional[str]:
+                """Error message if copies doesn't divide the panel evenly, else None."""
                 # Use axis from this request if provided, else from stored config.
                 hw = current_config.get('display', {}).get('hardware', {})
                 effective_axis = (data.get('double_sided_axis')
@@ -854,22 +952,53 @@ def save_main_config():
                 if effective_axis == 'horizontal':
                     chain_length = int(hw.get('chain_length', 2) or 2)
                     if chain_length % copies != 0:
-                        return jsonify({'status': 'error', 'message': f"Double-sided copies ({copies}) must divide chain length ({chain_length}) evenly"}), 400
+                        return f"Double-sided copies ({copies}) must divide chain length ({chain_length}) evenly"
                 elif effective_axis == 'vertical':
                     parallel = int(hw.get('parallel', 1) or 1)
                     if parallel % copies != 0:
-                        return jsonify({'status': 'error', 'message': f"Double-sided copies ({copies}) must divide parallel ({parallel}) evenly"}), 400
-                ds_config['copies'] = copies
+                        return f"Double-sided copies ({copies}) must divide parallel ({parallel}) evenly"
+                return None
+
+            if 'double_sided_copies' in data and data['double_sided_copies'] not in ('', None):
+                copies = None
+                try:
+                    copies = int(data['double_sided_copies'])
+                except (ValueError, TypeError):
+                    if enabled:
+                        return jsonify({'status': 'error', 'message': "Double-sided copies must be an integer"}), 400
+                if copies is not None and not (2 <= copies <= 8):
+                    if enabled:
+                        return jsonify({'status': 'error', 'message': "Double-sided copies must be between 2 and 8"}), 400
+                    # Disabled: leave the stored value alone rather than writing junk.
+                    copies = None
+                if copies is not None:
+                    # Divisibility is a hardware-relational check — only meaningful
+                    # when the feature is actually on.
+                    if enabled:
+                        fit_error = _copies_fits_hardware(copies)
+                        if fit_error:
+                            return jsonify({'status': 'error', 'message': fit_error}), 400
+                    ds_config['copies'] = copies
 
             if 'double_sided_axis' in data:
                 axis = data['double_sided_axis']
                 if axis not in ('horizontal', 'vertical'):
-                    return jsonify({'status': 'error', 'message': "Double-sided axis must be 'horizontal' or 'vertical'"}), 400
-                ds_config['axis'] = axis
+                    if enabled:
+                        return jsonify({'status': 'error', 'message': "Double-sided axis must be 'horizontal' or 'vertical'"}), 400
+                else:
+                    ds_config['axis'] = axis
 
         # Handle Vegas scroll mode settings
         vegas_fields = ['vegas_scroll_enabled', 'vegas_scroll_speed', 'vegas_separator_width',
-                       'vegas_target_fps', 'vegas_buffer_ahead', 'vegas_plugin_order', 'vegas_excluded_plugins']
+                       'vegas_target_fps', 'vegas_buffer_ahead', 'vegas_plugin_order', 'vegas_excluded_plugins',
+                       'vegas_auto_trim', 'vegas_trim_threshold', 'vegas_content_padding',
+                       'vegas_min_plugin_width', 'vegas_lead_in_width', 'vegas_plugins_per_cycle',
+                       'vegas_max_plugin_width_ratio', 'vegas_dynamic_duration_enabled',
+                       'vegas_min_cycle_duration', 'vegas_max_cycle_duration',
+                       'vegas_intra_plugin_gap', 'vegas_render_width_pct',
+                       'vegas_min_content_separation', 'vegas_min_cut_gap',
+                       'vegas_continuous_scroll', 'vegas_extend_threshold_screens',
+                       'vegas_smooth_scroll', 'vegas_overflow_mode']
 
         if any(k in data for k in vegas_fields):
             if 'display' not in current_config:
@@ -884,13 +1013,85 @@ def save_main_config():
             # was submitted (any vegas field present) but enabled key is missing,
             # the checkbox was unchecked and we should set enabled=False
             vegas_config['enabled'] = _coerce_to_bool(data.get('vegas_scroll_enabled'))
+            vegas_config['auto_trim'] = _coerce_to_bool(data.get('vegas_auto_trim'))
+            vegas_config['dynamic_duration_enabled'] = _coerce_to_bool(
+                data.get('vegas_dynamic_duration_enabled'))
+            vegas_config['continuous_scroll'] = _coerce_to_bool(
+                data.get('vegas_continuous_scroll'))
+            vegas_config['smooth_scroll'] = _coerce_to_bool(
+                data.get('vegas_smooth_scroll'))
 
-            # Handle numeric settings with validation
+            # max_plugin_width_ratio is the one fractional setting, so it is
+            # handled outside the integer loop below.
+            if data.get('vegas_overflow_mode') not in ('', None):
+                mode = str(data['vegas_overflow_mode']).strip().lower()
+                if mode not in ('rotate', 'truncate'):
+                    return jsonify({
+                        'status': 'error',
+                        'message': "Invalid value for vegas_overflow_mode: "
+                                   "must be 'rotate' or 'truncate'"
+                    }), 400
+                vegas_config['overflow_mode'] = mode
+
+            if data.get('vegas_extend_threshold_screens') not in ('', None):
+                try:
+                    screens = float(data['vegas_extend_threshold_screens'])
+                except (ValueError, TypeError):
+                    return jsonify({
+                        'status': 'error',
+                        'message': "Invalid value for vegas_extend_threshold_screens: "
+                                   "must be a number"
+                    }), 400
+                if not (1.0 <= screens <= 10.0):
+                    return jsonify({
+                        'status': 'error',
+                        'message': "Invalid value for vegas_extend_threshold_screens: "
+                                   "must be between 1.0 and 10.0"
+                    }), 400
+                vegas_config['extend_threshold_screens'] = screens
+
+            if data.get('vegas_max_plugin_width_ratio') not in ('', None):
+                try:
+                    ratio = float(data['vegas_max_plugin_width_ratio'])
+                except (ValueError, TypeError):
+                    return jsonify({
+                        'status': 'error',
+                        'message': "Invalid value for vegas_max_plugin_width_ratio: "
+                                   "must be a number"
+                    }), 400
+                if not (0 <= ratio <= 20):
+                    return jsonify({
+                        'status': 'error',
+                        'message': "Invalid value for vegas_max_plugin_width_ratio: "
+                                   "must be between 0 and 20 (0 disables the cap)"
+                    }), 400
+                vegas_config['max_plugin_width_ratio'] = ratio
+
+            # Handle numeric settings with validation.
+            #
+            # These bounds must match VegasModeConfig.validate(), which is what
+            # actually gates Vegas starting. Where they were looser, a value
+            # saved with a 200 and then made VegasModeCoordinator.start() bail
+            # out with only a log line, so the ticker silently never ran.
+            # Where they were tighter (scroll_speed capped at 100 against a
+            # slider that goes to 200), a legitimate value was rejected with a
+            # 400. See test_vegas_api_bounds_match_validate.
             numeric_fields = {
-                'vegas_scroll_speed': ('scroll_speed', 1, 100),
-                'vegas_separator_width': ('separator_width', 0, 500),
-                'vegas_target_fps': ('target_fps', 1, 200),
-                'vegas_buffer_ahead': ('buffer_ahead', 1, 20),
+                'vegas_scroll_speed': ('scroll_speed', 1, 200),
+                'vegas_separator_width': ('separator_width', 0, 128),
+                'vegas_intra_plugin_gap': ('intra_plugin_gap', 0, 128),
+                'vegas_render_width_pct': ('render_width_pct', 10, 100),
+                'vegas_min_content_separation': ('min_content_separation', 0, 256),
+                'vegas_min_cut_gap': ('min_cut_gap', 1, 128),
+                'vegas_target_fps': ('target_fps', 30, 200),
+                'vegas_buffer_ahead': ('buffer_ahead', 1, 5),
+                'vegas_trim_threshold': ('trim_threshold', 0, 254),
+                'vegas_content_padding': ('content_padding', 0, 128),
+                'vegas_min_plugin_width': ('min_plugin_width', 0, 512),
+                'vegas_lead_in_width': ('lead_in_width', 0, 2048),
+                'vegas_plugins_per_cycle': ('plugins_per_cycle', 1, 50),
+                'vegas_min_cycle_duration': ('min_cycle_duration', 5, 3600),
+                'vegas_max_cycle_duration': ('max_cycle_duration', 10, 3600),
             }
             for field_name, (config_key, min_val, max_val) in numeric_fields.items():
                 if field_name in data:
@@ -961,8 +1162,31 @@ def save_main_config():
                     return jsonify({"status": "error", "message": "sync_follower_position must be left or right"}), 400
                 current_config["sync"]["follower_position"] = pos_val
 
-        # Handle display durations
-        duration_fields = [k for k in data.keys() if k.endswith('_duration') or k in ['default_duration', 'transition_duration']]
+        # Handle primary rotation order: must be a JSON array of plugin-id
+        # strings. Reject anything else with a 400 rather than silently
+        # coercing, so a buggy client can't clear or corrupt the saved order.
+        if 'plugin_rotation_order' in data:
+            raw_order = data.pop('plugin_rotation_order')
+            try:
+                parsed = json.loads(raw_order) if isinstance(raw_order, str) else raw_order
+            except (json.JSONDecodeError, TypeError, ValueError):
+                return jsonify({'status': 'error',
+                                'message': 'plugin_rotation_order must be valid JSON'}), 400
+            if not isinstance(parsed, list) or not all(isinstance(p, str) for p in parsed):
+                return jsonify({'status': 'error',
+                                'message': 'plugin_rotation_order must be a list of plugin-id strings'}), 400
+            if 'display' not in current_config:
+                current_config['display'] = {}
+            current_config['display']['plugin_rotation_order'] = parsed
+
+        # Handle display durations. Popped from `data` (not just read) so
+        # they can never also fall through to the generic "remaining keys"
+        # merge near the end of this function, which would otherwise write
+        # them AGAIN as bogus top-level config keys (e.g. "clock_duration": 30
+        # sitting at config root alongside the correct
+        # display.display_durations.clock_duration).
+        duration_fields = [k for k in list(data.keys())
+                           if k.endswith('_duration') or k in ('default_duration', 'transition_duration')]
         if duration_fields:
             if 'display' not in current_config:
                 current_config['display'] = {}
@@ -970,8 +1194,36 @@ def save_main_config():
                 current_config['display']['display_durations'] = {}
 
             for field in duration_fields:
-                if field in data:
-                    current_config['display']['display_durations'][field] = int(data[field])
+                raw_value = data.pop(field)
+                try:
+                    int_value = int(raw_value)
+                except (ValueError, TypeError):
+                    return jsonify({'status': 'error',
+                                    'message': f"Invalid duration for {field}: must be an integer"}), 400
+                current_config['display']['display_durations'][field] = int_value
+
+        # Per-mode durations from the Rotation & Durations page, posted as
+        # duration__<mode_key> (mode keys are arbitrary plugin mode names, so
+        # they can't use the suffix convention above). Same pop-and-validate
+        # treatment, for the same reason.
+        mode_duration_fields = [k for k in list(data.keys()) if k.startswith('duration__')]
+        if mode_duration_fields:
+            if 'display' not in current_config:
+                current_config['display'] = {}
+            if 'display_durations' not in current_config['display']:
+                current_config['display']['display_durations'] = {}
+
+            for field in mode_duration_fields:
+                raw_value = data.pop(field)
+                mode_key = field[len('duration__'):]
+                if not mode_key:
+                    continue
+                try:
+                    int_value = int(raw_value)
+                except (ValueError, TypeError):
+                    return jsonify({'status': 'error',
+                                    'message': f"Invalid duration for mode '{mode_key}': must be an integer"}), 400
+                current_config['display']['display_durations'][mode_key] = int_value
 
         # Handle plugin configurations dynamically
         # Any key that matches a plugin ID should be saved as plugin config
@@ -996,18 +1248,6 @@ def save_main_config():
                         plugins_dir = PROJECT_ROOT / plugins_dir_name
                 schema_path = plugins_dir / plugin_id / 'config_schema.json'
 
-                def find_secret_fields(properties, prefix=''):
-                    """Recursively find fields marked with x-secret: true"""
-                    fields = set()
-                    for field_name, field_props in properties.items():
-                        full_path = f"{prefix}.{field_name}" if prefix else field_name
-                        if field_props.get('x-secret', False):
-                            fields.add(full_path)
-                        # Check nested objects
-                        if field_props.get('type') == 'object' and 'properties' in field_props:
-                            fields.update(find_secret_fields(field_props['properties'], full_path))
-                    return fields
-
                 if schema_path.exists():
                     try:
                         with open(schema_path, 'r', encoding='utf-8') as f:
@@ -1018,25 +1258,12 @@ def save_main_config():
                         logger.debug("Error reading schema for secret detection: %s", e)
 
                 # Separate secrets from regular config (same logic as save_plugin_config)
-                def separate_secrets(config, secrets_set, prefix=''):
-                    """Recursively separate secret fields from regular config"""
-                    regular = {}
-                    secrets = {}
-                    for key, value in config.items():
-                        full_path = f"{prefix}.{key}" if prefix else key
-                        if isinstance(value, dict):
-                            nested_regular, nested_secrets = separate_secrets(value, secrets_set, full_path)
-                            if nested_regular:
-                                regular[key] = nested_regular
-                            if nested_secrets:
-                                secrets[key] = nested_secrets
-                        elif full_path in secrets_set:
-                            secrets[key] = value
-                        else:
-                            regular[key] = value
-                    return regular, secrets
-
                 regular_config, secrets_config = separate_secrets(plugin_config, secret_fields)
+                # The config form renders secrets masked, so every save posts
+                # them back blank. Without this the blank is merged over the
+                # stored value and the credential is destroyed by the act of
+                # changing an unrelated setting. A blank means "unchanged".
+                secrets_config = remove_empty_secrets(secrets_config)
 
                 # PRE-PROCESSING: Preserve 'enabled' state if not in regular_config
                 # This prevents overwriting the enabled state when saving config from a form that doesn't include the toggle
@@ -1102,7 +1329,7 @@ def save_main_config():
             if key in ['timezone', 'city', 'state', 'country',
                        'web_display_autostart', 'auto_discover',
                        'auto_load_enabled', 'development_mode',
-                       'plugins_directory']:
+                       'plugins_directory', 'target_fps']:
                 continue
             # Skip fields that are already handled above in their own named sections.
             # Without this, every form field name lands as a top-level config key too.
@@ -1143,7 +1370,7 @@ def save_main_config():
         return error_response(
             ErrorCode.CONFIG_SAVE_FAILED,
             "An error occurred; see logs for details",
-            status_code=500
+            status_code=500, details=describe_exception(e)
         )
 
 @api_v3.route('/config/secrets', methods=['GET'])
@@ -1154,10 +1381,15 @@ def get_secrets_config():
             return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 500
 
         config = api_v3.config_manager.get_raw_file_content('secrets')
-        return jsonify({'status': 'success', 'data': config})
+        # This interface has no authentication, and this file is nothing but
+        # credentials. It was handing all of them to anyone who could reach
+        # the port. Values are masked; empty and YOUR_* placeholders are left
+        # alone so a client can still tell "set" from "not set".
+        return jsonify({'status': 'success',
+                        'data': mask_all_secret_values(config)})
     except Exception as e:
         logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/config/raw/main', methods=['POST'])
 def save_raw_main_config():
@@ -1166,18 +1398,20 @@ def save_raw_main_config():
         if not api_v3.config_manager:
             return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 500
 
-        data = request.get_json()
+        # silent=True so a malformed body returns None instead of raising
+        # Werkzeug's own BadRequest, which would answer in a different
+        # shape than this API's. Distinguish the two causes: a body that
+        # was sent but does not parse is a different mistake from no body.
+        data = request.get_json(silent=True)
+        if data is None and request.get_data():
+            return jsonify({'status': 'error', 'message': 'Invalid JSON in request body'}), 400
         if not data:
             return jsonify({'status': 'error', 'message': 'No data provided'}), 400
 
-        # Validate that it's valid JSON (already parsed by request.get_json())
         # Save the raw config file
         api_v3.config_manager.save_raw_file_content('main', data)
 
         return jsonify({'status': 'success', 'message': 'Main configuration saved successfully'})
-    except json.JSONDecodeError as e:
-        logger.error('Invalid JSON', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'Invalid JSON in request body'}), 400
     except Exception as e:
         from src.exceptions import ConfigError
         logger.error("Error saving raw main config", exc_info=True)
@@ -1190,6 +1424,7 @@ def save_raw_main_config():
             return error_response(
                 ErrorCode.CONFIG_SAVE_FAILED,
                 error_message,
+                details=describe_exception(e),
 
                 context={'config_path': e.config_path} if hasattr(e, 'config_path') and e.config_path else None,
                 status_code=500
@@ -1199,6 +1434,7 @@ def save_raw_main_config():
             return error_response(
                 ErrorCode.UNKNOWN_ERROR,
                 error_message,
+                details=describe_exception(e),
 
                 status_code=500
             )
@@ -1210,21 +1446,33 @@ def save_raw_secrets_config():
         if not api_v3.config_manager:
             return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 500
 
-        data = request.get_json()
+        # See save_raw_main_config: silent parsing, with a sent-but-broken
+        # body reported separately from a missing one.
+        data = request.get_json(silent=True)
+        if data is None and request.get_data():
+            return jsonify({'status': 'error', 'message': 'Invalid JSON in request body'}), 400
         if not data:
             return jsonify({'status': 'error', 'message': 'No data provided'}), 400
 
-        # Save the secrets config
-        api_v3.config_manager.save_raw_file_content('secrets', data)
+        # The GET above masks what it returns, and this endpoint's only client
+        # reads the whole file, edits one field and posts all of it back. So
+        # most of what arrives here is the mask, echoed rather than changed --
+        # storing it verbatim would replace every untouched credential with
+        # eight bullets. Strip those, then merge onto what is already stored,
+        # which makes "unchanged" mean unchanged.
+        #
+        # The cost is that a secret can no longer be cleared by blanking it.
+        # That needs its own affordance; a control that erases credentials as
+        # a side effect of saving an unrelated one is not it.
+        current = api_v3.config_manager.get_raw_file_content('secrets') or {}
+        merged = deep_merge(current, strip_masked_values(data))
+        api_v3.config_manager.save_raw_file_content('secrets', merged)
 
         # Reload GitHub token in plugin store manager if it exists
         if api_v3.plugin_store_manager:
             api_v3.plugin_store_manager.github_token = api_v3.plugin_store_manager._load_github_token()
 
         return jsonify({'status': 'success', 'message': 'Secrets configuration saved successfully'})
-    except json.JSONDecodeError as e:
-        logger.error('Invalid JSON', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'Invalid JSON in request body'}), 400
     except Exception as e:
         from src.exceptions import ConfigError
         logger.error("Error saving raw secrets config", exc_info=True)
@@ -1238,7 +1486,8 @@ def save_raw_secrets_config():
         else:
             error_message = 'An error occurred; see logs for details'
 
-        return jsonify({'status': 'error', 'message': error_message}), 500
+        return jsonify({'status': 'error', 'message': error_message,
+                        'details': describe_exception(e)}), 500
 
 @api_v3.route('/system/status', methods=['GET'])
 def get_system_status():
@@ -1326,7 +1575,7 @@ def get_system_status():
         return jsonify({'status': 'success', 'data': status})
     except Exception as e:
         logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/health', methods=['GET'])
 def get_health():
@@ -1425,11 +1674,177 @@ def get_health():
 
         return jsonify({'status': 'success', 'data': health_status})
     except Exception as e:
+        logger.error("%s failed", request.path, exc_info=True)
         return jsonify({
             'status': 'error',
             'message': 'An error occurred; see logs for details',
+            'details': describe_exception(e),
             'data': {'status': 'unhealthy'}
         }), 500
+
+def _git_current_branch(project_dir):
+    """Current branch name, or '' when detached or git fails."""
+    try:
+        r = subprocess.run(['git', 'branch', '--show-current'],
+                           capture_output=True, text=True, timeout=10, cwd=str(project_dir))
+        return r.stdout.strip() if r.returncode == 0 else ''
+    except (subprocess.TimeoutExpired, OSError):
+        return ''
+
+
+def _git_upstream(project_dir):
+    """Configured upstream for the current branch (e.g. 'origin/main'), or ''."""
+    try:
+        r = subprocess.run(['git', 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'],
+                           capture_output=True, text=True, timeout=10, cwd=str(project_dir))
+        return r.stdout.strip() if r.returncode == 0 else ''
+    except (subprocess.TimeoutExpired, OSError):
+        return ''
+
+
+def _git_remote_branch_exists(project_dir, branch):
+    """True when origin/<branch> exists locally as a remote-tracking ref."""
+    if not branch:
+        return False
+    try:
+        r = subprocess.run(
+            ['git', 'show-ref', '--verify', '--quiet', f'refs/remotes/origin/{branch}'],
+            capture_output=True, text=True, timeout=10, cwd=str(project_dir))
+        return r.returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def resolve_pull_command(project_dir):
+    """Work out how to pull, for branches with and without an upstream.
+
+    A plain ``git pull --rebase`` fails outright on a branch that has no
+    upstream ("There is no tracking information for the current branch"),
+    which is easy to end up on: checking out a branch by name, restoring a
+    backup, or following an install guide that names one. The update button
+    then reports a failure the user cannot act on.
+
+    ``--autostash`` is passed for the same reason. Rebase refuses to start
+    when any tracked file is modified, and on these installs something always
+    is: first_time_install.sh chmods five scripts that git tracked as 644, so
+    every machine that ran the installer carries five permanent mode changes
+    and the update button reports "cannot pull with rebase: You have unstaged
+    changes". Those modes are corrected in this commit, but a user cannot pull
+    the correction while the pull is what is blocked, and any other local edit
+    would reproduce it anyway. Autostash reapplies the changes afterwards.
+
+    Returns ``(args, note, error)``. When ``origin/<branch>`` exists the pull
+    is made explicit against it, so the update proceeds and the branch is
+    given tracking information afterwards.
+    """
+    upstream = _git_upstream(project_dir)
+    if upstream:
+        return ['git', 'pull', '--rebase', '--autostash'], '', None
+
+    branch = _git_current_branch(project_dir)
+    if not branch:
+        return None, '', (
+            "This checkout is in a detached HEAD state, so there is no branch "
+            "to update. Switch to a branch first (Tools -> Switch branch)."
+        )
+    if _git_remote_branch_exists(project_dir, branch):
+        return (
+            ['git', 'pull', '--rebase', '--autostash', 'origin', branch],
+            f"Branch '{branch}' had no upstream; pulled from origin/{branch} and set it as the upstream.",
+            None,
+        )
+    return None, '', (
+        f"Branch '{branch}' has no upstream and there is no origin/{branch} to "
+        f"pull from. Use Switch branch to move to a branch that exists on the "
+        f"remote, or push this one first."
+    )
+
+
+_BRANCH_NAME_RE = re.compile(r'[A-Za-z0-9._/-]{1,200}')
+
+
+def is_valid_branch_name(name):
+    """Accept only plain branch names.
+
+    This value becomes a subprocess argument, so anything exotic is refused
+    rather than escaped. '..' is excluded because it is range syntax to git.
+    """
+    if not name or not _BRANCH_NAME_RE.fullmatch(name):
+        return False
+    return '..' not in name and not name.startswith('-')
+
+
+def checkout_branch(project_dir, target, stash=False):
+    """Switch the checkout to `target`, returning (payload, http_status).
+
+    Split out of the route so it can be tested against real repositories.
+    Attaches tracking when the branch exists on origin, so the next
+    Pull Latest is a plain `git pull` rather than the no-upstream fallback.
+    """
+    target = (target or '').strip()
+    if not target:
+        return {'status': 'error', 'message': 'Branch name required'}, 400
+    if not is_valid_branch_name(target):
+        return {'status': 'error', 'message': 'Invalid branch name'}, 400
+
+    try:
+        subprocess.run(['git', 'fetch', 'origin', '--prune'],
+                       capture_output=True, text=True, timeout=60, cwd=project_dir)
+
+        local_exists = subprocess.run(
+            ['git', 'show-ref', '--verify', '--quiet', f'refs/heads/{target}'],
+            capture_output=True, text=True, timeout=10, cwd=project_dir).returncode == 0
+        remote_exists = _git_remote_branch_exists(project_dir, target)
+        if not local_exists and not remote_exists:
+            return {'status': 'error',
+                    'message': f"No branch '{target}' locally or on origin"}, 404
+
+        # Local edits block a checkout. Pull Latest already stashes for the
+        # same reason, so offer it here too -- but only when asked, never
+        # silently: putting someone's edits away unasked is worse than
+        # refusing the switch.
+        stash_note = ''
+        if stash:
+            stashed = subprocess.run(['git', 'stash', 'push', '-m', f'switch to {target}'],
+                                     capture_output=True, text=True, timeout=60, cwd=project_dir)
+            if stashed.returncode == 0 and 'No local changes' not in stashed.stdout:
+                stash_note = ' Local changes were stashed (recover them with git stash list).'
+
+        if local_exists:
+            co = subprocess.run(['git', 'checkout', target],
+                                capture_output=True, text=True, timeout=60, cwd=project_dir)
+        else:
+            # -B so a stale local ref does not block the checkout.
+            co = subprocess.run(['git', 'checkout', '-B', target, f'origin/{target}'],
+                                capture_output=True, text=True, timeout=60, cwd=project_dir)
+
+        if co.returncode != 0:
+            logger.warning("git checkout %s failed: %s", target, co.stderr)
+            return {
+                'status': 'error',
+                'message': f"Could not switch to '{target}'.",
+                # Keep git's full list of blocking files: naming them is the
+                # difference between an error the user can act on and one they
+                # cannot.
+                'detail': (co.stderr or '').strip(),
+                'can_retry_with_stash': 'would be overwritten by checkout' in (co.stderr or ''),
+            }, 200
+
+        if remote_exists:
+            subprocess.run(['git', 'branch', f'--set-upstream-to=origin/{target}', target],
+                           capture_output=True, text=True, timeout=10, cwd=project_dir)
+
+        logger.info("Switched checkout to branch %s", target)
+        return {
+            'status': 'success',
+            'message': f"Now on '{target}'.{stash_note} Use Pull Latest to fetch its newest code.",
+        }, 200
+    except subprocess.TimeoutExpired:
+        return {'status': 'error', 'message': 'Timed out talking to git'}, 504
+    except OSError as exc:
+        logger.error("checkout_branch failed: %s", exc, exc_info=True)
+        return {'status': 'error', 'message': 'Could not switch branch'}, 500
+
 
 def get_git_version(project_dir=None):
     """Get git version information from the repository"""
@@ -1482,6 +1897,33 @@ def get_system_version():
 _update_check_cache: Dict[str, Any] = {'result': None, 'ts': 0.0}
 _UPDATE_CHECK_TTL = 300  # 5 minutes — avoids a git fetch on every page load
 
+def _update_check_failed(detail: str) -> Dict[str, Any]:
+    """A check that could not run is not the same as being up to date.
+
+    Reporting update_available=False on a git failure hides the banner, and
+    the banner is the only route to the update button -- so a checkout git
+    refuses to touch looks exactly like a current one, permanently. The most
+    common cause is an install performed as root: git then reports "dubious
+    ownership" and every command fails, including the fetch here.
+    """
+    return {'update_available': False, 'remote_sha': 'unknown',
+            'commits_behind': 0, 'check_failed': True, 'error': detail}
+
+
+def _describe_git_failure(stderr: str) -> str:
+    """Turn git's stderr into something the user can act on."""
+    text = (stderr or '').strip()
+    if 'dubious ownership' in text or 'detected dubious ownership' in text:
+        return ("This checkout is owned by a different user than the one "
+                "running the web interface, so git refuses to use it. It is "
+                "usually the result of installing as root. Fix the ownership "
+                "and the update will work: sudo chown -R $USER:$USER "
+                + str(PROJECT_ROOT))
+    if 'could not resolve host' in text.lower() or 'network is unreachable' in text.lower():
+        return "Could not reach GitHub to check for updates."
+    return "Could not check for updates: " + (text.splitlines()[0] if text else "git failed")
+
+
 @api_v3.route('/system/check-update', methods=['GET'])
 def check_for_update():
     """Check whether a newer LEDMatrix commit is available on origin/main."""
@@ -1497,12 +1939,13 @@ def check_for_update():
             capture_output=True, timeout=10, cwd=cwd,
         )
         if fetch_result.returncode != 0:
+            stderr = fetch_result.stderr.decode(errors='replace').strip()
             logger.warning("check-update: git fetch failed (rc=%d): %s",
-                           fetch_result.returncode,
-                           fetch_result.stderr.decode(errors='replace').strip())
-            _update_check_cache['result'] = _safe
+                           fetch_result.returncode, stderr)
+            failed = _update_check_failed(_describe_git_failure(stderr))
+            _update_check_cache['result'] = failed
             _update_check_cache['ts'] = now
-            return jsonify(_safe)
+            return jsonify(failed)
         local = subprocess.run(
             ['git', 'rev-parse', 'HEAD'],
             capture_output=True, text=True, timeout=5, cwd=cwd,
@@ -1530,7 +1973,8 @@ def check_for_update():
         return jsonify(result)
     except Exception as e:
         logger.warning("check-update failed: %s", e)
-        return jsonify(_safe)
+        return jsonify(_update_check_failed(
+            "Could not check for updates; see logs for details."))
 
 @api_v3.route('/system/action', methods=['POST'])
 def execute_system_action():
@@ -1595,6 +2039,14 @@ def execute_system_action():
             # Use PROJECT_ROOT instead of hardcoded path
             project_dir = str(PROJECT_ROOT)
 
+            # Decide how to pull BEFORE stashing. If this checkout cannot be
+            # updated at all, stashing first would put the user's local changes
+            # away for an update that was never going to run.
+            pull_args, upstream_note, pull_error = resolve_pull_command(project_dir)
+            if pull_error:
+                logger.warning("git pull not attempted: %s", pull_error)
+                return jsonify({'status': 'error', 'message': pull_error})
+
             # Check if there are local changes that need to be stashed
             # Exclude plugins directory - plugins are separate repos and shouldn't be stashed with base project
             # Use --untracked-files=no to skip untracked files check (much faster with symlinked plugins)
@@ -1639,14 +2091,42 @@ def execute_system_action():
                 except subprocess.TimeoutExpired:
                     logger.warning("git stash timed out, proceeding with pull")
 
-            # Perform the git pull
+            # Record HEAD before the pull so dependency changes can be detected
+            old_head = None
+            try:
+                _pre = subprocess.run(['git', 'rev-parse', 'HEAD'],
+                                      capture_output=True, text=True, timeout=10, cwd=project_dir)
+                if _pre.returncode == 0:
+                    old_head = _pre.stdout.strip()
+            except subprocess.TimeoutExpired:
+                logger.warning("git rev-parse timed out before pull")
+
+            # Whether the pull actually brought new code in. "Already up to
+            # date" is a success too, and prompting for a restart then would
+            # train users to ignore the prompt.
+            code_changed = False
+
+            # Perform the git pull. Branches without an upstream were given
+            # an explicit "origin <branch>" above so the update still works.
             result = subprocess.run(
-                ['git', 'pull', '--rebase'],
+                pull_args,
                 capture_output=True,
                 text=True,
                 timeout=60,
                 cwd=project_dir
             )
+
+            # Give the branch tracking information so the next pull is a plain
+            # `git pull` — otherwise every update repeats the fallback.
+            if result.returncode == 0 and upstream_note:
+                branch = _git_current_branch(project_dir)
+                if branch:
+                    try:
+                        subprocess.run(
+                            ['git', 'branch', f'--set-upstream-to=origin/{branch}', branch],
+                            capture_output=True, text=True, timeout=10, cwd=project_dir)
+                    except (subprocess.TimeoutExpired, OSError) as exc:
+                        logger.debug("could not set upstream for %s: %s", branch, exc)
 
             # Return custom response for git_pull
             if result.returncode == 0:
@@ -1655,6 +2135,57 @@ def execute_system_action():
                     pull_message = f"Code updated successfully. Local changes were automatically stashed.{stash_info}"
                 if result.stdout and "Already up to date" not in result.stdout:
                     pull_message = f"Code updated successfully.{stash_info}"
+                if upstream_note:
+                    pull_message = f"{pull_message} {upstream_note}"
+
+                # Keep Python dependencies in sync automatically: if the pull
+                # changed a requirements file, install it now — users updating
+                # from the web UI (most of them) never SSH in to pip install.
+                # Installs go through the same root-visible path as the
+                # Tools-tab buttons (_pip_install_requirements).
+                dep_notes = []
+                try:
+                    _post = subprocess.run(['git', 'rev-parse', 'HEAD'],
+                                           capture_output=True, text=True, timeout=10, cwd=project_dir)
+                    new_head = _post.stdout.strip() if _post.returncode == 0 else None
+                    if old_head and new_head and old_head != new_head:
+                        code_changed = True
+                        diff = subprocess.run(
+                            ['git', 'diff', '--name-only', f'{old_head}..{new_head}'],
+                            capture_output=True, text=True, timeout=15, cwd=project_dir)
+                        changed = set(diff.stdout.split()) if diff.returncode == 0 else set()
+                        for rel in ('requirements.txt', 'web_interface/requirements.txt'):
+                            req_path = PROJECT_ROOT / rel
+                            if rel not in changed or not req_path.exists():
+                                continue
+                            # Each file's install is isolated: a timeout or
+                            # OSError (e.g. the sudo wrapper/interpreter
+                            # missing) on one file must not abort the other.
+                            try:
+                                r = _pip_install_requirements(req_path, timeout=180)
+                                if r.returncode == 0:
+                                    dep_notes.append(f"Dependencies from {rel} updated.")
+                                else:
+                                    dep_notes.append(
+                                        f"Dependency install from {rel} failed — "
+                                        "run Install Base Requirements from the Tools tab.")
+                                    logger.warning("post-update pip install failed for %s: %s",
+                                                   rel, _truncate_output(r.stdout, r.stderr))
+                            except subprocess.TimeoutExpired:
+                                dep_notes.append(
+                                    f"Dependency install from {rel} timed out — "
+                                    "run Install Base Requirements from the Tools tab.")
+                                logger.warning("post-update pip install timed out for %s", rel)
+                            except OSError as install_err:
+                                dep_notes.append(
+                                    f"Dependency install from {rel} failed — "
+                                    "run Install Base Requirements from the Tools tab.")
+                                logger.warning("post-update pip install errored for %s: %s",
+                                               rel, install_err)
+                except subprocess.TimeoutExpired:
+                    logger.warning("post-update dependency sync timed out")
+                if dep_notes:
+                    pull_message += " " + " ".join(dep_notes)
                 # A `git pull` restores built-in plugins (committed under
                 # plugin-repos/) even if the user uninstalled them. Re-remove
                 # any the user previously uninstalled so the update doesn't
@@ -1671,12 +2202,30 @@ def execute_system_action():
                         logger.warning("Post-update plugin purge failed: %s", purge_err)
             else:
                 logger.warning("git pull failed (returncode=%d): %s", result.returncode, result.stderr)
-                pull_message = "Update failed; check logs for details"
+                # Show git's own first line: "check logs" leaves the user with
+                # nothing to act on, and these failures are usually actionable
+                # (conflicting local commits, no upstream, network).
+                detail = next((ln.strip() for ln in (result.stderr or '').splitlines()
+                               if ln.strip()), '')
+                pull_message = f"Update failed: {detail}" if detail else "Update failed; check logs for details"
 
+            # Nothing here restarts anything: the pull replaces files on
+            # disk while the display and web services keep running the code
+            # they loaded at boot. Without this the user is told the update
+            # succeeded and sees no change until they happen to reboot.
             return jsonify({
                 'status': 'success' if result.returncode == 0 else 'error',
                 'message': pull_message,
+                'restart_required': bool(result.returncode == 0 and code_changed),
             })
+        elif action == 'checkout_branch':
+            # Switch branches from the Tools tab. Needed because a checkout
+            # that predates tracking (or a restored backup) can leave the pi
+            # on a branch the update button cannot pull.
+            result_payload, http_status = checkout_branch(
+                str(PROJECT_ROOT), data.get('branch') or '', stash=bool(data.get('stash')))
+            return jsonify(result_payload), http_status
+
         elif action == 'restart_display_service':
             result = subprocess.run(['sudo', 'systemctl', 'restart', 'ledmatrix.service'],
                                  capture_output=True, text=True, timeout=10)
@@ -1685,14 +2234,36 @@ def execute_system_action():
             result = subprocess.run(['sudo', 'systemctl', 'restart', 'ledmatrix-web.service'],
                                  capture_output=True, text=True, timeout=10)
         elif action == 'install_base_requirements':
-            req_file = PROJECT_ROOT / 'requirements.txt'
-            if not req_file.exists():
+            # Base + web interface requirements: flask-compress and friends
+            # live in web_interface/requirements.txt, not the root file.
+            req_files = [f for f in (PROJECT_ROOT / 'requirements.txt',
+                                     PROJECT_ROOT / 'web_interface' / 'requirements.txt')
+                         if f.exists()]
+            if not req_files:
                 return jsonify({'status': 'error', 'message': 'No requirements.txt found at project root'})
-            result = _pip_install_requirements(req_file, timeout=120)
+            outputs = []
+            all_ok = True
+            for req_file in req_files:
+                label = req_file.relative_to(PROJECT_ROOT)
+                # Isolate each file's install: a timeout or OSError on one
+                # (e.g. requirements.txt) must not abort the rest of the
+                # loop (e.g. web_interface/requirements.txt never attempted).
+                try:
+                    result = _pip_install_requirements(req_file, timeout=120)
+                    all_ok = all_ok and result.returncode == 0
+                    outputs.append(f"== {label} ==\n" + _truncate_output(result.stdout, result.stderr))
+                except subprocess.TimeoutExpired:
+                    all_ok = False
+                    outputs.append(f"== {label} ==\nTimed out after 120s")
+                    logger.warning("install_base_requirements timed out for %s", label)
+                except OSError as install_err:
+                    all_ok = False
+                    outputs.append(f"== {label} ==\nFailed: {install_err}")
+                    logger.warning("install_base_requirements errored for %s: %s", label, install_err)
             return jsonify({
-                'status': 'success' if result.returncode == 0 else 'error',
-                'message': 'Base requirements installed successfully' if result.returncode == 0 else 'pip install failed',
-                'output': _truncate_output(result.stdout, result.stderr)
+                'status': 'success' if all_ok else 'error',
+                'message': 'Base requirements installed successfully' if all_ok else 'pip install failed',
+                'output': "\n".join(outputs)
             })
         elif action == 'install_plugin_requirements':
             active_pm = getattr(api_v3, 'plugin_manager', None)
@@ -1798,16 +2369,62 @@ def get_git_info():
 
         log    = subprocess.run([_GIT, 'log', '--oneline', '-5'], capture_output=True, text=True, timeout=10, cwd=d)
         remote = subprocess.run([_GIT, 'remote', 'get-url', 'origin'], capture_output=True, text=True, timeout=10, cwd=d)
+        branch_name = branch.stdout.strip()
+        upstream = _git_upstream(d)
         return jsonify({
-            'branch': branch.stdout.strip(),
+            'branch': branch_name,
             'dirty': bool(status.stdout.strip()),
             'status': status.stdout.strip(),
             'recent_commits': log.stdout.strip() if log.returncode == 0 else '',
             'remote_url': _scrub_git_remote_url(remote.stdout.strip()) if remote.returncode == 0 else '',
+            # Surfaced so the Tools tab can warn before the user clicks Pull
+            # Latest, rather than after it fails.
+            'upstream': upstream,
+            'can_pull': bool(upstream) or _git_remote_branch_exists(d, branch_name),
         })
     except Exception as e:
         logger.error("get_git_info failed: %s", e, exc_info=True)
         return jsonify({'status': 'error', 'message': 'Failed to get git info'}), 500
+
+
+@api_v3.route('/system/git-branches', methods=['GET'])
+def get_git_branches():
+    """List branches available to switch to, for the Tools tab picker."""
+    if not _GIT:
+        return jsonify({'status': 'error', 'message': 'git not found on this system'}), 503
+    d = str(PROJECT_ROOT)
+    try:
+        # Refresh remote refs so a branch created since the last fetch shows up.
+        subprocess.run([_GIT, 'fetch', 'origin', '--prune'],
+                       capture_output=True, text=True, timeout=60, cwd=d)
+
+        local = subprocess.run([_GIT, 'for-each-ref', '--format=%(refname:short)', 'refs/heads'],
+                               capture_output=True, text=True, timeout=15, cwd=d)
+        remote = subprocess.run([_GIT, 'for-each-ref', '--format=%(refname:short)', 'refs/remotes/origin'],
+                                capture_output=True, text=True, timeout=15, cwd=d)
+        if local.returncode != 0:
+            return jsonify({'status': 'error', 'message': 'Could not list branches'}), 500
+
+        local_names = [b for b in local.stdout.split() if b]
+        remote_names = []
+        for ref in remote.stdout.split() if remote.returncode == 0 else []:
+            name = ref.split('origin/', 1)[-1]
+            # origin/HEAD is a symbolic alias, not a branch a user can pick.
+            if name and name != 'HEAD' and name not in local_names:
+                remote_names.append(name)
+
+        return jsonify({
+            'status': 'success',
+            'current': _git_current_branch(d),
+            'upstream': _git_upstream(d),
+            'local': sorted(local_names),
+            'remote_only': sorted(remote_names),
+        })
+    except subprocess.TimeoutExpired:
+        return jsonify({'status': 'error', 'message': 'Timed out talking to the remote'}), 504
+    except OSError as e:
+        logger.error("get_git_branches failed: %s", e, exc_info=True)
+        return jsonify({'status': 'error', 'message': 'Failed to list branches'}), 500
 
 
 @api_v3.route('/hardware/status', methods=['GET'])
@@ -1880,7 +2497,7 @@ def get_display_current():
         return jsonify({'status': 'success', 'data': display_data})
     except Exception as e:
         logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/display/on-demand/status', methods=['GET'])
 def get_on_demand_status():
@@ -1904,13 +2521,13 @@ def get_on_demand_status():
         })
     except Exception as exc:
         logger.error('Error in get_on_demand_status', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(exc)}), 500
 
 @api_v3.route('/display/on-demand/start', methods=['POST'])
 def start_on_demand_display():
     """Request the display controller to run a specific plugin on-demand."""
     try:
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
         plugin_id = data.get('plugin_id')
         mode = data.get('mode')
         duration = data.get('duration')
@@ -2007,7 +2624,7 @@ def start_on_demand_display():
         return jsonify({'status': 'success', 'data': response_data})
     except Exception as exc:
         logger.error('Error in start_on_demand_display', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(exc)}), 500
 
 @api_v3.route('/display/on-demand/stop', methods=['POST'])
 def stop_on_demand_display():
@@ -2043,7 +2660,7 @@ def stop_on_demand_display():
         })
     except Exception as exc:
         logger.error('Error in stop_on_demand_display', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(exc)}), 500
 
 @api_v3.route('/plugins/installed', methods=['GET'])
 def get_installed_plugins():
@@ -2111,9 +2728,12 @@ def get_installed_plugins():
             if enabled is None:
                 enabled = plugin_instance.enabled if plugin_instance else True
 
-            # Verified from registry (no network call)
+            # Verified + latest published version from registry (no network call)
             store_info = api_v3.plugin_store_manager.get_registry_info(plugin_id)
             verified = store_info.get('verified', False) if store_info else False
+            latest_version = store_info.get('latest_version', '') if store_info else ''
+            installed_version = plugin_info.get('version', '')
+            update_available = _is_plugin_update_available(installed_version, latest_version)
 
             # Local git info (single subprocess on cache miss, zero on hit)
             plugin_path = Path(api_v3.plugin_manager.plugins_dir) / plugin_id
@@ -2160,6 +2780,8 @@ def get_installed_plugins():
                 'id': plugin_id,
                 'name': plugin_info.get('name', plugin_id),
                 'version': plugin_info.get('version', ''),
+                'latest_version': latest_version,
+                'update_available': update_available,
                 'author': plugin_info.get('author', 'Unknown'),
                 'category': plugin_info.get('category', 'General'),
                 'description': plugin_info.get('description', 'No description available'),
@@ -2186,7 +2808,7 @@ def get_installed_plugins():
         return jsonify({'status': 'success', 'data': {'plugins': plugins}})
     except Exception as e:
         logger.error('Error in get_installed_plugins', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 def _installed_plugin_ids():
     """Best-effort list of installed plugin IDs for the web process.
@@ -2252,7 +2874,7 @@ def get_plugin_health():
         })
     except Exception as e:
         logger.error('Error in get_plugin_health', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/health/<plugin_id>', methods=['GET'])
 def get_plugin_health_single(plugin_id):
@@ -2277,7 +2899,7 @@ def get_plugin_health_single(plugin_id):
         })
     except Exception as e:
         logger.error('Error in get_plugin_health_single', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/health/<plugin_id>/reset', methods=['POST'])
 def reset_plugin_health(plugin_id):
@@ -2302,7 +2924,7 @@ def reset_plugin_health(plugin_id):
         })
     except Exception as e:
         logger.error('Error in reset_plugin_health', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/metrics', methods=['GET'])
 def get_plugin_metrics():
@@ -2342,7 +2964,7 @@ def get_plugin_metrics():
         })
     except Exception as e:
         logger.error('Error in get_plugin_metrics', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/metrics/<plugin_id>', methods=['GET'])
 def get_plugin_metrics_single(plugin_id):
@@ -2367,7 +2989,7 @@ def get_plugin_metrics_single(plugin_id):
         })
     except Exception as e:
         logger.error('Error in get_plugin_metrics_single', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/metrics/<plugin_id>/reset', methods=['POST'])
 def reset_plugin_metrics(plugin_id):
@@ -2392,7 +3014,7 @@ def reset_plugin_metrics(plugin_id):
         })
     except Exception as e:
         logger.error('Error in reset_plugin_metrics', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/limits/<plugin_id>', methods=['GET', 'POST'])
 def manage_plugin_limits(plugin_id):
@@ -2429,7 +3051,7 @@ def manage_plugin_limits(plugin_id):
                 })
         else:
             # POST - Set limits
-            data = request.get_json() or {}
+            data = request.get_json(silent=True) or {}
             from src.plugin_system.resource_monitor import ResourceLimits
 
             limits = ResourceLimits(
@@ -2447,7 +3069,7 @@ def manage_plugin_limits(plugin_id):
             })
     except Exception as e:
         logger.error('Error in manage_plugin_limits', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/toggle', methods=['POST'])
 def toggle_plugin():
@@ -2460,7 +3082,7 @@ def toggle_plugin():
         content_type = request.content_type or ''
 
         if 'application/json' in content_type:
-            data = request.get_json()
+            data = request.get_json(silent=True)
             if not data or 'plugin_id' not in data or 'enabled' not in data:
                 return jsonify({'status': 'error', 'message': 'plugin_id and enabled required'}), 400
             plugin_id = data['plugin_id']
@@ -3331,7 +3953,7 @@ def install_plugin():
         if not api_v3.plugin_store_manager:
             return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
 
-        data = request.get_json()
+        data = request.get_json(silent=True)
         if not data or 'plugin_id' not in data:
             return jsonify({'status': 'error', 'message': 'plugin_id required'}), 400
 
@@ -3456,7 +4078,7 @@ def install_plugin():
 
     except Exception as e:
         logger.error('Error in install_plugin', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/install-from-url', methods=['POST'])
 def install_plugin_from_url():
@@ -3465,9 +4087,14 @@ def install_plugin_from_url():
         if not api_v3.plugin_store_manager:
             return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
 
-        data = request.get_json()
+        data = request.get_json(silent=True)
         if not data or 'repo_url' not in data:
             return jsonify({'status': 'error', 'message': 'repo_url required'}), 400
+
+        # A non-string repo_url is a client mistake, not a server fault:
+        # .strip() would raise and the catch-all would report it as a 500.
+        if not isinstance(data['repo_url'], str) or not data['repo_url'].strip():
+            return jsonify({'status': 'error', 'message': 'repo_url must be a non-empty string'}), 400
 
         repo_url = data['repo_url'].strip()
         plugin_id = data.get('plugin_id')  # Optional, for monorepo installations
@@ -3511,7 +4138,7 @@ def install_plugin_from_url():
 
     except Exception as e:
         logger.error('Error in install_plugin_from_url', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/registry-from-url', methods=['POST'])
 def get_registry_from_url():
@@ -3520,9 +4147,14 @@ def get_registry_from_url():
         if not api_v3.plugin_store_manager:
             return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
 
-        data = request.get_json()
+        data = request.get_json(silent=True)
         if not data or 'repo_url' not in data:
             return jsonify({'status': 'error', 'message': 'repo_url required'}), 400
+
+        # A non-string repo_url is a client mistake, not a server fault:
+        # .strip() would raise and the catch-all would report it as a 500.
+        if not isinstance(data['repo_url'], str) or not data['repo_url'].strip():
+            return jsonify({'status': 'error', 'message': 'repo_url must be a non-empty string'}), 400
 
         repo_url = data['repo_url'].strip()
 
@@ -3543,7 +4175,7 @@ def get_registry_from_url():
 
     except Exception as e:
         logger.error('Error in get_registry_from_url', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/saved-repositories', methods=['GET'])
 def get_saved_repositories():
@@ -3556,7 +4188,7 @@ def get_saved_repositories():
         return jsonify({'status': 'success', 'data': {'repositories': repositories}})
     except Exception as e:
         logger.error('Error in get_saved_repositories', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/saved-repositories', methods=['POST'])
 def add_saved_repository():
@@ -3565,9 +4197,14 @@ def add_saved_repository():
         if not api_v3.saved_repositories_manager:
             return jsonify({'status': 'error', 'message': 'Saved repositories manager not initialized'}), 500
 
-        data = request.get_json()
+        data = request.get_json(silent=True)
         if not data or 'repo_url' not in data:
             return jsonify({'status': 'error', 'message': 'repo_url required'}), 400
+
+        # A non-string repo_url is a client mistake, not a server fault:
+        # .strip() would raise and the catch-all would report it as a 500.
+        if not isinstance(data['repo_url'], str) or not data['repo_url'].strip():
+            return jsonify({'status': 'error', 'message': 'repo_url must be a non-empty string'}), 400
 
         repo_url = data['repo_url'].strip()
         name = data.get('name')
@@ -3587,7 +4224,7 @@ def add_saved_repository():
             }), 400
     except Exception as e:
         logger.error('Error in add_saved_repository', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/saved-repositories', methods=['DELETE'])
 def remove_saved_repository():
@@ -3596,7 +4233,7 @@ def remove_saved_repository():
         if not api_v3.saved_repositories_manager:
             return jsonify({'status': 'error', 'message': 'Saved repositories manager not initialized'}), 500
 
-        data = request.get_json()
+        data = request.get_json(silent=True)
         if not data or 'repo_url' not in data:
             return jsonify({'status': 'error', 'message': 'repo_url required'}), 400
 
@@ -3617,7 +4254,7 @@ def remove_saved_repository():
             }), 404
     except Exception as e:
         logger.error('Error in remove_saved_repository', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/store/list', methods=['GET'])
 def list_plugin_store():
@@ -3670,7 +4307,7 @@ def list_plugin_store():
         return jsonify({'status': 'success', 'data': {'plugins': formatted_plugins}})
     except Exception as e:
         logger.error('Error in list_plugin_store', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/store/github-status', methods=['GET'])
 def get_github_auth_status():
@@ -3721,7 +4358,7 @@ def get_github_auth_status():
             })
     except Exception as e:
         logger.error('Error in get_github_auth_status', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/store/refresh', methods=['POST'])
 def refresh_plugin_store():
@@ -3730,7 +4367,7 @@ def refresh_plugin_store():
         if not api_v3.plugin_store_manager:
             return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
 
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
         fetch_commit_info = data.get('fetch_commit_info', data.get('fetch_latest_versions', False))
 
         # Force refresh the registry
@@ -3748,12 +4385,17 @@ def refresh_plugin_store():
         })
     except Exception as e:
         logger.error('Error in refresh_plugin_store', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 def deep_merge(base_dict, update_dict):
     """
     Deep merge update_dict into base_dict.
     For nested dicts, recursively merge. For other types, update_dict takes precedence.
+
+    Lists are intentionally REPLACED wholesale, never index-merged: form posts
+    carry complete arrays, and index-merging would resurrect items the user
+    deleted. This also applies to the parallel secrets lists produced by
+    separate_secrets — a newly saved secrets list is authoritative.
     """
     result = base_dict.copy()
     for key, value in update_dict.items():
@@ -4768,22 +5410,8 @@ def save_plugin_config():
                 # Default to True on error to avoid disabling plugins
                 plugin_config['enabled'] = True
 
-        # Find secret fields (supports nested schemas)
+        # Find secret fields (supports nested schemas and array-item secrets)
         secret_fields = set()
-
-        def find_secret_fields(properties, prefix=''):
-            """Recursively find fields marked with x-secret: true"""
-            fields = set()
-            if not isinstance(properties, dict):
-                return fields
-            for field_name, field_props in properties.items():
-                full_path = f"{prefix}.{field_name}" if prefix else field_name
-                if isinstance(field_props, dict) and field_props.get('x-secret', False):
-                    fields.add(full_path)
-                # Check nested objects
-                if isinstance(field_props, dict) and field_props.get('type') == 'object' and 'properties' in field_props:
-                    fields.update(find_secret_fields(field_props['properties'], full_path))
-            return fields
 
         if schema and 'properties' in schema:
             secret_fields = find_secret_fields(schema['properties'])
@@ -5099,30 +5727,14 @@ def save_plugin_config():
                     status_code=400
                 )
 
-        # Separate secrets from regular config (handles nested configs)
-        def separate_secrets(config, secrets_set, prefix=''):
-            """Recursively separate secret fields from regular config"""
-            regular = {}
-            secrets = {}
-
-            for key, value in config.items():
-                full_path = f"{prefix}.{key}" if prefix else key
-
-                if isinstance(value, dict):
-                    # Recursively handle nested dicts
-                    nested_regular, nested_secrets = separate_secrets(value, secrets_set, full_path)
-                    if nested_regular:
-                        regular[key] = nested_regular
-                    if nested_secrets:
-                        secrets[key] = nested_secrets
-                elif full_path in secrets_set:
-                    secrets[key] = value
-                else:
-                    regular[key] = value
-
-            return regular, secrets
-
+        # Separate secrets from regular config (handles nested configs and
+        # array-item secrets — see src/web_interface/secret_helpers.py)
         regular_config, secrets_config = separate_secrets(plugin_config, secret_fields)
+        # The config form renders secrets masked, so every save posts
+        # them back blank. Without this the blank is merged over the
+        # stored value and the credential is destroyed by the act of
+        # changing an unrelated setting. A blank means "unchanged".
+        secrets_config = remove_empty_secrets(secrets_config)
 
         # Get current configs
         current_config = api_v3.config_manager.load_config()
@@ -5262,6 +5874,18 @@ def get_plugin_schema():
         schema = schema_mgr.load_schema(plugin_id, use_cache=True)
 
         if schema:
+            # Offer installed visual skins as a dropdown (returns a copy;
+            # the cached schema and validation are never enum-restricted)
+            try:
+                current_skin = None
+                if api_v3.config_manager:
+                    config = api_v3.config_manager.load_config()
+                    current_skin = config.get(plugin_id, {}).get('skin')
+                injected = schema_mgr.inject_skin_selector(schema, plugin_id, current_skin)
+                if isinstance(injected, dict):
+                    schema = injected
+            except Exception:
+                logger.debug('Skin selector injection failed for %s', plugin_id, exc_info=True)
             return jsonify({'status': 'success', 'data': {'schema': schema}})
 
         # Return a simple default schema if file not found
@@ -5288,7 +5912,44 @@ def get_plugin_schema():
         return jsonify({'status': 'success', 'data': {'schema': default_schema}})
     except Exception as e:
         logger.error('Error in get_plugin_schema', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
+
+@api_v3.route('/skins', methods=['GET'])
+def list_skins():
+    """List installed visual skins (docs/SKIN_SYSTEM.md).
+
+    Optional ?plugin_id=... filters to skins matching that plugin.
+    """
+    try:
+        from src.skin_system import skin_runtime
+
+        plugin_id = request.args.get('plugin_id')
+        if plugin_id:
+            skins = skin_runtime.skins_for_plugin(plugin_id)
+        else:
+            # The discovery cache self-invalidates on directory/manifest
+            # mtime changes, so no force_refresh — keeps Pi disk I/O down.
+            skins = skin_runtime.discover_skins()
+
+        payload = []
+        for skin_id, manifest in sorted(skins.items()):
+            skin_dir = Path(manifest['_skin_dir'])
+            preview = manifest.get('preview')
+            payload.append({
+                'id': skin_id,
+                'name': manifest.get('name', skin_id),
+                'version': manifest.get('version'),
+                'author': manifest.get('author'),
+                'description': manifest.get('description', ''),
+                'skin_api_version': manifest.get('skin_api_version'),
+                'targets': manifest.get('targets', {}),
+                'modes': manifest.get('modes', []),
+                'has_preview': bool(preview and (skin_dir / preview).is_file()),
+            })
+        return jsonify({'status': 'success', 'data': {'skins': payload}})
+    except Exception as e:
+        logger.error('Error in list_skins', exc_info=True)
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/config/reset', methods=['POST'])
 def reset_plugin_config():
@@ -5297,7 +5958,7 @@ def reset_plugin_config():
         if not api_v3.config_manager:
             return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 500
 
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
         plugin_id = data.get('plugin_id')
         preserve_secrets = data.get('preserve_secrets', True)
 
@@ -5320,41 +5981,10 @@ def reset_plugin_config():
         schema = schema_mgr.load_schema(plugin_id, use_cache=True)
         secret_fields = set()
 
-        def find_secret_fields(properties, prefix=''):
-            """Recursively find fields marked with x-secret: true"""
-            fields = set()
-            if not isinstance(properties, dict):
-                return fields
-            for field_name, field_props in properties.items():
-                full_path = f"{prefix}.{field_name}" if prefix else field_name
-                if isinstance(field_props, dict) and field_props.get('x-secret', False):
-                    fields.add(full_path)
-                if isinstance(field_props, dict) and field_props.get('type') == 'object' and 'properties' in field_props:
-                    fields.update(find_secret_fields(field_props['properties'], full_path))
-            return fields
-
         if schema and 'properties' in schema:
             secret_fields = find_secret_fields(schema['properties'])
 
         # Separate defaults into regular and secret configs
-        def separate_secrets(config, secrets_set, prefix=''):
-            """Recursively separate secret fields from regular config"""
-            regular = {}
-            secrets = {}
-            for key, value in config.items():
-                full_path = f"{prefix}.{key}" if prefix else key
-                if isinstance(value, dict):
-                    nested_regular, nested_secrets = separate_secrets(value, secrets_set, full_path)
-                    if nested_regular:
-                        regular[key] = nested_regular
-                    if nested_secrets:
-                        secrets[key] = nested_secrets
-                elif full_path in secrets_set:
-                    secrets[key] = value
-                else:
-                    regular[key] = value
-            return regular, secrets
-
         default_regular, default_secrets = separate_secrets(defaults, secret_fields)
 
         # Update main config with defaults
@@ -5399,7 +6029,7 @@ def reset_plugin_config():
         })
     except Exception as e:
         logger.error('Error in reset_plugin_config', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/action', methods=['POST'])
 def execute_plugin_action():
@@ -5659,7 +6289,7 @@ sys.exit(proc.returncode)
                             logger.error("Error executing action step 1", exc_info=True)
                             return jsonify({
                                 'status': 'error',
-                                'message': 'An error occurred; see logs for details'
+                                'message': 'An error occurred; see logs for details', 'details': describe_exception(e)
                             }), 500
                     else:
                         # Simple script execution
@@ -5709,13 +6339,13 @@ sys.exit(proc.returncode)
         return jsonify({'status': 'error', 'message': 'Action timed out'}), 408
     except Exception as e:
         logger.error('Error in execute_plugin_action', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/authenticate/spotify', methods=['POST'])
 def authenticate_spotify():
     """Run Spotify authentication script"""
     try:
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
         redirect_url = data.get('redirect_url', '').strip()
 
         # Get plugin directory
@@ -5778,7 +6408,6 @@ sys.exit(proc.returncode)
                     timeout=120,
                     env=env
                 )
-                os.unlink(wrapper_path)
 
                 if result.returncode == 0:
                     return jsonify({
@@ -5793,9 +6422,13 @@ sys.exit(proc.returncode)
                         'output': result.stdout + result.stderr
                     }), 400
             except subprocess.TimeoutExpired:
+                return jsonify({'status': 'error', 'message': 'Authentication timed out'}), 408
+            finally:
+                # The wrapper carries the user's redirect URL, so it must not
+                # survive the request on any path — including a failure to
+                # launch, which the previous per-branch unlinks missed.
                 if os.path.exists(wrapper_path):
                     os.unlink(wrapper_path)
-                return jsonify({'status': 'error', 'message': 'Authentication timed out'}), 408
         else:
             # Step 1: Get authorization URL
             # Import the script's functions directly to get the auth URL
@@ -5842,12 +6475,12 @@ sys.exit(proc.returncode)
                 logger.error("Error getting Spotify auth URL", exc_info=True)
                 return jsonify({
                     'status': 'error',
-                    'message': 'An error occurred; see logs for details'
+                    'message': 'An error occurred; see logs for details', 'details': describe_exception(e)
                 }), 500
 
     except Exception as e:
         logger.error('Error in authenticate_spotify', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/authenticate/ytm', methods=['POST'])
 def authenticate_ytm():
@@ -5897,7 +6530,7 @@ def authenticate_ytm():
         return jsonify({'status': 'error', 'message': 'Authentication timed out'}), 408
     except Exception as e:
         logger.error('Error in authenticate_ytm', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/fonts/catalog', methods=['GET'])
 def get_fonts_catalog():
@@ -5992,7 +6625,10 @@ def get_fonts_catalog():
 
         return jsonify({'status': 'success', 'data': {'catalog': catalog}})
     except Exception as e:
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        logger.error("%s failed", request.path, exc_info=True)
+        return jsonify({'status': 'error',
+                        'message': 'An error occurred; see logs for details',
+                        'details': describe_exception(e)}), 500
 
 @api_v3.route('/fonts/tokens', methods=['GET'])
 def get_font_tokens():
@@ -6011,7 +6647,7 @@ def get_font_tokens():
         return jsonify({'status': 'success', 'data': {'tokens': tokens}})
     except Exception as e:
         logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/fonts/overrides', methods=['GET'])
 def get_fonts_overrides():
@@ -6023,13 +6659,13 @@ def get_fonts_overrides():
         return jsonify({'status': 'success', 'data': {'overrides': overrides}})
     except Exception as e:
         logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/fonts/overrides', methods=['POST'])
 def save_fonts_overrides():
     """Save font overrides"""
     try:
-        data = request.get_json()
+        data = request.get_json(silent=True)
         if not data:
             return jsonify({'status': 'error', 'message': 'No data provided'}), 400
 
@@ -6037,7 +6673,7 @@ def save_fonts_overrides():
         return jsonify({'status': 'success', 'message': 'Font overrides saved'})
     except Exception as e:
         logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/fonts/overrides/<element_key>', methods=['DELETE'])
 def delete_font_override(element_key):
@@ -6047,7 +6683,7 @@ def delete_font_override(element_key):
         return jsonify({'status': 'success', 'message': f'Font override for {element_key} deleted'})
     except Exception as e:
         logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/fonts/upload', methods=['POST'])
 def upload_font():
@@ -6112,7 +6748,7 @@ def upload_font():
         })
     except Exception as e:
         logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 
 @api_v3.route('/fonts/preview', methods=['GET'])
@@ -6257,7 +6893,7 @@ def get_font_preview() -> tuple[Response, int] | Response:
         })
     except Exception as e:
         logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 
 @api_v3.route('/fonts/<font_family>', methods=['DELETE'])
@@ -6345,7 +6981,7 @@ def delete_font(font_family: str) -> tuple[Response, int] | Response:
         })
     except Exception as e:
         logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 
 @api_v3.route('/plugins/assets/upload', methods=['POST'])
@@ -6493,7 +7129,7 @@ def upload_plugin_asset():
 
     except Exception as e:
         logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/of-the-day/json/upload', methods=['POST'])
 def upload_of_the_day_json():
@@ -6643,13 +7279,13 @@ def upload_of_the_day_json():
 
     except Exception as e:
         logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/of-the-day/json/delete', methods=['POST'])
 def delete_of_the_day_json():
     """Delete a JSON file from of-the-day plugin"""
     try:
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
         file_id = data.get('file_id')  # This is the category_name
 
         if not file_id:
@@ -6690,7 +7326,7 @@ def delete_of_the_day_json():
 
     except Exception as e:
         logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/<plugin_id>/static/<path:file_path>', methods=['GET'])
 def serve_plugin_static(plugin_id, file_path):
@@ -6736,7 +7372,30 @@ def serve_plugin_static(plugin_id, file_path):
 
     except Exception as e:
         logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
+
+
+_MAX_CREDENTIAL_BACKUPS = 5
+
+
+def _prune_credential_backups(plugin_dir: Path) -> None:
+    """Keep only the newest _MAX_CREDENTIAL_BACKUPS credential backups.
+
+    Every re-upload copies the previous credentials.json aside. Without
+    pruning those accumulate for the life of the install — each one a
+    complete set of OAuth client credentials sitting in the plugin
+    directory.
+    """
+    backups = sorted(
+        plugin_dir.glob('credentials.json.backup.*'),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    for stale in backups[_MAX_CREDENTIAL_BACKUPS:]:
+        try:
+            stale.unlink()
+        except OSError:
+            logger.warning("Could not remove old credential backup %s", stale.name)
 
 
 @api_v3.route('/plugins/calendar/upload-credentials', methods=['POST'])
@@ -6766,24 +7425,20 @@ def upload_calendar_credentials():
         try:
             file_content = file.read()
             file.seek(0)
-            json.loads(file_content)
+            creds_data = json.loads(file_content)
         except json.JSONDecodeError:
             return jsonify({'status': 'error', 'message': 'File is not valid JSON'}), 400
 
-        # Validate it looks like Google OAuth credentials
-        try:
-            file.seek(0)
-            creds_data = json.loads(file.read())
-            file.seek(0)
-
-            # Check for required Google OAuth fields
-            if 'installed' not in creds_data and 'web' not in creds_data:
-                return jsonify({
-                    'status': 'error',
-                    'message': 'File does not appear to be a valid Google OAuth credentials file'
-                }), 400
-        except Exception:
-            pass  # Continue even if validation fails
+        # Validate it looks like Google OAuth credentials. A bare scalar, a
+        # list, true/null — all valid JSON, none of them credentials. Reject
+        # rather than save: a file written as credentials.json but unusable
+        # as credentials only fails later, somewhere less obvious.
+        if not isinstance(creds_data, dict) or not (
+                'installed' in creds_data or 'web' in creds_data):
+            return jsonify({
+                'status': 'error',
+                'message': 'File does not appear to be a valid Google OAuth credentials file'
+            }), 400
 
         # Get plugin directory
         plugin_id = 'calendar'
@@ -6803,6 +7458,7 @@ def upload_calendar_credentials():
             backup_path = Path(plugin_dir) / f'credentials.json.backup.{int(time.time())}'
             import shutil
             shutil.copy2(credentials_path, backup_path)
+            _prune_credential_backups(Path(plugin_dir))
 
         # Save new file
         file.save(str(credentials_path))
@@ -6818,7 +7474,228 @@ def upload_calendar_credentials():
 
     except Exception as e:
         logger.error('Error in upload_calendar_credentials', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
+
+# calendarList.list pages at 250 entries maximum. Ten pages is far past any
+# real account and exists only so a malformed nextPageToken cannot spin here.
+_CALENDAR_LIST_MAX_PAGES = 10
+
+
+def _calendar_plugin_dir() -> Optional[Path]:
+    """Where the calendar plugin is installed, or None if it is not."""
+    if api_v3.plugin_manager:
+        plugin_dir = api_v3.plugin_manager.get_plugin_directory('calendar')
+    else:
+        plugin_dir = PROJECT_ROOT / 'plugins' / 'calendar'
+    if not plugin_dir:
+        return None
+    plugin_dir = Path(plugin_dir)
+    return plugin_dir if plugin_dir.exists() else None
+
+
+def _run_calendar_registration(plugin_dir: Path, stdin_payload: str):
+    """Run the plugin's OAuth script and return the JSON object it prints.
+
+    The script decides between web and terminal mode by whether stdin is a
+    tty, so it must be given a pipe. It emits one JSON object on stdout; the
+    last parsable line is taken, because an import warning or a library's
+    stderr redirection can land in front of it.
+
+    Returns (payload, error_message). Exactly one is None.
+    """
+    script = plugin_dir / 'calendar_registration.py'
+    if not script.exists():
+        return None, 'Authentication script not found in the calendar plugin'
+
+    try:
+        result = subprocess.run(  # nosec B603 - fixed script path inside the plugin dir
+            [sys.executable, str(script)],
+            input=stdin_payload,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            cwd=str(plugin_dir),
+        )
+    except subprocess.TimeoutExpired:
+        return None, 'Authentication timed out after 120s'
+    except OSError as e:
+        logger.error('Could not run calendar_registration.py', exc_info=True)
+        return None, 'Could not run the authentication script: %s' % describe_exception(e)
+
+    for line in reversed((result.stdout or '').splitlines()):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return payload, None
+
+    raw = (result.stderr or result.stdout or '').strip()
+    # The unredacted text goes to the log, where it is worth having in full.
+    # What comes back over HTTP is redacted: this is a script that handles
+    # OAuth client secrets, and its stderr can quote them.
+    if raw:
+        logger.error('calendar_registration.py failed (exit %s): %s',
+                     result.returncode, raw)
+    return None, 'Authentication script produced no result%s' % (
+        ': %s' % redact_text(raw) if raw else '')
+
+
+@api_v3.route('/plugins/calendar/authenticate', methods=['POST'])
+def authenticate_calendar():
+    """Google OAuth for the calendar plugin, in the two steps it requires.
+
+    Step 1 (no body) returns the consent URL to open. Step 2 posts back the
+    URL Google redirected to -- it fails to load, because the redirect points
+    at a loopback address nothing is listening on, but the address bar carries
+    the authorization code -- and the script exchanges it for a token.
+
+    Two calls rather than one because the user has to visit Google in between.
+    The script persists the PKCE verifier from step 1 for step 2 to reuse; the
+    exchange fails with "Missing code verifier" otherwise.
+    """
+    try:
+        plugin_dir = _calendar_plugin_dir()
+        if plugin_dir is None:
+            return jsonify({
+                'status': 'error',
+                'message': 'The calendar plugin is not installed'
+            }), 404
+
+        if not (plugin_dir / 'credentials.json').exists():
+            return jsonify({
+                'status': 'error',
+                'message': ('No credentials.json yet. Upload your Google OAuth '
+                            'client file first (Step 1).')
+            }), 400
+
+        data = request.get_json(silent=True) or {}
+        redirect_url = (data.get('redirect_url') or data.get('code') or '').strip()
+
+        payload, error = _run_calendar_registration(plugin_dir, redirect_url)
+        if error:
+            return jsonify({'status': 'error', 'message': error}), 500
+        if payload.get('status') != 'success':
+            # The script's own diagnosis is more useful than anything that
+            # could be reconstructed here -- but it interpolates exceptions
+            # into its messages, so it reaches the client redacted and the
+            # original goes to the log.
+            logger.error('calendar authentication failed: %s', payload)
+            safe = dict(payload)
+            safe['message'] = redact_text(str(payload.get('message', '')
+                                              or 'Authentication failed'))
+            return jsonify(safe), 400
+        return jsonify(payload)
+
+    except Exception as e:
+        logger.error('Error in authenticate_calendar', exc_info=True)
+        return jsonify({'status': 'error',
+                        'message': 'An error occurred; see logs for details',
+                        'details': describe_exception(e)}), 500
+
+
+@api_v3.route('/plugins/calendar/list-calendars', methods=['GET'])
+def list_calendar_calendars():
+    """The calendars this account can see, for the config picker.
+
+    Reads the token the OAuth flow wrote rather than shelling out again: the
+    picker is used interactively and a subprocess per click is slower than the
+    API call it would be wrapping.
+    """
+    try:
+        plugin_dir = _calendar_plugin_dir()
+        if plugin_dir is None:
+            return jsonify({
+                'status': 'error',
+                'message': 'The calendar plugin is not installed'
+            }), 404
+
+        token_file = plugin_dir / 'token.pickle'
+        if not token_file.exists():
+            return jsonify({
+                'status': 'error',
+                'message': ('Not authenticated with Google yet. Complete Step 2 '
+                            'first, then load your calendars.')
+            }), 400
+
+        try:
+            import pickle
+            from google.auth.transport.requests import Request as GoogleRequest
+            from googleapiclient.discovery import build as build_google_service
+        except ImportError as e:
+            return jsonify({
+                'status': 'error',
+                # The name of the missing module is the whole diagnosis, but it
+                # arrives as an exception, so it goes through the redactor like
+                # any other -- an ImportError can quote a path.
+                'message': ('The Google API libraries are not installed. Install '
+                            "the calendar plugin's requirements.txt. (%s)"
+                            % describe_exception(e))
+            }), 500
+
+        with open(token_file, 'rb') as handle:
+            # Written only by this plugin's own OAuth flow, into its own
+            # directory, and read here exactly as the plugin itself reads it.
+            creds = pickle.load(handle)  # nosec B301 - locally generated token
+
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(GoogleRequest())
+            with open(token_file, 'wb') as handle:
+                pickle.dump(creds, handle)
+            os.chmod(token_file, 0o600)
+
+        if not creds or not creds.valid:
+            return jsonify({
+                'status': 'error',
+                'message': ('Stored Google credentials are no longer valid. '
+                            'Run Step 2 again to re-authenticate.')
+            }), 400
+
+        service = build_google_service('calendar', 'v3', credentials=creds)
+
+        # calendarList.list returns 100 entries per page by default and caps at
+        # 250, handing back a nextPageToken when there are more. Taking only
+        # the first page would silently hide calendars from the picker, and the
+        # user would have no way to tell the list was truncated.
+        entries = []
+        page_token = None
+        for _ in range(_CALENDAR_LIST_MAX_PAGES):
+            response = service.calendarList().list(
+                maxResults=250, pageToken=page_token).execute()
+            entries.extend(response.get('items', []))
+            page_token = response.get('nextPageToken')
+            if not page_token:
+                break
+        else:
+            # 2500 calendars in, something is wrong with the account or the
+            # token is looping; show what was collected rather than spin.
+            logger.warning(
+                'calendarList paging stopped at %d pages with more remaining',
+                _CALENDAR_LIST_MAX_PAGES)
+
+        calendars = [{
+            'id': entry.get('id'),
+            # The picker labels each row with summary and falls back to the id
+            # only in its own display, so send something either way.
+            'summary': entry.get('summary') or entry.get('id'),
+            'primary': bool(entry.get('primary', False)),
+        } for entry in entries if entry.get('id')]
+
+        # Primary first, then alphabetically: the list is usually short but the
+        # one the user wants is almost always their own calendar.
+        calendars.sort(key=lambda c: (not c['primary'], c['summary'].lower()))
+
+        return jsonify({'status': 'success', 'calendars': calendars})
+
+    except Exception as e:
+        logger.error('Error in list_calendar_calendars', exc_info=True)
+        return jsonify({'status': 'error',
+                        'message': 'An error occurred; see logs for details',
+                        'details': describe_exception(e)}), 500
+
 
 @api_v3.route('/plugins/assets/delete', methods=['POST'])
 def delete_plugin_asset():
@@ -6861,7 +7738,7 @@ def delete_plugin_asset():
 
     except Exception as e:
         logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/plugins/assets/list', methods=['GET'])
 def list_plugin_assets():
@@ -6889,7 +7766,30 @@ def list_plugin_assets():
 
     except Exception as e:
         logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
+
+@api_v3.route('/display/current-status', methods=['GET'])
+def get_current_display_status():
+    """Return the display mode/plugin currently intended to be shown.
+
+    Published by the display process (display_controller._publish_current_mode_state)
+    to the shared cache whenever the active mode changes, so the web UI (e.g. the
+    System Logs page) can show what's on screen without querying the display
+    process directly.
+    """
+    try:
+        cache = _ensure_cache_manager()
+        state = cache.get('display_current_state', max_age=120)
+        if state is None:
+            state = {
+                'mode': None,
+                'plugin_id': None,
+                'last_updated': None,
+            }
+        return jsonify({'status': 'success', 'data': state})
+    except Exception as e:
+        logger.error('Error in get_current_display_status', exc_info=True)
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/logs', methods=['GET'])
 def get_logs():
@@ -6928,9 +7828,11 @@ def get_logs():
             'message': 'Timeout while fetching logs'
         }), 500
     except Exception as e:
+        logger.error("%s failed", request.path, exc_info=True)
         return jsonify({
             'status': 'error',
-            'message': 'An error occurred; see logs for details'
+            'message': 'An error occurred; see logs for details',
+            'details': describe_exception(e)
         }), 500
 
 # Multi-Display Sync Endpoints
@@ -6995,9 +7897,11 @@ def get_wifi_status():
             }
         })
     except Exception as e:
+        logger.error("%s failed", request.path, exc_info=True)
         return jsonify({
             'status': 'error',
-            'message': 'An error occurred; see logs for details'
+            'message': 'An error occurred; see logs for details',
+            'details': describe_exception(e)
         }), 500
 
 @api_v3.route('/wifi/scan', methods=['GET'])
@@ -7079,7 +7983,7 @@ def connect_wifi():
     try:
         from src.wifi_manager import WiFiManager
 
-        data = request.get_json()
+        data = request.get_json(silent=True)
         if not data:
             return jsonify({
                 'status': 'error',
@@ -7119,7 +8023,7 @@ def connect_wifi():
         logger.error("Error connecting to WiFi", exc_info=True)
         return jsonify({
             'status': 'error',
-            'message': 'An error occurred; see logs for details'
+            'message': 'An error occurred; see logs for details', 'details': describe_exception(e)
         }), 500
 
 @api_v3.route('/wifi/disconnect', methods=['POST'])
@@ -7145,7 +8049,7 @@ def disconnect_wifi():
         logger.error("Error disconnecting from WiFi", exc_info=True)
         return jsonify({
             'status': 'error',
-            'message': 'An error occurred; see logs for details'
+            'message': 'An error occurred; see logs for details', 'details': describe_exception(e)
         }), 500
 
 @api_v3.route('/wifi/ap/enable', methods=['POST'])
@@ -7170,9 +8074,11 @@ def enable_ap_mode():
                 'message': message
             }), 400
     except Exception as e:
+        logger.error("%s failed", request.path, exc_info=True)
         return jsonify({
             'status': 'error',
-            'message': 'An error occurred; see logs for details'
+            'message': 'An error occurred; see logs for details',
+            'details': describe_exception(e)
         }), 500
 
 @api_v3.route('/wifi/ap/disable', methods=['POST'])
@@ -7195,9 +8101,11 @@ def disable_ap_mode():
                 'message': message
             }), 400
     except Exception as e:
+        logger.error("%s failed", request.path, exc_info=True)
         return jsonify({
             'status': 'error',
-            'message': 'An error occurred; see logs for details'
+            'message': 'An error occurred; see logs for details',
+            'details': describe_exception(e)
         }), 500
 
 @api_v3.route('/wifi/ap/auto-enable', methods=['GET'])
@@ -7216,9 +8124,11 @@ def get_auto_enable_ap_mode():
             }
         })
     except Exception as e:
+        logger.error("%s failed", request.path, exc_info=True)
         return jsonify({
             'status': 'error',
-            'message': 'An error occurred; see logs for details'
+            'message': 'An error occurred; see logs for details',
+            'details': describe_exception(e)
         }), 500
 
 @api_v3.route('/wifi/ap/auto-enable', methods=['POST'])
@@ -7227,7 +8137,7 @@ def set_auto_enable_ap_mode():
     try:
         from src.wifi_manager import WiFiManager
 
-        data = request.get_json()
+        data = request.get_json(silent=True)
         if data is None or 'auto_enable_ap_mode' not in data:
             return jsonify({
                 'status': 'error',
@@ -7248,9 +8158,11 @@ def set_auto_enable_ap_mode():
             }
         })
     except Exception as e:
+        logger.error("%s failed", request.path, exc_info=True)
         return jsonify({
             'status': 'error',
-            'message': 'An error occurred; see logs for details'
+            'message': 'An error occurred; see logs for details',
+            'details': describe_exception(e)
         }), 500
 
 @api_v3.route('/wifi/radio', methods=['GET'])
@@ -7270,7 +8182,7 @@ def get_wifi_radio():
         logger.error("Error getting WiFi radio state", exc_info=True)
         return jsonify({
             'status': 'error',
-            'message': 'An error occurred; see logs for details'
+            'message': 'An error occurred; see logs for details', 'details': describe_exception(e)
         }), 500
 
 @api_v3.route('/wifi/radio', methods=['POST'])
@@ -7318,7 +8230,7 @@ def set_wifi_radio():
         logger.error("Error setting WiFi radio state", exc_info=True)
         return jsonify({
             'status': 'error',
-            'message': 'An error occurred; see logs for details'
+            'message': 'An error occurred; see logs for details', 'details': describe_exception(e)
         }), 500
 
 @api_v3.route('/cache/list', methods=['GET'])
@@ -7343,7 +8255,7 @@ def list_cache_files():
         })
     except Exception as e:
         logger.error('Error in list_cache_files', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/cache/delete', methods=['POST'])
 def delete_cache_file():
@@ -7354,7 +8266,7 @@ def delete_cache_file():
             from src.cache_manager import CacheManager
             api_v3.cache_manager = CacheManager()
 
-        data = request.get_json()
+        data = request.get_json(silent=True)
         if not data or 'key' not in data:
             return jsonify({'status': 'error', 'message': 'cache key is required'}), 400
 
@@ -7369,7 +8281,7 @@ def delete_cache_file():
         })
     except Exception as e:
         logger.error('Error in delete_cache_file', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details'}), 500
+        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
 
 # =============================================================================
@@ -7476,7 +8388,35 @@ def clear_old_errors():
 # Backup / Restore
 # ---------------------------------------------------------------------------
 
-_BACKUP_EXPORT_DIR = PROJECT_ROOT / "config" / "backups" / "exports"
+def _resolve_backup_export_dir() -> Path:
+    """Where exported backups live: beside the install, not inside it.
+
+    They used to be written to ``<project>/config/backups/exports``. That is
+    inside the directory a reinstall deletes, so the documented recovery path
+    -- export a backup, then reinstall -- destroyed the backup it had just
+    told the user to make. Anyone who downloaded the ZIP was fine; anyone
+    relying on the on-device copy was not.
+
+    Falls back to the old location when the parent directory is not writable,
+    so an unusual layout degrades to previous behaviour instead of failing to
+    export at all.
+    """
+    preferred = PROJECT_ROOT.parent / "ledmatrix-backups"
+    fallback = PROJECT_ROOT / "config" / "backups" / "exports"
+    try:
+        preferred.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=preferred, prefix=".writetest-"):
+            pass
+        return preferred
+    except OSError as e:
+        logger.warning(
+            f"[Backup] Export dir {preferred} is not writable ({e}); "
+            f"falling back to {fallback}, which a reinstall will delete"
+        )
+        return fallback
+
+
+_BACKUP_EXPORT_DIR = _resolve_backup_export_dir()
 
 
 def _safe_backup_path(filename: str) -> Path:
@@ -7589,7 +8529,16 @@ def backup_restore():
         try:
             opts_dict = json.loads(options_raw)
         except json.JSONDecodeError:
-            opts_dict = {}
+            opts_dict = None
+        if not isinstance(opts_dict, dict):
+            # Every option defaults to True, so falling back to {} on a
+            # parse failure would silently perform a FULL restore —
+            # secrets and all — for a caller who asked for a narrow one
+            # and mis-serialized it. Refuse instead of guessing.
+            return jsonify({
+                'status': 'error',
+                'message': 'Invalid options: expected a JSON object',
+            }), 400
         options = RestoreOptions(
             restore_config=bool(opts_dict.get('restore_config', True)),
             restore_secrets=bool(opts_dict.get('restore_secrets', True)),
@@ -7626,11 +8575,36 @@ def backup_restore():
                     else:
                         result.plugins_failed.append({'plugin_id': pid, 'error': 'Store manager unavailable'})
                 except Exception as pe:
-                    result.plugins_failed.append({'plugin_id': pid, 'error': str(pe)})
+                    logger.error(
+                        "[Backup] Failed to reinstall plugin %r: %s", pid, pe, exc_info=True
+                    )
+                    result.plugins_failed.append({'plugin_id': pid, 'error': 'Installation failed; see server logs'})
+
+        # A restore that dropped files can still report success if the only
+        # failures were plugin reinstalls, since those don't touch result.errors.
+        if result.plugins_failed:
+            result.success = False
 
         data = result.to_dict()
         if not result.success:
-            return jsonify({'status': 'error', 'message': 'Restore had errors', 'data': data}), 500
+            # Name what failed, and what nonetheless landed. A restore is
+            # partial far more often than it is total -- a fresh install can
+            # leave config_secrets.json unwritable by the web service, so
+            # config restores and secrets do not. "Restore had errors" alone
+            # left the user unable to tell a wholly failed restore from one
+            # that quietly dropped their API keys.
+            failed_plugins = [
+                str(p.get('plugin_id')) for p in (result.plugins_failed or []) if p.get('plugin_id')
+            ]
+            parts = []
+            if result.restored:
+                parts.append(f"restored: {', '.join(result.restored)}")
+            if result.errors:
+                parts.append(f"failed: {'; '.join(result.errors)}")
+            if failed_plugins:
+                parts.append(f"plugins not reinstalled: {', '.join(failed_plugins)}")
+            message = 'Restore incomplete — ' + ('. '.join(parts) if parts else 'see logs')
+            return jsonify({'status': 'error', 'message': message, 'data': data}), 500
         return jsonify({'status': 'success', 'data': data})
     except Exception as e:
         logger.error("backup_restore failed: %s", e, exc_info=True)

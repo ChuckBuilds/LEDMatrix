@@ -1,0 +1,1127 @@
+"""SportsCore — the shared fetch/cache/config/render base for the sports
+scoreboards. Split out of the former ``src/base_classes/sports.py``; see
+docs/SPORTS_UNIFICATION.md for the layering.
+"""
+
+import logging
+import os
+import tempfile
+import time
+from abc import ABC, abstractmethod
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+import pytz
+import requests
+from PIL import Image, ImageDraw, ImageFont
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+from src.background_data_service import get_background_service
+
+# Import new architecture components (individual classes will import what they need)
+from src.base_classes.api_extractors import APIDataExtractor
+from src.base_classes.data_sources import DataSource
+from src.cache_manager import CacheManager
+from src.display_manager import DisplayManager
+from src.dynamic_team_resolver import DynamicTeamResolver
+from src.logo_downloader import LogoDownloader, download_missing_logo
+try:
+    from src.base_odds_manager import BaseOddsManager as OddsManager
+except ImportError:
+    OddsManager = None
+
+# The core install root, resolved from this module's own location so nothing
+# here depends on the process working directory.
+#
+# The index is the number of directories between this file and the root:
+# src/base_classes/sports/core.py -> sports -> base_classes -> src -> root.
+# It is defined ONCE, here, because hand-counting it at each use site is
+# exactly what broke when this module moved from src/base_classes/sports.py
+# into the package (the old depth of 2 silently started resolving to src/).
+# If this module ever moves again, this is the single line to update.
+_INSTALL_ROOT = Path(__file__).resolve().parents[3]
+
+# Shared element-style resolver. Core always ships src.element_style, so the
+# guard is never taken here — it is kept because this module's methods are
+# back-copied verbatim into the plugins' bundled `sports.py`, where older
+# cores genuinely lack the module (the plugins fall back to the classic
+# inline config read below).
+try:
+    from src.element_style import ElementStyleResolver, defaults_from_schema_file
+    STYLE_AVAILABLE = True
+except ImportError:  # pragma: no cover - core always ships element_style
+    STYLE_AVAILABLE = False
+
+
+# --- Font catalog delegation -------------------------------------------------
+# The plugin copies each carried their own alias table mapping font *family*
+# names ("press_start") to filenames. That table is a duplicate of the core
+# FontManager's `common_fonts` catalog, so resolve through the catalog instead
+# and let the two never drift apart. Same lazy module-level shape as
+# skin_runtime._get_font_manager / base_plugin._fallback_font_manager: a
+# SportsCore host has no plugin_manager to borrow a FontManager from.
+
+_shared_font_catalog: Optional[Any] = None
+
+
+def _font_catalog() -> Any:
+    """Shared read-only FontManager used purely as a font-name catalog."""
+    global _shared_font_catalog
+    if _shared_font_catalog is None:
+        from src.font_manager import FontManager
+        _shared_font_catalog = FontManager({})
+    return _shared_font_catalog
+
+
+def _resolve_font_family_alias(font_name: str) -> str:
+    """Resolve a font family alias to its filename, leaving filenames as-is.
+
+    A config `font` value may be either a family name from the FontManager
+    catalog ("press_start", "four_by_six", "five_by_seven") or a literal
+    filename; the former resolve here, the latter pass through unchanged.
+    """
+    try:
+        catalogued = _font_catalog().common_fonts.get(font_name)
+    except Exception:
+        return font_name
+    return os.path.basename(catalogued) if catalogued else font_name
+
+
+def _read_bdf_native_size(bdf_path: str) -> Optional[int]:
+    """A BDF file's one true pixel size, delegated to FontManager.
+
+    Deliberately NOT reimplemented here: the plugin copies grew a variant
+    that scans the whole file and returns a partially collected value when
+    parsing raises, where FontManager's stops at the first STARTCHAR and
+    returns None on error.
+    """
+    try:
+        from src.font_manager import FontManager
+        return FontManager._read_bdf_native_size(bdf_path)
+    except Exception:
+        return None
+
+
+class SportsCore(ABC):
+    # Which ScoreboardSkin render method this class's display path maps to.
+    # SportsLive inherits the default; SportsUpcoming/SportsRecent override.
+    SKIN_MODE = "live"
+
+    def __init__(self, config: Dict[str, Any], display_manager: DisplayManager, cache_manager: CacheManager, logger: logging.Logger, sport_key: str):
+        self.logger = logger
+        self.config = config
+        self.cache_manager = cache_manager
+        self.config_manager = self.cache_manager.config_manager
+        if OddsManager:
+            try:
+                self.odds_manager = OddsManager(
+                    self.cache_manager, self.config_manager)
+            except Exception as e:
+                self.logger.warning(f"Failed to initialize OddsManager: {e}")
+                self.odds_manager = None
+        else:
+            self.odds_manager = None
+            self.logger.warning("OddsManager not available - odds functionality disabled")
+        self.display_manager = display_manager
+        self.display_width = self.display_manager.matrix.width
+        self.display_height = self.display_manager.matrix.height
+
+        self.sport_key = sport_key
+        self.sport = None
+        self.league = None
+        
+        # Initialize new architecture components (will be overridden by sport-specific classes)
+        self.sport_config = None
+        self.api_extractor: APIDataExtractor
+        self.data_source: DataSource
+        self.mode_config = config.get(f"{sport_key}_scoreboard", {})  # Changed config key
+        self.is_enabled: bool = self.mode_config.get("enabled", False)
+        self.show_odds: bool = self.mode_config.get("show_odds", False)
+        # Use LogoDownloader to get the correct default logo directory for this sport
+        default_logo_dir = Path(LogoDownloader().get_logo_directory(sport_key))
+        self.logo_dir = self._initialize_logo_dir(default_logo_dir)
+        self.update_interval: int = self.mode_config.get(
+            "update_interval_seconds", 60)
+        self.show_records: bool = self.mode_config.get('show_records', False)
+        self.show_ranking: bool = self.mode_config.get('show_ranking', False)
+        # Number of games to show (instead of time-based windows)
+        self.recent_games_to_show: int = self.mode_config.get(
+            "recent_games_to_show", 5)  # Show last 5 games
+        self.upcoming_games_to_show: int = self.mode_config.get(
+            "upcoming_games_to_show", 10)  # Show next 10 games
+        self.show_favorite_teams_only: bool = self.mode_config.get("show_favorite_teams_only", False)
+        self.show_all_live: bool = self.mode_config.get("show_all_live", False)
+
+        self.session = requests.Session()
+        retry_strategy = Retry(
+            total=5,  # increased number of retries
+            backoff_factor=1,  # increased backoff factor
+            # added 429 to retry list
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["GET", "HEAD", "OPTIONS"]
+        )
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        self.session.mount("https://", adapter)
+        self.session.mount("http://", adapter)
+
+        self._logo_cache = {}
+
+        # Font caches for _load_custom_font_from_element_config: per-frame
+        # callers (font-ladder walks) resolve the same (name, size) over and
+        # over, and the BDF strike size means re-reading a file header.
+        # Both are released in cleanup().
+        self._font_cache: Dict[Tuple[str, int], Any] = {}
+        self._bdf_native_size_cache: Dict[str, Optional[int]] = {}
+
+        # Set up headers
+        self.headers = {
+            'User-Agent': 'LEDMatrix/1.0 (https://github.com/yourusername/LEDMatrix; contact@example.com)',
+            'Accept': 'application/json',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive'
+        }
+        self.last_update = 0
+        self.current_game = None
+        # Cooldown clocks for _should_log(), one per warning type. Initialized
+        # here rather than lazily: _should_log() reads them unguarded, so
+        # whichever warning fires first would otherwise raise AttributeError
+        # instead of logging. `_last_warning_time` is the single-clock field
+        # the plugin copies expose; kept for subclasses that read it.
+        self._warning_cooldowns: Dict[str, float] = {}
+        self._last_warning_time = 0
+        self.fonts = self._load_fonts()
+
+        # Optional visual skin (see docs/SKIN_SYSTEM.md). "skin" is either a
+        # skin id applied to all modes, or a per-mode mapping like
+        # {"live": "retro", "recent": "built-in"}. Loaded lazily on first
+        # render so a broken skin can never block startup.
+        self._skin_config = self.mode_config.get("skin")
+        self.skin_options = self.mode_config.get("skin_options", {}) or {}
+        self._skin = None
+        self._skin_load_attempted = False
+        self._skin_failures = 0
+        self._skin_slow_renders = 0
+        
+        # Initialize dynamic team resolver and resolve favorite teams
+        self.dynamic_resolver = DynamicTeamResolver()
+        raw_favorite_teams = self.mode_config.get("favorite_teams", [])
+        self.favorite_teams = self.dynamic_resolver.resolve_teams(raw_favorite_teams, sport_key)
+        
+        # Log dynamic team resolution
+        if raw_favorite_teams != self.favorite_teams:
+            self.logger.info(f"Resolved dynamic teams: {raw_favorite_teams} -> {self.favorite_teams}")
+        else:
+            self.logger.info(f"Favorite teams: {self.favorite_teams}")
+            
+        self.logger.setLevel(logging.INFO)
+        
+        # Initialize team rankings cache
+        self._team_rankings_cache = {}
+        self._rankings_cache_timestamp = 0
+        self._rankings_cache_duration = 3600  # Cache rankings for 1 hour
+
+        # Initialize background data service with optimized settings
+        # Hardcoded for memory optimization: 1 worker, 30s timeout, 3 retries
+        self.background_service = get_background_service(self.cache_manager, max_workers=1)
+        self.background_fetch_requests = {}  # Track background fetch requests
+        self.background_enabled = True
+        self.logger.info("Background service enabled with 1 worker (memory optimized)")
+
+    def _initialize_logo_dir(self, configured_path: Path) -> Path:
+        """Resolve and ensure a writable logo directory, falling back when necessary."""
+        downloader = LogoDownloader()
+        resolved_configured = self._resolve_project_path(configured_path)
+        candidates = [resolved_configured] + self._get_logo_directory_fallbacks(resolved_configured)
+
+        for candidate in candidates:
+            candidate_path = self._resolve_project_path(candidate)
+            if downloader.ensure_logo_directory(str(candidate_path)):
+                if candidate_path != resolved_configured:
+                    self.logger.warning(
+                        "Configured logo directory '%s' is not writable; using fallback '%s'",
+                        resolved_configured,
+                        candidate_path,
+                    )
+                return candidate_path
+
+        self.logger.error(
+            "Unable to find a writable logo directory. Logos may fail to download (last attempted: %s)",
+            resolved_configured,
+        )
+        return resolved_configured
+
+    def _resolve_project_path(self, path: Path) -> Path:
+        """Convert relative paths to absolute ones rooted at the project directory."""
+        if path.is_absolute():
+            return path
+        return (_INSTALL_ROOT / path).resolve()
+
+    def _get_logo_directory_fallbacks(self, configured_dir: Path) -> List[Path]:
+        """Return fallback directories to try when the configured directory is not writable."""
+        fallbacks: List[Path] = []
+
+        env_override = os.environ.get("LEDMATRIX_LOGO_DIR")
+        if env_override:
+            env_path = Path(env_override)
+            if not env_path.is_absolute():
+                env_path = self._resolve_project_path(env_path)
+            fallbacks.append(env_path / self.sport_key)
+
+        cache_dir = getattr(self.cache_manager, "cache_dir", None)
+        if cache_dir:
+            fallbacks.append(Path(cache_dir) / "logos" / self.sport_key)
+
+        try:
+            fallbacks.append(Path.home() / ".ledmatrix" / "logos" / self.sport_key)
+        except RuntimeError as e:
+            self.logger.debug("Could not resolve home directory (expected for service users): %s", e)
+
+        fallbacks.append(Path(tempfile.gettempdir()) / "ledmatrix_logos" / self.sport_key)
+
+        unique_fallbacks: List[Path] = []
+        seen = set()
+        for candidate in fallbacks:
+            if candidate == configured_dir:
+                continue
+            if candidate not in seen:
+                unique_fallbacks.append(candidate)
+                seen.add(candidate)
+
+        return unique_fallbacks
+
+    def _get_season_schedule_dates(self) -> tuple[str, str]:
+        return "", ""
+
+    def _draw_scorebug_layout(self, game: Dict, force_clear: bool = False) -> None:
+        """Placeholder draw method - subclasses should override."""
+        # This base method will be simple, subclasses provide specifics
+        try:
+            img = Image.new('RGB', (self.display_width, self.display_height), (0, 0, 0))
+            draw = ImageDraw.Draw(img)
+            status = game.get("status_text", "N/A")
+            self._draw_text_with_outline(draw, status, (2, 2), self.fonts['status'])
+            self.display_manager.image.paste(img, (0, 0))
+            # Don't call update_display here, let subclasses handle it after drawing
+        except Exception as e:
+            self.logger.error(f"Error in base _draw_scorebug_layout: {e}", exc_info=True)
+
+
+    def _resolve_skin_id(self) -> Optional[str]:
+        """The skin id configured for this instance's mode, or None for the
+        built-in renderer. Accepts a plain id (all modes) or a per-mode
+        mapping ({"live": "retro-baseball", "recent": "built-in"})."""
+        skin_id = self._skin_config
+        if isinstance(skin_id, dict):
+            skin_id = skin_id.get(self.SKIN_MODE)
+        if not skin_id or not isinstance(skin_id, str) or skin_id == "built-in":
+            return None
+        return skin_id
+
+    def _get_skin(self):
+        """Lazily load the configured skin once. Returns None (built-in
+        renderer) when no skin is configured or loading failed."""
+        if not self._skin_load_attempted:
+            self._skin_load_attempted = True
+            skin_id = self._resolve_skin_id()
+            if skin_id:
+                try:
+                    from src.skin_system import skin_runtime
+                    self._skin = skin_runtime.load_skin(
+                        skin_id, sport=self.sport, sport_key=self.sport_key,
+                        options=self.skin_options)
+                except Exception as e:
+                    self.logger.error(f"Failed to load skin '{skin_id}': {e}", exc_info=True)
+                    self._skin = None
+        return self._skin
+
+    def _render_game(self, game: Dict, force_clear: bool = False) -> None:
+        """Render one game: try the configured skin first, fall back to the
+        built-in _draw_scorebug_layout. A skin that raises 3 times in a row
+        is disabled for the rest of the session."""
+        skin = self._get_skin()
+        if skin is not None and self._skin_failures < 3:
+            try:
+                from src.skin_system import skin_runtime
+                ctx = skin_runtime.build_context(self, game)
+                render = getattr(skin, f"render_{self.SKIN_MODE}")
+                started = time.monotonic()
+                handled = render(ctx, dict(game))
+                elapsed = time.monotonic() - started
+                if elapsed > 0.15 and self._skin_slow_renders < 5:
+                    self._skin_slow_renders += 1
+                    self.logger.warning(
+                        f"Skin '{self._resolve_skin_id()}' took {elapsed * 1000:.0f}ms to "
+                        f"render {self.SKIN_MODE} — slow renders stall the whole display loop")
+                if handled:
+                    self._skin_failures = 0
+                    self.display_manager.image.paste(ctx.canvas, (0, 0))
+                    self.display_manager.update_display()
+                    return
+            except Exception:
+                self._skin_failures += 1
+                outcome = ("disabling skin for this session" if self._skin_failures >= 3
+                           else "falling back to built-in renderer")
+                self.logger.error(
+                    f"Skin '{self._resolve_skin_id()}' failed rendering {self.SKIN_MODE} "
+                    f"({self._skin_failures}/3); {outcome}", exc_info=True)
+        self._draw_scorebug_layout(game, force_clear)
+
+    def render_skin_card(self, game: Dict, size: tuple) -> Optional[Image.Image]:
+        """Render one game as a standalone card via the configured skin —
+        for vegas mode and previews. Tries render_vegas_card at the given
+        size, then the mode renderer on a card-sized canvas. Returns None
+        when no skin is active or the skin declined, so callers can use
+        their default rendering."""
+        skin = self._get_skin()
+        if skin is None or self._skin_failures >= 3:
+            return None
+        try:
+            from src.skin_system import skin_runtime
+            ctx = skin_runtime.build_context(self, game, size=size)
+            card = skin.render_vegas_card(ctx, dict(game))
+            if card is not None:
+                # A successful render clears accumulated strikes, mirroring
+                # _render_game — transient failures must not add up across
+                # the session and disable a working skin.
+                self._skin_failures = 0
+                return card
+            ctx = skin_runtime.build_context(self, game, size=size)
+            render = getattr(skin, f"render_{self.SKIN_MODE}")
+            if render(ctx, dict(game)):
+                self._skin_failures = 0
+                return ctx.canvas
+        except Exception:
+            # Card failures count toward the same 3-strike session disable
+            # as display failures — a skin broken for vegas shouldn't get
+            # to throw on every scroll tick forever.
+            self._skin_failures += 1
+            self.logger.error(
+                f"Skin '{self._resolve_skin_id()}' card render failed "
+                f"({self._skin_failures}/3)", exc_info=True)
+        return None
+
+    def display(self, force_clear: bool = False) -> bool:
+        """Common display method for all NCAA FB managers""" # Updated docstring
+        if not self.is_enabled: # Check if module is enabled
+             return False
+
+        if not self.current_game:
+            # Clear display if force_clear is True, even when there's no content
+            # This prevents black screens when switching to modes with no content
+            if force_clear:
+                try:
+                    self.display_manager.clear()
+                    self.display_manager.update_display()
+                except Exception as e:
+                    self.logger.debug(f"Error clearing display when no content: {e}")
+            
+            current_time = time.time()
+            if not hasattr(self, '_last_warning_time'):
+                self._last_warning_time = 0
+            if current_time - getattr(self, '_last_warning_time', 0) > 300:
+                self.logger.warning(f"No game data available to display in {self.__class__.__name__}")
+                setattr(self, '_last_warning_time', current_time)
+            return False
+
+        try:
+            self._render_game(self.current_game, force_clear)
+            # display_manager.update_display() should be called within subclass draw methods
+            # or after calling display() in the main loop. Let's keep it out of the base display.
+            return True
+        except Exception as e:
+             self.logger.error(f"Error during display call in {self.__class__.__name__}: {e}", exc_info=True)
+             return False
+
+
+    def _load_fonts(self) -> Dict[str, Any]:
+        """Load fonts used by the scoreboard.
+
+        Paths go through :meth:`_resolve_font_path` so the bundled fonts are
+        found regardless of the process working directory — a bare
+        ``"assets/fonts/..."`` silently degraded every scoreboard to the PIL
+        default font whenever the process started elsewhere (the plugin safety
+        harness on CI being the case that surfaced it).
+        """
+        fonts: Dict[str, Any] = {}
+        press_start = self._resolve_font_path("PressStart2P-Regular.ttf")
+        four_by_six = self._resolve_font_path("4x6-font.ttf")
+        try:
+            fonts['score'] = ImageFont.truetype(press_start, 10)
+            fonts['time'] = ImageFont.truetype(press_start, 8)
+            fonts['team'] = ImageFont.truetype(press_start, 8)
+            fonts['status'] = ImageFont.truetype(four_by_six, 6) # Using 4x6 for status
+            fonts['detail'] = ImageFont.truetype(four_by_six, 6) # Added detail font
+            fonts['rank'] = ImageFont.truetype(press_start, 10)
+            self.logger.info("Successfully loaded fonts")
+        except OSError:
+            # Name the directory we searched: the usual cause is an install
+            # whose assets/fonts is missing, and the bare message sent people
+            # hunting for a font-format problem instead.
+            self.logger.warning(
+                "Fonts not found under %s, using default PIL font.",
+                self._font_root(),
+            )
+            fonts['score'] = ImageFont.load_default()
+            fonts['time'] = ImageFont.load_default()
+            fonts['team'] = ImageFont.load_default()
+            fonts['status'] = ImageFont.load_default()
+            fonts['detail'] = ImageFont.load_default()
+            fonts['rank'] = ImageFont.load_default()
+        return fonts
+
+    def _draw_dynamic_odds(self, draw: ImageDraw.Draw, odds: Dict[str, Any], width: int, height: int) -> None:
+        """Draw odds with dynamic positioning - only show negative spread and position O/U based on favored team."""
+        home_team_odds = odds.get('home_team_odds', {})
+        away_team_odds = odds.get('away_team_odds', {})
+        home_spread = home_team_odds.get('spread_odds')
+        away_spread = away_team_odds.get('spread_odds')
+
+        # Get top-level spread as fallback
+        top_level_spread = odds.get('spread')
+        
+        # If we have a top-level spread and the individual spreads are None or 0, use the top-level
+        if top_level_spread is not None:
+            if home_spread is None or home_spread == 0.0:
+                home_spread = top_level_spread
+            if away_spread is None:
+                away_spread = -top_level_spread
+
+        # Determine which team is favored (has negative spread)
+        home_favored = home_spread is not None and home_spread < 0
+        away_favored = away_spread is not None and away_spread < 0
+        
+        # Only show the negative spread (favored team)
+        favored_spread = None
+        favored_side = None
+        
+        if home_favored:
+            favored_spread = home_spread
+            favored_side = 'home'
+            self.logger.debug(f"Home team favored with spread: {favored_spread}")
+        elif away_favored:
+            favored_spread = away_spread
+            favored_side = 'away'
+            self.logger.debug(f"Away team favored with spread: {favored_spread}")
+        else:
+            self.logger.debug("No clear favorite - spreads: home={home_spread}, away={away_spread}")
+        
+        # Show the negative spread on the appropriate side
+        if favored_spread is not None:
+            spread_text = str(favored_spread)
+            font = self.fonts['detail']  # Use detail font for odds
+            
+            if favored_side == 'home':
+                # Home team is favored, show spread on right side
+                spread_width = draw.textlength(spread_text, font=font)
+                spread_x = width - spread_width  # Top right
+                spread_y = 0
+                self._draw_text_with_outline(draw, spread_text, (spread_x, spread_y), font, fill=(0, 255, 0))
+                self.logger.debug(f"Showing home spread '{spread_text}' on right side")
+            else:
+                # Away team is favored, show spread on left side
+                spread_x = 0  # Top left
+                spread_y = 0
+                self._draw_text_with_outline(draw, spread_text, (spread_x, spread_y), font, fill=(0, 255, 0))
+                self.logger.debug(f"Showing away spread '{spread_text}' on left side")
+        
+        # Show over/under on the opposite side of the favored team
+        over_under = odds.get('over_under')
+        if over_under is not None:
+            ou_text = f"O/U: {over_under}"
+            font = self.fonts['detail']  # Use detail font for odds
+            ou_width = draw.textlength(ou_text, font=font)
+            
+            if favored_side == 'home':
+                # Home team is favored, show O/U on left side (opposite of spread)
+                ou_x = 0  # Top left
+                ou_y = 0
+                self.logger.debug(f"Showing O/U '{ou_text}' on left side (home favored)")
+            elif favored_side == 'away':
+                # Away team is favored, show O/U on right side (opposite of spread)
+                ou_x = width - ou_width  # Top right
+                ou_y = 0
+                self.logger.debug(f"Showing O/U '{ou_text}' on right side (away favored)")
+            else:
+                # No clear favorite, show O/U in center
+                ou_x = (width - ou_width) // 2
+                ou_y = 0
+                self.logger.debug(f"Showing O/U '{ou_text}' in center (no clear favorite)")
+            
+            self._draw_text_with_outline(draw, ou_text, (ou_x, ou_y), font, fill=(0, 255, 0))
+
+    def _draw_text_with_outline(self, draw, text, position, font, fill=(255, 255, 255), outline_color=(0, 0, 0)):
+        """Draw text with a black outline for better readability."""
+        x, y = position
+        for dx, dy in [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]:
+            draw.text((x + dx, y + dy), text, font=font, fill=outline_color)
+        draw.text((x, y), text, font=font, fill=fill)
+
+    def _load_and_resize_logo(self, team_id: str, team_abbrev: str, logo_path: Path, logo_url: str | None ) -> Optional[Image.Image]:
+        """Load and resize a team logo, with caching and automatic download if missing."""
+        self.logger.debug(f"Logo path: {logo_path}")
+        if team_abbrev in self._logo_cache:
+            self.logger.debug(f"Using cached logo for {team_abbrev}")
+            return self._logo_cache[team_abbrev]
+
+        try:
+            # Try different filename variations first (for cases like TA&M vs TAANDM)
+            actual_logo_path = None
+            filename_variations = LogoDownloader.get_logo_filename_variations(team_abbrev)
+            
+            for filename in filename_variations:
+                test_path = logo_path.parent / filename
+                if test_path.exists():
+                    actual_logo_path = test_path
+                    self.logger.debug(f"Found logo at alternative path: {actual_logo_path}")
+                    break
+            
+            # If no variation found, try to download missing logo
+            if not actual_logo_path and not logo_path.exists():
+                self.logger.info(f"Logo not found for {team_abbrev} at {logo_path}. Attempting to download.")
+                
+                # Try to download the logo from ESPN API (this will create placeholder if download fails)
+                download_missing_logo(self.sport_key, team_id, team_abbrev, logo_path, logo_url)
+                actual_logo_path = logo_path
+
+            # Use the original path if no alternative was found
+            if not actual_logo_path:
+                actual_logo_path = logo_path
+
+            # Only try to open the logo if the file exists
+            if os.path.exists(actual_logo_path):
+                logo = Image.open(actual_logo_path)
+            else:
+                self.logger.error(f"Logo file still doesn't exist at {actual_logo_path} after download attempt")
+                return None
+            if logo.mode != 'RGBA':
+                logo = logo.convert('RGBA')
+
+            max_width = int(self.display_width * 1.5)
+            max_height = int(self.display_height * 1.5)
+            logo.thumbnail((max_width, max_height), Image.Resampling.LANCZOS)
+            self._logo_cache[team_abbrev] = logo
+            return logo
+
+        except Exception as e:
+            self.logger.error(f"Error loading logo for {team_abbrev}: {e}", exc_info=True)
+            return None
+
+    def _fetch_odds(self, game: Dict) -> None:
+        """Fetch odds for a specific game using the new architecture."""
+        try:
+            if not self.show_odds:
+                return
+            
+            if not self.odds_manager:
+                return
+            
+            # Determine update interval based on game state
+            is_live = game.get('is_live', False)
+            update_interval = self.mode_config.get("live_odds_update_interval", 60) if is_live \
+                else self.mode_config.get("odds_update_interval", 3600)
+            
+            # Fetch odds using OddsManager
+            odds_data = self.odds_manager.get_odds(
+                sport=self.sport,
+                league=self.league,
+                event_id=game['id'],
+                update_interval_seconds=update_interval,
+            )
+            
+            if odds_data:
+                game['odds'] = odds_data
+                self.logger.debug(f"Successfully fetched and attached odds for game {game['id']}")
+            else:
+                self.logger.debug(f"No odds data returned for game {game['id']}")
+                
+        except Exception as e:
+            self.logger.error(f"Error fetching odds for game {game.get('id', 'N/A')}: {e}")
+
+    def _get_timezone(self):
+        try:
+            timezone_str = self.config.get('timezone', 'UTC')
+            return pytz.timezone(timezone_str)
+        except pytz.UnknownTimeZoneError:
+            return pytz.utc
+
+    def _should_log(self, warning_type: str, cooldown: int = 60) -> bool:
+        """Whether a warning of this kind is outside its cooldown window.
+
+        Cooldowns are tracked **per ``warning_type``**. They previously shared
+        one timestamp, so the parameter was accepted and ignored: an API-error
+        warning would silence an unrelated cache warning for the next minute,
+        and whichever fired first won. Nothing in core called this, so no
+        behavior regressed with the fix — but every caller has always been
+        entitled to assume its own warning type has its own clock.
+        """
+        current_time = time.time()
+        if current_time - self._warning_cooldowns.get(warning_type, 0) > cooldown:
+            self._warning_cooldowns[warning_type] = current_time
+            # Kept in step for subclasses that read it directly.
+            self._last_warning_time = current_time
+            return True
+        return False
+
+    def _fetch_team_rankings(self) -> Dict[str, int]:
+        """Fetch team rankings using the new architecture components."""
+        current_time = time.time()
+        
+        # Check if we have cached rankings that are still valid
+        if (self._team_rankings_cache and 
+            current_time - self._rankings_cache_timestamp < self._rankings_cache_duration):
+            return self._team_rankings_cache
+        
+        try:
+            data = self.data_source.fetch_standings(self.sport, self.league)
+            
+            rankings = {}
+            rankings_data = data.get('rankings', [])
+            
+            if rankings_data:
+                # Use the first ranking (usually AP Top 25)
+                first_ranking = rankings_data[0]
+                teams = first_ranking.get('ranks', [])
+                
+                for team_data in teams:
+                    team_info = team_data.get('team', {})
+                    team_abbr = team_info.get('abbreviation', '')
+                    current_rank = team_data.get('current', 0)
+                    
+                    if team_abbr and current_rank > 0:
+                        rankings[team_abbr] = current_rank
+            
+            # Cache the results
+            self._team_rankings_cache = rankings
+            self._rankings_cache_timestamp = current_time
+            
+            self.logger.debug(f"Fetched rankings for {len(rankings)} teams")
+            return rankings
+            
+        except Exception as e:
+            self.logger.error(f"Error fetching team rankings: {e}")
+            return {}
+
+    def _extract_game_details_common(self, game_event: Dict) -> tuple[Dict | None, Dict | None, Dict | None, Dict | None, Dict | None]:
+        if not game_event: 
+            return None, None, None, None, None
+        try:
+            competition = game_event["competitions"][0]
+            status = competition["status"]
+            competitors = competition["competitors"]
+            game_date_str = game_event["date"]
+            situation = competition.get("situation")
+            start_time_utc = None
+            try:
+                # Parse the datetime string
+                if game_date_str.endswith('Z'):
+                    game_date_str = game_date_str.replace('Z', '+00:00')
+                dt = datetime.fromisoformat(game_date_str)
+                # Ensure the datetime is UTC-aware (fromisoformat may create timezone-aware but not pytz.UTC)
+                if dt.tzinfo is None:
+                    # If naive, assume it's UTC
+                    start_time_utc = dt.replace(tzinfo=pytz.UTC)
+                else:
+                    # Convert to pytz.UTC for consistency
+                    start_time_utc = dt.astimezone(pytz.UTC)
+            except ValueError:
+                logging.warning(f"Could not parse game date: {game_date_str}")
+
+            home_team = next((c for c in competitors if c.get("homeAway") == "home"), None)
+            away_team = next((c for c in competitors if c.get("homeAway") == "away"), None)
+
+            if not home_team or not away_team:
+                self.logger.warning(f"Could not find home or away team in event: {game_event.get('id')}")
+                return None, None, None, None, None
+
+            try:
+                home_abbr = home_team["team"]["abbreviation"]
+            except KeyError:
+                home_abbr = home_team["team"]["name"][:3]
+            try:
+                away_abbr = away_team["team"]["abbreviation"]
+            except KeyError:
+                away_abbr = away_team["team"]["name"][:3]
+            
+            # Check if this is a favorite team game BEFORE doing expensive logging
+            is_favorite_game = (home_abbr in self.favorite_teams or away_abbr in self.favorite_teams)
+            
+            # Only log debug info for favorite team games
+            if is_favorite_game:
+                self.logger.debug(f"Processing favorite team game: {game_event.get('id')}")
+                self.logger.debug(f"Found teams: {away_abbr}@{home_abbr}, Status: {status['type']['name']}, State: {status['type']['state']}")
+            
+            game_time, game_date = "", ""
+            if start_time_utc:
+                local_time = start_time_utc.astimezone(self._get_timezone())
+                game_time = local_time.strftime("%I:%M%p").lstrip('0')
+                
+                # Check date format from config
+                use_short_date_format = self.config.get('display', {}).get('use_short_date_format', False)
+                if use_short_date_format:
+                    game_date = local_time.strftime("%-m/%-d")
+                else:
+                    game_date = self.display_manager.format_date_with_ordinal(local_time)
+
+
+            home_record = home_team.get('records', [{}])[0].get('summary', '') if home_team.get('records') else ''
+            away_record = away_team.get('records', [{}])[0].get('summary', '') if away_team.get('records') else ''
+            
+            # Don't show "0-0" records - set to blank instead
+            if home_record in {"0-0", "0-0-0"}:
+                home_record = ''
+            if away_record in {"0-0", "0-0-0"}:
+                away_record = ''
+
+            details = {
+                "id": game_event.get("id"),
+                "game_time": game_time,
+                "game_date": game_date,
+                "start_time_utc": start_time_utc,
+                "status_text": status["type"]["shortDetail"], # e.g., "Final", "7:30 PM", "Q1 12:34"
+                "is_live": status["type"]["state"] == "in",
+                "is_final": status["type"]["state"] == "post",
+                "is_upcoming": (status["type"]["state"] == "pre" or 
+                               status["type"]["name"].lower() in ['scheduled', 'pre-game', 'status_scheduled']),
+                "is_halftime": status["type"]["state"] == "halftime" or status["type"]["name"] == "STATUS_HALFTIME", # Added halftime check
+                "is_period_break": status["type"]["name"] == "STATUS_END_PERIOD", # Added Period Break check
+                "home_abbr": home_abbr,
+                "home_id": home_team["id"],
+                "home_score": home_team.get("score", "0"),
+                "home_logo_path": self.logo_dir / Path(f"{LogoDownloader.normalize_abbreviation(home_abbr)}.png"),
+                "home_logo_url": home_team["team"].get("logo"),
+                "home_record": home_record,
+                "away_record": away_record,
+                "away_abbr": away_abbr,
+                "away_id": away_team["id"],
+                "away_score": away_team.get("score", "0"),
+                "away_logo_path": self.logo_dir / Path(f"{LogoDownloader.normalize_abbreviation(away_abbr)}.png"),
+                "away_logo_url": away_team["team"].get("logo"),
+                "is_within_window": True, # Whether game is within display window
+
+            }
+            return details, home_team, away_team, status, situation
+        except Exception as e:
+            # Log the problematic event structure if possible
+            logging.error(f"Error extracting game details: {e} from event: {game_event.get('id')}", exc_info=True)
+            return None, None, None, None, None
+
+    @abstractmethod
+    def _extract_game_details(self, game_event: dict) -> dict | None:
+        details, _, _, _, _ = self._extract_game_details_common(game_event)
+        return details
+
+    @abstractmethod
+    def _fetch_data(self) -> Optional[Dict]:
+        pass
+
+    def _fetch_todays_games(self) -> Optional[Dict]:
+        """Fetch only today's games for live updates (not entire season)."""
+        try:
+            tz = pytz.timezone("America/New_York")  # Use full name (not "EST") for DST support
+            now = datetime.now(tz)
+            yesterday = now - timedelta(days=1)
+            formatted_date = now.strftime("%Y%m%d")
+            formatted_date_yesterday = yesterday.strftime("%Y%m%d")
+            # Fetch todays games only
+            url = f"https://site.api.espn.com/apis/site/v2/sports/{self.sport}/{self.league}/scoreboard"
+            response = self.session.get(url, params={"dates": f"{formatted_date_yesterday}-{formatted_date}", "limit": 1000}, headers=self.headers, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            events = data.get('events', [])
+            
+            self.logger.info(f"Fetched {len(events)} todays games for {self.sport} - {self.league}")
+            return {'events': events}
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"API error fetching todays games for {self.sport} - {self.league}: {e}")
+            return None
+        
+    def _get_weeks_data(self) -> Optional[Dict]:
+        """
+        Get partial data for immediate display while background fetch is in progress.
+        This fetches current/recent games only for quick response.
+        """
+        try:
+            # Fetch current week and next few days for immediate display
+            now = datetime.now(pytz.utc)
+            immediate_events = []
+            
+            start_date = now + timedelta(weeks=-2)
+            end_date = now + timedelta(weeks=1)
+            date_str = f"{start_date.strftime('%Y%m%d')}-{end_date.strftime('%Y%m%d')}"
+            url = f"https://site.api.espn.com/apis/site/v2/sports/{self.sport}/{self.league}/scoreboard"
+            response = self.session.get(url, params={"dates": date_str, "limit": 1000},headers=self.headers, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            immediate_events = data.get('events', [])
+                
+            if immediate_events:
+                self.logger.info(f"Fetched {len(immediate_events)} events {date_str}")
+                return {'events': immediate_events}
+                
+        except requests.exceptions.RequestException as e:
+            self.logger.warning(f"Error fetching this weeks games for {self.sport} - {self.league} - {date_str}: {e}")
+        return None
+
+    def _custom_scorebug_layout(self, game: dict, draw_overlay: ImageDraw.ImageDraw):
+        pass
+
+    # ------------------------------------------------------------------
+    # Promoted from the plugin copies (see docs/SPORTS_UNIFICATION.md).
+    # Everything below is present in all nine bundled `sports.py` copies;
+    # the canonical form of each is documented on the method.
+    # ------------------------------------------------------------------
+
+    def _favorite_key(self, game: Dict, side: str) -> Optional[str]:
+        """Override point: which view-model field identifies a team when
+        matching against ``favorite_teams``.
+
+        ``side`` is ``"home"`` or ``"away"``. The default is the team
+        abbreviation — what eight of the nine scoreboards match on, and what
+        users type into their favorites list.
+
+        NRL overrides this to the team **id**, because NRL abbreviations are
+        not unique: "NEW" is both Newcastle Knights and New Zealand Warriors,
+        "CAN" both Canberra Raiders and Canterbury Bulldogs. Matching those by
+        abbreviation selects the wrong club. It is a seam rather than a branch
+        precisely so core never has to learn the string "nrl"::
+
+            def _favorite_key(self, game, side):
+                return str(game.get(f"{side}_id"))
+
+        An override that stringifies should note that a missing id becomes the
+        literal ``"None"``, which would spuriously match a favorites list
+        containing that string. The default returns ``None``, which never
+        matches.
+        """
+        return game.get(f"{side}_abbr")
+
+    def _config_schema_path(self) -> Optional[str]:
+        """Override point: the plugin's ``config_schema.json``, used as the
+        reference for style-resolver defaults.
+
+        None (the default) means no schema is available — layout offsets are
+        then read with the classic inline config lookup, which is exactly what
+        a plugin that never shipped resolver support does today. A plugin
+        opting into :mod:`src.element_style` returns its own schema path::
+
+            def _config_schema_path(self):
+                return os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                    'config_schema.json')
+
+        It must not be derived from this module's ``__file__``: after
+        promotion that resolves inside ``src/base_classes/sports/``, where no
+        ``config_schema.json`` exists.
+        """
+        return None
+
+    def _font_root(self) -> str:
+        """Override point: the directory ``assets/fonts`` resolves against.
+
+        Defaults to the core install root, derived from this module's own
+        location — the same strategy as ``FontManager._resolve_asset_path``.
+        A plugin bundling its own fonts overrides this to return its plugin
+        directory. Never a cwd-relative path: fonts must load no matter where
+        the process was started from (e.g. the plugin safety harness on CI).
+        """
+        return str(_INSTALL_ROOT)
+
+    def _resolve_font_path(self, font_name: str) -> str:
+        """Locate a font file by filename, independently of the process cwd.
+
+        Tries ``assets/fonts/<name>`` relative to the cwd first (preserving
+        behavior for a process started from an install root), then under
+        :meth:`_font_root`. Returns the cwd-relative path unchanged when the
+        file is nowhere to be found, so callers log the familiar path.
+        """
+        relative = os.path.join('assets', 'fonts', font_name)
+        if os.path.exists(relative):
+            return relative
+        candidate = os.path.join(self._font_root(), relative)
+        if os.path.exists(candidate):
+            return candidate
+        return relative
+
+    def _get_layout_offset(self, element: str, axis: str, default: int = 0) -> int:
+        """
+        Get layout offset for a specific element and axis.
+
+        Args:
+            element: Element name (e.g., 'home_logo', 'score', 'status_text')
+            axis: 'x_offset' or 'y_offset' (or 'away_x_offset', 'home_x_offset' for records)
+            default: Default value if not configured (default: 0)
+
+        Returns:
+            Offset value from config or default (always returns int)
+        """
+        schema_path = self._config_schema_path() if STYLE_AVAILABLE else None
+        if schema_path:
+            # Shared resolver (rebuilt if the config dict was swapped out,
+            # matching the classic path's read-config-on-every-call semantics).
+            # Note it is stricter than the classic read below: a boolean offset
+            # degrades to the default instead of counting as 1/0, which is the
+            # more correct reading of a pixel offset.
+            resolver = getattr(self, '_style_resolver_cached', None)
+            if resolver is None or resolver._config is not self.config:
+                resolver = ElementStyleResolver(
+                    self.config, defaults_from_schema_file(schema_path))
+                self._style_resolver_cached = resolver
+            return resolver.offset_value(element, axis, default)
+        try:
+            layout_config = self.config.get('customization', {}).get('layout', {})
+            element_config = layout_config.get(element, {})
+            offset_value = element_config.get(axis, default)
+
+            # Ensure we return an integer (handle float/string from config)
+            if isinstance(offset_value, (int, float)):
+                return int(offset_value)
+            elif isinstance(offset_value, str):
+                # Try to convert string to int
+                try:
+                    return int(float(offset_value))
+                except (ValueError, TypeError):
+                    self.logger.warning(
+                        f"Invalid layout offset value for {element}.{axis}: '{offset_value}', using default {default}"
+                    )
+                    return default
+            else:
+                return default
+        except Exception as e:
+            # Gracefully handle any config access errors
+            self.logger.debug(f"Error reading layout offset for {element}.{axis}: {e}, using default {default}")
+            return default
+
+    def _load_custom_font_from_element_config(
+        self,
+        element_config: Dict[str, Any],
+        default_size: int = 8,
+        default_font: Optional[str] = None,
+    ) -> ImageFont.FreeTypeFont:
+        """
+        Load a custom font from an element configuration dictionary.
+
+        Args:
+            element_config: Configuration dict for a single element containing 'font' and 'font_size' keys
+            default_size: Default font size if not specified in config
+            default_font: Default font filename when not specified in config (e.g. '4x6-font.ttf' for odds)
+
+        Returns:
+            PIL ImageFont object
+        """
+        base_default = default_font or "PressStart2P-Regular.ttf"
+        font_name = element_config.get('font', base_default)
+        font_size = int(element_config.get('font_size', default_size))  # Ensure integer for PIL
+
+        # Resolve family aliases (e.g. "press_start") to real filenames, then
+        # locate the file against _font_root() rather than the cwd.
+        resolved_name = _resolve_font_family_alias(font_name)
+        font_path = self._resolve_font_path(resolved_name)
+
+        # Memoized: per-frame callers (font-ladder walks) resolve the same
+        # (name, size) repeatedly -- return the previously loaded face.
+        cache_key = (resolved_name, font_size)
+        cached_font = self._font_cache.get(cache_key)
+        if cached_font is not None:
+            return cached_font
+
+        # Try to load the font
+        try:
+            if os.path.exists(font_path):
+                # Try loading as TTF first (works for both TTF and some BDF files with PIL)
+                if font_path.lower().endswith('.ttf'):
+                    font = ImageFont.truetype(font_path, font_size)
+                    self.logger.debug(f"Loaded font: {font_name} at size {font_size}")
+                    self._font_cache[cache_key] = font
+                    return font
+                elif font_path.lower().endswith('.bdf'):
+                    # BDF fonts are fixed-size bitmaps, not scalable outlines --
+                    # FreeType only accepts the exact pixel size baked into the
+                    # file (its "strike") and raises "invalid pixel size" for
+                    # anything else. Try the requested size first (in case it
+                    # happens to match), then fall back to the file's real
+                    # native size, so a BDF font can still be selected via
+                    # font_size-driven configs without the caller needing to
+                    # know its exact strike size.
+                    #
+                    # This retry is the OLDER lineage's behavior and it is the
+                    # correct one: the newer copies call truetype() on a BDF at
+                    # any size (which simply fails) or refuse BDF outright.
+                    try:
+                        font = ImageFont.truetype(font_path, font_size)
+                        self.logger.debug(f"Loaded BDF font: {font_name} at size {font_size}")
+                        self._font_cache[cache_key] = font
+                        return font
+                    except OSError:
+                        if font_path in self._bdf_native_size_cache:
+                            native_size = self._bdf_native_size_cache[font_path]
+                        else:
+                            native_size = _read_bdf_native_size(font_path)
+                            self._bdf_native_size_cache[font_path] = native_size
+                        if native_size and native_size != font_size:
+                            try:
+                                font = ImageFont.truetype(font_path, native_size)
+                                self.logger.debug(
+                                    f"Loaded BDF font: {font_name} at its native size {native_size} "
+                                    f"(requested {font_size} isn't a valid strike for this file)"
+                                )
+                                self._font_cache[cache_key] = font
+                                return font
+                            except Exception as retry_exc:
+                                self.logger.debug(
+                                    f"BDF font {font_name} also failed to load at native "
+                                    f"size {native_size}: {retry_exc}"
+                                )
+                        self.logger.warning(f"Could not load BDF font {font_name} with PIL, using default")
+                        # Fall through to default
+                else:
+                    self.logger.warning(f"Unknown font file type: {font_name}, using default")
+            else:
+                self.logger.warning(f"Font file not found: {font_path}, using default")
+        except Exception as e:
+            self.logger.error(f"Error loading font {font_name}: {e}, using default")
+
+        # Fall back to default font. Cached under the requested (name, size)
+        # key too, so a misconfigured or missing font pays the disk cost once
+        # instead of on every frame of a font-ladder walk.
+        default_font_path = self._resolve_font_path(
+            _resolve_font_family_alias(base_default))
+        try:
+            if os.path.exists(default_font_path):
+                font = ImageFont.truetype(default_font_path, font_size)
+            else:
+                self.logger.warning("Default font not found, using PIL default")
+                font = ImageFont.load_default()
+        except Exception as e:
+            self.logger.error(f"Error loading default font: {e}")
+            font = ImageFont.load_default()
+        self._font_cache[cache_key] = font
+        return font
+
+    def cleanup(self):
+        """Clean up resources when plugin is unloaded."""
+        # Close HTTP session
+        if hasattr(self, 'session') and self.session:
+            try:
+                self.session.close()
+            except Exception as e:
+                self.logger.warning(f"Error closing session: {e}")
+
+        # Clear caches
+        if hasattr(self, '_logo_cache'):
+            self._logo_cache.clear()
+        # Font caches hold PIL faces; without this they are an unbounded
+        # per-instance leak across enable/disable cycles.
+        if hasattr(self, '_font_cache'):
+            self._font_cache.clear()
+        if hasattr(self, '_bdf_native_size_cache'):
+            self._bdf_native_size_cache.clear()
+
+        # NOTE: self.background_service is deliberately NOT shut down here.
+        # get_background_service() returns a PROCESS-WIDE singleton shared by
+        # every scoreboard; shutting it down from one unloading plugin would
+        # stop background fetching for all the others. Whoever owns the
+        # process owns its lifecycle. Do not "fix" this.
+
+        self.logger.info(f"{self.__class__.__name__} cleanup completed")

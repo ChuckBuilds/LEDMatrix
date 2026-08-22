@@ -50,7 +50,15 @@ I'm trying to be open to constructive criticism and support, as long as it's a r
 
 <details>
 <summary>Core Features</summary>
-The following plugins are available inside of the LEDMatrix project. These modular, rotating Displays that can be individually enabled or disabled per the user's needs with some configuration around display durations, teams, stocks, weather, timezones, and more. Displays include:
+LEDMatrix is a plugin platform: the displays below are plugins installed
+from the built-in Plugin Store (web interface → Plugins), where each can be
+individually enabled, ordered, and configured — display durations, teams,
+stocks, weather, timezones, and more. The core repo ships with just two
+bundled plugins (`starlark-apps` and `web-ui-info`); the official plugins
+live in the [ledmatrix-plugins](https://github.com/ChuckBuilds/ledmatrix-plugins)
+monorepo and install with one click, and third-party plugins can be
+installed from their own GitHub repositories. Displays available in the
+store include:
 
 ### Time and Weather
 - Real-time clock display (2x 64x32 Displays 4mm Pixel Pitch)
@@ -141,6 +149,7 @@ The system supports live, recent, and upcoming game information for multiple spo
     sudo RPI_RGB_FORCE_REBUILD=1 ./first_time_install.sh
     ```
   - Pi 5 config: leave `rp1_rio` at `0` (PIO mode, default) and set `gpio_slowdown` to `1` or `2`.
+  - **1GB models (Pi 3B / 3B+) and other low-memory boards**: supported, but the `rpi-rgb-led-matrix` C++ build needs more memory than the Pi has. The installer detects this automatically, compiles with fewer parallel jobs, and adds a temporary swapfile for the build which it removes afterwards. Expect that step to take 15-25 minutes instead of 2-5, and leave at least **3GB free** on the SD card. If you manage swap yourself, opt out with `--skip-swap`. To pin the compiler down further, use `--build-jobs 1`.
 
 
 ### RGB Matrix Bonnet / HAT
@@ -314,12 +323,12 @@ curl -fsSL https://raw.githubusercontent.com/ChuckBuilds/LEDMatrix/main/scripts/
 ```
 
 This one-shot installer will automatically:
-- Check system prerequisites (network, disk space, sudo access)
+- Check system prerequisites (network, disk space, memory, sudo access)
 - Install required system packages (git, python3, build tools, etc.)
 - Clone or update the LEDMatrix repository
 - Run the complete first-time installation script
 
-The installation process typically takes 10-30 minutes depending on your internet connection and Pi model. All errors are reported explicitly with actionable fixes.
+The installation process typically takes 10-30 minutes depending on your internet connection and Pi model. Pi 3B/3B+ and other 1GB boards land at the top of that range, because the C++ library is compiled serially to stay within available memory. All errors are reported explicitly with actionable fixes.
 
 **Note:** The script is safe to run multiple times and will handle existing installations gracefully.
 
@@ -356,6 +365,12 @@ sudo bash ./first_time_install.sh
 
 This single script installs services, dependencies, configures permissions and sudoers, and validates the setup.
 
+It finishes by asking whether to reboot. If you run it non-interactively — piped, over a script, or with `-y` — there is no one to ask, so **it reboots immediately without prompting**. Pass `--no-reboot-prompt` to install without rebooting:
+
+```bash
+sudo bash ./first_time_install.sh -y --no-reboot-prompt
+```
+
 </details>
 
 </details>
@@ -370,6 +385,10 @@ This single script installs services, dependencies, configures permissions and s
 ## Configuration
 
 ### Initial Setup
+
+For a complete list of every key in `config.json` and
+`config_secrets.json`, see
+[docs/CONFIG_REFERENCE.md](docs/CONFIG_REFERENCE.md).
 
 For most settings I recommend using the web interface:
 Edit the project via the web interface at http://[IP ADDRESS or HOSTNAME]:5000 or http://ledpi:5000 .
@@ -416,7 +435,7 @@ I recommend using the web-ui "Quick Actions" to control the Display.
 ## Plugins
 
 <details>
-LEDMatrix uses a plugin-based architecture where all display functionality (except the core calendar) is implemented as plugins. All managers that were previously built into the core system are now available as plugins through the Plugin Store.
+LEDMatrix uses a plugin-based architecture where all display functionality is implemented as plugins. All managers that were previously built into the core system are now available as plugins through the Plugin Store.
 
 ### Plugin Store
 See the [Plugin Store documentation](https://github.com/ChuckBuilds/ledmatrix-plugins) for detailed installation instructions.
@@ -439,6 +458,16 @@ You can also install plugins directly from GitHub repositories:
 See the [Plugin Store documentation](https://github.com/ChuckBuilds/ledmatrix-plugins) for detailed installation instructions.
 
 For plugin development, check out the [Hello World Plugin](https://github.com/ChuckBuilds/ledmatrix-hello-world) repository as a starter template.
+
+### Visual Skins for Scoreboards
+
+Want a different look for a sports scoreboard without forking the plugin?
+**Skins** restyle the live/recent/upcoming screens while the plugin keeps
+handling data, scheduling, caching, and vegas mode. Install one with
+`git clone <skin repo> skins/<skin-id>`, select it in the plugin's config,
+and you're done — see [docs/SKIN_SYSTEM.md](docs/SKIN_SYSTEM.md) (how it
+works) and [docs/CREATING_SKINS.md](docs/CREATING_SKINS.md) (build your own,
+including a ready-made Claude Code prompt).
 
 2. **Built-in Managers Deprecated**: The built-in managers (hockey, football, stocks, etc.) are now deprecated and have been moved to the plugin system. **You must install replacement plugins from the Plugin Store** in the web interface instead. The plugin system provides the same functionality with better maintainability and extensibility.
 </details>
@@ -571,6 +600,14 @@ These settings are typically only needed for non-standard panels or custom confi
   - Leave empty unless you need custom mapping
   - See rpi-rgb-led-matrix documentation for full options
 
+- **`orientation`** (string, default: "normal")
+  - Rotates the rendered image to match how the panel is physically mounted
+  - Set to `"180"` (or use the "Upside Down" option in the web UI's Display
+    settings) if the panel is mounted upside down — useful for optimizing
+    where the Raspberry Pi and wiring sit relative to the mounting location
+  - Applied independently of `pixel_mapper_config` (appended as a trailing
+    `Rotate:180` mapper), so custom mapper configs keep working alongside it
+
 - **`row_address_type`** (integer, default: 0)
   - How rows are addressed on the panel
   - Most panels use 0 (direct addressing)
@@ -599,12 +636,7 @@ These settings control runtime behavior and GPIO timing:
 
 ### Display Durations (`display.display_durations`)
 
-Controls how long each display module stays visible in seconds before switching to the next one.
-
-- **`calendar`** (integer, default: 30)
-  - Duration in seconds for the calendar display
-  - Increase for more time to read dates/events
-  - Decrease to cycle through other displays faster
+Controls how long each installed plugin stays visible in seconds before switching to the next one, keyed by plugin id.
 
 - **Plugin-specific durations**
   - Each plugin can have its own duration setting

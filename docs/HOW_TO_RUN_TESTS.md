@@ -10,10 +10,7 @@ Make sure you have the testing packages installed:
 
 ```bash
 # Install all dependencies including test packages
-pip install -r requirements.txt
-
-# Or install just the test dependencies
-pip install pytest pytest-cov pytest-mock
+pip install -r requirements.txt -r requirements-test.txt
 ```
 
 ### 2. Set Environment Variables
@@ -248,13 +245,11 @@ test/
 ├── test_config_service.py               # Config service tests
 ├── test_config_validation_edge_cases.py # Config edge cases
 ├── test_font_manager.py                 # Font manager tests
-├── test_layout_manager.py               # Layout manager tests
 ├── test_text_helper.py                  # Text helper tests
 ├── test_error_handling.py               # Error handling tests
 ├── test_error_aggregator.py             # Error aggregation tests
 ├── test_schema_manager.py               # Schema manager tests
 ├── test_web_api.py                      # Web API tests
-├── test_nba_*.py                        # NBA-specific test suites
 ├── plugins/                             # Per-plugin test suites
 │   ├── test_clock_simple.py
 │   ├── test_calendar.py
@@ -304,7 +299,7 @@ If tests fail due to missing packages:
 
 ```bash
 # Install all dependencies
-pip install -r requirements.txt
+pip install -r requirements.txt -r requirements-test.txt
 
 # Or install specific missing package
 pip install <package-name>
@@ -336,15 +331,15 @@ pytest --cov=src --cov-report=html
 
 ## Continuous Integration
 
-The repo runs
-[`.github/workflows/security-audit.yml`](../.github/workflows/security-audit.yml)
-(bandit + semgrep) on every push. A pytest CI workflow at
-`.github/workflows/tests.yml` is queued to land alongside this
-PR ([ChuckBuilds/LEDMatrix#307](https://github.com/ChuckBuilds/LEDMatrix/pull/307));
-the workflow file itself was held back from that PR because the
-push token lacked the GitHub `workflow` scope, so it needs to be
-committed separately by a maintainer. Once it's in, this section
-will be updated to describe what the job runs.
+The repo runs the pytest suite via
+[`.github/workflows/test.yml`](../.github/workflows/test.yml) on every
+push and pull request: a plugin-safety job (harness, visual rendering
+and plugin-matrix tests) plus a unit-test job that runs an explicit
+allowlist of suites — new test files must be added to that list to run
+in CI. Release version consistency is checked by
+[`.github/workflows/release-version-check.yml`](../.github/workflows/release-version-check.yml).
+Bandit, flake8, mypy and gitleaks run as pre-commit hooks (see
+`.pre-commit-config.yaml`), not in CI.
 
 ## Best Practices
 

@@ -146,6 +146,60 @@ def ensure_file_permissions(path: Path, mode: int = 0o644) -> None:
         raise
 
 
+_shared_group_gid_cache: Optional[int] = None
+
+
+def get_shared_group_gid() -> Optional[int]:
+    """
+    Return the gid that should own config/secrets files shared between the
+    root-run ``ledmatrix.service`` (main display) and the non-root user that
+    ``ledmatrix-web.service`` runs as (see install_web_service.sh, which sets
+    ``User=$SUDO_USER``).
+
+    Resolved once from the project root directory's current group (normally
+    the login user's group from the initial ``git clone``), since that user
+    is stable across reinstalls unlike any single file's ownership.
+
+    Returns:
+        The gid, or None if it cannot be determined.
+    """
+    global _shared_group_gid_cache
+    if _shared_group_gid_cache is not None:
+        return _shared_group_gid_cache
+    try:
+        project_root = Path(__file__).resolve().parent.parent.parent
+        _shared_group_gid_cache = project_root.stat().st_gid
+        return _shared_group_gid_cache
+    except OSError:
+        return None
+
+
+def ensure_shared_group_ownership(path: Path) -> None:
+    """
+    Best-effort chgrp of ``path`` to the shared group (see
+    :func:`get_shared_group_gid`) when running as root.
+
+    Only root can change a file's group to one the calling process isn't a
+    member of, which is exactly the case that causes the web interface
+    (running as a non-root user) to get ``PermissionError`` reading files
+    the root-run display service just wrote with a 0o640/2775 mode: the mode
+    is group-readable, but without this the group is root's, not the web
+    user's. Silently does nothing if not running as root or on any error —
+    this is a hardening step, not a required one.
+    """
+    if os.geteuid() != 0:
+        return
+    gid = get_shared_group_gid()
+    if gid is None:
+        return
+    try:
+        if path.exists() and path.stat().st_gid != gid:
+            os.chown(path, -1, gid)
+            logger.debug(f"Set shared group ownership (gid {gid}) on {path}")
+    except OSError as e:
+        logger.debug(f"Could not set shared group ownership on {path}: {e}")
+
+
 def get_config_file_mode(file_path: Path) -> int:
     """
     Return appropriate permission mode for config files.

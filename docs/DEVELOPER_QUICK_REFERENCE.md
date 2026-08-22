@@ -31,7 +31,7 @@ POST /api/v3/system/action
 
 **Base URL**: `http://your-pi-ip:5000/api/v3`
 
-See [API_REFERENCE.md](API_REFERENCE.md) for complete documentation.
+See [REST_API_REFERENCE.md](REST_API_REFERENCE.md) for complete documentation.
 
 ## Display Manager Quick Methods
 
@@ -190,12 +190,13 @@ def display(self, force_clear=False):
 
 ```
 LEDMatrix/
-├── plugins/              # Installed plugins
+├── plugin-repos/         # Installed plugins (default; plugins/ is only
+│                         #   for dev symlinks via scripts/dev/dev_plugin_setup.sh)
 ├── config/
 │   ├── config.json      # Main configuration
 │   └── config_secrets.json  # API keys and secrets
 ├── docs/                 # Documentation
-│   ├── API_REFERENCE.md
+│   ├── REST_API_REFERENCE.md
 │   ├── PLUGIN_API_REFERENCE.md
 │   └── ...
 └── src/
@@ -207,7 +208,7 @@ LEDMatrix/
 
 ## Quick Links
 
-- [Complete API Reference](API_REFERENCE.md)
+- [Complete REST API Reference](REST_API_REFERENCE.md)
 - [Plugin API Reference](PLUGIN_API_REFERENCE.md)
 - [Plugin Development Guide](PLUGIN_DEVELOPMENT_GUIDE.md)
 - [Advanced Patterns](ADVANCED_PLUGIN_DEVELOPMENT.md)

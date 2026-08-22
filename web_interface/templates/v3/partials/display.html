@@ -22,7 +22,7 @@
             On Raspberry Pi 5: ensure the library was rebuilt from the latest submodule
             (<code class="bg-yellow-100 px-1 rounded">first_time_install.sh</code>)
             and try adjusting <strong>GPIO Slowdown</strong> (start at 3, reduce if the display looks dim or choppy).
-            Check the <a href="/v3/logs" class="underline font-medium">Logs tab</a> for the full error.
+            Check the <a href="#" @click.prevent="activeTab = 'logs'" class="underline font-medium">Logs tab</a> for the full error.
         </p>
     </div>
 
@@ -30,7 +30,7 @@
           hx-ext="json-enc"
           hx-headers='{"Content-Type": "application/json"}'
           hx-swap="none"
-          hx-on:htmx:after-request="showNotification(event.detail.xhr.responseJSON?.message || 'Display settings saved', event.detail.xhr.responseJSON?.status || 'success')"
+          hx-on:htmx:after-request="showDisplaySaveResult(event.detail.xhr)"
           class="space-y-6"
           novalidate
           onsubmit="fixInvalidNumberInputs(this); return true;">
@@ -47,7 +47,7 @@
                            name="rows"
                            value="{{ main_config.display.hardware.rows or 32 }}"
                            min="1"
-                           max="64"
+                           max="128"
                            class="form-control">
                 </div>
 
@@ -85,7 +85,14 @@
                 </div>
             </div>
 
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <!-- Live total-resolution readout: width = cols x chain_length, height = rows x parallel -->
+            <p id="display-resolution-readout" class="text-sm text-gray-600 mb-4" aria-live="polite">
+                <i class="fas fa-expand-arrows-alt mr-1 text-gray-400"></i>
+                Your display: <strong id="display-resolution-value">&mdash;</strong>
+                <span class="text-gray-400">(columns &times; chain length wide, rows &times; parallel tall)</span>
+            </p>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div class="form-group" id="setting-display-brightness" data-setting-key="display.hardware.brightness">
                     <label for="brightness" class="block text-sm font-medium text-gray-700">Brightness{{ ui.help_tip('Overall LED brightness (1–100%).\nLower is dimmer, higher is brighter. Recommended: 70–90 indoors, 90–100 in bright rooms.', 'Brightness') }}</label>
                     <div class="flex items-center space-x-2">
@@ -109,9 +116,15 @@
                         <option value="regular-pi1" {% if main_config.display.hardware.hardware_mapping == "regular-pi1" %}selected{% endif %}>Regular Pi1</option>
                     </select>
                 </div>
-            </div>
 
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div class="form-group" id="setting-display-orientation" data-setting-key="display.hardware.orientation">
+                    <label for="orientation" class="block text-sm font-medium text-gray-700">Panel Orientation{{ ui.help_tip('Rotates the rendered image to match how the panel is physically mounted.\nUse "Upside Down" if you flipped the panel 180° to move the Raspberry Pi / wiring to a more convenient side.', 'Panel Orientation') }}</label>
+                    <select id="orientation" name="orientation" class="form-control">
+                        <option value="normal" {% if main_config.display.hardware.get('orientation', 'normal') == "normal" %}selected{% endif %}>Normal</option>
+                        <option value="180" {% if main_config.display.hardware.get('orientation', 'normal') == "180" %}selected{% endif %}>Upside Down (180°)</option>
+                    </select>
+                </div>
+
                 <div class="form-group" id="setting-display-led_rgb_sequence" data-setting-key="display.hardware.led_rgb_sequence">
                     <label for="led_rgb_sequence" class="block text-sm font-medium text-gray-700">LED RGB Sequence{{ ui.help_tip('Order the panel expects color channels in.\nChange this only if reds/greens/blues look swapped. Default: RGB.', 'LED RGB Sequence') }}</label>
                     <select id="led_rgb_sequence" name="led_rgb_sequence" class="form-control">
@@ -123,7 +136,29 @@
                         <option value="BGR" {% if main_config.display.hardware.get('led_rgb_sequence', 'RGB') == "BGR" %}selected{% endif %}>BGR</option>
                     </select>
                 </div>
+            </div>
 
+            <!-- Advanced hardware settings: niche-panel and deep tuning fields.
+                 Collapsed by default; reuses the same nested-section shell as
+                 plugin config forms, so toggleSection() and the settings
+                 search's auto-expand both work unchanged. -->
+            <div class="nested-section border border-gray-300 rounded-lg mt-4">
+                <button type="button"
+                        class="w-full bg-gray-100 hover:bg-gray-200 px-4 py-3 flex items-center justify-between text-left transition-colors rounded-t-lg"
+                        aria-controls="display-section-advanced-hardware"
+                        aria-expanded="false"
+                        onclick="toggleSection('display-section-advanced-hardware')">
+                    <div class="flex-1">
+                        <h4 class="font-semibold text-gray-900">
+                            <i class="fas fa-sliders-h mr-1 text-gray-500"></i>Advanced Hardware &amp; Display Options (15)
+                        </h4>
+                        <p class="text-sm text-gray-600 mt-1">Multiplexing, panel variants, PWM tuning, and display options &mdash; the defaults work for standard HUB75 panels.</p>
+                    </div>
+                    <i id="display-section-advanced-hardware-icon" class="fas fa-chevron-right text-gray-500 transition-transform"></i>
+                </button>
+                <div id="display-section-advanced-hardware" class="nested-content bg-gray-50 px-4 py-4 space-y-4 hidden" style="display: none;">
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div class="form-group" id="setting-display-multiplexing" data-setting-key="display.hardware.multiplexing">
                     <label for="multiplexing" class="block text-sm font-medium text-gray-700">Multiplexing{{ ui.help_tip('Pixel-mapping scheme used by outdoor/specialty panels.\nLeave at 0 (Direct) for most indoor panels. Only change if the image is scrambled — try values until it looks right.', 'Multiplexing') }}</label>
                     <select id="multiplexing" name="multiplexing" class="form-control">
@@ -255,47 +290,6 @@
                            class="form-control">
                 </div>
             </div>
-        </div>
-
-        <!-- Double-Sided Display -->
-        <div class="bg-gray-50 rounded-lg p-4">
-            <h3 class="text-md font-medium text-gray-900 mb-1">Double-Sided Display</h3>
-            <p class="text-sm text-gray-600 mb-4">Show the same content on every panel in the chain &mdash; e.g. two 64&times;32 panels mirrored, or four panels as two identical screens. Rendered once and duplicated, so it adds no extra CPU. Takes effect after a display restart.</p>
-
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div class="form-group" id="setting-display-double_sided_enabled" data-setting-key="display.double_sided.enabled">
-                    <label class="flex items-center gap-2">
-                        <input type="checkbox"
-                               id="double_sided_enabled"
-                               name="double_sided_enabled"
-                               value="true"
-                               {% if main_config.display.get('double_sided', {}).get('enabled') %}checked{% endif %}
-                               class="form-control h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
-                        <span class="text-sm font-medium text-gray-700">Enabled</span>
-                        {{ ui.help_tip('Show the same content mirrored across every panel in the chain.\nRendered once and duplicated, so it adds no extra CPU. Takes effect after a display restart.', 'Double-Sided Enabled') }}
-                    </label>
-                </div>
-
-                <div class="form-group" id="setting-display-double_sided_copies" data-setting-key="display.double_sided.copies">
-                    <label for="double_sided_copies" class="block text-sm font-medium text-gray-700">Copies{{ ui.help_tip('How many identical screens to split the panel area into (2–8).\nMust divide the panel evenly — e.g. 2 for a two-sided cube.', 'Copies') }}</label>
-                    <input type="number"
-                           id="double_sided_copies"
-                           name="double_sided_copies"
-                           value="{{ main_config.display.get('double_sided', {}).get('copies', 2) }}"
-                           min="2"
-                           max="8"
-                           class="form-control">
-                </div>
-
-                <div class="form-group" id="setting-display-double_sided_axis" data-setting-key="display.double_sided.axis">
-                    <label for="double_sided_axis" class="block text-sm font-medium text-gray-700">Split Axis{{ ui.help_tip('Direction the display is divided into copies.\nHorizontal splits along the chained panels (side by side); Vertical splits along parallel chains (stacked).', 'Split Axis') }}</label>
-                    <select id="double_sided_axis" name="double_sided_axis" class="form-control">
-                        <option value="horizontal" {% if main_config.display.get('double_sided', {}).get('axis', 'horizontal') == 'horizontal' %}selected{% endif %}>Horizontal &mdash; chained panels (side by side)</option>
-                        <option value="vertical" {% if main_config.display.get('double_sided', {}).get('axis', 'horizontal') == 'vertical' %}selected{% endif %}>Vertical &mdash; parallel chains (stacked)</option>
-                    </select>
-                </div>
-            </div>
-        </div>
 
         <!-- Display Options -->
         <div class="bg-gray-50 rounded-lg p-4">
@@ -368,6 +362,36 @@
                 </div>
             </div>
         </div>
+                </div> <!-- /#display-section-advanced-hardware (nested-content) -->
+            </div> <!-- /advanced hardware nested-section -->
+
+            <script>
+                // Live "Your display: W x H" readout - width = cols x chain_length,
+                // height = rows x parallel (same math as the chain-length tooltip).
+                (function () {
+                    const ids = ['rows', 'cols', 'chain_length', 'parallel'];
+                    const out = document.getElementById('display-resolution-value');
+                    if (!out) return;
+                    function recompute() {
+                        const v = {};
+                        for (const id of ids) {
+                            const el = document.getElementById(id);
+                            v[id] = el ? parseInt(el.value, 10) : NaN;
+                        }
+                        if (Object.values(v).some(n => !Number.isFinite(n) || n <= 0)) {
+                            out.textContent = '—';
+                            return;
+                        }
+                        out.textContent = (v.cols * v.chain_length) + ' × ' + (v.rows * v.parallel) + ' pixels';
+                    }
+                    for (const id of ids) {
+                        const el = document.getElementById(id);
+                        if (el) el.addEventListener('input', recompute);
+                    }
+                    recompute();
+                })();
+            </script>
+        </div>
 
         <!-- Vegas Scroll Mode Settings -->
         <div class="bg-gray-50 rounded-lg p-4 mt-6">
@@ -409,13 +433,51 @@
                     </div>
 
                     <div class="form-group" id="setting-display-vegas_separator_width" data-setting-key="display.vegas_scroll.separator_width">
-                        <label for="vegas_separator_width" class="block text-sm font-medium text-gray-700">Separator Width (pixels){{ ui.help_tip('Blank gap inserted between each plugin block in the ticker (0–128 px).\nDefault: 32. Larger values make the boundary between plugins clearer.', 'Separator Width') }}</label>
+                        <label for="vegas_separator_width" class="block text-sm font-medium text-gray-700">Separator Width (pixels){{ ui.help_tip('Blank gap where one plugin hands off to the next (0–128 px).\nDefault: 32. Larger values make the boundary between plugins clearer. This does not apply between rows of the same plugin — see Row Gap for that.', 'Separator Width') }}</label>
                         <input type="number"
                                id="vegas_separator_width"
                                name="vegas_separator_width"
                                value="{{ main_config.display.get('vegas_scroll', {}).get('separator_width', 32) }}"
                                min="0"
                                max="128"
+                               class="form-control">
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="form-group" id="setting-display-vegas_intra_plugin_gap" data-setting-key="display.vegas_scroll.intra_plugin_gap">
+                        <label for="vegas_intra_plugin_gap" class="block text-sm font-medium text-gray-700">Row Gap (pixels){{ ui.help_tip('Extra gap always added between rows contributed by the same plugin (0–128 px).\nDefault: 8. This is a floor on top of Row Separation below, which does most of the work. Set both to 0 to butt rows directly together.', 'Row Gap') }}</label>
+                        <input type="number"
+                               id="vegas_intra_plugin_gap"
+                               name="vegas_intra_plugin_gap"
+                               value="{{ main_config.display.get('vegas_scroll', {}).get('intra_plugin_gap', 8) }}"
+                               min="0"
+                               max="128"
+                               class="form-control">
+                    </div>
+
+                    <div class="form-group" id="setting-display-vegas_min_content_separation" data-setting-key="display.vegas_scroll.min_content_separation">
+                        <label for="vegas_min_content_separation" class="block text-sm font-medium text-gray-700">Row Separation (pixels){{ ui.help_tip('Blank space guaranteed between rows of the same plugin, measured from the actual content rather than added blindly (0–256 px).\nDefault: 24. Rows already carrying wide margins get nothing added; rows drawn right up to their own edges — sports score cards, for instance — get the full amount, so they no longer look like they are touching. Raise it if items still feel cramped.', 'Row Separation') }}</label>
+                        <input type="number"
+                               id="vegas_min_content_separation"
+                               name="vegas_min_content_separation"
+                               value="{{ main_config.display.get('vegas_scroll', {}).get('min_content_separation', 24) }}"
+                               min="0"
+                               max="256"
+                               class="form-control">
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="form-group" id="setting-display-vegas_render_width_pct" data-setting-key="display.vegas_scroll.render_width_pct">
+                        <label for="vegas_render_width_pct" class="block text-sm font-medium text-gray-700">Plugin Render Width (%){{ ui.help_tip('How much of the screen width each plugin is told it has while drawing for the ticker (10–100%).\nDefault: 100 (unchanged). Lowering it makes plugins choose a tighter layout rather than being cropped — a weather forecast becomes narrow cards instead of five columns spread across the panel. Useful on wide displays. Override per plugin with the vegas_width_pct setting in that plugin\'s own configuration.', 'Plugin Render Width') }}</label>
+                        <input type="number"
+                               id="vegas_render_width_pct"
+                               name="vegas_render_width_pct"
+                               value="{{ main_config.display.get('vegas_scroll', {}).get('render_width_pct', 100) }}"
+                               min="10"
+                               max="100"
+                               step="5"
                                class="form-control">
                     </div>
                 </div>
@@ -440,6 +502,194 @@
                     </div>
                 </div>
 
+                <!-- Cycle Pacing -->
+                <div class="mt-4 pt-4 border-t border-gray-200">
+                    <h4 class="text-sm font-medium text-gray-900 mb-3">Cycle Pacing</h4>
+                    <p class="text-sm text-gray-600 mb-3">How long one pass through the ticker lasts, and how many plugins it covers.</p>
+
+                    <div class="form-group mb-4" id="setting-display-vegas_continuous_scroll" data-setting-key="display.vegas_scroll.continuous_scroll">
+                        <label class="flex items-center">
+                            <input type="checkbox"
+                                   id="vegas_continuous_scroll"
+                                   name="vegas_continuous_scroll"
+                                   {% if main_config.display.get('vegas_scroll', {}).get('continuous_scroll', True) %}checked{% endif %}
+                                   class="form-checkbox">
+                            <span class="ml-2 text-sm text-gray-700">Scroll continuously between groups{{ ui.help_tip('Keep one endless strip, extending it with the next group of plugins as the scroll approaches the end, so they simply arrive from the right. Default: on.\nWith this off the ticker builds a fresh strip and swaps it in, which stops the motion, replaces everything at once and restarts with the screen already full — a freeze, a flash and a jump.', 'Continuous Scroll') }}</span>
+                        </label>
+                    </div>
+
+                    <div class="form-group mb-4" id="setting-display-vegas_smooth_scroll" data-setting-key="display.vegas_scroll.smooth_scroll">
+                        <label class="flex items-center">
+                            <input type="checkbox"
+                                   id="vegas_smooth_scroll"
+                                   name="vegas_smooth_scroll"
+                                   {% if main_config.display.get('vegas_scroll', {}).get('smooth_scroll', True) %}checked{% endif %}
+                                   class="form-checkbox">
+                            <span class="ml-2 text-sm text-gray-700">Smooth sub-pixel motion{{ ui.help_tip('Blend between neighbouring pixel positions so the ticker moves once per rendered frame instead of once per pixel. Default: on.\nWithout it, motion happens only as often as the scroll speed in pixels per second — at 50 px/s that is 50 steps a second however fast the display renders, which reads as a slight judder. The trade is that text softens very slightly horizontally, since each frame blends two positions. Turn it off if you prefer maximum crispness.', 'Smooth Scrolling') }}</span>
+                        </label>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                        <div class="form-group" id="setting-display-vegas_extend_threshold_screens" data-setting-key="display.vegas_scroll.extend_threshold_screens">
+                            <label for="vegas_extend_threshold_screens" class="block text-sm font-medium text-gray-700">Extend When (screens left){{ ui.help_tip('How much unscrolled content triggers loading the next group, measured in screen widths (1.0–10.0).\nDefault: 2. Higher loads earlier and leaves more slack, at the cost of holding more content in memory. Only applies when Continuous Scroll is on.', 'Extend Threshold') }}</label>
+                            <input type="number"
+                                   id="vegas_extend_threshold_screens"
+                                   name="vegas_extend_threshold_screens"
+                                   value="{{ main_config.display.get('vegas_scroll', {}).get('extend_threshold_screens', 2.0) }}"
+                                   min="1"
+                                   max="10"
+                                   step="0.5"
+                                   class="form-control">
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="form-group" id="setting-display-vegas_plugins_per_cycle" data-setting-key="display.vegas_scroll.plugins_per_cycle">
+                            <label for="vegas_plugins_per_cycle" class="block text-sm font-medium text-gray-700">Plugins Per Cycle{{ ui.help_tip('How many plugins are composed into one pass of the ticker (1–50).\nDefault: 6. Higher means more variety before the ticker restarts, and fewer recompose pauses. Lower means each plugin comes around sooner.', 'Plugins Per Cycle') }}</label>
+                            <input type="number"
+                                   id="vegas_plugins_per_cycle"
+                                   name="vegas_plugins_per_cycle"
+                                   value="{{ main_config.display.get('vegas_scroll', {}).get('plugins_per_cycle', 6) }}"
+                                   min="1"
+                                   max="50"
+                                   class="form-control">
+                        </div>
+
+                        <div class="form-group" id="setting-display-vegas_overflow_mode" data-setting-key="display.vegas_scroll.overflow_mode">
+                            <label for="vegas_overflow_mode" class="block text-sm font-medium text-gray-700">When A Plugin Is Too Wide{{ ui.help_tip('What to do when a plugin has more content than its width allowance.\nRotate through it: show a different slice each time round, so everything is seen eventually. Right for interchangeable items like news headlines, odds or stock prices.\nShow the start only: always display from the beginning and drop the rest. Right for ordered content — a league table that shows ranks 1-6 and then resumes at 7 two rotations later reads as out of order.\nDefault: rotate. Override for one plugin with vegas_overflow in its own settings.', 'Overflow Handling') }}</label>
+                            <select id="vegas_overflow_mode" name="vegas_overflow_mode" class="form-control">
+                                <option value="rotate" {% if main_config.display.get('vegas_scroll', {}).get('overflow_mode', 'rotate') == 'rotate' %}selected{% endif %}>Rotate through it (default)</option>
+                                <option value="truncate" {% if main_config.display.get('vegas_scroll', {}).get('overflow_mode', 'rotate') == 'truncate' %}selected{% endif %}>Show the start only</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group" id="setting-display-vegas_max_plugin_width_ratio" data-setting-key="display.vegas_scroll.max_plugin_width_ratio">
+                            <label for="vegas_max_plugin_width_ratio" class="block text-sm font-medium text-gray-700">Max Plugin Width (screens){{ ui.help_tip('Caps how much of one cycle a single plugin may occupy, measured in screen widths (0–20).\nDefault: 0 (no limit) — every plugin shows all of its content and always starts at the beginning.\nSet a limit to stop one long ticker holding the display for minutes: it is cut to this width and the remainder shown on later cycles. The trade-off is that such a plugin then resumes mid-content on each appearance instead of starting fresh.', 'Max Plugin Width') }}</label>
+                            <input type="number"
+                                   id="vegas_max_plugin_width_ratio"
+                                   name="vegas_max_plugin_width_ratio"
+                                   value="{{ main_config.display.get('vegas_scroll', {}).get('max_plugin_width_ratio', 0.0) }}"
+                                   min="0"
+                                   max="20"
+                                   step="0.5"
+                                   class="form-control">
+                        </div>
+                    </div>
+
+                    <div class="form-group mt-4" id="setting-display-vegas_dynamic_duration_enabled" data-setting-key="display.vegas_scroll.dynamic_duration_enabled">
+                        <label class="flex items-center">
+                            <input type="checkbox"
+                                   id="vegas_dynamic_duration_enabled"
+                                   name="vegas_dynamic_duration_enabled"
+                                   {% if main_config.display.get('vegas_scroll', {}).get('dynamic_duration_enabled', True) %}checked{% endif %}
+                                   class="form-checkbox">
+                            <span class="ml-2 text-sm text-gray-700">Size cycle time to the content{{ ui.help_tip('When on, each cycle runs just long enough to scroll all its content past, clamped to the min and max below.\nWhen off, the max is always used. Default: on.', 'Dynamic Cycle Duration') }}</span>
+                        </label>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
+                        <div class="form-group" id="setting-display-vegas_min_cycle_duration" data-setting-key="display.vegas_scroll.min_cycle_duration">
+                            <label for="vegas_min_cycle_duration" class="block text-sm font-medium text-gray-700">Min Cycle Time (seconds){{ ui.help_tip('Shortest a single ticker pass may last (5–3600 s).\nDefault: 60.', 'Min Cycle Time') }}</label>
+                            <input type="number"
+                                   id="vegas_min_cycle_duration"
+                                   name="vegas_min_cycle_duration"
+                                   value="{{ main_config.display.get('vegas_scroll', {}).get('min_cycle_duration', 60) }}"
+                                   min="5"
+                                   max="3600"
+                                   class="form-control">
+                        </div>
+
+                        <div class="form-group" id="setting-display-vegas_max_cycle_duration" data-setting-key="display.vegas_scroll.max_cycle_duration">
+                            <label for="vegas_max_cycle_duration" class="block text-sm font-medium text-gray-700">Max Cycle Time (seconds){{ ui.help_tip('Longest a single ticker pass may last before it restarts with fresh content (10–3600 s).\nThis is the setting that caps total Vegas scroll time. Default: 240. Lower it if the ticker feels like it takes too long to come back around.', 'Max Cycle Time') }}</label>
+                            <input type="number"
+                                   id="vegas_max_cycle_duration"
+                                   name="vegas_max_cycle_duration"
+                                   value="{{ main_config.display.get('vegas_scroll', {}).get('max_cycle_duration', 240) }}"
+                                   min="10"
+                                   max="3600"
+                                   class="form-control">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Dead Space -->
+                <div class="mt-4 pt-4 border-t border-gray-200">
+                    <h4 class="text-sm font-medium text-gray-900 mb-3">Dead Space</h4>
+                    <p class="text-sm text-gray-600 mb-3">Plugins that draw onto a full-screen canvas contribute all the empty space around their content. Trimming reclaims it so the ticker stays full.</p>
+
+                    <div class="form-group mb-4" id="setting-display-vegas_auto_trim" data-setting-key="display.vegas_scroll.auto_trim">
+                        <label class="flex items-center">
+                            <input type="checkbox"
+                                   id="vegas_auto_trim"
+                                   name="vegas_auto_trim"
+                                   {% if main_config.display.get('vegas_scroll', {}).get('auto_trim', True) %}checked{% endif %}
+                                   class="form-checkbox">
+                            <span class="ml-2 text-sm text-gray-700">Trim empty edges from plugin content{{ ui.help_tip('Crops blank columns from the left and right of each plugin block before it enters the ticker. Space between two pieces of content inside a block is left alone, so layouts are not altered. Default: on.', 'Auto Trim') }}</span>
+                        </label>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="form-group" id="setting-display-vegas_content_padding" data-setting-key="display.vegas_scroll.content_padding">
+                            <label for="vegas_content_padding" class="block text-sm font-medium text-gray-700">Content Padding (pixels){{ ui.help_tip('Blank columns kept either side of trimmed content, so it does not butt against the separator (0–128 px).\nDefault: 8.', 'Content Padding') }}</label>
+                            <input type="number"
+                                   id="vegas_content_padding"
+                                   name="vegas_content_padding"
+                                   value="{{ main_config.display.get('vegas_scroll', {}).get('content_padding', 8) }}"
+                                   min="0"
+                                   max="128"
+                                   class="form-control">
+                        </div>
+
+                        <div class="form-group" id="setting-display-vegas_lead_in_width" data-setting-key="display.vegas_scroll.lead_in_width">
+                            <label for="vegas_lead_in_width" class="block text-sm font-medium text-gray-700">Lead-In Gap (pixels){{ ui.help_tip('Blank space before the first plugin of each cycle (0–2048 px).\nDefault: 0. Anything approaching your screen width reads as the display switching off at the start of every cycle.', 'Lead-In Gap') }}</label>
+                            <input type="number"
+                                   id="vegas_lead_in_width"
+                                   name="vegas_lead_in_width"
+                                   value="{{ main_config.display.get('vegas_scroll', {}).get('lead_in_width', 0) }}"
+                                   min="0"
+                                   max="2048"
+                                   class="form-control">
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                        <div class="form-group" id="setting-display-vegas_trim_threshold" data-setting-key="display.vegas_scroll.trim_threshold">
+                            <label for="vegas_trim_threshold" class="block text-sm font-medium text-gray-700">Trim Threshold{{ ui.help_tip('How bright a pixel must be to count as content rather than empty space (0–254).\nDefault: 10, which ignores the near-black noise left by image compression. Raise it if very dark artwork is being kept; lower it if dark detail is being cropped.', 'Trim Threshold') }}</label>
+                            <input type="number"
+                                   id="vegas_trim_threshold"
+                                   name="vegas_trim_threshold"
+                                   value="{{ main_config.display.get('vegas_scroll', {}).get('trim_threshold', 10) }}"
+                                   min="0"
+                                   max="254"
+                                   class="form-control">
+                        </div>
+
+                        <div class="form-group" id="setting-display-vegas_min_plugin_width" data-setting-key="display.vegas_scroll.min_plugin_width">
+                            <label for="vegas_min_plugin_width" class="block text-sm font-medium text-gray-700">Min Plugin Width (pixels){{ ui.help_tip('Plugin blocks narrower than this after trimming are skipped for that cycle (0–512 px).\nDefault: 8. Raise it to hide plugins showing only a tiny placeholder such as "No Data" until they have real content.', 'Min Plugin Width') }}</label>
+                            <input type="number"
+                                   id="vegas_min_plugin_width"
+                                   name="vegas_min_plugin_width"
+                                   value="{{ main_config.display.get('vegas_scroll', {}).get('min_plugin_width', 8) }}"
+                                   min="0"
+                                   max="512"
+                                   class="form-control">
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                        <div class="form-group" id="setting-display-vegas_min_cut_gap" data-setting-key="display.vegas_scroll.min_cut_gap">
+                            <label for="vegas_min_cut_gap" class="block text-sm font-medium text-gray-700">Min Cut Gap (pixels){{ ui.help_tip('When a plugin is too wide for its share of a cycle and has to be narrowed, the cut is only made where there is at least this much blank space (1–128 px).\nDefault: 6. The gaps between letters are about 1px wide, so a smaller value lets a cut land inside a word and orphan its last letter into the next cycle. Raise it if cuts still land awkwardly. Continuous images such as maps have no gaps and are cut to fit regardless.', 'Min Cut Gap') }}</label>
+                            <input type="number"
+                                   id="vegas_min_cut_gap"
+                                   name="vegas_min_cut_gap"
+                                   value="{{ main_config.display.get('vegas_scroll', {}).get('min_cut_gap', 6) }}"
+                                   min="1"
+                                   max="128"
+                                   class="form-control">
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Plugin Order Section -->
                 <div class="mt-4 pt-4 border-t border-gray-200">
                     <h4 class="text-sm font-medium text-gray-900 mb-3">Plugin Order</h4>
@@ -453,6 +703,52 @@
                 </div>
             </div>
         </div>
+
+        <!-- Double-Sided Display -->
+        <div class="bg-gray-50 rounded-lg p-4">
+            <h3 class="text-md font-medium text-gray-900 mb-1">Double-Sided Display</h3>
+            <p class="text-sm text-gray-600 mb-4">Show the same content on every panel in the chain &mdash; e.g. two 64&times;32 panels mirrored, or four panels as two identical screens. Rendered once and duplicated, so it adds no extra CPU. Takes effect after a display restart.</p>
+
+            <div class="form-group mb-4" id="setting-display-double_sided_enabled" data-setting-key="display.double_sided.enabled">
+                <label class="flex items-center gap-2">
+                    <input type="checkbox"
+                           id="double_sided_enabled"
+                           name="double_sided_enabled"
+                           value="true"
+                           {% if main_config.display.get('double_sided', {}).get('enabled') %}checked{% endif %}
+                           class="form-control h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                    <span class="text-sm font-medium text-gray-700">Enabled</span>
+                    {{ ui.help_tip('Show the same content mirrored across every panel in the chain.\nRendered once and duplicated, so it adds no extra CPU. Takes effect after a display restart.', 'Double-Sided Enabled') }}
+                </label>
+            </div>
+
+            <!-- Hidden (not disabled) when the feature is off, so the values are
+                 still submitted and round-trip through a save. -->
+            <div id="double_sided_settings"
+                 class="grid grid-cols-1 md:grid-cols-2 gap-4"
+                 {% if not main_config.display.get('double_sided', {}).get('enabled') %}style="display: none;"{% endif %}>
+                <div class="form-group" id="setting-display-double_sided_copies" data-setting-key="display.double_sided.copies">
+                    <label for="double_sided_copies" class="block text-sm font-medium text-gray-700">Copies{{ ui.help_tip('How many identical screens to split the panel area into (2–8).\nWhen enabled, this must divide the panel evenly — e.g. 2 for a two-sided cube.', 'Copies') }}</label>
+                    <input type="number"
+                           id="double_sided_copies"
+                           name="double_sided_copies"
+                           value="{{ main_config.display.get('double_sided', {}).get('copies', 2) }}"
+                           min="2"
+                           max="8"
+                           class="form-control">
+                </div>
+
+                <div class="form-group" id="setting-display-double_sided_axis" data-setting-key="display.double_sided.axis">
+                    <label for="double_sided_axis" class="block text-sm font-medium text-gray-700">Split Axis{{ ui.help_tip('Direction the display is divided into copies.\nHorizontal splits along the chained panels (side by side); Vertical splits along parallel chains (stacked).', 'Split Axis') }}</label>
+                    <select id="double_sided_axis" name="double_sided_axis" class="form-control">
+                        <option value="horizontal" {% if main_config.display.get('double_sided', {}).get('axis', 'horizontal') == 'horizontal' %}selected{% endif %}>Horizontal &mdash; chained panels (side by side)</option>
+                        <option value="vertical" {% if main_config.display.get('double_sided', {}).get('axis', 'horizontal') == 'vertical' %}selected{% endif %}>Vertical &mdash; parallel chains (stacked)</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+
 
         <!-- Multi-Display Sync Settings -->
         <div class="bg-gray-50 rounded-lg p-4 mt-6">
@@ -549,6 +845,28 @@ if (typeof window.fixInvalidNumberInputs !== 'function') {
     };
 }
 
+// Report the outcome of a display-settings save. XMLHttpRequest has no
+// `responseJSON` (that's a jQuery property) — read `responseText` and the real
+// status code, otherwise a failed save reports success.
+window.showDisplaySaveResult = function(xhr) {
+    // Only 2xx counts as saved. A network failure reports status 0, which any
+    // `>= 400` test would wave through as success.
+    const httpSuccess = xhr.status >= 200 && xhr.status < 300;
+    let message = httpSuccess
+        ? 'Display settings saved'
+        : 'Display settings were not saved. Check your connection and try again.';
+    let status = httpSuccess ? 'success' : 'error';
+    try {
+        const data = JSON.parse(xhr.responseText);
+        if (data.message) message = data.message;
+        // A body can refine a successful verdict but never overturn a failed one.
+        if (httpSuccess && data.status) status = data.status;
+    } catch {
+        // Non-JSON body — fall back to the status-code verdict above.
+    }
+    showNotification(message, status);
+};
+
 // Vegas Scroll Mode Settings
 (function() {
     // Escape HTML to prevent XSS
@@ -573,6 +891,18 @@ if (typeof window.fixInvalidNumberInputs !== 'function') {
         });
     }
 
+    // Double-sided: copies/axis only mean anything while the feature is on.
+    // Hidden rather than disabled so the fields keep submitting and the server
+    // still sees an 'off' state to persist.
+    const doubleSidedCheckbox = document.getElementById('double_sided_enabled');
+    const doubleSidedSettings = document.getElementById('double_sided_settings');
+
+    if (doubleSidedCheckbox && doubleSidedSettings) {
+        doubleSidedCheckbox.addEventListener('change', function() {
+            doubleSidedSettings.style.display = this.checked ? 'grid' : 'none';
+        });
+    }
+
     // Update scroll speed display
     const scrollSpeedSlider = document.getElementById('vegas_scroll_speed');
     const scrollSpeedValue = document.getElementById('vegas_scroll_speed_value');
@@ -583,182 +913,31 @@ if (typeof window.fixInvalidNumberInputs !== 'function') {
         });
     }
 
-    // Initialize plugin order list
-    function initPluginOrderList() {
+    // Initialize plugin order list via the shared drag-and-drop module
+    // (static/v3/js/widgets/plugin-order-list.js) — the same component the
+    // Durations tab uses for the primary rotation order.
+    function initPluginOrderList(attempt) {
         const container = document.getElementById('vegas_plugin_order');
         if (!container) return;
-
-        // Fetch available plugins
-        fetch('/api/v3/plugins/installed')
-            .then(response => response.json())
-            .then(data => {
-                // Handle both {data: {plugins: []}} and {plugins: []} response formats
-                const allPlugins = data.data?.plugins || data.plugins || [];
-                if (!allPlugins || allPlugins.length === 0) {
-                    container.innerHTML = '<p class="text-sm text-gray-500 italic">No plugins available</p>';
-                    return;
-                }
-
-                // Get current order and exclusions
-                const orderInput = document.getElementById('vegas_plugin_order_value');
-                const excludedInput = document.getElementById('vegas_excluded_plugins_value');
-                let currentOrder = [];
-                let excluded = [];
-
-                try {
-                    currentOrder = JSON.parse(orderInput.value || '[]');
-                    excluded = JSON.parse(excludedInput.value || '[]');
-                } catch (e) {
-                    console.error('Error parsing vegas config:', e);
-                }
-
-                // Build ordered plugin list (only enabled plugins)
-                const plugins = allPlugins.filter(p => p.enabled);
-                const orderedPlugins = [];
-
-                // First add plugins in current order
-                currentOrder.forEach(id => {
-                    const plugin = plugins.find(p => p.id === id);
-                    if (plugin) orderedPlugins.push(plugin);
-                });
-
-                // Then add remaining plugins
-                plugins.forEach(plugin => {
-                    if (!orderedPlugins.find(p => p.id === plugin.id)) {
-                        orderedPlugins.push(plugin);
-                    }
-                });
-
-                // Build HTML with display mode indicators
-                let html = '';
-                orderedPlugins.forEach((plugin, index) => {
-                    const isExcluded = excluded.includes(plugin.id);
-                    // Determine display mode (from plugin config or default)
-                    const vegasMode = plugin.vegas_mode || plugin.vegas_content_type || 'fixed';
-                    const modeLabels = {
-                        'scroll': { label: 'Scroll', icon: 'fa-scroll', color: 'text-blue-600' },
-                        'fixed': { label: 'Fixed', icon: 'fa-square', color: 'text-green-600' },
-                        'static': { label: 'Static', icon: 'fa-pause', color: 'text-orange-600' }
-                    };
-                    const modeInfo = modeLabels[vegasMode] || modeLabels['fixed'];
-                    // Escape plugin metadata to prevent XSS
-                    const safePluginId = escapeAttr(plugin.id);
-                    const safePluginName = escapeHtml(plugin.name || plugin.id);
-                    html += `
-                        <div class="flex items-center p-2 bg-gray-50 rounded border border-gray-200 cursor-move vegas-plugin-item"
-                             data-plugin-id="${safePluginId}" draggable="true">
-                            <i class="fas fa-grip-vertical text-gray-400 mr-3"></i>
-                            <label class="flex items-center flex-1">
-                                <input type="checkbox"
-                                       class="vegas-plugin-include h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded mr-2"
-                                       ${!isExcluded ? 'checked' : ''}>
-                                <span class="text-sm font-medium text-gray-700">${safePluginName}</span>
-                            </label>
-                            <span class="text-xs ${modeInfo.color} ml-2" title="Vegas display mode: ${modeInfo.label}">
-                                <i class="fas ${modeInfo.icon} mr-1"></i>${modeInfo.label}
-                            </span>
-                        </div>
-                    `;
-                });
-
-                container.innerHTML = html || '<p class="text-sm text-gray-500 italic">No enabled plugins</p>';
-
-                // Setup drag and drop
-                setupDragAndDrop(container);
-
-                // Setup checkbox handlers
-                container.querySelectorAll('.vegas-plugin-include').forEach(checkbox => {
-                    checkbox.addEventListener('change', updatePluginConfig);
-                });
-
-                // Initialize hidden inputs with current state
-                updatePluginConfig();
-            })
-            .catch(error => {
-                console.error('Error fetching plugins:', error);
-                container.innerHTML = '<p class="text-sm text-red-500">Error loading plugins</p>';
-            });
-    }
-
-    function setupDragAndDrop(container) {
-        let draggedItem = null;
-
-        container.querySelectorAll('.vegas-plugin-item').forEach(item => {
-            item.addEventListener('dragstart', function(e) {
-                draggedItem = this;
-                this.style.opacity = '0.5';
-                e.dataTransfer.effectAllowed = 'move';
-            });
-
-            item.addEventListener('dragend', function() {
-                this.style.opacity = '1';
-                draggedItem = null;
-                updatePluginConfig();
-            });
-
-            item.addEventListener('dragover', function(e) {
-                e.preventDefault();
-                e.dataTransfer.dropEffect = 'move';
-
-                const rect = this.getBoundingClientRect();
-                const midY = rect.top + rect.height / 2;
-
-                if (e.clientY < midY) {
-                    this.style.borderTop = '2px solid #3b82f6';
-                    this.style.borderBottom = '';
-                } else {
-                    this.style.borderBottom = '2px solid #3b82f6';
-                    this.style.borderTop = '';
-                }
-            });
-
-            item.addEventListener('dragleave', function() {
-                this.style.borderTop = '';
-                this.style.borderBottom = '';
-            });
-
-            item.addEventListener('drop', function(e) {
-                e.preventDefault();
-                this.style.borderTop = '';
-                this.style.borderBottom = '';
-
-                if (draggedItem && draggedItem !== this) {
-                    const rect = this.getBoundingClientRect();
-                    const midY = rect.top + rect.height / 2;
-
-                    if (e.clientY < midY) {
-                        container.insertBefore(draggedItem, this);
-                    } else {
-                        container.insertBefore(draggedItem, this.nextSibling);
-                    }
-                }
-            });
-        });
-    }
-
-    function updatePluginConfig() {
-        const container = document.getElementById('vegas_plugin_order');
-        const orderInput = document.getElementById('vegas_plugin_order_value');
-        const excludedInput = document.getElementById('vegas_excluded_plugins_value');
-
-        if (!container || !orderInput || !excludedInput) return;
-
-        const order = [];
-        const excluded = [];
-
-        container.querySelectorAll('.vegas-plugin-item').forEach(item => {
-            const pluginId = item.dataset.pluginId;
-            const checkbox = item.querySelector('.vegas-plugin-include');
-
-            order.push(pluginId);
-            if (checkbox && !checkbox.checked) {
-                excluded.push(pluginId);
+        if (!window.PluginOrderList) {
+            // Widget script is deferred; retry briefly, then surface a real
+            // error instead of waiting forever.
+            if ((attempt || 0) < 50) {
+                setTimeout(function() { initPluginOrderList((attempt || 0) + 1); }, 100);
+            } else {
+                container.textContent = 'Could not load the reorder widget — reload the page to try again.';
+                container.className = 'text-sm text-red-500';
             }
+            return;
+        }
+        window.PluginOrderList.init({
+            containerId: 'vegas_plugin_order',
+            orderInputId: 'vegas_plugin_order_value',
+            excludedInputId: 'vegas_excluded_plugins_value',
+            showVegasModeBadge: true
         });
-
-        orderInput.value = JSON.stringify(order);
-        excludedInput.value = JSON.stringify(excluded);
     }
+
 
     // Initialize on DOM ready
     if (document.readyState === 'loading') {

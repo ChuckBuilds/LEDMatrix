@@ -10,8 +10,8 @@ WorkingDirectory=__PROJECT_ROOT_DIR__
 ExecStart=/usr/bin/python3 __PROJECT_ROOT_DIR__/scripts/utils/wifi_monitor_daemon.py --interval 30
 Restart=on-failure
 RestartSec=10
-StandardOutput=syslog
-StandardError=syslog
+StandardOutput=journal
+StandardError=journal
 SyslogIdentifier=ledmatrix-wifi-monitor
 
 [Install]

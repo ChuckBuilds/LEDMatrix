@@ -44,6 +44,20 @@ from src.common.sync_manager import DisplaySyncManager, SyncRole
 # Get logger with consistent configuration
 logger = get_logger(__name__)
 
+# How long startup will wait for plugins to fetch their first data before
+# showing anything. Each plugin's update blocks for up to the executor's 30s
+# timeout and they run one after another, so the uncapped total is the sum of
+# every slow plugin: 82 seconds on the worst boot measured, with a blank panel
+# throughout. Whatever does not finish in time is picked up by the scheduled
+# update tick moments later, with the display already running.
+_INITIAL_UPDATE_BUDGET_SECONDS = 20.0
+
+# The least budget worth starting a plugin with. Below this the plugin is
+# deferred instead: granting it a floor would let the pass run past its
+# deadline, and granting it the true remainder would record a timeout for a
+# slot it never had a chance to use.
+_MIN_INITIAL_UPDATE_TIMEOUT_SECONDS = 2.0
+
 # Vegas mode import (lazy loaded to avoid circular imports)
 _vegas_mode_imported = False
 VegasModeCoordinator = None
@@ -90,7 +104,8 @@ class DisplayController:
         # Validate startup configuration
         try:
             from src.startup_validator import StartupValidator
-            validator = StartupValidator(self.config_manager)
+            validator = StartupValidator(self.config_manager,
+                                         cache_manager=self.cache_manager)
             is_valid, errors, warnings = validator.validate_all()
             
             if warnings:
@@ -258,7 +273,8 @@ class DisplayController:
             # Validate plugins after plugin manager is created
             try:
                 from src.startup_validator import StartupValidator
-                validator = StartupValidator(self.config_manager, self.plugin_manager)
+                validator = StartupValidator(self.config_manager, self.plugin_manager,
+                                             cache_manager=self.cache_manager)
                 is_valid, errors, warnings = validator.validate_all()
                 
                 if warnings:
@@ -381,6 +397,10 @@ class DisplayController:
                 logger.debug("%d plugin(s) disabled in config", disabled_count)
 
             logger.info("Plugin system initialized in %.3f seconds", time.time() - plugin_time)
+            # Parallel loading appends modes in load-completion order, which
+            # varies between restarts; apply the user's configured rotation
+            # order (no-op when not configured).
+            self._apply_plugin_rotation_order()
             logger.info("Total available modes: %d", len(self.available_modes))
             logger.info("Available modes: %s", self.available_modes)
             
@@ -457,7 +477,7 @@ class DisplayController:
         # Initial data update for plugins (ensures data available on first display)
         logger.info("Performing initial plugin data update...")
         update_start = time.time()
-        self._update_modules()
+        self._update_modules(deadline=update_start + _INITIAL_UPDATE_BUDGET_SECONDS)
         logger.info("Initial plugin update completed in %.3f seconds", time.time() - update_start)
 
         # Initialize Vegas mode coordinator
@@ -813,14 +833,42 @@ class DisplayController:
             self._cached_target_brightness = normal_brightness  # persist for minute-gate
             return normal_brightness
 
-    def _update_modules(self):
-        """Update all plugin modules."""
+    def _update_modules(self, deadline: Optional[float] = None):
+        """Update all plugin modules.
+
+        Args:
+            deadline: Wall-clock time after which remaining plugins are left
+                for the scheduled update tick instead of being waited on. Each
+                update blocks this thread for up to the executor's timeout, and
+                they run one after another, so without a bound the total is the
+                sum of every slow plugin on the system. Measured at startup on
+                a live rig: 82 seconds, 55 and 26 on the two boots before -- all
+                of it with nothing on the panel.
+        """
         if not self.plugin_manager:
             return
-            
+
         # Update all loaded plugins
         plugins_dict = getattr(self.plugin_manager, 'loaded_plugins', None) or getattr(self.plugin_manager, 'plugins', {})
+        deferred = []
         for plugin_id, plugin_instance in plugins_dict.items():
+            update_timeout = None
+            if deadline is not None:
+                update_timeout = deadline - time.time()
+                if update_timeout < _MIN_INITIAL_UPDATE_TIMEOUT_SECONDS:
+                    # Too little left to be worth starting. Deferring rather
+                    # than granting a floor keeps the budget a real ceiling --
+                    # clamping up to a minimum let a plugin that began with a
+                    # sliver left run on past the deadline -- and a plugin
+                    # handed a slot it cannot use would just be recorded as
+                    # having timed out.
+                    #
+                    # Nothing is lost either way: a plugin that has never
+                    # updated is immediately due, so run_scheduled_updates()
+                    # picks it up within seconds, with the display already
+                    # running.
+                    deferred.append(plugin_id)
+                    continue
             # Check circuit breaker before attempting update
             if hasattr(self.plugin_manager, 'health_tracker') and self.plugin_manager.health_tracker:
                 if self.plugin_manager.health_tracker.should_skip_plugin(plugin_id):
@@ -829,7 +877,13 @@ class DisplayController:
             
             # Use PluginExecutor if available for safe execution
             if hasattr(self.plugin_manager, 'plugin_executor'):
-                success = self.plugin_manager.plugin_executor.execute_update(plugin_instance, plugin_id)
+                # The remaining budget is the timeout, so the pass cannot
+                # run past its deadline. Bounding the loop alone did not do
+                # it: the last plugin to start could still block for the
+                # executor's full 30s, which turned a 20s budget into a 31.8s
+                # pass on the rig.
+                success = self.plugin_manager.plugin_executor.execute_update(
+                    plugin_instance, plugin_id, timeout=update_timeout)
                 if success and hasattr(self.plugin_manager, 'plugin_last_update'):
                     self.plugin_manager.plugin_last_update[plugin_id] = time.time()
             else:
@@ -847,6 +901,12 @@ class DisplayController:
                     # Record failure
                     if hasattr(self.plugin_manager, 'health_tracker') and self.plugin_manager.health_tracker:
                         self.plugin_manager.health_tracker.record_failure(plugin_id, exc)
+
+        if deferred:
+            logger.info(
+                "Initial update budget spent; %d plugin(s) left to the update "
+                "tick so the display can start: %s",
+                len(deferred), ", ".join(deferred))
 
     def _tick_plugin_updates_for_vegas(self) -> None:
         """Run scheduled plugin updates and tell Vegas mode which plugins
@@ -1132,6 +1192,29 @@ class DisplayController:
             return None
         remaining = self.on_demand_expires_at - time.time()
         return max(0.0, remaining)
+
+    def _publish_current_mode_state(self) -> None:
+        """Publish the currently active display mode/plugin to cache for the web UI."""
+        try:
+            state = {
+                'mode': self.current_display_mode,
+                'plugin_id': self.mode_to_plugin_id.get(self.current_display_mode),
+                'mode_index': self.current_mode_index,
+                'total_modes': len(self.available_modes),
+                'on_demand_active': self.on_demand_active,
+                'is_display_active': self.is_display_active,
+                'last_updated': time.time(),
+            }
+            self.cache_manager.set('display_current_state', state)
+            self._last_published_mode = self.current_display_mode
+        except (OSError, RuntimeError, ValueError, TypeError) as err:
+            logger.error("Failed to publish current display state: %s", err, exc_info=True)
+
+    def _publish_current_mode_state_if_changed(self) -> None:
+        """Publish current mode state only when it actually changed, to avoid
+        writing to the shared cache on every render tick."""
+        if self.current_display_mode != getattr(self, '_last_published_mode', None):
+            self._publish_current_mode_state()
 
     def _publish_on_demand_state(self) -> None:
         """Publish current on-demand state to cache for external consumers."""
@@ -1611,6 +1694,12 @@ class DisplayController:
                 logger.warning("Error checking live priority for %s: %s", mode_name, e)
         return live
 
+    def _vegas_keeps_live_in_ticker(self) -> bool:
+        """Whether live content should stay in the ticker instead of preempting it."""
+        coordinator = getattr(self, 'vegas_coordinator', None)
+        config = getattr(coordinator, 'vegas_config', None)
+        return bool(getattr(config, 'live_in_ticker', False))
+
     def _check_live_priority(self, advance=False):
         """Return the live-priority mode to display, or None if nothing is live.
 
@@ -1652,6 +1741,7 @@ class DisplayController:
             logger.info("Starting display with cached data (fast startup mode)")
             self.current_display_mode = self.available_modes[self.current_mode_index] if self.available_modes else 'none'
             logger.info(f"Initial mode set to: {self.current_display_mode} (index: {self.current_mode_index}, total modes: {len(self.available_modes)})")
+            self._publish_current_mode_state()
             
             while True:
                 # Apply plugin enable/disable edits saved via the web UI. The
@@ -1712,9 +1802,11 @@ class DisplayController:
                         logger.debug(f"Error clearing display when inactive: {e}")
                     
                     logger.info(f"Display not active (is_display_active={self.is_display_active}), sleeping...")
+                    self._publish_current_mode_state()
                     self._sleep_with_plugin_updates(60)
                     continue
                 
+                self._publish_current_mode_state_if_changed()
                 logger.debug("Display active, processing mode: %s", self.current_display_mode)
                 
                 # Plugins update on their own schedules - no forced sync updates needed
@@ -1821,14 +1913,24 @@ class DisplayController:
                 # Check for live priority content and switch to it immediately.
                 # advance=True so multiple simultaneously-live games take turns
                 # (round-robin) instead of pinning to the first plugin.
-                if not self.on_demand_active and not wifi_status_data:
+                # Skipped when the ticker is keeping live content: switching
+                # the rotation underneath Vegas would move current_mode_index
+                # and stash a resume point for a takeover that never happens.
+                if (not self.on_demand_active and not wifi_status_data
+                        and not (self._is_vegas_mode_active()
+                                 and self._vegas_keeps_live_in_ticker())):
                     live_priority_mode = self._check_live_priority(advance=True)
                     self._apply_live_priority(live_priority_mode)
 
                 # Vegas scroll mode - continuous ticker across all plugins
                 # Priority: on-demand > wifi-status > live-priority > vegas > normal rotation
                 if self._is_vegas_mode_active() and not wifi_status_data:
-                    live_mode = self._check_live_priority()
+                    # Live content normally preempts the ticker entirely. With
+                    # vegas_scroll.live_in_ticker the marquee keeps running and
+                    # the live plugin takes extra turns inside it instead --
+                    # see StreamManager._apply_priority_weights.
+                    live_mode = (None if self._vegas_keeps_live_in_ticker()
+                                 else self._check_live_priority())
                     if not live_mode:
                         try:
                             # Run Vegas mode iteration
@@ -2843,10 +2945,51 @@ class DisplayController:
             except Exception as e:
                 logger.error("Plugin reconcile: error enabling %s: %s", plugin_id, e, exc_info=True)
 
+        # Newly enabled plugins were appended at the end; put them in the
+        # configured rotation slot before resyncing the index.
+        self._apply_plugin_rotation_order()
         self._resync_mode_index_after_change(previous_mode)
-        logger.info("Plugin reconcile complete: +%s -%s (%d modes)",
+        logger.info("[DisplayController] Plugin reconcile complete: +%s -%s (%d modes)",
                     sorted(to_add), sorted(to_remove), len(self.available_modes))
         return True
+
+    def _apply_plugin_rotation_order(self) -> None:
+        """Reorder available_modes to follow display.plugin_rotation_order.
+
+        The configured value is a list of plugin ids; their modes rotate in
+        that order (each plugin's own modes keep their declared order), with
+        any enabled-but-unlisted plugins appended afterwards in their current
+        relative order. An empty/missing list leaves available_modes exactly
+        as built (today's behavior). Mirrors vegas_mode/config.py's
+        get_ordered_plugins() semantics for the primary rotation.
+        """
+        configured = (self.config.get("display", {}) or {}).get("plugin_rotation_order", []) or []
+        # Defensive: hand-edited or migrated configs may hold a non-list or
+        # non-string entries; keep the existing rotation rather than applying
+        # a garbage order.
+        if not isinstance(configured, list):
+            logger.warning("[DisplayController] Ignoring invalid plugin_rotation_order (not a list): %r",
+                           type(configured).__name__)
+            return
+        configured = [p for p in configured if isinstance(p, str)]
+        if not configured or not self.available_modes:
+            return
+
+        ordered_ids = [p for p in configured if p in self.plugin_display_modes]
+        new_modes: List[str] = []
+        for plugin_id in ordered_ids:
+            for mode in self.plugin_display_modes[plugin_id]:
+                if mode in self.available_modes and mode not in new_modes:
+                    new_modes.append(mode)
+        # Unlisted plugins' modes (and any mode not attributable to a plugin)
+        # follow in their existing relative order.
+        for mode in self.available_modes:
+            if mode not in new_modes:
+                new_modes.append(mode)
+        if new_modes != self.available_modes:
+            self.available_modes = new_modes
+            logger.info("[DisplayController] Applied plugin rotation order %s -> modes: %s",
+                        configured, self.available_modes)
 
     def _resync_mode_index_after_change(self, previous_mode: Optional[str]) -> None:
         """Clamp rotation state after available_modes changed. Stays on the

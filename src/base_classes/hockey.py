@@ -38,10 +38,17 @@ class Hockey(SportsCore):
             status = competition["status"]
             powerplay = False
             penalties = ""
+            # A competitor may legitimately arrive without a "statistics"
+            # array (pre-game feeds, and some in-progress ones). Reading it
+            # unguarded raised KeyError inside the generator and dropped the
+            # WHOLE event, discarding valid scores and status. Default to an
+            # empty list so the saves/shots figures fall back to 0 instead.
+            home_stats = home_team.get("statistics", [])
+            away_stats = away_team.get("statistics", [])
             home_team_saves = next(
                 (
                     int(c["displayValue"])
-                    for c in home_team["statistics"]
+                    for c in home_stats
                     if c.get("name") == "saves"
                 ),
                 0,
@@ -49,7 +56,7 @@ class Hockey(SportsCore):
             home_team_saves_per = next(
                 (
                     float(c["displayValue"])
-                    for c in home_team["statistics"]
+                    for c in home_stats
                     if c.get("name") == "savePct"
                 ),
                 0.0,
@@ -57,7 +64,7 @@ class Hockey(SportsCore):
             away_team_saves = next(
                 (
                     int(c["displayValue"])
-                    for c in away_team["statistics"]
+                    for c in away_stats
                     if c.get("name") == "saves"
                 ),
                 0,
@@ -65,7 +72,7 @@ class Hockey(SportsCore):
             away_team_saves_per = next(
                 (
                     float(c["displayValue"])
-                    for c in away_team["statistics"]
+                    for c in away_stats
                     if c.get("name") == "savePct"
                 ),
                 0.0,

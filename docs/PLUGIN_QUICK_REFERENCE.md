@@ -14,8 +14,10 @@ and [PLUGIN_DEVELOPMENT_GUIDE.md](PLUGIN_DEVELOPMENT_GUIDE.md).
 ✅ **GitHub Store**: Discovery from `ledmatrix-plugins` registry plus
    any GitHub URL
 ✅ **Plugin Location**: configured by `plugin_system.plugins_directory`
-   in `config.json` (default `plugin-repos/`; the loader also searches
-   `plugins/` as a fallback)
+   in `config.json` (default `plugin-repos/`). Plugin discovery scans
+   only this directory — there is no loader fallback to `plugins/`
+   (only Plugin Store operations and schema lookup additionally probe
+   `plugins/`)
 
 ## File Structure
 
@@ -109,7 +111,7 @@ git push -u origin main
 git tag v1.0.0
 git push origin v1.0.0
 
-# Submit to registry (PR to ChuckBuilds/ledmatrix-plugin-registry)
+# Submit to registry (PR to ChuckBuilds/ledmatrix-plugins)
 ```
 
 ## Using Plugins
@@ -120,12 +122,12 @@ git push origin v1.0.0
 2. **Install**: Click **Install** in the plugin's row
 3. **Configure**: open the plugin's tab in the second nav row
 4. **Enable/Disable**: toggle switch in the **Installed Plugins** list
-5. **Reorder**: order is set by the position in `display_modes` /
-   plugin order; rearranging via drag-and-drop is not yet supported
+5. **Reorder**: use the drag-and-drop **Rotation Order** list in the
+   **Rotation** tab (saved to `display.plugin_rotation_order`)
 
 ### REST API
 
-The API is mounted at `/api/v3` (`web_interface/app.py:144`).
+The API is mounted at `/api/v3` (`web_interface/app.py:199`).
 
 ```bash
 # Install plugin from the registry

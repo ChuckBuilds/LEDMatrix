@@ -17,6 +17,7 @@ from enum import Enum
 
 from src.exceptions import ConfigError
 from src.logging_config import get_logger
+from src.common.permission_utils import ensure_shared_group_ownership
 
 
 class SaveResultStatus(Enum):
@@ -410,6 +411,13 @@ class AtomicConfigManager:
             # This is important because temp files may have different permissions
             # and we need root service to be able to read config.json
             os.chmod(destination, target_mode)
+
+            # Also fix group ownership when this save is running as root
+            # (the display service): 0o640 alone only helps the non-root web
+            # user read a root-written secrets file if its group already
+            # matches the web user's group, which isn't guaranteed. See
+            # permission_utils.ensure_shared_group_ownership for why.
+            ensure_shared_group_ownership(destination)
             
         except Exception as e:
             raise ConfigError(f"Error during atomic move: {e}") from e

@@ -251,6 +251,12 @@ def _preprocess_elements(elements: list) -> list:
             if t == 'text':
                 t1 = el.get('text', '') or ''
                 t2 = el.get('text2', '') or ''
+                # p is a copy of the raw element, so a payload omitting these
+                # leaves the key absent and the template renders
+                # {{ el.text | tojson }} over a jinja2.Undefined. tojson then
+                # raises TypeError, which no handler catches -- so a missing
+                # key came back as a 500 rather than a validation error.
+                p['text'] = t1
                 p['text2'] = t2
                 # Detect {variable} tokens — generate format_map() call instead of literal
                 _var_re = re.compile(r'\{([a-zA-Z_]\w*)\}')
@@ -260,6 +266,7 @@ def _preprocess_elements(elements: list) -> list:
                 p['x2_expr'] = p['x_expr']  # second line uses same x
             else:  # clock
                 fmt1 = el.get('format', '%H:%M') or '%H:%M'
+                p['format'] = fmt1
                 fmt2 = el.get('format2', '') or ''
                 p['format2'] = fmt2
                 ref_len = max(len(fmt1), len(fmt2)) if fmt2 else len(fmt1)

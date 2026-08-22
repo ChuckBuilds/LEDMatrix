@@ -164,8 +164,34 @@ def test_the_generated_config_assignment_does_not_precede_super_init():
     """Guards the reasoning behind the reserved list, not just the list."""
     src = _generated(_with_key("brightness"))
     body = src.splitlines()
-    super_at = next(i for i, l in enumerate(body) if "super().__init__(" in l)
-    assign_at = next(i for i, l in enumerate(body) if "self.brightness = config.get(" in l)
+    super_at = next(i for i, line in enumerate(body) if "super().__init__(" in line)
+    assign_at = next(i for i, line in enumerate(body)
+                     if "self.brightness = config.get(" in line)
     assert assign_at > super_at, (
         "config vars are assigned before super().__init__(); the reserved-name "
         "list assumes they land after it")
+
+
+# --- optional keys ----------------------------------------------------------
+
+@pytest.mark.parametrize("el_type,missing", [
+    ("text", "text"), ("text", "text2"), ("clock", "format"),
+])
+def test_an_element_missing_an_optional_key_does_not_500(el_type, missing):
+    """`p` is a copy of the raw element, so an absent key stays absent.
+
+    The defaults were applied to locals only, so manager.py.j2 rendered
+    `{{ el.text | tojson }}` over a jinja2.Undefined and tojson raised
+    TypeError -- which no handler catches, making a missing key a 500 rather
+    than a validation error or a sensible default.
+    """
+    el = {"type": el_type, "id": "e1", "x": 0, "y": 0, "font": "press_start"}
+    src = _generated(_payload(elements=[el]))
+    ast.parse(src)          # must still be valid Python
+    assert "Undefined" not in src
+
+
+def test_a_clock_without_a_format_uses_the_documented_default():
+    el = {"type": "clock", "id": "c1", "x": 0, "y": 0, "font": "press_start"}
+    src = _generated(_payload(elements=[el]))
+    assert '"%H:%M"' in src, "the %H:%M default did not reach the generated source"

@@ -1,0 +1,29 @@
+# bandit.yaml — LEDMatrix bandit configuration
+# https://bandit.readthedocs.io/en/latest/config.html
+#
+# Skips are justified by the specific codebase context documented below.
+# Do not remove skips without updating the justification comment.
+
+skips:
+  # B104: Binding to all interfaces (0.0.0.0)
+  # Intentional — the Flask server binds 0.0.0.0 for LAN access on a Raspberry Pi.
+  # This is not internet-facing and is documented in web_interface/app.py.
+  - B104
+
+  # B603: subprocess call without shell=True
+  # All subprocess.run() calls in this codebase use list arguments (confirmed by
+  # grep — zero uses of shell=True in src/ or web_interface/). List args prevent
+  # shell injection. See src/common/permission_utils.py for the primary usage.
+  - B603
+
+  # B607: Starting a process with a partial executable path
+  # The subprocess calls invoke system utilities (systemctl, sudo, git) by name.
+  # These are fixed-list invocations, not user-controlled, and rely on PATH.
+  - B607
+
+exclude_dirs:
+  - tests
+  - test
+  - venv
+  - .venv
+  - rpi-rgb-led-matrix-master

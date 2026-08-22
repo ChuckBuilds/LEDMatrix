@@ -206,6 +206,81 @@ To use an existing widget in your plugin's `config_schema.json`, simply add the 
 
 The widget will be automatically rendered when the plugin configuration form is loaded.
 
+## Labelling Enum Options (`x-options.labels`)
+
+A plain `enum` renders as a dropdown whose option text is the value with
+underscores replaced and title case applied — `day_first` becomes "Day First".
+That is fine for values that read as their own label, and wrong for values that
+do not: `vs` becomes "Vs", and `abbrev` says nothing about the `Sep 19` it
+actually produces.
+
+Supply `x-options.labels` to set the visible text. This is the same convention
+the `checkbox-group` widget uses:
+
+```json
+{
+  "date_format": {
+    "type": "string",
+    "enum": ["abbrev", "numeric", "day_first"],
+    "default": "abbrev",
+    "x-options": {
+      "labels": {
+        "abbrev": "Sep 19",
+        "numeric": "9/19",
+        "day_first": "19 Sep"
+      }
+    }
+  }
+}
+```
+
+Labels are **display only** — the stored value is still the enum value, so
+adding them never changes a saved config. The map may be partial: any value
+without a label keeps the humanised fallback. Older cores that predate this
+support ignore `x-options` and render the fallback for every option, so a
+plugin can ship labels without requiring a core upgrade.
+
+Array-table columns (`x-widget: array-table`) accept the same
+`x-options.labels` on a column definition, but their fallback is the **raw
+value** rather than the humanised one, because those columns hold values such
+as ticker symbols where `aapl` → "Aapl" would be wrong. Rows added in the
+browser use the labels too (`array-table.js`), so a column reads the same
+before and after a page reload.
+
+## Marking Fields as Advanced (`x-advanced`)
+
+Add `"x-advanced": true` to any top-level, non-object property to move it out
+of the main form and into a single collapsed **Advanced Settings** section at
+the bottom of the plugin's configuration page:
+
+```json
+{
+  "properties": {
+    "city": {
+      "type": "string",
+      "title": "City"
+    },
+    "request_timeout": {
+      "type": "integer",
+      "default": 10,
+      "description": "HTTP timeout in seconds",
+      "x-advanced": true
+    }
+  }
+}
+```
+
+Guidelines:
+
+- Use it for fine-tuning knobs most users never touch (timeouts, retry
+  behavior, cache TTLs, styling overrides). Anything a first-time user must
+  set to get the plugin working should stay basic.
+- Nothing is hidden permanently — the section expands on click, and the
+  settings search finds and auto-expands advanced fields like any others.
+- The flag is ignored on `object`-type properties (they already render as
+  their own collapsible sections) and is safely ignored by older cores, so
+  adding it never breaks compatibility.
+
 ## Creating Custom Widgets
 
 ### Step 1: Create Widget File

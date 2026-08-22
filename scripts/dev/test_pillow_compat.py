@@ -55,7 +55,7 @@ def main():
     failures += not check("draw.textbbox",
         lambda: draw.textbbox((0, 0), "Test", font=font))
 
-    print("\nResampling (used in logo_helper, image_utils, sports base):")
+    print("\nResampling (used in logo_helper, sports base):")
     logo = Image.new('RGBA', (200, 200), (255, 128, 0, 200))
     failures += not check("Image.Resampling.LANCZOS exists",
         lambda: str(Image.Resampling.LANCZOS))

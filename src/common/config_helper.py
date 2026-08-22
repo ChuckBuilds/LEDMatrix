@@ -5,6 +5,7 @@ Handles configuration management and validation for LED matrix plugins.
 Extracted from LEDMatrix core to provide reusable functionality for plugins.
 """
 
+import copy
 import json
 import logging
 from pathlib import Path
@@ -160,17 +161,20 @@ class ConfigHelper:
             override_config: Configuration to merge in (takes precedence)
             
         Returns:
-            Merged configuration dictionary
+            Merged configuration dictionary (fully independent of both
+            inputs — a shallow copy would alias un-overridden nested dicts,
+            so mutating the result would mutate the caller's base config).
         """
-        merged = base_config.copy()
-        
+        merged = copy.deepcopy(base_config)
+
         for key, value in override_config.items():
             if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
                 # Recursively merge nested dictionaries
                 merged[key] = self.merge_configs(merged[key], value)
             else:
-                # Override with new value
-                merged[key] = value
+                # Override with new value — deep-copied so mutating the
+                # merged result can't reach back into override_config.
+                merged[key] = copy.deepcopy(value)
         
         return merged
     

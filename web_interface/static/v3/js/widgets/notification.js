@@ -58,6 +58,10 @@
 
     // Track active notifications
     let activeNotifications = [];
+    // onAction callbacks for notifications with an inline action button,
+    // keyed by notification id (cleaned up on dismiss). A Map rather than a
+    // plain object so ids can never collide with prototype properties.
+    const actionCallbacks = new Map();
     let notificationCounter = 0;
 
     /**
@@ -113,6 +117,7 @@
 
         // Remove from tracking array
         activeNotifications = activeNotifications.filter(id => id !== notificationId);
+        actionCallbacks.delete(notificationId);
     }
 
     /**
@@ -157,6 +162,20 @@
         }
 
         html += `<span class="flex-1 text-sm">${escapeHtml(message)}</span>`;
+
+        // Optional inline action button (e.g. "Restart Now" on a restart nudge).
+        // The callback is stored by id and invoked via triggerAction, which
+        // also dismisses the notification.
+        if (options.actionLabel && typeof options.onAction === 'function') {
+            actionCallbacks.set(notificationId, options.onAction);
+            html += `
+                <button type="button"
+                        onclick="window.LEDMatrixWidgets.get('notification').triggerAction('${notificationId}')"
+                        class="flex-shrink-0 ml-2 px-3 py-1 text-xs font-semibold rounded-md bg-white bg-opacity-20 hover:bg-opacity-30 transition-colors duration-150">
+                    ${escapeHtml(options.actionLabel)}
+                </button>
+            `;
+        }
 
         if (dismissible) {
             html += `
@@ -228,6 +247,17 @@
         },
 
         /**
+         * Invoke a notification's onAction callback (see options.actionLabel /
+         * options.onAction on show) and dismiss it.
+         * @param {string} notificationId - Notification ID whose action to run
+         */
+        triggerAction: function(notificationId) {
+            const cb = actionCallbacks.get(notificationId);
+            removeNotification(notificationId);
+            if (typeof cb === 'function') cb();
+        },
+
+        /**
          * Clear all notifications
          */
         clearAll: clearAll,
@@ -262,9 +292,11 @@
         }
     });
 
-    // Global shorthand function (backwards compatible with existing code)
+    // Global shorthand function (backwards compatible with existing code).
+    // Accepts either the legacy type string or a full options object
+    // ({ type, duration, actionLabel, onAction, ... }).
     window.showNotification = function(message, type = 'info') {
-        return showNotification(message, { type: type });
+        return showNotification(message, typeof type === 'string' ? { type: type } : (type || {}));
     };
 
     // Initialize container on load

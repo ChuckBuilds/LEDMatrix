@@ -29,18 +29,16 @@ def success_response(
         Flask jsonify response
     """
     response_data = create_success_response(data, message, metadata)
-    
-    # Add request metadata if available
-    if metadata is None:
-        metadata = {}
-    
-    # Add timing if request start time is available
+
+    # Timing is merged into whatever the caller passed, without inventing a
+    # metadata block for responses that have neither.
+    enriched = dict(metadata) if metadata is not None else {}
     if hasattr(request, 'start_time'):
-        metadata['response_time_ms'] = int((time.time() - request.start_time) * 1000)
-    
-    if metadata:
-        response_data['metadata'] = metadata
-    
+        enriched['response_time_ms'] = int((time.time() - request.start_time) * 1000)
+
+    if metadata is not None or enriched:
+        response_data['metadata'] = enriched
+
     return jsonify(response_data)
 
 

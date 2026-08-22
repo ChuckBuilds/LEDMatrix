@@ -10,6 +10,12 @@ This guide explains how to set up a development workflow for plugins that are ma
 > scale. Existing plugins keep their classic rendering unless they adopt
 > those APIs; nothing migrates automatically.
 
+> **Just want a different look for an existing sports scoreboard?** You may
+> not need a plugin at all — a **skin** restyles the live/recent/upcoming
+> rendering while the plugin keeps handling data, scheduling, caching, and
+> vegas mode, in ~100 lines of drawing code. See
+> [CREATING_SKINS.md](CREATING_SKINS.md).
+
 ## Overview
 
 When developing plugins in separate repositories, you need a way to:
@@ -583,11 +589,24 @@ Your plugin must:
 ### Versioning Best Practices
 
 - **Use semantic versioning**: `MAJOR.MINOR.PATCH` (e.g., `1.2.3`)
-- **Automatic version bumping**: Use the pre-push git hook for automatic patch version bumps
-- **Manual versioning**: Only needed for major/minor bumps or special cases
-- **GitHub as source of truth**: Plugin store fetches versions from GitHub releases/tags/manifest
+- **GitHub as source of truth**: the plugin store resolves versions in this
+  order: GitHub Releases → GitHub Tags → manifest from branch → git commit hash
+- **Automatic version bumping**: install the self-contained pre-push hook in
+  your plugin repo and patch versions bump themselves on push (a git tag
+  `v{version}` is created and `manifest.json` staged automatically):
 
-See the [Git Workflow rules](../.cursorrules) for version management details.
+  ```bash
+  # From your plugin repository directory
+  cp /path/to/LEDMatrix/scripts/git-hooks/pre-push-plugin-version .git/hooks/pre-push
+  chmod +x .git/hooks/pre-push
+  ```
+
+  Set `SKIP_TAG=1` in the environment to skip auto-tagging for one push.
+- **Manual versioning**: only needed for major/minor bumps, CI pipelines that
+  bypass hooks, or forks without the hook — use
+  `scripts/bump_plugin_version.py`.
+- **Registry stores no versions**: `plugins.json` holds only metadata (name,
+  description, repo URL).
 
 ### Submitting to Official Registry
 
@@ -661,5 +680,5 @@ For your plugin to work well in the plugin store:
 - [Advanced Plugin Development](ADVANCED_PLUGIN_DEVELOPMENT.md) - Advanced patterns and examples
 - [Plugin Quick Reference](PLUGIN_QUICK_REFERENCE.md) - Quick development reference
 - [Plugin Configuration Guide](PLUGIN_CONFIGURATION_GUIDE.md) - Configuration setup
-- [Plugin Store User Guide](PLUGIN_STORE_USER_GUIDE.md) - Using the plugin store
+- [Plugin Store Guide](PLUGIN_STORE_GUIDE.md) - Using the plugin store
 

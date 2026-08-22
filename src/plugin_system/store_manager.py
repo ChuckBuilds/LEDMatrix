@@ -149,18 +149,27 @@ class PluginStoreManager:
         # loser can end up renaming the winner's in-progress install aside
         # mid-download, stealing its own rollback safety net. Keyed by
         # plugin_id so unrelated plugins still update concurrently.
-        self._reinstall_locks: Dict[str, threading.Lock] = {}
+        # Reentrant: install_plugin takes this lock, and _reinstall_with_rollback
+        # holds it across its call to install_plugin. A plain Lock would
+        # self-deadlock on that nesting.
+        self._reinstall_locks: Dict[str, "threading.RLock"] = {}
         self._reinstall_locks_guard = threading.Lock()
 
         # Ensure plugins directory exists
         self.plugins_dir.mkdir(exist_ok=True)
 
-    def _get_reinstall_lock(self, plugin_id: str) -> threading.Lock:
-        """Lazily create (or fetch) the per-plugin reinstall lock."""
+    def _get_reinstall_lock(self, plugin_id: str):
+        """Lazily create (or fetch) the per-plugin reinstall lock.
+
+        Reentrant by necessity: `install_plugin` acquires it to protect its
+        set-aside/restore, and `_reinstall_with_rollback` holds it across its
+        own call to `install_plugin`. With a plain `Lock` that nesting
+        deadlocks the request thread.
+        """
         with self._reinstall_locks_guard:
             lock = self._reinstall_locks.get(plugin_id)
             if lock is None:
-                lock = threading.Lock()
+                lock = threading.RLock()
                 self._reinstall_locks[plugin_id] = lock
             return lock
 
@@ -1134,7 +1143,7 @@ class PluginStoreManager:
         """
         registry = self.fetch_registry()
         plugins = registry.get('plugins', []) or []
-        plugin_info = next((p for p in plugins if p['id'] == plugin_id), None)
+        plugin_info = self._match_registry_entry(plugins, plugin_id)
 
         if not plugin_info:
             return None
@@ -1174,6 +1183,37 @@ class PluginStoreManager:
 
         return plugin_info
 
+    @staticmethod
+    def _match_registry_entry(plugins: List[Dict], plugin_id: str) -> Optional[Dict]:
+        """Find a registry entry by its id, or by the directory it installs to.
+
+        Four shipped plugins have a registry ``id`` that differs from the ``id``
+        in their own manifest: ``weather`` installs to ``plugins/ledmatrix-weather``,
+        and likewise stocks, music and leaderboard. Installation already prefers
+        the manifest id for the directory name, so on disk, in ``config.json``
+        and in a backup manifest those plugins are called ``ledmatrix-weather``.
+
+        Only the registry calls them ``weather``, and nothing resolved that in
+        reverse: restoring a backup asked the store for ``ledmatrix-weather``
+        and got "Plugin not found in registry", silently dropping four enabled
+        plugins from a restored device.
+
+        Matching ``plugin_path`` fixes it without renaming any published id,
+        which would orphan ``plugin_state.json`` entries keyed on the old ones.
+        Exact id always wins, so an entry whose *path* happens to collide with
+        another entry's id cannot shadow it.
+        """
+        if not plugin_id:
+            return None
+        exact = next((p for p in plugins if p.get('id') == plugin_id), None)
+        if exact is not None:
+            return exact
+        for entry in plugins:
+            path = (entry.get('plugin_path') or '').rstrip('/')
+            if path and path.rsplit('/', 1)[-1] == plugin_id:
+                return entry
+        return None
+
     def get_registry_info(self, plugin_id: str) -> Optional[Dict]:
         """
         Get plugin information from the registry cache only (no GitHub API calls).
@@ -1189,9 +1229,93 @@ class PluginStoreManager:
         """
         registry = self.fetch_registry()
         plugins = registry.get('plugins', []) or []
-        return next((p for p in plugins if p.get('id') == plugin_id), None)
+        return self._match_registry_entry(plugins, plugin_id)
     
     def install_plugin(self, plugin_id: str, branch: Optional[str] = None) -> bool:
+        """Install a plugin, keeping any existing install until the new one is
+        known good.
+
+        `_install_plugin_impl` deletes the existing directory *before*
+        downloading, so every failure after that point — a dropped connection, a
+        malformed manifest, or the compatibility gate refusing the new version —
+        left the user with no plugin at all. `_reinstall_with_rollback` gives the
+        *update* path exactly this protection; a direct install had none, and the
+        compatibility gate added a new way to reach it.
+
+        Pass-through when nothing is installed, and when called from
+        `_reinstall_with_rollback`, which has already moved the old copy aside.
+
+        The aside name embeds '.standalone-backup-' so plugin discovery
+        (`plugin_manager._scan_directory_for_plugins`) skips it even though it
+        still holds a manifest.json.
+
+        Held under the per-plugin reinstall lock for the same reason
+        `_reinstall_with_rollback` is: the web UI runs Flask with
+        threaded=True, so a double-clicked Install button gives two threads the
+        same plugin_id. Interleaved, one thread's restore would delete the
+        other's freshly installed copy. The lock is reentrant because the
+        rollback path already holds it when it calls in here.
+        """
+        with self._get_reinstall_lock(plugin_id):
+            plugin_path = self.plugins_dir / plugin_id
+            if not plugin_path.exists():
+                return self._install_plugin_impl(plugin_id, branch)
+
+            backup_path = plugin_path.with_name(
+                f"{plugin_path.name}.standalone-backup-preinstall")
+            if backup_path.exists() and not self._safe_remove_directory(backup_path):
+                # Can't stage a safety net. Better to attempt the install than
+                # to refuse outright, which is what callers got before this
+                # existed.
+                self.logger.warning(
+                    "Could not clear stale pre-install backup for %s at %s; "
+                    "installing without a rollback net", plugin_id, backup_path)
+                return self._install_plugin_impl(plugin_id, branch)
+
+            try:
+                plugin_path.rename(backup_path)
+            except OSError as e:
+                self.logger.warning(
+                    "Could not set aside existing install of %s (%s); "
+                    "installing without a rollback net", plugin_id, e)
+                return self._install_plugin_impl(plugin_id, branch)
+
+            try:
+                installed = self._install_plugin_impl(plugin_id, branch)
+            except Exception:
+                self._restore_preinstall_backup(plugin_id, plugin_path, backup_path)
+                raise
+
+            if installed:
+                if not self._safe_remove_directory(backup_path):
+                    self.logger.warning(
+                        "Install of %s succeeded but the previous copy at %s "
+                        "could not be removed; it will be cleared on the next "
+                        "install", plugin_id, backup_path)
+                return True
+
+            self._restore_preinstall_backup(plugin_id, plugin_path, backup_path)
+            return False
+
+    def _restore_preinstall_backup(
+        self, plugin_id: str, plugin_path: Path, backup_path: Path
+    ) -> None:
+        """Put the previous install back after a failed (re)install."""
+        self.logger.error(
+            "Install of %s failed; restoring the previous version", plugin_id)
+        try:
+            if plugin_path.exists():
+                # Partial download debris from the failed install.
+                self._safe_remove_directory(plugin_path)
+            backup_path.rename(plugin_path)
+            self.logger.info("Restored previous install of %s", plugin_id)
+        except OSError as e:
+            self.logger.error(
+                "CRITICAL: could not restore %s from %s: %s. The previous "
+                "install is preserved there — rename it back manually.",
+                plugin_id, backup_path, e)
+
+    def _install_plugin_impl(self, plugin_id: str, branch: Optional[str] = None) -> bool:
         """
         Install a plugin from the official registry. Always installs the latest commit
         from the repository's default branch (or specified branch).
@@ -1213,6 +1337,11 @@ class PluginStoreManager:
         if not plugin_info:
             self.logger.error(f"Plugin not found in registry: {plugin_id}")
             return False
+
+        # Visual skins share the registry but install to skins/, not to a
+        # plugin directory (docs/SKIN_SYSTEM.md)
+        if (plugin_info.get('type') or 'plugin') == 'skin':
+            return self._install_skin_from_info(plugin_id, plugin_info, branch)
 
         repo_url = plugin_info.get('repo')
         if not repo_url:
@@ -1325,6 +1454,26 @@ class PluginStoreManager:
 
                 if missing:
                     self.logger.error(f"Plugin manifest missing required fields for {plugin_id}: {', '.join(missing)}")
+                    self._safe_remove_directory(plugin_path)
+                    return False
+
+                # Refuse a plugin that needs a newer core than this one. The
+                # registry carries no compatibility field, so the floor is only
+                # knowable once the files are down — checking here, before
+                # dependency installation, is the earliest possible point.
+                #
+                # Refusing costs the user nothing: on an update this returns
+                # False and _reinstall_with_rollback restores the version they
+                # already had. Allowing it costs them a plugin that raises
+                # ModuleNotFoundError at load and is reported only as one line
+                # in the journal. See docs/SPORTS_UNIFICATION.md (phase B4/B6).
+                from src import __version__ as core_version
+                from src.plugin_system import compatibility
+
+                compatible, reason = compatibility.check(manifest, core_version)
+                if not compatible:
+                    self.logger.error(
+                        "Refusing to install %s: %s", plugin_id, reason)
                     self._safe_remove_directory(plugin_path)
                     return False
 
@@ -2254,19 +2403,171 @@ class PluginStoreManager:
         
         return None
     
+    _SKIN_ID_PATTERN = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$')
+
+    def _resolve_skin_target(self, skin_id: str) -> Optional[Path]:
+        """Validate an externally-supplied skin id and resolve it to a path
+        strictly inside the skins directory. Returns None (after logging)
+        for ids that are malformed or would escape the directory — registry
+        entries and manifests are external input and must not be able to
+        write or delete outside skins/."""
+        from src.skin_system import skin_runtime
+
+        if not isinstance(skin_id, str) or not self._SKIN_ID_PATTERN.match(skin_id) \
+                or '..' in skin_id:
+            self.logger.error(f"Rejecting unsafe skin id: {skin_id!r}")
+            return None
+        skins_dir = skin_runtime.get_skins_directory().resolve()
+        target = (skins_dir / skin_id).resolve()
+        if target.parent != skins_dir:
+            self.logger.error(f"Skin id {skin_id!r} escapes the skins directory; rejecting")
+            return None
+        return target
+
+    def _install_skin_from_info(self, skin_id: str, skin_info: Dict,
+                                branch: Optional[str] = None) -> bool:
+        """Install a registry entry of type "skin" into skins/<id>/.
+
+        Reuses the plugin download machinery (git / monorepo zip / archive)
+        but validates skin.json instead of manifest.json and never installs
+        dependencies — skins are render-only (stdlib + PIL + the provided
+        SkinContext), which is also what keeps them safe to iterate on.
+
+        Downloads into a staging directory and validates there; the
+        existing installation is only replaced after the new one passes,
+        so a failed download or bad manifest can't destroy a working skin.
+        """
+        from src.skin_system import skin_runtime
+        from src.skin_system.skin_base import SKIN_API_VERSION
+
+        repo_url = skin_info.get('repo')
+        if not repo_url:
+            self.logger.error(f"Skin {skin_id} missing repository URL")
+            return False
+
+        target = self._resolve_skin_target(skin_id)
+        if target is None:
+            return False
+        skins_dir = target.parent
+        skins_dir.mkdir(parents=True, exist_ok=True)
+        # Leading "_" keeps staging invisible to skin discovery
+        staging = skins_dir / f"_staging-{skin_id}"
+        if staging.exists() and not self._safe_remove_directory(staging):
+            return False
+
+        subpath = skin_info.get('plugin_path')
+        branch_candidates = self._distinct_sequence([
+            branch,
+            skin_info.get('branch'),
+            skin_info.get('default_branch'),
+            skin_info.get('last_commit_branch'),
+            'main',
+            'master'
+        ])
+
+        try:
+            branch_used = None
+            if subpath:
+                for candidate in branch_candidates:
+                    download_url = f"{repo_url}/archive/refs/heads/{candidate}.zip"
+                    if self._install_from_monorepo(download_url, subpath, staging):
+                        branch_used = candidate
+                        break
+            else:
+                branch_used = self._install_via_git(repo_url, staging, branch_candidates)
+                if branch_used is None and not staging.exists():
+                    for candidate in branch_candidates:
+                        download_url = f"{repo_url}/archive/refs/heads/{candidate}.zip"
+                        if self._install_via_download(download_url, staging):
+                            branch_used = candidate
+                            break
+
+            if branch_used is None and not staging.exists():
+                self.logger.error(f"Failed to install skin {skin_id} via git or archive download")
+                return False
+
+            try:
+                with open(staging / 'skin.json', 'r', encoding='utf-8') as f:
+                    manifest = json.load(f)
+            except (OSError, json.JSONDecodeError) as e:
+                self.logger.error(f"Skin {skin_id} has no valid skin.json: {e}")
+                return False
+
+            missing = [k for k in ('id', 'name', 'version', 'skin_api_version', 'class_name')
+                       if not manifest.get(k)]
+            if missing:
+                self.logger.error(f"Skin {skin_id} manifest missing fields: {missing}")
+                return False
+
+            # Unlike plugins, a mismatched id is rejected rather than
+            # renamed: the manifest id is external input, and the registry
+            # id is what the user asked to install.
+            if manifest['id'] != skin_id:
+                self.logger.error(
+                    f"Skin manifest id {manifest['id']!r} doesn't match registry id "
+                    f"{skin_id!r}; not installing")
+                return False
+
+            def _api_major(v):
+                try:
+                    return int(str(v).split('.')[0])
+                except (ValueError, IndexError):
+                    return None
+
+            if _api_major(manifest['skin_api_version']) != _api_major(SKIN_API_VERSION):
+                self.logger.error(
+                    f"Skin {skin_id} targets skin API {manifest['skin_api_version']} but this "
+                    f"LEDMatrix provides {SKIN_API_VERSION}; not installing")
+                return False
+
+            # Validated — swap into place
+            if target.exists() and not self._safe_remove_directory(target):
+                self.logger.error(f"Could not replace existing skin directory: {target}")
+                return False
+            shutil.move(str(staging), str(target))
+            skin_runtime.discover_skins(force_refresh=True)
+            self.logger.info(f"Successfully installed skin: {skin_id} (branch: {branch_used})")
+            return True
+        finally:
+            if staging.exists():
+                self._safe_remove_directory(staging)
+
+    def uninstall_skin(self, skin_id: str) -> bool:
+        """Remove an installed skin. Plugin configs referencing it keep
+        validating; rendering falls back to the built-in layout."""
+        from src.skin_system import skin_runtime
+
+        target = self._resolve_skin_target(skin_id)
+        if target is None:
+            return False
+        if not target.exists():
+            self.logger.info(f"Skin {skin_id} not found (already uninstalled)")
+            return True
+        if self._safe_remove_directory(target):
+            skin_runtime.discover_skins(force_refresh=True)
+            self.logger.info(f"Successfully uninstalled skin: {skin_id}")
+            return True
+        return False
+
     def uninstall_plugin(self, plugin_id: str) -> bool:
         """
         Uninstall a plugin by removing its directory.
-        
+
         Args:
             plugin_id: Plugin identifier
-            
+
         Returns:
             True if uninstalled successfully (or already not installed)
         """
         plugin_path = self._find_plugin_path(plugin_id)
-        
+
         if plugin_path is None or not plugin_path.exists():
+            # A skin id passed to the plugin uninstall path (the store UI
+            # uses one uninstall flow) removes the skin instead
+            skin_target = self._resolve_skin_target(plugin_id) \
+                if self._SKIN_ID_PATTERN.match(str(plugin_id)) else None
+            if skin_target is not None and skin_target.exists():
+                return self.uninstall_skin(plugin_id)
             self.logger.info(f"Plugin {plugin_id} not found (already uninstalled)")
             return True  # Already uninstalled, consider this success
         
@@ -2699,7 +3000,10 @@ class PluginStoreManager:
             remote_branch = plugin_info_remote.get('branch') or plugin_info_remote.get('default_branch')
 
             # Compare local manifest version against registry latest_version
-            # to avoid unnecessary reinstalls for monorepo plugins
+            # to avoid unnecessary reinstalls for monorepo plugins. Uses the
+            # same semantic comparator as the web UI's update badge, so
+            # equivalent spellings ("v1.2.0" vs "1.2.0") never trigger a
+            # reinstall and a locally-ahead version is never downgraded.
             try:
                 local_manifest_path = plugin_path / "manifest.json"
                 if local_manifest_path.exists():
@@ -2707,8 +3011,16 @@ class PluginStoreManager:
                         local_manifest = json.load(f)
                     local_version = local_manifest.get('version', '')
                     remote_version = plugin_info_remote.get('latest_version', '')
-                    if local_version and remote_version and local_version == remote_version:
-                        self.logger.info(f"Plugin {plugin_id} already at latest version {local_version}")
+                    from src.plugin_system.compatibility import is_update_available
+                    # No truthiness gate: the shared comparator already treats
+                    # a missing version on either side as "no update", and the
+                    # store must agree with the UI badge in that case too. A
+                    # missing manifest (not just a missing version field)
+                    # still falls through to the reinstall recovery path.
+                    if not is_update_available(local_version, remote_version):
+                        self.logger.info(
+                            f"Plugin {plugin_id} already at latest version "
+                            f"(installed {local_version}, registry {remote_version})")
                         return True
             except Exception as e:
                 self.logger.debug(f"Could not compare versions for {plugin_id}: {e}")

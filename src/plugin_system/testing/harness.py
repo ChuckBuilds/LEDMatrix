@@ -73,6 +73,11 @@ class RenderResult:
     golden_ok: Optional[bool] = None
     golden_diff_pixels: int = 0
     golden_max_delta: int = 0
+    # what display() handed back; the controller skips a mode only on False
+    display_returned: Any = None
+    # empty-frame check: rendered nothing while not reporting "no content"
+    empty_claimed: Optional[bool] = None   # True when that happened
+    empty_ok: Optional[bool] = None        # False only in strict mode
     # fill / scale-up check (populated only for sizes >= 2x the design size)
     fill_checked: bool = False
     fill_ok: Optional[bool] = None       # False only in strict mode
@@ -91,6 +96,8 @@ class RenderResult:
         if self.golden_checked and self.golden_ok is False:
             return False
         if self.fill_ok is False:
+            return False
+        if self.empty_ok is False:
             return False
         return True
 
@@ -132,21 +139,25 @@ def _instantiate(plugin_id: str, manifest: Dict[str, Any], plugin_dir: Path,
     return plugin_instance
 
 
-def _render_mode(plugin_instance: Any, mode: str) -> None:
+def _render_mode(plugin_instance: Any, mode: str) -> Any:
     """Render a specific screen. Prefer an explicit display_mode kwarg; otherwise
     drive the plugin's internal mode state machine (first display() call renders
-    modes[current_mode_index] when current_display_mode is None)."""
+    modes[current_mode_index] when current_display_mode is None).
+
+    Returns whatever display() returned. The display controller skips a mode
+    whose display() returns False, so that value decides whether an empty mode
+    is rotated past or sat on -- which makes it worth reporting rather than
+    discarding."""
     sig = inspect.signature(plugin_instance.display)
     if "display_mode" in sig.parameters:
-        plugin_instance.display(force_clear=True, display_mode=mode)
-        return
+        return plugin_instance.display(force_clear=True, display_mode=mode)
 
     modes = getattr(plugin_instance, "modes", None)
     if modes and mode in modes:
         plugin_instance.current_mode_index = list(modes).index(mode)
     if hasattr(plugin_instance, "current_display_mode"):
         plugin_instance.current_display_mode = None
-    plugin_instance.display(force_clear=False)
+    return plugin_instance.display(force_clear=False)
 
 
 def _freeze(freeze_time: Optional[str]):
@@ -234,7 +245,7 @@ def _render_size(plugin_id, manifest, plugin_dir, config, mock_data,
                     logger.warning("update() raised a non-connectivity error for %s [%s]: %s",
                                    plugin_id, mode, e)
             if result.error is None:
-                _render_mode(inst, mode)
+                result.display_returned = _render_mode(inst, mode)
                 result.image = dm.get_image()
                 result.overflow = dm.check_overflow()
         except Exception as e:  # noqa: BLE001 — a display crash is a real failure
@@ -339,6 +350,44 @@ def fill_metrics(image: Image.Image) -> Tuple[float, float, float]:
     extent_y = (bbox[3] - bbox[1]) / image.height
     ink = sum(1 for p in lit.getdata() if p) / (image.width * image.height)
     return (extent_x, extent_y, ink)
+
+
+def check_empty_claimed(results: List[RenderResult],
+                        strict: bool = False) -> List[RenderResult]:
+    """Flag a mode that rendered nothing without reporting "no content".
+
+    The display controller skips a mode whose ``display()`` returns False, and
+    treats anything else -- including None -- as "content was shown". A mode
+    that draws nothing and does not return False therefore holds whatever is on
+    the panel for its whole display duration. Since a mode switch clears first,
+    that is a blank screen. Two sports plugins shipped exactly this: their
+    ``display()`` returned None on every path, so an out-of-season league sat
+    blank for its full duration rather than being rotated past.
+
+    Warn-only by default, because a blank frame is not automatically wrong: a
+    scroll mode whose first frame is its blank scroll-in buffer renders empty
+    and is behaving correctly. ``strict=True`` sets ``empty_claimed`` such that
+    ``RenderResult.ok`` fails -- opt in per plugin via harness.json
+    ``{"empty_check": "strict"}`` once its modes are known to draw on the
+    fixture data.
+
+    Note this can only catch what the fixtures actually render. A plugin whose
+    harness fixture seeds content never exercises its empty path here; the
+    source-level gate in the plugins repo covers that case.
+    """
+    for r in results:
+        if r.image is None or r.error is not None:
+            continue
+        # An explicit False is the plugin correctly saying "nothing to show".
+        if r.display_returned is False:
+            continue
+        if r.image.convert("L").point(
+                lambda p: 255 if p > _LIT_THRESHOLD else 0).getbbox() is not None:
+            continue
+        r.empty_claimed = True
+        if strict:
+            r.empty_ok = False
+    return results
 
 
 def check_scale_up(results: List[RenderResult],

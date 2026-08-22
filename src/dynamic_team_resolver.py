@@ -167,10 +167,14 @@ class DynamicTeamResolver:
                 
                 # Sort by ranking (1, 2, 3, etc.)
                 sorted_rankings = dict(sorted(rankings.items(), key=lambda x: x[1]))
-                
-                # Cache the results
-                self._rankings_cache = sorted_rankings
-                self._cache_timestamp = current_time
+
+                # Cache the results ON THE CLASS. Assigning through self
+                # would create instance attributes that shadow the shared
+                # class-level cache, making it per-instance — and every
+                # scoreboard constructs its own resolver, so the cache
+                # would never actually be shared.
+                DynamicTeamResolver._rankings_cache = sorted_rankings
+                DynamicTeamResolver._cache_timestamp = current_time
                 
                 self.logger.info(f"Fetched rankings for {len(sorted_rankings)} teams")
                 return sorted_rankings
@@ -216,9 +220,11 @@ class DynamicTeamResolver:
         return any(pattern in team_name.upper() for pattern in dynamic_patterns)
     
     def clear_cache(self):
-        """Clear the rankings cache to force fresh data on next request."""
-        self._rankings_cache = {}
-        self._cache_timestamp = 0
+        """Clear the SHARED rankings cache to force fresh data on next
+        request. Writes through the class — assigning via self would only
+        shadow the shared cache for this instance."""
+        DynamicTeamResolver._rankings_cache = {}
+        DynamicTeamResolver._cache_timestamp = 0
         self.logger.info("Cleared dynamic team rankings cache")
 
 

@@ -82,6 +82,70 @@ python3 web_interface/start.py
 
 ## Common Issues by Category
 
+### Installation & Build Issues
+
+#### Step 6 fails: "Failed building wheel for rgbmatrix"
+
+**Symptoms:**
+
+```
+note: This error originates from a subprocess, and is likely not a problem with pip.
+  ERROR: Failed building wheel for rgbmatrix
+Failed to build rgbmatrix
+✗ Failed to install rpi-rgb-led-matrix Python package
+```
+
+**Cause:**
+
+Almost always the kernel's out-of-memory killer, not missing build tools. The
+`rpi-rgb-led-matrix` library compiles roughly 45 C++ translation units, two of
+them Cython-generated — a single `cc1plus` on those can peak near 800MB. The
+build system defaults to running several of those at once, which exceeds RAM on
+512MB and 1GB boards. Because the OOM killer writes nothing to pip's output, the
+failure looks like a toolchain problem, and `sudo apt install -y
+python-dev-is-python3 cmake build-essential` will report everything is already
+up to date.
+
+**How to confirm:**
+
+```bash
+dmesg -T | grep -i "out of memory"     # look for "Killed process ... (cc1plus)"
+free -h                                 # total RAM and swap
+```
+
+**Fix:**
+
+Current versions of the installer handle this automatically: they cap build
+parallelism based on available RAM and add a temporary swapfile for the build,
+removing it when the build finishes. If you are on an older checkout, or the
+temporary swapfile could not be created, either force a serial compile:
+
+```bash
+sudo ./first_time_install.sh --build-jobs 1
+```
+
+or add permanent swap and re-run the installer, which resumes at Step 6:
+
+```bash
+sudo apt install -y dphys-swapfile
+sudo sed -i 's/^#\?CONF_SWAPSIZE=.*/CONF_SWAPSIZE=2048/' /etc/dphys-swapfile
+sudo sed -i 's/^#\?CONF_MAXSWAP=.*/CONF_MAXSWAP=2048/' /etc/dphys-swapfile
+sudo dphys-swapfile swapoff && sudo dphys-swapfile setup && sudo dphys-swapfile swapon
+sudo ./first_time_install.sh
+```
+
+`CONF_MAXSWAP` matters: it defaults to 2048 and silently clamps `CONF_SWAPSIZE`,
+so setting only `CONF_SWAPSIZE` to a larger value has no effect.
+
+**Related:**
+
+- The installer needs roughly 3GB free on the card to place the swapfile. If
+  disk is tight it will say so and skip the swapfile: `sudo apt clean` first.
+- `sudo bash scripts/check_system_compatibility.sh` reports RAM and disk.
+- `sudo bash scripts/diagnose_dependencies.sh` dumps build-dependency state.
+
+---
+
 ### Web Interface & Service Issues
 
 #### Service Not Running/Starting
@@ -266,8 +330,8 @@ sudo systemctl cat ledmatrix-web | grep User
 
 6. **Manually enable AP mode:**
    ```bash
-   # Via API
-   curl -X POST http://localhost:5000/api/wifi/ap/enable
+   # Via API (the WiFi blueprint is mounted under /api/v3)
+   curl -X POST http://localhost:5000/api/v3/wifi/ap/enable
 
    # Via Python
    python3 -c "
@@ -418,19 +482,19 @@ sudo systemctl cat ledmatrix-web | grep User
 
 1. **Check plugin directory exists:**
    ```bash
-   ls -ld plugins/plugin-id/
+   ls -ld plugin-repos/plugin-id/
    ```
 
 2. **Verify manifest.json:**
    ```bash
-   cat plugins/plugin-id/manifest.json
+   cat plugin-repos/plugin-id/manifest.json
    # Verify all required fields present
    ```
 
 3. **Check dependencies installed:**
    ```bash
-   if [ -f plugins/plugin-id/requirements.txt ]; then
-     pip3 install --break-system-packages -r plugins/plugin-id/requirements.txt
+   if [ -f plugin-repos/plugin-id/requirements.txt ]; then
+     pip3 install --break-system-packages -r plugin-repos/plugin-id/requirements.txt
    fi
    ```
 
@@ -443,7 +507,7 @@ sudo systemctl cat ledmatrix-web | grep User
    ```bash
    python3 -c "
    import sys
-   sys.path.insert(0, 'plugins/plugin-id')
+   sys.path.insert(0, 'plugin-repos/plugin-id')
    from manager import PluginClass
    print('Plugin imports successfully')
    "
@@ -459,12 +523,18 @@ sudo systemctl cat ledmatrix-web | grep User
 **Solutions:**
 
 1. **Manual cache clearing:**
-   ```bash
-   # Remove plugin-specific cache
-   rm -rf cache/plugin-id*
 
-   # Or remove all cache
-   rm -rf cache/*
+   The cache does not live in the project directory. The cache manager
+   uses the first writable location among `/var/cache/ledmatrix`,
+   `~/.ledmatrix_cache`, `/opt/ledmatrix/cache`, and
+   `$TMPDIR/ledmatrix_cache`. The easiest option is the helper script:
+
+   ```bash
+   # Clear the cache with the helper script
+   sudo python3 scripts/utils/clear_cache.py
+
+   # Or remove files manually from the cache dir in use, e.g.:
+   sudo rm -rf /var/cache/ledmatrix/*
 
    # Restart display
    sudo systemctl restart ledmatrix
@@ -472,8 +542,8 @@ sudo systemctl cat ledmatrix-web | grep User
 
 2. **Check cache permissions:**
    ```bash
-   ls -ld cache/
-   sudo chown -R ledpi:ledpi cache/
+   ls -ld /var/cache/ledmatrix
+   sudo ./scripts/fix_perms/fix_cache_permissions.sh
    ```
 
 ---
@@ -708,11 +778,11 @@ nmcli device status
 ```bash
 # Check file exists
 ls -l config/config.json
-ls -l plugins/plugin-id/manifest.json
+ls -l plugin-repos/plugin-id/manifest.json
 
 # Check directory structure
 ls -la web_interface/
-ls -la plugins/
+ls -la plugin-repos/
 
 # Check file permissions
 ls -l config/config_secrets.json
@@ -740,7 +810,7 @@ python3 -c "from src.wifi_manager import WiFiManager; print('OK')"
 # Test plugin import
 python3 -c "
 import sys
-sys.path.insert(0, 'plugins/plugin-id')
+sys.path.insert(0, 'plugin-repos/plugin-id')
 from manager import PluginClass
 print('Plugin imports OK')
 "
@@ -748,39 +818,28 @@ print('Plugin imports OK')
 
 ---
 
-## Service File Template
+## Reinstalling Service Files
 
-If your systemd service file is corrupted or missing, use this template:
-
-```ini
-[Unit]
-Description=LEDMatrix Web Interface
-After=network.target
-
-[Service]
-Type=simple
-User=ledpi
-Group=ledpi
-WorkingDirectory=/home/ledpi/LEDMatrix
-Environment="PYTHONUNBUFFERED=1"
-ExecStart=/usr/bin/python3 /home/ledpi/LEDMatrix/web_interface/start.py
-Restart=on-failure
-RestartSec=5s
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=ledmatrix-web
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Save to `/etc/systemd/system/ledmatrix-web.service` and run:
+If a systemd service file is corrupted or missing, do NOT hand-write
+one. The real unit files live in the repo's `systemd/` directory
+(`ledmatrix.service`, `ledmatrix-web.service`,
+`ledmatrix-wifi-monitor.service`) and contain a
+`__PROJECT_ROOT_DIR__` placeholder that the install scripts substitute
+with your actual checkout path:
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable ledmatrix-web
-sudo systemctl start ledmatrix-web
+# Reinstall the display service unit
+sudo ./scripts/install/install_service.sh
+
+# Reinstall the web interface service unit
+sudo ./scripts/install/install_web_service.sh
 ```
+
+Note that `ledmatrix-web.service` runs as root via
+`scripts/utils/start_web_conditionally.py` — root is needed for
+system operations (service control, WiFi management), and the wrapper
+honors the `web_display_autostart` config flag before actually
+starting the web server.
 
 ---
 
@@ -814,7 +873,7 @@ echo ""
 
 echo "5. File Structure:"
 ls -la web_interface/ | head -10
-ls -la plugins/ | head -10
+ls -la plugin-repos/ | head -10
 echo ""
 
 echo "6. Python Imports:"
@@ -890,12 +949,11 @@ sudo systemctl restart ledmatrix-web
 # Reinstall WiFi monitor
 sudo ./scripts/install/install_wifi_monitor.sh
 
-# Recreate service files from templates
-sudo cp templates/ledmatrix.service /etc/systemd/system/
-sudo cp templates/ledmatrix-web.service /etc/systemd/system/
+# Recreate service files (substitutes __PROJECT_ROOT_DIR__ in systemd/ units)
+sudo ./scripts/install/install_service.sh
+sudo ./scripts/install/install_web_service.sh
 
-# Reload and restart
-sudo systemctl daemon-reload
+# Restart
 sudo systemctl restart ledmatrix ledmatrix-web
 ```
 

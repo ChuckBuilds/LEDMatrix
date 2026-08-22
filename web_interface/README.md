@@ -30,7 +30,12 @@ web_interface/
 └── static/                   # CSS/JS assets
     └── v3/
         ├── app.css
-        └── app.js
+        ├── app.js
+        ├── manifest.json     # PWA manifest
+        ├── plugins_manager.js
+        ├── icons/            # PWA / touch icons
+        ├── js/               # Alpine, htmx, app shell, widgets, utils
+        └── vendor/           # codemirror, fontawesome
 ```
 
 ## Running the Web Interface

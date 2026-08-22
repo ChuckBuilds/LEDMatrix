@@ -44,17 +44,12 @@ def install_via_apt(package_name: str) -> Tuple[bool, str]:
     apt_package_map = {
         'flask': 'python3-flask',
         'PIL': 'python3-pil',
-        'freetype': 'python3-freetype',
+        'freetype-py': 'python3-freetype',
         'psutil': 'python3-psutil',
         'werkzeug': 'python3-werkzeug',
         'numpy': 'python3-numpy',
         'requests': 'python3-requests',
-        'python-dateutil': 'python3-dateutil',
-        'pytz': 'python3-tz',
-        'geopy': 'python3-geopy',
-        'unidecode': 'python3-unidecode',
-        'websockets': 'python3-websockets',
-        'websocket-client': 'python3-websocket-client'
+        'pytz': 'python3-tz'
     }
 
     apt_package = apt_package_map.get(package_name, f'python3-{package_name}')
@@ -81,8 +76,8 @@ def install_via_pip(package_name: str) -> Tuple[bool, str]:
     pip RECORD file, so an uninstall attempt fails with "uninstall-no-record-file"
     and aborts the whole install. With --ignore-installed, pip lays the new
     version down in /usr/local where it shadows the apt copy instead of removing
-    it. This matters when a pip dependency (google-api-python-client pulls a
-    newer requests) needs to upgrade an apt-managed package.
+    it. This matters when a pip dependency needs to upgrade an apt-managed
+    package (e.g. a package that pulls a newer requests).
 
     Returns (success, output).
     """
@@ -101,13 +96,35 @@ def install_via_pip(package_name: str) -> Tuple[bool, str]:
 
 # Distribution (pip/apt) names whose importable module name differs.
 IMPORT_NAME_MAP = {
-    'python-dateutil': 'dateutil',
-    'websocket-client': 'websocket',
+    'freetype-py': 'freetype',
+}
+
+# Minimum versions that must be met for an already-installed package to count
+# as satisfied. Debian Bookworm's python3-freetype is 2.3.0, below the
+# freetype-py>=2.5.1 pin in requirements.txt, so an import-only check would
+# wrongly skip the pip upgrade.
+MIN_VERSIONS = {
+    'freetype-py': (2, 5, 1),
 }
 
 
+def _installed_version_tuple(dist_name: str) -> tuple:
+    """Return the installed distribution version as an int tuple, or () if unknown."""
+    try:
+        from importlib.metadata import version
+        parts = []
+        for part in version(dist_name).split('.'):
+            digits = ''.join(ch for ch in part if ch.isdigit())
+            if not digits:
+                break
+            parts.append(int(digits))
+        return tuple(parts)
+    except Exception:
+        return ()
+
+
 def check_package_installed(package_name: str) -> bool:
-    """Check if a package is already installed."""
+    """Check if a package is already installed (and meets any minimum version)."""
     import_name = IMPORT_NAME_MAP.get(package_name, package_name)
     # Suppress deprecation warnings when checking if packages are installed
     # (we're just checking, not using them)
@@ -115,9 +132,16 @@ def check_package_installed(package_name: str) -> bool:
         warnings.filterwarnings('ignore', category=DeprecationWarning)
         try:
             __import__(import_name)
-            return True
         except ImportError:
             return False
+    minimum = MIN_VERSIONS.get(package_name)
+    if minimum:
+        installed = _installed_version_tuple(package_name)
+        if not installed or installed < minimum:
+            print(f"{package_name} is installed but below the required "
+                  f"{'.'.join(map(str, minimum))}; will upgrade via pip")
+            return False
+    return True
 
 
 def print_failure_summary(failed_packages: List[str], failure_details: dict) -> None:
@@ -147,17 +171,12 @@ def main():
     required_packages = [
         'flask',
         'PIL',
-        'freetype',
+        'freetype-py',
         'psutil',
         'werkzeug',
         'numpy',
         'requests',
-        'python-dateutil',
-        'pytz',
-        'geopy',
-        'unidecode',
-        'websockets',
-        'websocket-client'
+        'pytz'
     ]
 
     failed_packages = []
@@ -168,8 +187,13 @@ def main():
             print(f"{package} is already installed")
             continue
 
-        # Try apt first, then pip
+        # Try apt first, then pip. An apt install only counts if it also
+        # satisfies any minimum version (Debian's python3-freetype can be
+        # older than the freetype-py pin), otherwise fall through to pip.
         ok, apt_output = install_via_apt(package)
+        if ok and package in MIN_VERSIONS and not check_package_installed(package):
+            ok = False
+            apt_output = f"apt version of {package} is below the required minimum"
         if not ok:
             ok, pip_output = install_via_pip(package)
             if not ok:
@@ -177,15 +201,12 @@ def main():
                 failure_details[package] = pip_output or apt_output
 
     # Install packages that don't have apt equivalents
+    # Packages without apt equivalents. Plugin-specific dependencies
+    # (timezonefinder, google-api stack, icalevents, socketio, ...) are
+    # no longer installed here — store plugins declare their own
+    # requirements.txt, which the plugin store installs.
     special_packages = [
-        'timezonefinder>=6.5.0,<7.0.0',
-        'google-auth-oauthlib>=1.2.0,<2.0.0',
-        'google-auth-httplib2>=0.2.0,<1.0.0',
-        'google-api-python-client>=2.147.0,<3.0.0',
         'spotipy',
-        'icalevents',
-        'python-socketio>=5.11.0,<6.0.0',
-        'python-engineio>=4.9.0,<5.0.0'
     ]
 
     for package in special_packages:

@@ -146,6 +146,11 @@ class TestConfigAPI:
 
     def test_save_double_sided_settings(self, client, mock_config_manager):
         """Double-sided form fields are persisted under display.double_sided."""
+        # 2 copies on the vertical axis needs parallel to be a multiple of 2.
+        mock_config_manager.load_config.return_value['display']['hardware'] = {
+            'chain_length': 2, 'parallel': 2,
+        }
+
         response = client.post(
             '/api/v3/config/main',
             data={
@@ -162,6 +167,78 @@ class TestConfigAPI:
             'enabled': True, 'copies': 2, 'axis': 'vertical',
         }
 
+    def test_save_target_fps(self, client, mock_config_manager):
+        """The device-wide scroll frame rate persists as a top-level int."""
+        response = client.post(
+            '/api/v3/config/main',
+            data={'target_fps': '90'},
+            content_type='application/x-www-form-urlencoded',
+        )
+
+        assert response.status_code == 200
+        saved = mock_config_manager.save_config_atomic.call_args[0][0]
+        # Must be the coerced int, not the raw form string -- the generic
+        # remaining-keys loop would otherwise write '90' back over it.
+        assert saved['target_fps'] == 90
+
+    def test_save_target_fps_alone_does_not_reset_other_general_settings(
+            self, client, mock_config_manager):
+        """A target_fps-only POST must not be treated as a full General-tab save.
+
+        The general branch reads web_display_autostart as an unchecked-checkbox
+        (absent means False), so counting target_fps as a general update would
+        silently switch autostart off for anyone setting only the frame rate.
+        """
+        mock_config_manager.load_config.return_value['web_display_autostart'] = True
+
+        response = client.post(
+            '/api/v3/config/main',
+            data={'target_fps': '90'},
+            content_type='application/x-www-form-urlencoded',
+        )
+
+        assert response.status_code == 200
+        saved = mock_config_manager.save_config_atomic.call_args[0][0]
+        assert saved['web_display_autostart'] is True
+
+    @pytest.mark.parametrize('value', [90.5, 90.0, True])
+    def test_save_target_fps_rejects_non_integer_json(self, client, mock_config_manager, value):
+        """int() would truncate silently: 90.5 -> 90, True -> 1.
+
+        Only JSON can carry these; a form post sends '90.5', which int()
+        already rejects.
+        """
+        response = client.post(
+            '/api/v3/config/main',
+            data=json.dumps({'target_fps': value}),
+            content_type='application/json',
+        )
+
+        assert response.status_code == 400
+
+    @pytest.mark.parametrize('value', ['20', '250', 'fast'])
+    def test_save_target_fps_rejects_out_of_range(self, client, mock_config_manager, value):
+        """Values ScrollHelper would silently clamp are reported instead."""
+        response = client.post(
+            '/api/v3/config/main',
+            data={'target_fps': value},
+            content_type='application/x-www-form-urlencoded',
+        )
+
+        assert response.status_code == 400
+
+    def test_save_target_fps_accepts_bounds(self, client, mock_config_manager):
+        """Both endpoints of the documented range are valid."""
+        for value in ('30', '200'):
+            response = client.post(
+                '/api/v3/config/main',
+                data={'target_fps': value},
+                content_type='application/x-www-form-urlencoded',
+            )
+            assert response.status_code == 200, f"{value} should be accepted"
+            saved = mock_config_manager.save_config_atomic.call_args[0][0]
+            assert saved['target_fps'] == int(value)
+
     def test_save_double_sided_unchecked_disables(self, client, mock_config_manager):
         """An omitted 'enabled' checkbox is saved as disabled, not left stale."""
         response = client.post(
@@ -174,6 +251,91 @@ class TestConfigAPI:
         ds = mock_config_manager.save_config_atomic.call_args[0][0]['display']['double_sided']
         assert ds['enabled'] is False
         assert ds['copies'] == 4
+
+    def test_save_double_sided_disabled_skips_divisibility_check(self, client, mock_config_manager):
+        """A copies/chain_length mismatch must not block saves while disabled.
+
+        The Display form posts copies/axis on every save, so validating them
+        with the feature off locked users out of every other display setting.
+        """
+        mock_config_manager.load_config.return_value['display']['hardware'] = {
+            'chain_length': 3, 'parallel': 1,
+        }
+
+        response = client.post(
+            '/api/v3/config/main',
+            data={
+                'double_sided_copies': '2',
+                'double_sided_axis': 'horizontal',
+                'brightness': '75',
+            },
+            content_type='application/x-www-form-urlencoded',
+        )
+
+        assert response.status_code == 200
+        ds = mock_config_manager.save_config_atomic.call_args[0][0]['display']['double_sided']
+        assert ds['enabled'] is False
+        assert ds['copies'] == 2
+
+    def test_save_double_sided_enabled_enforces_divisibility(self, client, mock_config_manager):
+        """The same mismatch is still rejected once the feature is turned on."""
+        mock_config_manager.load_config.return_value['display']['hardware'] = {
+            'chain_length': 3, 'parallel': 1,
+        }
+
+        response = client.post(
+            '/api/v3/config/main',
+            data={
+                'double_sided_enabled': 'true',
+                'double_sided_copies': '2',
+                'double_sided_axis': 'horizontal',
+            },
+            content_type='application/x-www-form-urlencoded',
+        )
+
+        assert response.status_code == 400
+        assert 'chain length' in response.get_json()['message']
+        mock_config_manager.save_config_atomic.assert_not_called()
+
+    def test_save_double_sided_vertical_checks_parallel(self, client, mock_config_manager):
+        """The vertical axis is checked against parallel, not chain_length."""
+        mock_config_manager.load_config.return_value['display']['hardware'] = {
+            'chain_length': 2, 'parallel': 3,
+        }
+
+        response = client.post(
+            '/api/v3/config/main',
+            data={
+                'double_sided_enabled': 'true',
+                'double_sided_copies': '2',
+                'double_sided_axis': 'vertical',
+            },
+            content_type='application/x-www-form-urlencoded',
+        )
+
+        # chain_length 2 would divide evenly — only parallel 3 rejects this.
+        assert response.status_code == 400
+        assert 'parallel' in response.get_json()['message']
+        mock_config_manager.save_config_atomic.assert_not_called()
+
+    def test_save_double_sided_disabled_ignores_bad_values(self, client, mock_config_manager):
+        """While disabled, unusable copies/axis are dropped rather than rejected."""
+        mock_config_manager.load_config.return_value['display']['double_sided'] = {
+            'enabled': True, 'copies': 2, 'axis': 'horizontal',
+        }
+
+        response = client.post(
+            '/api/v3/config/main',
+            data={'double_sided_copies': 'abc', 'double_sided_axis': 'diagonal'},
+            content_type='application/x-www-form-urlencoded',
+        )
+
+        assert response.status_code == 200
+        ds = mock_config_manager.save_config_atomic.call_args[0][0]['display']['double_sided']
+        assert ds['enabled'] is False
+        # Stored values left untouched rather than overwritten with junk.
+        assert ds['copies'] == 2
+        assert ds['axis'] == 'horizontal'
 
     def test_save_double_sided_invalid_copies_rejected(self, client, mock_config_manager):
         """copies < 2 is rejected with a 400 before any save."""
@@ -231,6 +393,9 @@ class TestSystemAPI:
     @patch('web_interface.blueprints.api_v3.subprocess')
     def test_get_system_status(self, mock_subprocess, client):
         """Test getting system status."""
+        # The endpoint returns 503 without psutil, which is an optional
+        # runtime dependency (requirements-test.txt installs it for CI).
+        pytest.importorskip("psutil")
         mock_result = MagicMock()
         mock_result.stdout = 'active\n'
         mock_result.returncode = 0
@@ -372,11 +537,71 @@ class TestPluginsAPI:
         }
         
         response = client.get('/api/v3/plugins/installed')
-        
+
         assert response.status_code == 200
         data = json.loads(response.data)
         assert isinstance(data, (list, dict))
-    
+
+    def test_installed_plugins_report_update_available(self, client, mock_plugin_manager):
+        """Installed-plugin entries surface latest_version + update_available
+        by comparing the on-disk manifest version to the registry."""
+        from web_interface.blueprints.api_v3 import api_v3
+        api_v3.plugin_manager = mock_plugin_manager
+        # No on-disk manifest to merge — keep the version we hand in below.
+        mock_plugin_manager.plugins_dir = '/nonexistent-plugins-dir'
+        mock_plugin_manager.get_all_plugin_info.return_value = [
+            {'id': 'weather', 'name': 'Weather', 'version': '1.0.0'}
+        ]
+        # Avoid touching plugin instances (Vegas hooks, enabled fallback).
+        mock_plugin_manager.get_plugin.return_value = None
+        # Registry advertises a newer version than the installed one.
+        api_v3.plugin_store_manager.get_registry_info.return_value = {
+            'verified': True, 'latest_version': '1.2.0'
+        }
+
+        response = client.get('/api/v3/plugins/installed')
+
+        assert response.status_code == 200
+        payload = json.loads(response.data)
+        entry = payload['data']['plugins'][0]
+        assert entry['version'] == '1.0.0'
+        assert entry['latest_version'] == '1.2.0'
+        assert entry['update_available'] is True
+
+    def test_installed_plugins_no_update_when_current(self, client, mock_plugin_manager):
+        """No update is flagged when installed version matches the registry."""
+        from web_interface.blueprints.api_v3 import api_v3
+        api_v3.plugin_manager = mock_plugin_manager
+        mock_plugin_manager.plugins_dir = '/nonexistent-plugins-dir'
+        mock_plugin_manager.get_all_plugin_info.return_value = [
+            {'id': 'weather', 'name': 'Weather', 'version': '1.2.0'}
+        ]
+        mock_plugin_manager.get_plugin.return_value = None
+        api_v3.plugin_store_manager.get_registry_info.return_value = {
+            'verified': True, 'latest_version': '1.2.0'
+        }
+
+        response = client.get('/api/v3/plugins/installed')
+
+        assert response.status_code == 200
+        entry = json.loads(response.data)['data']['plugins'][0]
+        assert entry['latest_version'] == '1.2.0'
+        assert entry['update_available'] is False
+
+    def test_is_plugin_update_available_helper(self):
+        """Unit-level checks for the semver-aware update comparison."""
+        from web_interface.blueprints.api_v3 import _is_plugin_update_available
+        assert _is_plugin_update_available('1.0.0', '1.0.1') is True
+        assert _is_plugin_update_available('1.0.1', '1.0.1') is False
+        # Local build ahead of the registry must not be flagged.
+        assert _is_plugin_update_available('2.0.0', '1.9.9') is False
+        # Missing either side yields no signal.
+        assert _is_plugin_update_available('', '1.0.0') is False
+        assert _is_plugin_update_available('1.0.0', '') is False
+        # Unparseable version differing from the installed one surfaces the
+        # mismatch rather than hiding a possible update.
+        assert _is_plugin_update_available('1.0.0', 'not-a-semver') is True
+
     def test_get_plugin_health(self, client, mock_plugin_manager):
         """Test getting plugin health information."""
         from web_interface.blueprints.api_v3 import api_v3

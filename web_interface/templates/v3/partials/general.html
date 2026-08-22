@@ -49,6 +49,18 @@
             <label for="timezone" class="block text-sm font-medium text-gray-700">Timezone{{ ui.help_tip('Time zone used for clocks, schedules, and time-based content.\nChoose the zone where the display physically lives so on/off schedules fire at the correct local time.', 'Timezone') }}</label>
             <div id="timezone_container" class="mt-1"></div>
         </div>
+
+        <!-- Scroll frame rate (device-wide) -->
+        <div class="form-group" id="setting-general-target-fps" data-setting-key="target_fps">
+            <label for="target_fps" class="block text-sm font-medium text-gray-700">Scroll Frame Rate{{ ui.help_tip('Frames per second for scrolling content, applied across plugins that scroll.\nHigher is smoother but uses more CPU; lower frees CPU but looks steppier.\nRange 30-200. Default: 100.', 'Scroll Frame Rate') }}</label>
+            <input type="number"
+                   id="target_fps"
+                   name="target_fps"
+                   value="{{ main_config.target_fps or 100 }}"
+                   min="30"
+                   max="200"
+                   class="form-control">
+        </div>
         <script>
         (function() {
             // Track if already initialized to prevent re-render
@@ -83,7 +95,7 @@
         <!-- Location Information -->
         <div class="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-3 gap-4">
             <div class="form-group" id="setting-general-city" data-setting-key="location.city">
-                <label for="city" class="block text-sm font-medium text-gray-700">City{{ ui.help_tip('City used for weather, sunrise/sunset, and other location-based content.\nExample: Dallas.', 'City') }}</label>
+                <label for="city" class="block text-sm font-medium text-gray-700">City{{ ui.help_tip('City used for weather, sunrise/sunset, radar, and other location-based content.\nExample: Kansas City.\nUsed as the default for the location_city setting on plugins that have one; a value saved on the plugin itself overrides it.', 'City') }}</label>
                 <input type="text"
                        id="city"
                        name="city"
@@ -92,7 +104,7 @@
             </div>
 
             <div class="form-group" id="setting-general-state" data-setting-key="location.state">
-                <label for="state" class="block text-sm font-medium text-gray-700">State{{ ui.help_tip('State or region for your location.\nExample: Texas. Improves location-lookup accuracy.', 'State') }}</label>
+                <label for="state" class="block text-sm font-medium text-gray-700">State{{ ui.help_tip('State or region for your location.\nExample: Missouri. Improves location-lookup accuracy.\nUsed as the default for the location_state setting on plugins that have one.', 'State') }}</label>
                 <input type="text"
                        id="state"
                        name="state"
@@ -101,7 +113,7 @@
             </div>
 
             <div class="form-group" id="setting-general-country" data-setting-key="location.country">
-                <label for="country" class="block text-sm font-medium text-gray-700">Country{{ ui.help_tip('Country code or name for your location.\nExample: US. Used with City and State for weather and geolocation.', 'Country') }}</label>
+                <label for="country" class="block text-sm font-medium text-gray-700">Country{{ ui.help_tip('Country code or name for your location.\nExample: US. Used with City and State for weather, radar, and geolocation.\nUsed as the default for the location_country setting on plugins that have one.', 'Country') }}</label>
                 <input type="text"
                        id="country"
                        name="country"

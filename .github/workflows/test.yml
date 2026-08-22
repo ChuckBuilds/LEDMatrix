@@ -4,10 +4,46 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Manual runs against any branch — useful when a PR's automatic run
+  # needs a re-run or didn't get created.
+  workflow_dispatch:
+
+# Both jobs only check out the repo and run pytest.
+permissions:
+  contents: read
 
 jobs:
   plugin-safety:
     name: Plugin safety harness + unit tests
+    runs-on: ubuntu-latest
+    env:
+      # The bundled fixture plugin gives the harness at least one real plugin
+      # to render, and REQUIRE_PLUGINS turns "discovered zero plugins" into a
+      # hard failure instead of a silent all-skip green run.
+      LEDMATRIX_PLUGINS_DIR: test/fixtures/plugins
+      LEDMATRIX_REQUIRE_PLUGINS: "1"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-test.txt
+          pip install RGBMatrixEmulator
+
+      - name: Run plugin safety harness
+        run: |
+          pytest --no-cov test/plugins/
+
+  unit-tests:
+    name: Core unit tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -25,9 +61,15 @@ jobs:
           pip install -r requirements.txt -r requirements-test.txt
           pip install RGBMatrixEmulator
 
-      - name: Run harness + visual rendering tests
+      # Run the ENTIRE test tree (except test/plugins, which the
+      # plugin-safety job owns). New test files are enrolled automatically;
+      # excluding anything requires a visible, commented --ignore here.
+      # Coverage is measured and enforced only in this step — pytest.ini
+      # deliberately carries no coverage flags so local runs stay fast.
+      - name: Run core unit suites
         run: |
-          pytest --no-cov \
-            test/plugins/test_harness.py \
-            test/plugins/test_visual_rendering.py \
-            test/plugins/test_plugin_matrix.py
+          pytest -m "not hardware" test/ \
+            --ignore=test/plugins \
+            --cov=src --cov=web_interface \
+            --cov-report=term \
+            --cov-fail-under=52

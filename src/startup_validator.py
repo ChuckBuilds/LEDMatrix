@@ -15,16 +15,23 @@ from src.logging_config import get_logger
 class StartupValidator:
     """Validates system state on startup."""
     
-    def __init__(self, config_manager: Any, plugin_manager: Optional[Any] = None) -> None:
+    def __init__(self, config_manager: Any, plugin_manager: Optional[Any] = None,
+                 cache_manager: Optional[Any] = None) -> None:
         """
         Initialize the startup validator.
-        
+
         Args:
             config_manager: ConfigManager instance
             plugin_manager: Optional PluginManager instance
+            cache_manager: The CacheManager the application will actually use.
+                Pass it. Without one this validator builds its own just to read
+                a directory path, which reports on a cache the app does not
+                use and leaves behind a cleanup thread that nothing stops --
+                validation runs twice per startup, so that was two of them.
         """
         self.config_manager = config_manager
         self.plugin_manager = plugin_manager
+        self.cache_manager = cache_manager
         self.logger = get_logger(__name__)
         self.errors: List[str] = []
         self.warnings: List[str] = []
@@ -37,7 +44,12 @@ class StartupValidator:
             Tuple of (is_valid, errors, warnings)
         """
         self.logger.info("Starting startup validation...")
-        
+
+        # Fresh lists each run — without this, calling validate_all() twice
+        # duplicated every message.
+        self.errors = []
+        self.warnings = []
+
         # Validate configuration
         self._validate_config()
         
@@ -50,6 +62,9 @@ class StartupValidator:
         # Validate plugins if plugin manager is available
         if self.plugin_manager:
             self._validate_plugins()
+
+        # Warn when the running systemd unit no longer matches the repo's
+        self._validate_systemd_units()
         
         is_valid = len(self.errors) == 0
         
@@ -62,6 +77,80 @@ class StartupValidator:
         
         return (is_valid, self.errors.copy(), self.warnings.copy())
     
+    #: Units this project installs, and where each is installed to.
+    _UNITS = (
+        ("systemd/ledmatrix.service", "/etc/systemd/system/ledmatrix.service"),
+        ("systemd/ledmatrix-web.service", "/etc/systemd/system/ledmatrix-web.service"),
+    )
+
+    def _validate_systemd_units(self) -> None:
+        """Warn when an installed unit has drifted from the repo's template.
+
+        Nothing re-applies these after the first install. `git pull` -- which is
+        what the web UI's update button runs -- brings a new template into the
+        checkout, but nothing copies it to /etc/systemd/system and nothing runs
+        `systemctl daemon-reload`, so the unit that actually runs is whatever
+        first_time_install.sh wrote on day one.
+
+        That makes every hardening added to a unit inert on existing installs.
+        Measured on one rig: the installed unit was thirteen days older than the
+        repo's and differed in content, so a MemoryMax the repo had specified
+        was not being enforced at all -- `systemctl show` reported
+        MemoryMax=infinity.
+
+        A warning rather than an error, and certainly not a silent rewrite:
+        editing files under /etc and restarting services is the installer's job,
+        not something a display process should do to a machine while it boots.
+        The remedy is to re-run scripts/install/install_service.sh.
+        """
+        try:
+            project_root = Path(__file__).resolve().parent.parent
+            for template_rel, installed_path in self._UNITS:
+                template = project_root / template_rel
+                installed = Path(installed_path)
+                if not template.is_file() or not installed.is_file():
+                    continue
+
+                # The template carries placeholders the installer substitutes,
+                # so compare the substituted form rather than the raw file.
+                expected = template.read_text(encoding="utf-8")
+                expected = expected.replace("__PROJECT_ROOT_DIR__", str(project_root))
+                expected = expected.replace("__USER__", "root")
+
+                try:
+                    actual = installed.read_text(encoding="utf-8")
+                except PermissionError:
+                    continue
+
+                if self._unit_body(expected) != self._unit_body(actual):
+                    self.warnings.append(
+                        f"{installed.name} differs from {template_rel}; the "
+                        "installed unit is not refreshed by an update, so "
+                        "settings added to the template are not in effect. "
+                        "Re-run scripts/install/install_service.sh to apply them."
+                    )
+        except OSError as e:
+            self.logger.debug("Could not compare systemd units: %s", e)
+
+    @staticmethod
+    def _unit_body(text: str) -> str:
+        """A unit's meaningful lines, in order: no comments, no blanks.
+
+        Order is preserved deliberately. This used to sort, which made the
+        comparison insensitive to two changes that matter in a systemd unit:
+        repeated directives such as ExecStartPre= and ExecStartPost= run in
+        the order they appear, and a directive that moves between [Unit],
+        [Service] and [Install] means something different -- or nothing --
+        where it lands. A drift check that normalises those away reports no
+        drift for a unit that has genuinely changed.
+        """
+        lines = []
+        for line in text.splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                lines.append(line)
+        return "\n".join(lines)
+
     def _validate_config(self) -> None:
         """Validate configuration files."""
         try:
@@ -86,9 +175,21 @@ class StartupValidator:
     def _validate_cache_directory(self) -> None:
         """Validate cache directory permissions."""
         try:
-            from src.cache_manager import CacheManager
-            cache_manager = CacheManager()
-            cache_dir = cache_manager.get_cache_dir()
+            cache_manager = self.cache_manager
+            if cache_manager is None:
+                # No caller supplied one (older embedders, direct use in a
+                # script). Build one, but do not leave its cleanup thread
+                # running behind us -- this instance is discarded on the next
+                # line but the thread is a closure over it, so it would never
+                # be collected.
+                from src.cache_manager import CacheManager
+                cache_manager = CacheManager()
+                try:
+                    cache_dir = cache_manager.get_cache_dir()
+                finally:
+                    cache_manager.stop_cleanup_thread()
+            else:
+                cache_dir = cache_manager.get_cache_dir()
             
             if not cache_dir:
                 self.warnings.append("Cache directory not available - caching will be disabled")

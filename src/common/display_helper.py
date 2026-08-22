@@ -115,17 +115,13 @@ class DisplayHelper:
         if home_logo and away_logo:
             self._draw_logos(main_img, home_logo, away_logo)
         
-        # Draw status/period text (top center)
-        if status_text or period_text:
-            status_display = f"{period_text} {status_text}".strip()
-            if status_display:
-                self._draw_centered_text(draw, status_display, 
-                                       fonts.get('time', fonts.get('status')), 
-                                       y_position=1)
-        
-        # Draw clock if available
-        if clock:
-            self._draw_centered_text(draw, clock, fonts.get('time'), y_position=1)
+        # Draw one combined top line (period/status/clock all share y=1 —
+        # drawing them separately overprinted each other).
+        top_line = " ".join(p for p in [period_text, status_text, clock] if p)
+        if top_line:
+            self._draw_centered_text(draw, top_line,
+                                   fonts.get('time', fonts.get('status')),
+                                   y_position=1)
         
         # Draw scores (center)
         score_text = f"{away_score}-{home_score}"
@@ -153,26 +149,28 @@ class DisplayHelper:
         """
         Draw a ticker/scrolling text layout.
         
+        Renders a single static frame with the text at the left edge; the
+        caller advances the scroll by re-rendering or shifting. The
+        scroll_speed parameter is accepted for API compatibility but does
+        not affect this frame. (Previously the text was drawn starting at
+        x=display_width — entirely off-canvas — so every frame was blank.)
+
         Args:
             text: Text to display
             font: Font to use
             background_color: Background color
             text_color: Text color
-            scroll_speed: Pixels to scroll per frame
-            
+            scroll_speed: Accepted for compatibility; unused per-frame
+
         Returns:
             PIL Image with ticker layout
         """
         img = self.create_base_image(background_color)
         draw = ImageDraw.Draw(img)
-        
-        # Start text off-screen to the right
-        x_position = self.display_width
-        
-        # Draw text
-        self._draw_text_with_outline(draw, text, (x_position, self.display_height // 2 - 6), 
+
+        self._draw_text_with_outline(draw, text, (0, self.display_height // 2 - 6),
                                    font, fill=text_color)
-        
+
         return img
     
     def draw_centered_text(self, text: str, font: ImageFont.ImageFont,
@@ -214,15 +212,9 @@ class DisplayHelper:
         Returns:
             PIL Image with error message
         """
-        img = self.create_base_image((50, 0, 0))  # Dark red background
-
-        # Use default font
+        # Dark red background, white text
         font = ImageFont.load_default()
-        
-        # Draw centered error message
-        self._draw_centered_text(message, font, (50, 0, 0), (255, 255, 255))
-        
-        return img
+        return self.draw_centered_text(message, font, (50, 0, 0), (255, 255, 255))
     
     def draw_no_data_message(self, message: str = "No Data") -> Image.Image:
         """
@@ -234,11 +226,8 @@ class DisplayHelper:
         Returns:
             PIL Image with no data message
         """
-        img = self.create_base_image((0, 0, 0))
         font = ImageFont.load_default()
-        self._draw_centered_text(message, font, (0, 0, 0), (150, 150, 150))
-        
-        return img
+        return self.draw_centered_text(message, font, (0, 0, 0), (150, 150, 150))
     
     def get_display_dimensions(self) -> Tuple[int, int]:
         """

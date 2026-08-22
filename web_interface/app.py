@@ -16,6 +16,8 @@ from datetime import datetime, timedelta
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.config_manager import ConfigManager
+from src.web_interface.error_handler import describe_exception
+from werkzeug.exceptions import HTTPException
 from src.exceptions import ConfigError
 from src.plugin_system.plugin_manager import PluginManager
 from src.plugin_system.store_manager import PluginStoreManager
@@ -58,6 +60,20 @@ try:
 except ImportError:
     # flask-limiter not installed, rate limiting disabled
     limiter = None
+
+# Enable gzip/brotli response compression (Flask-Compress skips streaming
+# responses, so the SSE endpoints are unaffected). Optional, like limiter:
+# missing package just means uncompressed responses.
+try:
+    from flask_compress import Compress
+
+    Compress(app)
+except ImportError:
+    logging.getLogger(__name__).warning(
+        "flask-compress not installed - responses will be served uncompressed. "
+        "Install it with the Tools tab's 'Install Base Requirements' button or "
+        "'pip install flask-compress'."
+    )
 
 # Import cache functions from separate module to avoid circular imports
 
@@ -102,7 +118,8 @@ saved_repositories_manager = SavedRepositoriesManager()
 schema_manager = SchemaManager(
     plugins_dir=plugins_dir,
     project_root=project_root,
-    logger=None
+    logger=None,
+    config_manager=config_manager
 )
 
 # Initialize operation queue for plugin operations
@@ -176,7 +193,12 @@ except Exception as _hm_err:  # pragma: no cover - defensive startup guard
         "Could not enable plugin health/metrics for web UI: %s", _hm_err
     )
 
-app.register_blueprint(pages_v3, url_prefix='/v3')
+# Pages are served un-prefixed (the interface lives at /); the /v3 mount is a
+# legacy alias kept so existing bookmarks and the hardcoded /v3/partials/...
+# fetches in templates/JS keep working unchanged. url_for('pages_v3.*')
+# resolves against the primary (un-prefixed) registration.
+app.register_blueprint(pages_v3, url_prefix='')
+app.register_blueprint(pages_v3, url_prefix='/v3', name='pages_v3_legacy')
 app.register_blueprint(api_v3, url_prefix='/api/v3')
 
 # Route to serve plugin asset files (registered on main app, not blueprint, for /assets/... path)
@@ -372,15 +394,42 @@ def internal_error(error):
     import logging
     logger = logging.getLogger('web_interface')
     logger.error("Internal server error", exc_info=True)
-    return jsonify({
+    payload = {
         'status': 'error',
         'error_code': 'INTERNAL_ERROR',
         'message': 'An internal error occurred; see logs for details',
-    }), 500
+    }
+    # Flask hands the original exception over as `error.original_exception`
+    # when propagation is off; without it there is nothing to describe.
+    original = getattr(error, 'original_exception', None) or (
+        error if isinstance(error, BaseException) else None)
+    if original is not None:
+        payload['details'] = describe_exception(original)
+    return jsonify(payload), 500
 
 @app.errorhandler(Exception)
 def handle_exception(error):
-    """Handle all unhandled exceptions."""
+    """Handle all unhandled exceptions.
+
+    Returning only "see logs for details" is fine until the logs are exactly
+    what you cannot reach. A device with failing storage answered every
+    endpoint with that sentence -- including the log viewer, because journalctl
+    could not be executed -- while the exception underneath said
+    `[Errno 5] Input/output error`. Naming the error costs nothing here and is
+    frequently the whole diagnosis, so include it alongside the log pointer.
+    """
+    # Werkzeug's HTTPExceptions subclass Exception, so this catch-all sees
+    # them too and was reporting every 405, 400, 413 and 415 as a server-side
+    # UNKNOWN_ERROR 500. A GET on a POST-only route came back as "an error
+    # occurred" rather than "method not allowed", which tells the caller
+    # nothing and blames the wrong side. Hand those back as themselves.
+    if isinstance(error, HTTPException):
+        return jsonify({
+            'status': 'error',
+            'error_code': (error.name or 'HTTP_ERROR').upper().replace(' ', '_'),
+            'message': error.description,
+        }), error.code or 500
+
     import logging
     logger = logging.getLogger('web_interface')
     logger.error("Unhandled exception", exc_info=True)
@@ -388,6 +437,7 @@ def handle_exception(error):
         'status': 'error',
         'error_code': 'UNKNOWN_ERROR',
         'message': 'An error occurred; see logs for details',
+        'details': describe_exception(error),
     }), 500
 
 # Captive portal redirect middleware
@@ -407,7 +457,11 @@ def captive_portal_redirect():
     
     # List of paths that should NOT be redirected (allow normal operation)
     allowed_paths = [
-        '/v3',  # Main interface and all sub-paths (includes /v3/setup)
+        '/v3',  # Legacy-prefixed interface and all sub-paths
+        '/setup',  # Captive setup page itself (un-prefixed mount)
+        '/partials/',  # HTMX partials (un-prefixed mount)
+        '/settings/',  # Settings search index (un-prefixed mount)
+        '/plugin-ui/',  # Plugin-provided web UI assets (un-prefixed mount)
         '/api/v3/',  # All API endpoints
         '/static/',  # Static files (CSS, JS, images)
         '/hotspot-detect.html',  # iOS/macOS detection
@@ -606,8 +660,6 @@ def system_status_generator():
 def display_preview_generator():
     """Generate display preview updates from snapshot file"""
     import base64
-    from PIL import Image
-    import io
 
     snapshot_path = "/tmp/led_matrix_preview.png"  # nosec B108 - fixed path matches display_manager; only read here
     # Viewer marker: this generator only runs while the broadcaster has
@@ -649,24 +701,26 @@ def display_preview_generator():
                 # Only read if file is new or has been updated
                 if last_modified is None or current_modified > last_modified:
                     try:
-                        # Read and encode the image
-                        with Image.open(snapshot_path) as img:
-                            # Convert to PNG and encode as base64
-                            buffer = io.BytesIO()
-                            img.save(buffer, format='PNG')
-                            img_str = base64.b64encode(buffer.getvalue()).decode('utf-8')
-                            
-                            preview_data = {
-                                'timestamp': time.time(),
-                                'width': width,
-                                'height': height,
-                                'image': img_str
-                            }
-                            last_modified = current_modified
-                            yield preview_data
-                    except Exception:  # nosec B110 - SSE preview file may be mid-write; transient error, skip this update
-                        # File might be being written, skip this update
-                        pass
+                        # The snapshot is already a PNG, written atomically by
+                        # the display service (tmp + os.replace in
+                        # display_manager), so pass the raw bytes straight
+                        # through instead of PIL-decoding and re-encoding —
+                        # identical payload, much less CPU on the Pi.
+                        with open(snapshot_path, 'rb') as f:
+                            img_str = base64.b64encode(f.read()).decode('utf-8')
+
+                        preview_data = {
+                            'timestamp': time.time(),
+                            'width': width,
+                            'height': height,
+                            'image': img_str
+                        }
+                        last_modified = current_modified
+                        yield preview_data
+                    except OSError:
+                        # Transient filesystem race (file rotated/replaced
+                        # between mtime check and read); skip this update.
+                        app.logger.debug("Preview snapshot read failed; skipping frame", exc_info=True)
             else:
                 # No snapshot available
                 yield {
@@ -799,11 +853,8 @@ if limiter:
     limiter.limit("200 per minute")(stream_display)
     limiter.limit("200 per minute")(stream_logs)
 
-# Main route - redirect to v3 interface as default
-@app.route('/')
-def index():
-    """Redirect to v3 interface"""
-    return redirect(url_for('pages_v3.index'))
+# The pages blueprint's index now serves '/' directly (see the un-prefixed
+# blueprint registration above), so no redirect route is needed here.
 
 @app.route('/favicon.ico')
 def favicon():

@@ -41,6 +41,7 @@ from src.plugin_system.testing.loading import (  # noqa: E402
 )
 from src.plugin_system.testing.harness import (  # noqa: E402
     RenderResult, render_plugin_matrix, compare_to_goldens, write_goldens,
+    check_empty_claimed,
     check_scale_up,
 )
 from src.plugin_system.testing.sizes import (  # noqa: E402
@@ -115,6 +116,11 @@ def check_one(plugin_id: str, search_dirs: List[str], sizes, mock_data: Dict,
     declared = load_manifest(plugin_dir).get("display", {}).get("design_size", {})
     design_size = (int(declared.get("width", 128)), int(declared.get("height", 32)))
     fill_strict = spec.get("fill_check") == "strict"
+    # A mode that renders nothing without returning False is never skipped by
+    # the display controller, so it holds a blank panel for its whole duration.
+    # Warn-only by default: a scroll mode's first frame is legitimately its
+    # blank scroll-in buffer.
+    empty_strict = spec.get("empty_check") == "strict"
 
     # Every run: the base config, plus one per harness.json "variant" —
     # a config overlay with its own golden dir (e.g. adaptive layout mode
@@ -142,6 +148,7 @@ def check_one(plugin_id: str, search_dirs: List[str], sizes, mock_data: Dict,
             compare_to_goldens(results, golden_dir)
 
         check_scale_up(results, design_size=design_size, strict=fill_strict)
+        check_empty_claimed(results, strict=empty_strict)
 
         # Tag variant runs so the report and PNG dumps stay distinguishable.
         if variant_name:
@@ -178,6 +185,9 @@ def print_report(all_results: Dict[str, List[RenderResult]]) -> bool:
                     # warn-only underfill: big panel left mostly empty
                     ex, ey = r.fill_extent
                     detail += f" (fill warn: extent {ex:.0%}x{ey:.0%})"
+                if r.empty_claimed and r.empty_ok is None:
+                    detail += (f" (empty warn: drew nothing but display() returned"
+                               f" {r.display_returned!r}, so the mode is not skipped)")
             else:
                 everything_ok = False
                 if r.error is not None:
@@ -191,6 +201,11 @@ def print_report(all_results: Dict[str, List[RenderResult]]) -> bool:
                     ex, ey = r.fill_extent or (0.0, 0.0)
                     status = "FAIL"
                     detail = f" fill: extent {ex:.0%}x{ey:.0%} below required coverage"
+                elif r.empty_ok is False:
+                    status = "FAIL"
+                    detail = (f" drew nothing but display() returned"
+                              f" {r.display_returned!r}; return False so the"
+                              f" controller skips the mode")
                 else:
                     status, detail = "FAIL", ""
             print(f"  [{status}] {r.size_label:>7}  {r.mode}{detail}")

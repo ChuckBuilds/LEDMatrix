@@ -86,7 +86,9 @@ class BasePlugin(ABC):
         self.display_manager: Any = display_manager
         self.cache_manager: Any = cache_manager
         self.plugin_manager: Any = plugin_manager
-        self.logger: logging.Logger = get_logger(f"plugin.{plugin_id}", plugin_id=plugin_id)
+        # get_logger returns a PluginLoggerAdapter here (plugin_id given), which
+        # stamps every record with plugin_id so it survives into formatted output.
+        self.logger = get_logger(f"plugin.{plugin_id}", plugin_id=plugin_id)
         self.enabled: bool = config.get("enabled", True)
 
         self.logger.info("Initialized plugin: %s", plugin_id)
@@ -142,6 +144,77 @@ class BasePlugin(ABC):
                 self.display_manager.update_display()
         """
         raise NotImplementedError("Plugins must implement display()")
+
+    # -------------------------------------------------------------------------
+    # Global (whole-device) configuration
+    # -------------------------------------------------------------------------
+    @property
+    def global_config(self) -> Dict[str, Any]:
+        """
+        The full LEDMatrix configuration, for reading device-wide settings.
+
+        ``self.config`` is only this plugin's own slice, so cross-cutting
+        settings — ``target_fps``, ``timezone``, ``location`` — were previously
+        unreachable from a plugin without reaching into a manager by hand.
+
+        Resolution order mirrors the timezone helpers the sports plugins
+        already ship: ``plugin_manager.config_manager`` first (the cores that
+        hang it there), then ``cache_manager.config_manager``. Returns ``{}``
+        when neither is available, so callers can use plain ``.get()`` without
+        guarding, and a plugin on a core that predates this property still
+        loads — ``getattr(self, 'global_config', {})`` simply yields the
+        default.
+
+        Treat as read-only: the returned dict is the live config the core is
+        using, so mutating it edits every other consumer's view and can be
+        persisted back to disk.
+
+        Assignment is still allowed and wins over the resolved value. Several
+        shipped plugins (news, stock-news, ledmatrix-stocks, ledmatrix-
+        elections, ledmatrix-leaderboard, nfl-draft) set
+        ``self.global_config`` to their own ``config['global']`` sub-dict; a
+        property without a setter would raise AttributeError and stop those
+        plugins loading.
+
+        Example:
+            fps = self.global_config.get('target_fps')
+        """
+        override = getattr(self, '_global_config_override', None)
+        if override is not None:
+            return override
+        for owner in (self.plugin_manager, self.cache_manager):
+            config_manager = getattr(owner, 'config_manager', None)
+            if config_manager is None:
+                continue
+            try:
+                config = config_manager.get_config()
+            except Exception:
+                # A broken or unreadable config must never stop a plugin from
+                # loading; fall through to the next source, then to {}.
+                self.logger.debug(
+                    "Could not read global config from %s",
+                    type(owner).__name__, exc_info=True,
+                )
+                continue
+            # Only a real mapping is usable: callers do .get() on this and feed
+            # the result to numeric code, so handing back whatever a stub or a
+            # half-built manager returned would fail later and further away.
+            #
+            # An empty dict is treated as "nothing here yet" rather than a
+            # valid answer, so resolution continues to the next source. Both
+            # managers default to the same config/config.json, so falling
+            # through cannot pick up a different file's settings -- but it does
+            # rescue the case where the first manager simply hasn't loaded yet,
+            # which would otherwise return {} and silently disable every
+            # setting read through this property.
+            if isinstance(config, dict) and config:
+                return config
+        return {}
+
+    @global_config.setter
+    def global_config(self, value: Dict[str, Any]) -> None:
+        """Let a plugin substitute its own view (see the getter's docstring)."""
+        self._global_config_override = value
 
     # -------------------------------------------------------------------------
     # Adaptive layout support (opt-in)
@@ -291,8 +364,10 @@ class BasePlugin(ABC):
                 # Handle None case
                 if duration is None:
                     pass  # Fall through to config
-                # Try to convert to float if it's a number or numeric string
-                elif isinstance(duration, (int, float)):
+                # Try to convert to float if it's a number or numeric string.
+                # bool is excluded: it's an int subclass, and True would
+                # otherwise read as a 1-second duration.
+                elif isinstance(duration, (int, float)) and not isinstance(duration, bool):
                     if duration > 0:
                         return float(duration)
                     else:
@@ -330,8 +405,9 @@ class BasePlugin(ABC):
         # Fall back to config
         config_duration = self.config.get("display_duration", 15.0)
         try:
-            # Ensure config value is also a valid float
-            if isinstance(config_duration, (int, float)):
+            # Ensure config value is also a valid float (bool excluded — an
+            # int subclass that would otherwise read True as 1 second)
+            if isinstance(config_duration, (int, float)) and not isinstance(config_duration, bool):
                 if config_duration > 0:
                     return float(config_duration)
                 else:
@@ -479,6 +555,48 @@ class BasePlugin(ABC):
         """
         return False
 
+    def get_vegas_priority_weight(self) -> Optional[int]:
+        """How many slots per Vegas cycle this plugin should get, or None.
+
+        The Vegas ticker is otherwise a strict round robin: every plugin
+        appears exactly once per cycle. With a dozen plugins enabled that puts
+        minutes between a live score and its next appearance. A weight of N
+        gives the plugin N slots per cycle, spread evenly through it rather
+        than clumped together.
+
+        Return ``None`` (the default) to let the core decide. It gives a
+        plugin ``vegas_scroll.live_weight`` when ``has_live_priority()`` and
+        ``has_live_content()`` are both true, and 1 otherwise -- so live sports
+        already get extra turns without implementing this at all.
+
+        Implement it only when the plugin knows something the core cannot. The
+        motivating case is favorite teams: the core can see *that* a game is
+        live but not *whose*, so a scoreboard that wants its favorite's game
+        shown more often than other live games has to say so::
+
+            def get_vegas_priority_weight(self):
+                if not (self.has_live_priority() and self.has_live_content()):
+                    return None                      # let the core decide
+                cfg = self.global_config.get('display', {}).get('vegas_scroll', {})
+                if self._favorite_is_live():
+                    return cfg.get('favorite_live_weight', 5)
+                return cfg.get('live_weight', 3)
+
+        The weight is per *plugin*, not per game. A scoreboard showing four
+        live games still occupies one slot at a time and rotates its own games
+        within that slot; this controls how often the plugin itself comes
+        round.
+
+        Raising is safe: the core logs it and falls back to its own
+        live-content check, so a broken weight calculation costs the plugin
+        the favorite distinction but not the live boost.
+
+        Returns:
+            Slots per cycle (clamped to 1..10 by the caller), or None to
+            defer to the core's own live-content weighting.
+        """
+        return None
+
     def get_live_modes(self) -> List[str]:
         """
         Get list of display modes that should be used during live priority takeover.
@@ -503,6 +621,40 @@ class BasePlugin(ABC):
     # -------------------------------------------------------------------------
     # Vegas scroll mode support
     # -------------------------------------------------------------------------
+    def get_vegas_render_width(self) -> int:
+        """
+        Width the Vegas ticker wants this plugin's content to occupy.
+
+        On a wide panel a layout built to fill the screen reads as sparse in a
+        ticker — a forecast spread over five columns, a progress bar drawn at
+        100% width, a stat block with the panel's whole width between its
+        elements. Vegas asks for a narrower render so the plugin can choose a
+        tighter arrangement instead of being cropped afterwards.
+
+        Vegas also narrows ``display_manager`` for the duration of the call, so
+        a plugin that already sizes itself from ``matrix.width`` needs no
+        changes. Read this only when you size content some other way.
+
+        Controlled by the plugin's own ``vegas_width_pct`` config value, else
+        the global ``display.vegas_scroll.render_width_pct``.
+
+        Returns:
+            Target width in pixels. Outside a Vegas content request, the full
+            display width.
+        """
+        requested = getattr(self, '_vegas_render_width', None)
+        if isinstance(requested, int) and requested > 0:
+            return requested
+
+        display_manager = getattr(self, 'display_manager', None)
+        matrix = getattr(display_manager, 'matrix', None)
+        if matrix is not None and getattr(matrix, 'width', None):
+            return int(matrix.width)
+        width = getattr(display_manager, 'width', None)
+        if callable(width):
+            width = width()
+        return int(width) if width else 128
+
     def get_vegas_content(self) -> Optional[Any]:
         """
         Get content for Vegas-style continuous scroll mode.
@@ -687,10 +839,12 @@ class BasePlugin(ABC):
                 self.logger.error("'enabled' must be a boolean")
                 return False
 
-        # Check display_duration if present
+        # Check display_duration if present. bool is excluded explicitly:
+        # it's an int subclass, and get_display_duration rejects it too.
         if "display_duration" in self.config:
             duration = self.config["display_duration"]
-            if not isinstance(duration, (int, float)) or duration <= 0:
+            if (not isinstance(duration, (int, float))
+                    or isinstance(duration, bool) or duration <= 0):
                 self.logger.error("'display_duration' must be a positive number")
                 return False
 

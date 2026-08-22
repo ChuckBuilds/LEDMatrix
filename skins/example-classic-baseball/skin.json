@@ -1,0 +1,25 @@
+{
+  "id": "example-classic-baseball",
+  "name": "Example: Classic Baseball",
+  "version": "1.0.0",
+  "author": "LEDMatrix",
+  "description": "Reference skin: a restyled baseball scorebug demonstrating the skin API. Copy this directory to start your own skin.",
+  "skin_api_version": "1.0.0",
+  "targets": {
+    "sports": [
+      "baseball"
+    ],
+    "sport_keys": [
+      "mlb",
+      "milb"
+    ]
+  },
+  "entry_point": "skin.py",
+  "class_name": "ClassicBaseballSkin",
+  "modes": [
+    "live",
+    "recent",
+    "upcoming"
+  ],
+  "preview": "preview.png"
+}

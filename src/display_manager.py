@@ -25,6 +25,7 @@ the same object.
 
 import json
 import os
+import socket
 import tempfile
 if os.getenv("EMULATOR", "false") == "true":
     from RGBMatrixEmulator import RGBMatrix, RGBMatrixOptions
@@ -186,8 +187,14 @@ class DisplayManager:
         self.config = config or {}
         self._force_fallback = force_fallback
         self._suppress_test_pattern = suppress_test_pattern
-        # When True, update_display() and clear() skip hardware writes (used during off-screen content capture)
-        self._capture_mode_active = False
+        # Per-thread capture state. update_display() and clear() skip hardware
+        # writes while the *calling* thread is capturing content off-screen.
+        #
+        # Thread-local rather than a plain flag because Vegas mode prepares
+        # upcoming content on a background thread: a shared flag set there would
+        # suppress the render loop's own frame pushes for the duration, freezing
+        # the panel exactly when the point was to avoid a freeze.
+        self._capture_state = threading.local()
         # Double-sided mode state (resolved in _setup_matrix). When disabled,
         # the logical image is blitted to the matrix unchanged.
         self._double_sided = None  # dict {copies, axis, logical_width, logical_height} or None
@@ -252,6 +259,26 @@ class DisplayManager:
         # Initialize managers
         # Calendar manager is now initialized by DisplayController
         
+    # Orientation setting -> rpi-rgb-led-matrix "Rotate:<deg>" pixel-mapper suffix.
+    # "normal" needs no suffix since 0 degrees is the identity transform.
+    _ORIENTATION_ROTATE_DEGREES = {'normal': None, '90': 90, '180': 180, '270': 270}
+
+    def _build_pixel_mapper_config(self, hardware_config: dict) -> str:
+        """Compose the raw pixel_mapper_config string with the orientation setting.
+
+        `pixel_mapper_config` stays available as a free-form advanced field (e.g.
+        for "U-mapper" chain layouts); `orientation` is the user-facing dropdown
+        for physical mounting (e.g. panels mounted upside down) and is appended as
+        a "Rotate:<deg>" mapper rather than overwriting any existing config.
+        """
+        base_mapper = (hardware_config.get('pixel_mapper_config') or '').strip()
+        orientation = hardware_config.get('orientation', 'normal')
+        degrees = self._ORIENTATION_ROTATE_DEGREES.get(orientation)
+        if degrees is None:
+            return base_mapper
+        rotate_mapper = f'Rotate:{degrees}'
+        return f'{base_mapper};{rotate_mapper}' if base_mapper else rotate_mapper
+
     def _setup_matrix(self):
         """Initialize the RGB matrix with configuration settings."""
         _init_error_str = None
@@ -277,7 +304,7 @@ class DisplayManager:
             options.pwm_bits = hardware_config.get('pwm_bits', 10)
             options.pwm_lsb_nanoseconds = hardware_config.get('pwm_lsb_nanoseconds', 150)
             options.led_rgb_sequence = hardware_config.get('led_rgb_sequence', 'RGB')
-            options.pixel_mapper_config = hardware_config.get('pixel_mapper_config', '')
+            options.pixel_mapper_config = self._build_pixel_mapper_config(hardware_config)
             options.row_address_type = hardware_config.get('row_address_type', 0)
             options.multiplexing = hardware_config.get('multiplexing', 0)
             options.panel_type = hardware_config.get('panel_type', '')
@@ -491,6 +518,91 @@ class DisplayManager:
             logger.warning(f"[BRIGHTNESS] Matrix does not support brightness property: {e}", exc_info=True)
             return -1
 
+    @staticmethod
+    def _local_ip() -> Optional[str]:
+        """This device's address on the network it routes through, or None.
+
+        Deliberately not `hostname -I` or a systemctl probe for AP mode, which
+        is how the web launcher does it: both spawn processes with multi-second
+        timeouts, and this runs on the startup path the rest of this change
+        exists to shorten. Connecting a UDP socket sends no packets -- it only
+        asks the kernel which source address it would use -- so it costs
+        microseconds and works with the network down, as long as a route
+        exists.
+        """
+        sock = None
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.settimeout(0.2)
+            sock.connect(("8.8.8.8", 80))  # nosec B104 - no traffic; selects a route
+            ip = sock.getsockname()[0]
+            return ip if ip and not ip.startswith("127.") else None
+        except OSError:
+            return None
+        finally:
+            if sock is not None:
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+
+    def _fitting_font(self, lines, width):
+        """The largest font from the usual ladder that fits every line."""
+        candidates = [self.font,
+                      ("assets/fonts/4x6-font.ttf", 6)]
+        for candidate in candidates:
+            try:
+                font = candidate
+                if isinstance(candidate, tuple):
+                    font = ImageFont.truetype(candidate[0], candidate[1])
+                if all(self.draw.textlength(t, font=font) <= width for t in lines):
+                    return font
+            except (OSError, ValueError, AttributeError):
+                continue
+        return self.font
+
+    def _draw_startup_banner(self, lines, width: int, height: int) -> None:
+        """Centre `lines` over whatever the test pattern already drew.
+
+        This screen stays on the panel for the whole initial plugin update, and
+        on a headless Pi it is the only place the device's address appears
+        without going looking for it -- so it has to be readable off a wall,
+        not merely present.
+
+        The font is chosen to fit rather than fixed at 8px: "Initializing" is
+        96px in PressStart2P, which ran off the side of a 64px panel even
+        before an address was added. And the pattern is punched out behind the
+        text, because the diagonal runs through the middle of the panel, which
+        is exactly where this sits.
+
+        The text stays blue. It is not decoration: the pattern draws one pure
+        channel per element -- red border, green diagonal, blue text -- so that
+        a glance at the panel says whether led_rgb_sequence is right. Swap the
+        wiring to BGR and the border comes up blue and this text red. Drawing
+        it white would light all three channels and destroy the only blue
+        reference on the screen, which is why it is worth a comment rather
+        than a quiet preference.
+        """
+        if not lines:
+            return
+        font = self._fitting_font(lines, width - 2)
+        line_height = self.draw.textbbox((0, 0), "Ag", font=font)[3] + 1
+        block_height = line_height * len(lines)
+        block_top = max(1, (height - block_height) // 2)
+        block_width = max(self.draw.textlength(t, font=font) for t in lines)
+        block_left = max(0, (width - block_width) // 2)
+
+        self.draw.rectangle(
+            [block_left - 2, block_top - 1,
+             block_left + block_width + 1, block_top + block_height],
+            fill=(0, 0, 0))
+
+        for row, line in enumerate(lines):
+            line_width = self.draw.textlength(line, font=font)
+            self.draw.text(
+                (max(0, (width - line_width) // 2), block_top + row * line_height),
+                line, font=font, fill=(0, 0, 255))
+
     def _draw_test_pattern(self):
         """Draw a test pattern to verify the display is working."""
         try:
@@ -510,8 +622,11 @@ class DisplayManager:
             # Draw a diagonal line
             self.draw.line([0, 0, self.matrix.width-1, self.matrix.height-1], fill=(0, 255, 0))
             
-            # Draw some text - changed from "TEST" to "Initializing" with smaller font
-            self.draw.text((10, 10), "Initializing", font=self.font, fill=(0, 0, 255))
+            lines = ["Initializing"]
+            ip = self._local_ip()
+            if ip:
+                lines.append(ip)
+            self._draw_startup_banner(lines, self.matrix.width, self.matrix.height)
             
             # Update the display once after everything is drawn
             self.update_display()
@@ -519,6 +634,15 @@ class DisplayManager:
             
         except Exception as e:
             logger.error(f"Error drawing test pattern: {e}", exc_info=True)
+
+    @property
+    def _capture_mode_active(self) -> bool:
+        """True while the calling thread is capturing content off-screen."""
+        return getattr(self._capture_state, 'active', False)
+
+    @_capture_mode_active.setter
+    def _capture_mode_active(self, value: bool) -> None:
+        self._capture_state.active = bool(value)
 
     @contextmanager
     def capture_mode(self):
@@ -535,6 +659,59 @@ class DisplayManager:
             yield
         finally:
             self._capture_mode_active = False
+
+    @contextmanager
+    def render_size(self, width: int, height: Optional[int] = None):
+        """Temporarily present a smaller logical canvas to plugins.
+
+        Plugins lay out against ``display_manager.matrix.width`` (and the
+        ``width``/``height`` properties, which defer to it), so the only way to
+        get a *narrower layout* rather than a cropped one is to tell the plugin
+        the screen is narrower while it renders. Trimming after the fact cannot
+        fix a forecast spread across five columns or a progress bar drawn at
+        100% width — those need the plugin to make different layout decisions.
+
+        Vegas mode uses this so a plugin can occupy a fraction of a wide panel
+        and still look deliberately composed. Reuses the same _LogicalMatrix
+        indirection that double-sided mode relies on, so plugins see a
+        consistent size from every accessor.
+
+        Only meaningful inside :meth:`capture_mode` — this swaps the shared
+        image buffer, so the render loop must not be writing to it concurrently.
+
+        Args:
+            width: Logical width to report, clamped to at least 1 and to the
+                real panel width (a larger canvas would overflow the hardware).
+            height: Logical height, defaulting to the current height.
+        """
+        real_matrix = self.matrix
+        prev_image = getattr(self, 'image', None)
+        prev_draw = getattr(self, 'draw', None)
+
+        current_w = self.width
+        current_h = self.height
+        target_w = max(1, min(int(width), current_w))
+        target_h = max(1, min(int(height) if height else current_h, current_h))
+
+        if target_w == current_w and target_h == current_h:
+            # Nothing to do; avoid pointless wrapping and buffer churn.
+            yield
+            return
+
+        try:
+            if real_matrix is not None:
+                self.matrix = _LogicalMatrix(real_matrix, target_w, target_h)
+            # With no hardware, the width/height properties fall through to
+            # self.image, so swapping the buffer below is enough on its own.
+            self.image = Image.new('RGB', (target_w, target_h))
+            self.draw = ImageDraw.Draw(self.image)
+            yield
+        finally:
+            self.matrix = real_matrix
+            if prev_image is not None:
+                self.image = prev_image
+            if prev_draw is not None:
+                self.draw = prev_draw
 
     def _composite_double_sided(self):
         """Tile the logical screen across the full physical chain.

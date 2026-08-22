@@ -110,20 +110,30 @@ class ScrollHelper:
         self.is_scrolling = False
         self.scroll_complete = False
         
-    def create_scrolling_image(self, content_items: list, 
+    def create_scrolling_image(self, content_items: list,
                              item_gap: int = 32,
-                             element_gap: int = 16) -> Image.Image:
+                             element_gap: int = 16,
+                             lead_gap: Optional[int] = None) -> Image.Image:
         """
         Create a wide image containing all content items for scrolling.
-        
+
         Args:
             content_items: List of PIL Images to include in scroll
             item_gap: Gap between different items
             element_gap: Gap between elements within an item
-            
+            lead_gap: Blank columns before the first item. Defaults to a full
+                display width, which makes a standalone ticker scroll in from
+                off-screen. Callers that loop many plugins back-to-back (Vegas
+                mode) pass a smaller value, since a full display width of black
+                reads as the panel being switched off at the start of every
+                cycle.
+
         Returns:
             PIL Image containing all content arranged horizontally
         """
+        if lead_gap is None:
+            lead_gap = self.display_width
+        lead_gap = max(0, int(lead_gap))
         if not content_items:
             # Create empty image if no content
             # Still set total_scroll_width to 0 to indicate no scrollable content
@@ -144,13 +154,13 @@ class ScrollHelper:
         total_width += element_gap * len(content_items)
         
         # Add initial gap before first item
-        total_width += self.display_width
-        
+        total_width += lead_gap
+
         # Create the full scrolling image
         full_image = Image.new('RGB', (total_width, self.display_height), (0, 0, 0))
-        
+
         # Position items
-        current_x = self.display_width  # Start with initial gap
+        current_x = lead_gap  # Start with initial gap
         
         for i, img in enumerate(content_items):
             # Paste the item image
@@ -318,7 +328,7 @@ class ScrollHelper:
             elapsed_time = current_time - (self.scroll_start_time or current_time)
             # The image already includes display_width padding, so we only need total_scroll_width
             required_total_distance = self.total_scroll_width
-            self.logger.info(
+            self.logger.debug(
                 "Scroll progress: elapsed=%.2fs, target=%.2fs, total_scrolled=%.0f/%d px (%.1f%%)",
                 elapsed_time,
                 self.calculated_duration,
@@ -338,13 +348,72 @@ class ScrollHelper:
         """
         if not self.cached_image or self.cached_array is None:
             return None
-        
-        # Use integer pixel positioning for high FPS scrolling (like stock ticker)
+
         start_x_int = int(self.scroll_position)
         end_x_int = start_x_int + self.display_width
-        
-        # Fast integer pixel path (no interpolation - high frame rate provides smoothness)
+
+        # Integer positioning quantises motion to whole pixels, so the number of
+        # distinct frames per second equals the scroll speed in px/s, no matter
+        # how fast the loop renders. At 50px/s and 78fps that made 36% of frames
+        # identical: the extra frames cost work and bought nothing. Blending
+        # between the two neighbouring positions gives motion at the frame rate
+        # instead of the step rate.
+        if self.sub_pixel_scrolling:
+            fractional = self.scroll_position - start_x_int
+            if fractional > 0.0:
+                return self._blend_visible_portion(start_x_int, fractional)
+
         return self._get_visible_portion_integer(start_x_int, end_x_int)
+
+    def _blend_visible_portion(self, start_x: int, fractional: float) -> Image.Image:
+        """
+        Linear blend between the frames at ``start_x`` and ``start_x + 1``.
+
+        Implemented with numpy rather than scipy.ndimage.shift: scipy is not
+        installed on the target devices (HAS_SCIPY is False there), which is why
+        the pre-existing sub-pixel path was dead code — get_visible_portion never
+        consulted the flag, and the scipy fallback would not have interpolated
+        anyway.
+
+        Args:
+            start_x: Left column of the earlier of the two frames
+            fractional: How far between the two, in [0, 1)
+
+        Returns:
+            The blended frame
+        """
+        width = self.display_width
+        strip_width = self.cached_array.shape[1]
+
+        if start_x + width + 1 <= strip_width:
+            # Slice the backing array directly. Going via
+            # _get_visible_portion_integer would build two PIL images only for
+            # them to be converted straight back to arrays, which measured 15x
+            # the cost of the integer path.
+            near = self.cached_array[:, start_x:start_x + width]
+            far = self.cached_array[:, start_x + 1:start_x + 1 + width]
+        else:
+            # Close enough to the end that one of the slices wraps; let the
+            # integer path handle that and pay the conversion. Continuous mode
+            # extends the strip before reaching here, so this is the rare case.
+            near = np.asarray(
+                self._get_visible_portion_integer(start_x, start_x + width))
+            far = np.asarray(
+                self._get_visible_portion_integer(start_x + 1, start_x + 1 + width))
+
+        # Fixed-point rather than float32: integer multiply-add on uint16 is
+        # markedly faster than float maths on the Pi's ARM cores, and 8 bits of
+        # weight is finer than the panel can show.
+        weight = int(fractional * 256.0)
+        blended = (
+            (near.astype(np.uint16) * (256 - weight)
+             + far.astype(np.uint16) * weight) >> 8
+        ).astype(np.uint8)
+
+        return Image.frombytes(
+            'RGB', (width, self.display_height),
+            np.ascontiguousarray(blended).tobytes()
+        )
     
     def _get_visible_portion_integer(self, start_x: int, end_x: int) -> Image.Image:
         """Fast integer pixel extraction (no interpolation).
@@ -638,6 +707,128 @@ class ScrollHelper:
         """
         return self.scroll_complete
     
+    def append_content(self, content_items: list,
+                       item_gap: int = 32,
+                       element_gap: int = 0) -> bool:
+        """
+        Append items to the right of the existing strip, preserving scroll state.
+
+        Lets a caller keep one continuous strip instead of replacing it. Vegas
+        mode uses this so the next group of plugins scrolls in from the right
+        rather than the strip being swapped out underneath the viewer — a swap
+        shows as a flash and a hard cut to already-full-screen content.
+
+        ``scroll_position`` and ``total_distance_scrolled`` are untouched, so
+        motion continues uninterrupted; only the strip gets longer. Because
+        completion is measured against ``total_scroll_width``, extending the
+        strip also defers completion, which is the intent.
+
+        Args:
+            content_items: Images to append, in order
+            item_gap: Gap between appended items, and between the existing
+                content and the first appended item
+            element_gap: Extra gap after each item, mirroring
+                create_scrolling_image
+
+        Returns:
+            True if content was appended
+        """
+        if not content_items:
+            return False
+
+        if self.cached_image is None or self.cached_array is None:
+            # Nothing to extend yet — this is just the first build.
+            self.create_scrolling_image(
+                content_items, item_gap=item_gap, element_gap=element_gap, lead_gap=0)
+            return True
+
+        gap = max(0, item_gap)
+        addition_width = (
+            sum(img.width for img in content_items)
+            + gap * len(content_items)          # one leading gap per item
+            + element_gap * len(content_items)
+        )
+
+        addition = Image.new('RGB', (addition_width, self.display_height), (0, 0, 0))
+        x = 0
+        for img in content_items:
+            x += gap                            # separate from whatever precedes
+            addition.paste(img, (x, 0))
+            x += img.width + element_gap
+
+        # numpy concatenate then one conversion back, rather than allocating a
+        # full-width PIL image and pasting twice: the strip can be tens of
+        # thousands of columns wide and this runs on the render path.
+        self.cached_array = np.concatenate(
+            (self.cached_array, np.array(addition)), axis=1)
+        self.cached_image = Image.fromarray(self.cached_array)
+        self.total_scroll_width = self.cached_image.width
+        self.scroll_complete = False
+
+        self.logger.info(
+            "Appended %d item(s) (%dpx) to scroll strip: now %dpx, position %.0f",
+            len(content_items), addition_width, self.total_scroll_width,
+            self.scroll_position
+        )
+        return True
+
+    def drop_scrolled_prefix(self, keep_before: int = 0) -> int:
+        """
+        Discard columns that have already scrolled past, to bound memory.
+
+        A continuously extended strip would otherwise grow without limit. All
+        the positional state is shifted by the amount removed so the visible
+        frame and the completion arithmetic are unchanged:
+        ``total_distance_scrolled`` and ``total_scroll_width`` both shrink by the
+        same amount, preserving their difference.
+
+        Args:
+            keep_before: Columns to retain behind the current position, as a
+                safety margin against a caller reading slightly behind it
+
+        Returns:
+            Number of columns actually removed
+        """
+        if self.cached_image is None or self.cached_array is None:
+            return 0
+
+        # While the viewport wraps, get_visible_portion fills its right-hand side
+        # from the *head* of the strip, so trimming the head would change what
+        # is on screen. Continuous mode extends before ever reaching that state;
+        # refusing here keeps "trimming is invisible" true unconditionally.
+        if self.scroll_position + self.display_width > self.cached_image.width:
+            return 0
+
+        cut = int(self.scroll_position) - max(0, keep_before)
+        if cut <= 0:
+            return 0
+        # Never trim so far that the remaining strip is narrower than the
+        # viewport, or get_visible_portion has nothing to slice.
+        cut = min(cut, max(0, self.cached_image.width - self.display_width))
+        if cut <= 0:
+            return 0
+
+        # .copy() so the original buffer is released rather than kept alive by
+        # a numpy view.
+        self.cached_array = self.cached_array[:, cut:].copy()
+        self.cached_image = Image.fromarray(self.cached_array)
+        self.total_scroll_width = self.cached_image.width
+        self.scroll_position -= cut
+        self.total_distance_scrolled = max(0.0, self.total_distance_scrolled - cut)
+
+        self.logger.debug(
+            "Dropped %dpx of scrolled strip: now %dpx, position %.0f",
+            cut, self.total_scroll_width, self.scroll_position
+        )
+        return cut
+
+    def remaining_unscrolled(self) -> int:
+        """Columns of strip still to the right of the viewport."""
+        if self.cached_image is None:
+            return 0
+        return max(0, self.total_scroll_width - int(self.scroll_position)
+                   - self.display_width)
+
     def reset_scroll(self) -> None:
         """
         Reset scroll position to beginning.
