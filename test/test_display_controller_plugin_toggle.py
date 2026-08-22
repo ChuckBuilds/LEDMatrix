@@ -385,3 +385,51 @@ class TestReconcileQueuedThroughSubscriber:
         self._subscriber(controller)(old, new)
 
         assert controller._pending_plugin_reconcile is False
+
+
+class TestPendingReconcileNotLost:
+    """A config change arriving *during* reconcile must not be discarded.
+
+    The flag used to be cleared after a successful reconcile. Reconcile has
+    already read its config by then, so that clear erased a request it never
+    served and the newest config never reconciled -- the same "my save did
+    nothing" symptom this path exists to prevent.
+    """
+
+    def test_request_arriving_during_reconcile_survives(self, test_display_controller):
+        controller = test_display_controller
+        controller._pending_plugin_reconcile = True
+
+        def reconcile_and_race():
+            # The watcher thread queues another change while we are mid-flight.
+            with controller._reconcile_flag_lock:
+                controller._pending_plugin_reconcile = True
+            return True
+
+        controller._reconcile_enabled_plugins = reconcile_and_race
+        controller._service_pending_reconcile()
+
+        assert controller._pending_plugin_reconcile is True, \
+            "a config change landing during reconcile was discarded"
+
+    def test_flag_cleared_on_a_quiet_success(self, test_display_controller):
+        controller = test_display_controller
+        controller._pending_plugin_reconcile = True
+        controller._reconcile_enabled_plugins = lambda: True
+        controller._service_pending_reconcile()
+        assert controller._pending_plugin_reconcile is False
+
+    def test_retryable_failure_rearms(self, test_display_controller):
+        controller = test_display_controller
+        controller._pending_plugin_reconcile = True
+        controller._reconcile_enabled_plugins = lambda: False
+        controller._service_pending_reconcile()
+        assert controller._pending_plugin_reconcile is True
+
+    def test_no_reconcile_when_nothing_pending(self, test_display_controller):
+        controller = test_display_controller
+        controller._pending_plugin_reconcile = False
+        calls = []
+        controller._reconcile_enabled_plugins = lambda: calls.append(1) or True
+        controller._service_pending_reconcile()
+        assert calls == []

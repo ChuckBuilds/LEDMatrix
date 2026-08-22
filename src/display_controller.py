@@ -187,6 +187,10 @@ class DisplayController:
         # run during reconcile (rare), so this lock never touches the per-frame
         # path -- the hot-path reads are same-thread as the writes.
         self._plugin_modes_lock = threading.Lock()
+        # Guards the consume-and-clear of _pending_plugin_reconcile. Only taken
+        # when a reconcile is actually pending or a config change arrives, both
+        # rare -- the per-frame path just reads the bool.
+        self._reconcile_flag_lock = threading.Lock()
         # Per-plugin config-change callbacks, kept so we can unsubscribe a
         # plugin when it is disabled live.
         self._plugin_config_callbacks: Dict[str, Callable] = {}
@@ -471,7 +475,8 @@ class DisplayController:
             # loop to apply (loading/unloading off the watcher thread is unsafe).
             if (self._enabled_set_changed(old_config, new_config)
                     or self._enabled_plugin_not_running(new_config)):
-                self._pending_plugin_reconcile = True
+                with self._reconcile_flag_lock:
+                    self._pending_plugin_reconcile = True
 
         self.config_service.subscribe(_controller_config_change)
 
@@ -1756,11 +1761,12 @@ class DisplayController:
                 # rebuilding available_modes happens here on the render thread so
                 # it can't race with rendering. Deferred while on-demand is active
                 # (the flag stays set) so we don't fight its temporary-enable.
+                # The lock-free read is a fast path only; it can be a false
+                # negative (the watcher setting the flag just after it is read
+                # is seen next iteration), never a false positive that loses a
+                # request.
                 if self._pending_plugin_reconcile and not self.on_demand_active:
-                    # Only clear the flag on success -- a retryable failure
-                    # (e.g. discovery) leaves it set so the request isn't lost.
-                    if self._reconcile_enabled_plugins():
-                        self._pending_plugin_reconcile = False
+                    self._service_pending_reconcile()
 
                 if not self.available_modes:
                     # Nothing to render yet. Re-check _pending_plugin_reconcile
@@ -2900,6 +2906,26 @@ class DisplayController:
                 if isinstance(value, dict)
             }
         return enabled_map(old_config) != enabled_map(new_config)
+
+    def _service_pending_reconcile(self) -> None:
+        """Consume a pending reconcile request and run it.
+
+        The request is consumed BEFORE reconciling, not cleared after. Clearing
+        after would drop any config change that lands while reconcile is
+        running: reconcile has already read its config by then, so the clear
+        erases a request it never served and the newest config never
+        reconciles -- the same "your save did nothing" failure this whole path
+        exists to prevent. Consuming first means such a request stays set and
+        is picked up on the next pass.
+
+        A retryable failure (e.g. discovery) re-arms the flag.
+        """
+        with self._reconcile_flag_lock:
+            pending = self._pending_plugin_reconcile
+            self._pending_plugin_reconcile = False
+        if pending and not self._reconcile_enabled_plugins():
+            with self._reconcile_flag_lock:
+                self._pending_plugin_reconcile = True
 
     def _enabled_plugin_not_running(self, new_config: Dict[str, Any]) -> bool:
         """True when a discovered plugin is enabled in config but not running.
