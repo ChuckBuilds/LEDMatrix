@@ -274,6 +274,7 @@ class TestEnabledPluginNotRunning:
     def test_queues_reconcile_when_enabled_plugin_is_absent(self, test_display_controller):
         controller = test_display_controller
         controller.plugin_manager.plugin_manifests = {"hockey-scoreboard": {}}
+        controller.plugin_manager.discovered_plugin_ids.return_value = {"hockey-scoreboard"}
         controller.plugin_display_modes = {}  # failed to load
         cfg = {"hockey-scoreboard": {"enabled": True, "nhl": {"enabled": True}}}
         assert controller._enabled_plugin_not_running(cfg) is True
@@ -281,6 +282,7 @@ class TestEnabledPluginNotRunning:
     def test_quiet_when_every_enabled_plugin_is_running(self, test_display_controller):
         controller = test_display_controller
         controller.plugin_manager.plugin_manifests = {"hockey-scoreboard": {}}
+        controller.plugin_manager.discovered_plugin_ids.return_value = {"hockey-scoreboard"}
         controller.plugin_display_modes = {"hockey-scoreboard": ["nhl"]}
         cfg = {"hockey-scoreboard": {"enabled": True}}
         assert controller._enabled_plugin_not_running(cfg) is False
@@ -288,6 +290,7 @@ class TestEnabledPluginNotRunning:
     def test_disabled_plugin_does_not_queue(self, test_display_controller):
         controller = test_display_controller
         controller.plugin_manager.plugin_manifests = {"hockey-scoreboard": {}}
+        controller.plugin_manager.discovered_plugin_ids.return_value = {"hockey-scoreboard"}
         controller.plugin_display_modes = {}
         cfg = {"hockey-scoreboard": {"enabled": False}}
         assert controller._enabled_plugin_not_running(cfg) is False
@@ -298,6 +301,7 @@ class TestEnabledPluginNotRunning:
         a reconcile, and therefore a filesystem scan, on every config save."""
         controller = test_display_controller
         controller.plugin_manager.plugin_manifests = {"hockey-scoreboard": {}}
+        controller.plugin_manager.discovered_plugin_ids.return_value = {"hockey-scoreboard"}
         controller.plugin_display_modes = {"hockey-scoreboard": ["nhl"]}
         cfg = {
             "hockey-scoreboard": {"enabled": True},
@@ -309,6 +313,7 @@ class TestEnabledPluginNotRunning:
     def test_non_dict_section_is_ignored(self, test_display_controller):
         controller = test_display_controller
         controller.plugin_manager.plugin_manifests = {"hockey-scoreboard": {}}
+        controller.plugin_manager.discovered_plugin_ids.return_value = {"hockey-scoreboard"}
         controller.plugin_display_modes = {}
         assert controller._enabled_plugin_not_running({"hockey-scoreboard": "nonsense"}) is False
 
@@ -347,6 +352,7 @@ class TestReconcileQueuedThroughSubscriber:
     def test_nested_edit_queues_reconcile_for_absent_plugin(self, test_display_controller):
         controller = test_display_controller
         controller.plugin_manager.plugin_manifests = {"hockey-scoreboard": {}}
+        controller.plugin_manager.discovered_plugin_ids.return_value = {"hockey-scoreboard"}
         controller.plugin_display_modes = {}          # validate_config() said False
         controller._pending_plugin_reconcile = False
 
@@ -367,6 +373,7 @@ class TestReconcileQueuedThroughSubscriber:
         render thread."""
         controller = test_display_controller
         controller.plugin_manager.plugin_manifests = {"hockey-scoreboard": {}}
+        controller.plugin_manager.discovered_plugin_ids.return_value = {"hockey-scoreboard"}
         controller.plugin_display_modes = {"hockey-scoreboard": ["nhl"]}
         controller._pending_plugin_reconcile = False
 

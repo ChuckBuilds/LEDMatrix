@@ -181,6 +181,12 @@ class DisplayController:
         self.plugin_modes = {}  # mode -> plugin_instance mapping for plugin-first dispatch
         self.mode_to_plugin_id: Dict[str, str] = {}
         self.plugin_display_modes: Dict[str, List[str]] = {}
+        # plugin_display_modes is mutated only by _register_loaded_plugin /
+        # _unregister_plugin on the render thread, but the config-watcher
+        # thread reads it in _enabled_plugin_not_running. Both mutation sites
+        # run during reconcile (rare), so this lock never touches the per-frame
+        # path -- the hot-path reads are same-thread as the writes.
+        self._plugin_modes_lock = threading.Lock()
         # Per-plugin config-change callbacks, kept so we can unsubscribe a
         # plugin when it is disabled live.
         self._plugin_config_callbacks: Dict[str, Callable] = {}
@@ -2814,7 +2820,8 @@ class DisplayController:
             logger.debug("Using manifest display_modes for %s: %s", plugin_id, display_modes)
         if not (isinstance(display_modes, list) and display_modes):
             display_modes = [plugin_id]
-        self.plugin_display_modes[plugin_id] = list(display_modes)
+        with self._plugin_modes_lock:
+            self.plugin_display_modes[plugin_id] = list(display_modes)
 
         # Subscribe to config changes for per-plugin hot-reload. Bind plugin_id
         # and instance as defaults so each plugin's callback targets its own
@@ -2848,7 +2855,8 @@ class DisplayController:
     def _unregister_plugin(self, plugin_id: str) -> None:
         """Remove a plugin's modes, config subscription and instance, then
         unload it. Used by live disable hot-reload."""
-        modes = self.plugin_display_modes.pop(plugin_id, [])
+        with self._plugin_modes_lock:
+            modes = self.plugin_display_modes.pop(plugin_id, [])
         for mode in modes:
             if mode in self.available_modes:
                 self.available_modes.remove(mode)
@@ -2912,16 +2920,22 @@ class DisplayController:
         this is False and costs nothing. That matters because reconcile runs
         ``discover_plugins()`` on the render thread, where a needless
         filesystem scan per config save would show up as a frame hitch.
+
+        Runs on the config-watcher thread, so both mappings it reads are
+        snapshotted under the lock that guards their writes.
         """
         if self.plugin_manager is None:
             return False
+        # Two snapshots, each taken under its own lock and never nested, so a
+        # half-written mapping is never observed and this can't deadlock
+        # against discovery (which holds the discovery lock while rebuilding).
         try:
-            known = set(self.plugin_manager.plugin_manifests)
+            known = self.plugin_manager.discovered_plugin_ids()
+        except AttributeError:
+            # Older manager without the accessor: fall back to a plain read.
+            known = set(getattr(self.plugin_manager, 'plugin_manifests', ()) or ())
+        with self._plugin_modes_lock:
             running = set(self.plugin_display_modes)
-        except (RuntimeError, AttributeError):
-            # Mid-mutation on the render thread, or a manager without the
-            # attribute. Let reconcile decide -- it no-ops when nothing differs.
-            return True
         for key, value in new_config.items():
             if (key in known and isinstance(value, dict)
                     and value.get('enabled', False) and key not in running):
