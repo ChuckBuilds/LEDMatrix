@@ -22,6 +22,13 @@ window.ComposerCanvas = (() => {
   let _ctx = null;
   let _showGrid = true;
 
+  //: Element types the canvas draws resize handles for. Exported because the
+  //: editor has to gate its resize and hover behaviour on exactly this list --
+  //: the two had drifted, so handles appeared on five shapes that could not
+  //: actually be resized.
+  const RESIZABLE_TYPES = ['rectangle', 'rounded_rectangle', 'ellipse', 'arc',
+                           'gauge', 'sparkline'];
+
   const DISPLAY_PRESETS = [
     { label: '64×32',   w: 64,  h: 32 },
     { label: '128×32',  w: 128, h: 32 },
@@ -225,8 +232,17 @@ window.ComposerCanvas = (() => {
         const pc = el.count ?? 5, ps = el.pipSize ?? 4, pg = el.pipSpacing ?? 2;
         return { x: ax, y: ay, w: pc * ps + (pc - 1) * pg, h: ps };
       }
-      case 'section':
-        return { x: ax, y: ay, w: 0, h: 0 };
+      case 'section': {
+        // Was 0x0, so the element was unselectable except through the 3px
+        // hit-test padding and drew nothing at all -- a user adding one from
+        // the palette saw an empty canvas.
+        // Same font resolution as the draw case below, or the box will not
+        // match the glyphs: getBoundingBox's shared `finfo` falls back to
+        // press_start, and a section has no font of its own.
+        const sinfo = FONT_MAP[el.font] || FONT_MAP.four_by_six;
+        const label = el.label || 'Section';
+        return { x: ax, y: ay, w: label.length * sinfo.charW, h: sinfo.sizePx };
+      }
       default:
         return { x: ax, y: ay, w: 4, h: 4 };
     }
@@ -252,7 +268,7 @@ window.ComposerCanvas = (() => {
 
   // Returns the handle direction under LED-space point (lx, ly), or null
   function getResizeHandle(el, lx, ly, matrixW, matrixH) {
-    if (!['rectangle', 'rounded_rectangle', 'ellipse', 'arc', 'gauge', 'sparkline'].includes(el.type)) return null;
+    if (!RESIZABLE_TYPES.includes(el.type)) return null;
     const handles = _getRectHandles(el, matrixW, matrixH);
     const PAD = 4;
     for (const [dir, pt] of Object.entries(handles)) {
@@ -307,6 +323,18 @@ window.ComposerCanvas = (() => {
 
     try {
       switch (el.type) {
+        case 'section': {
+          // A design-time label: it marks a region for the author and is not
+          // emitted into the generated plugin. There was no case here at all,
+          // so adding "Section Label" from the palette drew nothing and left
+          // the user with an apparently broken control.
+          const sfinfo = FONT_MAP[el.font] || FONT_MAP.four_by_six;
+          ctx.font = `${sfinfo.sizePx * s}px ${sfinfo.family}`;
+          ctx.fillStyle = `rgba(${el.r ?? 120},${el.g ?? 120},${el.b ?? 120},0.85)`;
+          ctx.textBaseline = 'top';
+          ctx.fillText(el.label || 'Section', ax * s, ay * s);
+          break;
+        }
         case 'text':
         case 'dynamic_text':
         case 'clock': {
@@ -496,6 +524,12 @@ window.ComposerCanvas = (() => {
           const cx = (ax + gw / 2) * s, cy = (ay + gh / 2) * s;
           const rx = (gw / 2) * s, ry = (gh / 2) * s;
           const lw = Math.max(1, (el.lineWidth ?? 3));
+          // rx/ry are canvas pixels ((gw/2)*s) but lw is LED pixels, so
+          // insetting by lw/2 under-corrected by the scale factor while the
+          // stroke was drawn at lw*s -- the arc spilled outside the element's
+          // reported bounding box at any SCALE > 1, and the preview stopped
+          // matching the generated PIL output.
+          const lwPx = lw * s;
           const startDeg = el.startAngle ?? 135;
           const endDeg   = el.endAngle   ?? 45;
           // Arc sweep: from startDeg clockwise to endDeg (PIL convention)
@@ -510,17 +544,17 @@ window.ComposerCanvas = (() => {
           // Track arc
           if (el.hasTrack !== false) {
             ctx.beginPath();
-            ctx.ellipse(cx, cy, rx - lw / 2, ry - lw / 2, 0, toRad(startDeg), toRad(startDeg + totalSweep), false);
+            ctx.ellipse(cx, cy, rx - lwPx / 2, ry - lwPx / 2, 0, toRad(startDeg), toRad(startDeg + totalSweep), false);
             ctx.strokeStyle = `rgb(${el.trackR ?? 40},${el.trackG ?? 40},${el.trackB ?? 40})`;
-            ctx.lineWidth = lw * s;
+            ctx.lineWidth = lwPx;
             ctx.stroke();
           }
           // Fill arc
           if (pct > 0) {
             ctx.beginPath();
-            ctx.ellipse(cx, cy, rx - lw / 2, ry - lw / 2, 0, toRad(startDeg), toRad(startDeg + fillSweep), false);
+            ctx.ellipse(cx, cy, rx - lwPx / 2, ry - lwPx / 2, 0, toRad(startDeg), toRad(startDeg + fillSweep), false);
             ctx.strokeStyle = `rgb(${el.r},${el.g},${el.b})`;
-            ctx.lineWidth = lw * s;
+            ctx.lineWidth = lwPx;
             ctx.stroke();
           }
           // Centre label
@@ -624,7 +658,7 @@ window.ComposerCanvas = (() => {
     }
 
     // Resize handles: on rect, rounded rect, ellipse
-    if (['rectangle', 'rounded_rectangle', 'ellipse', 'arc', 'gauge', 'sparkline'].includes(el.type)) {
+    if (RESIZABLE_TYPES.includes(el.type)) {
       const handles = _getRectHandles(el, matrixW, matrixH);
       const HS = 5;
       ctx.fillStyle = 'white';
@@ -752,6 +786,6 @@ window.ComposerCanvas = (() => {
     init, render, setGrid, updateCanvasSize,
     hitTest, getBoundingBox, computeActualPos, resolveAnchor,
     getResizeHandle, getCursorForHandle,
-    ELEMENT_DEFAULTS, FONT_MAP, DISPLAY_PRESETS,
+    ELEMENT_DEFAULTS, FONT_MAP, DISPLAY_PRESETS, RESIZABLE_TYPES,
   };
 })();

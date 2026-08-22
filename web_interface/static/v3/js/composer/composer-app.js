@@ -446,8 +446,13 @@ function composerApp() {
         id: el.id ?? (this._nextId++),
       }));
       if (state.dataModel)  this.dataModel  = state.dataModel;
-      if (state.currentPreset && state.currentPreset !== this.currentPreset) {
-        this.changePreset(state.currentPreset, { silent: true });
+      // _buildPayload writes this as `preset`; older drafts and hand-edited
+      // files may carry `currentPreset`. Reading only the latter meant every
+      // saved design restored onto the default 128x32 canvas, with every
+      // element then drawn at the wrong place.
+      const savedPreset = state.preset ?? state.currentPreset;
+      if (savedPreset && savedPreset !== this.currentPreset) {
+        this.applyPresetLabel(savedPreset, { silent: true });
       }
       this._nextId = Math.max(...this.elements.map(e => e.id + 1), 1);
       this.selectedId = null;
@@ -455,6 +460,29 @@ function composerApp() {
     },
 
     // ── Display preset ────────────────────────────────────────────────
+    /**
+     * Restore any saved canvas label, preset or custom.
+     *
+     * setCustomSize() stores labels like "200×50" that are deliberately not in
+     * DISPLAY_PRESETS, so changePreset() alone cannot round-trip them: its
+     * find() misses and it returns without doing anything, silently.
+     */
+    applyPresetLabel(label, opts = {}) {
+      if (!label) return;
+      const known = window.ComposerCanvas.DISPLAY_PRESETS.some(p => p.label === label);
+      if (known) { this.changePreset(label, opts); return; }
+      const m = String(label).match(/(\d+)[×xX*,\s]+(\d+)/);
+      if (!m) return;
+      const w = Math.max(8, Math.min(512, parseInt(m[1], 10)));
+      const h = Math.max(8, Math.min(256, parseInt(m[2], 10)));
+      this.MATRIX_W = w;
+      this.MATRIX_H = h;
+      this.currentPreset = `${w}×${h}`;
+      this.SCALE = w <= 64 ? 6 : w <= 128 ? 4 : 2;
+      this._applyScale();
+      if (!opts.silent) this.render();
+    },
+
     changePreset(presetLabel, opts = {}) {
       const preset = window.ComposerCanvas.DISPLAY_PRESETS.find(p => p.label === presetLabel);
       if (!preset) return;
@@ -545,7 +573,13 @@ function composerApp() {
             const data = JSON.parse(ev.target.result);
             if (!data.composer_version) throw new Error('Not a composer file');
             if (this.isDirty && !confirm('Replace current design?')) return;
-            this._applyState({ metadata: data.metadata, elements: data.elements, dataModel: data.dataModel });
+            // Carry the canvas size through too -- an imported 256x64 design
+            // laid out on a 128x32 canvas puts every element in the wrong place.
+            this._applyState({
+              metadata: data.metadata, elements: data.elements,
+              dataModel: data.dataModel,
+              preset: data.preset ?? data.currentPreset,
+            });
             this.isDirty = false;
             this._setStatus('Design loaded', 'success');
             this.render();
@@ -619,7 +653,10 @@ function composerApp() {
       const { lx, ly } = this._canvasToLed(event);
 
       // Priority 1: resize handle on selected rectangle (skip if locked)
-      if (this.selectedElement?.type === 'rectangle' && !this.selectedElement.locked) {
+      // Gate on the same list the canvas draws handles from, or the editor
+      // advertises handles it will not honour.
+      if (window.ComposerCanvas.RESIZABLE_TYPES.includes(this.selectedElement?.type)
+          && !this.selectedElement.locked) {
         const handle = window.ComposerCanvas.getResizeHandle(
           this.selectedElement, lx, ly, this.MATRIX_W, this.MATRIX_H
         );
@@ -721,7 +758,7 @@ function composerApp() {
       const canvas = document.getElementById('led-canvas');
       if (canvas) {
         let cursor = 'crosshair';
-        if (this.selectedElement?.type === 'rectangle') {
+        if (window.ComposerCanvas.RESIZABLE_TYPES.includes(this.selectedElement?.type)) {
           const handle = window.ComposerCanvas.getResizeHandle(
             this.selectedElement, lx, ly, this.MATRIX_W, this.MATRIX_H
           );
@@ -766,6 +803,14 @@ function composerApp() {
 
     // Anchor-aware position storage: x/y stored as offset from anchor
     _getStoredPos(el) {
+      // addElement() assigns `x`/`y` before spreading ELEMENT_DEFAULTS, and the
+      // line defaults define only x0/y0 -- so a line carries both, with `x` set
+      // to canvas/4 and x0 to 0. Drag and nudge move x0/y0 only, so preferring
+      // `x` here handed the drag a base it never updates and the line jumped by
+      // the difference on the next grab.
+      if (el.type === 'line') {
+        return { x: el.x0 ?? 0, y: el.y0 ?? 0 };
+      }
       return { x: el.x ?? el.x0 ?? 0, y: el.y ?? el.y0 ?? 0 };
     },
 
@@ -817,9 +862,17 @@ function composerApp() {
     // ── Keyboard shortcuts ────────────────────────────────────────────
     _onKeyDown(e) {
       const tag = document.activeElement?.tagName;
-      const inInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+      const inInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
+        || document.activeElement?.isContentEditable === true;
 
-      // Ctrl/Cmd combos work everywhere
+      // While a field has focus the browser's own editing keys win. This
+      // guard used to sit below, so Ctrl+C copied the selected *element*
+      // instead of the selected text (preventDefault stopped the real copy),
+      // Ctrl+V pasted an element, Ctrl+A could not select the field's
+      // contents, and Tab always moved the element selection rather than
+      // focus -- leaving no way to reach the next input from the keyboard.
+      if (inInput) return;
+
       if (e.ctrlKey || e.metaKey) {
         if (e.key === 'z' && !e.shiftKey) { e.preventDefault(); this.undo(); return; }
         if ((e.key === 'y') || (e.key === 'z' && e.shiftKey)) { e.preventDefault(); this.redo(); return; }
@@ -831,7 +884,7 @@ function composerApp() {
         if (e.key === 'a') { e.preventDefault(); if (this.elements.length) { this.selectedId = this.elements[0].id; this.render(); } return; }
       }
 
-      // Tab cycles through elements regardless of input focus
+      // Tab cycles through elements (canvas focus only -- see the guard above)
       if (e.key === 'Tab' && this.elements.length) {
         e.preventDefault();
         const idx = this.elements.findIndex(el => el.id === this.selectedId);
@@ -842,8 +895,6 @@ function composerApp() {
         this.render();
         return;
       }
-
-      if (inInput) return;
 
       const dist = e.shiftKey ? 5 : (this.snapToGrid && this.snapSize >= 2 ? this.snapSize : 1);
       if (e.key === 'ArrowLeft')  { e.preventDefault(); this.nudge(-dist, 0); }
@@ -1142,7 +1193,10 @@ function composerApp() {
     async loadPlugin(pluginId) {
       this.showOpenModal = false;
       try {
-        const resp = await fetch(`/composer/api/load/${pluginId}`);
+        // encodeURIComponent: this id comes back from /composer/api/plugins,
+        // and any character outside the expected set would otherwise change
+        // which path is requested rather than being part of the id.
+        const resp = await fetch(`/composer/api/load/${encodeURIComponent(pluginId)}`);
         if (!resp.ok) {
           const err = await resp.json().catch(() => ({}));
           throw new Error(err.message || `HTTP ${resp.status}`);
@@ -1200,6 +1254,12 @@ function composerApp() {
       else if (hexField === 'empty') { el.emptyR = r; el.emptyG = g; el.emptyB = b; }
       else                         { el.r = r; el.g = g; el.b = b; }
       this._trackColor(r, g, b);
+      // Matches applyPaletteColor below. Without these, a colour set through
+      // the picker never marked the design dirty and never took a snapshot --
+      // _debouncedAutosave only runs from _snapshot -- so the change was lost
+      // on reload and could not be undone.
+      this.isDirty = true;
+      this._snapshot();
       this.render();
     },
 
