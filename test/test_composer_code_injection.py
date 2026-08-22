@@ -48,7 +48,10 @@ LITERAL_PAYLOADS = [
 
 
 def _payload(**over):
-    p = {"metadata": dict(BASE_META), "elements": [], "config_vars": []}
+    # dataModel.configVars is the key _generate_plugin_files reads; "config_vars"
+    # was never looked at, so anything passed through it tested nothing.
+    p = {"metadata": dict(BASE_META), "elements": [],
+         "dataModel": {"configVars": over.pop("config_vars", [])}}
     p["metadata"].update(over.pop("metadata", {}))
     p.update(over)
     return p
@@ -77,17 +80,50 @@ def test_a_name_that_breaks_out_of_a_literal_is_refused(payload):
         _generated(_payload(metadata={"name": payload}))
 
 
+#: Types with a drawing branch in manager.py.j2. An injection test using any
+#: other type proves nothing: _preprocess_elements drops it, so its values
+#: never reach the generated source and every assertion passes trivially.
+#: This test previously used "line", which has never had a branch.
+RENDERED_GEOMETRY_CASES = [
+    ("rectangle", {"x": 0, "y": 0, "width": 10, "height": 8}),
+    ("arc", {"x": 0, "y": 0, "width": 24, "height": 24}),
+    ("ellipse", {"x": 0, "y": 0, "width": 24, "height": 12}),
+    ("rounded_rectangle", {"x": 0, "y": 0, "width": 24, "height": 10}),
+    ("gauge", {"x": 0, "y": 0, "width": 32, "height": 32}),
+]
+
+
+@pytest.mark.parametrize("etype,base", RENDERED_GEOMETRY_CASES)
 @pytest.mark.parametrize("evil", EXPR_PAYLOADS)
-@pytest.mark.parametrize("field", ["x", "y", "x0", "y0", "x1", "y1", "lineWidth"])
-def test_a_non_numeric_geometry_value_cannot_reach_the_source(evil, field):
-    el = {"type": "line", "id": "l1", "x0": 0, "y0": 0, "x1": 10, "y1": 10,
-          "anchor_x": "right", "anchor_y": "bottom"}
+@pytest.mark.parametrize("field", ["x", "y", "width", "height"])
+def test_a_non_numeric_geometry_value_cannot_reach_the_source(etype, base, evil, field):
+    """width/height were interpolated raw into the generated source.
+
+    p['x2_expr'] = f"({x_expr}) + {w}" with w straight off the payload, so a
+    rectangle with width='0 or __import__("os").system("id")' produced
+
+        [0, 0, (0) + 0 or __import__("os").system("id"), (0) + 8],
+
+    in a manager.py that /api/install writes to disk and the loader imports.
+    """
+    el = {"type": etype, "id": "e1", **base}
     el[field] = evil
     src = _generated(_payload(elements=[el]))
-    assert "__import__" not in src, f"{field}={evil!r} reached the generated source"
+    assert "__import__" not in src, f"{etype}.{field}={evil!r} reached the generated source"
     assert "os.system" not in src
     assert not _module_level_code(src), \
-        f"{field}={evil!r} produced module-level statements: {_module_level_code(src)}"
+        f"{etype}.{field}={evil!r} produced module-level statements: {_module_level_code(src)}"
+
+
+def test_every_injection_case_uses_a_type_that_actually_renders():
+    """Guards against the whole suite quietly going vacuous again.
+
+    An element type with no template branch is dropped before generation, so
+    an injection test written against one asserts nothing and still passes.
+    """
+    used = {etype for etype, _ in RENDERED_GEOMETRY_CASES}
+    missing = used - set(C._RENDERABLE_ELEMENT_TYPES)
+    assert not missing, f"injection tests use non-rendering types: {sorted(missing)}"
 
 
 @pytest.mark.parametrize("evil", EXPR_PAYLOADS)

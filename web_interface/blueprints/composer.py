@@ -310,8 +310,8 @@ def _preprocess_elements(elements: list) -> list:
         elif t == 'rectangle':
             x_expr = _compute_pos_expr(el.get('x', 0), x_anchor, 'width')
             y_expr = _compute_pos_expr(el.get('y', 0), y_anchor, 'height')
-            w = el.get('width', 10)
-            h = el.get('height', 8)
+            w = _safe_int(el.get('width'), 10, 0, 4096)
+            h = _safe_int(el.get('height'), 8, 0, 4096)
             p['x_expr'] = x_expr
             p['y_expr'] = y_expr
             # x2/y2 as runtime expressions to support anchored positions
@@ -372,8 +372,8 @@ def _preprocess_elements(elements: list) -> list:
         elif t == 'arc':
             x_expr = _compute_pos_expr(el.get('x', 0), x_anchor, 'width')
             y_expr = _compute_pos_expr(el.get('y', 0), y_anchor, 'height')
-            w = el.get('width', 24)
-            h = el.get('height', 24)
+            w = _safe_int(el.get('width'), 24, 0, 4096)
+            h = _safe_int(el.get('height'), 24, 0, 4096)
             p['x_expr'] = x_expr
             p['y_expr'] = y_expr
             p['x2_expr'] = f"({x_expr}) + {w}"
@@ -387,8 +387,8 @@ def _preprocess_elements(elements: list) -> list:
         elif t == 'ellipse':
             x_expr = _compute_pos_expr(el.get('x', 0), x_anchor, 'width')
             y_expr = _compute_pos_expr(el.get('y', 0), y_anchor, 'height')
-            w = el.get('width', 24)
-            h = el.get('height', 12)
+            w = _safe_int(el.get('width'), 24, 0, 4096)
+            h = _safe_int(el.get('height'), 12, 0, 4096)
             p['x_expr'] = x_expr
             p['y_expr'] = y_expr
             p['x2_expr'] = f"({x_expr}) + {w}"
@@ -414,8 +414,8 @@ def _preprocess_elements(elements: list) -> list:
         elif t == 'rounded_rectangle':
             x_expr = _compute_pos_expr(el.get('x', 0), x_anchor, 'width')
             y_expr = _compute_pos_expr(el.get('y', 0), y_anchor, 'height')
-            w = el.get('width', 24)
-            h = el.get('height', 10)
+            w = _safe_int(el.get('width'), 24, 0, 4096)
+            h = _safe_int(el.get('height'), 10, 0, 4096)
             p['x_expr'] = x_expr
             p['y_expr'] = y_expr
             p['x2_expr'] = f"({x_expr}) + {w}"
@@ -477,8 +477,8 @@ def _preprocess_elements(elements: list) -> list:
         elif t == 'gauge':
             x_expr = _compute_pos_expr(el.get('x', 0), x_anchor, 'width')
             y_expr = _compute_pos_expr(el.get('y', 0), y_anchor, 'height')
-            w = el.get('width', 32)
-            h = el.get('height', 32)
+            w = _safe_int(el.get('width'), 32, 0, 4096)
+            h = _safe_int(el.get('height'), 32, 0, 4096)
             p['x_expr'] = x_expr
             p['y_expr'] = y_expr
             p['x2_expr'] = f"({x_expr}) + {w}"
