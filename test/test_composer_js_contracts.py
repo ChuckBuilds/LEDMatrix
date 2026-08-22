@@ -145,3 +145,43 @@ def test_restore_path_stays_snapshot_free(method):
     snap = body.index("_snapshot()")
     guard = body.index("!opts.silent")
     assert guard < snap, f"{method} snapshots outside the !opts.silent guard"
+
+
+TEMPLATE_HTML = (Path(__file__).resolve().parent.parent
+                 / "web_interface/templates/v3/composer.html")
+
+#: The six toolbar buttons and the wrapper each must call.
+ALIGN_BUTTONS = ["alignLeft", "alignHCenter", "alignRight",
+                 "alignTop", "alignVCenter", "alignBottom"]
+
+
+def test_alignment_buttons_use_the_anchor_clearing_path():
+    """Two alignment implementations existed and the toolbar used the wrong one.
+
+    The legacy alignElement(dir) set el.x/el.y but left xAnchor/yAnchor in
+    place. resolveAnchor turns anchor='right' into `dim - val`, so "align left"
+    (el.x = 0) resolved to x = MATRIX_W -- the element jumped to the far right
+    edge instead. _alignElement clears the anchor first, so the stored value is
+    absolute, and it also updates el.x0/el.y0 so lines actually move.
+    """
+    html = TEMPLATE_HTML.read_text()
+    for wrapper in ALIGN_BUTTONS:
+        assert f"{wrapper}()" in html, f"toolbar does not call {wrapper}()"
+    assert not re.search(r"[^_]alignElement\(", html), \
+        "toolbar still calls the legacy alignElement()"
+
+
+def test_the_legacy_alignelement_is_gone():
+    """Leaving it in place invites the toolbar drifting back to it."""
+    src = APP.read_text()
+    assert not re.search(r"^\s{4}alignElement\(dir\)", src, re.M), \
+        "legacy alignElement(dir) still defined"
+
+
+def test_align_clears_the_anchor_and_moves_line_endpoints():
+    body = _method_source(APP, "_alignElement")
+    assert "xAnchor = null" in body and "yAnchor = null" in body, \
+        "_alignElement no longer clears the anchor, so aligning an anchored " \
+        "element resolves to the wrong edge"
+    assert "el.x0" in body and "el.y0" in body, \
+        "_alignElement no longer moves line endpoints"

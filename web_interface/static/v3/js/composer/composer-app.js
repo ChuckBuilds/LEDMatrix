@@ -1098,23 +1098,6 @@ function composerApp() {
     },
 
     // ── Alignment ─────────────────────────────────────────────────────
-    alignElement(dir) {
-      const el = this.selectedElement;
-      if (!el) return;
-      const bb = window.ComposerCanvas.getBoundingBox(el, this.MATRIX_W, this.MATRIX_H);
-      switch (dir) {
-        case 'left':   el.x = 0; break;
-        case 'center': el.x = Math.round((this.MATRIX_W - bb.w) / 2); break;
-        case 'right':  el.x = this.MATRIX_W - bb.w; break;
-        case 'top':    el.y = 0; break;
-        case 'middle': el.y = Math.round((this.MATRIX_H - bb.h) / 2); break;
-        case 'bottom': el.y = this.MATRIX_H - bb.h; break;
-      }
-      this.isDirty = true;
-      this._snapshot();
-      this.render();
-    },
-
     // ── Templates ─────────────────────────────────────────────────────
     loadTemplate(tmpl) {
       if (this.isDirty && this.elements.length > 0) {

@@ -667,13 +667,13 @@
             <div>
               <span class="prop-label">Align to Canvas</span>
               <div class="flex gap-0.5 mt-0.5 flex-wrap">
-                <button class="align-btn" @click="alignElement('left')"   title="Align left">  <i class="fas fa-align-left"></i></button>
-                <button class="align-btn" @click="alignElement('center')" title="Center horiz"><i class="fas fa-align-center"></i></button>
-                <button class="align-btn" @click="alignElement('right')"  title="Align right"> <i class="fas fa-align-right"></i></button>
+                <button class="align-btn" @click="alignLeft()"   title="Align left">  <i class="fas fa-align-left"></i></button>
+                <button class="align-btn" @click="alignHCenter()" title="Center horiz"><i class="fas fa-align-center"></i></button>
+                <button class="align-btn" @click="alignRight()"  title="Align right"> <i class="fas fa-align-right"></i></button>
                 <div class="w-px h-5 bg-gray-200 mx-0.5"></div>
-                <button class="align-btn" @click="alignElement('top')"    title="Align top">   <i class="fas fa-arrow-up"></i></button>
-                <button class="align-btn" @click="alignElement('middle')" title="Center vert"> <i class="fas fa-arrows-alt-v"></i></button>
-                <button class="align-btn" @click="alignElement('bottom')" title="Align bottom"><i class="fas fa-arrow-down"></i></button>
+                <button class="align-btn" @click="alignTop()"    title="Align top">   <i class="fas fa-arrow-up"></i></button>
+                <button class="align-btn" @click="alignVCenter()" title="Center vert"> <i class="fas fa-arrows-alt-v"></i></button>
+                <button class="align-btn" @click="alignBottom()" title="Align bottom"><i class="fas fa-arrow-down"></i></button>
               </div>
             </div>
 
