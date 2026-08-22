@@ -11,6 +11,7 @@ Routes:
 import ast
 import io
 import json
+import math
 import keyword
 import logging
 import os
@@ -150,9 +151,16 @@ def _safe_int(value, default: int = 0, lo: int | None = None,
     produced `x=0 or __import__("os").system("id")` in the generated source,
     which is valid Python and so passed the ast.parse check.
     """
+    # json.loads accepts Infinity/-Infinity/NaN by default and Flask's
+    # get_json passes them straight through, so a payload can hand this a
+    # non-finite float. int(inf) raises OverflowError, which is neither
+    # ValueError nor ComposerInputError -- it escaped both handlers and became
+    # a 500 with a traceback instead of a 422.
+    if isinstance(value, float) and not math.isfinite(value):
+        return default
     try:
         out = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
     if lo is not None:
         out = max(lo, out)
@@ -161,11 +169,22 @@ def _safe_int(value, default: int = 0, lo: int | None = None,
     return out
 
 
+def _rgb_tuple(el: dict, keys, defaults) -> str:
+    """A colour tuple literal from coerced, clamped values under *keys*.
+
+    Several element types carry prefixed channels (emptyR/G/B, labelR/G/B)
+    rather than r/g/b. Those were interpolated straight into the generated
+    source, so they were an injection route exactly like an uncoerced
+    dimension. Every channel now goes through _safe_int.
+    """
+    return "(" + ", ".join(
+        str(_safe_int(el.get(k), d, 0, 255)) for k, d in zip(keys, defaults)
+    ) + ")"
+
+
 def _rgb_expr(el: dict, dr: int = 255, dg: int = 255, db: int = 255) -> str:
     """A colour tuple literal built from coerced, clamped channel values."""
-    return (f"({_safe_int(el.get('r'), dr, 0, 255)}, "
-            f"{_safe_int(el.get('g'), dg, 0, 255)}, "
-            f"{_safe_int(el.get('b'), db, 0, 255)})")
+    return _rgb_tuple(el, ('r', 'g', 'b'), (dr, dg, db))
 
 
 def _compute_pos_expr(val, anchor: str | None, dim_var: str) -> str:
@@ -356,7 +375,7 @@ def _preprocess_elements(elements: list) -> list:
             p['bar_height'] = int(el.get('barHeight', 6))
             binding = el.get('binding', {})
             p['binding_key'] = binding.get('key', '')
-            p['fill_tuple'] = f"({el.get('r', 100)}, {el.get('g', 200)}, {el.get('b', 100)})"
+            p['fill_tuple'] = _rgb_tuple(el, ('r', 'g', 'b'), (100, 200, 100))
             bg = (
                 [el.get('bgR', 30), el.get('bgG', 30), el.get('bgB', 30)]
                 if el.get('hasBg', True) else None
@@ -454,8 +473,8 @@ def _preprocess_elements(elements: list) -> list:
             p['show_empty'] = bool(el.get('showEmpty', True))
             binding = el.get('binding', {})
             p['binding_key'] = binding.get('key', '')
-            p['fill_tuple'] = f"({el.get('r', 255)}, {el.get('g', 200)}, {el.get('b', 0)})"
-            p['empty_tuple'] = f"({el.get('emptyR', 50)}, {el.get('emptyG', 50)}, {el.get('emptyB', 50)})"
+            p['fill_tuple'] = _rgb_tuple(el, ('r', 'g', 'b'), (255, 200, 0))
+            p['empty_tuple'] = _rgb_tuple(el, ('emptyR', 'emptyG', 'emptyB'), (50, 50, 50))
             p['blink'] = bool(el.get('blink', False))
 
         elif t == 'sparkline':
@@ -469,7 +488,7 @@ def _preprocess_elements(elements: list) -> list:
             p['bar_spacing'] = max(0, int(el.get('barSpacing', 1)))
             binding = el.get('binding', {})
             p['binding_key'] = binding.get('key', '')
-            p['fill_tuple'] = f"({el.get('r', 80)}, {el.get('g', 200)}, {el.get('b', 120)})"
+            p['fill_tuple'] = _rgb_tuple(el, ('r', 'g', 'b'), (80, 200, 120))
             bg = [el.get('bgR', 30), el.get('bgG', 30), el.get('bgB', 30)] if el.get('hasBg', False) else None
             p['bg_tuple'] = _as_fill_filter(bg)
             p['blink'] = bool(el.get('blink', False))
@@ -497,7 +516,7 @@ def _preprocess_elements(elements: list) -> list:
             font_key = el.get('font', 'four_by_six')
             p['font_attr'] = _FONT_ATTR_MAP.get(font_key, 'extra_small_font')
             p['show_label'] = bool(el.get('showLabel', True))
-            p['label_tuple'] = f"({el.get('labelR', 200)}, {el.get('labelG', 200)}, {el.get('labelB', 200)})"
+            p['label_tuple'] = _rgb_tuple(el, ('labelR', 'labelG', 'labelB'), (200, 200, 200))
             p['blink'] = bool(el.get('blink', False))
 
         elif t == 'marquee':
@@ -510,9 +529,15 @@ def _preprocess_elements(elements: list) -> list:
             p['gap'] = int(el.get('gap', 16))
             p['scroll_speed'] = max(1, int(el.get('scrollSpeed', 1)))
             p['direction'] = el.get('direction', 'left')
-            # Data key stored in self._data for stateful scrolling across display() calls
-            raw_id = str(el.get('id', 0)).replace('-', '_')
-            p['data_key'] = f"mq_{raw_id}"
+            # Data key stored in self._data for stateful scrolling across
+            # display() calls. It is spliced UNQUOTED into variable names
+            # (_{{ data_key }}_text = ...), so anything that is not an
+            # identifier character lands in the generated source as code.
+            # ast.parse catches the result, but the caller then gets an opaque
+            # "Generated code has a syntax error" instead of being told the id
+            # is unusable. Restrict it to identifier characters and bound it.
+            raw_id = re.sub(r'[^A-Za-z0-9_]', '_', str(el.get('id', 0)))[:64]
+            p['data_key'] = f"mq_{raw_id or '0'}"
             p['blink'] = bool(el.get('blink', False))
 
         result.append(p)

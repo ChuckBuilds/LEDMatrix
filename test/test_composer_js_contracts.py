@@ -96,18 +96,28 @@ def test_element_strokes_scale_with_scale():
 
 
 def test_line_branch_applies_the_anchor_offset():
-    text = CANVAS.read_text()
-    line_branch = text[text.index("case 'line': {"):]
+    """Scoped to _drawElement.
+
+    getBoundingBox has its own `case 'line': {` and appears first in the file,
+    so searching the whole text found *that* branch -- this assertion passed
+    with the draw branch's anchor offset removed. Verified: stripping it and
+    re-running gave 11/11 green.
+    """
+    body = _function_source(CANVAS, "_drawElement")
+    line_branch = body[body.index("case 'line': {"):]
     line_branch = line_branch[:line_branch.index("case 'divider'")]
     assert "ax - el.x0" in line_branch and "ay - el.y0" in line_branch, \
         "line drawing ignores xAnchor/yAnchor"
-    assert "el.x0 * s" not in line_branch, "line still drawn from unanchored endpoints"
+    assert "moveTo(el.x0 * s" not in line_branch, \
+        "line still drawn from unanchored endpoints"
 
 
 def test_line_bounding_box_applies_the_anchor_offset():
-    text = CANVAS.read_text()
-    i = text.index("case 'line':", text.index("getBoundingBox"))
-    box = text[i:i + 400]
+    """The companion to the above: scoped to getBoundingBox specifically, so
+    the two tests cannot both be satisfied by the same branch."""
+    body = _function_source(CANVAS, "getBoundingBox")
+    box = body[body.index("case 'line'"):]
+    box = box[:box.index("case 'divider'")]
     assert "ax - el.x0" in box, "line bounding box ignores the anchor"
 
 

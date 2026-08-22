@@ -17,6 +17,7 @@ Two ways in, both confirmed against the code before it was fixed:
       -> f-string interpolated it verbatim: x=0 or __import__("os").system("id")
 """
 import ast
+import re
 import sys
 from pathlib import Path
 
@@ -231,3 +232,70 @@ def test_a_clock_without_a_format_uses_the_documented_default():
     el = {"type": "clock", "id": "c1", "x": 0, "y": 0, "font": "press_start"}
     src = _generated(_payload(elements=[el]))
     assert '"%H:%M"' in src, "the %H:%M default did not reach the generated source"
+
+
+#: (element type, channel key, base element) for colour channels that were
+#: interpolated raw rather than through _rgb_expr/_safe_int. Prefixed channels
+#: (emptyR/G/B, labelR/G/B) were the ones the original r/g/b test never reached.
+RAW_COLOUR_CASES = [
+    ("progress_bar", "r",      {"x": 0, "y": 0}),
+    ("progress_bar", "g",      {"x": 0, "y": 0}),
+    ("pips",         "b",      {"x": 0, "y": 0}),
+    ("pips",         "emptyR", {"x": 0, "y": 0}),
+    ("pips",         "emptyG", {"x": 0, "y": 0}),
+    ("sparkline",    "r",      {"x": 0, "y": 0}),
+    ("gauge",        "labelR", {"x": 0, "y": 0, "width": 32, "height": 32}),
+    ("gauge",        "labelB", {"x": 0, "y": 0, "width": 32, "height": 32}),
+]
+
+
+@pytest.mark.parametrize("etype,channel,base", RAW_COLOUR_CASES)
+@pytest.mark.parametrize("evil", EXPR_PAYLOADS)
+def test_a_prefixed_colour_channel_cannot_reach_the_source(etype, channel, base, evil):
+    """Five tuples were built with f"({el.get('r', 100)}, ...)" -- no coercion.
+
+    The pre-existing colour test only covered r/g/b on a text element, so the
+    prefixed channels and the four other types were never exercised.
+    """
+    el = {"type": etype, "id": "e1", **base}
+    el[channel] = evil
+    src = _generated(_payload(elements=[el]))
+    assert "__import__" not in src, f"{etype}.{channel}={evil!r} reached the source"
+    assert "os.system" not in src
+    assert not _module_level_code(src)
+
+
+@pytest.mark.parametrize("value", [float("inf"), float("-inf"), float("nan")])
+@pytest.mark.parametrize("field", ["x", "y", "width", "height"])
+def test_a_non_finite_dimension_does_not_escape_as_an_unhandled_error(field, value):
+    """json.loads accepts Infinity/NaN and Flask passes them through, so a
+    payload can hand _safe_int a non-finite float. int(inf) raises
+    OverflowError -- neither ValueError nor ComposerInputError -- so it escaped
+    both handlers and surfaced as a 500 with a traceback instead of a 422."""
+    el = {"type": "rectangle", "id": "r1", "x": 0, "y": 0, "width": 10, "height": 8}
+    el[field] = value
+    src = _generated(_payload(elements=[el]))       # must not raise
+    # A non-finite value must be replaced by the default, not spelled into the
+    # source. Word-boundary match: "info" in self.logger.info contains "inf".
+    assert not re.search(r"\b(inf|nan|Infinity|NaN)\b", src), \
+        f"{field}={value!r} leaked a non-finite literal into the source"
+    assert not _module_level_code(src)
+
+
+@pytest.mark.parametrize("bad_id", [
+    'x = __import__("os").system("id") #',
+    "x\nimport os\n_y",
+    "x[0]",
+    "",
+    "a" * 200,
+])
+def test_a_marquee_id_cannot_become_code(bad_id):
+    """data_key is spliced UNQUOTED into variable names
+    (_{{ data_key }}_text = ...), so a non-identifier id landed in the source
+    as code. ast.parse caught it, but the caller then got an opaque
+    "Generated code has a syntax error" rather than being told the id is bad."""
+    el = {"type": "marquee", "id": bad_id, "x": 0, "y": 0, "text": "hi"}
+    src = _generated(_payload(elements=[el]))       # must not raise
+    assert "__import__(" not in src
+    assert "os.system(" not in src
+    assert not _module_level_code(src)
