@@ -6,6 +6,7 @@ These tests cover the reconcile path that loads/unloads plugins and rebuilds
 the dispatch maps on the main thread when the enabled set changes.
 """
 
+import copy
 from unittest.mock import MagicMock
 
 
@@ -253,3 +254,127 @@ class TestEnabledSetChanged:
             {"a": {"enabled": True, "duration": 30}},
             {"a": {"enabled": True, "duration": 45}},
         ) is False
+
+
+class TestEnabledPluginNotRunning:
+    """A plugin that fails validate_config() is enabled but absent, and the
+    config edit that fixes it is nested inside the plugin's own section -- so
+    the top-level ``enabled`` comparison never sees it. These cover the second
+    gate that queues a reconcile in that case.
+    """
+
+    def test_nested_edit_is_invisible_to_the_enabled_set_check(self, test_display_controller):
+        """The original gate: proves why a second one is needed."""
+        controller = test_display_controller
+        old = {"hockey-scoreboard": {"enabled": True, "nhl": {"enabled": False}}}
+        new = {"hockey-scoreboard": {"enabled": True, "nhl": {"enabled": True}}}
+        # Enabling a league changes no top-level flag.
+        assert controller._enabled_set_changed(old, new) is False
+
+    def test_queues_reconcile_when_enabled_plugin_is_absent(self, test_display_controller):
+        controller = test_display_controller
+        controller.plugin_manager.plugin_manifests = {"hockey-scoreboard": {}}
+        controller.plugin_display_modes = {}  # failed to load
+        cfg = {"hockey-scoreboard": {"enabled": True, "nhl": {"enabled": True}}}
+        assert controller._enabled_plugin_not_running(cfg) is True
+
+    def test_quiet_when_every_enabled_plugin_is_running(self, test_display_controller):
+        controller = test_display_controller
+        controller.plugin_manager.plugin_manifests = {"hockey-scoreboard": {}}
+        controller.plugin_display_modes = {"hockey-scoreboard": ["nhl"]}
+        cfg = {"hockey-scoreboard": {"enabled": True}}
+        assert controller._enabled_plugin_not_running(cfg) is False
+
+    def test_disabled_plugin_does_not_queue(self, test_display_controller):
+        controller = test_display_controller
+        controller.plugin_manager.plugin_manifests = {"hockey-scoreboard": {}}
+        controller.plugin_display_modes = {}
+        cfg = {"hockey-scoreboard": {"enabled": False}}
+        assert controller._enabled_plugin_not_running(cfg) is False
+
+    def test_non_plugin_sections_do_not_queue(self, test_display_controller):
+        """``schedule``/``display`` carry their own ``enabled`` and are never
+        in plugin_display_modes -- without the manifest check they would queue
+        a reconcile, and therefore a filesystem scan, on every config save."""
+        controller = test_display_controller
+        controller.plugin_manager.plugin_manifests = {"hockey-scoreboard": {}}
+        controller.plugin_display_modes = {"hockey-scoreboard": ["nhl"]}
+        cfg = {
+            "hockey-scoreboard": {"enabled": True},
+            "schedule": {"enabled": True},
+            "display": {"enabled": True},
+        }
+        assert controller._enabled_plugin_not_running(cfg) is False
+
+    def test_non_dict_section_is_ignored(self, test_display_controller):
+        controller = test_display_controller
+        controller.plugin_manager.plugin_manifests = {"hockey-scoreboard": {}}
+        controller.plugin_display_modes = {}
+        assert controller._enabled_plugin_not_running({"hockey-scoreboard": "nonsense"}) is False
+
+    def test_no_plugin_manager_is_quiet(self, test_display_controller):
+        controller = test_display_controller
+        controller.plugin_manager = None
+        assert controller._enabled_plugin_not_running({"x": {"enabled": True}}) is False
+
+
+class TestReconcileQueuedThroughSubscriber:
+    """End-to-end through the real config-change subscriber, not the helper.
+
+    Without the second gate this is the four-day-outage path: the plugin is
+    enabled, absent, and the save that enables its league sets no flag.
+    """
+
+    @staticmethod
+    def _subscriber(controller):
+        subs = controller.config_service._subscribers['*']
+        for cb in subs:
+            if getattr(cb, '__name__', '') == '_controller_config_change':
+                return cb
+        raise AssertionError(f"controller subscriber not found among {subs}")
+
+    @staticmethod
+    def _configs(controller, plugin_section_old, plugin_section_new):
+        """Build two full configs differing only inside the plugin section --
+        the subscriber refreshes its cache from these, so they must be real."""
+        base = copy.deepcopy(controller.config)
+        old = copy.deepcopy(base)
+        new = copy.deepcopy(base)
+        old["hockey-scoreboard"] = plugin_section_old
+        new["hockey-scoreboard"] = plugin_section_new
+        return old, new
+
+    def test_nested_edit_queues_reconcile_for_absent_plugin(self, test_display_controller):
+        controller = test_display_controller
+        controller.plugin_manager.plugin_manifests = {"hockey-scoreboard": {}}
+        controller.plugin_display_modes = {}          # validate_config() said False
+        controller._pending_plugin_reconcile = False
+
+        old, new = self._configs(
+            controller,
+            {"enabled": True, "nhl": {"enabled": False}},
+            {"enabled": True, "nhl": {"enabled": True}},
+        )
+        # The original gate is blind to this edit ...
+        assert controller._enabled_set_changed(old, new) is False
+        self._subscriber(controller)(old, new)
+        # ... but the reconcile is queued anyway.
+        assert controller._pending_plugin_reconcile is True
+
+    def test_steady_state_does_not_queue_reconcile(self, test_display_controller):
+        """Everything enabled is running: an unrelated edit must not queue a
+        reconcile, or every config save drags a filesystem scan onto the
+        render thread."""
+        controller = test_display_controller
+        controller.plugin_manager.plugin_manifests = {"hockey-scoreboard": {}}
+        controller.plugin_display_modes = {"hockey-scoreboard": ["nhl"]}
+        controller._pending_plugin_reconcile = False
+
+        old, new = self._configs(
+            controller,
+            {"enabled": True, "scroll_speed": 1},
+            {"enabled": True, "scroll_speed": 2},
+        )
+        self._subscriber(controller)(old, new)
+
+        assert controller._pending_plugin_reconcile is False

@@ -463,7 +463,8 @@ class DisplayController:
             self._refresh_config_cache(new_config)
             # If a plugin was enabled/disabled, flag a reconcile for the main
             # loop to apply (loading/unloading off the watcher thread is unsafe).
-            if self._enabled_set_changed(old_config, new_config):
+            if (self._enabled_set_changed(old_config, new_config)
+                    or self._enabled_plugin_not_running(new_config)):
                 self._pending_plugin_reconcile = True
 
         self.config_service.subscribe(_controller_config_change)
@@ -2891,6 +2892,41 @@ class DisplayController:
                 if isinstance(value, dict)
             }
         return enabled_map(old_config) != enabled_map(new_config)
+
+    def _enabled_plugin_not_running(self, new_config: Dict[str, Any]) -> bool:
+        """True when a discovered plugin is enabled in config but not running.
+
+        ``_enabled_set_changed`` compares only top-level ``enabled`` flags, which
+        misses the case that strands a plugin: one whose ``validate_config()``
+        returned False is absent from the running set, and the edit that fixes it
+        (enabling a league, filling in an API key) lives *nested* inside that
+        plugin's own section. No top-level flag changes, so no reconcile is
+        queued, and the save that should have fixed it appears to do nothing --
+        only toggling some unrelated plugin recovers it. hockey-scoreboard sat
+        enabled-but-absent on a live rig for four days this way.
+
+        Deliberately narrow: it fires only for ids the plugin manager has
+        actually discovered, so non-plugin sections that carry their own
+        ``enabled`` flag (``schedule``, ``display``, ...) don't queue a reconcile
+        on every save. In the steady state -- everything enabled is loaded --
+        this is False and costs nothing. That matters because reconcile runs
+        ``discover_plugins()`` on the render thread, where a needless
+        filesystem scan per config save would show up as a frame hitch.
+        """
+        if self.plugin_manager is None:
+            return False
+        try:
+            known = set(self.plugin_manager.plugin_manifests)
+            running = set(self.plugin_display_modes)
+        except (RuntimeError, AttributeError):
+            # Mid-mutation on the render thread, or a manager without the
+            # attribute. Let reconcile decide -- it no-ops when nothing differs.
+            return True
+        for key, value in new_config.items():
+            if (key in known and isinstance(value, dict)
+                    and value.get('enabled', False) and key not in running):
+                return True
+        return False
 
     def _reconcile_enabled_plugins(self) -> bool:
         """Load/unload plugins so the running set matches the enabled set in
