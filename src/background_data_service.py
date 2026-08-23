@@ -57,7 +57,15 @@ class FetchRequest:
 
 @dataclass
 class FetchResult:
-    """Result of a background fetch operation."""
+    """Result of a background fetch operation.
+
+    ``data`` survives on the stored result only for requests submitted without
+    a ``callback``, where polling ``get_result()`` is the sole way to collect
+    it. When a callback was given, the payload has already been delivered and
+    the service releases it -- see :meth:`BackgroundDataService._release_payload`.
+    Either way the data remains in the cache under the request's ``cache_key``,
+    which is where consumers read it from.
+    """
     request_id: str
     success: bool
     data: Optional[Any] = None
@@ -191,14 +199,15 @@ class BackgroundDataService:
                     cached=True,
                     fetch_time=0.0
                 )
-                self.completed_requests[request_id] = result
-                
                 if callback:
                     try:
                         callback(result)
                     except Exception as e:
                         logger.error(f"Error in callback for request {request_id}: {e}")
-                
+                    self._release_payload(result)
+
+                self.completed_requests[request_id] = result
+
                 logger.debug(f"Cache hit for {sport} {year} data")
                 return request_id
         
@@ -333,8 +342,29 @@ class BackgroundDataService:
                     request.callback(result)
                 except Exception as e:
                     logger.error(f"Error in callback for request {request.id}: {e}")
-        
+                # Delivered. Drop both references -- they point at the same
+                # object, so one survivor keeps the whole payload resident.
+                self._release_payload(result)
+                request.result = None
+
         return result
+
+    @staticmethod
+    def _release_payload(result: FetchResult) -> None:
+        """Drop a delivered payload, keeping the result's status and timings.
+
+        Only called once a callback has been handed the data. Consumers read
+        fetched data back from the cache under ``cache_key``; the copy carried
+        here was pinning a parsed season schedule -- 946 games for NCAA
+        football, roughly a tenth of total RAM on a 1GB Pi -- in memory until
+        the hourly sweep.
+
+        The cache-hit path matters most: it runs once per update interval per
+        sport, mints a fresh request_id each time, and a memory-tier miss
+        re-parses the payload from disk. Those were genuinely separate copies
+        accumulating toward the 500-entry cap, not shared references.
+        """
+        result.data = None
     
     def _make_request_with_retry(self, request: FetchRequest) -> requests.Response:
         """
