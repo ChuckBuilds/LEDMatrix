@@ -199,14 +199,18 @@ class BackgroundDataService:
                     cached=True,
                     fetch_time=0.0
                 )
+                # Filed before the callback runs, as it always was: a callback
+                # that queries get_result()/is_request_complete() for its own
+                # request must still find it. Releasing afterwards mutates the
+                # same object the dict holds.
+                self.completed_requests[request_id] = result
+
                 if callback:
                     try:
                         callback(result)
                     except Exception as e:
                         logger.error(f"Error in callback for request {request_id}: {e}")
                     self._release_payload(result)
-
-                self.completed_requests[request_id] = result
 
                 logger.debug(f"Cache hit for {sport} {year} data")
                 return request_id
