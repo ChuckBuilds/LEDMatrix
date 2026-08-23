@@ -126,7 +126,17 @@ window.showRestartPending = function(message) {
     } catch { /* private browsing */ }
     const banner = document.getElementById('restart-pending-banner');
     const text = document.getElementById('restart-pending-text');
-    if (text && message) text.textContent = message;
+    if (text) {
+        // Without the else-branch a config save inherited whatever wording the
+        // previous update left in the DOM: showRestartPending() clears the
+        // stored text but used to leave the element itself alone. The default
+        // is read back from the server-rendered copy rather than duplicated
+        // here, so the template stays the one place that owns the string.
+        if (text.dataset.defaultText === undefined) {
+            text.dataset.defaultText = text.textContent.trim();
+        }
+        text.textContent = message || text.dataset.defaultText;
+    }
     if (banner) banner.style.display = 'block';
 };
 
