@@ -687,12 +687,26 @@
                 const mUsedGb = d.memory_used_mb != null ? (d.memory_used_mb / 1024).toFixed(1) : null;
                 const mTotGb  = d.memory_total_mb != null ? (d.memory_total_mb / 1024).toFixed(1) : null;
                 const temp    = d.cpu_temp != null ? d.cpu_temp + '°C' : 'N/A';
+                // Available memory is the number that predicts trouble. When it
+                // runs out the board does not fail cleanly: fork() starts
+                // returning ENOMEM, so sshd cannot spawn a session and systemd
+                // cannot respawn the display, while the kernel keeps answering
+                // pings. Thresholds are drawn from that failure -- it was
+                // measured at 73MB free, and healthy running sits well above.
+                const availMb = d.memory_available_mb;
+                const availColor = availMb == null ? 'text-gray-400'
+                                 : availMb < 150   ? 'text-red-600'
+                                 : availMb < 300   ? 'text-amber-500'
+                                 : 'text-green-600';
                 panel.innerHTML =
                     diagTile('fa-microchip', 'text-blue-600', 'CPU Usage',
                         (d.cpu_percent != null ? d.cpu_percent : '--') + '%', null) +
                     diagTile('fa-memory', 'text-green-600', 'Memory',
                         (d.memory_used_percent != null ? d.memory_used_percent : '--') + '%',
                         (mUsedGb && mTotGb) ? `${mUsedGb} / ${mTotGb} GB` : null) +
+                    diagTile('fa-memory', availColor, 'Available Memory',
+                        availMb != null ? `${Math.round(availMb)} MB` : '--',
+                        mTotGb ? `of ${mTotGb} GB total` : null) +
                     diagTile('fa-thermometer-half', 'text-red-600', 'CPU Temp', temp, null) +
                     diagTile('fa-hdd', 'text-indigo-600', 'Disk',
                         (d.disk_used_percent != null ? d.disk_used_percent : '--') + '%',
