@@ -51,9 +51,37 @@ def service(cache):
 
 
 def _wait(service, req_id, timeout=5):
+    """Wait for the result to be FILED.
+
+    Enough for anything that is true by the time the worker stores the result:
+    its success flag, its error, the cache write that happened during the
+    fetch.
+    """
     deadline = time.time() + timeout
     while not service.is_request_complete(req_id) and time.time() < deadline:
         time.sleep(0.02)
+
+
+def _wait_for_release(service, req_id, timeout=5):
+    """Wait for the payload to be RELEASED, which is strictly later.
+
+    The worker files the result, then runs the callback, then releases. So
+    is_request_complete() goes true while the callback still has not run --
+    waiting on it alone leaves a window in which `seen` is empty and the
+    payload is still resident, and the assertions race the worker. It passes
+    in practice only because a one-line callback usually beats the 20ms poll.
+
+    Release happens after the callback returns, so a released payload also
+    means the callback has finished: one wait covers both.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        result = service.get_result(req_id)
+        if result is not None and result.data is None:
+            return
+        time.sleep(0.02)
+    raise AssertionError(
+        f"payload for {req_id} was never released (callback may not have run)")
 
 
 def _resp():
@@ -76,7 +104,7 @@ class TestFetchPath:
                 sport="ncaa_fb", year=2026, url="https://example.com/s",
                 cache_key="ncaa_fb_2026", callback=callback, max_retries=0,
             )
-            _wait(service, req_id)
+            _wait_for_release(service, req_id)
 
         assert seen['events'] == 50, "callback must still be handed the payload"
 
