@@ -6,22 +6,38 @@ with state transitions and queries.
 """
 
 import threading
+import time
 from collections import deque
 from enum import Enum
-from typing import Optional, Dict, Any, Deque, List
+from typing import Optional, Dict, Any, Deque, List, Tuple
 from datetime import datetime
 import logging
 
 from src.logging_config import get_logger
 
 
-# Transitions retained per plugin. The history is diagnostic only -- nothing
-# reads the entries themselves, just their count -- but it is appended to on the
-# hot scheduling path: every update cycle records RUNNING on reserve and ENABLED
-# on finish. Unbounded, that is 2,880 entries per plugin per day at the default
-# 60s interval, which on a 1 GB Pi exhausts memory in weeks. Keep the recent
-# tail for debugging and let the rest age out.
-MAX_STATE_HISTORY_PER_PLUGIN = 200
+# The history is diagnostic only -- nothing reads the entries themselves, just
+# their count -- but it is appended to on the hot scheduling path: every update
+# cycle records RUNNING on reserve and ENABLED on finish. Unbounded, that is
+# 2,880 entries per plugin per day at the default 60s interval, which on a 1 GB
+# Pi exhausts memory in weeks.
+#
+# Two limits, because a single entry count answers the wrong question. What a
+# reader wants is "the last couple of hours", and how many transitions that is
+# depends entirely on the plugin's update interval -- which on a real board
+# spans 2s to 3600s. A flat 200 entries is 4.2 days for the slowest plugin and
+# 3.3 minutes for the fastest, so the plugin churning hardest, the one worth
+# looking at, keeps the least history.
+#
+# So: trim by AGE first, which makes the retained window comparable across
+# plugins whatever their cadence...
+STATE_HISTORY_MAX_AGE_SECONDS = 2 * 60 * 60
+
+# ...and cap by COUNT second, purely as a memory ceiling for the fast pollers
+# whose age window would otherwise run to thousands of entries. At ~230 bytes
+# an entry this is ~0.5 MB per plugin worst case, and only plugins updating
+# faster than roughly every 4s can reach it.
+MAX_STATE_HISTORY_PER_PLUGIN = 2000
 
 
 class PluginState(Enum):
@@ -47,7 +63,10 @@ class PluginStateManager:
         self.logger = logger or get_logger(__name__)
         self._lock = threading.RLock()
         self._states: Dict[str, PluginState] = {}
-        self._state_history: Dict[str, Deque[Dict[str, Any]]] = {}
+        # (monotonic timestamp, transition). The clock is monotonic so a DST
+        # shift or an NTP step cannot make entries look old and flush the
+        # history; the human-readable timestamp lives inside the transition.
+        self._state_history: Dict[str, Deque[Tuple[float, Dict[str, Any]]]] = {}
         # Lifetime transition totals, kept separately so the count reported by
         # get_state_info() stays truthful once the history above starts rolling.
         self._state_transition_counts: Dict[str, int] = {}
@@ -70,7 +89,13 @@ class PluginStateManager:
         if history is None:
             history = deque(maxlen=MAX_STATE_HISTORY_PER_PLUGIN)
             self._state_history[plugin_id] = history
-        history.append(transition)
+        now = time.monotonic()
+        history.append((now, transition))
+        # Age out first; the deque's maxlen is the backstop for plugins that
+        # produce more than the ceiling within the window.
+        cutoff = now - STATE_HISTORY_MAX_AGE_SECONDS
+        while history and history[0][0] < cutoff:
+            history.popleft()
         self._state_transition_counts[plugin_id] = (
             self._state_transition_counts.get(plugin_id, 0) + 1
         )
@@ -160,8 +185,10 @@ class PluginStateManager:
         """
         Get state transition history for a plugin.
 
-        Only the most recent MAX_STATE_HISTORY_PER_PLUGIN transitions are
-        retained; older ones age out.
+        Retention is by age first -- transitions older than
+        STATE_HISTORY_MAX_AGE_SECONDS are dropped -- and by count second, at
+        MAX_STATE_HISTORY_PER_PLUGIN, which only binds for plugins updating
+        fast enough to exceed it inside that window.
 
         Args:
             plugin_id: Plugin identifier
@@ -175,7 +202,7 @@ class PluginStateManager:
         with self._lock:
             return [
                 dict(transition)
-                for transition in self._state_history.get(plugin_id, ())
+                for _stamp, transition in self._state_history.get(plugin_id, ())
             ]
     
     def set_error_info(self, plugin_id: str, error_info: Dict[str, Any]) -> None:
