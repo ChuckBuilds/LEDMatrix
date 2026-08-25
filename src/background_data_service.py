@@ -18,7 +18,7 @@ import time
 import logging
 import threading
 import requests
-from typing import Dict, Any, Optional, Callable
+from typing import Dict, Any, Optional, Callable, List
 from dataclasses import dataclass, field
 from enum import Enum
 import queue
@@ -50,6 +50,11 @@ class FetchRequest:
     max_retries: int = 3
     priority: int = 1  # Higher number = higher priority
     callback: Optional[Callable] = None
+    # Callbacks from submitters that JOINED this fetch instead of starting a
+    # duplicate one. The primary `callback` above belongs to whoever created
+    # the request; these belong to everyone who asked for the same cache_key
+    # while it was still in flight.
+    extra_callbacks: List[Callable] = field(default_factory=list)
     created_at: float = field(default_factory=time.time)
     status: FetchStatus = FetchStatus.PENDING
     result: Optional[Any] = None
@@ -98,6 +103,14 @@ class BackgroundDataService:
         
         # Thread management
         self.executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="BackgroundData")
+        # cache_key -> request_id for fetches currently in flight. Submitting
+        # the same key twice used to start two identical fetches: request_id
+        # carries a millisecond timestamp, so every submit looked new, and
+        # active_requests is keyed by it rather than by what is being fetched.
+        # On a real board the season-schedule key is requested by both the
+        # Recent and the Upcoming manager, which miss the cache in the same
+        # millisecond and each download and parse the same payload.
+        self._inflight_by_cache_key: Dict[str, str] = {}
         self.active_requests: Dict[str, FetchRequest] = {}
         self.completed_requests: Dict[str, FetchResult] = {}
         self.request_queue = queue.PriorityQueue()
@@ -231,7 +244,29 @@ class BackgroundDataService:
         )
         
         with self._lock:
+            existing_id = self._inflight_by_cache_key.get(cache_key)
+            existing = self.active_requests.get(existing_id) if existing_id else None
+            if existing_id and existing is None:
+                # Stranded index entry: the request it names is gone. Drop it and
+                # fetch normally. Looking the request up rather than trusting the
+                # id is what stops a stale entry wedging a key forever.
+                del self._inflight_by_cache_key[cache_key]
+            if existing is not None:
+                # Someone is already fetching this key. Ride along rather than
+                # duplicating the download, the parse and the resident copy.
+                if callback:
+                    existing.extra_callbacks.append(callback)
+                self.stats['deduplicated_requests'] = (
+                    self.stats.get('deduplicated_requests', 0) + 1
+                )
+                logger.info(
+                    "Joined in-flight fetch %s for %s (cache_key=%s) instead of "
+                    "starting a duplicate", existing_id, sport, cache_key
+                )
+                return existing_id
+
             self.active_requests[request_id] = request
+            self._inflight_by_cache_key[cache_key] = request_id
             self.stats['total_requests'] += 1
             self.stats['cache_misses'] += 1
         
@@ -324,6 +359,16 @@ class BackgroundDataService:
                 self.completed_requests[request.id] = result
                 if request.id in self.active_requests:
                     del self.active_requests[request.id]
+                # Stop accepting joiners and take the callback list in the same
+                # critical section. A submitter that arrives after this point
+                # finds no in-flight entry and either hits the cache (written
+                # above, before the result was built) or starts a fresh fetch --
+                # what it must never do is join a fetch whose callbacks have
+                # already run and then never be called.
+                if self._inflight_by_cache_key.get(request.cache_key) == request.id:
+                    del self._inflight_by_cache_key[request.cache_key]
+                callbacks = ([request.callback] if request.callback else [])
+                callbacks.extend(request.extra_callbacks)
                 
                 # Update statistics
                 if result.success:
@@ -340,10 +385,11 @@ class BackgroundDataService:
             # Periodic cleanup after storing result
             self._cleanup_completed_requests()
             
-            # Call callback if provided
-            if request.callback:
+            # Call every callback: the original submitter's and any that joined
+            # this fetch. One raising must not stop the others being delivered.
+            for cb in callbacks:
                 try:
-                    request.callback(result)
+                    cb(result)
                 except Exception as e:
                     logger.error(f"Error in callback for request {request.id}: {e}")
                 # Delivered. Drop both references -- they point at the same
@@ -474,6 +520,11 @@ class BackgroundDataService:
                 request = self.active_requests[request_id]
                 request.status = FetchStatus.CANCELLED
                 del self.active_requests[request_id]
+                # Cancelling is the other way a request leaves active_requests,
+                # so the in-flight index has to be released here too or the key
+                # stays pointed at a request that no longer exists.
+                if self._inflight_by_cache_key.get(request.cache_key) == request_id:
+                    del self._inflight_by_cache_key[request.cache_key]
                 logger.info(f"Cancelled request {request_id}")
                 return True
             return False
