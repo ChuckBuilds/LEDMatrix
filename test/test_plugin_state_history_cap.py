@@ -132,6 +132,24 @@ def test_get_state_history_returns_a_copy():
     assert len(manager.get_state_history("clock")) == 1
 
 
+def test_get_state_history_entries_are_copies():
+    """Copying the outer list is not enough -- the entries are handed out too.
+
+    A caller holding a returned transition must not be able to rewrite the
+    manager's record of what happened.
+    """
+    manager = PluginStateManager()
+    manager.set_state("clock", PluginState.ENABLED)
+
+    entry = manager.get_state_history("clock")[0]
+    entry["to"] = "tampered"
+    entry["error"] = "injected"
+
+    stored = manager.get_state_history("clock")[0]
+    assert stored["to"] == PluginState.ENABLED.value
+    assert stored["error"] is None
+
+
 def test_clear_state_drops_history():
     """Unloading a plugin still releases everything it accumulated."""
     manager = PluginStateManager()

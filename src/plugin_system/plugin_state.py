@@ -167,11 +167,16 @@ class PluginStateManager:
             plugin_id: Plugin identifier
 
         Returns:
-            List of recent state transitions, oldest first. A copy, so callers
-            cannot mutate the manager's own history.
+            List of recent state transitions, oldest first. Both the list and
+            the transition dicts are copies, so callers cannot mutate the
+            manager's own history. The values inside a transition are all
+            immutable, so a shallow copy per entry is enough.
         """
         with self._lock:
-            return list(self._state_history.get(plugin_id, ()))
+            return [
+                dict(transition)
+                for transition in self._state_history.get(plugin_id, ())
+            ]
     
     def set_error_info(self, plugin_id: str, error_info: Dict[str, Any]) -> None:
         """
@@ -290,11 +295,17 @@ class PluginStateManager:
         return info
     
     def clear_state(self, plugin_id: str) -> None:
-        """Clear all state information for a plugin."""
-        self._states.pop(plugin_id, None)
-        self._state_history.pop(plugin_id, None)
-        self._state_transition_counts.pop(plugin_id, None)
-        self._error_info.pop(plugin_id, None)
-        self._last_update.pop(plugin_id, None)
-        self._last_display.pop(plugin_id, None)
+        """Clear all state information for a plugin.
+
+        Held under ``_lock`` so the five dicts are dropped as one unit: every
+        other mutator takes the lock, and without it a concurrent set_state()
+        could interleave and leave a plugin with history but no state.
+        """
+        with self._lock:
+            self._states.pop(plugin_id, None)
+            self._state_history.pop(plugin_id, None)
+            self._state_transition_counts.pop(plugin_id, None)
+            self._error_info.pop(plugin_id, None)
+            self._last_update.pop(plugin_id, None)
+            self._last_display.pop(plugin_id, None)
 
