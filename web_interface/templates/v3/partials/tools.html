@@ -693,7 +693,16 @@
                 // cannot respawn the display, while the kernel keeps answering
                 // pings. Thresholds are drawn from that failure -- it was
                 // measured at 73MB free, and healthy running sits well above.
-                const availMb = d.memory_available_mb;
+                // Round ONCE, then colour and label off the same number.
+                // The API sends one decimal place, so classifying the raw
+                // value and displaying the rounded one disagreed at the
+                // boundaries: 149.6 rendered as "150 MB" in red, and 299.6 as
+                // "300 MB" in amber, both contradicting the threshold the
+                // colour claims to apply. Which side of the line a spare
+                // 0.4MB falls on does not matter; the tile agreeing with
+                // itself does.
+                const availMb = d.memory_available_mb == null
+                              ? null : Math.round(d.memory_available_mb);
                 const availColor = availMb == null ? 'text-gray-400'
                                  : availMb < 150   ? 'text-red-600'
                                  : availMb < 300   ? 'text-amber-500'
@@ -705,7 +714,7 @@
                         (d.memory_used_percent != null ? d.memory_used_percent : '--') + '%',
                         (mUsedGb && mTotGb) ? `${mUsedGb} / ${mTotGb} GB` : null) +
                     diagTile('fa-memory', availColor, 'Available Memory',
-                        availMb != null ? `${Math.round(availMb)} MB` : '--',
+                        availMb != null ? `${availMb} MB` : '--',
                         mTotGb ? `of ${mTotGb} GB total` : null) +
                     diagTile('fa-thermometer-half', 'text-red-600', 'CPU Temp', temp, null) +
                     diagTile('fa-hdd', 'text-indigo-600', 'Disk',
