@@ -1563,6 +1563,11 @@ def get_system_status():
             'memory_used_percent': round(memory_percent, 1),
             'memory_total_mb': round(memory.total / (1024 * 1024), 1),
             'memory_used_mb': round(memory.used / (1024 * 1024), 1),
+            # MemAvailable, not total-minus-used: it accounts for reclaimable
+            # page cache, so it is what actually predicts memory trouble. A
+            # board can read 70% "used" and be fine, or read the same and be
+            # about to fail fork(), and only this number tells them apart.
+            'memory_available_mb': round(memory.available / (1024 * 1024), 1),
             'cpu_temp': round(cpu_temp, 1) if cpu_temp is not None else None,
             'disk_used_percent': round(disk_percent, 1),
             'disk_total_gb': round(disk.total / (1024 * 1024 * 1024), 1),
