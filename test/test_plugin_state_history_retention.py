@@ -164,3 +164,46 @@ def test_a_monotonic_clock_is_used_not_the_wall_clock(clock):
 
     assert len(m.get_state_history("clock")) == before + 1, (
         "a wall-clock jump must not trim anything")
+
+
+def test_get_state_info_is_a_consistent_snapshot():
+    """An unload running concurrently must not be observed half-done.
+
+    Each field used to be read under its own lock, so clear_state() could
+    interleave: 'state' read before the removal, 'state_history_count' after,
+    handing a caller a plugin that is ENABLED with zero transitions. The whole
+    payload is now built in one critical section.
+    """
+    import threading
+
+    m = PluginStateManager()
+    for _ in range(50):
+        m.set_state("clock", PluginState.RUNNING)
+        m.set_state("clock", PluginState.ENABLED)
+
+    inconsistent = []
+    stop = threading.Event()
+
+    def reader():
+        while not stop.is_set():
+            info = m.get_state_info("clock")
+            # Either fully present or fully cleared -- never a live state with
+            # a wiped count.
+            if info["state"] != PluginState.UNLOADED.value and \
+                    info["state_history_count"] == 0:
+                inconsistent.append(info)
+                return
+
+    def clearer():
+        for _ in range(200):
+            for _ in range(20):
+                m.set_state("clock", PluginState.ENABLED)
+            m.clear_state("clock")
+
+    t = threading.Thread(target=reader, daemon=True)
+    t.start()
+    clearer()
+    stop.set()
+    t.join(timeout=5)
+
+    assert not inconsistent, f"observed a torn snapshot: {inconsistent[:1]}"

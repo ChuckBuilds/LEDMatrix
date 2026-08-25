@@ -306,19 +306,26 @@ class PluginStateManager:
         Returns:
             Dictionary with state information
         """
-        state = self.get_state(plugin_id)
-        info = {
-            'state': state.value,
-            'is_loaded': self.is_loaded(plugin_id),
-            'is_enabled': self.is_enabled(plugin_id),
-            'is_running': self.is_running(plugin_id),
-            'is_error': self.is_error(plugin_id),
-            'can_execute': self.can_execute(plugin_id),
-            'last_update': self.get_last_update(plugin_id),
-            'last_display': self.get_last_display(plugin_id),
-            'error_info': self.get_error_info(plugin_id),
-            'state_history_count': self._state_transition_counts.get(plugin_id, 0)
-        }
+        # One snapshot, one critical section. Each field was read under its own
+        # lock, so an unload running concurrently could be observed half-done:
+        # 'state' read before clear_state() removed it and
+        # 'state_history_count' read after, giving a caller a plugin that is
+        # ENABLED with zero transitions. _lock is an RLock, so the helpers
+        # below can still take it.
+        with self._lock:
+            state = self.get_state(plugin_id)
+            info = {
+                'state': state.value,
+                'is_loaded': self.is_loaded(plugin_id),
+                'is_enabled': self.is_enabled(plugin_id),
+                'is_running': self.is_running(plugin_id),
+                'is_error': self.is_error(plugin_id),
+                'can_execute': self.can_execute(plugin_id),
+                'last_update': self.get_last_update(plugin_id),
+                'last_display': self.get_last_display(plugin_id),
+                'error_info': self.get_error_info(plugin_id),
+                'state_history_count': self._state_transition_counts.get(plugin_id, 0)
+            }
         return info
     
     def clear_state(self, plugin_id: str) -> None:
