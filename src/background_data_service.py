@@ -14,6 +14,7 @@ Key Features:
 - Memory-efficient data storage
 """
 
+import itertools
 import time
 import logging
 import threading
@@ -111,6 +112,12 @@ class BackgroundDataService:
         # Recent and the Upcoming manager, which miss the cache in the same
         # millisecond and each download and parse the same payload.
         self._inflight_by_cache_key: Dict[str, str] = {}
+        # request_id was sport_year_milliseconds, which is not unique: two
+        # submits inside the same millisecond produced the SAME id, so one
+        # silently replaced the other in active_requests and completed_requests.
+        # Rare before, but dedupe hands this id back to every joiner as their
+        # handle for get_result(), so it has to be unique. A counter is enough.
+        self._request_seq = itertools.count()
         self.active_requests: Dict[str, FetchRequest] = {}
         self.completed_requests: Dict[str, FetchResult] = {}
         self.request_queue = queue.PriorityQueue()
@@ -198,7 +205,9 @@ class BackgroundDataService:
         if cache_key is None:
             cache_key = self.get_sport_cache_key(sport)
         
-        request_id = f"{sport}_{year}_{int(time.time() * 1000)}"
+        with self._lock:
+            request_id = (f"{sport}_{year}_{int(time.time() * 1000)}"
+                          f"_{next(self._request_seq)}")
         
         # Check cache first
         cached_data = self.cache_manager.get(cache_key)
@@ -317,6 +326,28 @@ class BackgroundDataService:
             # Log data validation
             logger.debug(f"Validated {len(events)} events for {request.sport} {request.year}")
             
+            # A cancelled request must not commit anything. Cancelling
+            # releases the cache_key, so a replacement fetch for the same key
+            # may already be in flight or finished -- writing this response to
+            # the cache now would overwrite fresher data with the response
+            # nobody wanted. The worker has no way to abort the HTTP call, so
+            # this is where the work gets discarded.
+            with self._lock:
+                cancelled = request.status == FetchStatus.CANCELLED
+            if cancelled:
+                logger.info(
+                    "Discarding response for cancelled request %s; %s may "
+                    "already belong to a replacement fetch",
+                    request.id, request.cache_key
+                )
+                return FetchResult(
+                    request_id=request.id,
+                    success=False,
+                    error="cancelled",
+                    fetch_time=time.time() - start_time,
+                    retry_count=request.retry_count
+                )
+
             # Cache the data
             self.cache_manager.set(request.cache_key, data)
             
@@ -367,8 +398,14 @@ class BackgroundDataService:
                 # already run and then never be called.
                 if self._inflight_by_cache_key.get(request.cache_key) == request.id:
                     del self._inflight_by_cache_key[request.cache_key]
-                callbacks = ([request.callback] if request.callback else [])
-                callbacks.extend(request.extra_callbacks)
+                # A cancelled request delivers nothing: its joiners were told
+                # about a fetch that has been abandoned, and a replacement will
+                # call them via its own request.
+                if request.status == FetchStatus.CANCELLED:
+                    callbacks = []
+                else:
+                    callbacks = ([request.callback] if request.callback else [])
+                    callbacks.extend(request.extra_callbacks)
                 
                 # Update statistics
                 if result.success:

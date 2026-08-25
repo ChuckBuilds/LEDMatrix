@@ -210,3 +210,88 @@ def test_the_deduplicated_count_is_reported(service):
         session.release.set()
         _wait(service, first)
     assert service.get_statistics().get("deduplicated_requests") == 1
+
+
+def test_a_cancelled_worker_cannot_overwrite_its_replacement(service, cache):
+    """Cancelling frees the key, so a replacement may already own it.
+
+    The worker cannot abort an HTTP call in flight, so when the cancelled one
+    finally returns it must discard its response rather than write it. Without
+    that, the sequence is: cancel A, submit B for the same key, B fetches and
+    caches fresh data, A returns and overwrites it with the response nobody
+    wanted -- and calls A's callbacks too.
+    """
+    slow = _BlockingSession()
+    stale = {"events": [{"id": "STALE"}]}
+    slow_resp = Mock()
+    slow_resp.json.return_value = stale
+    slow_resp.raise_for_status.return_value = None
+
+    def blocked_get(*a, **k):
+        slow.calls += 1
+        slow.started.set()
+        slow.release.wait(timeout=5)
+        return slow_resp
+
+    called = []
+    with patch.object(service.session, "get", side_effect=blocked_get):
+        first = service.submit_fetch_request(
+            sport="nba", year=2026, url="https://x/s", cache_key="k",
+            callback=lambda r: called.append("cancelled_one"), max_retries=0)
+        assert slow.started.wait(timeout=5)
+
+        service.cancel_request(first)
+        assert "k" not in service._inflight_by_cache_key
+
+    # The replacement writes the fresh value while the cancelled fetch is held.
+    fresh = {"events": [{"id": "FRESH"}]}
+    fresh_resp = Mock()
+    fresh_resp.json.return_value = fresh
+    fresh_resp.raise_for_status.return_value = None
+    with patch.object(service.session, "get", return_value=fresh_resp):
+        second = service.submit_fetch_request(
+            sport="nba", year=2026, url="https://x/s", cache_key="k",
+            callback=lambda r: called.append("replacement"), max_retries=0)
+        _wait(service, second)
+
+    assert cache.set.call_args[0][1] == fresh, "replacement must own the cache"
+
+    # Now let the cancelled fetch finish. It must write nothing and call nobody.
+    # Wait for the worker to actually finish rather than sleeping: a fixed
+    # sleep is a race under load, and a slow worker would make this pass for
+    # the wrong reason. A cancelled request is still filed in
+    # completed_requests, so that is the signal it has run to completion.
+    writes_before = cache.set.call_count
+    slow.release.set()
+    deadline = time.time() + 5
+    while first not in service.completed_requests and time.time() < deadline:
+        time.sleep(0.02)
+    assert first in service.completed_requests, "cancelled worker never finished"
+
+    assert cache.set.call_count == writes_before, (
+        "the cancelled worker wrote to the cache after its replacement")
+    assert cache.set.call_args[0][1] == fresh, "stale data overwrote fresh"
+    assert "cancelled_one" not in called, (
+        "a cancelled request must not deliver callbacks")
+
+
+def test_request_ids_are_unique_within_a_millisecond(service):
+    """request_id was sport_year_milliseconds, which collides.
+
+    Two submits inside the same millisecond produced the SAME id, so one
+    silently replaced the other in active_requests and completed_requests.
+    Dedupe hands this id back to every joiner as their handle for
+    get_result(), so uniqueness is now load-bearing rather than incidental.
+    """
+    # Stub the executor rather than the session: this is about what submit
+    # hands back, and letting 50 workers loose would outlive the patch and
+    # make real network calls.
+    with patch.object(service.executor, "submit"):
+        ids = [
+            service.submit_fetch_request(
+                sport="nba", year=2026, url="https://x/s",
+                cache_key=f"key_{i}",           # distinct keys: no dedupe
+                callback=lambda r: None, max_retries=0)
+            for i in range(50)
+        ]
+    assert len(set(ids)) == len(ids), "request ids collided"
