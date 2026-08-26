@@ -214,7 +214,7 @@ one of them cannot break a user on an old core and the other can.
 | **B3** | Upstream the scroll **orchestration** layer as `src/common/sports_scroll.py`, reading `global_config['target_fps']` natively | ✅ | Content building stays per-sport |
 | **B4** | Ship 3.2.0 *and* make version reporting trustworthy | ✅ | Released 2026-08-03; tag, release and `src.__version__` agree; compatibility gate merged (#428, #431, #433) |
 | **B5** | Adoption — guarded core imports, all eight. **Bundled copies stay.** | ✅ | All eight adopted; harness byte-identical; see the B5 retrospective below — four shipped broken and were repaired in plugins #251 |
-| **B6** | Sunset — delete the bundled copies | **blocked, deliberately** | 3.2.0 *in users' hands*. Released 2026-08-03; there is no adoption data yet. See "B6 — the decision as of 2026-08-05" |
+| **B6** | Sunset — delete the bundled copies | **blocked, deliberately** | 3.2.0 *in users' hands*. Released 2026-08-03; still no adoption data at the 2026-08-26 re-check. The prerequisite regression test is built (#505); only the evidence is missing. See "B6 — the decision as of 2026-08-05" |
 
 ### B4 — what "ship 3.2.0" actually requires
 
@@ -305,7 +305,8 @@ been in users' hands long enough that the population running a core without it
 is small.** The bundled copies cost disk space; deleting them early costs
 scoreboards, silently. That trade is not close.
 
-Before the first sunset, add a **compatibility regression test**. It has to
+Before the first sunset, add a **compatibility regression test**. **Built:**
+core `test/test_sports_sunset_matrix.py` (#505). It has to
 cover four cases, not one — B5's safety claim and B6's failure mode are
 different propositions and only the second is obvious:
 
@@ -353,6 +354,15 @@ instead of receiving one that cannot load. Every adopted plugin has a
 **What would unblock it.** Evidence of 3.2.0 uptake — a few months of it being
 the default download, or store-side install data if that is ever added. Revisit
 then, not on a schedule.
+
+**Re-checked 2026-08-26 — still held.** v3.2.0 remains the latest release and
+`src.__version__` is still `3.2.0`; no 3.3.0 has been cut. That is 23 days, not
+the few months above, and no store-side install data has appeared. Note also
+that the core updates by `git pull --rebase` rather than by downloading a
+release, so release-asset counts would not measure uptake even if we had them —
+whatever eventually unblocks this has to come from the store side. The
+prerequisite test is now built (#505), so when the evidence does arrive the
+remaining work is the sunset itself.
 
 **When it happens, remember:** four plugins declare their floor top-level, where
 editing `versions[0]` is a silent no-op, and the floor has three live spellings
@@ -423,21 +433,30 @@ What actually remains, smallest first:
 1. **Nothing on the critical path.** B6 is the only remaining phase and it is
    waiting on calendar time, not on work. Resist the urge to fill the gap by
    adopting more modules — see the decision above.
-2. **The stale plugin-test tranche** — 5 failures across baseball, hockey and
-   basketball, all pre-existing API drift in the plugins' own older tests
-   (`plugin.initialized`, `CacheManager(config_manager=...)`, a bare
-   `cache_manager` import, `MockLogger.setLevel`, `BasketballPluginManager`).
-   None are scroll-related. They make the suite noisy, which is how a real
-   failure gets ignored.
+2. ~~**The stale plugin-test tranche**~~ — **done** (verified 2026-08-26).
+   The 5 failures across baseball, hockey and basketball are gone;
+   `scripts/run_plugin_tests.py --all` reports 174 passed, 2 skipped, 0 failed
+   across the whole fleet. Re-check with that runner rather than by pointing
+   pytest at a plugin directory: these are standalone scripts, not a pytest
+   suite, and one of them calls `sys.exit(1)` at import, which collapses a
+   pytest run into an INTERNALERROR that looks nothing like the real state.
 3. **Soak the remaining adoptions on hardware.** Only baseball has been watched
    through a live game, and hockey has been loaded on devpi. The other six are
    proven by harness, unit tests and pixel comparison — not by a live match.
-   Out-of-season sports cannot be soaked until their season starts.
-4. **`CLAUDE.md` in the plugins repo says four panel sizes; the harness renders
-   eight.** A one-line doc fix, and the discrepancy has already produced one
-   false review finding.
-5. **Then, when the evidence supports it, B6** — with the four-case
-   compatibility regression test above in CI first.
+   Out-of-season sports cannot be soaked until their season starts. **This is
+   now the only open item that needs work rather than calendar time.**
+4. ~~**`CLAUDE.md` says four panel sizes**~~ — **done.** It reads "Default
+   matrix sizes are eight … design for the classic four first".
+5. **Then, when the evidence supports it, B6.** Its prerequisite — the
+   four-case compatibility regression test — is built: core
+   `test/test_sports_sunset_matrix.py` (#505). It drives all four cells through
+   the real `PluginManager.load_plugin` and asserts the sunset cell as
+   `PluginState.ERROR` plus an error naming the missing module, not as a raise.
+   Two modelling traps it had to work through, worth knowing before trusting
+   any successor: the copy-removed shape must be an *unguarded* import, or the
+   failure names the missing `scroll_display_legacy` instead of the core
+   module; and only the leaf module may be hidden, since a pre-3.2.0 core still
+   ships `src/common/`.
 
 ## How to keep this project healthy
 
