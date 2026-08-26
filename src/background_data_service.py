@@ -58,6 +58,12 @@ class FetchRequest:
     extra_callbacks: List[Callable] = field(default_factory=list)
     created_at: float = field(default_factory=time.time)
     status: FetchStatus = FetchStatus.PENDING
+    # Set once the worker has decided this response will be cached, while it
+    # still holds the lock. From that point cancelling is refused: the write
+    # is already authorised, and abandoning it here would put the payload in
+    # the cache with the callbacks suppressed -- joiners waiting forever for a
+    # fetch that did, in fact, succeed.
+    commit_claimed: bool = False
     result: Optional[Any] = None
     error: Optional[str] = None
 
@@ -80,6 +86,10 @@ class FetchResult:
     fetch_time: float = 0.0
     retry_count: int = 0
     completed_at: float = field(default_factory=time.time)  # Timestamp when request completed
+    # The request's final status, recorded so a finished request can still be
+    # reported accurately. Without it a caller can only be told COMPLETED or
+    # FAILED, which turns "you cancelled this" into "this errored".
+    final_status: Optional[FetchStatus] = None
 
 class BackgroundDataService:
     """
@@ -300,7 +310,31 @@ class BackgroundDataService:
         
         try:
             with self._lock:
-                request.status = FetchStatus.IN_PROGRESS
+                # A request cancelled while it sat in the executor queue must
+                # stay cancelled. Overwriting the status here undid the cancel
+                # outright: the worker went on to download, cache and call back
+                # for work the caller had already withdrawn.
+                if request.status == FetchStatus.CANCELLED:
+                    cancelled_before_start = True
+                else:
+                    cancelled_before_start = False
+                    request.status = FetchStatus.IN_PROGRESS
+            if cancelled_before_start:
+                logger.info(
+                    "Request %s was cancelled before its worker started; "
+                    "skipping the fetch entirely", request.id
+                )
+                # Assign before returning: the finally block stores `result`
+                # in completed_requests, so building a fresh one here would
+                # file the untouched placeholder instead of this outcome.
+                result = FetchResult(
+                    request_id=request.id,
+                    success=False,
+                    error="cancelled",
+                    fetch_time=time.time() - start_time,
+                    retry_count=request.retry_count
+                )
+                return result
             
             logger.info(f"Starting background fetch for {request.sport} {request.year}")
             
@@ -334,19 +368,28 @@ class BackgroundDataService:
             # this is where the work gets discarded.
             with self._lock:
                 cancelled = request.status == FetchStatus.CANCELLED
+                if not cancelled:
+                    # Claim the commit in the same critical section that read
+                    # the status, so a cancel cannot slip in between the check
+                    # and the cache write below. The write itself stays outside
+                    # the lock: it serialises a multi-megabyte payload to the
+                    # SD card, and holding the service lock across that would
+                    # stall every submit, status query and cancel behind it.
+                    request.commit_claimed = True
             if cancelled:
                 logger.info(
                     "Discarding response for cancelled request %s; %s may "
                     "already belong to a replacement fetch",
                     request.id, request.cache_key
                 )
-                return FetchResult(
+                result = FetchResult(
                     request_id=request.id,
                     success=False,
                     error="cancelled",
                     fetch_time=time.time() - start_time,
                     retry_count=request.retry_count
                 )
+                return result
 
             # Cache the data
             self.cache_manager.set(request.cache_key, data)
@@ -373,7 +416,12 @@ class BackgroundDataService:
             logger.error(f"Failed to fetch {request.sport} {request.year} data: {error_msg}")
             
             with self._lock:
-                request.status = FetchStatus.FAILED
+                # Don't relabel a cancelled request. The callback gate in the
+                # finally block only suppresses CANCELLED, so promoting it to
+                # FAILED here delivered an error callback for a fetch nobody
+                # was waiting on any more.
+                if request.status != FetchStatus.CANCELLED:
+                    request.status = FetchStatus.FAILED
                 request.error = error_msg
             
             result = FetchResult(
@@ -387,6 +435,7 @@ class BackgroundDataService:
         finally:
             # Store result and clean up
             with self._lock:
+                result.final_status = request.status
                 self.completed_requests[request.id] = result
                 if request.id in self.active_requests:
                     del self.active_requests[request.id]
@@ -539,6 +588,8 @@ class BackgroundDataService:
                 return self.active_requests[request_id].status
             elif request_id in self.completed_requests:
                 result = self.completed_requests[request_id]
+                if result.final_status is not None:
+                    return result.final_status
                 return FetchStatus.COMPLETED if result.success else FetchStatus.FAILED
             return None
     
@@ -555,6 +606,15 @@ class BackgroundDataService:
         with self._lock:
             if request_id in self.active_requests:
                 request = self.active_requests[request_id]
+                if request.commit_claimed:
+                    # Too late: the worker holds an authorised commit. Report
+                    # the failure rather than half-cancelling a request whose
+                    # data is about to land in the cache.
+                    logger.debug(
+                        "Not cancelling %s: its response is already being "
+                        "committed", request_id
+                    )
+                    return False
                 request.status = FetchStatus.CANCELLED
                 del self.active_requests[request_id]
                 # Cancelling is the other way a request leaves active_requests,

@@ -20,8 +20,9 @@ import time
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
+import requests
 
-from src.background_data_service import BackgroundDataService
+from src.background_data_service import BackgroundDataService, FetchStatus
 
 
 PAYLOAD = {"events": [{"id": f"g{i}"} for i in range(20)]}
@@ -295,3 +296,126 @@ def test_request_ids_are_unique_within_a_millisecond(service):
             for i in range(50)
         ]
     assert len(set(ids)) == len(ids), "request ids collided"
+
+
+# --- cancellation must be terminal ------------------------------------------
+#
+# Cancelling used to be advisory: three separate paths wrote request.status
+# without checking whether the request had already been cancelled, so a cancel
+# could be silently undone and the work it was meant to stop went ahead.
+
+URL = "http://example.invalid/scores"
+KEY = "sched_nfl_2025"
+
+
+class _CountingSession:
+    """Records whether an HTTP fetch was ever attempted."""
+
+    def __init__(self, boom=None):
+        self.calls = 0
+        self.boom = boom
+
+    def get(self, *a, **k):
+        self.calls += 1
+        if self.boom:
+            raise self.boom
+        return _resp()
+
+
+def _fill_every_worker_slot(service, slots=3):
+    """Occupy the pool so the next submit is queued rather than started.
+
+    This is what makes "cancel before the worker runs" deterministic instead
+    of a race the test would win only sometimes. Returns the gate that
+    releases the pool.
+    """
+    gate = threading.Event()
+    for _ in range(slots):
+        service.executor.submit(gate.wait, 5)
+    return gate
+
+
+def test_cancelling_before_the_worker_starts_stops_the_fetch(service, cache):
+    """The queued worker must honour a cancel, not overwrite it with IN_PROGRESS.
+
+    Between submit and the worker picking the job up, the request sits in the
+    executor queue. Cancelling there is the cheapest possible cancel -- nothing
+    has been downloaded yet -- and it was the one that did not work.
+    """
+    gate = _fill_every_worker_slot(service)
+    session = _CountingSession()
+    delivered = []
+
+    with patch.object(service, 'session', session):
+        rid = service.submit_fetch_request(
+            "nfl", 2025, URL, KEY, max_retries=0, callback=delivered.append
+        )
+        assert service.cancel_request(rid) is True
+        gate.set()                       # let the queued worker run
+        _wait(service, rid)
+
+    assert session.calls == 0, (
+        "cancelled before it started, yet the worker still downloaded the payload"
+    )
+    assert cache.set.call_count == 0, "a cancelled request wrote to the cache"
+    assert delivered == [], "a cancelled request invoked its callbacks"
+
+
+def test_a_cancel_during_the_commit_is_refused(service, cache):
+    """Once the worker has claimed the commit, cancelling is too late.
+
+    The claim and the cancelled-check happen in one critical section, so a
+    cancel arriving after it cannot retroactively abandon data already on its
+    way to the cache. Letting it through stranded every joiner: the payload
+    landed in the cache but the callbacks were suppressed, so a manager that
+    joined this fetch waited for a call that never came.
+    """
+    gate = _fill_every_worker_slot(service)
+    late = {}
+    delivered = []
+
+    def cancel_mid_write(key, data, *a, **k):
+        late['returned'] = service.cancel_request(late['rid'])
+
+    cache.set.side_effect = cancel_mid_write
+
+    with patch.object(service, 'session', _CountingSession()):
+        late['rid'] = service.submit_fetch_request(
+            "nfl", 2025, URL, KEY, max_retries=0, callback=delivered.append
+        )
+        gate.set()                       # only now can the worker reach the commit
+        _wait(service, late['rid'])
+
+    assert late.get('returned') is False, (
+        "cancelled a request that had already committed"
+    )
+    assert cache.set.call_count == 1, "the commit itself was lost"
+    assert [(r.success, r.data) for r in delivered] == [(True, PAYLOAD)], (
+        "data reached the cache but the callbacks were suppressed -- "
+        "every joined submitter is left waiting forever"
+    )
+
+
+def test_a_failure_after_cancelling_stays_cancelled(service, cache):
+    """A cancelled request that then errors must not resurface as FAILED.
+
+    The except path overwrote CANCELLED with FAILED, and the callback gate in
+    the finally block only suppresses callbacks for CANCELLED -- so cancelling
+    a request that was about to time out delivered a spurious error callback.
+    """
+    gate = _fill_every_worker_slot(service)
+    session = _CountingSession(boom=requests.RequestException("connection reset"))
+    delivered = []
+
+    with patch.object(service, 'session', session):
+        rid = service.submit_fetch_request(
+            "nfl", 2025, URL, KEY, max_retries=0, callback=delivered.append
+        )
+        assert service.cancel_request(rid) is True
+        gate.set()
+        _wait(service, rid)
+
+    assert delivered == [], "a cancelled request delivered a failure callback"
+    assert service.get_request_status(rid) is FetchStatus.CANCELLED, (
+        "a cancelled request that then errored was reported as FAILED"
+    )
