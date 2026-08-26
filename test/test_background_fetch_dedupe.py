@@ -311,15 +311,33 @@ KEY = "sched_nfl_2025"
 class _CountingSession:
     """Records whether an HTTP fetch was ever attempted."""
 
-    def __init__(self, boom=None):
+    def __init__(self):
         self.calls = 0
-        self.boom = boom
 
     def get(self, *a, **k):
         self.calls += 1
-        if self.boom:
-            raise self.boom
         return _resp()
+
+
+class _BlockingFailingSession(_CountingSession):
+    """Holds the fetch open, then fails it.
+
+    Cancelling while the worker is parked inside the HTTP call is the only way
+    to reach the exception handler as a cancelled request. Cancel it before
+    the call starts and the worker returns at the pre-start branch instead,
+    which would leave the except path untested.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.started = threading.Event()
+        self.release = threading.Event()
+
+    def get(self, *a, **k):
+        self.calls += 1
+        self.started.set()
+        self.release.wait(timeout=5)
+        raise requests.RequestException("connection reset")
 
 
 def _fill_every_worker_slot(service, slots=3):
@@ -379,9 +397,15 @@ def test_a_cancel_during_the_commit_is_refused(service, cache):
 
     cache.set.side_effect = cancel_mid_write
 
+    # Read the payload inside the callback. The service releases result.data
+    # once every callback has been delivered, so inspecting the FetchResult
+    # afterwards sees the released object, not what the caller was handed.
+    def record(result):
+        delivered.append((result.success, result.data))
+
     with patch.object(service, 'session', _CountingSession()):
         late['rid'] = service.submit_fetch_request(
-            "nfl", 2025, URL, KEY, max_retries=0, callback=delivered.append
+            "nfl", 2025, URL, KEY, max_retries=0, callback=record
         )
         gate.set()                       # only now can the worker reach the commit
         _wait(service, late['rid'])
@@ -390,7 +414,7 @@ def test_a_cancel_during_the_commit_is_refused(service, cache):
         "cancelled a request that had already committed"
     )
     assert cache.set.call_count == 1, "the commit itself was lost"
-    assert [(r.success, r.data) for r in delivered] == [(True, PAYLOAD)], (
+    assert delivered == [(True, PAYLOAD)], (
         "data reached the cache but the callbacks were suppressed -- "
         "every joined submitter is left waiting forever"
     )
@@ -403,17 +427,22 @@ def test_a_failure_after_cancelling_stays_cancelled(service, cache):
     the finally block only suppresses callbacks for CANCELLED -- so cancelling
     a request that was about to time out delivered a spurious error callback.
     """
-    gate = _fill_every_worker_slot(service)
-    session = _CountingSession(boom=requests.RequestException("connection reset"))
+    session = _BlockingFailingSession()
     delivered = []
 
     with patch.object(service, 'session', session):
         rid = service.submit_fetch_request(
             "nfl", 2025, URL, KEY, max_retries=0, callback=delivered.append
         )
+        # Assert the worker is inside the HTTP call before cancelling,
+        # otherwise this silently degrades into the pre-start case and the
+        # exception handler is never exercised.
+        assert session.started.wait(timeout=5)
         assert service.cancel_request(rid) is True
-        gate.set()
+        session.release.set()
         _wait(service, rid)
+
+    assert session.calls == 1, "the fetch never started, so nothing could fail"
 
     assert delivered == [], "a cancelled request delivered a failure callback"
     assert service.get_request_status(rid) is FetchStatus.CANCELLED, (
