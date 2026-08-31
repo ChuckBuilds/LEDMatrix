@@ -2640,8 +2640,10 @@ class PluginStoreManager:
                 "reinstall it from the plugin store.", plugin_id)
             return False
 
-        # Any local changes were stashed before the pull and are not popped on
-        # the success path either, so the reset leaves the working tree exactly
+        # Safe by construction: update_plugin returns before pulling unless the
+        # tree was clean or successfully stashed, so there are no uncommitted
+        # tracked edits for --hard to discard. The stash is not popped on the
+        # success path either, so the reset leaves the working tree exactly
         # where a successful pull would have. Say "commit", not "changes".
         reset = subprocess.run(
             ['git', '-C', str(plugin_path), 'reset', '--hard', previous_sha],
@@ -2937,6 +2939,8 @@ class PluginStoreManager:
                         status_result = type('obj', (object,), {'stdout': '', 'stderr': 'Status check timed out'})()
                     
                     stash_info = ""
+                    # Whether the pull can be undone without destroying work.
+                    tree_is_recoverable = not has_changes
                     if has_changes:
                         self.logger.info(f"Stashing local changes in {plugin_id} before update")
                         try:
@@ -2950,11 +2954,36 @@ class PluginStoreManager:
                             )
                             if stash_result.returncode == 0:
                                 stash_info = " (local changes were stashed)"
+                                tree_is_recoverable = True
                                 self.logger.info(f"Stashed local changes (including untracked files) for {plugin_id}")
                             else:
                                 self.logger.warning(f"Failed to stash local changes for {plugin_id}: {stash_result.stderr}")
                         except subprocess.TimeoutExpired:
                             self.logger.warning(f"Stash operation timed out for {plugin_id}, proceeding with pull")
+
+                    # Do not pull what cannot be un-pulled.
+                    #
+                    # The compatibility gate below can refuse the commit this
+                    # pull brings down, and its only way back is `git reset
+                    # --hard`, which discards uncommitted tracked edits. Those
+                    # edits are exactly what the stash above exists to protect,
+                    # so a stash that failed or timed out leaves the rollback
+                    # unable to run without destroying them.
+                    #
+                    # A pull does not necessarily refuse on a dirty tree -- git
+                    # merges happily as long as the incoming commit touches
+                    # different files -- so without this the update would
+                    # succeed, the gate would refuse, and the reset would take
+                    # the user's work with it. Refusing here costs an update in
+                    # a case that already went wrong; the alternative costs
+                    # data.
+                    if not tree_is_recoverable:
+                        self.logger.error(
+                            "Refusing to update %s: it has local changes that could "
+                            "not be stashed, and an incompatible update could then "
+                            "only be rolled back by discarding them. Commit or stash "
+                            "them by hand, then update.", plugin_id)
+                        return False
 
                     # Pull from the determined remote branch
                     self.logger.info(f"Pulling from origin/{remote_pull_branch} for {plugin_id}...")

@@ -221,8 +221,18 @@ class TestInstallGate:
 # The git-pull update path — the one route that does not re-download
 # --------------------------------------------------------------------------
 
-_HAS_GIT = subprocess.run(
-    ['git', '--version'], capture_output=True).returncode == 0
+def _git_available() -> bool:
+    # OSError, not just a non-zero exit: with no git on PATH subprocess raises
+    # FileNotFoundError, and this runs at import time -- before skipif can act,
+    # so the whole module would error out instead of skipping.
+    try:
+        return subprocess.run(
+            ['git', '--version'], capture_output=True).returncode == 0
+    except OSError:
+        return False
+
+
+_HAS_GIT = _git_available()
 
 
 def _git(*args, cwd):
@@ -360,6 +370,42 @@ class TestGitPullGate:
         monkeypatch.setattr(src, '__version__', '1.0.0')
         assert mgr.update_plugin('gitplug') is True
         assert self._head(work) != before
+
+    def test_a_failed_stash_stops_the_update_before_pulling(
+            self, checkout, monkeypatch):
+        """Uncommitted work is not collateral for the gate.
+
+        The gate's only rollback is `git reset --hard`, which discards
+        uncommitted tracked edits. update_plugin stashes them first -- but when
+        that stash fails it used to pull anyway, and a pull touching different
+        files succeeds on a dirty tree. Refuse, refuse the rollback's rollback,
+        and the user's edits go with it.
+        """
+        mgr, seed, work = checkout
+        before = self._head(work)
+        (work / 'manager.py').write_text(
+            "class P:\n    MINE = 'do not lose this'\n", encoding='utf-8')
+        self._push(seed, json.dumps({
+            "id": "gitplug", "name": "Git Plug", "class_name": "P",
+            "display_modes": ["a"], "min_ledmatrix_version": "9.9.9",
+        }))
+
+        real_run = subprocess.run
+
+        def fail_stash(cmd, *a, **k):
+            if isinstance(cmd, list) and 'stash' in cmd:
+                return subprocess.CompletedProcess(cmd, 1, '', 'stash boom')
+            return real_run(cmd, *a, **k)
+
+        import src
+        monkeypatch.setattr(src, '__version__', '3.2.0')
+        monkeypatch.setattr(
+            'src.plugin_system.store_manager.subprocess.run', fail_stash)
+        assert mgr.update_plugin('gitplug') is False
+
+        assert self._head(work) == before, "must not pull what it cannot undo"
+        assert 'do not lose this' in (work / 'manager.py').read_text(), (
+            "the local edit the stash failed to save must still be there")
 
     def test_rollback_reports_the_recovery_command_when_git_fails(
             self, checkout, monkeypatch):

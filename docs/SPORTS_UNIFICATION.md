@@ -27,7 +27,7 @@ These are independent concerns. Conflating them is what produces god classes.
 | Plugin loads on a core that predates a module | Guarded import with a bundled fallback (`try: from src.X import Y / except ModuleNotFoundError: from y import Y`) |
 | Plugin loads on a core that predates a *method* | Capability probing — `hasattr(SportsCore, "_detect_stale_games")` — never a version comparison. The loader's compat check is advisory-only (it logs and continues), so probing is the real protection. |
 | Core changes never break a plugin's rendering | The **view-model contract**: `_extract_game_details_common` returns a dict whose `GUARANTEED_KEYS` are frozen by `test/test_skin_system.py::TestViewModelContract`. Keys may be added, never renamed or removed. |
-| A plugin can drop its bundled copy safely | The **sunset rule**: its manifest must floor `ledmatrix_min_version` at the first core release shipping the module (recorded in `CHANGELOG.md`) — *necessary but not sufficient*. The store enforces that floor on every route that installs or updates, but a floor cannot reach a user who never updates, so the copy also waits for the B6 gate below. |
+| A plugin can drop its bundled copy safely | The **sunset rule**: its manifest must floor `ledmatrix_min_version` at the first core release shipping the module (recorded in `CHANGELOG.md`) — *necessary but not sufficient*. The store enforces that floor on every registry-managed install and on both supported update paths (sideloading via `install_from_url` is not gated), but a floor cannot reach a user who never updates, so the copy also waits for the B6 gate below. |
 
 The core API is **additive-only**. A method the plugins call is never removed or
 given a new required parameter; new behavior arrives as new methods with
@@ -235,7 +235,8 @@ a floor can be trusted against, and today it is not:
   `latest_version` and nothing else.
 
   *Fixed, in two parts.* `install_plugin` gained the gate in #431/#433, which
-  covers every route that re-downloads, `_reinstall_with_rollback` included.
+  covers every registry-managed install and, through `_reinstall_with_rollback`,
+  the update path that re-downloads.
   `update_plugin`'s git branch pulls in place and re-downloads nothing, so it
   stayed ungated until `_gate_pulled_commit` closed it — checked after the pull
   (the registry carries no floor field, so the incoming floor is unknowable
