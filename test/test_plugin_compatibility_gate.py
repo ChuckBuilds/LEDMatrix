@@ -19,6 +19,7 @@ The rules being pinned here, in priority order:
 """
 
 import json
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -146,9 +147,17 @@ def store(tmp_path, monkeypatch):
 
 
 class TestInstallGate:
-    """`install_plugin` is the chokepoint: `_reinstall_with_rollback` calls it,
-    so gating there covers updates too, and a refused update restores the
-    version the user already had."""
+    """`install_plugin` is the chokepoint for every route that re-downloads:
+    `_reinstall_with_rollback` calls it, so a refused update restores the
+    version the user already had.
+
+    It is not the *only* route in, and saying so here once is cheaper than
+    rediscovering it. `update_plugin` also has a git branch that pulls in
+    place and never re-downloads; that one is gated separately by
+    `_gate_pulled_commit` and pinned in `TestGitPullGate` below. A third
+    route, `install_from_url`, is still ungated — sideloading from a URL
+    checks required fields but not the floor.
+    """
 
     def _install_with_manifest(self, store, manifest, core_version, monkeypatch):
         mgr, plugins_dir = store
@@ -206,6 +215,224 @@ class TestInstallGate:
             "a core below the trustworthy floor must not block installs — "
             "nearly every published manifest floors at 2.0.0")
         assert (path / "manifest.json").exists()
+
+
+# --------------------------------------------------------------------------
+# The git-pull update path — the one route that does not re-download
+# --------------------------------------------------------------------------
+
+def _git_available() -> bool:
+    # OSError, not just a non-zero exit: with no git on PATH subprocess raises
+    # FileNotFoundError, and this runs at import time -- before skipif can act,
+    # so the whole module would error out instead of skipping.
+    try:
+        return subprocess.run(
+            ['git', '--version'], capture_output=True).returncode == 0
+    except OSError:
+        return False
+
+
+_HAS_GIT = _git_available()
+
+
+def _git(*args, cwd):
+    return subprocess.run(['git', *args], cwd=str(cwd),
+                          capture_output=True, text=True, check=True)
+
+
+@pytest.mark.skipif(not _HAS_GIT, reason='git not available')
+class TestGitPullGate:
+    """A plugin installed as a git checkout updates by pulling in place, so it
+    never passes through `install_plugin` and was never gated.
+
+    Real git repositories rather than mocks, because the claim under test is
+    that `git reset --hard` puts the checkout back — a mock of git would only
+    prove the call was made, which is the easy half.
+
+    Only the handful of registry entries with no `plugin_path` reach this path
+    in practice; monorepo plugins install as archives and update through
+    `_reinstall_with_rollback`. It is gated anyway because the sunset rule in
+    `docs/plugin-development/08-shared-sports-code.md` states the core enforces
+    the floor "at install/update time", and a precondition that is documented
+    but not true is worse than one that is merely missing.
+    """
+
+    @pytest.fixture
+    def checkout(self, tmp_path, monkeypatch):
+        """An origin repo holding a plugin, and a clone of it installed as
+        `plugin-repos/gitplug`, with the store pointed at it."""
+        from src.plugin_system.store_manager import PluginStoreManager
+
+        origin = tmp_path / 'origin'
+        origin.mkdir()
+        _git('init', '--initial-branch=main', '--bare', cwd=origin)
+
+        seed = tmp_path / 'seed'
+        _git('clone', str(origin), str(seed), cwd=tmp_path)
+        _git('config', 'user.email', 'test@example.com', cwd=seed)
+        _git('config', 'user.name', 'Test', cwd=seed)
+        (seed / 'manifest.json').write_text(json.dumps({
+            "id": "gitplug", "name": "Git Plug", "class_name": "P",
+            "display_modes": ["a"], "min_ledmatrix_version": "2.0.0",
+        }), encoding='utf-8')
+        (seed / 'manager.py').write_text("class P: pass\n", encoding='utf-8')
+        _git('add', '-A', cwd=seed)
+        _git('commit', '-m', 'initial', cwd=seed)
+        _git('push', '-u', 'origin', 'main', cwd=seed)
+
+        plugins_dir = tmp_path / 'plugin-repos'
+        plugins_dir.mkdir()
+        work = plugins_dir / 'gitplug'
+        _git('clone', str(origin), str(work), cwd=tmp_path)
+        _git('config', 'user.email', 'test@example.com', cwd=work)
+        _git('config', 'user.name', 'Test', cwd=work)
+
+        mgr = PluginStoreManager(plugins_dir=str(plugins_dir))
+        mgr.logger = MagicMock()
+        # No registry entry, so update_plugin takes the plain-pull branch
+        # rather than the remote-mismatch or already-current shortcuts.
+        monkeypatch.setattr(mgr, 'fetch_registry', lambda *a, **k: None)
+        monkeypatch.setattr(mgr, 'get_plugin_info', lambda *a, **k: None)
+        monkeypatch.setattr(mgr, '_install_dependencies', lambda *a, **k: True)
+        return mgr, seed, work
+
+    def _push(self, seed, manifest_text):
+        (seed / 'manifest.json').write_text(manifest_text, encoding='utf-8')
+        _git('add', '-A', cwd=seed)
+        _git('commit', '-m', 'update', cwd=seed)
+        _git('push', 'origin', 'main', cwd=seed)
+
+    def _head(self, work):
+        return _git('rev-parse', 'HEAD', cwd=work).stdout.strip()
+
+    def test_refuses_a_pulled_commit_that_needs_a_newer_core(
+            self, checkout, monkeypatch):
+        mgr, seed, work = checkout
+        before = self._head(work)
+        self._push(seed, json.dumps({
+            "id": "gitplug", "name": "Git Plug", "class_name": "P",
+            "display_modes": ["a"], "min_ledmatrix_version": "9.9.9",
+        }))
+
+        import src
+        monkeypatch.setattr(src, '__version__', '3.2.0')
+        assert mgr.update_plugin('gitplug') is False
+
+        assert self._head(work) == before, (
+            "a refused update must leave the checkout on the commit it was "
+            "already running, not on the one it cannot load")
+        floor = json.loads((work / 'manifest.json').read_text())
+        assert floor['min_ledmatrix_version'] == '2.0.0', (
+            "the reset must restore the working tree, not just the ref")
+
+    def test_allows_a_pulled_commit_the_core_can_run(
+            self, checkout, monkeypatch):
+        """The guard against over-refusing. A gate that refuses everything
+        passes the test above and breaks every update."""
+        mgr, seed, work = checkout
+        before = self._head(work)
+        self._push(seed, json.dumps({
+            "id": "gitplug", "name": "Git Plug", "class_name": "P",
+            "display_modes": ["a"], "min_ledmatrix_version": "3.0.0",
+        }))
+
+        import src
+        monkeypatch.setattr(src, '__version__', '3.2.0')
+        assert mgr.update_plugin('gitplug') is True
+        assert self._head(work) != before
+
+    def test_an_unreadable_manifest_after_pull_is_not_a_refusal(
+            self, checkout, monkeypatch):
+        """Rule 1 of this file — refuse only on evidence. A manifest that
+        will not parse declares no floor, so it is not evidence of anything."""
+        mgr, seed, work = checkout
+        self._push(seed, '{ this is not json')
+
+        import src
+        monkeypatch.setattr(src, '__version__', '3.2.0')
+        assert mgr.update_plugin('gitplug') is True
+
+    def test_an_untrustworthy_core_does_not_block_a_2_0_0_floor_on_pull(
+            self, checkout, monkeypatch):
+        """The same regression guard as
+        `test_untrustworthy_core_does_not_block_installs`, because this path
+        now shares that rule: a v3.1.0 release reports 1.0.0, and nearly every
+        published manifest floors at 2.0.0."""
+        mgr, seed, work = checkout
+        before = self._head(work)
+        self._push(seed, json.dumps({
+            "id": "gitplug", "name": "Git Plug", "class_name": "P",
+            "display_modes": ["a"], "min_ledmatrix_version": "2.0.0",
+            "description": "changed",
+        }))
+
+        import src
+        monkeypatch.setattr(src, '__version__', '1.0.0')
+        assert mgr.update_plugin('gitplug') is True
+        assert self._head(work) != before
+
+    def test_a_failed_stash_stops_the_update_before_pulling(
+            self, checkout, monkeypatch):
+        """Uncommitted work is not collateral for the gate.
+
+        The gate's only rollback is `git reset --hard`, which discards
+        uncommitted tracked edits. update_plugin stashes them first -- but when
+        that stash fails it used to pull anyway, and a pull touching different
+        files succeeds on a dirty tree. Refuse, refuse the rollback's rollback,
+        and the user's edits go with it.
+        """
+        mgr, seed, work = checkout
+        before = self._head(work)
+        (work / 'manager.py').write_text(
+            "class P:\n    MINE = 'do not lose this'\n", encoding='utf-8')
+        self._push(seed, json.dumps({
+            "id": "gitplug", "name": "Git Plug", "class_name": "P",
+            "display_modes": ["a"], "min_ledmatrix_version": "9.9.9",
+        }))
+
+        real_run = subprocess.run
+
+        def fail_stash(cmd, *a, **k):
+            if isinstance(cmd, list) and 'stash' in cmd:
+                return subprocess.CompletedProcess(cmd, 1, '', 'stash boom')
+            return real_run(cmd, *a, **k)
+
+        import src
+        monkeypatch.setattr(src, '__version__', '3.2.0')
+        monkeypatch.setattr(
+            'src.plugin_system.store_manager.subprocess.run', fail_stash)
+        assert mgr.update_plugin('gitplug') is False
+
+        assert self._head(work) == before, "must not pull what it cannot undo"
+        assert 'do not lose this' in (work / 'manager.py').read_text(), (
+            "the local edit the stash failed to save must still be there")
+
+    def test_rollback_reports_the_recovery_command_when_git_fails(
+            self, checkout, monkeypatch):
+        """If the reset itself fails the user is left on a version that cannot
+        load, so the log line has to carry the command that fixes it —
+        it is the only thing standing between them and a manual reinstall."""
+        mgr, seed, work = checkout
+        self._push(seed, json.dumps({
+            "id": "gitplug", "name": "Git Plug", "class_name": "P",
+            "display_modes": ["a"], "min_ledmatrix_version": "9.9.9",
+        }))
+
+        real_run = subprocess.run
+
+        def fail_reset(cmd, *a, **k):
+            if isinstance(cmd, list) and 'reset' in cmd:
+                return subprocess.CompletedProcess(cmd, 1, '', 'reset boom')
+            return real_run(cmd, *a, **k)
+
+        import src
+        monkeypatch.setattr(src, '__version__', '3.2.0')
+        monkeypatch.setattr(
+            'src.plugin_system.store_manager.subprocess.run', fail_reset)
+        assert mgr.update_plugin('gitplug') is False
+
+        logged = ' '.join(str(c) for c in mgr.logger.error.call_args_list)
+        assert 'reset --hard' in logged, logged
 
 
 class TestLoaderAndStoreAgree:
