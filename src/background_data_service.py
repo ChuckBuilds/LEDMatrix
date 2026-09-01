@@ -478,8 +478,22 @@ class BackgroundDataService:
                     cb(result)
                 except Exception as e:
                     logger.error(f"Error in callback for request {request.id}: {e}")
-                # Delivered. Drop both references -- they point at the same
-                # object, so one survivor keeps the whole payload resident.
+
+            # Released AFTER the loop, not inside it. Every callback here holds
+            # the same FetchResult, so releasing per-delivery handed the first
+            # one the data and every joiner `result.data is None` -- which is
+            # not a quiet degradation: they read `result.data.get('events')` and
+            # raise AttributeError, which this very loop catches and logs, so
+            # the symptom was one ERROR line and a manager that silently never
+            # got its schedule. Deduplication is the normal case, not a corner:
+            # a sport's recent, upcoming and live managers all ride one season
+            # fetch.
+            #
+            # Guarded on `callbacks`, because a request submitted without one
+            # has no other way to collect its payload than polling get_result().
+            # The old per-delivery release got that right by accident: an empty
+            # list never entered the loop body.
+            if callbacks:
                 self._release_payload(result)
                 request.result = None
 
@@ -489,8 +503,11 @@ class BackgroundDataService:
     def _release_payload(result: FetchResult) -> None:
         """Drop a delivered payload, keeping the result's status and timings.
 
-        Only called once a callback has been handed the data. Consumers read
-        fetched data back from the cache under ``cache_key``; the copy carried
+        Only called once EVERY callback has been handed the data -- callers
+        that joined an in-flight fetch share this object, so releasing between
+        deliveries strips the payload out from under the ones still queued.
+        Consumers read fetched data back from the cache under ``cache_key``;
+        the copy carried
         here was pinning a parsed season schedule -- 946 games for NCAA
         football, roughly a tenth of total RAM on a 1GB Pi -- in memory until
         the hourly sweep.

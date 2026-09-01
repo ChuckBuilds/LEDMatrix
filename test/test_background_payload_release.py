@@ -23,8 +23,14 @@ it only in passing before reading the cache back.
 Requests submitted *without* a callback keep their payload: polling
 get_result() is then the only way to collect it, so releasing would break that
 contract.
+
+And the release must happen after EVERY callback, not after each one. Callers
+that joined an in-flight fetch share a single FetchResult, so releasing per
+delivery strips the payload out from under everyone still queued -- see
+TestJoinersAllGetTheData.
 """
 
+import threading
 import time
 import pytest
 from unittest.mock import MagicMock, Mock, patch
@@ -185,3 +191,90 @@ class TestCacheHitPath:
             cache_key="nfl_2026",
         )
         assert service.get_result(req_id).data == PAYLOAD
+
+
+class TestJoinersAllGetTheData:
+    """Deduplicated callers share one FetchResult; releasing between them
+    empties it for the rest.
+
+    Not a corner case. A sport's recent, upcoming and live managers all ask for
+    the same season schedule, so the second and third are joiners on almost
+    every cycle. Releasing inside the delivery loop handed the payload to
+    whichever ran first and gave the others `result.data is None`.
+
+    The consequence was worse than a quiet degradation, because consumers do
+    `result.data.get('events')`: they raised AttributeError, the delivery loop
+    caught it, and the whole failure surfaced as a single
+    "Error in callback for request ..." line while that manager silently never
+    received its schedule.
+    """
+
+    class _BlockingSession:
+        """Holds the fetch open so a second submit lands while in flight."""
+
+        def __init__(self):
+            self.release = threading.Event()
+            self.started = threading.Event()
+
+        def get(self, *a, **k):
+            self.started.set()
+            self.release.wait(timeout=5)
+            return _resp()
+
+    def test_every_joiner_is_handed_the_payload(self, service):
+        session = self._BlockingSession()
+        seen = {}
+
+        def record(name):
+            # Read it the way the sport managers do. `result.data['events']`
+            # would raise TypeError on None; `.get` raises AttributeError,
+            # which is the error actually seen in the field.
+            def cb(result):
+                seen[name] = result.data.get('events') if result.data else None
+            return cb
+
+        with patch.object(service, "session", session):
+            first = service.submit_fetch_request(
+                sport="nhl", year=2026, url="https://x/s", cache_key="nhl_2026",
+                callback=record("first"), max_retries=0)
+            assert session.started.wait(timeout=5)
+
+            joined = service.submit_fetch_request(
+                sport="nhl", year=2026, url="https://x/s", cache_key="nhl_2026",
+                callback=record("second"), max_retries=0)
+            # Without coalescing these are two independent fetches that each
+            # own their result, and the test proves nothing about sharing.
+            assert joined == first, "the joiner should share the in-flight id"
+
+            session.release.set()
+            _wait(service, first)
+
+        deadline = time.time() + 5
+        while len(seen) < 2 and time.time() < deadline:
+            time.sleep(0.02)
+
+        assert set(seen) == {"first", "second"}, f"both must be called, got {seen}"
+        for name, events in seen.items():
+            assert events is not None, (
+                f"{name!r} was handed a released payload: the result was "
+                f"emptied before every callback had been delivered")
+            assert len(events) == 50, f"{name!r} got {events!r}"
+
+    def test_the_payload_is_still_released_once_they_have_all_had_it(self, service):
+        """The memory fix must survive the ordering fix."""
+        session = self._BlockingSession()
+
+        with patch.object(service, "session", session):
+            first = service.submit_fetch_request(
+                sport="nhl", year=2026, url="https://x/s", cache_key="nhl_2026",
+                callback=lambda r: None, max_retries=0)
+            assert session.started.wait(timeout=5)
+            service.submit_fetch_request(
+                sport="nhl", year=2026, url="https://x/s", cache_key="nhl_2026",
+                callback=lambda r: None, max_retries=0)
+            session.release.set()
+            _wait_for_release(service, first)
+
+        stored = service.get_result(first)
+        assert stored is not None and stored.data is None, (
+            "the payload must still be dropped once every callback has run")
