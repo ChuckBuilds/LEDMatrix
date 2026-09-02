@@ -143,8 +143,10 @@ class LogoHelper:
         """
         logo_path = Path(logo_path)
         
-        # Try to load existing logo first
-        if logo_path.exists():
+        # Try to load existing logo first. A placeholder written by a previous
+        # failed download does not count: it wears the real logo's filename, so
+        # trusting the file's existence is what left teams as grey boxes.
+        if logo_path.exists() and not self._is_stale_placeholder(logo_path):
             return self.load_logo(team_abbr, logo_path, max_width, max_height)
         
         # Download if URL provided and file doesn't exist
@@ -159,6 +161,26 @@ class LogoHelper:
         # Create placeholder if all else fails
         return self._create_placeholder_logo(team_abbr, max_width, max_height)
     
+    @staticmethod
+    def _is_stale_placeholder(logo_path: Path) -> bool:
+        """True if the file is a placeholder old enough to be worth retrying.
+
+        Imported lazily so this module keeps working against a core build whose
+        logo_downloader predates placeholder marking.
+        """
+        try:
+            from src.logo_downloader import (
+                PLACEHOLDER_RETRY_SECONDS,
+                is_placeholder_logo,
+                placeholder_age_seconds,
+            )
+        except ImportError:
+            return False
+        if not is_placeholder_logo(logo_path):
+            return False
+        age = placeholder_age_seconds(logo_path)
+        return age is None or age >= PLACEHOLDER_RETRY_SECONDS
+
     def get_logo_variations(self, team_abbr: str) -> List[str]:
         """
         Get possible filename variations for a team abbreviation.
