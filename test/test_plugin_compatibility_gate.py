@@ -155,8 +155,9 @@ class TestInstallGate:
     rediscovering it. `update_plugin` also has a git branch that pulls in
     place and never re-downloads; that one is gated separately by
     `_gate_pulled_commit` and pinned in `TestGitPullGate` below. A third
-    route, `install_from_url`, is still ungated — sideloading from a URL
-    checks required fields but not the floor.
+    route, `install_from_url` (sideloading from a URL), is gated in that
+    function and pinned in `TestSideloadGate`. All three refuse on the same
+    rule.
     """
 
     def _install_with_manifest(self, store, manifest, core_version, monkeypatch):
@@ -216,6 +217,73 @@ class TestInstallGate:
             "nearly every published manifest floors at 2.0.0")
         assert (path / "manifest.json").exists()
 
+
+class TestSideloadGate:
+    """`install_from_url` never looked at the core version.
+
+    Sideloading is an explicit act rather than an automatic store update, so
+    the argument for gating it is different: not "the user did not choose
+    this", but that the floor states the plugin *cannot run here*. Letting it
+    through produces the same silent PluginState.ERROR at load that the store
+    gate exists to prevent, and the user who typed the URL is no better placed
+    to diagnose it than one who pressed Update.
+    """
+
+    def _sideload(self, store, manifest, core_version, monkeypatch):
+        mgr, plugins_dir = store
+        plugin_id = manifest["id"]
+
+        def fake_clone(repo_url, target_path, branches=None):
+            target_path.mkdir(parents=True, exist_ok=True)
+            (target_path / "manifest.json").write_text(
+                json.dumps(manifest), encoding="utf-8")
+            (target_path / "manager.py").write_text(
+                "class P: pass\n", encoding="utf-8")
+            return "main"
+
+        monkeypatch.setattr(mgr, "_install_via_git", fake_clone)
+        monkeypatch.setattr(mgr, "_install_dependencies", lambda *a, **k: True)
+
+        import src
+        monkeypatch.setattr(src, "__version__", core_version)
+        return mgr.install_from_url("https://example.invalid/plugin"), \
+            plugins_dir / plugin_id
+
+    def test_refuses_a_plugin_that_needs_a_newer_core(self, store, monkeypatch):
+        manifest = {
+            "id": "sideload-newer", "name": "Sideload", "class_name": "P",
+            "display_modes": ["a"], "min_ledmatrix_version": "9.9.9",
+        }
+        result, path = self._sideload(store, manifest, "3.2.0", monkeypatch)
+
+        assert result["success"] is False
+        assert "9.9.9" in result["error"], result["error"]
+        assert not path.exists(), (
+            "a refused sideload must not leave the plugin installed")
+
+    def test_allows_a_compatible_plugin(self, store, monkeypatch):
+        """The guard against over-refusing: a gate that blocks everything
+        passes the test above and breaks sideloading entirely."""
+        manifest = {
+            "id": "sideload-fine", "name": "Sideload", "class_name": "P",
+            "display_modes": ["a"], "min_ledmatrix_version": "3.0.0",
+        }
+        result, path = self._sideload(store, manifest, "3.2.0", monkeypatch)
+
+        assert result["success"] is True, result.get("error")
+        assert (path / "manifest.json").exists()
+
+    def test_untrustworthy_core_does_not_block_a_2_0_0_floor(
+            self, store, monkeypatch):
+        """Same rule as the other two routes: a v3.1.0 release reports 1.0.0,
+        and nearly every published manifest floors at 2.0.0."""
+        manifest = {
+            "id": "sideload-floored", "name": "Sideload", "class_name": "P",
+            "display_modes": ["a"], "versions": [{"ledmatrix_min": "2.0.0"}],
+        }
+        result, _ = self._sideload(store, manifest, "1.0.0", monkeypatch)
+
+        assert result["success"] is True, result.get("error")
 
 # --------------------------------------------------------------------------
 # The git-pull update path — the one route that does not re-download
