@@ -1602,6 +1602,26 @@ class PluginStoreManager:
                     'error': f'Manifest missing required fields: {", ".join(missing_fields)}'
                 }
             
+            # Refuse a plugin that needs a newer core than this one, exactly as
+            # _install_plugin_impl does after its download. Sideloading is an
+            # explicit act rather than an automatic store update, but the floor
+            # is not advice about intent -- it is a statement that the plugin
+            # cannot run here, and letting it through produces the same silent
+            # PluginState.ERROR at load. This was the last of the three routes
+            # in that skipped the check.
+            #
+            # Before the move, so the `finally` below removes the temp tree and
+            # nothing half-installed is left behind.
+            from src import __version__ as core_version
+            from src.plugin_system import compatibility
+
+            compatible, reason = compatibility.check(manifest, core_version)
+            if not compatible:
+                self.logger.error(
+                    "Refusing to install %s from %s: %s",
+                    plugin_id, repo_url, reason)
+                return {'success': False, 'error': reason}
+
             # Validate version fields consistency (warnings only, not required)
             validation_errors = self._validate_manifest_version_fields(manifest)
             if validation_errors:
