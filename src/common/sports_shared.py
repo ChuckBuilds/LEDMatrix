@@ -37,20 +37,30 @@ needs it -- so it is inlined below rather than left behind.
 
 WHAT A HOST MUST PROVIDE
 ------------------------
+Enumerated by walking every ``self.<attr>`` the mixins read and subtracting what
+they define, so this list is derived rather than remembered. Everything below is
+supplied by all eight scoreboards today.
+
 State: ``config``, ``fonts``, ``logger``, ``display_width``, ``display_height``,
 ``display_manager``, ``league``, ``sport``, ``mode_config``, ``session``,
-``headers``, ``schedule_lookback_days``, ``schedule_lookahead_days``,
-``game_update_timestamps``, ``_zero_clock_timestamps``, ``_logo_cache``,
-``_selection_pools``, ``_ranking_coverage_logged_at``, ``_empty_live_streak``,
-``_last_warning_time``, ``_score_grew``.
+``headers``, ``favorite_teams``, ``games_list``, ``current_game_index``,
+``last_game_switch``, ``last_update``, ``update_interval``,
+``no_data_interval``, ``game_display_duration``, ``stale_game_timeout``,
+``other_games_min_quality``, ``schedule_lookback_days``,
+``schedule_lookahead_days``, ``game_update_timestamps``,
+``_zero_clock_timestamps``, ``_logo_cache``, ``_selection_pools``,
+``_ranking_coverage_logged_at``, ``_empty_live_streak``, ``_last_warning_time``,
+``_score_grew``.
 
-Methods that stay per-plugin, because they are not identical across the eight:
+Methods that stay per-plugin, because they are not identical across the eight
+(or, for ``_get_timezone``, because they bind per-plugin modules):
 ``_get_layout_offset``, ``_by_importance``, ``_other_games_window``,
 ``_upcoming_date_and_time_text``, ``_extract_game_details_common``,
-``_load_division_team_ids``.
+``_load_division_team_ids``, ``_get_timezone``, ``_is_favorite_game``,
+``_is_game_really_over``, ``_is_ranked_game``, ``_passes_other_filters``.
 
-Of the twelve shared class constants, eleven are identical everywhere and live
-here. Only ``_SCORE_PROBE_TEXT`` varies -- afl and basketball reach three digits
+Of the fourteen shared class constants, thirteen are identical everywhere and
+live here. Only ``_SCORE_PROBE_TEXT`` varies -- afl and basketball reach three digits
 a side and override it, the same two that override ``_SCORE_PROBE`` on
 ``SportsGameRendererMixin``.
 
@@ -168,6 +178,10 @@ class SportsCoreSharedMixin:
         "PressStart2P-Regular.ttf": 8, "4x6-font.ttf": 7}
     _FONT_NAME_ALIASES: ClassVar[Dict[str, str]] = {
         "press_start": "PressStart2P-Regular.ttf", "four_by_six": "4x6-font.ttf"}
+    #: Accepted values for the other-games quality filter.
+    _QUALITY_CHOICES: ClassVar[frozenset] = frozenset({"any", "ranked"})
+    #: How long to stay quiet between ranking-coverage warnings.
+    _RANKING_COVERAGE_SECONDS: ClassVar[int] = 60 * 60
 
     def _get_season_schedule_dates(self) -> tuple[str, str]:
         return "", ""
