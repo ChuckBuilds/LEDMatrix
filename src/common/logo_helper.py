@@ -143,8 +143,10 @@ class LogoHelper:
         """
         logo_path = Path(logo_path)
         
-        # Try to load existing logo first
-        if logo_path.exists():
+        # Try to load existing logo first. A placeholder written by a previous
+        # failed download does not count: it wears the real logo's filename, so
+        # trusting the file's existence is what left teams as grey boxes.
+        if logo_path.exists() and not self._is_stale_placeholder(logo_path):
             return self.load_logo(team_abbr, logo_path, max_width, max_height)
         
         # Download if URL provided and file doesn't exist
@@ -152,13 +154,61 @@ class LogoHelper:
             try:
                 self.logger.info(f"Downloading logo for {team_abbr} from {logo_url}")
                 self._download_logo(logo_url, logo_path)
+                # The file on disk just changed. Any cached image for it is the
+                # placeholder we came here to replace, and load_logo() answers
+                # from the cache before touching the disk -- so without this the
+                # real logo would not appear until the process restarted.
+                self._invalidate_cached_logo(team_abbr, logo_path)
                 return self.load_logo(team_abbr, logo_path, max_width, max_height)
             except Exception as e:
                 self.logger.error(f"Failed to download logo for {team_abbr}: {e}")
+                # The retry failed, so restart the back-off. The stale
+                # placeholder is still on disk with its old timestamp, and
+                # leaving it there means the next call retries immediately --
+                # a download attempt per call, which is what the back-off
+                # exists to prevent.
+                self._refresh_stale_placeholder(logo_path)
         
         # Create placeholder if all else fails
         return self._create_placeholder_logo(team_abbr, max_width, max_height)
     
+    def _invalidate_cached_logo(self, team_abbr: str, logo_path: Path) -> None:
+        """Drop every cached size of one logo after its file changed on disk."""
+        prefix = f"{team_abbr}_{logo_path}_"
+        for key in [k for k in self._logo_cache if k.startswith(prefix)]:
+            self._logo_cache.pop(key, None)
+            if key in self._cache_order:
+                self._cache_order.remove(key)
+
+    @staticmethod
+    def _refresh_stale_placeholder(logo_path: Path) -> None:
+        """Restart the retry back-off after a failed download attempt."""
+        try:
+            from src.logo_downloader import refresh_placeholder_timestamp
+        except ImportError:
+            return
+        refresh_placeholder_timestamp(logo_path)
+
+    @staticmethod
+    def _is_stale_placeholder(logo_path: Path) -> bool:
+        """True if the file is a placeholder old enough to be worth retrying.
+
+        Imported lazily so this module keeps working against a core build whose
+        logo_downloader predates placeholder marking.
+        """
+        try:
+            from src.logo_downloader import (
+                PLACEHOLDER_RETRY_SECONDS,
+                is_placeholder_logo,
+                placeholder_age_seconds,
+            )
+        except ImportError:
+            return False
+        if not is_placeholder_logo(logo_path):
+            return False
+        age = placeholder_age_seconds(logo_path)
+        return age is None or age >= PLACEHOLDER_RETRY_SECONDS
+
     def get_logo_variations(self, team_abbr: str) -> List[str]:
         """
         Get possible filename variations for a team abbreviation.
