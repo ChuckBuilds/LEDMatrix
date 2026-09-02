@@ -64,6 +64,44 @@ def is_placeholder_logo(filepath: Path) -> bool:
         return False
 
 
+def should_attempt_download(filepath: Path, force_download: bool = False) -> bool:
+    """Whether a real logo is worth (re)fetching for ``filepath``.
+
+    True when nothing is there, when the caller forced it, or when what is
+    there is a placeholder old enough to retry. A *fresh* placeholder says a
+    download just failed, so retrying it immediately would hammer the API for
+    a result that is very unlikely to have changed.
+    """
+    if force_download or not filepath.exists():
+        return True
+    if not is_placeholder_logo(filepath):
+        return False
+    age = placeholder_age_seconds(filepath)
+    return age is None or age >= PLACEHOLDER_RETRY_SECONDS
+
+
+def refresh_placeholder_timestamp(filepath: Path) -> bool:
+    """Restamp a placeholder so a failed retry restarts the back-off clock.
+
+    Without this a stale placeholder stays stale: every later call sees an
+    expired timestamp, retries, fails, and leaves the timestamp untouched --
+    which is a download attempt per call, the opposite of what the back-off is
+    for.
+    """
+    try:
+        if not is_placeholder_logo(filepath):
+            return False
+        metadata = PngInfo()
+        metadata.add_text(PLACEHOLDER_MARKER, str(time.time()))
+        with Image.open(filepath) as img:
+            img.copy().save(filepath, "PNG", pnginfo=metadata)
+        return True
+    except Exception:
+        logger.debug("Could not refresh placeholder timestamp for %s", filepath,
+                     exc_info=True)
+        return False
+
+
 def placeholder_age_seconds(filepath: Path) -> Optional[float]:
     """Seconds since a placeholder was written, or None if unknown."""
     try:
@@ -552,10 +590,10 @@ class LogoDownloader:
             filename = f"{self.normalize_abbreviation(abbreviation)}.png"
             filepath = Path(logo_dir) / filename
             
-            # Skip if already exists and not forcing download. A placeholder
-            # does not count as existing -- it is a previous failure, and this
-            # bulk pass is exactly where it should get another chance.
-            if filepath.exists() and not force_download and not is_placeholder_logo(filepath):
+            # A placeholder does not count as existing -- it is a previous
+            # failure, and a bulk pass is exactly where it should get another
+            # chance, subject to the same back-off as everywhere else.
+            if not should_attempt_download(filepath, force_download):
                 logger.debug(f"Skipping {display_name}: {filename} already exists")
                 continue
             
@@ -614,8 +652,9 @@ class LogoDownloader:
             filename = f"{self.normalize_abbreviation(abbreviation)}.png"
             filepath = Path(logo_dir) / filename
             
-            # Skip if already exists and not forcing download
-            if filepath.exists() and not force_download:
+            # Same eligibility rule as every other download site: a stale
+            # placeholder is a failed download, not a logo.
+            if not should_attempt_download(filepath, force_download):
                 logger.debug(f"Skipping {display_name} ({category}, {conference}): {filename} already exists")
                 continue
             
@@ -830,23 +869,14 @@ def download_missing_logo(league: str, team_id: str, team_abbreviation: str, log
     # Use the exact filepath that was passed in (respects config settings)
     filepath = logo_path
     
+    if filepath.exists() and not should_attempt_download(filepath):
+        # Either a real logo, or a placeholder too fresh to be worth retrying.
+        logger.debug(f"Logo already exists for {team_abbreviation} ({league})")
+        return True
     if filepath.exists():
-        if not is_placeholder_logo(filepath):
-            logger.debug(f"Logo already exists for {team_abbreviation} ({league})")
-            return True
-
         # A placeholder is a *failed* download wearing the real logo's
         # filename. Treating it as "already exists" is what pinned a team to a
-        # grey box permanently after one transient failure. Retry it, but not
-        # more often than PLACEHOLDER_RETRY_SECONDS.
-        age = placeholder_age_seconds(filepath)
-        if age is not None and age < PLACEHOLDER_RETRY_SECONDS:
-            logger.debug(
-                "Logo for %s (%s) is a placeholder written %.0fs ago; "
-                "not retrying for another %.0fs",
-                team_abbreviation, league, age, PLACEHOLDER_RETRY_SECONDS - age,
-            )
-            return True
+        # grey box permanently after one transient failure.
         logger.info(
             "Logo for %s (%s) is a placeholder from a failed download; "
             "retrying the real logo", team_abbreviation, league,

@@ -421,3 +421,76 @@ class TestSessionConfiguration:
     def test_user_agent_and_accept_headers(self, helper):
         assert helper.session.headers["User-Agent"] == "LEDMatrix-Common/1.0"
         assert helper.session.headers["Accept"] == "image/*"
+
+
+class TestStalePlaceholderHandling:
+    """load_logo_with_download must not be fooled by a cached placeholder.
+
+    A placeholder wears the real logo's filename, so both the file cache and
+    the in-memory cache can hold one and look like a hit.
+    """
+
+    def _placeholder(self, tmp_path, abbrev="COLL"):
+        from src.logo_downloader import LogoDownloader
+        assert LogoDownloader().create_placeholder_logo(abbrev, str(tmp_path))
+        return tmp_path / f"{abbrev}.png"
+
+    def _make_stale(self, path):
+        import time
+        from PIL.PngImagePlugin import PngInfo
+        from src.logo_downloader import PLACEHOLDER_MARKER, PLACEHOLDER_RETRY_SECONDS
+        metadata = PngInfo()
+        metadata.add_text(PLACEHOLDER_MARKER, str(time.time() - (PLACEHOLDER_RETRY_SECONDS + 60)))
+        with Image.open(path) as img:
+            img.copy().save(path, "PNG", pnginfo=metadata)
+
+    def test_fresh_placeholder_is_served_without_a_download(self, helper, tmp_path):
+        path = self._placeholder(tmp_path)
+        with patch.object(LogoHelper, "_download_logo") as download:
+            assert helper.load_logo_with_download("COLL", path, "http://x/c.png") is not None
+        download.assert_not_called()
+
+    def test_stale_placeholder_triggers_a_download(self, helper, tmp_path):
+        path = self._placeholder(tmp_path)
+        self._make_stale(path)
+        with patch.object(LogoHelper, "_download_logo") as download:
+            helper.load_logo_with_download("COLL", path, "http://x/c.png")
+        download.assert_called_once()
+
+    def test_replacement_logo_is_not_masked_by_the_cached_placeholder(self, helper, tmp_path):
+        """The bug this guards: load_logo answers from cache before the disk.
+
+        Without invalidation the freshly downloaded logo would not appear until
+        the process restarted.
+        """
+        path = self._placeholder(tmp_path)
+        first = helper.load_logo_with_download("COLL", path, "http://x/c.png")
+        assert first is not None
+
+        self._make_stale(path)
+
+        def fake_download(_self, _url, file_path):
+            Image.new("RGB", (500, 500), (7, 8, 9)).save(file_path, format="PNG")
+
+        with patch.object(LogoHelper, "_download_logo", fake_download):
+            second = helper.load_logo_with_download("COLL", path, "http://x/c.png")
+
+        assert second is not None
+        from src.logo_downloader import is_placeholder_logo
+        assert is_placeholder_logo(path) is False
+        assert second.getpixel((0, 0))[:3] == (7, 8, 9)
+
+    def test_failed_retry_restarts_the_back_off(self, helper, tmp_path):
+        """Otherwise a stale placeholder means a download attempt per call."""
+        from src.logo_downloader import should_attempt_download
+        path = self._placeholder(tmp_path)
+        self._make_stale(path)
+        assert should_attempt_download(path) is True
+
+        def boom(_self, _url, _file_path):
+            raise OSError("network down")
+
+        with patch.object(LogoHelper, "_download_logo", boom):
+            helper.load_logo_with_download("COLL", path, "http://x/c.png")
+
+        assert should_attempt_download(path) is False

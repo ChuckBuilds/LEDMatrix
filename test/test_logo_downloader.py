@@ -26,6 +26,8 @@ from src.logo_downloader import (
     download_missing_logo,
     is_placeholder_logo,
     placeholder_age_seconds,
+    refresh_placeholder_timestamp,
+    should_attempt_download,
 )
 
 
@@ -233,3 +235,119 @@ class TestPlaceholderLogos:
                 "afl", "1", "COLL", path,
                 logo_url="http://example/coll.png") is True
         download.assert_not_called()
+
+
+class TestDownloadEligibility:
+    """One rule, shared by every download site.
+
+    The two bulk loops and the single-logo path each had their own idea of what
+    counted as "already have it", which is how one of them ended up retrying
+    fresh placeholders and the other skipping stale ones forever.
+    """
+
+    def _placeholder(self, tmp_path, abbrev="COLL"):
+        assert LogoDownloader().create_placeholder_logo(abbrev, str(tmp_path))
+        return tmp_path / f"{abbrev}.png"
+
+    def _age(self, path, seconds):
+        metadata = PngInfo()
+        metadata.add_text(PLACEHOLDER_MARKER, str(time.time() - seconds))
+        with Image.open(path) as img:
+            img.copy().save(path, "PNG", pnginfo=metadata)
+
+    def test_missing_file_is_eligible(self, tmp_path):
+        assert should_attempt_download(tmp_path / "nope.png") is True
+
+    def test_real_logo_is_not_eligible(self, tmp_path):
+        real = tmp_path / "REAL.png"
+        Image.new("RGBA", (500, 500), (1, 2, 3, 255)).save(real)
+        assert should_attempt_download(real) is False
+
+    def test_force_download_beats_a_real_logo(self, tmp_path):
+        real = tmp_path / "REAL.png"
+        Image.new("RGBA", (500, 500), (1, 2, 3, 255)).save(real)
+        assert should_attempt_download(real, force_download=True) is True
+
+    def test_fresh_placeholder_is_not_eligible(self, tmp_path):
+        assert should_attempt_download(self._placeholder(tmp_path)) is False
+
+    def test_stale_placeholder_is_eligible(self, tmp_path):
+        path = self._placeholder(tmp_path)
+        self._age(path, PLACEHOLDER_RETRY_SECONDS + 60)
+        assert should_attempt_download(path) is True
+
+    def test_league_bulk_loop_skips_a_fresh_placeholder(self, tmp_path):
+        """A bulk pass honours the same back-off as everything else."""
+        self._placeholder(tmp_path, "AAA")
+        downloader = LogoDownloader()
+        teams = [{"abbreviation": "AAA", "display_name": "A", "logo_url": "http://x/a.png"}]
+        with patch.object(LogoDownloader, "get_logo_directory", return_value=str(tmp_path)):
+            with patch.object(LogoDownloader, "fetch_teams_data", return_value={"sports": [{}]}):
+                with patch.object(LogoDownloader, "extract_teams_from_data", return_value=teams):
+                    with patch.object(LogoDownloader, "download_logo") as download:
+                        downloader.download_missing_logos_for_league("nfl")
+        download.assert_not_called()
+
+    def test_league_bulk_loop_retries_a_stale_placeholder(self, tmp_path):
+        path = self._placeholder(tmp_path, "AAA")
+        self._age(path, PLACEHOLDER_RETRY_SECONDS + 60)
+        downloader = LogoDownloader()
+        teams = [{"abbreviation": "AAA", "display_name": "A", "logo_url": "http://x/a.png"}]
+        with patch.object(LogoDownloader, "get_logo_directory", return_value=str(tmp_path)):
+            with patch.object(LogoDownloader, "fetch_teams_data", return_value={"sports": [{}]}):
+                with patch.object(LogoDownloader, "extract_teams_from_data", return_value=teams):
+                    with patch.object(LogoDownloader, "download_logo", return_value=True) as download:
+                        downloader.download_missing_logos_for_league("nfl")
+        download.assert_called_once()
+
+    def test_ncaa_bulk_loop_retries_a_stale_placeholder(self, tmp_path):
+        """This loop skipped placeholders forever; it now shares the rule."""
+        path = self._placeholder(tmp_path, "AAA")
+        self._age(path, PLACEHOLDER_RETRY_SECONDS + 60)
+        downloader = LogoDownloader()
+        teams = [{"abbreviation": "AAA", "display_name": "A",
+                  "logo_url": "http://x/a.png", "category": "FBS",
+                  "conference": "SEC"}]
+        with patch.object(LogoDownloader, "get_logo_directory", return_value=str(tmp_path)):
+            with patch.object(LogoDownloader, "fetch_teams_data", return_value={"sports": [{}]}):
+                with patch.object(LogoDownloader, "extract_teams_from_data", return_value=teams):
+                    with patch.object(LogoDownloader, "download_logo", return_value=True) as download:
+                        downloader.download_all_ncaa_football_logos()
+        download.assert_called_once()
+
+    def test_ncaa_bulk_loop_skips_a_fresh_placeholder(self, tmp_path):
+        self._placeholder(tmp_path, "AAA")
+        downloader = LogoDownloader()
+        teams = [{"abbreviation": "AAA", "display_name": "A",
+                  "logo_url": "http://x/a.png", "category": "FBS",
+                  "conference": "SEC"}]
+        with patch.object(LogoDownloader, "get_logo_directory", return_value=str(tmp_path)):
+            with patch.object(LogoDownloader, "fetch_teams_data", return_value={"sports": [{}]}):
+                with patch.object(LogoDownloader, "extract_teams_from_data", return_value=teams):
+                    with patch.object(LogoDownloader, "download_logo") as download:
+                        downloader.download_all_ncaa_football_logos()
+        download.assert_not_called()
+
+
+class TestRefreshPlaceholderTimestamp:
+    def test_restarts_the_back_off(self, tmp_path):
+        assert LogoDownloader().create_placeholder_logo("COLL", str(tmp_path))
+        path = tmp_path / "COLL.png"
+        metadata = PngInfo()
+        metadata.add_text(PLACEHOLDER_MARKER, str(time.time() - (PLACEHOLDER_RETRY_SECONDS + 60)))
+        with Image.open(path) as img:
+            img.copy().save(path, "PNG", pnginfo=metadata)
+        assert should_attempt_download(path) is True
+
+        assert refresh_placeholder_timestamp(path) is True
+        assert should_attempt_download(path) is False
+
+    def test_refuses_to_touch_a_real_logo(self, tmp_path):
+        real = tmp_path / "REAL.png"
+        Image.new("RGBA", (500, 500), (1, 2, 3, 255)).save(real)
+        before = real.read_bytes()
+        assert refresh_placeholder_timestamp(real) is False
+        assert real.read_bytes() == before
+
+    def test_missing_file_is_not_an_error(self, tmp_path):
+        assert refresh_placeholder_timestamp(tmp_path / "nope.png") is False
