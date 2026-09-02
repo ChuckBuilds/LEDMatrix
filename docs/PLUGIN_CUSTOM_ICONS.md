@@ -296,7 +296,7 @@ Want to change icons programmatically? While not officially supported, you could
 ## Related Documentation
 
 - [Plugin Configuration Tabs](PLUGIN_CONFIGURATION_TABS.md) - Main plugin tabs documentation
-- [Plugin Development Guide](plugin_docs/) - How to create plugins
+- [Plugin Development Guide](PLUGIN_DEVELOPMENT_GUIDE.md) - How to create plugins
 - [Font Awesome Icons](https://fontawesome.com/icons) - Browse all available icons
 - [Emoji Reference](https://unicode.org/emoji/charts/full-emoji-list.html) - All emoji options
 

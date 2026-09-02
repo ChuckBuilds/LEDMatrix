@@ -47,6 +47,11 @@ Enable Vegas mode in `config/config.json`:
 }
 ```
 
+Vegas mode can also be configured entirely from the web UI — the
+**Display** tab has a Vegas Scroll Mode section (enable toggle, scroll
+speed, separator width, dynamic duration, and more), so hand-editing
+JSON is optional.
+
 **Configuration Options:**
 
 | Setting | Default | Description |
@@ -57,7 +62,99 @@ Enable Vegas mode in `config/config.json`:
 | `plugin_order` | `[]` | Plugin display order (empty = auto) |
 | `excluded_plugins` | `[]` | Plugins to exclude from Vegas mode |
 | `target_fps` | `125` | Target frame rate |
-| `buffer_ahead` | `2` | Number of panels to render ahead |
+| `buffer_ahead` | `2` | Number of plugins buffered ahead |
+
+This table is a subset — `display.vegas_scroll` supports 30 keys in
+total. See the full list in
+[CONFIG_REFERENCE.md](CONFIG_REFERENCE.md#displayvegas_scroll--continuous-scroll-mode).
+
+### Live Content in the Ticker
+
+By default, live content **preempts** Vegas mode: while any plugin reports
+live priority, the display controller refuses to run the ticker and shows
+that plugin's full-screen display instead. You get a big readable scoreboard,
+but the marquee stops entirely for the duration of the game.
+
+Set `live_in_ticker` to keep the ticker running and let live content take
+**extra turns inside it** instead:
+
+```json
+"vegas_scroll": {
+  "live_in_ticker": true,
+  "live_weight": 3,
+  "favorite_live_weight": 5
+}
+```
+
+#### Why weights exist
+
+The rotation is otherwise a strict round robin — every plugin appears exactly
+once per cycle. With a dozen plugins enabled, a live score comes round once a
+lap and can be minutes old by the time you see it. A weight of *N* gives a
+plugin *N* slots per cycle.
+
+The slots are placed by **Smooth Weighted Round-Robin**, the same scheduler
+the sports plugins use internally to rotate their own games. The important
+property is that repeats are *spread through the cycle* rather than clumped:
+three appearances in a row followed by a long silence would be worse than not
+boosting at all.
+
+Twelve plugins, with a favorite's baseball game and an ordinary live hockey
+game (`live_weight: 3`, `favorite_live_weight: 5`):
+
+```
+baseball > hockey > weather  > clock  > baseball
+stocks   > news   > flights  > baseball > hockey
+calendar > f1     > music    > baseball > tides
+birds    > hockey > baseball
+```
+
+18 slots for 12 plugins. Baseball appears 5 times, hockey 3, everything else
+once, and no plugin ever appears twice in a row — **including across the seam**
+where the cycle loops back on itself. Smooth Weighted Round-Robin schedules the
+heaviest item first and usually last as well, so the strip would otherwise show
+it twice running at exactly the one join a within-cycle check cannot see. The
+trailing repeat is moved into the widest remaining gap. Where a double is
+unavoidable — a plugin holding most of the slots has to neighbour itself — the
+schedule is left as it is.
+
+#### Where the weight comes from
+
+For each plugin in the rotation, in order:
+
+1. **The plugin's own answer.** If it implements
+   `get_vegas_priority_weight()` and returns a number, that wins. This is the
+   only route for favorite-team awareness — the core can see *that* a game is
+   live, but not *whose*, so a scoreboard has to say so itself.
+2. **The core's default.** When the plugin returns `None` (the base-class
+   default), a plugin where both `has_live_priority()` and `has_live_content()`
+   are true gets `live_weight`.
+3. **Everything else** gets 1.
+
+Because of step 2, **existing plugins need no changes** — any scoreboard with
+`live_priority` enabled already gets extra turns. Step 1 is opt-in, for
+plugins that want to distinguish a favorite's game from any other live game.
+
+Weights are clamped to 1–10. A weight of 1 is no boost; a weight below 1 would
+drop the plugin from the rotation entirely, which is never what is meant.
+
+#### Things worth knowing
+
+- **Weights are per plugin, not per game.** A scoreboard showing four live
+  games still occupies one slot at a time, rotating its own games within that
+  slot using its own `favorite_live_boost`. This controls how often the
+  *plugin* comes round.
+- **The ticker is zero-sum.** Giving baseball 5 slots does not make the cycle
+  faster; it makes the cycle *longer* and everything else proportionally
+  rarer. If you want live scores sooner in wall-clock terms, pair this with a
+  smaller `plugins_per_cycle`.
+- **Frequency is not freshness.** Each appearance redraws from the plugin's
+  current data (`refresh_updated_plugins()` drops cached content when a
+  plugin's data changes), but how current that data is depends on the
+  plugin's own `live_update_interval`. Showing a stale score five times a lap
+  is no better than showing it once.
+- **Everything still appears.** A boost never starves another plugin out of
+  the cycle; low-weight plugins keep their single slot.
 
 ### Per-Plugin Configuration
 
@@ -79,8 +176,12 @@ Override Vegas behavior for specific plugins:
 | Setting | Values | Description |
 |---------|--------|-------------|
 | `vegas_mode` | `scroll`, `fixed`, `static` | Display mode for this plugin |
-| `vegas_panel_count` | `1-10` | Width in panels (1 panel = display width) |
+| `vegas_panel_count` | any positive integer | Width in panels (1 panel = display width) |
 | `display_duration` | seconds | Pause duration for STATIC mode |
+
+Plugins may also set `vegas_overflow` and `vegas_max_width_screens` in
+their config section to control how oversized content is handled (see
+`PluginManager` in `src/plugin_system/plugin_manager.py`).
 
 ### Plugin Integration (Developer Guide)
 
@@ -451,7 +552,7 @@ time when something is active.
 
 ### REST API Reference
 
-The API is mounted at `/api/v3` (`web_interface/app.py:144`).
+The API is mounted at `/api/v3` (`web_interface/app.py:199`).
 
 #### Start On-Demand Display
 
@@ -518,13 +619,15 @@ curl http://localhost:5000/api/v3/display/on-demand/status
 
 > There is no public Python on-demand API. The display controller's
 > on-demand machinery is internal — drive it through the REST endpoints
-> above (or the web UI buttons), which write a request into the cache
-> manager under the `display_on_demand_request` key
-> (`web_interface/blueprints/api_v3.py:1622,1687`) that the controller
-> polls at `src/display_controller.py:921`. A separate
+> above (or the web UI buttons). The API handlers
+> (`start_on_demand_display()` / `stop_on_demand_display()` in
+> `web_interface/blueprints/api_v3.py`) write a request into the cache
+> manager under the `display_on_demand_request` key, which
+> `DisplayController._poll_on_demand_requests()`
+> (`src/display_controller.py`) picks up. A separate
 > `display_on_demand_config` key is used by the controller itself
-> during activation to track what's currently running (written at
-> `display_controller.py:1195`, cleared at `:1221`).
+> during activation (`_activate_on_demand()`) to track what's
+> currently running, and is cleared by `_clear_on_demand()`.
 
 ### Duration Modes
 
@@ -646,13 +749,13 @@ keys helps troubleshoot stuck states.
 **When Set:** Every display loop iteration
 **Auto-Cleared:** Never (continuously updated)
 
-**4. display_on_demand_processed_id** (TTL: 5 minutes)
-```
+**4. display_on_demand_processed_id** (TTL: 1 hour)
+```text
 "uuid-string-of-last-processed-request"
 ```
 **Purpose:** Prevents duplicate request processing
 **When Set:** After processing request
-**Auto-Cleared:** After 5 minutes TTL
+**Auto-Cleared:** After 1 hour TTL
 
 ### When Manual Clearing is Needed
 
@@ -685,9 +788,9 @@ keys helps troubleshoot stuck states.
 The cache is stored as JSON files under one of:
 
 - `/var/cache/ledmatrix/` (preferred when the service has permission)
-- `~/.cache/ledmatrix/`
+- `~/.ledmatrix_cache/`
 - `/opt/ledmatrix/cache/`
-- `/tmp/ledmatrix-cache/` (fallback)
+- `$TMPDIR/ledmatrix_cache/` (fallback)
 
 ```bash
 # Find the cache dir actually in use
@@ -711,8 +814,9 @@ cache.clear_cache('display_on_demand_request')
 cache.clear_cache('display_on_demand_processed_id')
 ```
 
-> The actual public method is `clear_cache(key=None)` — there is no
-> `delete()` method on `CacheManager`.
+> `CacheManager` also has a `delete(key)` method — a thin wrapper over
+> `clear_cache(key)` — so `cache.delete('display_on_demand_config')`
+> works equally well.
 
 ### Cache Impact on Running Service
 
@@ -730,7 +834,7 @@ The display controller automatically handles cleanup:
 - **Config key**: Cleared when on-demand stops
 - **State key**: Updated every display loop iteration
 - **Request key**: Expires after 1 hour TTL (or after processing)
-- **Processed ID**: Expires after 5 minutes TTL
+- **Processed ID**: Expires after 1 hour TTL
 
 ---
 
@@ -821,9 +925,6 @@ same shape as the example above.
 ### Testing
 
 ```bash
-# Run background service test
-python test_background_service.py
-
 # Check logs for background operations
 sudo journalctl -u ledmatrix -f | grep "background"
 ```
@@ -832,9 +933,10 @@ sudo journalctl -u ledmatrix -f | grep "background"
 
 **View Statistics:**
 ```python
-from src.background_data_service import BackgroundDataService
+from src.background_data_service import get_background_service
+from src.cache_manager import CacheManager
 
-service = BackgroundDataService()
+service = get_background_service(CacheManager())
 stats = service.get_statistics()
 print(f"Active tasks: {stats['active_tasks']}")
 print(f"Completed: {stats['completed']}")
@@ -875,6 +977,7 @@ from src.common.permission_utils import (
     ensure_file_permissions,
     get_config_file_mode,
     get_assets_file_mode,
+    get_assets_dir_mode,
     get_plugin_file_mode,
     get_cache_dir_mode
 )
@@ -883,7 +986,10 @@ from src.common.permission_utils import (
 ensure_directory_permissions(Path("assets/sports"), get_assets_dir_mode())
 
 # Set file permissions after writing
-ensure_file_permissions(Path("config/config.json"), get_config_file_mode())
+# (get_config_file_mode requires the file path — secrets files get a
+# stricter mode than the main config)
+config_path = Path("config/config.json")
+ensure_file_permissions(config_path, get_config_file_mode(config_path))
 ```
 
 ### When to Use Utilities
@@ -938,7 +1044,7 @@ from src.common.permission_utils import ensure_file_permissions, get_config_file
 config_path = Path("config/config.json")
 with open(config_path, 'w') as f:
     json.dump(data, f)
-ensure_file_permissions(config_path, get_config_file_mode())
+ensure_file_permissions(config_path, get_config_file_mode(config_path))
 ```
 
 **Pattern 3: Downloading Logo**
@@ -984,8 +1090,11 @@ These core utilities **already handle permissions** - you don't need to call per
 If you encounter permission issues:
 
 ```bash
-# Fix all permissions at once
-sudo ./scripts/fix_permissions.sh
+# Targeted permission fixes (see scripts/fix_perms/README.md)
+sudo ./scripts/fix_perms/fix_assets_permissions.sh   # assets/ tree (logos, fonts)
+sudo ./scripts/fix_perms/fix_cache_permissions.sh    # all cache directories
+sudo ./scripts/fix_perms/fix_plugin_permissions.sh   # plugin directories
+sudo ./scripts/fix_perms/fix_web_permissions.sh      # web interface files
 
 # Fix specific directory
 sudo chown -R ledpi:ledpi /home/ledpi/LEDMatrix/config
@@ -1017,7 +1126,7 @@ stat -c "%a %n" config/config.json
 
 ## Related Documentation
 
-- [PLUGIN_DEVELOPMENT.md](PLUGIN_DEVELOPMENT.md) - Creating plugins with Vegas/on-demand support
+- [PLUGIN_DEVELOPMENT_GUIDE.md](PLUGIN_DEVELOPMENT_GUIDE.md) - Creating plugins with Vegas/on-demand support
 - [WEB_INTERFACE_GUIDE.md](WEB_INTERFACE_GUIDE.md) - Using on-demand controls in web UI
 - [PLUGIN_API_REFERENCE.md](PLUGIN_API_REFERENCE.md) - Complete API documentation
 - [DEVELOPMENT.md](DEVELOPMENT.md) - Development environment and testing

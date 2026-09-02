@@ -14,7 +14,7 @@ import sys
 import subprocess
 import threading
 from pathlib import Path
-from typing import Dict, Any, Optional, Tuple, Type
+from typing import Dict, Any, List, Optional, Tuple, Type
 import logging
 
 from packaging.requirements import InvalidRequirement, Requirement
@@ -43,6 +43,76 @@ def requirements_has_real_deps(requirements_file: str) -> bool:
         # Let the caller's own file handling report the error.
         return True
     return False
+
+
+def _extra_dependencies(dist_name: str, extras) -> Optional[List[Requirement]]:
+    """Dependencies a distribution declares *only* behind the given extras.
+
+    Returns None when the installed metadata cannot be read or parsed, so the
+    caller can fall back to running pip rather than assuming anything.
+    """
+    try:
+        meta = importlib.metadata.metadata(dist_name)
+    except importlib.metadata.PackageNotFoundError:
+        return None
+
+    gated: List[Requirement] = []
+    for raw in meta.get_all('Requires-Dist') or []:
+        try:
+            dep = Requirement(raw)
+        except InvalidRequirement:
+            return None
+        if dep.marker is None:
+            continue
+        # Keep only what the distribution gates behind an extra we asked for:
+        # satisfied when `extra` is that name, but not when no extra is
+        # requested. A marker that holds either way (python_version, sys_platform)
+        # belongs to the base install and is already covered by the version check.
+        if dep.marker.evaluate({'extra': ''}):
+            continue
+        if any(dep.marker.evaluate({'extra': extra}) for extra in extras):
+            gated.append(dep)
+    return gated
+
+
+def _extras_are_satisfied(req: Requirement, _visited: Optional[set] = None) -> bool:
+    """Check the dependencies pulled in by req's extras are installed.
+
+    Follows extras through nested extras. A gated dependency can itself request
+    one (`requests[socks]`), and checking only that `requests` is installed at
+    an acceptable version says nothing about whether the socks extra's own
+    dependency is there -- so the caller would skip pip and the plugin would
+    fail at import instead. Plain dependencies are still checked one level
+    deep, which is all that is needed to tell "the extra was installed" from
+    "the extra was never installed".
+
+    `_visited` carries the (distribution, extras) pairs already seen, so a
+    dependency cycle between extras terminates instead of recursing forever.
+    Anything unreadable returns False, so the caller still falls through to pip.
+    """
+    if _visited is None:
+        _visited = set()
+    marker = (req.name.lower(), frozenset(e.lower() for e in req.extras))
+    if marker in _visited:
+        # Already accounted for higher up the chain; treating a cycle as
+        # satisfied here is safe because the outer frame still has to pass.
+        return True
+    _visited.add(marker)
+
+    gated = _extra_dependencies(req.name, req.extras)
+    if gated is None:
+        return False
+
+    for dep in gated:
+        try:
+            dep_version = importlib.metadata.version(dep.name)
+        except importlib.metadata.PackageNotFoundError:
+            return False
+        if dep.specifier and not dep.specifier.contains(dep_version, prereleases=True):
+            return False
+        if dep.extras and not _extras_are_satisfied(dep, _visited):
+            return False
+    return True
 
 
 def requirements_are_satisfied(requirements_file: str) -> bool:
@@ -76,9 +146,6 @@ def requirements_are_satisfied(requirements_file: str) -> bool:
         except InvalidRequirement:
             return False
 
-        if req.extras:
-            return False  # verifying extras' sub-dependencies isn't worth it here
-
         if req.marker is not None and not req.marker.evaluate():
             continue  # not applicable on this platform/interpreter
 
@@ -88,6 +155,9 @@ def requirements_are_satisfied(requirements_file: str) -> bool:
             return False
 
         if req.specifier and not req.specifier.contains(installed_version, prereleases=True):
+            return False
+
+        if req.extras and not _extras_are_satisfied(req):
             return False
 
     return True

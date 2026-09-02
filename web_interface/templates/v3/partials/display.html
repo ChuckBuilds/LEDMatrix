@@ -117,6 +117,14 @@
                     </select>
                 </div>
 
+                <div class="form-group" id="setting-display-orientation" data-setting-key="display.hardware.orientation">
+                    <label for="orientation" class="block text-sm font-medium text-gray-700">Panel Orientation{{ ui.help_tip('Rotates the rendered image to match how the panel is physically mounted.\nUse "Upside Down" if you flipped the panel 180° to move the Raspberry Pi / wiring to a more convenient side.', 'Panel Orientation') }}</label>
+                    <select id="orientation" name="orientation" class="form-control">
+                        <option value="normal" {% if main_config.display.hardware.get('orientation', 'normal') == "normal" %}selected{% endif %}>Normal</option>
+                        <option value="180" {% if main_config.display.hardware.get('orientation', 'normal') == "180" %}selected{% endif %}>Upside Down (180°)</option>
+                    </select>
+                </div>
+
                 <div class="form-group" id="setting-display-led_rgb_sequence" data-setting-key="display.hardware.led_rgb_sequence">
                     <label for="led_rgb_sequence" class="block text-sm font-medium text-gray-700">LED RGB Sequence{{ ui.help_tip('Order the panel expects color channels in.\nChange this only if reds/greens/blues look swapped. Default: RGB.', 'LED RGB Sequence') }}</label>
                     <select id="led_rgb_sequence" name="led_rgb_sequence" class="form-control">
@@ -556,11 +564,11 @@
                         </div>
 
                         <div class="form-group" id="setting-display-vegas_max_plugin_width_ratio" data-setting-key="display.vegas_scroll.max_plugin_width_ratio">
-                            <label for="vegas_max_plugin_width_ratio" class="block text-sm font-medium text-gray-700">Max Plugin Width (screens){{ ui.help_tip('Caps how much of one cycle a single plugin may occupy, measured in screen widths (0–20).\nDefault: 3. A long ticker such as a news feed or leaderboard is trimmed to this and the remainder shown on later cycles, so one plugin cannot hold the display for minutes. Set 0 for no limit.', 'Max Plugin Width') }}</label>
+                            <label for="vegas_max_plugin_width_ratio" class="block text-sm font-medium text-gray-700">Max Plugin Width (screens){{ ui.help_tip('Caps how much of one cycle a single plugin may occupy, measured in screen widths (0–20).\nDefault: 0 (no limit) — every plugin shows all of its content and always starts at the beginning.\nSet a limit to stop one long ticker holding the display for minutes: it is cut to this width and the remainder shown on later cycles. The trade-off is that such a plugin then resumes mid-content on each appearance instead of starting fresh.', 'Max Plugin Width') }}</label>
                             <input type="number"
                                    id="vegas_max_plugin_width_ratio"
                                    name="vegas_max_plugin_width_ratio"
-                                   value="{{ main_config.display.get('vegas_scroll', {}).get('max_plugin_width_ratio', 3.0) }}"
+                                   value="{{ main_config.display.get('vegas_scroll', {}).get('max_plugin_width_ratio', 0.0) }}"
                                    min="0"
                                    max="20"
                                    step="0.5"

@@ -1,0 +1,13 @@
+{
+    "id": "ci-fixture-plugin",
+    "name": "CI Fixture Plugin",
+    "version": "1.0.0",
+    "description": "Bundled test fixture so the plugin safety harness always has at least one real plugin to render in CI. Draws a deterministic border + diagonals pattern at any panel size. Not installable from the store and never shipped to devices.",
+    "author": "LEDMatrix",
+    "entry_point": "manager.py",
+    "class_name": "CIFixturePlugin",
+    "display_modes": ["ci-fixture"],
+    "update_interval": 3600,
+    "min_ledmatrix_version": "2.0.0",
+    "compatible_versions": [">=2.0.0"]
+}

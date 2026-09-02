@@ -413,7 +413,8 @@
             <div class="flex items-center justify-between">
                 <div class="flex items-center space-x-3">
                     <i class="fas fa-rotate text-lg"></i>
-                    <span class="text-sm font-medium" aria-live="polite">
+                    <span class="text-sm font-medium" aria-live="polite"
+                          id="restart-pending-text">
                         Configuration saved &mdash; restart the display to apply the changes
                     </span>
                 </div>
@@ -987,8 +988,12 @@
     <script src="{{ url_for('static', filename='v3/js/widgets/custom-feeds.js') }}" defer></script>
     <script src="{{ url_for('static', filename='v3/js/widgets/array-table.js') }}" defer></script>
     <script src="{{ url_for('static', filename='v3/js/widgets/google-calendar-picker.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='v3/js/widgets/google-oauth.js') }}" defer></script>
     <script src="{{ url_for('static', filename='v3/js/widgets/day-selector.js') }}" defer></script>
     <script src="{{ url_for('static', filename='v3/js/widgets/time-range.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='v3/js/widgets/time-picker.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='v3/js/widgets/file-upload-single.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='v3/js/widgets/plugin-file-manager.js') }}" defer></script>
     <script src="{{ url_for('static', filename='v3/js/widgets/schedule-picker.js') }}" defer></script>
     <!-- Basic input widgets -->
     <script src="{{ url_for('static', filename='v3/js/widgets/text-input.js') }}" defer></script>
@@ -1010,7 +1015,11 @@
     <!-- Reusable JSON file manager widget (used by of-the-day and others via x-widget: json-file-manager) -->
     <script src="{{ url_for('static', filename='v3/js/widgets/json-file-manager.js') }}" defer></script>
 
-    <!-- Legacy plugins_manager.js (for backward compatibility during migration) -->
+    <!-- plugins_manager.js: loaded LAST on purpose — it defines the live
+         window.* implementations for several plugin actions (installPlugin,
+         uninstallPlugin, executePluginAction, ...) and intentionally wins
+         over same-named definitions in js/app.js and js/app-shell.js. Do not
+         remove or reorder without resolving that overlap first. -->
     <script src="{{ url_for('static', filename='v3/plugins_manager.js') }}?v=20260307" defer></script>
     
     <!-- Custom feeds table helpers live in js/widgets/custom-feeds.js (the
@@ -1099,15 +1108,29 @@
         fetch('/api/v3/system/check-update')
             .then(function(r) { return r.json(); })
             .then(function(data) {
+                var banner = document.getElementById('update-banner');
+                var btn = document.getElementById('update-banner-btn');
+                if (data.check_failed) {
+                    // A check that could not run is not the same as being up
+                    // to date. Hiding the banner here made a checkout git
+                    // refuses to touch look permanently current, with no
+                    // route to the update button and nothing to act on.
+                    document.getElementById('update-banner-text').textContent =
+                        data.error || 'Could not check for updates.';
+                    if (btn) btn.style.display = 'none';
+                    banner.style.display = '';
+                    return;
+                }
+                if (btn) btn.style.display = '';
                 if (data.update_available && getDismissedSha() !== data.remote_sha) {
                     var n = data.commits_behind || 0;
                     var msg = 'A new LEDMatrix update is available';
                     if (n > 0) msg += ' (' + n + ' commit' + (n > 1 ? 's' : '') + ')';
                     document.getElementById('update-banner-text').textContent = msg;
-                    document.getElementById('update-banner').style.display = '';
+                    banner.style.display = '';
                     try { sessionStorage.setItem('update-sha', data.remote_sha); } catch(e) {}
                 } else {
-                    document.getElementById('update-banner').style.display = 'none';
+                    banner.style.display = 'none';
                 }
             })
             .catch(function() {});
@@ -1138,6 +1161,13 @@
             if (data.status === 'success') {
                 document.getElementById('update-banner').style.display = 'none';
                 try { sessionStorage.removeItem('update-sha-dismissed'); } catch(e) {}
+                // The pull replaced files on disk; the running services still
+                // hold the code they loaded at boot. Ask for the restart that
+                // makes the update actually take effect.
+                if (data.restart_required && typeof window.showRestartPending === 'function') {
+                    window.showRestartPending(
+                        'Update installed \u2014 restart the display to run the new code');
+                }
             }
             if (typeof showNotification === 'function') {
                 showNotification(data.message || 'Update complete', data.status || 'success');

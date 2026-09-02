@@ -9,7 +9,7 @@ import time
 import logging
 import threading
 from typing import Dict, Optional, Any, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 
 try:
     import psutil
@@ -49,6 +49,20 @@ class ResourceMetrics:
             self.total_execution_time = self.total_execution_time / self.call_count
 
 
+#: How often a plugin's metrics are written to the cache, in seconds.
+#:
+#: Persisting on every call meant a small file rewritten roughly nine times a
+#: minute per plugin. On a rig with fourteen active plugins that was ~126
+#: writes a minute for metrics alone, and since each ~350-byte file costs a
+#: 4KB block plus an ext4 journal entry, it dominated the device's write
+#: volume -- on an SD card, which wears out.
+#:
+#: The in-memory copy stays authoritative and exact; only the cross-process
+#: snapshot the web UI reads is delayed, and telemetry up to half a minute old
+#: is still a fair description of a long-running plugin.
+_METRICS_PERSIST_INTERVAL = 30.0
+
+
 class PluginResourceMonitor:
     """
     Monitors resource usage for plugins.
@@ -75,6 +89,10 @@ class PluginResourceMonitor:
         # Resource metrics per plugin
         self._metrics: Dict[str, ResourceMetrics] = {}
         self._limits: Dict[str, ResourceLimits] = {}
+        # When each plugin's metrics last reached the cache. Metrics change on
+        # every call, so they cannot be de-duplicated the way health state can;
+        # they are rate-limited instead. See _METRICS_PERSIST_INTERVAL.
+        self._metrics_persisted_at: Dict[str, float] = {}
 
         # Thread-local storage for execution tracking
         self._local = threading.local()
@@ -102,6 +120,66 @@ class PluginResourceMonitor:
                 "psutil not available - resource monitoring will be limited to execution time only"
             )
     
+    def _metrics_from_cache(self, plugin_id: str, cached: Any) -> "ResourceMetrics":
+        """Build metrics from a cached record, ignoring anything unrecognised.
+
+        ResourceMetrics(**cached) raises TypeError on a single unexpected key,
+        and that exception escapes into plugin_manager, which reports it as
+        "plugin <id> operation failed". Every plugin fails, and the plugin
+        system never finishes initialising.
+
+        Seen on a live rig: every plugin failing with
+
+            ResourceMetrics.__init__() got an unexpected keyword argument
+            'consecutive_failures'
+
+        which is a plugin_health field, not a metrics one. How a health-shaped
+        record came to sit under a plugin_metrics key on that machine is not
+        established -- a restored backup that mixed two machines' caches is the
+        likeliest explanation -- but the loader should not be brittle enough for
+        it to matter. plugin_health already repairs its records field by field
+        rather than trusting whatever is on disk; this does the same.
+
+        Unknown keys are dropped and named once, so a genuine schema change is
+        visible in the log instead of silently discarded.
+        """
+        if not isinstance(cached, dict):
+            self.logger.warning(
+                "Ignoring cached metrics for %s: expected a mapping, got %s",
+                plugin_id, type(cached).__name__)
+            return ResourceMetrics()
+
+        known = {f.name for f in fields(ResourceMetrics)}
+        unknown = sorted(set(cached) - known)
+        if unknown:
+            self.logger.warning(
+                "Dropping unrecognised field(s) from cached metrics for %s: %s",
+                plugin_id, ", ".join(unknown))
+        # A dataclass does not enforce its annotations, so
+        # ResourceMetrics(call_count="not a number") builds happily and only
+        # blows up later, deep inside monitor_call ("can only concatenate str
+        # (not \"int\") to str"). Coerce here, where there is still a cache
+        # key to name in the warning.
+        declared = {f.name: f.type for f in fields(ResourceMetrics)}
+        usable = {}
+        for key, value in cached.items():
+            if key not in known:
+                continue
+            try:
+                usable[key] = int(value) if declared[key] in ('int', int) else float(value)
+            except (TypeError, ValueError):
+                self.logger.warning(
+                    "Cached metrics for %s have a bad %s (%r); starting fresh",
+                    plugin_id, key, value)
+                return ResourceMetrics()
+        try:
+            return ResourceMetrics(**usable)
+        except (TypeError, ValueError) as e:
+            self.logger.warning(
+                "Cached metrics for %s unusable (%s); starting fresh",
+                plugin_id, e)
+            return ResourceMetrics()
+
     def _get_metrics_key(self, plugin_id: str) -> str:
         """Get cache key for plugin metrics."""
         return f"plugin_metrics:{plugin_id}"
@@ -126,7 +204,7 @@ class PluginResourceMonitor:
                     cache_key, max_age=None, memory_ttl=0 if force_reload else None
                 )
                 if cached:
-                    metrics = ResourceMetrics(**cached)
+                    metrics = self._metrics_from_cache(plugin_id, cached)
                 else:
                     metrics = ResourceMetrics()
                 self._metrics[plugin_id] = metrics
@@ -232,18 +310,8 @@ class PluginResourceMonitor:
                     # CPU is harder to measure per-call, so we track it separately
                     metrics.cpu_percent = self._get_process_cpu_percent()
                 
-                # Persist metrics
-                cache_key = self._get_metrics_key(plugin_id)
-                self.cache_manager.set(cache_key, {
-                    'memory_mb': metrics.memory_mb,
-                    'cpu_percent': metrics.cpu_percent,
-                    'execution_time': metrics.execution_time,
-                    'call_count': metrics.call_count,
-                    'total_execution_time': metrics.total_execution_time,
-                    'max_execution_time': metrics.max_execution_time,
-                    'min_execution_time': metrics.min_execution_time if metrics.min_execution_time != float('inf') else 0.0,
-                    'last_update_time': metrics.last_update_time
-                })
+                # Persist metrics, at most once per interval per plugin.
+                self._persist_metrics(plugin_id, metrics)
             
             # Check limits
             if limits:
@@ -363,6 +431,44 @@ class PluginResourceMonitor:
             summaries[plugin_id] = self.get_metrics_summary(plugin_id)
         return summaries
     
+    def _persist_metrics(self, plugin_id: str, metrics: ResourceMetrics,
+                         force: bool = False) -> None:
+        """Write a plugin's metrics to the cache, at most once per interval.
+
+        Caller must hold ``self._lock``.
+        """
+        # Monotonic, not wall clock: these devices have no RTC, so the clock
+        # jumps by however far off boot-time was the moment NTP first syncs.
+        # A forward jump would allow an early write, a backward one would
+        # stall the snapshot well past the interval.
+        #
+        # The sentinel for "never written" is None, not 0.0. monotonic() is
+        # time since boot on Linux, and systemd starts this service *at* boot,
+        # so `now - 0.0 < 30` was true for the first half-minute of every
+        # single run -- the throttle swallowed the very first snapshot, which
+        # is the one that matters most after a restart.
+        now = time.monotonic()
+        last_written = self._metrics_persisted_at.get(plugin_id)
+        if (not force and last_written is not None
+                and now - last_written < _METRICS_PERSIST_INTERVAL):
+            return
+        cache_key = self._get_metrics_key(plugin_id)
+        self.cache_manager.set(cache_key, {
+            'memory_mb': metrics.memory_mb,
+            'cpu_percent': metrics.cpu_percent,
+            'execution_time': metrics.execution_time,
+            'call_count': metrics.call_count,
+            'total_execution_time': metrics.total_execution_time,
+            'max_execution_time': metrics.max_execution_time,
+            'min_execution_time': (metrics.min_execution_time
+                                   if metrics.min_execution_time != float('inf')
+                                   else 0.0),
+            'last_update_time': metrics.last_update_time,
+        })
+        # Only after the write lands. Marking it first would mean a failed
+        # set() bought the next interval's silence without leaving a snapshot.
+        self._metrics_persisted_at[plugin_id] = now
+
     def reset_metrics(self, plugin_id: str) -> None:
         """Reset metrics for a plugin."""
         with self._lock:
@@ -370,4 +476,7 @@ class PluginResourceMonitor:
                 self._metrics[plugin_id] = ResourceMetrics()
                 cache_key = self._get_metrics_key(plugin_id)
                 self.cache_manager.delete(cache_key)
+                # Let the next call persist immediately rather than leaving the
+                # deleted key absent for the rest of the interval.
+                self._metrics_persisted_at.pop(plugin_id, None)
 

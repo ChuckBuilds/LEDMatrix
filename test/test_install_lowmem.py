@@ -13,6 +13,7 @@ need root and mutate the system, so they are exercised manually instead.
 """
 
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -29,6 +30,16 @@ def run_lib(snippet: str, env: dict | None = None) -> subprocess.CompletedProces
         text=True,
         env={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", **(env or {})},
     )
+
+
+def _fstype_of(path: object) -> str:
+    """Filesystem type backing ``path``, via the same tool the helper uses."""
+    result = subprocess.run(
+        ["findmnt", "-no", "FSTYPE", "--target", str(path)],
+        capture_output=True, text=True,
+        env={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin"},
+    )
+    return result.stdout.strip()
 
 
 def call(fn: str, *args: object, env: dict | None = None) -> str:
@@ -195,8 +206,29 @@ class TestOomDetection:
 
 class TestDiskBackedTmpdir:
     def test_returns_nothing_when_tmpdir_is_already_disk_backed(self, tmp_path):
-        # tmp_path is on the regular filesystem, so the default must be kept.
-        assert call("lm_disk_backed_tmpdir", env={"TMPDIR": str(tmp_path)}) == ""
+        # Do not assume tmp_path is disk-backed. Debian 13 -- the platform this
+        # helper exists for -- mounts /tmp as tmpfs, and pytest puts tmp_path
+        # under /tmp, so this asserted against a *memory*-backed directory and
+        # failed on the target platform while the helper behaved exactly as
+        # designed. Search for a directory whose backing store is really disk.
+        scratch = None
+        disk_backed = None
+        for candidate in (tmp_path, Path("/var/tmp"), LIB.parent):
+            if _fstype_of(candidate) not in ("tmpfs", "ramfs", ""):
+                if candidate is tmp_path:
+                    disk_backed = candidate
+                else:
+                    scratch = Path(tempfile.mkdtemp(dir=str(candidate)))
+                    disk_backed = scratch
+                break
+        if disk_backed is None:
+            pytest.skip("no disk-backed directory available to test against")
+        try:
+            assert call("lm_disk_backed_tmpdir",
+                        env={"TMPDIR": str(disk_backed)}) == ""
+        finally:
+            if scratch is not None:
+                scratch.rmdir()
 
     def test_redirects_away_from_a_memory_backed_tmpdir(self):
         # Debian 13 mounts /tmp as tmpfs, which would otherwise hold the whole

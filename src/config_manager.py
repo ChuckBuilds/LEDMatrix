@@ -106,18 +106,13 @@ class ConfigManager:
         Returns:
             SaveResult with status and details
         """
-        # Load current secrets to preserve them
-        secrets_content = {}
-        if os.path.exists(self.secrets_path):
-            try:
-                with open(self.secrets_path, 'r') as f_secrets:
-                    secrets_content = json.load(f_secrets)
-            except Exception as e:
-                self.logger.warning(f"Could not load secrets file {self.secrets_path} during save: {e}")
-        
+        # Load current secrets to preserve them (raises if unreadable — see
+        # _load_secrets_for_save)
+        secrets_content = self._load_secrets_for_save()
+
         # Strip secrets from main config before saving
         config_to_write = self._strip_secrets_recursive(new_config_data, secrets_content)
-        
+
         # Use atomic manager to save
         atomic_mgr = self._get_atomic_manager()
         result = atomic_mgr.save_config_atomic(
@@ -274,35 +269,86 @@ class ConfigManager:
             self.logger.error(error_msg, exc_info=True)
             raise ConfigError(error_msg, config_path=self.config_path) from e
 
+    @staticmethod
+    def _is_parallel_secrets_list(value: Any) -> bool:
+        """True for the parallel-placeholder list shape emitted by
+        ``secret_helpers.separate_secrets`` for array-item secrets: a
+        non-empty list whose elements are ALL dicts (``{}`` marks an item
+        with no secrets). Any other list-shaped secrets value is a
+        whole-key secret (e.g. a list of secret scalars)."""
+        return (isinstance(value, list) and bool(value)
+                and all(isinstance(item, dict) for item in value))
+
     def _strip_secrets_recursive(self, data_to_filter: Dict[str, Any], secrets: Dict[str, Any]) -> Dict[str, Any]:
         """Recursively remove secret keys from a dictionary."""
         result = {}
         for key, value in data_to_filter.items():
-            if key in secrets:
-                if isinstance(value, dict) and isinstance(secrets[key], dict):
-                    # This key is a shared group, recurse
-                    stripped_sub_dict = self._strip_secrets_recursive(value, secrets[key])
-                    if stripped_sub_dict: # Only add if there's non-secret data left
-                        result[key] = stripped_sub_dict
-                # Else, it's a secret key at this level, so we skip it
-            else:
+            if key not in secrets:
                 # This key is not in secrets, so we keep it
                 result[key] = value
+                continue
+            sec = secrets[key]
+            if isinstance(value, dict) and isinstance(sec, dict):
+                # This key is a shared group, recurse
+                stripped_sub_dict = self._strip_secrets_recursive(value, sec)
+                if stripped_sub_dict: # Only add if there's non-secret data left
+                    result[key] = stripped_sub_dict
+            elif isinstance(value, list) and self._is_parallel_secrets_list(sec):
+                # Parallel-list shape from separate_secrets: sec[i] holds the
+                # secret fields of value[i] ({} = item i has none). Strip each
+                # item and ALWAYS keep the list — indices must survive so the
+                # merge-on-load can realign secrets with their items. The
+                # regular list's length is authoritative: extra secrets
+                # entries are ignored.
+                stripped_items = []
+                for i, item in enumerate(value):
+                    s_item = sec[i] if i < len(sec) else {}
+                    if isinstance(item, dict) and s_item:
+                        stripped_items.append(self._strip_secrets_recursive(item, s_item))
+                    else:
+                        stripped_items.append(item)
+                result[key] = stripped_items
+            # Else: whole-key secret (scalar, list of secret scalars, or a
+            # shape mismatch) -> drop the key entirely. Never leak.
         return result
 
+    def _load_secrets_for_save(self) -> Dict[str, Any]:
+        """Load config_secrets.json for stripping before a save.
+
+        A missing secrets file is fine (nothing to strip). But a file that
+        EXISTS and cannot be read or parsed means stripping is impossible —
+        and the in-memory config being saved has secrets deep-merged into it,
+        so proceeding would write them into config.json in plaintext. That
+        was the historical behavior; it is now a hard refusal. The save
+        raises so the caller (and user) fixes the secrets file instead of
+        silently leaking its contents into the world-readable main config.
+        """
+        if not os.path.exists(self.secrets_path):
+            return {}
+        try:
+            with open(self.secrets_path, 'r') as f_secrets:
+                return json.load(f_secrets)
+        # Only the expected read/parse failures — an unexpected implementation
+        # error should propagate as itself, not masquerade as a secrets-file
+        # problem. (JSONDecodeError and UnicodeDecodeError are ValueErrors.)
+        except (OSError, ValueError, RecursionError) as e:
+            error_msg = (
+                f"Refusing to save config: secrets file {self.secrets_path} exists "
+                f"but could not be loaded ({e}). Saving without it would write "
+                f"merged secret values into config.json in plaintext. Fix or "
+                f"remove the secrets file, then retry."
+            )
+            self.logger.error("[Config] %s", error_msg, exc_info=True)
+            raise ConfigError(error_msg, config_path=self.secrets_path) from e
+
     def save_config(self, new_config_data: Dict[str, Any]) -> None:
-        """Save configuration to the main JSON file, stripping out secrets."""
-        secrets_content = {}
-        if os.path.exists(self.secrets_path):
-            try:
-                with open(self.secrets_path, 'r') as f_secrets:
-                    secrets_content = json.load(f_secrets)
-            except Exception as e:
-                self.logger.warning(f"Could not load secrets file {self.secrets_path} during save: {e}")
-                # Continue without stripping if secrets can't be loaded, or handle as critical error
-                # For now, we'll proceed cautiously and save the full new_config_data if secrets are unreadable
-                # to prevent accidental data loss if the secrets file is temporarily corrupt.
-                # A more robust approach might be to fail the save or use a cached version of secrets.
+        """Save configuration to the main JSON file, stripping out secrets.
+
+        Raises ConfigError when the secrets file exists but cannot be loaded,
+        because stripping would be impossible and secrets would leak into
+        config.json.
+        """
+        secrets_content = self._load_secrets_for_save()
 
         config_to_write = self._strip_secrets_recursive(new_config_data, secrets_content)
 
@@ -339,11 +385,39 @@ class ConfigManager:
             return None
 
     def _deep_merge(self, target: Dict[str, Any], source: Dict[str, Any]) -> None:
-        """Deep merge source dict into target dict."""
+        """Deep merge source dict into target dict.
+
+        Sole call site: merging config_secrets.json into the loaded config.
+        Understands the parallel-list shape separate_secrets emits for
+        array-item secrets (see _is_parallel_secrets_list): each secrets
+        list item is merged into the config list item at the same index
+        ({} placeholders skipped). The config list's length is
+        authoritative — a user deleting an array item from config.json
+        must not have it resurrected from a stale secrets entry."""
         for key, value in source.items():
             if key in target and isinstance(target[key], dict) and isinstance(value, dict):
                 self._deep_merge(target[key], value)
+            elif (key in target and isinstance(target[key], list)
+                    and self._is_parallel_secrets_list(value)):
+                tlist = target[key]
+                for i, s_item in enumerate(value):
+                    if i >= len(tlist):
+                        # Interpolate only config-side data here — nothing
+                        # iterated out of the secrets dict (not even the key
+                        # name) may reach the log.
+                        self.logger.warning(
+                            "A secrets list is longer than the config list it "
+                            "parallels (config has %d item(s)); ignoring the "
+                            "extra entries", len(tlist))
+                        break
+                    if not s_item:
+                        continue  # {} placeholder: item i has no secrets
+                    if isinstance(tlist[i], dict):
+                        self._deep_merge(tlist[i], s_item)
+                    else:
+                        tlist[i] = s_item  # shape drift; the secret wins
             else:
+                # Scalars AND whole-secret scalar arrays: replace (legacy).
                 target[key] = value
 
     def _create_config_from_template(self) -> None:
@@ -448,10 +522,6 @@ class ConfigManager:
     def get_display_config(self) -> Dict[str, Any]:
         """Get display configuration."""
         return self.config.get('display', {})
-
-    def get_clock_config(self) -> Dict[str, Any]:
-        """Get clock configuration."""
-        return self.config.get('clock', {})
 
     def get_config(self) -> Dict[str, Any]:
         """Get the full configuration dictionary.

@@ -26,7 +26,25 @@ class SchemaManager:
     - Cache invalidation on plugin changes
     """
     
-    def __init__(self, plugins_dir: Optional[Path] = None, project_root: Optional[Path] = None, logger: Optional[logging.Logger] = None):
+    # Plugin config keys that mean "where this device is". A plugin declaring
+    # any of these in its schema gets the device-wide ``location`` block from
+    # config.json as the *default* for that field, instead of whatever city the
+    # plugin author happened to ship. A value the user set on the plugin itself
+    # always wins -- this only ever replaces the schema default, so an explicit
+    # per-plugin location is still honoured.
+    #
+    # Only these fully-namespaced keys are substituted. A bare ``state`` or
+    # ``city`` key is deliberately left alone: plugins use those for unrelated
+    # things (ledmatrix-elections' ``state`` is a two-letter code, not a place
+    # name), and silently rewriting them would break those plugins.
+    DEVICE_LOCATION_KEYS: Dict[str, str] = {
+        'location_city': 'city',
+        'location_state': 'state',
+        'location_country': 'country',
+    }
+
+    def __init__(self, plugins_dir: Optional[Path] = None, project_root: Optional[Path] = None,
+                 logger: Optional[logging.Logger] = None, config_manager: Optional[Any] = None):
         """
         Initialize the Schema Manager.
         
@@ -34,10 +52,14 @@ class SchemaManager:
             plugins_dir: Base plugins directory path
             project_root: Project root directory path
             logger: Optional logger instance
+            config_manager: Optional config manager, used to resolve the
+                device-wide ``location`` that seeds plugin location defaults.
+                Omitting it simply leaves schema defaults untouched.
         """
         self.logger = logger or logging.getLogger(__name__)
         self.plugins_dir = plugins_dir
         self.project_root = project_root or Path.cwd()
+        self.config_manager = config_manager
         
         # Schema cache: plugin_id -> schema dict
         self._schema_cache: Dict[str, Dict[str, Any]] = {}
@@ -212,9 +234,69 @@ class SchemaManager:
         
         return defaults
     
+    def get_device_location(self) -> Optional[Dict[str, Any]]:
+        """
+        Return the device-wide ``location`` block from config.json, or None.
+
+        This is the City/State/Country the user sets once under General
+        settings. Returns None when there is no config manager wired, the
+        config can't be read, or no location has been configured.
+        """
+        if self.config_manager is None:
+            return None
+        try:
+            config = self.config_manager.load_config()
+        except Exception as e:
+            # A config that can't be read must never stop defaults being
+            # generated -- the plugin's own schema defaults still apply.
+            self.logger.debug(f"Could not read device location from config: {e}")
+            return None
+        if not isinstance(config, dict):
+            return None
+        location = config.get('location')
+        return location if isinstance(location, dict) else None
+
+    def apply_device_location(self, defaults: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Replace location-shaped schema defaults with the device's own location.
+
+        Without this, a plugin that ships ``"location_city": "Dallas"`` as its
+        schema default silently reports Dallas weather (and centres its radar
+        there) for every user who never opened that plugin's config form --
+        even though they set their real city under General settings. The
+        substituted value is still only a *default*: ``merge_with_defaults``
+        lets any per-plugin value the user saved win over it.
+
+        Mutates and returns ``defaults`` for convenience.
+        """
+        if not defaults:
+            return defaults
+        if not any(key in defaults for key in self.DEVICE_LOCATION_KEYS):
+            return defaults
+
+        location = self.get_device_location()
+        if not location:
+            return defaults
+
+        for key, field in self.DEVICE_LOCATION_KEYS.items():
+            if key not in defaults:
+                continue
+            value = location.get(field)
+            # Only a non-empty string is a real answer; a blank or missing
+            # field means "not configured", which leaves the schema default.
+            if isinstance(value, str) and value.strip():
+                defaults[key] = value.strip()
+
+        return defaults
+
     def generate_default_config(self, plugin_id: str, use_cache: bool = True) -> Dict[str, Any]:
         """
         Generate default configuration for a plugin from its schema.
+        
+        Location fields (see ``DEVICE_LOCATION_KEYS``) default to the device's
+        configured location rather than the plugin author's. That substitution
+        is applied on the way out rather than being cached, so changing the
+        device location takes effect without invalidating the defaults cache.
         
         Args:
             plugin_id: Plugin identifier
@@ -225,7 +307,7 @@ class SchemaManager:
         """
         # Check cache first
         if use_cache and plugin_id in self._defaults_cache:
-            return self._defaults_cache[plugin_id].copy()
+            return self.apply_device_location(self._defaults_cache[plugin_id].copy())
         
         schema = self.load_schema(plugin_id, use_cache=use_cache)
         if not schema:
@@ -249,10 +331,11 @@ class SchemaManager:
         if 'live_priority' not in defaults:
             defaults['live_priority'] = schema.get('properties', {}).get('live_priority', {}).get('default', False)
         
-        # Cache the defaults
+        # Cache the defaults *before* the device location is layered on, so a
+        # later change to the device location is picked up by the next call.
         self._defaults_cache[plugin_id] = defaults.copy()
         
-        return defaults
+        return self.apply_device_location(defaults)
     
     def validate_config_against_schema(self, config: Dict[str, Any], schema: Dict[str, Any], 
                                       plugin_id: Optional[str] = None) -> Tuple[bool, List[str]]:

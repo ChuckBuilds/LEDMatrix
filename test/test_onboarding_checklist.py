@@ -1,0 +1,241 @@
+"""
+Getting Started checklist: what the server decides, and what it must not.
+
+The timezone step used to tick server-side when the saved timezone differed
+from the shipped default, OR-ed with the saved city. That made the step
+unsatisfiable for anyone genuinely in the default zone (the card nagged
+forever), and let a saved city tick it off while the timezone was still wrong.
+The step is now verified in the browser against its own zone, so the server's
+only job is to hand over the configured value and stay out of the decision.
+
+These tests pin that contract: the panel-size step still reflects config, the
+timezone step never pre-ticks, it carries the configured zone, and the city
+has no influence on it.
+"""
+
+import copy
+import re
+import sys
+from pathlib import Path
+from unittest.mock import MagicMock
+
+import pytest
+from flask import Flask
+
+PROJECT_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+BASE_CONFIG = {
+    "timezone": "America/New_York",
+    "location": {"city": "Tampa", "state": "Florida", "country": "US"},
+    "display": {
+        "hardware": {"rows": 32, "cols": 64, "chain_length": 2, "parallel": 1},
+        "runtime": {},
+        "double_sided": {"enabled": False},
+        "vegas_scroll": {"plugin_order": [], "excluded_plugins": []},
+        "plugin_rotation_order": [],
+    },
+    "plugin_system": {},
+    "schedule": {},
+    "dim_schedule": {},
+    "sync": {},
+}
+
+
+def render(config):
+    """Render the overview partial against one config, as app.py would."""
+    base = PROJECT_ROOT / "web_interface"
+    app = Flask(
+        __name__,
+        template_folder=str(base / "templates"),
+        static_folder=str(base / "static"),
+    )
+    app.config["TESTING"] = True
+
+    from web_interface.blueprints import pages_v3 as pv
+
+    # pages_v3 is a module-level singleton shared across the test process;
+    # restore whatever the previous test left on it.
+    original_cm = getattr(pv.pages_v3, "config_manager", None)
+    original_pm = getattr(pv.pages_v3, "plugin_manager", None)
+
+    mock_cm = MagicMock()
+    mock_cm.load_config.return_value = config
+    mock_cm.get_raw_file_content.return_value = config
+    pv.pages_v3.config_manager = mock_cm
+
+    mock_pm = MagicMock()
+    mock_pm.plugins = {}
+    mock_pm.get_all_plugin_info.return_value = []
+    mock_pm.get_plugin_display_modes.side_effect = lambda pid: []
+    pv.pages_v3.plugin_manager = mock_pm
+
+    app.register_blueprint(pv.pages_v3, url_prefix="")
+    try:
+        resp = app.test_client().get("/partials/overview")
+        assert resp.status_code == 200, resp.status_code
+        return resp.get_data(as_text=True)
+    finally:
+        pv.pages_v3.config_manager = original_cm
+        pv.pages_v3.plugin_manager = original_pm
+
+
+def timezone_step(body):
+    """The checklist <button> for the timezone step."""
+    match = re.search(r"<button[^>]*data-check=\"timezone\"[^>]*>", body)
+    assert match, "timezone step not found in the rendered checklist"
+    return match.group(0)
+
+
+def config_with(**overrides):
+    config = copy.deepcopy(BASE_CONFIG)
+    for key, value in overrides.items():
+        config[key] = value
+    return config
+
+
+@pytest.mark.parametrize(
+    "timezone",
+    ["America/New_York", "America/Los_Angeles", "Europe/Madrid", "Asia/Kolkata"],
+)
+def test_timezone_step_never_pre_ticks_server_side(timezone):
+    """The browser owns this decision; the server must not pre-empt it.
+
+    The default zone is in the list deliberately: that is the case the old
+    default-comparison could never tick.
+    """
+    step = timezone_step(render(config_with(timezone=timezone)))
+    assert 'data-done="0"' in step, step
+
+
+@pytest.mark.parametrize(
+    "timezone",
+    ["America/New_York", "Europe/Madrid", "Pacific/Auckland"],
+)
+def test_timezone_step_carries_the_configured_zone(timezone):
+    """JS compares data-tz against the browser, so it has to be the real value."""
+    assert f'data-tz="{timezone}"' in timezone_step(render(config_with(timezone=timezone)))
+
+
+def test_city_does_not_influence_the_timezone_step():
+    """The coupling this change removes: city said nothing about the timezone,
+    and OR-ing it let a saved city tick the step off with the zone still wrong.
+
+    timezone_step() returns the opening tag only, so this compares the state
+    the step is in -- data-done and data-tz -- and not the label, which does
+    still show the configured city as context and so differs between the two.
+    """
+    tampa = timezone_step(render(config_with(
+        location={"city": "Tampa", "state": "Florida", "country": "US"})))
+    seattle = timezone_step(render(config_with(
+        location={"city": "Seattle", "state": "Washington", "country": "US"})))
+    assert tampa == seattle
+
+
+def test_missing_timezone_leaves_the_step_open():
+    """Nothing saved means nothing to verify: the step stays unticked and the
+    JS bails on the empty value rather than comparing against ''."""
+    step = timezone_step(render(config_with(timezone="")))
+    assert 'data-tz=""' in step
+    assert 'data-done="0"' in step
+
+
+def test_zone_comparison_asks_for_the_time_of_day():
+    """Guard on the Intl options, which look like a stylistic choice.
+
+    dateStyle/timeStyle are late additions (Firefox shipped them in 91). An
+    implementation that does not know them ignores them and formats the date
+    alone -- which compares New York, Chicago and Madrid as equal and ticks
+    the step for a timezone that is plainly wrong. Explicit numeric fields
+    have been in Intl since ECMA-402 v1.
+    """
+    template = (PROJECT_ROOT / "web_interface" / "templates" / "v3"
+                / "partials" / "overview.html").read_text()
+    body = template[template.index("function sameZone"):]
+    body = body[:body.index("}())")]
+    # The comment above the options names dateStyle/timeStyle to explain why
+    # they are not used, so match on code only.
+    body = "\n".join(line for line in body.splitlines()
+                     if not line.lstrip().startswith("//"))
+    assert "dateStyle" not in body and "timeStyle" not in body, (
+        "zone comparison must not depend on dateStyle/timeStyle")
+    for field in ("hour:", "minute:", "year:", "month:", "day:"):
+        assert field in body, f"zone comparison dropped {field!r}"
+
+
+def test_zone_comparison_samples_both_sides_of_dst():
+    """One instant is not enough, and the shortfall is invisible for months.
+
+    America/New_York and America/Lima hold the same offset all winter, so a
+    check against now alone ticks the step in January for a panel that runs an
+    hour off from March. The comparison has to sample instants either side of
+    DST -- mid-January and mid-July, which covers both hemispheres.
+    """
+    template = (PROJECT_ROOT / "web_interface" / "templates" / "v3"
+                / "partials" / "overview.html").read_text()
+    body = template[template.index("function sameZone"):]
+    body = body[:body.index("}())")]
+    code = "\n".join(line for line in body.splitlines()
+                     if not line.lstrip().startswith("//"))
+    assert "Date.UTC" in code, (
+        "zone comparison samples only the current instant, so zones that "
+        "coincide seasonally would read as equal")
+    assert code.count("Date.UTC") >= 2, "expected an instant either side of DST"
+
+
+def _stamp(zone, instant):
+    """The JS comparison's algorithm, for pinning what it must decide.
+
+    There is no JS runtime here (and the repo has no JS test infra), so this
+    mirrors sameZone rather than executing it: same instants, same wall-clock
+    equality. It records the verdicts the shipped code has to reach.
+    """
+    from zoneinfo import ZoneInfo
+    return instant.astimezone(ZoneInfo(zone)).strftime("%m/%d/%Y %H:%M")
+
+
+@pytest.mark.parametrize(
+    "left,right,equivalent",
+    [
+        # Aliases: one zone under two names.
+        ("Asia/Calcutta", "Asia/Kolkata", True),
+        ("Europe/Kiev", "Europe/Kyiv", True),
+        # Same rules year-round: either renders the same times, so a panel set
+        # to one and browsed from the other is correctly configured.
+        ("America/New_York", "America/Toronto", True),
+        # Coincide in winter only -- the case a single-instant check gets wrong.
+        ("America/New_York", "America/Lima", False),
+        ("America/Phoenix", "America/Los_Angeles", False),
+        ("Australia/Sydney", "Pacific/Guadalcanal", False),
+        # Plainly different.
+        ("America/New_York", "America/Chicago", False),
+        ("America/New_York", "Europe/Madrid", False),
+    ],
+)
+def test_which_zone_pairs_must_count_as_the_same(left, right, equivalent):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    year = 2026
+    instants = [datetime(year, 1, 15, 12, tzinfo=ZoneInfo("UTC")),
+                datetime(year, 7, 15, 12, tzinfo=ZoneInfo("UTC"))]
+    matched = all(_stamp(left, at) == _stamp(right, at) for at in instants)
+    assert matched is equivalent, (
+        f"{left} vs {right}: sampling both seasons gave {matched}")
+
+
+@pytest.mark.parametrize(
+    "hardware,expected",
+    [
+        ({"rows": 32, "cols": 64, "chain_length": 2, "parallel": 1}, "1"),
+        ({"rows": 0, "cols": 0, "chain_length": 0, "parallel": 1}, "0"),
+    ],
+)
+def test_panel_size_step_still_reflects_config(hardware, expected):
+    """Regression guard: the hardware step is still decided server-side."""
+    config = config_with()
+    config["display"]["hardware"] = hardware
+    body = render(config)
+    match = re.search(r"<button[^>]*data-tab=\"display\"[^>]*>", body)
+    assert match, "panel-size step not found"
+    assert f'data-done="{expected}"' in match.group(0), match.group(0)

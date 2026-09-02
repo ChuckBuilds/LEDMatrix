@@ -19,6 +19,7 @@ Port default: 5765 (UDP). Open this port on both Pis if ufw is active:
 
 import io
 import json
+import math
 import os
 import socket
 import struct
@@ -36,6 +37,13 @@ from PIL import Image
 _RAW_MAGIC = b'SYNC_RAW'
 _RAW_HEADER = struct.Struct('<HH')  # width, height (uint16 LE)
 
+
+# Upper bound on a decoded frame/scroll image. Generous for any real scroll
+# image (a leader's full cycle is long but only panel-height tall), and low
+# enough that a crafted image from any host on the LAN cannot force a large
+# allocation on the render thread. Applied on both receive paths — the TCP
+# image server and the follower's legacy-PNG UDP fallback.
+_MAX_FRAME_W, _MAX_FRAME_H = 100_000, 256
 
 SYNC_PORT = 5765
 HELLO_INTERVAL = 5.0       # follower broadcasts hello every 5 s
@@ -101,6 +109,7 @@ class DisplaySyncManager:
         self._peer_chain: int = 0
         self._last_heartbeat_time: float = 0.0
         self._leader_width: int = 0  # set by display_controller after init
+        self._oversized_frame_warned: bool = False
 
         # Follower state
         self._follower_state = FollowerState.STANDALONE
@@ -174,6 +183,10 @@ class DisplaySyncManager:
                 continue
             except Exception as exc:
                 self.logger.debug("Sync leader recv error: %s", exc)
+                # Brief backoff: a socket left in a bad state raises
+                # immediately, which would otherwise spin this thread at
+                # 100% CPU logging the same error.
+                time.sleep(0.1)
 
     def _handle_hello(self, msg: dict, sender_ip: str) -> None:
         hw = self._hw_config
@@ -273,11 +286,10 @@ class DisplaySyncManager:
                             break
                         data.extend(chunk)
                     img = Image.open(io.BytesIO(data))
-                    _MAX_W, _MAX_H = 100_000, 256  # generous for any real scroll image
-                    if img.width > _MAX_W or img.height > _MAX_H:
+                    if img.width > _MAX_FRAME_W or img.height > _MAX_FRAME_H:
                         self.logger.warning(
                             "Sync: rejected oversized scroll image %dx%d (max %dx%d) from %s",
-                            img.width, img.height, _MAX_W, _MAX_H, addr,
+                            img.width, img.height, _MAX_FRAME_W, _MAX_FRAME_H, addr,
                         )
                         continue
                     try:
@@ -396,7 +408,7 @@ class DisplaySyncManager:
             data = header + arr.tobytes()
             if len(data) <= 65000:
                 self._send_sock.sendto(data, (self._peer_ip, self.port))
-            elif not getattr(self, '_oversized_frame_warned', False):
+            elif not self._oversized_frame_warned:
                 self._oversized_frame_warned = True
                 self.logger.warning(
                     "Sync: frame too large for UDP (%d bytes, max 65000) — "
@@ -451,43 +463,76 @@ class DisplaySyncManager:
         )
         self.write_status_file()
 
+    def _handle_received_frame(self, img: Image.Image, sender_ip: str) -> None:
+        """Record a decoded leader frame and enter follower mode if needed."""
+        with self._frame_lock:
+            self._latest_frame = img
+        self._last_leader_frame_time = time.time()
+        self._leader_ip = sender_ip
+
+        if self._follower_state == FollowerState.STANDALONE:
+            self._follower_state = FollowerState.FOLLOWER
+            self.logger.info(
+                "Sync: leader active at %s — switching to follower mode",
+                sender_ip,
+            )
+            self.write_status_file()
+
     def _follower_recv_loop(self) -> None:
         while self._running:
             try:
                 data, addr = self._recv_sock.recvfrom(65535)
                 sender_ip = addr[0]
 
-                if data[:8] == _RAW_MAGIC or len(data) > 512:
-                    # Frame data: prefer magic-tagged raw RGB; fall back to legacy PNG
+                if data[:8] == _RAW_MAGIC:
+                    # Magic-tagged raw RGB frame — self-describing, no guessing.
                     try:
-                        if data[:8] == _RAW_MAGIC:
-                            w, h = _RAW_HEADER.unpack(data[8:12])
-                            raw = data[12:]
-                            img = Image.frombuffer(
-                                "RGB", (w, h), raw, "raw", "RGB", 0, 1
-                            )
-                        else:
-                            # Fallback: try legacy PNG
-                            img = Image.open(io.BytesIO(data))
-                            img.load()
-                        with self._frame_lock:
-                            self._latest_frame = img
-                        self._last_leader_frame_time = time.time()
-                        self._leader_ip = sender_ip
-
-                        if self._follower_state == FollowerState.STANDALONE:
-                            self._follower_state = FollowerState.FOLLOWER
-                            self.logger.info(
-                                "Sync: leader active at %s — switching to follower mode",
-                                sender_ip,
-                            )
-                            self.write_status_file()
+                        w, h = _RAW_HEADER.unpack(data[8:12])
+                        raw = data[12:]
+                        img = Image.frombuffer(
+                            "RGB", (w, h), raw, "raw", "RGB", 0, 1
+                        )
+                        self._handle_received_frame(img, sender_ip)
                     except Exception as exc:
                         self.logger.debug("Sync: frame decode error: %s", exc)
                 else:
-                    # Control message
+                    # No magic prefix. Whether the payload parses as JSON
+                    # decides between a control message and a legacy
+                    # (pre-magic) PNG frame — both wire formats are
+                    # self-describing, so no size heuristic is needed. A
+                    # >512-byte control message used to be misrouted into
+                    # image decode and silently dropped.
                     try:
                         msg = json.loads(data.decode("utf-8"))
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        # Not JSON — try a legacy PNG frame.
+                        try:
+                            img = Image.open(io.BytesIO(data))
+                            if img.width > _MAX_FRAME_W or img.height > _MAX_FRAME_H:
+                                # Same cap the TCP image path applies: decode
+                                # is deferred until load(), so check first.
+                                self.logger.debug(
+                                    "Sync: rejected oversized legacy frame %dx%d from %s",
+                                    img.width, img.height, sender_ip,
+                                )
+                                continue
+                            img.load()
+                            self._handle_received_frame(img, sender_ip)
+                        except Exception as exc:
+                            self.logger.debug("Sync: frame decode error: %s", exc)
+                        continue
+
+                    # It parsed, so it is a control message and never a
+                    # frame. Read and validate its fields under a guard —
+                    # a UDP payload is attacker-shaped, so a non-object
+                    # body makes .get() raise AttributeError and an "sx"
+                    # carrying a non-numeric x raises ValueError/TypeError
+                    # — but dispatch the callback *outside* it. Running
+                    # the callback in here would let a fault in someone
+                    # else's code read as a malformed packet and be
+                    # logged as one.
+                    fire_new_cycle = False
+                    try:
                         t = msg.get("t")
                         if t == "hello_ack":
                             self._leader_ip = sender_ip
@@ -501,7 +546,17 @@ class DisplaySyncManager:
                             self.write_status_file()
                         elif t == "sx":
                             # Vegas scroll-position sync — tiny message, renders locally
-                            self._latest_scroll_x = float(msg["x"])
+                            scroll_x = float(msg["x"])
+                            if not math.isfinite(scroll_x):
+                                # json.loads accepts the NaN/Infinity literals,
+                                # and float("nan") accepts the strings, so a
+                                # non-finite x reaches here intact. Left alone
+                                # it poisons every offset computed from it —
+                                # NaN comparisons are all false, so the
+                                # follower renders a frame it can never scroll
+                                # back from. Treat it as malformed.
+                                raise ValueError(f"non-finite scroll x: {msg['x']!r}")
+                            self._latest_scroll_x = scroll_x
                             self._last_leader_frame_time = time.time()
                             self._leader_ip = sender_ip
                             if self._follower_state == FollowerState.STANDALONE:
@@ -511,19 +566,22 @@ class DisplaySyncManager:
                                     sender_ip,
                                 )
                                 self.write_status_file()
-                                if self._on_new_cycle:
-                                    self._on_new_cycle()  # build initial scroll image
+                                fire_new_cycle = True  # build initial scroll image
                         elif t == "nc":
                             # Leader started a new scroll cycle — rebuild local image
-                            if self._on_new_cycle:
-                                self._on_new_cycle()
-                    except (json.JSONDecodeError, UnicodeDecodeError, KeyError):
-                        pass
+                            fire_new_cycle = True
+                    except (KeyError, AttributeError, TypeError, ValueError) as exc:
+                        self.logger.debug("Sync: malformed control message: %s", exc)
+                        continue
+
+                    if fire_new_cycle and self._on_new_cycle:
+                        self._on_new_cycle()
 
             except socket.timeout:
                 continue
             except Exception as exc:
                 self.logger.debug("Sync follower recv error: %s", exc)
+                time.sleep(0.1)
 
     def _follower_announce_loop(self) -> None:
         hw = self._hw_config

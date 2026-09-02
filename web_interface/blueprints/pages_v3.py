@@ -180,10 +180,6 @@ def load_partial(partial_name):
             return _load_durations_partial()
         elif partial_name == 'schedule':
             return _load_schedule_partial()
-        elif partial_name == 'weather':
-            return _load_weather_partial()
-        elif partial_name == 'stocks':
-            return _load_stocks_partial()
         elif partial_name == 'plugins':
             return _load_plugins_partial()
         elif partial_name == 'fonts':
@@ -463,28 +459,6 @@ def _load_schedule_partial():
         logger.error("Error loading partial", exc_info=True)
         return "Error loading partial", 500
 
-
-def _load_weather_partial():
-    """Load weather configuration partial"""
-    try:
-        if pages_v3.config_manager:
-            main_config = pages_v3.config_manager.load_config()
-            return render_template('v3/partials/weather.html',
-                                 main_config=main_config)
-    except Exception as e:
-        logger.error("Error loading partial", exc_info=True)
-        return "Error loading partial", 500
-
-def _load_stocks_partial():
-    """Load stocks configuration partial"""
-    try:
-        if pages_v3.config_manager:
-            main_config = pages_v3.config_manager.load_config()
-            return render_template('v3/partials/stocks.html',
-                                 main_config=main_config)
-    except Exception as e:
-        logger.error("Error loading partial", exc_info=True)
-        return "Error loading partial", 500
 
 def _load_plugins_partial():
     """Load plugins management partial"""

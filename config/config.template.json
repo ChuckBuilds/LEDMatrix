@@ -110,7 +110,12 @@
             "inverse_colors": false,
             "show_refresh_rate": false,
             "led_rgb_sequence": "RGB",
-            "limit_refresh_rate_hz": 100
+            "limit_refresh_rate_hz": 100,
+            "pixel_mapper_config": "",
+            "orientation": "normal",
+            "row_address_type": 0,
+            "multiplexing": 0,
+            "panel_type": ""
         },
         "runtime": {
             "gpio_slowdown": 3,
@@ -125,6 +130,9 @@
         "plugin_rotation_order": [],
         "use_short_date_format": true,
         "vegas_scroll": {
+      "live_in_ticker": false,
+      "live_weight": 3,
+      "favorite_live_weight": 5,
             "enabled": false,
             "scroll_speed": 50,
             "separator_width": 32,
@@ -145,11 +153,13 @@
             "min_plugin_width": 8,
             "lead_in_width": 0,
             "plugins_per_cycle": 6,
-            "max_plugin_width_ratio": 3.0,
+            "max_plugin_width_ratio": 0.0,
             "overflow_mode": "rotate",
             "dynamic_duration_enabled": true,
             "min_cycle_duration": 60,
-            "max_cycle_duration": 240
+            "max_cycle_duration": 240,
+            "frame_based_scrolling": true,
+            "scroll_delay": 0.02
         }
     },
     "sync": {
@@ -160,7 +170,8 @@
     "plugin_system": {
         "plugins_directory": "plugin-repos",
         "auto_discover": true,
-        "auto_load_enabled": true
+        "auto_load_enabled": true,
+        "development_mode": false
     },
     "web-ui-info": {
         "enabled": true,

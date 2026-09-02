@@ -1143,7 +1143,7 @@ class PluginStoreManager:
         """
         registry = self.fetch_registry()
         plugins = registry.get('plugins', []) or []
-        plugin_info = next((p for p in plugins if p['id'] == plugin_id), None)
+        plugin_info = self._match_registry_entry(plugins, plugin_id)
 
         if not plugin_info:
             return None
@@ -1183,6 +1183,37 @@ class PluginStoreManager:
 
         return plugin_info
 
+    @staticmethod
+    def _match_registry_entry(plugins: List[Dict], plugin_id: str) -> Optional[Dict]:
+        """Find a registry entry by its id, or by the directory it installs to.
+
+        Four shipped plugins have a registry ``id`` that differs from the ``id``
+        in their own manifest: ``weather`` installs to ``plugins/ledmatrix-weather``,
+        and likewise stocks, music and leaderboard. Installation already prefers
+        the manifest id for the directory name, so on disk, in ``config.json``
+        and in a backup manifest those plugins are called ``ledmatrix-weather``.
+
+        Only the registry calls them ``weather``, and nothing resolved that in
+        reverse: restoring a backup asked the store for ``ledmatrix-weather``
+        and got "Plugin not found in registry", silently dropping four enabled
+        plugins from a restored device.
+
+        Matching ``plugin_path`` fixes it without renaming any published id,
+        which would orphan ``plugin_state.json`` entries keyed on the old ones.
+        Exact id always wins, so an entry whose *path* happens to collide with
+        another entry's id cannot shadow it.
+        """
+        if not plugin_id:
+            return None
+        exact = next((p for p in plugins if p.get('id') == plugin_id), None)
+        if exact is not None:
+            return exact
+        for entry in plugins:
+            path = (entry.get('plugin_path') or '').rstrip('/')
+            if path and path.rsplit('/', 1)[-1] == plugin_id:
+                return entry
+        return None
+
     def get_registry_info(self, plugin_id: str) -> Optional[Dict]:
         """
         Get plugin information from the registry cache only (no GitHub API calls).
@@ -1198,7 +1229,7 @@ class PluginStoreManager:
         """
         registry = self.fetch_registry()
         plugins = registry.get('plugins', []) or []
-        return next((p for p in plugins if p.get('id') == plugin_id), None)
+        return self._match_registry_entry(plugins, plugin_id)
     
     def install_plugin(self, plugin_id: str, branch: Optional[str] = None) -> bool:
         """Install a plugin, keeping any existing install until the new one is
@@ -2552,6 +2583,85 @@ class PluginStoreManager:
             self.logger.error(f"Error uninstalling plugin {plugin_id}: {e}")
             return False
     
+    def _gate_pulled_commit(self, plugin_id: str, plugin_path: Path,
+                            previous_sha: Optional[str]) -> bool:
+        """Apply the compatibility gate to a commit that arrived via git pull.
+
+        Every other route into an installed plugin goes through
+        ``install_plugin``, which gates in ``_install_plugin_impl``. This one
+        did not: a ``git pull`` could deliver a manifest flooring above this
+        core and nothing would notice until the plugin failed to load, which
+        surfaces as one line in the journal and a scoreboard that silently
+        stopped appearing.
+
+        Checked after the pull rather than before it, for the same reason
+        ``_install_plugin_impl`` checks after the download: the registry
+        carries no compatibility field, so the incoming floor is only knowable
+        once the new commit is on disk.
+
+        Undone with ``git reset --hard`` rather than by removing the directory.
+        This is a live checkout, the previous commit is still in the object
+        store, and the reset leaves the user on the exact version they were
+        already running -- the same promise ``_reinstall_with_rollback`` makes,
+        reached by the means this path actually has. It is also the gentler
+        option: no window in which the plugin directory does not exist, and no
+        ``.standalone-backup-`` debris if the process dies mid-way.
+
+        A manifest that cannot be read is not evidence of incompatibility, so
+        it allows. ``compatibility.check`` refuses only on evidence for the
+        same reason: a wrong refusal breaks a working install, while a wrong
+        allowance degrades to exactly the behaviour this path had before the
+        gate existed.
+        """
+        manifest_path = plugin_path / "manifest.json"
+        try:
+            with open(manifest_path, 'r', encoding='utf-8') as mf:
+                manifest = json.load(mf)
+        except (OSError, ValueError) as e:
+            self.logger.warning(
+                "Could not read %s after updating %s (%s); allowing the "
+                "update, as an unreadable manifest declares no floor",
+                manifest_path, plugin_id, e)
+            return True
+
+        from src import __version__ as core_version
+        from src.plugin_system import compatibility
+
+        compatible, reason = compatibility.check(manifest, core_version)
+        if compatible:
+            return True
+
+        self.logger.error("Refusing the update to %s: %s", plugin_id, reason)
+
+        if not previous_sha:
+            self.logger.error(
+                "Cannot roll %s back: the commit it was on before the pull is "
+                "unknown. It is now on a version this core cannot run — "
+                "reinstall it from the plugin store.", plugin_id)
+            return False
+
+        # Safe by construction: update_plugin returns before pulling unless the
+        # tree was clean or successfully stashed, so there are no uncommitted
+        # tracked edits for --hard to discard. The stash is not popped on the
+        # success path either, so the reset leaves the working tree exactly
+        # where a successful pull would have. Say "commit", not "changes".
+        reset = subprocess.run(
+            ['git', '-C', str(plugin_path), 'reset', '--hard', previous_sha],
+            capture_output=True, text=True, timeout=60, check=False)
+        if reset.returncode != 0:
+            self.logger.error(
+                "CRITICAL: could not roll %s back to commit %s: %s. It is left "
+                "on a version this core cannot run; "
+                "`git -C %s reset --hard %s` restores it.",
+                plugin_id, previous_sha[:7],
+                (reset.stderr or reset.stdout or '').strip(),
+                plugin_path, previous_sha)
+        else:
+            self.logger.info(
+                "Rolled %s back to commit %s; it stays on the version it was "
+                "already running.", plugin_id, previous_sha[:7])
+        return False
+
     def _reinstall_with_rollback(self, plugin_id: str, plugin_path: Path) -> bool:
         """Replace an installed plugin with a fresh install, atomically.
 
@@ -2829,6 +2939,8 @@ class PluginStoreManager:
                         status_result = type('obj', (object,), {'stdout': '', 'stderr': 'Status check timed out'})()
                     
                     stash_info = ""
+                    # Whether the pull can be undone without destroying work.
+                    tree_is_recoverable = not has_changes
                     if has_changes:
                         self.logger.info(f"Stashing local changes in {plugin_id} before update")
                         try:
@@ -2842,11 +2954,36 @@ class PluginStoreManager:
                             )
                             if stash_result.returncode == 0:
                                 stash_info = " (local changes were stashed)"
+                                tree_is_recoverable = True
                                 self.logger.info(f"Stashed local changes (including untracked files) for {plugin_id}")
                             else:
                                 self.logger.warning(f"Failed to stash local changes for {plugin_id}: {stash_result.stderr}")
                         except subprocess.TimeoutExpired:
                             self.logger.warning(f"Stash operation timed out for {plugin_id}, proceeding with pull")
+
+                    # Do not pull what cannot be un-pulled.
+                    #
+                    # The compatibility gate below can refuse the commit this
+                    # pull brings down, and its only way back is `git reset
+                    # --hard`, which discards uncommitted tracked edits. Those
+                    # edits are exactly what the stash above exists to protect,
+                    # so a stash that failed or timed out leaves the rollback
+                    # unable to run without destroying them.
+                    #
+                    # A pull does not necessarily refuse on a dirty tree -- git
+                    # merges happily as long as the incoming commit touches
+                    # different files -- so without this the update would
+                    # succeed, the gate would refuse, and the reset would take
+                    # the user's work with it. Refusing here costs an update in
+                    # a case that already went wrong; the alternative costs
+                    # data.
+                    if not tree_is_recoverable:
+                        self.logger.error(
+                            "Refusing to update %s: it has local changes that could "
+                            "not be stashed, and an incompatible update could then "
+                            "only be rolled back by discarding them. Commit or stash "
+                            "them by hand, then update.", plugin_id)
+                        return False
 
                     # Pull from the determined remote branch
                     self.logger.info(f"Pulling from origin/{remote_pull_branch} for {plugin_id}...")
@@ -2869,6 +3006,14 @@ class PluginStoreManager:
                         self.logger.info(f"Plugin {plugin_id} now at remote commit {remote_sha[:7]}{stash_info}")
                     elif updated_sha:
                         self.logger.info(f"Plugin {plugin_id} updated to commit {updated_sha[:7]}{stash_info}")
+
+                    # The install gate, at the only point on this path where
+                    # it can be answered. Every other route in goes through
+                    # install_plugin, which gates in _install_plugin_impl; this
+                    # one did not, so a pull could deliver a manifest flooring
+                    # above this core and nothing would notice.
+                    if not self._gate_pulled_commit(plugin_id, plugin_path, local_sha):
+                        return False
 
                     self._install_dependencies(plugin_path)
                     return True
@@ -2969,7 +3114,10 @@ class PluginStoreManager:
             remote_branch = plugin_info_remote.get('branch') or plugin_info_remote.get('default_branch')
 
             # Compare local manifest version against registry latest_version
-            # to avoid unnecessary reinstalls for monorepo plugins
+            # to avoid unnecessary reinstalls for monorepo plugins. Uses the
+            # same semantic comparator as the web UI's update badge, so
+            # equivalent spellings ("v1.2.0" vs "1.2.0") never trigger a
+            # reinstall and a locally-ahead version is never downgraded.
             try:
                 local_manifest_path = plugin_path / "manifest.json"
                 if local_manifest_path.exists():
@@ -2977,8 +3125,16 @@ class PluginStoreManager:
                         local_manifest = json.load(f)
                     local_version = local_manifest.get('version', '')
                     remote_version = plugin_info_remote.get('latest_version', '')
-                    if local_version and remote_version and local_version == remote_version:
-                        self.logger.info(f"Plugin {plugin_id} already at latest version {local_version}")
+                    from src.plugin_system.compatibility import is_update_available
+                    # No truthiness gate: the shared comparator already treats
+                    # a missing version on either side as "no update", and the
+                    # store must agree with the UI badge in that case too. A
+                    # missing manifest (not just a missing version field)
+                    # still falls through to the reinstall recovery path.
+                    if not is_update_available(local_version, remote_version):
+                        self.logger.info(
+                            f"Plugin {plugin_id} already at latest version "
+                            f"(installed {local_version}, registry {remote_version})")
                         return True
             except Exception as e:
                 self.logger.debug(f"Could not compare versions for {plugin_id}: {e}")

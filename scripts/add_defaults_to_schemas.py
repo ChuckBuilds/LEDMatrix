@@ -201,7 +201,7 @@ def process_schema_file(schema_path: Path) -> bool:
 def main():
     """Main entry point."""
     project_root = Path(__file__).parent.parent
-    plugins_dir = project_root / 'plugins'
+    plugins_dir = project_root / 'plugin-repos'
     
     if not plugins_dir.exists():
         print(f"Error: Plugins directory not found: {plugins_dir}")

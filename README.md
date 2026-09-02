@@ -50,7 +50,15 @@ I'm trying to be open to constructive criticism and support, as long as it's a r
 
 <details>
 <summary>Core Features</summary>
-The following plugins are available inside of the LEDMatrix project. These modular, rotating Displays that can be individually enabled or disabled per the user's needs with some configuration around display durations, teams, stocks, weather, timezones, and more. Displays include:
+LEDMatrix is a plugin platform: the displays below are plugins installed
+from the built-in Plugin Store (web interface → Plugins), where each can be
+individually enabled, ordered, and configured — display durations, teams,
+stocks, weather, timezones, and more. The core repo ships with just two
+bundled plugins (`starlark-apps` and `web-ui-info`); the official plugins
+live in the [ledmatrix-plugins](https://github.com/ChuckBuilds/ledmatrix-plugins)
+monorepo and install with one click, and third-party plugins can be
+installed from their own GitHub repositories. Displays available in the
+store include:
 
 ### Time and Weather
 - Real-time clock display (2x 64x32 Displays 4mm Pixel Pitch)
@@ -153,9 +161,11 @@ The system supports live, recent, and upcoming game information for multiple spo
 ### LED Matrix Panels  
 (2x in a horizontal chain is recommended)
 - [Adafruit 64×32](https://www.adafruit.com/product/2278) – designed for 128×32 but works with dynamic scaling on many displays (pixel pitch is user preference)
+**Warning: Lately the Waveshare Panels have had different variations - only some are compatible with this project. I hope to identify what is different to fix it but so far there is a decent chance you get a mis-matched set of panels if you don't buy them all at once! **
 - [Waveshare 64×32](https://amzn.to/3Kw55jK) - Does not require E addressable pad
-- [Waveshare 96×48](https://amzn.to/4bydNcv) – higher resolution, requires soldering the **E addressable pad** on the [Adafruit RGB Bonnet](https://www.adafruit.com/product/3211) to “8” **OR** toggling the DIP switch on the Adafruit Triple LED Matrix Bonnet *(no soldering required!)*  
-  > Amazon Affiliate Link – ChuckBuilds receives a small commission on purchases  
+- [Waveshare 96×48](https://amzn.to/4bydNcv) – higher resolution, requires soldering the **E addressable pad** on the [Adafruit RGB Bonnet](https://www.adafruit.com/product/3211) to “8” **OR** toggling the DIP switch on the Adafruit Triple LED Matrix Bonnet *(no soldering required!)*
+- There are some Panels on Aliexpress that have worked fine for me, shop around! I think Adafruit is probably the "safest" but they do have some limitation on resolution and layout.
+  > Amazon Affiliate Links – ChuckBuilds receives a small commission on purchases  
 
 ### Power Supply
 - [5V 4A DC Power Supply](https://www.adafruit.com/product/658) (good for 2 -3 displays, depending on brightness and pixel density, you'll need higher amperage for more)
@@ -357,6 +367,12 @@ sudo bash ./first_time_install.sh
 
 This single script installs services, dependencies, configures permissions and sudoers, and validates the setup.
 
+It finishes by asking whether to reboot. If you run it non-interactively — piped, over a script, or with `-y` — there is no one to ask, so **it reboots immediately without prompting**. Pass `--no-reboot-prompt` to install without rebooting:
+
+```bash
+sudo bash ./first_time_install.sh -y --no-reboot-prompt
+```
+
 </details>
 
 </details>
@@ -371,6 +387,10 @@ This single script installs services, dependencies, configures permissions and s
 ## Configuration
 
 ### Initial Setup
+
+For a complete list of every key in `config.json` and
+`config_secrets.json`, see
+[docs/CONFIG_REFERENCE.md](docs/CONFIG_REFERENCE.md).
 
 For most settings I recommend using the web interface:
 Edit the project via the web interface at http://[IP ADDRESS or HOSTNAME]:5000 or http://ledpi:5000 .
@@ -417,7 +437,7 @@ I recommend using the web-ui "Quick Actions" to control the Display.
 ## Plugins
 
 <details>
-LEDMatrix uses a plugin-based architecture where all display functionality (except the core calendar) is implemented as plugins. All managers that were previously built into the core system are now available as plugins through the Plugin Store.
+LEDMatrix uses a plugin-based architecture where all display functionality is implemented as plugins. All managers that were previously built into the core system are now available as plugins through the Plugin Store.
 
 ### Plugin Store
 See the [Plugin Store documentation](https://github.com/ChuckBuilds/ledmatrix-plugins) for detailed installation instructions.
@@ -582,6 +602,14 @@ These settings are typically only needed for non-standard panels or custom confi
   - Leave empty unless you need custom mapping
   - See rpi-rgb-led-matrix documentation for full options
 
+- **`orientation`** (string, default: "normal")
+  - Rotates the rendered image to match how the panel is physically mounted
+  - Set to `"180"` (or use the "Upside Down" option in the web UI's Display
+    settings) if the panel is mounted upside down — useful for optimizing
+    where the Raspberry Pi and wiring sit relative to the mounting location
+  - Applied independently of `pixel_mapper_config` (appended as a trailing
+    `Rotate:180` mapper), so custom mapper configs keep working alongside it
+
 - **`row_address_type`** (integer, default: 0)
   - How rows are addressed on the panel
   - Most panels use 0 (direct addressing)
@@ -610,12 +638,7 @@ These settings control runtime behavior and GPIO timing:
 
 ### Display Durations (`display.display_durations`)
 
-Controls how long each display module stays visible in seconds before switching to the next one.
-
-- **`calendar`** (integer, default: 30)
-  - Duration in seconds for the calendar display
-  - Increase for more time to read dates/events
-  - Decrease to cycle through other displays faster
+Controls how long each installed plugin stays visible in seconds before switching to the next one, keyed by plugin id.
 
 - **Plugin-specific durations**
   - Each plugin can have its own duration setting

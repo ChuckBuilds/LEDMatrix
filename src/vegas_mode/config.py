@@ -104,14 +104,52 @@ class VegasModeConfig:
     overflow_mode: str = "rotate"
 
     # Cap on one plugin's share of a cycle, as a multiple of display width.
-    # A single ticker returning 7,000px would otherwise hold the panel for over
-    # two minutes. Overflow is deferred to later cycles rather than discarded.
-    # 0 disables the cap.
-    max_plugin_width_ratio: float = 3.0
+    # 0 (the default) disables the cap, so every plugin contributes all of its
+    # content and is always entered at its beginning.
+    #
+    # Capping was the default until it proved to cost more than it bought.
+    # Measured over a 17-plugin fleet on a 512px panel, only four plugins were
+    # ever wide enough to hit a 3.0 cap; for those four it produced two visible
+    # faults. Content resumed mid-item on each appearance (a news ticker entered
+    # at column 6027 of its own strip), and the final window of a rotation was
+    # whatever happened to be left — 348px of a 1840px stocks ticker, seven
+    # seconds of panel time. Both read as the display being broken rather than
+    # as deferral working.
+    #
+    # A wide plugin does hold the panel for a long time uncapped: set the cap
+    # per plugin with vegas_max_width_screens where that matters, rather than
+    # globally where it mostly hurts plugins that were never the problem.
+    max_plugin_width_ratio: float = 0.0
 
     # Plugin management
     plugin_order: List[str] = field(default_factory=list)
     excluded_plugins: Set[str] = field(default_factory=set)
+
+    # --- Live content in the ticker -------------------------------------
+    #
+    # By default a live game preempts Vegas entirely: the display controller
+    # refuses to run the ticker while any plugin reports live priority, and you
+    # get the full-screen scoreboard instead. Set live_in_ticker to keep the
+    # marquee running and let live content take extra turns within it.
+    #
+    # The rotation is otherwise a strict round robin -- every plugin appears
+    # exactly once per cycle -- so with a dozen plugins enabled a live score
+    # comes round once a lap and can be minutes old on screen. Weighting lets a
+    # plugin claim several slots per cycle instead.
+    #
+    # Weights are per plugin, not per game: a scoreboard showing four live
+    # games still occupies one slot at a time, and rotates its own games within
+    # that slot using its own favorite_live_boost.
+    live_in_ticker: bool = False
+
+    # Slots per cycle for a plugin reporting live content. 1 disables the boost
+    # and restores the plain round robin.
+    live_weight: int = 3
+
+    # Slots per cycle for a plugin whose live content involves a favorite team.
+    # Only plugins implementing get_vegas_priority_weight() can claim this --
+    # the core cannot tell whose game is on, so the plugin reports it.
+    favorite_live_weight: int = 5
 
     # Performance settings
     target_fps: int = 125  # Target frame rate
@@ -159,10 +197,16 @@ class VegasModeConfig:
             lead_in_width=int(vegas_config.get('lead_in_width', 0)),
             plugins_per_cycle=int(vegas_config.get('plugins_per_cycle', 6)),
             max_plugin_width_ratio=float(
-                vegas_config.get('max_plugin_width_ratio', 3.0)),
+                vegas_config.get('max_plugin_width_ratio', 0.0)),
             overflow_mode=str(vegas_config.get('overflow_mode', 'rotate')),
             plugin_order=list(vegas_config.get('plugin_order', [])),
             excluded_plugins=set(vegas_config.get('excluded_plugins', [])),
+            live_in_ticker=bool(vegas_config.get('live_in_ticker', False)),
+            # Clamped: a weight below 1 would drop the plugin from the rotation
+            # entirely, and a very large one starves everything else.
+            live_weight=max(1, min(10, int(vegas_config.get('live_weight', 3)))),
+            favorite_live_weight=max(
+                1, min(10, int(vegas_config.get('favorite_live_weight', 5)))),
             target_fps=int(vegas_config.get('target_fps', 125)),
             buffer_ahead=int(vegas_config.get('buffer_ahead', 2)),
             frame_based_scrolling=vegas_config.get('frame_based_scrolling', True),
@@ -192,6 +236,9 @@ class VegasModeConfig:
             'lead_in_width': self.lead_in_width,
             'plugins_per_cycle': self.plugins_per_cycle,
             'max_plugin_width_ratio': self.max_plugin_width_ratio,
+            'live_in_ticker': self.live_in_ticker,
+            'live_weight': self.live_weight,
+            'favorite_live_weight': self.favorite_live_weight,
             'overflow_mode': self.overflow_mode,
             'plugin_order': self.plugin_order,
             'excluded_plugins': list(self.excluded_plugins),
@@ -359,6 +406,15 @@ class VegasModeConfig:
 
         if 'enabled' in vegas_config:
             self.enabled = vegas_config['enabled']
+        if 'live_in_ticker' in vegas_config:
+            self.live_in_ticker = bool(vegas_config['live_in_ticker'])
+        # Clamped exactly as from_config does: a weight below 1 would drop the
+        # plugin from the rotation, and a huge one starves everything else.
+        if 'live_weight' in vegas_config:
+            self.live_weight = max(1, min(10, int(vegas_config['live_weight'])))
+        if 'favorite_live_weight' in vegas_config:
+            self.favorite_live_weight = max(
+                1, min(10, int(vegas_config['favorite_live_weight'])))
         if 'scroll_speed' in vegas_config:
             self.scroll_speed = float(vegas_config['scroll_speed'])
         if 'separator_width' in vegas_config:

@@ -323,15 +323,21 @@ curl -X POST http://pi:5000/api/v3/plugins/install-from-url \
 ### Regular Updates
 
 ```bash
-# Update stars/downloads counts
-python3 scripts/update_stats.py
+# Refresh local clones of all plugin repos
+python3 scripts/update_plugin_repos.py
 
-# Validate all plugin entries
-python3 scripts/validate_registry.py
+# (Re-)create local plugin repo checkouts from the registry
+python3 scripts/setup_plugin_repos.py
 
-# Check for plugin updates
-python3 scripts/check_updates.py
+# Audit installed plugins for manifest/schema problems
+python3 scripts/audit_plugins.py
+
+# Validate a single plugin
+python3 scripts/check_plugin.py --plugin <plugin-id>
 ```
+
+Registry regeneration (`update_registry.py`) lives in the
+`ledmatrix-plugins` monorepo, not in this repo.
 
 ## Converting Existing Plugins
 
@@ -400,7 +406,7 @@ print(f'Found {len(registry[\"plugins\"])} plugins')
 
 ## References
 
-- Plugin Store Implementation: See `PLUGIN_STORE_IMPLEMENTATION_SUMMARY.md`
-- User Guide: See `PLUGIN_STORE_USER_GUIDE.md`
+- Plugin Store Implementation: See `PLUGIN_IMPLEMENTATION_SUMMARY.md`
+- User Guide: See `PLUGIN_STORE_GUIDE.md`
 - Architecture: See `PLUGIN_ARCHITECTURE_SPEC.md`
 

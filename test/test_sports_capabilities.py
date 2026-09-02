@@ -878,3 +878,200 @@ class TestCapabilityExports:
     def test_rotation_strategy_base_requires_a_schedule(self):
         with pytest.raises(NotImplementedError):
             RotationStrategy().schedule([game("a")])
+
+
+# ---------------------------------------------------------------------------
+# Celebrations: rendering + previously untested edges
+# ---------------------------------------------------------------------------
+
+from PIL import Image, ImageDraw, ImageFont  # noqa: E402
+
+
+class _RenderableLive(_FakeLive):
+    """A _FakeLive that can actually execute _draw_celebration_layout:
+    real fonts, a display manager holding a real PIL image, and the two
+    SportsCore drawing seams the mixin calls."""
+
+    def __init__(self, mode_config=None, favorite_teams=None,
+                 width=128, height=32, with_matrix=True):
+        super().__init__(mode_config=mode_config, favorite_teams=favorite_teams)
+        font = ImageFont.load_default()
+        self.fonts = {"time": font, "status": font, "score": font}
+        self.display_width = width
+        self.display_height = height
+        dm = MagicMock()
+        if with_matrix:
+            dm.matrix.width = width
+            dm.matrix.height = height
+        else:
+            dm.matrix = None
+        dm.image = Image.new("RGB", (width, height))
+        self.display_manager = dm
+        self.logo_calls = []
+
+    def _load_and_resize_logo(self, team_id, abbr, path, url):
+        self.logo_calls.append(abbr)
+        logo = Image.new("RGBA", (10, 10), (0, 200, 0, 255))
+        return logo
+
+    def _draw_text_with_outline(self, draw, text, position, font, fill=(255, 255, 255)):
+        draw.text(position, str(text), font=font, fill=fill)
+
+
+class _RenderableCelebrating(CelebrationMixin, _RenderableLive):
+    pass
+
+
+def _armed(manager, *, kind="score", side="home", started_ago=0.0):
+    manager._start_celebration(
+        game("g1", home_score=7, away_score=3), kind,
+        scored_side=side, team_abbr="HOM", away_score=3, home_score=7,
+        points=7,
+    )
+    manager.active_celebration["started_at"] = time.time() - started_ago
+    return manager.active_celebration
+
+
+class TestDrawCelebrationLayout:
+    """The takeover render path, executed for real (previously always
+    mocked out)."""
+
+    def test_renders_and_hands_frame_to_display_manager(self):
+        manager = _RenderableCelebrating()
+        celebration = _armed(manager)
+        manager._draw_celebration_layout(celebration)
+        # The final frame was assigned and pushed.
+        assert isinstance(manager.display_manager.image, Image.Image)
+        assert manager.display_manager.image.mode == "RGB"
+        assert manager.display_manager.image.size == (128, 32)
+        manager.display_manager.update_display.assert_called_once()
+        assert manager.display_manager.image.convert("L").getbbox() is not None
+
+    def test_force_clear_clears_display_first(self):
+        manager = _RenderableCelebrating()
+        celebration = _armed(manager)
+        manager._draw_celebration_layout(celebration, force_clear=True)
+        manager.display_manager.clear.assert_called_once()
+
+    def test_flash_background_within_first_window(self):
+        # elapsed < 1.2 with int(elapsed/0.2) even -> flash color backdrop.
+        manager = _RenderableCelebrating()
+        celebration = _armed(manager, started_ago=0.05)
+        manager._draw_celebration_layout(celebration)
+        flash = manager.display_manager.image
+        # After the flash window: plain black backdrop.
+        celebration["started_at"] = time.time() - 5
+        manager._draw_celebration_layout(celebration)
+        steady = manager.display_manager.image
+        # Corner pixels (away from logos/text) show the two backgrounds.
+        assert flash.getpixel((64, 30)) != steady.getpixel((64, 30)) or \
+            flash.getpixel((3, 0)) != steady.getpixel((3, 0))
+
+    def test_matrix_dims_fallback_to_display_attrs(self):
+        manager = _RenderableCelebrating(width=96, height=48, with_matrix=False)
+        celebration = _armed(manager)
+        manager._draw_celebration_layout(celebration)
+        assert manager.display_manager.image.size == (96, 48)
+
+    def test_highlight_color_alternates_with_elapsed(self):
+        manager = _RenderableCelebrating()
+        celebration = _armed(manager)
+        # int(elapsed*4) % 2 == 0 -> yellow; == 1 -> orange. Force each phase
+        # and diff the frames.
+        celebration["started_at"] = time.time() - 2.0   # 8 -> even
+        manager._draw_celebration_layout(celebration)
+        even = manager.display_manager.image.tobytes()
+        celebration["started_at"] = time.time() - 2.25  # 9 -> odd
+        manager._draw_celebration_layout(celebration)
+        odd = manager.display_manager.image.tobytes()
+        assert even != odd
+
+    def test_logo_failure_still_renders_text(self):
+        manager = _RenderableCelebrating()
+
+        def boom(*a, **k):
+            raise RuntimeError("disk gone")
+
+        manager._load_and_resize_logo = boom
+        celebration = _armed(manager, started_ago=5)  # steady background
+        manager._draw_celebration_layout(celebration)  # must not raise
+        assert manager.display_manager.image.convert("L").getbbox() is not None
+        manager.display_manager.update_display.assert_called_once()
+
+
+class TestCelebrationEdges:
+    def test_should_celebrate_for_three_way_branch(self, celebrating):
+        g = game("g1", home="FAV", away="OPP")
+        favored = celebrating(favorites=["FAV"])
+        assert favored._should_celebrate_for(g, "home") is True   # favorite
+        assert favored._should_celebrate_for(g, "away") is False  # opponent
+        favored.celebrate_opponent_scores = True
+        assert favored._should_celebrate_for(g, "away") is True   # opted in
+        unconfigured = celebrating(favorites=[])
+        assert unconfigured._should_celebrate_for(g, "away") is True  # no favs
+
+    def test_active_celebration_boundary_is_strict(self, celebrating):
+        manager = celebrating(mode_config={"celebration_duration": 3})
+        manager.active_celebration = {"started_at": time.time() - 3.0}
+        # elapsed == duration -> strictly-less-than comparison says done.
+        assert manager.has_active_celebration() is False
+        manager.active_celebration = None
+        assert manager.has_active_celebration() is False
+
+    @pytest.mark.parametrize("value,expected", [
+        ({"value": None}, None),      # int(float(None)) TypeError -> caught
+        ({"value": "abc"}, None),
+        ({"other": 1}, 0),            # neither key -> default 0
+        ([3], None),                  # list -> TypeError -> caught
+        ("-4", None),                 # regex fallback finds digits -> 4? No:
+    ])
+    def test_score_to_int_edges(self, value, expected):
+        result = CelebrationMixin._score_to_int(value)
+        if value == "-4":
+            # int(float("-4")) parses directly: -4.
+            assert result == -4
+        else:
+            assert result == expected
+
+    def test_both_teams_scoring_prefers_away(self, celebrating):
+        manager = celebrating(favorites=[])
+        manager._check_for_score(game("g1", home_score=0, away_score=0))
+        manager._check_for_score(game("g1", home_score=7, away_score=3))
+        assert manager.active_celebration["scored_side"] == "away"
+
+    def test_away_not_celebratable_falls_through_to_home(self, celebrating):
+        manager = celebrating(favorites=["HOM"])  # away is the opponent
+        manager._check_for_score(game("g1", home_score=0, away_score=0))
+        manager._check_for_score(game("g1", home_score=7, away_score=3))
+        assert manager.active_celebration["scored_side"] == "home"
+
+    def test_coalesce_expired_celebration_fires_fresh(self, celebrating):
+        manager = celebrating(cls=_Coalescing,
+                              mode_config={"celebration_duration": 1})
+        manager._check_for_score(game("g1"))
+        manager._check_for_score(game("g1", home_score=6))
+        first = manager.active_celebration
+        assert first is not None
+        first["started_at"] = time.time() - 2  # expired
+        manager._check_for_score(game("g1", home_score=7))
+        # A new celebration replaced the expired one (coalescing only
+        # suppresses while one is actively on screen).
+        assert manager.active_celebration is not first
+        assert manager.active_celebration["home_score"] == 7
+
+    def test_disabled_win_check_preserves_baseline(self, celebrating):
+        manager = celebrating(favorites=["HOM"])
+        manager._check_for_score(game("g1"))
+        assert "g1" in manager._score_baselines
+        manager.celebration_enabled = False
+        manager._check_for_win(game("g1", home_score=7))
+        # Early return BEFORE consuming the baseline: re-enabling later can
+        # still fire for this game.
+        assert "g1" in manager._score_baselines
+
+    def test_prune_drops_baselines_for_idless_live_games(self, celebrating):
+        manager = celebrating()
+        manager._score_baselines = {"g1": {"away": 0, "home": 0}}
+        manager.prune_score_baselines([{"no_id_here": True}])
+        # live ids collapse to {None}; g1 is not live -> dropped.
+        assert manager._score_baselines == {}

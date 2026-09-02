@@ -1,6 +1,15 @@
+import os
 import pytest
 from unittest.mock import MagicMock, patch
 from PIL import ImageDraw
+
+# display_manager imports the hardware rgbmatrix module at import time unless
+# EMULATOR=true. Use the emulator (same convention as
+# test_display_dirty_tracking.py) so this file collects standalone instead of
+# relying on collection order — the tests below patch RGBMatrix/
+# RGBMatrixOptions explicitly, so the underlying binding doesn't matter here.
+os.environ.setdefault("EMULATOR", "true")
+
 from src.display_manager import DisplayManager
 
 @pytest.fixture
@@ -77,18 +86,26 @@ class TestDisplayManagerDrawing:
             assert dm.matrix.Clear.called
             
     def test_draw_text(self, test_config, mock_rgb_matrix):
-        """Test text drawing."""
+        """Text drawn through draw_text must actually light pixels."""
+        from PIL import Image, ImageDraw, ImageFont
+        import src.display_manager as dm_mod
         with patch.dict('os.environ', {'EMULATOR': 'false'}):
-            dm = DisplayManager(test_config)
-            
-            # Mock font
-            font = MagicMock()
-            
-            dm.draw_text("Test", 0, 0, font)
-            
-            # Verify draw_text was called (DisplayManager uses freetype/PIL)
-            # The actual implementation uses freetype or PIL, not graphics module
-            assert True  # draw_text should execute without error
+            DisplayManager._instance = None
+            dm = DisplayManager(test_config, suppress_test_pattern=True)
+            # The fixture replaces the module's freetype with a MagicMock,
+            # which breaks draw_text's isinstance(font, freetype.Face) check
+            # (and silently swallows the draw). Give the mock a real class so
+            # isinstance works and the PIL path is taken.
+            dm_mod.freetype.Face = type("_FakeFace", (), {})
+            # Start from a known-black canvas so the assertion below can only
+            # pass if draw_text itself lit something.
+            dm.image = Image.new('RGB', (dm.width, dm.height))
+            dm.draw = ImageDraw.Draw(dm.image)
+
+            dm.draw_text("Test", 0, 0, font=ImageFont.load_default())
+
+            assert dm.image.convert("L").getbbox() is not None, \
+                "draw_text lit no pixels"
             
     def test_draw_image(self, test_config, mock_rgb_matrix):
         """Test image drawing."""
@@ -220,3 +237,45 @@ class TestDisplayManagerDoubleSided:
                                 suppress_test_pattern=True)
             assert dm.set_brightness(70) is True
             assert mock_rgb_matrix['matrix_instance'].brightness == 70
+
+
+class TestDisplayManagerOrientation:
+    """The orientation setting composes onto pixel_mapper_config for panels
+    mounted upside down, without disturbing a custom pixel_mapper_config."""
+
+    def _config(self, **hardware_overrides):
+        config = {
+            'display': {
+                'hardware': {
+                    'rows': 32, 'cols': 64, 'chain_length': 2, 'parallel': 1,
+                    'hardware_mapping': 'adafruit-hat-pwm', 'brightness': 90,
+                },
+                'runtime': {'gpio_slowdown': 2},
+            },
+            'timezone': 'UTC',
+            'plugin_system': {'plugins_directory': 'plugins'},
+        }
+        config['display']['hardware'].update(hardware_overrides)
+        return config
+
+    def test_default_orientation_leaves_pixel_mapper_config_untouched(self, mock_rgb_matrix):
+        DisplayManager._instance = None
+        with patch.dict('os.environ', {'EMULATOR': 'false'}):
+            DisplayManager(self._config(), suppress_test_pattern=True)
+            options = mock_rgb_matrix['options_class'].return_value
+            assert options.pixel_mapper_config == ''
+
+    def test_orientation_180_appends_rotate_mapper(self, mock_rgb_matrix):
+        DisplayManager._instance = None
+        with patch.dict('os.environ', {'EMULATOR': 'false'}):
+            DisplayManager(self._config(orientation='180'), suppress_test_pattern=True)
+            options = mock_rgb_matrix['options_class'].return_value
+            assert options.pixel_mapper_config == 'Rotate:180'
+
+    def test_orientation_180_composes_with_existing_pixel_mapper_config(self, mock_rgb_matrix):
+        DisplayManager._instance = None
+        with patch.dict('os.environ', {'EMULATOR': 'false'}):
+            DisplayManager(self._config(orientation='180', pixel_mapper_config='U-mapper'),
+                           suppress_test_pattern=True)
+            options = mock_rgb_matrix['options_class'].return_value
+            assert options.pixel_mapper_config == 'U-mapper;Rotate:180'

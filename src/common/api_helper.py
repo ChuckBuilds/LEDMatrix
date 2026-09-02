@@ -56,7 +56,9 @@ class APIHelper:
         
         # Default headers
         self.session.headers.update({
-            'User-Agent': 'LEDMatrix-Common/1.0',
+            # Identifies the client and links to it: ESPN began 403ing bare
+            # custom tokens (and browser strings) around 2026-08-04.
+            'User-Agent': 'LEDMatrix/1.0 (+https://github.com/ChuckBuilds/LEDMatrix)',
             'Accept': 'application/json',
             'Accept-Language': 'en-US,en;q=0.9',
             'Accept-Encoding': 'gzip, deflate, br',
@@ -270,20 +272,35 @@ class APIHelper:
     def clear_cache(self, pattern: Optional[str] = None) -> None:
         """
         Clear cache data.
-        
+
+        Uses CacheManager's real surface (clear_cache / delete /
+        list_cache_files); safely no-ops on managers without it. The old
+        implementation guarded on a nonexistent ``clear`` method, so it
+        silently never cleared anything.
+
         Args:
-            pattern: Optional pattern to match cache keys
+            pattern: Optional substring to match cache keys; only matching
+                entries are deleted.
         """
-        if self.cache_manager:
-            if hasattr(self.cache_manager, 'clear'):
-                if pattern:
-                    # Clear only keys matching pattern
-                    keys = self.cache_manager.keys()
-                    for key in keys:
-                        if pattern in key:
-                            self.cache_manager.delete(key)
-                else:
-                    self.cache_manager.clear()
+        if not self.cache_manager:
+            return
+        if pattern:
+            if (hasattr(self.cache_manager, 'list_cache_files')
+                    and hasattr(self.cache_manager, 'delete')):
+                for entry in self.cache_manager.list_cache_files():
+                    key = entry.get('key') if isinstance(entry, dict) else None
+                    if key and pattern in key:
+                        self.cache_manager.delete(key)
+            else:
+                self.logger.debug(
+                    "Cache manager lacks list_cache_files/delete; "
+                    "cannot clear by pattern")
+        elif hasattr(self.cache_manager, 'clear_cache'):
+            self.cache_manager.clear_cache()
+        elif hasattr(self.cache_manager, 'clear'):
+            self.cache_manager.clear()
+        else:
+            self.logger.debug("Cache manager exposes no clear method; no-op")
     
     def _get_from_cache(self, key: str) -> Optional[Any]:
         """Get data from cache."""

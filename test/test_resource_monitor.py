@@ -11,7 +11,7 @@ Focus areas:
 import time
 
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from src.plugin_system.resource_monitor import (
     PluginResourceMonitor,
@@ -127,3 +127,87 @@ class TestForceReload:
         fresh = mon.get_metrics_summary("p", force_reload=True)
         assert fresh["call_count"] == 7
         assert any(c.kwargs.get("memory_ttl") == 0 for c in cache.get.call_args_list)
+
+
+class TestMetricsPersistenceChurn:
+    """Metrics are telemetry; writing them on every call wore the SD card.
+
+    Each write is a ~350-byte file, which on ext4 costs a 4KB block plus a
+    journal entry. At roughly nine calls a minute per plugin across fourteen
+    plugins it dominated the device's write volume.
+    """
+
+    def test_the_first_snapshot_is_written_even_seconds_after_boot(self):
+        """The throttle must key off "have we written?", not process uptime.
+
+        time.monotonic() is time since boot on Linux, and systemd starts this
+        service at boot. With 0.0 as the missing-timestamp default,
+        `now - 0.0 < 30` was true for the first half-minute of every run, so
+        the very first metrics write -- the one that matters most after a
+        restart -- was silently skipped.
+        """
+        import src.plugin_system.resource_monitor as rm
+        cache = _cache()
+        mon = PluginResourceMonitor(cache, enable_monitoring=False)
+        # 12 seconds after boot: inside the interval, but nothing written yet.
+        with patch.object(rm.time, "monotonic", return_value=12.0):
+            mon.monitor_call("p", lambda: None)
+        writes = [c for c in cache.set.call_args_list
+                  if "plugin_metrics:" in str(c)]
+        assert writes, \
+            "the first snapshot was dropped because the process was young"
+
+    def test_repeated_calls_persist_once_per_interval(self):
+        cache = _cache()
+        mon = PluginResourceMonitor(cache, enable_monitoring=False)
+        for _ in range(50):
+            mon.monitor_call("p", lambda: None)
+        writes = [c for c in cache.set.call_args_list
+                  if c.args and str(c.args[0]).startswith("plugin_metrics:")]
+        assert len(writes) == 1, (
+            f"50 calls produced {len(writes)} metric writes; expected 1")
+
+    def test_the_interval_elapsing_allows_the_next_write(self, monkeypatch):
+        import src.plugin_system.resource_monitor as rm
+        cache = _cache()
+        mon = PluginResourceMonitor(cache, enable_monitoring=False)
+        mon.monitor_call("p", lambda: None)
+        # pretend the interval has passed
+        mon._metrics_persisted_at["p"] -= rm._METRICS_PERSIST_INTERVAL + 1
+        mon.monitor_call("p", lambda: None)
+        writes = [c for c in cache.set.call_args_list
+                  if c.args and str(c.args[0]).startswith("plugin_metrics:")]
+        assert len(writes) == 2
+
+    def test_in_memory_metrics_stay_exact_while_writes_are_skipped(self):
+        mon = PluginResourceMonitor(_cache(), enable_monitoring=False)
+        for _ in range(20):
+            mon.monitor_call("p", lambda: None)
+        assert mon.get_metrics("p").call_count == 20
+
+    def test_reset_lets_the_next_call_persist_immediately(self):
+        cache = _cache()
+        mon = PluginResourceMonitor(cache, enable_monitoring=False)
+        mon.monitor_call("p", lambda: None)
+        mon.reset_metrics("p")
+        mon.monitor_call("p", lambda: None)
+        writes = [c for c in cache.set.call_args_list
+                  if c.args and str(c.args[0]).startswith("plugin_metrics:")]
+        assert len(writes) == 2, "reset should clear the throttle timestamp"
+
+    def test_a_failed_write_does_not_buy_the_next_interval_of_silence(self):
+        """A set() that raises must not count as having persisted.
+
+        Marking the timestamp before the write would leave no snapshot in the
+        cache and still suppress the next 30 seconds of attempts.
+        """
+        cache = _cache()
+        cache.set.side_effect = [OSError("disk full"), None]
+        mon = PluginResourceMonitor(cache, enable_monitoring=False)
+        with pytest.raises(OSError):
+            mon.monitor_call("p", lambda: None)
+        # the very next call must try again rather than skip the interval
+        mon.monitor_call("p", lambda: None)
+        writes = [c for c in cache.set.call_args_list
+                  if c.args and str(c.args[0]).startswith("plugin_metrics:")]
+        assert len(writes) == 2, "a failed write should be retried, not skipped"

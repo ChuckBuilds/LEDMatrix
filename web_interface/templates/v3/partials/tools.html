@@ -31,6 +31,24 @@
         </div>
 
         <div class="space-y-4">
+            <!-- Switch branch -->
+            <div class="flex items-start justify-between gap-4">
+                <div class="min-w-0">
+                    <p class="text-sm font-medium text-gray-900">Branch</p>
+                    <p class="text-xs text-gray-500 mt-0.5">Choose which branch this pi follows. Switching attaches tracking, so Pull Latest works afterwards.</p>
+                </div>
+                <div class="shrink-0 flex items-center gap-2">
+                    <select id="branch-select" class="text-sm border border-gray-300 rounded-md px-2 py-2 bg-white max-w-[14rem]">
+                        <option value="">Loading branches…</option>
+                    </select>
+                    <button id="btn-checkout-branch" onclick="checkoutBranch(false)"
+                            class="inline-flex items-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
+                        <i class="fas fa-code-branch mr-2"></i>Switch
+                    </button>
+                </div>
+            </div>
+            <div id="result-checkout-branch" class="hidden"></div>
+
             <!-- Pull latest -->
             <div class="flex items-start justify-between gap-4">
                 <div>
@@ -467,6 +485,14 @@
                     </div>`;
                 }
 
+                if (d.upstream) {
+                    html += `<p class="text-xs text-gray-500 mt-1"><i class="fas fa-link mr-1"></i>tracking <span class="font-mono">${escHtml(d.upstream)}</span></p>`;
+                } else if (d.can_pull) {
+                    html += `<p class="text-xs text-blue-700 mt-1"><i class="fas fa-info-circle mr-1"></i>No upstream set; Pull Latest will use <span class="font-mono">origin/${escHtml(d.branch || '')}</span> and set it.</p>`;
+                } else {
+                    html += `<p class="text-xs text-amber-700 mt-1"><i class="fas fa-triangle-exclamation mr-1"></i>No upstream and no matching branch on origin — Pull Latest cannot run. Switch to a branch that exists on the remote.</p>`;
+                }
+
                 if (d.remote_url) {
                     html += `<p class="text-xs text-gray-400 mt-1"><i class="fas fa-cloud mr-1"></i>${escHtml(d.remote_url)}</p>`;
                 }
@@ -478,6 +504,84 @@
                 panel.innerHTML = `<span class="text-sm text-red-600">Could not load git info: ${escHtml(String(err))}</span>`;
             });
     }
+
+    // ── branch picker ─────────────────────────────────────────────────────
+    // A pi can end up on a branch with no tracking information (checked out by
+    // name, restored from a backup), where `git pull` refuses to run. Being
+    // able to see and change the branch from here beats needing SSH.
+
+    function loadBranches() {
+        const sel = document.getElementById('branch-select');
+        if (!sel) return;
+
+        fetch('/api/v3/system/git-branches')
+            .then(r => r.ok ? r.json() : r.json().then(d => Promise.reject(d.message || `HTTP ${r.status}`)))
+            .then(d => {
+                if (d.status === 'error') {
+                    sel.innerHTML = `<option value="">${escHtml(d.message || 'unavailable')}</option>`;
+                    sel.disabled = true;
+                    return;
+                }
+                sel.innerHTML = '';
+                const add = (name, suffix) => {
+                    const o = document.createElement('option');
+                    o.value = name;
+                    o.textContent = name + (suffix || '');
+                    if (name === d.current) o.selected = true;
+                    sel.appendChild(o);
+                };
+                (d.local || []).forEach(b => add(b, b === d.current ? '  (current)' : ''));
+                // Remote-only branches are checked out on demand.
+                (d.remote_only || []).forEach(b => add(b, '  (remote)'));
+                if (!sel.options.length) add('', 'no branches found');
+            })
+            .catch(err => {
+                sel.innerHTML = `<option value="">${escHtml(String(err))}</option>`;
+                sel.disabled = true;
+            });
+    }
+
+    window.checkoutBranch = function(stash) {
+        const sel = document.getElementById('branch-select');
+        const branch = sel && sel.value;
+        if (!branch) return;
+
+        setBusy('btn-checkout-branch', true);
+        const el = document.getElementById('result-checkout-branch');
+        if (el) el.classList.add('hidden');
+
+        fetch('/api/v3/system/action', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({action: 'checkout_branch', branch: branch, stash: !!stash})
+        })
+        .then(r => r.json().catch(() => ({status: 'error', message: `HTTP ${r.status}`})))
+        .then(d => {
+            const ok = d.status === 'success';
+            // Show git's own list of blocking files, then offer the single
+            // action that clears it. Stashing is never done unasked.
+            showResult('result-checkout-branch', ok, d.message || '', d.detail || '');
+            if (!ok && d.can_retry_with_stash && el) {
+                const retry = document.createElement('div');
+                retry.className = 'mt-2 flex items-center gap-2';
+                const label = document.createElement('span');
+                label.className = 'text-xs text-gray-700';
+                label.textContent = 'Stash these changes and switch anyway?';
+                const btn = document.createElement('button');
+                btn.className = 'inline-flex items-center px-2 py-1 border border-gray-300 text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50';
+                btn.textContent = 'Stash and switch';
+                btn.onclick = function() { window.checkoutBranch(true); };
+                retry.appendChild(label);
+                retry.appendChild(btn);
+                el.appendChild(retry);
+            }
+            // Both panels describe the checkout, so refresh them together.
+            loadGitInfo();
+            loadBranches();
+        })
+        .catch(err => showResult('result-checkout-branch', false, String(err)))
+        .finally(() => setBusy('btn-checkout-branch', false));
+    };
 
     // ── power supply diagnostics panel ────────────────────────────────────────
     // Reuses the same SSE stream (window.statsSource, set up in base.html)
@@ -583,12 +687,35 @@
                 const mUsedGb = d.memory_used_mb != null ? (d.memory_used_mb / 1024).toFixed(1) : null;
                 const mTotGb  = d.memory_total_mb != null ? (d.memory_total_mb / 1024).toFixed(1) : null;
                 const temp    = d.cpu_temp != null ? d.cpu_temp + '°C' : 'N/A';
+                // Available memory is the number that predicts trouble. When it
+                // runs out the board does not fail cleanly: fork() starts
+                // returning ENOMEM, so sshd cannot spawn a session and systemd
+                // cannot respawn the display, while the kernel keeps answering
+                // pings. Thresholds are drawn from that failure -- it was
+                // measured at 73MB free, and healthy running sits well above.
+                // Round ONCE, then colour and label off the same number.
+                // The API sends one decimal place, so classifying the raw
+                // value and displaying the rounded one disagreed at the
+                // boundaries: 149.6 rendered as "150 MB" in red, and 299.6 as
+                // "300 MB" in amber, both contradicting the threshold the
+                // colour claims to apply. Which side of the line a spare
+                // 0.4MB falls on does not matter; the tile agreeing with
+                // itself does.
+                const availMb = d.memory_available_mb == null
+                              ? null : Math.round(d.memory_available_mb);
+                const availColor = availMb == null ? 'text-gray-400'
+                                 : availMb < 150   ? 'text-red-600'
+                                 : availMb < 300   ? 'text-amber-500'
+                                 : 'text-green-600';
                 panel.innerHTML =
                     diagTile('fa-microchip', 'text-blue-600', 'CPU Usage',
                         (d.cpu_percent != null ? d.cpu_percent : '--') + '%', null) +
                     diagTile('fa-memory', 'text-green-600', 'Memory',
                         (d.memory_used_percent != null ? d.memory_used_percent : '--') + '%',
                         (mUsedGb && mTotGb) ? `${mUsedGb} / ${mTotGb} GB` : null) +
+                    diagTile('fa-memory', availColor, 'Available Memory',
+                        availMb != null ? `${availMb} MB` : '--',
+                        mTotGb ? `of ${mTotGb} GB total` : null) +
                     diagTile('fa-thermometer-half', 'text-red-600', 'CPU Temp', temp, null) +
                     diagTile('fa-hdd', 'text-indigo-600', 'Disk',
                         (d.disk_used_percent != null ? d.disk_used_percent : '--') + '%',
@@ -810,6 +937,7 @@
 
     // Load on first render; HTMX will have already swapped us in by this point.
     loadGitInfo();
+    loadBranches();
 
     // Plugin health: initial load + periodic refresh. Guard against duplicate
     // timers if this partial is re-swapped in by HTMX; the handler re-resolves

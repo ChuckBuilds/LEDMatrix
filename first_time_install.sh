@@ -821,10 +821,6 @@ if [ ! -f "$PROJECT_ROOT_DIR/config/config_secrets.json" ]; then
         echo "⚠ Template config/config_secrets.template.json not found; creating a minimal secrets file"
         cat > "$PROJECT_ROOT_DIR/config/config_secrets.json" <<'EOF'
 {
-    "youtube": {
-        "api_key": "YOUR_YOUTUBE_API_KEY",
-        "channel_id": "YOUR_YOUTUBE_CHANNEL_ID"
-    },
     "github": {
         "api_token": "YOUR_GITHUB_PERSONAL_ACCESS_TOKEN"
     }
@@ -1187,25 +1183,26 @@ else
     cd "$PROJECT_ROOT_DIR"
 
     # Try to install dependencies using the smart installer if available
+    WEB_DEPS_OK=true
     if [ -f "$PROJECT_ROOT_DIR/scripts/install_dependencies_apt.py" ]; then
         echo "Using smart dependency installer..."
         # -u: unbuffered stdout/stderr so output is captured in $LOG_FILE in
         # real time and in order relative to this script's own echo statements
-        python3 -u "$PROJECT_ROOT_DIR/scripts/install_dependencies_apt.py"
-    else
-        echo "Using pip to install dependencies..."
-        if [ -f "$PROJECT_ROOT_DIR/requirements_web_v2.txt" ]; then
-            # --ignore-installed: see the Step 5 web_interface/requirements.txt
-            # install above — same apt/pip RECORD-file conflict applies here.
-            python3 -m pip install --break-system-packages --prefer-binary --ignore-installed -r requirements_web_v2.txt
-        else
-            echo "⚠ requirements_web_v2.txt not found; skipping web dependency install"
+        if ! python3 -u "$PROJECT_ROOT_DIR/scripts/install_dependencies_apt.py"; then
+            WEB_DEPS_OK=false
         fi
+    else
+        echo "Web dependencies already installed from web_interface/requirements.txt in Step 5"
     fi
 
-    # Create marker file to indicate dependencies are installed
-    touch "$PROJECT_ROOT_DIR/.web_deps_installed"
-    echo "✓ Web interface dependencies installed"
+    # Create the marker only when installation actually succeeded, so a
+    # re-run retries instead of silently skipping missing dependencies.
+    if [ "$WEB_DEPS_OK" = true ]; then
+        touch "$PROJECT_ROOT_DIR/.web_deps_installed"
+        echo "✓ Web interface dependencies installed"
+    else
+        echo "⚠ Web interface dependency install reported errors; not creating .web_deps_installed (will retry on next run)"
+    fi
 fi
 echo ""
 
@@ -1422,9 +1419,16 @@ $ACTUAL_USER ALL=(ALL) NOPASSWD: $BASH_PATH $PROJECT_ROOT_DIR/scripts/fix_perms/
 EOF
 if [ -n "$JOURNALCTL_PATH" ]; then
     cat >> /tmp/ledmatrix_web_sudoers << EOF
-$ACTUAL_USER ALL=(ALL) NOPASSWD: $JOURNALCTL_PATH -u ledmatrix.service *
-$ACTUAL_USER ALL=(ALL) NOPASSWD: $JOURNALCTL_PATH -u ledmatrix *
-$ACTUAL_USER ALL=(ALL) NOPASSWD: $JOURNALCTL_PATH -t ledmatrix *
+# NOEXEC, because these rules end in a wildcard and journalctl starts a pager
+# when its output is a terminal. From that pager (less) a "!sh" is a root
+# shell -- the standard journalctl escalation. The web interface always passes
+# --no-pager, so nothing here needs it, but the rule cannot require a flag that
+# sits in the middle of the command line. NOEXEC stops the command executing
+# another program at all, which closes the hole without depending on wildcard
+# matching subtleties.
+$ACTUAL_USER ALL=(ALL) NOPASSWD:NOEXEC: $JOURNALCTL_PATH -u ledmatrix.service *
+$ACTUAL_USER ALL=(ALL) NOPASSWD:NOEXEC: $JOURNALCTL_PATH -u ledmatrix *
+$ACTUAL_USER ALL=(ALL) NOPASSWD:NOEXEC: $JOURNALCTL_PATH -t ledmatrix *
 EOF
 fi
 
@@ -1483,27 +1487,54 @@ if [ -f "$PROJECT_ROOT_DIR/config/config.json" ]; then
 fi
 
 # Set proper permissions for secrets file (restrictive: owner rw, group r)
-# If service runs as root, set ownership to root so it can read as owner
-# Otherwise, use ACTUAL_USER and rely on group membership
+# Owned by whoever WRITES the file, which is the web interface.
+#
+# This used to read the User= of ledmatrix.service — the display service —
+# and, finding root, hand the file to root:ledmatrix 640. But the display
+# service only ever reads secrets, and root can read any file regardless of
+# mode. The account that *writes* them is the web interface: it saves config
+# edits and performs backup restores, and it deliberately does not run as root
+# (a web server should not). So a root-owned, group-read-only file left the web
+# UI unable to write its own secrets, and restoring a backup failed with
+# "Permission denied: config_secrets.json" while every other file in the same
+# backup restored fine.
+#
+# Owning by the writer keeps the tighter 640 rather than loosening to
+# group-writable, and root still reads it as superuser.
 if [ -f "$PROJECT_ROOT_DIR/config/config_secrets.json" ]; then
-    # Check if service runs as root (from service file or template)
-    SERVICE_USER="root"
-    if [ -f "/etc/systemd/system/ledmatrix.service" ]; then
-        SERVICE_USER=$(grep "^User=" /etc/systemd/system/ledmatrix.service | cut -d'=' -f2 || echo "root")
-    elif [ -f "$PROJECT_ROOT_DIR/systemd/ledmatrix.service" ]; then
-        SERVICE_USER=$(grep "^User=" "$PROJECT_ROOT_DIR/systemd/ledmatrix.service" | cut -d'=' -f2 || echo "root")
+    # The web service is the writer; fall back to the display service, then to
+    # the installing user, so an unusual layout still lands somewhere sensible.
+    SECRETS_OWNER=""
+    for unit in "/etc/systemd/system/ledmatrix-web.service" \
+                "$PROJECT_ROOT_DIR/systemd/ledmatrix-web.service"; do
+        if [ -f "$unit" ]; then
+            SECRETS_OWNER=$(grep -m1 "^User=" "$unit" | cut -d'=' -f2)
+            [ -n "$SECRETS_OWNER" ] && break
+        fi
+    done
+    if [ -z "$SECRETS_OWNER" ]; then
+        SECRETS_OWNER="$ACTUAL_USER"
     fi
-    
-    if [ "$SERVICE_USER" = "root" ]; then
-        # Service runs as root - set ownership to root so it can read as owner
-        chown "root:$LEDMATRIX_GROUP" "$PROJECT_ROOT_DIR/config/config_secrets.json" || true
-        echo "✓ Secrets file permissions set (root:ledmatrix for root service)"
-    else
-        # Service runs as regular user - use ACTUAL_USER and rely on group membership
-        chown "$ACTUAL_USER:$LEDMATRIX_GROUP" "$PROJECT_ROOT_DIR/config/config_secrets.json" || true
-        echo "✓ Secrets file permissions set ($ACTUAL_USER:ledmatrix)"
+    SECRETS_FILE="$PROJECT_ROOT_DIR/config/config_secrets.json"
+    # A root-owned file is only correct when the writer really is root.
+    if ! chown "$SECRETS_OWNER:$LEDMATRIX_GROUP" "$SECRETS_FILE"; then
+        echo "✗ ERROR: Failed to set ownership on $SECRETS_FILE to $SECRETS_OWNER:$LEDMATRIX_GROUP" >&2
+        echo "  Try: sudo chown $SECRETS_OWNER:$LEDMATRIX_GROUP $SECRETS_FILE" >&2
+        exit 1
     fi
-    chmod 640 "$PROJECT_ROOT_DIR/config/config_secrets.json"
+    if ! chmod 640 "$SECRETS_FILE"; then
+        echo "✗ ERROR: Failed to set permissions on $SECRETS_FILE to 640" >&2
+        echo "  Try: sudo chmod 640 $SECRETS_FILE" >&2
+        exit 1
+    fi
+    ACTUAL_OWNERSHIP=$(stat -c '%U:%G' "$SECRETS_FILE" 2>/dev/null || echo "unknown")
+    ACTUAL_MODE=$(stat -c '%a' "$SECRETS_FILE" 2>/dev/null || echo "unknown")
+    if [ "$ACTUAL_OWNERSHIP" != "$SECRETS_OWNER:$LEDMATRIX_GROUP" ] || [ "$ACTUAL_MODE" != "640" ]; then
+        echo "✗ ERROR: $SECRETS_FILE ended up as $ACTUAL_OWNERSHIP mode $ACTUAL_MODE, expected $SECRETS_OWNER:$LEDMATRIX_GROUP mode 640" >&2
+        echo "  The web interface may be unable to read or write config_secrets.json." >&2
+        exit 1
+    fi
+    echo "✓ Secrets file owned by the web service user ($SECRETS_OWNER:$LEDMATRIX_GROUP, mode 640)"
 fi
 
 # Set proper permissions for YTM auth file (readable by all users including root service)
@@ -1662,6 +1693,97 @@ elif [ -f "$CMDLINE_FILE" ]; then
     fi
 else
     echo "✗ $CMDLINE_FILE not found; skipping isolcpus optimization"
+fi
+
+# Enable the memory cgroup controller (idempotent).
+# The Pi firmware boots with cgroup_disable=memory, so systemd's MemoryMax= is
+# accepted and silently ignored — the display service then has no ceiling, and
+# a runaway takes the whole board down (sshd can no longer fork, the panel goes
+# dark) rather than just restarting the one service.
+if [ "$SKIP_PERF" != "1" ] && [ -f "$CMDLINE_FILE" ]; then
+    # Both parameters are required for the memory controller, and they can get
+    # separated -- an image, another tool or a half-applied earlier run can
+    # leave one without the other. Checking only cgroup_enable=memory would
+    # report success while MemoryMax= silently does nothing, so each is checked
+    # and appended independently.
+    cgroup_missing=""
+    for cgroup_param in cgroup_enable=memory cgroup_memory=1; do
+        if ! grep -qw "$cgroup_param" "$CMDLINE_FILE"; then
+            cgroup_missing="$cgroup_missing $cgroup_param"
+        fi
+    done
+    if [ -z "$cgroup_missing" ]; then
+        echo "cgroup memory parameters already present in $CMDLINE_FILE"
+    else
+        echo "Adding${cgroup_missing} to $CMDLINE_FILE..."
+        cp "$CMDLINE_FILE" "$CMDLINE_FILE.bak" 2>/dev/null || true
+        # The kernel command line must stay on one line.
+        sed -i "1 s|\$|${cgroup_missing}|" "$CMDLINE_FILE"
+        echo "  Takes effect after reboot. Verify with:"
+        echo "    grep memory /sys/fs/cgroup/cgroup.controllers"
+    fi
+fi
+
+# Persist the journal (idempotent).
+# These images default to volatile storage: journald keeps everything in /run
+# (tmpfs), so every reboot destroys the logs — including the ones that would
+# explain why the board rebooted. Capped so an SD card is not worn out by logs.
+# A non-empty /var/log/journal does not prove journald is configured the way
+# this needs: the directory survives a switch back to volatile storage, and it
+# says nothing about whether a size cap is set. Read the effective
+# configuration instead, and only write the keys the user has not set
+# themselves so an explicit local limit is preserved.
+journald_effective() {
+    # systemd-analyze merges journald.conf with every drop-in; grep is the
+    # fallback for images that ship without it.
+    if command -v systemd-analyze >/dev/null 2>&1 &&
+       systemd-analyze cat-config systemd/journald.conf >/dev/null 2>&1; then
+        systemd-analyze cat-config systemd/journald.conf 2>/dev/null
+    else
+        cat /etc/systemd/journald.conf /etc/systemd/journald.conf.d/*.conf 2>/dev/null || true
+    fi
+}
+journald_conf="$(journald_effective)"
+# Both settings are optional, and stock images ship them commented out. grep
+# exits 1 on no match, which pipefail turns fatal under set -e — an absent
+# setting must read as empty, not abort the install.
+journald_storage="$(printf '%s\n' "$journald_conf" | grep -E '^[[:space:]]*Storage=' | tail -n1 | cut -d= -f2 | tr -d '[:space:]' || true)"
+journald_cap="$(printf '%s\n' "$journald_conf" | grep -E '^[[:space:]]*SystemMaxUse=' | tail -n1 | cut -d= -f2 | tr -d '[:space:]' || true)"
+
+if [ "$journald_storage" = "persistent" ] && [ -n "$journald_cap" ]; then
+    echo "Persistent journald storage already configured (SystemMaxUse=$journald_cap)"
+else
+    echo "Enabling persistent journald storage..."
+    mkdir -p /etc/systemd/journald.conf.d
+    {
+        echo "# Installed by LEDMatrix first_time_install.sh"
+        echo "[Journal]"
+        echo "Storage=persistent"
+        if [ -n "$journald_cap" ]; then
+            echo "# SystemMaxUse left to your existing setting ($journald_cap)"
+        else
+            # Capped so logs cannot wear out or fill an SD card.
+            echo "SystemMaxUse=64M"
+        fi
+    } > /etc/systemd/journald.conf.d/ledmatrix-persistent.conf
+    mkdir -p /var/log/journal
+    systemd-tmpfiles --create --prefix /var/log/journal >/dev/null 2>&1 || true
+    systemctl restart systemd-journald >/dev/null 2>&1 || true
+
+    # Drop-ins are applied in lexical order, so a locally added file that sorts
+    # after ledmatrix-persistent.conf (zz-local.conf and friends) still wins.
+    # Writing the file is not evidence it took effect -- re-read and say so
+    # plainly rather than reporting success we cannot confirm.
+    journald_now="$(journald_effective | grep -E '^[[:space:]]*Storage=' | tail -n1 | cut -d= -f2 | tr -d '[:space:]' || true)"
+    if [ "$journald_now" = "persistent" ]; then
+        echo "  Persistent journald storage active"
+    else
+        echo "  WARNING: journald storage is still '${journald_now:-unset}' after"
+        echo "  writing /etc/systemd/journald.conf.d/ledmatrix-persistent.conf."
+        echo "  Another drop-in that sorts later is overriding it. Check:"
+        echo "    systemd-analyze cat-config systemd/journald.conf | grep -n Storage="
+        echo "  Logs will not survive a reboot until that is resolved."
+    fi
 fi
 
 # Ensure dtparam=audio=off in config.txt (idempotent)

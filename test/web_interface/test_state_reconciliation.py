@@ -367,6 +367,10 @@ class TestStateReconciliationUnrecoverable(unittest.TestCase):
         self.store_manager.fetch_registry.return_value = {"plugins": []}
         self.store_manager.install_plugin.return_value = False
         self.store_manager.was_recently_uninstalled.return_value = False
+        # A bare Mock() returns a truthy Mock for is_plugin_uninstalled(),
+        # which reads as "persistently uninstalled" and skips auto-repair
+        # entirely — these tests need the repair path to run.
+        self.store_manager.is_plugin_uninstalled.return_value = False
 
         self.reconciler = StateReconciliation(
             state_manager=self.state_manager,

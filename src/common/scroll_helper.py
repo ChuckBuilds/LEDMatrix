@@ -328,7 +328,11 @@ class ScrollHelper:
             elapsed_time = current_time - (self.scroll_start_time or current_time)
             # The image already includes display_width padding, so we only need total_scroll_width
             required_total_distance = self.total_scroll_width
-            self.logger.info(
+            # Progress telemetry, emitted every few seconds for the whole of
+            # every scroll. It says how far along a marquee is, which is what
+            # you turn debug on to watch and not something an operator needs
+            # in the journal on a device that scrolls all day.
+            self.logger.debug(
                 "Scroll progress: elapsed=%.2fs, target=%.2fs, total_scrolled=%.0f/%d px (%.1f%%)",
                 elapsed_time,
                 self.calculated_duration,

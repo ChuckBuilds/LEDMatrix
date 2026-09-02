@@ -8,6 +8,10 @@
  * 1. Copy this file to your plugin's widgets directory
  * 2. Reference it in your config_schema.json with "x-widget": "color-picker"
  * 3. The widget will be automatically loaded when the plugin config form is rendered
+ *
+ * Do NOT add this file to base.html's widget script list: it registers
+ * under the name 'color-picker' and would shadow the built-in
+ * color-picker.js widget.
  * 
  * @module ColorPickerWidget
  */

@@ -44,6 +44,20 @@ from src.common.sync_manager import DisplaySyncManager, SyncRole
 # Get logger with consistent configuration
 logger = get_logger(__name__)
 
+# How long startup will wait for plugins to fetch their first data before
+# showing anything. Each plugin's update blocks for up to the executor's 30s
+# timeout and they run one after another, so the uncapped total is the sum of
+# every slow plugin: 82 seconds on the worst boot measured, with a blank panel
+# throughout. Whatever does not finish in time is picked up by the scheduled
+# update tick moments later, with the display already running.
+_INITIAL_UPDATE_BUDGET_SECONDS = 20.0
+
+# The least budget worth starting a plugin with. Below this the plugin is
+# deferred instead: granting it a floor would let the pass run past its
+# deadline, and granting it the true remainder would record a timeout for a
+# slot it never had a chance to use.
+_MIN_INITIAL_UPDATE_TIMEOUT_SECONDS = 2.0
+
 # Vegas mode import (lazy loaded to avoid circular imports)
 _vegas_mode_imported = False
 VegasModeCoordinator = None
@@ -90,7 +104,8 @@ class DisplayController:
         # Validate startup configuration
         try:
             from src.startup_validator import StartupValidator
-            validator = StartupValidator(self.config_manager)
+            validator = StartupValidator(self.config_manager,
+                                         cache_manager=self.cache_manager)
             is_valid, errors, warnings = validator.validate_all()
             
             if warnings:
@@ -166,6 +181,16 @@ class DisplayController:
         self.plugin_modes = {}  # mode -> plugin_instance mapping for plugin-first dispatch
         self.mode_to_plugin_id: Dict[str, str] = {}
         self.plugin_display_modes: Dict[str, List[str]] = {}
+        # plugin_display_modes is mutated only by _register_loaded_plugin /
+        # _unregister_plugin on the render thread, but the config-watcher
+        # thread reads it in _enabled_plugin_not_running. Both mutation sites
+        # run during reconcile (rare), so this lock never touches the per-frame
+        # path -- the hot-path reads are same-thread as the writes.
+        self._plugin_modes_lock = threading.Lock()
+        # Guards the consume-and-clear of _pending_plugin_reconcile. Only taken
+        # when a reconcile is actually pending or a config change arrives, both
+        # rare -- the per-frame path just reads the bool.
+        self._reconcile_flag_lock = threading.Lock()
         # Per-plugin config-change callbacks, kept so we can unsubscribe a
         # plugin when it is disabled live.
         self._plugin_config_callbacks: Dict[str, Callable] = {}
@@ -258,7 +283,8 @@ class DisplayController:
             # Validate plugins after plugin manager is created
             try:
                 from src.startup_validator import StartupValidator
-                validator = StartupValidator(self.config_manager, self.plugin_manager)
+                validator = StartupValidator(self.config_manager, self.plugin_manager,
+                                             cache_manager=self.cache_manager)
                 is_valid, errors, warnings = validator.validate_all()
                 
                 if warnings:
@@ -447,8 +473,10 @@ class DisplayController:
             self._refresh_config_cache(new_config)
             # If a plugin was enabled/disabled, flag a reconcile for the main
             # loop to apply (loading/unloading off the watcher thread is unsafe).
-            if self._enabled_set_changed(old_config, new_config):
-                self._pending_plugin_reconcile = True
+            if (self._enabled_set_changed(old_config, new_config)
+                    or self._enabled_plugin_not_running(new_config)):
+                with self._reconcile_flag_lock:
+                    self._pending_plugin_reconcile = True
 
         self.config_service.subscribe(_controller_config_change)
 
@@ -461,7 +489,7 @@ class DisplayController:
         # Initial data update for plugins (ensures data available on first display)
         logger.info("Performing initial plugin data update...")
         update_start = time.time()
-        self._update_modules()
+        self._update_modules(deadline=update_start + _INITIAL_UPDATE_BUDGET_SECONDS)
         logger.info("Initial plugin update completed in %.3f seconds", time.time() - update_start)
 
         # Initialize Vegas mode coordinator
@@ -817,14 +845,42 @@ class DisplayController:
             self._cached_target_brightness = normal_brightness  # persist for minute-gate
             return normal_brightness
 
-    def _update_modules(self):
-        """Update all plugin modules."""
+    def _update_modules(self, deadline: Optional[float] = None):
+        """Update all plugin modules.
+
+        Args:
+            deadline: Wall-clock time after which remaining plugins are left
+                for the scheduled update tick instead of being waited on. Each
+                update blocks this thread for up to the executor's timeout, and
+                they run one after another, so without a bound the total is the
+                sum of every slow plugin on the system. Measured at startup on
+                a live rig: 82 seconds, 55 and 26 on the two boots before -- all
+                of it with nothing on the panel.
+        """
         if not self.plugin_manager:
             return
-            
+
         # Update all loaded plugins
         plugins_dict = getattr(self.plugin_manager, 'loaded_plugins', None) or getattr(self.plugin_manager, 'plugins', {})
+        deferred = []
         for plugin_id, plugin_instance in plugins_dict.items():
+            update_timeout = None
+            if deadline is not None:
+                update_timeout = deadline - time.time()
+                if update_timeout < _MIN_INITIAL_UPDATE_TIMEOUT_SECONDS:
+                    # Too little left to be worth starting. Deferring rather
+                    # than granting a floor keeps the budget a real ceiling --
+                    # clamping up to a minimum let a plugin that began with a
+                    # sliver left run on past the deadline -- and a plugin
+                    # handed a slot it cannot use would just be recorded as
+                    # having timed out.
+                    #
+                    # Nothing is lost either way: a plugin that has never
+                    # updated is immediately due, so run_scheduled_updates()
+                    # picks it up within seconds, with the display already
+                    # running.
+                    deferred.append(plugin_id)
+                    continue
             # Check circuit breaker before attempting update
             if hasattr(self.plugin_manager, 'health_tracker') and self.plugin_manager.health_tracker:
                 if self.plugin_manager.health_tracker.should_skip_plugin(plugin_id):
@@ -833,7 +889,13 @@ class DisplayController:
             
             # Use PluginExecutor if available for safe execution
             if hasattr(self.plugin_manager, 'plugin_executor'):
-                success = self.plugin_manager.plugin_executor.execute_update(plugin_instance, plugin_id)
+                # The remaining budget is the timeout, so the pass cannot
+                # run past its deadline. Bounding the loop alone did not do
+                # it: the last plugin to start could still block for the
+                # executor's full 30s, which turned a 20s budget into a 31.8s
+                # pass on the rig.
+                success = self.plugin_manager.plugin_executor.execute_update(
+                    plugin_instance, plugin_id, timeout=update_timeout)
                 if success and hasattr(self.plugin_manager, 'plugin_last_update'):
                     self.plugin_manager.plugin_last_update[plugin_id] = time.time()
             else:
@@ -851,6 +913,12 @@ class DisplayController:
                     # Record failure
                     if hasattr(self.plugin_manager, 'health_tracker') and self.plugin_manager.health_tracker:
                         self.plugin_manager.health_tracker.record_failure(plugin_id, exc)
+
+        if deferred:
+            logger.info(
+                "Initial update budget spent; %d plugin(s) left to the update "
+                "tick so the display can start: %s",
+                len(deferred), ", ".join(deferred))
 
     def _tick_plugin_updates_for_vegas(self) -> None:
         """Run scheduled plugin updates and tell Vegas mode which plugins
@@ -1638,6 +1706,12 @@ class DisplayController:
                 logger.warning("Error checking live priority for %s: %s", mode_name, e)
         return live
 
+    def _vegas_keeps_live_in_ticker(self) -> bool:
+        """Whether live content should stay in the ticker instead of preempting it."""
+        coordinator = getattr(self, 'vegas_coordinator', None)
+        config = getattr(coordinator, 'vegas_config', None)
+        return bool(getattr(config, 'live_in_ticker', False))
+
     def _check_live_priority(self, advance=False):
         """Return the live-priority mode to display, or None if nothing is live.
 
@@ -1687,11 +1761,12 @@ class DisplayController:
                 # rebuilding available_modes happens here on the render thread so
                 # it can't race with rendering. Deferred while on-demand is active
                 # (the flag stays set) so we don't fight its temporary-enable.
+                # The lock-free read is a fast path only; it can be a false
+                # negative (the watcher setting the flag just after it is read
+                # is seen next iteration), never a false positive that loses a
+                # request.
                 if self._pending_plugin_reconcile and not self.on_demand_active:
-                    # Only clear the flag on success -- a retryable failure
-                    # (e.g. discovery) leaves it set so the request isn't lost.
-                    if self._reconcile_enabled_plugins():
-                        self._pending_plugin_reconcile = False
+                    self._service_pending_reconcile()
 
                 if not self.available_modes:
                     # Nothing to render yet. Re-check _pending_plugin_reconcile
@@ -1851,14 +1926,24 @@ class DisplayController:
                 # Check for live priority content and switch to it immediately.
                 # advance=True so multiple simultaneously-live games take turns
                 # (round-robin) instead of pinning to the first plugin.
-                if not self.on_demand_active and not wifi_status_data:
+                # Skipped when the ticker is keeping live content: switching
+                # the rotation underneath Vegas would move current_mode_index
+                # and stash a resume point for a takeover that never happens.
+                if (not self.on_demand_active and not wifi_status_data
+                        and not (self._is_vegas_mode_active()
+                                 and self._vegas_keeps_live_in_ticker())):
                     live_priority_mode = self._check_live_priority(advance=True)
                     self._apply_live_priority(live_priority_mode)
 
                 # Vegas scroll mode - continuous ticker across all plugins
                 # Priority: on-demand > wifi-status > live-priority > vegas > normal rotation
                 if self._is_vegas_mode_active() and not wifi_status_data:
-                    live_mode = self._check_live_priority()
+                    # Live content normally preempts the ticker entirely. With
+                    # vegas_scroll.live_in_ticker the marquee keeps running and
+                    # the live plugin takes extra turns inside it instead --
+                    # see StreamManager._apply_priority_weights.
+                    live_mode = (None if self._vegas_keeps_live_in_ticker()
+                                 else self._check_live_priority())
                     if not live_mode:
                         try:
                             # Run Vegas mode iteration
@@ -2741,7 +2826,8 @@ class DisplayController:
             logger.debug("Using manifest display_modes for %s: %s", plugin_id, display_modes)
         if not (isinstance(display_modes, list) and display_modes):
             display_modes = [plugin_id]
-        self.plugin_display_modes[plugin_id] = list(display_modes)
+        with self._plugin_modes_lock:
+            self.plugin_display_modes[plugin_id] = list(display_modes)
 
         # Subscribe to config changes for per-plugin hot-reload. Bind plugin_id
         # and instance as defaults so each plugin's callback targets its own
@@ -2775,7 +2861,8 @@ class DisplayController:
     def _unregister_plugin(self, plugin_id: str) -> None:
         """Remove a plugin's modes, config subscription and instance, then
         unload it. Used by live disable hot-reload."""
-        modes = self.plugin_display_modes.pop(plugin_id, [])
+        with self._plugin_modes_lock:
+            modes = self.plugin_display_modes.pop(plugin_id, [])
         for mode in modes:
             if mode in self.available_modes:
                 self.available_modes.remove(mode)
@@ -2819,6 +2906,67 @@ class DisplayController:
                 if isinstance(value, dict)
             }
         return enabled_map(old_config) != enabled_map(new_config)
+
+    def _service_pending_reconcile(self) -> None:
+        """Consume a pending reconcile request and run it.
+
+        The request is consumed BEFORE reconciling, not cleared after. Clearing
+        after would drop any config change that lands while reconcile is
+        running: reconcile has already read its config by then, so the clear
+        erases a request it never served and the newest config never
+        reconciles -- the same "your save did nothing" failure this whole path
+        exists to prevent. Consuming first means such a request stays set and
+        is picked up on the next pass.
+
+        A retryable failure (e.g. discovery) re-arms the flag.
+        """
+        with self._reconcile_flag_lock:
+            pending = self._pending_plugin_reconcile
+            self._pending_plugin_reconcile = False
+        if pending and not self._reconcile_enabled_plugins():
+            with self._reconcile_flag_lock:
+                self._pending_plugin_reconcile = True
+
+    def _enabled_plugin_not_running(self, new_config: Dict[str, Any]) -> bool:
+        """True when a discovered plugin is enabled in config but not running.
+
+        ``_enabled_set_changed`` compares only top-level ``enabled`` flags, which
+        misses the case that strands a plugin: one whose ``validate_config()``
+        returned False is absent from the running set, and the edit that fixes it
+        (enabling a league, filling in an API key) lives *nested* inside that
+        plugin's own section. No top-level flag changes, so no reconcile is
+        queued, and the save that should have fixed it appears to do nothing --
+        only toggling some unrelated plugin recovers it. hockey-scoreboard sat
+        enabled-but-absent on a live rig for four days this way.
+
+        Deliberately narrow: it fires only for ids the plugin manager has
+        actually discovered, so non-plugin sections that carry their own
+        ``enabled`` flag (``schedule``, ``display``, ...) don't queue a reconcile
+        on every save. In the steady state -- everything enabled is loaded --
+        this is False and costs nothing. That matters because reconcile runs
+        ``discover_plugins()`` on the render thread, where a needless
+        filesystem scan per config save would show up as a frame hitch.
+
+        Runs on the config-watcher thread, so both mappings it reads are
+        snapshotted under the lock that guards their writes.
+        """
+        if self.plugin_manager is None:
+            return False
+        # Two snapshots, each taken under its own lock and never nested, so a
+        # half-written mapping is never observed and this can't deadlock
+        # against discovery (which holds the discovery lock while rebuilding).
+        try:
+            known = self.plugin_manager.discovered_plugin_ids()
+        except AttributeError:
+            # Older manager without the accessor: fall back to a plain read.
+            known = set(getattr(self.plugin_manager, 'plugin_manifests', ()) or ())
+        with self._plugin_modes_lock:
+            running = set(self.plugin_display_modes)
+        for key, value in new_config.items():
+            if (key in known and isinstance(value, dict)
+                    and value.get('enabled', False) and key not in running):
+                return True
+        return False
 
     def _reconcile_enabled_plugins(self) -> bool:
         """Load/unload plugins so the running set matches the enabled set in

@@ -8,10 +8,10 @@ import os
 import sys
 import argparse
 
-# Add the src directory to the path so we can import our modules
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+# Add the project root to the path so we can import our modules
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from cache_manager import CacheManager
+from src.cache_manager import CacheManager
 
 def list_cache_keys(cache_manager):
     """List all available cache keys."""

@@ -383,19 +383,6 @@ class TestConfigHelpers:
         display_config = manager.get_display_config()
         assert display_config["hardware"]["rows"] == 32
     
-    def test_get_clock_config(self, tmp_path):
-        """Test getting clock config."""
-        config_file = tmp_path / "config.json"
-        config_data = {"clock": {"format": "12h"}}
-        
-        with open(config_file, 'w') as f:
-            json.dump(config_data, f)
-        
-        manager = ConfigManager(config_path=str(config_file))
-        manager.load_config()
-        
-        clock_config = manager.get_clock_config()
-        assert clock_config["format"] == "12h"
 
 
 class TestPluginConfigManagement:

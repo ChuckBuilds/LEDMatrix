@@ -20,7 +20,22 @@ The installation script:
 - Installs and configures `dnsmasq` (DHCP server for AP mode)
 - These services can interfere with normal WiFi client mode
 
-### 3. Reboot After Installation
+### 3. The Board Ran Out of Memory
+
+On a 512MB or 1GB board, memory exhaustion stops `sshd` being able to fork a
+session process. The connection is accepted and then closed immediately, before
+any banner:
+
+```text
+kex_exchange_identification: Connection closed by remote host
+```
+
+The giveaway is that the board is otherwise healthy — ping is clean and the web
+UI still responds — but nothing that needs to start a new process works, and
+the panel is usually dark. Only a power cycle clears it. See
+[LOW_MEMORY_BOARDS.md](LOW_MEMORY_BOARDS.md).
+
+### 4. Reboot After Installation
 
 If the script reboots the Pi (which it recommends), network services may restart in a different state, potentially triggering AP mode.
 
@@ -190,10 +205,22 @@ The web interface allows you to:
 
 ## Summary
 
-**SSH becomes unavailable because**:
+**SSH becomes unavailable because** — two unrelated causes, and they need
+different responses:
+
+*AP mode (most common):*
 - WiFi monitor service enables AP mode when WiFi disconnects
 - AP mode switches WiFi from client to access point mode
 - Pi loses connection to your original network
+
+*Memory exhaustion (low-memory boards):*
+- The board runs out of memory, so `sshd` cannot fork a session process
+- The connection is accepted and closed before any banner
+- Ping still answers and the web UI still responds, so it looks healthy
+- The panel is usually dark and the service cannot restart
+- **Only a power cycle clears this** — there is no remote recovery, because
+  every remote route needs a new process
+- Prevention and tuning: [LOW_MEMORY_BOARDS.md](LOW_MEMORY_BOARDS.md)
 
 **To regain SSH**:
 1. Connect to **LEDMatrix-Setup** AP network (password: `ledmatrix123`)

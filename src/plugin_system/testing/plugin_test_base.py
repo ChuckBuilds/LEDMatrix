@@ -2,6 +2,11 @@
 Base test class for LEDMatrix plugins.
 
 Provides common fixtures and helper methods for plugin testing.
+
+Note: this is the plugin-author-facing base class shipped with the
+core (importable as src.plugin_system.testing.plugin_test_base). The
+repo's own plugin tests use a separate, richer harness in
+test/plugins/test_plugin_base.py — the two are intentionally distinct.
 """
 
 import unittest

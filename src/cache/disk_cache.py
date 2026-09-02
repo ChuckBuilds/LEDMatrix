@@ -14,6 +14,13 @@ import zlib
 from typing import Dict, Any, Optional, Protocol
 from datetime import datetime
 
+# How old an abandoned write's temp file must be before the sweep removes it.
+# A real write holds its temp file for milliseconds, so an hour is far beyond
+# any in-flight write while still clearing the same day's debris. Deliberately
+# not tied to the retention policies: those describe how long data stays
+# useful, and a half-written file was never useful.
+_ORPHAN_TEMP_MAX_AGE_SECONDS = 3600
+
 
 
 class CacheStrategyProtocol(Protocol):
@@ -112,6 +119,22 @@ class DiskCache:
                     record_ts = None
             
             now = time.time()
+
+            # An explicit per-entry ttl wins over the caller's max_age. The
+            # caller that wrote the record knows what its data is; max_age is
+            # inferred from substrings in the key ("live", "odds", "stock") and
+            # is only a fallback for records that never said. Until now the ttl
+            # was stored and ignored, so `set(key, data, ttl=...)` did nothing
+            # at all -- 48 plugin call sites and 4 in the core were writing a
+            # number no read path consulted.
+            effective_max_age = max_age
+            if isinstance(record, dict):
+                stored_ttl = record.get('ttl')
+                if isinstance(stored_ttl, (int, float)) and not isinstance(stored_ttl, bool) \
+                        and stored_ttl >= 0:
+                    effective_max_age = stored_ttl
+            max_age = effective_max_age
+
             # max_age=None means "never expires" (mirrors MemoryCache and the
             # cache_manager docstring). Guard it explicitly — otherwise the
             # comparison below raises TypeError and the record is treated as a
@@ -331,6 +354,23 @@ class DiskCache:
         """Get the cache directory path."""
         return self.cache_dir
     
+    @staticmethod
+    def _is_orphaned_temp(filename: str) -> bool:
+        """Whether a name is one of set()'s temp files rather than real data.
+
+        Matches only what this class creates: mkstemp with a prefix of
+        ".<cache filename>." , so ".weather.json.a1b2c3d4". The shape is
+        checked rather than just the leading dot, because this predicate
+        deletes things -- a stray dotfile someone left in the cache directory
+        is not ours to remove, and a completed ".json" never is either.
+        """
+        if not filename.startswith('.') or filename.endswith('.json'):
+            return False
+        head, sep, suffix = filename.rpartition('.json.')
+        # head is the key (non-empty after the leading dot), suffix is
+        # mkstemp's random component.
+        return bool(sep) and len(head) > 1 and bool(suffix)
+
     def cleanup_expired_files(self, cache_strategy: CacheStrategyProtocol, retention_policies: Dict[str, int]) -> Dict[str, Any]:
         """
         Clean up expired cache files based on retention policies.
@@ -365,11 +405,50 @@ class DiskCache:
             try:
                 with self._lock:
                     # Get snapshot of files while holding lock briefly
-                    filenames = [f for f in os.listdir(self.cache_dir) if f.endswith('.json')]
+                    entries = os.listdir(self.cache_dir)
             except OSError as list_error:
                 self.logger.error("Error listing cache directory %s: %s", self.cache_dir, list_error, exc_info=True)
                 stats['errors'] += 1
                 return stats
+
+            filenames = [f for f in entries if f.endswith('.json')]
+
+            # Sweep temp files abandoned by a write that never finished. set()
+            # removes its own in a finally, so these are the ones where the
+            # process died between mkstemp and os.replace -- a SIGKILL, a lost
+            # restart race, a power cut. Nothing ever collected them: they are
+            # named ".<key>.json.<random>", and the scan above only matches
+            # names ending in .json, so they accumulated indefinitely. Measured
+            # on a live rig: 76 files, 1,050 MB, 81% of the whole cache
+            # directory, the oldest six months old.
+            stats['orphan_temp_files_deleted'] = 0
+            for filename in (f for f in entries if self._is_orphaned_temp(f)):
+                # Counted as scanned like any other candidate, so files_deleted
+                # can never exceed files_scanned and the summary line reads
+                # honestly ("77/8864", not "77/0").
+                stats['files_scanned'] += 1
+                path = os.path.join(self.cache_dir, filename)
+                try:
+                    # An in-flight write lives for milliseconds, so anything
+                    # this old is certainly abandoned rather than in progress.
+                    if (current_time - os.path.getmtime(path)) <= _ORPHAN_TEMP_MAX_AGE_SECONDS:
+                        continue
+                    with self._lock:
+                        size = os.path.getsize(path)
+                        os.remove(path)
+                    stats['files_deleted'] += 1
+                    stats['orphan_temp_files_deleted'] += 1
+                    stats['space_freed_bytes'] += size
+                except FileNotFoundError:
+                    continue          # another sweep got there first
+                except OSError as e:
+                    stats['errors'] += 1
+                    self.logger.warning("Error deleting orphaned temp file %s: %s", filename, e)
+
+            if stats['orphan_temp_files_deleted']:
+                self.logger.info(
+                    "Removed %d abandoned cache temp file(s)",
+                    stats['orphan_temp_files_deleted'])
             
             # Process files outside the lock to avoid blocking get/set operations
             for filename in filenames:

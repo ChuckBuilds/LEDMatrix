@@ -27,7 +27,7 @@ These are independent concerns. Conflating them is what produces god classes.
 | Plugin loads on a core that predates a module | Guarded import with a bundled fallback (`try: from src.X import Y / except ModuleNotFoundError: from y import Y`) |
 | Plugin loads on a core that predates a *method* | Capability probing — `hasattr(SportsCore, "_detect_stale_games")` — never a version comparison. The loader's compat check is advisory-only (it logs and continues), so probing is the real protection. |
 | Core changes never break a plugin's rendering | The **view-model contract**: `_extract_game_details_common` returns a dict whose `GUARANTEED_KEYS` are frozen by `test/test_skin_system.py::TestViewModelContract`. Keys may be added, never renamed or removed. |
-| A plugin can drop its bundled copy safely | The **sunset rule**: its manifest must floor `ledmatrix_min_version` at the first core release shipping the module (recorded in `CHANGELOG.md`) — *necessary but not sufficient*. Nothing enforces that floor today, so the copy also waits for the B6 gate below. |
+| A plugin can drop its bundled copy safely | The **sunset rule**: its manifest must floor `ledmatrix_min_version` at the first core release shipping the module (recorded in `CHANGELOG.md`) — *necessary but not sufficient*. The store enforces that floor on every registry-managed install and on both supported update paths (sideloading via `install_from_url` is not gated), but a floor cannot reach a user who never updates, so the copy also waits for the B6 gate below. |
 
 The core API is **additive-only**. A method the plugins call is never removed or
 given a new required parameter; new behavior arrives as new methods with
@@ -214,7 +214,7 @@ one of them cannot break a user on an old core and the other can.
 | **B3** | Upstream the scroll **orchestration** layer as `src/common/sports_scroll.py`, reading `global_config['target_fps']` natively | ✅ | Content building stays per-sport |
 | **B4** | Ship 3.2.0 *and* make version reporting trustworthy | ✅ | Released 2026-08-03; tag, release and `src.__version__` agree; compatibility gate merged (#428, #431, #433) |
 | **B5** | Adoption — guarded core imports, all eight. **Bundled copies stay.** | ✅ | All eight adopted; harness byte-identical; see the B5 retrospective below — four shipped broken and were repaired in plugins #251 |
-| **B6** | Sunset — delete the bundled copies | **blocked, deliberately** | 3.2.0 *in users' hands*. Released 2026-08-03; still no adoption data at the 2026-08-26 re-check. The prerequisite regression test is built (#505); only the evidence is missing. See "B6 — the decision as of 2026-08-05" |
+| **B6** | Sunset — delete the bundled copies | ✅ | Ran 2026-09-01, all eight. Floors at 3.2.0; the store refuses on all three routes in (#431/#433, #508, #510). See "B6 — what actually happened" |
 
 ### B4 — what "ship 3.2.0" actually requires
 
@@ -233,6 +233,20 @@ a floor can be trusted against, and today it is not:
   `StoreManager.update_plugin` compares the core version at all — `update_plugin`
   compares the plugin's manifest version against the registry's
   `latest_version` and nothing else.
+
+  *Fixed, in two parts.* `install_plugin` gained the gate in #431/#433, which
+  covers every registry-managed install and, through `_reinstall_with_rollback`,
+  the update path that re-downloads.
+  `update_plugin`'s git branch pulls in place and re-downloads nothing, so it
+  stayed ungated until `_gate_pulled_commit` closed it — checked after the pull
+  (the registry carries no floor field, so the incoming floor is unknowable
+  before it) and undone with `git reset --hard` to the pre-pull commit. That
+  route is rare in practice, since monorepo plugins install as archives; it was
+  closed because the sunset rule in the plugins repo's
+  `08-shared-sports-code.md` states as **condition 3** that the core enforces
+  the floor "at install/update time", and B6 rests on that being true rather
+  than merely written down. `install_from_url` — sideloading a plugin from a
+  URL — is still ungated.
 
 So B4 is: tag and release 3.2.0; make the tag, the release, and `__version__`
 agree, and keep them agreeing; reconsider the `< 2.0.0` skip; migrate manifests
@@ -330,46 +344,69 @@ gate rather than trusting the failure to be noticed.
 The same suite should exercise the install/update gate, since it is the other
 half of the guarantee.
 
-### B6 — the decision as of 2026-08-05
+### B6 — what actually happened
 
-**Do not run B6 yet. Do not abandon it either.** The blocker is no longer
-technical; it is calendar time, and it is the one thing here that cannot be
-worked around by writing more code.
+**Ran 2026-09-01, across all eight scoreboards.** Held from 2026-08-05 to
+2026-09-01 on the argument below, which is kept because the reasoning applies to
+the next module, not because it is still in force.
 
-**Why not yet.** 3.2.0 was published **2026-08-03**. Its predecessor 3.1.0 ran
-for nine months. B6's entire safety argument is "cores without
-`src.common.sports_scroll` are gone", and two days after release that is not
-close to true. There are no release assets to count and no install telemetry, so
-we cannot demonstrate otherwise — and that absence of evidence *is* the answer.
-Executing B6 now would strand essentially the whole user base on their current
-plugin versions.
+**The hold, and why it lifted.** The stated gate was evidence of 3.2.0 uptake —
+"a few months of it being the default download, or store-side install data".
+That evidence never arrived and could not: the core updates by
+`git pull --rebase`, so release-asset counts cannot measure uptake, and no
+store-side telemetry exists. What changed instead is that the *risk* the gate
+protected against was closed directly. The store now refuses a plugin whose
+floor exceeds the running core on **all three** routes in:
 
-**What is already done and waiting.** The hard part is built and tested. The
-install gate refuses a plugin whose floor exceeds the core's version, and
-refuses one whose floor is above 2.0.0 when the core reports an untrustworthy
-version — so a v3.1.0-release user (who reports `1.0.0`) keeps a working plugin
-instead of receiving one that cannot load. Every adopted plugin has a
-`test_core_fallback.py` covering both paths.
+| route | gated by |
+|---|---|
+| `install_plugin` — every path that re-downloads, `_reinstall_with_rollback` included | #431, #433 |
+| `update_plugin`'s git branch — pulls in place, re-downloads nothing | #508 |
+| `install_from_url` — sideloading | #510 |
 
-**What would unblock it.** Evidence of 3.2.0 uptake — a few months of it being
-the default download, or store-side install data if that is ever added. Revisit
-then, not on a schedule.
+With all three closed a pre-3.2.0 user cannot receive a sunset plugin at all;
+they keep the version they already run. The population the hold existed to
+protect is protected by refusal rather than by a bundled copy — which is what
+the copy was standing in for.
 
-**Re-checked 2026-08-26 — still held.** v3.2.0 remains the latest release and
-`src.__version__` is still `3.2.0`; no 3.3.0 has been cut. That is 23 days, not
-the few months above, and no store-side install data has appeared. Note also
-that the core updates by `git pull --rebase` rather than by downloading a
-release, so release-asset counts would not measure uptake even if we had them —
-whatever eventually unblocks this has to come from the store side. The
-prerequisite test is now built (#505), so when the evidence does arrive the
-remaining work is the sunset itself.
+**What shipped.** Eight plugins, ~5,800 lines of frozen fallback deleted. Each:
+copy removed, guarded import collapsed to a plain one, floor raised to 3.2.0,
+`test_core_fallback.py` rewritten as `test_core_scroll.py` asserting the sunset
+rather than the fallback. `scripts/check_scroll_adoption.py` gained
+`sunset_violations` and a `SUNSET_PLUGINS` set naming all eight, so a
+resurrected copy or a returned guard fails CI.
 
-**When it happens, remember:** four plugins declare their floor top-level, where
-editing `versions[0]` is a silent no-op, and the floor has three live spellings
-(`min_ledmatrix_version`, `requires.min_ledmatrix_version`,
-`versions[].ledmatrix_min_version`, plus deprecated `ledmatrix_min`). See
+Delivered as plugins #346 (hockey, later folded into #351), #349 (football),
+#350 (baseball), #351 (the remaining six).
+
+**Two things found by doing it, both worth carrying forward:**
+
+- **Only one fallback held orchestration logic the core lacked.** baseball's
+  `_configure_scroll_helper` reinterpreted `scroll_speed` as pixels-per-*frame*
+  when `speed × delay` fell outside the 0.1–5.0 window — measured, 10–20×
+  faster than configured for a speed between 1.0 and 5.0. Standardised onto the
+  core's behaviour (honour the documented px/sec, clamp) rather than preserved.
+  Every other difference across the eight was a docstring, an unreachable
+  `scroll_helper is None` guard, or an equivalent diagnostic.
+- **Two tests had been leaning on the guard without anyone knowing.**
+  `soccer/test_live_screens.py` stubbed `src` in a way that shadowed the core,
+  so its guarded import fell back and the test had been exercising the *frozen
+  copy* rather than the shipping class since B5. Before sunsetting anything else
+  that carries a guarded core import, grep for tests that stub `src`.
+
+**The floor-raising traps still apply** to any future sunset: four plugins
+declare their floor top-level, where editing `versions[0]` is a silent no-op,
+and the floor has three live spellings (`min_ledmatrix_version`,
+`requires.min_ledmatrix_version`, `versions[].ledmatrix_min_version`, plus
+deprecated `ledmatrix_min`). See
 `src/plugin_system/compatibility.py:declared_min_version` for the resolution
-order any floor-raising tool must reproduce.
+order any floor-raising tool must reproduce — and note the name is **inverted**
+between the top level and `versions[]`.
+
+**Still not adopted, deliberately:** `data_sources.py`, `game_renderer.py` and
+`base_odds_manager.py`. The standing decision held them until B6 closed; it now
+has, so they can be reconsidered — with B5's lesson applied, which is to build
+the object and diff rendered output rather than trust a static check.
 
 ### B5 retrospective — what the adoption actually cost
 
@@ -430,33 +467,21 @@ a version number CI now asserts (#428), the compatibility gate is in
 
 What actually remains, smallest first:
 
-1. **Nothing on the critical path.** B6 is the only remaining phase and it is
-   waiting on calendar time, not on work. Resist the urge to fill the gap by
-   adopting more modules — see the decision above.
-2. ~~**The stale plugin-test tranche**~~ — **done** (verified 2026-08-26).
-   The 5 failures across baseball, hockey and basketball are gone;
-   `scripts/run_plugin_tests.py --all` reports 174 passed, 2 skipped, 0 failed
-   across the whole fleet. Re-check with that runner rather than by pointing
-   pytest at a plugin directory: these are standalone scripts, not a pytest
-   suite, and one of them calls `sys.exit(1)` at import, which collapses a
-   pytest run into an INTERNALERROR that looks nothing like the real state.
-3. **Soak the remaining adoptions on hardware.** Only baseball has been watched
-   through a live game, and hockey has been loaded on devpi. The other six are
-   proven by harness, unit tests and pixel comparison — not by a live match.
-   Out-of-season sports cannot be soaked until their season starts. **This is
-   now the only open item that needs work rather than calendar time.**
-4. ~~**`CLAUDE.md` says four panel sizes**~~ — **done.** It reads "Default
-   matrix sizes are eight … design for the classic four first".
-5. **Then, when the evidence supports it, B6.** Its prerequisite — the
-   four-case compatibility regression test — is built: core
-   `test/test_sports_sunset_matrix.py` (#505). It drives all four cells through
-   the real `PluginManager.load_plugin` and asserts the sunset cell as
-   `PluginState.ERROR` plus an error naming the missing module, not as a raise.
-   Two modelling traps it had to work through, worth knowing before trusting
-   any successor: the copy-removed shape must be an *unguarded* import, or the
-   failure names the missing `scroll_display_legacy` instead of the core
-   module; and only the leaf module may be hidden, since a pre-3.2.0 core still
-   ships `src/common/`.
+1. **Soak the adoptions on hardware.** football and hockey have been run on a
+   live rig through real games; baseball was watched through one earlier. The
+   rest are proven by harness, unit tests and pixel comparison. Out-of-season
+   sports cannot be soaked until their season starts. When you do, **check the
+   rig's `*_display_mode` first** — a board in `switch` mode will happily load a
+   sunset plugin and tell you nothing about the scroll code the sunset changed.
+2. **Cut 3.3.0.** Not required by B6 — its floors are 3.2.0, which is released —
+   but `calendar` 1.2.3 floors at 3.3.0 for the device-authorization endpoints
+   that landed after 3.2.0, so it is un-installable until the release exists.
+3. **Reconsider the held modules** (`data_sources.py`, `game_renderer.py`,
+   `base_odds_manager.py`) now that the sunset has closed. `game_renderer.py` is
+   the largest single duplication left: ~11,500 lines across eight plugins, with
+   ~36,500 more in the eight `sports.py`. Note that core already ships
+   `src/base_classes/sports/` (~143KB, promoted in B1/B2) that **no plugin
+   imports** — check whether it has drifted before treating it as the target.
 
 ## How to keep this project healthy
 

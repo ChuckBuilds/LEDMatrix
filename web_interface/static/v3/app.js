@@ -116,14 +116,35 @@ document.body.addEventListener('htmx:afterRequest', function(event) {
 // ===== Restart-pending banner =====
 // Shown after restart-requiring saves; persists across tab switches (and
 // reloads, via sessionStorage) until the display restarts or it's dismissed.
-window.showRestartPending = function() {
-    try { sessionStorage.setItem('ledmatrix-restart-pending', '1'); } catch { /* private browsing */ }
+window.showRestartPending = function(message) {
+    try {
+        sessionStorage.setItem('ledmatrix-restart-pending', '1');
+        // Persisted alongside the flag: a code update and a config save want
+        // different wording, and the banner outlives the page that raised it.
+        if (message) sessionStorage.setItem('ledmatrix-restart-pending-text', message);
+        else sessionStorage.removeItem('ledmatrix-restart-pending-text');
+    } catch { /* private browsing */ }
     const banner = document.getElementById('restart-pending-banner');
+    const text = document.getElementById('restart-pending-text');
+    if (text) {
+        // Without the else-branch a config save inherited whatever wording the
+        // previous update left in the DOM: showRestartPending() clears the
+        // stored text but used to leave the element itself alone. The default
+        // is read back from the server-rendered copy rather than duplicated
+        // here, so the template stays the one place that owns the string.
+        if (text.dataset.defaultText === undefined) {
+            text.dataset.defaultText = text.textContent.trim();
+        }
+        text.textContent = message || text.dataset.defaultText;
+    }
     if (banner) banner.style.display = 'block';
 };
 
 window.dismissRestartPending = function() {
-    try { sessionStorage.removeItem('ledmatrix-restart-pending'); } catch { /* no-op */ }
+    try {
+        sessionStorage.removeItem('ledmatrix-restart-pending');
+        sessionStorage.removeItem('ledmatrix-restart-pending-text');
+    } catch { /* no-op */ }
     const banner = document.getElementById('restart-pending-banner');
     if (banner) banner.style.display = 'none';
 };
@@ -151,6 +172,9 @@ document.addEventListener('DOMContentLoaded', function() {
     try {
         if (sessionStorage.getItem('ledmatrix-restart-pending') === '1') {
             const banner = document.getElementById('restart-pending-banner');
+            const saved = sessionStorage.getItem('ledmatrix-restart-pending-text');
+            const text = document.getElementById('restart-pending-text');
+            if (text && saved) text.textContent = saved;
             if (banner) banner.style.display = 'block';
         }
     } catch { /* no-op */ }

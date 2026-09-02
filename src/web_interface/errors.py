@@ -89,7 +89,11 @@ class WebInterfaceError:
         self.category = category or self._infer_category(error_code)
         self.details = details
         self.context = context or {}
-        self.suggested_fixes = suggested_fixes or self._get_default_suggestions(error_code)
+        # `is None`, not truthiness: an explicit [] means "this caller has
+        # no suggestions to offer", which the default list would override.
+        self.suggested_fixes = (
+            suggested_fixes if suggested_fixes is not None
+            else self._get_default_suggestions(error_code))
         self.original_error = original_error
     
     def _infer_category(self, error_code: ErrorCode) -> ErrorCategory:

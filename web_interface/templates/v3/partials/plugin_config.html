@@ -121,14 +121,21 @@
             </label>
             {% endif %}
             
-            {# Enum dropdown #}
+            {# Enum dropdown. Option text comes from x-options.labels when the
+               schema supplies it -- the same convention the checkbox-group
+               widget already uses -- because humanising the raw value cannot
+               express every label: "vs" reads as "Vs", and "abbrev" says
+               nothing about the "Sep 19" it produces. Values without a label
+               fall back to the humanised form, so existing schemas render
+               exactly as before. #}
             {% elif prop.enum %}
+            {% set enum_labels = (prop.get('x-options') or prop.get('x_options') or {}).get('labels') or {} %}
             <select id="{{ field_id }}"
-                    name="{{ full_key }}" 
+                    name="{{ full_key }}"
                     class="form-select w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-white text-black">
                 {% for option in prop.enum %}
                 <option value="{{ option }}" {% if value == option %}selected{% endif %}>
-                    {{ option|replace('_', ' ')|title }}
+                    {{ enum_labels.get(option, option|replace('_', ' ')|title) }}
                 </option>
                 {% endfor %}
             </select>
@@ -289,7 +296,27 @@
                 {% set enum_items = items_schema.get('enum') or [] %}
                 {% set x_options = prop.get('x-options') or {} %}
                 {% set labels = x_options.get('labels') or {} %}
-                
+                {# A saved value that is no longer one of the options -- a team
+                   code the league retired, an option dropped from the schema --
+                   has no checkbox to render, so it would sit unseen in the
+                   hidden input below and be posted back on save. The schema
+                   rejects it and the save endpoint returns 400, which blocks
+                   editing any other field on the plugin until the stale entry
+                   is found and removed. Drop them here instead, and say which,
+                   so the value is not lost silently. Only when the widget
+                   actually has options: an empty enum means nothing to check
+                   against, and filtering on it would wipe the field. #}
+                {% set stale_values = (array_value | reject('in', enum_items) | list) if enum_items else [] %}
+                {% set array_value = (array_value | select('in', enum_items) | list) if enum_items else array_value %}
+
+                {% if stale_values %}
+                <div class="mt-1 mb-2 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800"
+                     data-stale-options="{{ field_id }}">
+                    No longer offered, and will be removed when you save:
+                    <span class="font-mono">{{ stale_values | join(', ') }}</span>.
+                </div>
+                {% endif %}
+
                 <div class="mt-1 space-y-2">
                     {% for option in enum_items %}
                     {% set is_checked = option in array_value %}
@@ -569,10 +596,14 @@
                                                        class="block w-20 px-2 py-1 border border-gray-300 rounded text-sm text-center"
                                                        {% if col_def.get('description') %}title="{{ col_def.get('description') }}"{% endif %}>
                                             {% elif col_enum %}
+                                                {# Labels are opt-in here and the fallback stays the raw
+                                                   value: table columns hold things like ticker symbols,
+                                                   which must not be title-cased behind the user's back. #}
+                                                {% set col_labels = (col_def.get('x-options') or col_def.get('x_options') or {}).get('labels') or {} %}
                                                 <select name="{{ full_key }}.{{ item_index }}.{{ col_name }}"
                                                         class="block w-full px-2 py-1 border border-gray-300 rounded text-sm bg-white">
                                                     {% for opt in col_enum %}{% if opt is not none %}
-                                                    <option value="{{ opt }}" {% if col_value == opt or (col_value is none and col_def.get('default') == opt) %}selected{% endif %}>{{ opt }}</option>
+                                                    <option value="{{ opt }}" {% if col_value == opt or (col_value is none and col_def.get('default') == opt) %}selected{% endif %}>{{ col_labels.get(opt, opt) }}</option>
                                                     {% endif %}{% endfor %}
                                                 </select>
                                             {% elif col_xwidget == 'date-picker' %}
@@ -804,7 +835,7 @@
                     <i class="fas fa-info-circle mr-1"></i>
                     Changes in the file manager save immediately — no need to click Save Configuration.
                 </p>
-            {% elif str_widget in ['text-input', 'textarea', 'select-dropdown', 'toggle-switch', 'radio-group', 'date-picker', 'time-picker', 'slider', 'color-picker', 'email-input', 'url-input', 'password-input', 'font-selector', 'file-upload-single', 'plugin-file-manager'] %}
+            {% elif str_widget in ['text-input', 'textarea', 'select-dropdown', 'toggle-switch', 'radio-group', 'date-picker', 'time-picker', 'slider', 'color-picker', 'email-input', 'url-input', 'password-input', 'font-selector', 'file-upload-single', 'plugin-file-manager', 'google-oauth'] %}
                 {# Render widget container #}
                 <div id="{{ field_id }}_container" class="{{ str_widget }}-container"></div>
                 <script>

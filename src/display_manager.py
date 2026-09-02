@@ -25,6 +25,7 @@ the same object.
 
 import json
 import os
+import socket
 import tempfile
 if os.getenv("EMULATOR", "false") == "true":
     from RGBMatrixEmulator import RGBMatrix, RGBMatrixOptions
@@ -258,6 +259,26 @@ class DisplayManager:
         # Initialize managers
         # Calendar manager is now initialized by DisplayController
         
+    # Orientation setting -> rpi-rgb-led-matrix "Rotate:<deg>" pixel-mapper suffix.
+    # "normal" needs no suffix since 0 degrees is the identity transform.
+    _ORIENTATION_ROTATE_DEGREES = {'normal': None, '90': 90, '180': 180, '270': 270}
+
+    def _build_pixel_mapper_config(self, hardware_config: dict) -> str:
+        """Compose the raw pixel_mapper_config string with the orientation setting.
+
+        `pixel_mapper_config` stays available as a free-form advanced field (e.g.
+        for "U-mapper" chain layouts); `orientation` is the user-facing dropdown
+        for physical mounting (e.g. panels mounted upside down) and is appended as
+        a "Rotate:<deg>" mapper rather than overwriting any existing config.
+        """
+        base_mapper = (hardware_config.get('pixel_mapper_config') or '').strip()
+        orientation = hardware_config.get('orientation', 'normal')
+        degrees = self._ORIENTATION_ROTATE_DEGREES.get(orientation)
+        if degrees is None:
+            return base_mapper
+        rotate_mapper = f'Rotate:{degrees}'
+        return f'{base_mapper};{rotate_mapper}' if base_mapper else rotate_mapper
+
     def _setup_matrix(self):
         """Initialize the RGB matrix with configuration settings."""
         _init_error_str = None
@@ -283,7 +304,7 @@ class DisplayManager:
             options.pwm_bits = hardware_config.get('pwm_bits', 10)
             options.pwm_lsb_nanoseconds = hardware_config.get('pwm_lsb_nanoseconds', 150)
             options.led_rgb_sequence = hardware_config.get('led_rgb_sequence', 'RGB')
-            options.pixel_mapper_config = hardware_config.get('pixel_mapper_config', '')
+            options.pixel_mapper_config = self._build_pixel_mapper_config(hardware_config)
             options.row_address_type = hardware_config.get('row_address_type', 0)
             options.multiplexing = hardware_config.get('multiplexing', 0)
             options.panel_type = hardware_config.get('panel_type', '')
@@ -497,6 +518,91 @@ class DisplayManager:
             logger.warning(f"[BRIGHTNESS] Matrix does not support brightness property: {e}", exc_info=True)
             return -1
 
+    @staticmethod
+    def _local_ip() -> Optional[str]:
+        """This device's address on the network it routes through, or None.
+
+        Deliberately not `hostname -I` or a systemctl probe for AP mode, which
+        is how the web launcher does it: both spawn processes with multi-second
+        timeouts, and this runs on the startup path the rest of this change
+        exists to shorten. Connecting a UDP socket sends no packets -- it only
+        asks the kernel which source address it would use -- so it costs
+        microseconds and works with the network down, as long as a route
+        exists.
+        """
+        sock = None
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.settimeout(0.2)
+            sock.connect(("8.8.8.8", 80))  # nosec B104 - no traffic; selects a route
+            ip = sock.getsockname()[0]
+            return ip if ip and not ip.startswith("127.") else None
+        except OSError:
+            return None
+        finally:
+            if sock is not None:
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+
+    def _fitting_font(self, lines, width):
+        """The largest font from the usual ladder that fits every line."""
+        candidates = [self.font,
+                      ("assets/fonts/4x6-font.ttf", 6)]
+        for candidate in candidates:
+            try:
+                font = candidate
+                if isinstance(candidate, tuple):
+                    font = ImageFont.truetype(candidate[0], candidate[1])
+                if all(self.draw.textlength(t, font=font) <= width for t in lines):
+                    return font
+            except (OSError, ValueError, AttributeError):
+                continue
+        return self.font
+
+    def _draw_startup_banner(self, lines, width: int, height: int) -> None:
+        """Centre `lines` over whatever the test pattern already drew.
+
+        This screen stays on the panel for the whole initial plugin update, and
+        on a headless Pi it is the only place the device's address appears
+        without going looking for it -- so it has to be readable off a wall,
+        not merely present.
+
+        The font is chosen to fit rather than fixed at 8px: "Initializing" is
+        96px in PressStart2P, which ran off the side of a 64px panel even
+        before an address was added. And the pattern is punched out behind the
+        text, because the diagonal runs through the middle of the panel, which
+        is exactly where this sits.
+
+        The text stays blue. It is not decoration: the pattern draws one pure
+        channel per element -- red border, green diagonal, blue text -- so that
+        a glance at the panel says whether led_rgb_sequence is right. Swap the
+        wiring to BGR and the border comes up blue and this text red. Drawing
+        it white would light all three channels and destroy the only blue
+        reference on the screen, which is why it is worth a comment rather
+        than a quiet preference.
+        """
+        if not lines:
+            return
+        font = self._fitting_font(lines, width - 2)
+        line_height = self.draw.textbbox((0, 0), "Ag", font=font)[3] + 1
+        block_height = line_height * len(lines)
+        block_top = max(1, (height - block_height) // 2)
+        block_width = max(self.draw.textlength(t, font=font) for t in lines)
+        block_left = max(0, (width - block_width) // 2)
+
+        self.draw.rectangle(
+            [block_left - 2, block_top - 1,
+             block_left + block_width + 1, block_top + block_height],
+            fill=(0, 0, 0))
+
+        for row, line in enumerate(lines):
+            line_width = self.draw.textlength(line, font=font)
+            self.draw.text(
+                (max(0, (width - line_width) // 2), block_top + row * line_height),
+                line, font=font, fill=(0, 0, 255))
+
     def _draw_test_pattern(self):
         """Draw a test pattern to verify the display is working."""
         try:
@@ -516,8 +622,11 @@ class DisplayManager:
             # Draw a diagonal line
             self.draw.line([0, 0, self.matrix.width-1, self.matrix.height-1], fill=(0, 255, 0))
             
-            # Draw some text - changed from "TEST" to "Initializing" with smaller font
-            self.draw.text((10, 10), "Initializing", font=self.font, fill=(0, 0, 255))
+            lines = ["Initializing"]
+            ip = self._local_ip()
+            if ip:
+                lines.append(ip)
+            self._draw_startup_banner(lines, self.matrix.width, self.matrix.height)
             
             # Update the display once after everything is drawn
             self.update_display()
