@@ -33,6 +33,7 @@ the ``sports_card`` delegations ``_scroll_card_option``,
 ``_format_game_date`` and ``_format_game_time``.
 """
 
+import math
 from typing import ClassVar, Dict, Tuple
 
 from PIL import Image, ImageDraw
@@ -54,6 +55,13 @@ class SportsGameRendererMixin:
     _SCORE_PROBE: ClassVar[str] = "00-00"
 
     # ---- geometry ------------------------------------------------------
+
+    # Non-finite settings are rejected before any int()/round(): "inf" reaches
+    # these from config as a float or a string, passes an `isinstance` plus
+    # `>= 0` check unharmed, and then raises OverflowError out of int() --
+    # which the old `except (TypeError, ValueError)` did not catch, so it
+    # aborted the whole card render. Present in all eight plugins before this
+    # moved to the core; fixing it here fixes it in all eight.
 
     def _score_reserve_width(self) -> int:
         """Centre strip the score actually needs, measured rather than assumed.
@@ -80,18 +88,23 @@ class SportsGameRendererMixin:
         edge-to-edge logos.
         """
         configured = self._scroll_card_option("center_gap")
-        if isinstance(configured, (int, float)) and configured >= 0:
+        if (isinstance(configured, (int, float))
+                and math.isfinite(configured) and configured >= 0):
             return int(configured)
         ratio = self._scroll_card_option("center_gap_ratio", self.CENTER_GAP_RATIO)
         low = self._scroll_card_option("center_gap_min", self.CENTER_GAP_MIN_PX)
         high = self._scroll_card_option("center_gap_max", self.CENTER_GAP_MAX_PX)
         try:
-            scaled = round(self.display_width * float(ratio))
+            ratio, low, high = float(ratio), float(low), float(high)
+            if not (math.isfinite(ratio) and math.isfinite(low)
+                    and math.isfinite(high)):
+                return self.CENTER_GAP_MIN_PX
+            scaled = round(self.display_width * ratio)
             derived = int(max(int(low), min(int(high), scaled)))
             # A strip narrower than the score is the bug, not a style choice.
             # An explicit ``center_gap`` is still honoured above, including 0.
             return max(derived, self._score_reserve_width())
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return self.CENTER_GAP_MIN_PX
 
     def _logo_slot_width(self) -> int:
@@ -127,10 +140,11 @@ class SportsGameRendererMixin:
             if isinstance(value, bool):
                 return default
             if isinstance(value, (int, float)):
-                return int(value)
+                return int(value) if math.isfinite(value) else default
             if isinstance(value, str):
-                return int(float(value))
-        except (TypeError, ValueError):
+                parsed = float(value)
+                return int(parsed) if math.isfinite(parsed) else default
+        except (TypeError, ValueError, OverflowError):
             pass
         return default
 

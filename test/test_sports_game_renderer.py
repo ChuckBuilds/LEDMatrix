@@ -86,6 +86,38 @@ class TestCenterGap:
         assert h._center_gap_width() == h.CENTER_GAP_MIN_PX
 
 
+class TestNonFiniteSettings:
+    """inf reaches int() and raises OverflowError, which the old
+    `except (TypeError, ValueError)` did not catch -- so one bad config value
+    aborted the entire card render rather than falling back."""
+
+    @pytest.mark.parametrize("bad", [float("inf"), float("-inf")])
+    def test_a_non_finite_center_gap_falls_back(self, bad):
+        h = Host(scroll={'center_gap': bad})
+        assert h._center_gap_width() >= h.CENTER_GAP_MIN_PX
+
+    @pytest.mark.parametrize("bad", [float("inf"), float("-inf"), float("nan")])
+    def test_a_non_finite_ratio_falls_back_to_the_floor(self, bad):
+        h = Host(scroll={'center_gap_ratio': bad})
+        assert h._center_gap_width() == h.CENTER_GAP_MIN_PX
+
+    @pytest.mark.parametrize("bad", [float("inf"), float("-inf")])
+    def test_non_finite_clamp_bounds_fall_back(self, bad):
+        h = Host(scroll={'center_gap_min': bad, 'center_gap_max': bad})
+        assert h._center_gap_width() == h.CENTER_GAP_MIN_PX
+
+    @pytest.mark.parametrize("bad", [float("inf"), float("-inf"), "inf", "-inf", "nan"])
+    def test_a_non_finite_layout_offset_gives_the_default(self, bad):
+        cfg = {'customization': {'layout': {'score': {'x_offset': bad}}}}
+        assert Host(config=cfg)._layout_offset('score', 'x_offset', 7) == 7
+
+    def test_a_finite_value_is_still_honoured(self):
+        # The guard must not swallow ordinary settings.
+        assert Host(scroll={'center_gap': 31})._center_gap_width() == 31
+        cfg = {'customization': {'layout': {'score': {'x_offset': -3}}}}
+        assert Host(config=cfg)._layout_offset('score', 'x_offset', 7) == -3
+
+
 class TestScoreReserve:
     def test_it_measures_the_probe_plus_both_gutters(self):
         h = Host()
