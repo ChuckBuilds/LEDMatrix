@@ -364,6 +364,7 @@ class DisplayManager:
             # Create image with the (logical) display dimensions
             self.image = Image.new('RGB', (self.matrix.width, self.matrix.height))
             self.draw = ImageDraw.Draw(self.image)
+            self.draw.fontmode = "1"  # 1-bit text: the panel has no partial brightness, so AA only smears glyphs.
             logger.info(f"Image canvas created with dimensions: {self.matrix.width}x{self.matrix.height}")
             
             # Initialize font with Press Start 2P
@@ -403,6 +404,7 @@ class DisplayManager:
 
             self.image = Image.new('RGB', (fallback_width, fallback_height))
             self.draw = ImageDraw.Draw(self.image)
+            self.draw.fontmode = "1"  # 1-bit text: the panel has no partial brightness, so AA only smears glyphs.
             # Simple fallback visualization so web UI shows a realistic canvas
             try:
                 self.draw.rectangle([0, 0, fallback_width - 1, fallback_height - 1], outline=(255, 0, 0))
@@ -705,6 +707,7 @@ class DisplayManager:
             # self.image, so swapping the buffer below is enough on its own.
             self.image = Image.new('RGB', (target_w, target_h))
             self.draw = ImageDraw.Draw(self.image)
+            self.draw.fontmode = "1"  # 1-bit text: the panel has no partial brightness, so AA only smears glyphs.
             yield
         finally:
             self.matrix = real_matrix
@@ -814,6 +817,7 @@ class DisplayManager:
                 
                 self.image = Image.new('RGB', (width, height))
                 self.draw = ImageDraw.Draw(self.image)
+                self.draw.fontmode = "1"  # 1-bit text: the panel has no partial brightness, so AA only smears glyphs.
                 logger.debug("Cleared display in fallback mode")
                 return
                 
@@ -825,6 +829,7 @@ class DisplayManager:
             # Create a new black image
             self.image = Image.new('RGB', (self.matrix.width, self.matrix.height))
             self.draw = ImageDraw.Draw(self.image)
+            self.draw.fontmode = "1"  # 1-bit text: the panel has no partial brightness, so AA only smears glyphs.
 
             if not self._capture_mode_active:
                 # Clear both canvases and the underlying matrix to ensure no artifacts.
@@ -1258,6 +1263,7 @@ class DisplayManager:
             try:
                 self.image = Image.new('RGB', (self.width, self.height))
                 self.draw = ImageDraw.Draw(self.image)
+                self.draw.fontmode = "1"  # 1-bit text: the panel has no partial brightness, so AA only smears glyphs.
             except (OSError, RuntimeError, ValueError, MemoryError):
                 logger.debug("Canvas reset during cleanup failed", exc_info=True)
         # Reset the singleton state when cleaning up
