@@ -1467,8 +1467,11 @@ class PluginStoreManager:
                 # already had. Allowing it costs them a plugin that raises
                 # ModuleNotFoundError at load and is reported only as one line
                 # in the journal. See docs/SPORTS_UNIFICATION.md (phase B4/B6).
-                from src import __version__ as core_version
                 from src.plugin_system import compatibility
+                # On disk, not as imported: this process may predate the core
+                # update that made the plugin compatible. See
+                # compatibility.current_core_version.
+                core_version = compatibility.current_core_version()
 
                 compatible, reason = compatibility.check(manifest, core_version)
                 if not compatible:
@@ -1612,8 +1615,8 @@ class PluginStoreManager:
             #
             # Before the move, so the `finally` below removes the temp tree and
             # nothing half-installed is left behind.
-            from src import __version__ as core_version
             from src.plugin_system import compatibility
+            core_version = compatibility.current_core_version()
 
             compatible, reason = compatibility.check(manifest, core_version)
             if not compatible:
@@ -2644,8 +2647,8 @@ class PluginStoreManager:
                 manifest_path, plugin_id, e)
             return True
 
-        from src import __version__ as core_version
         from src.plugin_system import compatibility
+        core_version = compatibility.current_core_version()
 
         compatible, reason = compatibility.check(manifest, core_version)
         if compatible:
