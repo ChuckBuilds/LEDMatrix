@@ -77,14 +77,11 @@ implementations, and is left for its own change.
 from __future__ import annotations
 
 import logging
-import math
 import os
 import sys
 import time
-from abc import abstractmethod
 from datetime import datetime, timedelta, timezone
 from typing import Any, ClassVar, Dict, List, Optional, Tuple
-from zoneinfo import ZoneInfo
 
 import pytz
 import requests
@@ -952,14 +949,16 @@ class SportsCoreSharedMixin:
         # not unique ("NEW" is both Newcastle and New Zealand), while the rest
         # match on abbreviation. Ask for the lineage's own matcher rather than
         # assuming, or this silently groups nothing and every slot goes empty.
-        team_in = getattr(self, "_team_in", None)
-        if callable(team_in):
-            def belongs(game, team):
-                return bool(team_in(game.get("home_id"), [team])
-                            or team_in(game.get("away_id"), [team]))
-        else:
+        matcher = getattr(self, "_team_in", None)
+        if not callable(matcher):
+            matcher = None      # an is-None test narrows for static analysis
+        if matcher is None:
             def belongs(game, team):
                 return team in (game.get("home_abbr"), game.get("away_abbr"))
+        else:
+            def belongs(game, team):
+                return bool(matcher(game.get("home_id"), [team])
+                            or matcher(game.get("away_id"), [team]))
 
         queues = {team: [] for team in wanted}
         for game in games:              # already in kickoff order
