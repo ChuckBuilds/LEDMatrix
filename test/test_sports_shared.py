@@ -319,3 +319,58 @@ class TestLiveMixin:
         assert not hasattr(h, "_empty_live_streak")
         h._note_live_fetch(False)
         assert h._empty_live_streak == 1
+
+
+class TestPluginDirIsToldNotDeduced:
+    """The regression that shipped: _plugin_dir returned None in production.
+
+    The first version walked the MRO for a class whose module sits beside a
+    config_schema.json. That passes when a test imports the plugin directly --
+    which is how it was verified -- and returns None under the real plugin
+    loader, which imports modules by a path that leaves no such entry on the
+    MRO.
+
+    Silent, and expensive: no schema means _schema_font_size returns None for
+    every element, so a configured size equal to the schema default stops
+    looking like a default, is treated as a deliberate choice, and skips the
+    grid snap. 4x6-font.ttf then renders at 6 rather than 7 -- 3px-wide glyphs
+    instead of 4px. On a 256x64 panel that made the odds, the records and the
+    date row illegible. A user counted the pixels; no gate here caught it.
+    """
+
+    def test_a_declared_directory_is_used(self, tmp_path):
+        d = _write_plugin(tmp_path, "declared")
+        host = type("H", (SportsCoreSharedMixin,), {"_PLUGIN_DIR": str(d)})()
+        assert host._plugin_dir() == str(d)
+
+    def test_it_works_when_no_module_on_the_mro_helps(self, tmp_path, monkeypatch):
+        """The production case: nothing on the MRO sits beside a schema."""
+        d = _write_plugin(tmp_path, "loaderstyle")
+        # A class whose module is not importable by name, as the loader produces.
+        cls = type("Loaded", (SportsCoreSharedMixin,), {"_PLUGIN_DIR": str(d)})
+        cls.__module__ = "a.module.name.that.is.not.in.sys.modules"
+        assert cls.__new__(cls)._plugin_dir() == str(d), (
+            "the declared directory must win when the MRO walk cannot help")
+
+    def test_without_it_the_mro_walk_would_have_failed(self):
+        # Pin the precondition, so this test still means something if the
+        # fallback is ever changed.
+        cls = type("Orphan", (SportsCoreSharedMixin,), {})
+        cls.__module__ = "not.a.real.module"
+        assert cls.__new__(cls)._plugin_dir() is None
+
+    def test_a_declared_directory_without_a_schema_is_not_trusted(self, tmp_path):
+        # A stale or wrong path must not shadow the fallback.
+        empty = tmp_path / "noschema"
+        empty.mkdir()
+        d = _write_plugin(tmp_path, "realone")
+        monkey = type("H", (SportsCoreSharedMixin,), {"_PLUGIN_DIR": str(empty)})
+        assert monkey.__new__(monkey)._plugin_dir() != str(empty)
+
+    def test_the_font_size_consequence(self, tmp_path):
+        """End to end: a declared directory restores the schema lookup."""
+        d = _write_plugin(tmp_path, "sizeconseq")
+        host = type("H", (SportsCoreSharedMixin,), {"_PLUGIN_DIR": str(d)})()
+        assert host._schema_font_size("score") == 16, (
+            "without the schema this is None, which is what made a configured "
+            "size look user-chosen and skipped the grid snap")
