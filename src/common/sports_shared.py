@@ -211,17 +211,52 @@ class SportsCoreSharedMixin:
             return desired
         return max(grid, int(round(float(desired) / grid)) * grid)
 
+    #: Absolute path of this plugin's directory, declared by the plugin
+    #: itself. The mixin cannot work it out -- see _plugin_dir.
+    _PLUGIN_DIR: ClassVar[Optional[str]] = None
+
     def _plugin_dir(self) -> Optional[str]:
-        """Directory of the plugin that defines this class.
+        """Directory of the plugin that owns this instance.
 
         In sports.py these methods could just use ``__file__``. Here that is
-        src/common/, so the plugin's own directory has to be recovered from the
-        instance. ``type(self).__module__`` alone is not enough: SportsCore is
-        an ABC, so a subclass built with ``type(name, bases, ns)`` -- which the
-        plugins' own tests do -- reports its module as "abc". Walking the MRO
-        steps past those synthetic classes to the first one whose module sits
-        next to a config_schema.json, which is the real plugin.
+        src/common/, so the directory has to come from the plugin.
+
+        It is TOLD, not deduced. The first version walked the MRO for a class
+        whose module sits beside a config_schema.json. That works when a test
+        imports the plugin itself, and returns None under the real loader, for
+        a specific reason worth recording:
+
+            PluginLoader._namespace_plugin_modules renames every bare module a
+            plugin brought in (sports, game_renderer, ...) to
+            "_plg_<plugin_id>_<module>" and REMOVES the bare entry, so two
+            plugins owning a module of the same name cannot collide.
+
+        The class still reports ``__module__ == "sports"``, but
+        ``sys.modules["sports"]`` no longer exists, so the walk finds no
+        __file__ and falls off the end. The failure was silent and expensive:
+
+            _plugin_dir()       -> None
+            _schema_font_size() -> None for every element
+            -> a configured size equal to the schema default stops looking
+               like a default and is treated as a deliberate user choice
+            -> the snap to the font's pixel grid is skipped
+            -> 4x6-font.ttf renders at 6 instead of 7: 3px-wide glyphs
+               instead of 4px
+
+        On a 256x64 panel that made the odds, the team records and the date row
+        hard to read. It was found by a user counting pixels on the panel. No
+        gate here caught it: the tests imported plugins directly and the
+        safety harness loads them its own way, so neither reproduced the
+        loader's renaming.
+
+        The MRO walk stays as a fallback for hosts that declare no
+        _PLUGIN_DIR -- the plugins' own probe harnesses build classes with
+        ``type()`` -- but it is no longer the primary answer.
         """
+        declared = getattr(self, "_PLUGIN_DIR", None)
+        if declared and os.path.isfile(os.path.join(declared, "config_schema.json")):
+            return declared
+
         for cls in type(self).__mro__:
             module = sys.modules.get(getattr(cls, "__module__", ""), None)
             path = getattr(module, "__file__", None)
