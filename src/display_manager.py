@@ -776,9 +776,24 @@ class DisplayManager:
                         brightness = None
                     frame_checksum = zlib.adler32(self.image.tobytes())
                     digest = (frame_checksum, brightness)
-                    if digest == self._last_pushed_digest:
+                    if digest == self._last_pushed_digest and not self.is_currently_scrolling():
                         # Nothing changed since the last push — the panel is
                         # already showing exactly this frame.
+                        #
+                        # Never taken mid-scroll, and that exception is the
+                        # point. SwapOnVSync is what paces the render loop, so
+                        # skipping it also skips the wait: a duplicate frame
+                        # returns in ~8ms instead of ~10ms on a 100Hz panel,
+                        # advances only 0.8px instead of 1.0px, and so makes
+                        # the *next* frame more likely to repeat as well. That
+                        # is self-sustaining -- measured at ~20% duplicate
+                        # frames mid-scroll on the odds ticker, against
+                        # essentially zero on a lighter plugin with identical
+                        # scroll settings. Swapping an identical frame costs
+                        # one canvas copy and keeps the loop locked to the
+                        # panel; falling out of that lock costs smooth motion.
+                        # Static content is unaffected: is_currently_scrolling()
+                        # expires on its own inactivity threshold.
                         self._write_snapshot_if_due(frame_checksum)
                         return
 

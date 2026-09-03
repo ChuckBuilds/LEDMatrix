@@ -109,6 +109,11 @@ class TestDirtyTracking:
         dm.draw.rectangle([0, 0, 30, 8], fill=(255, 255, 0))
         dm.update_display()   # push + snapshot write (first frame)
         assert os.path.exists(dm._snapshot_path)
+        # Backdate the file so the "was it bumped?" check below cannot be
+        # defeated by filesystem mtime granularity -- on Windows two writes in
+        # the same tick get identical timestamps, which made this test fail
+        # roughly two runs in three regardless of the code under test.
+        os.utime(dm._snapshot_path, (time.time() - 60, time.time() - 60))
         first_mtime = os.path.getmtime(dm._snapshot_path)
 
         # Age the write/touch bookkeeping past TOUCH_INTERVAL so the next
@@ -123,6 +128,62 @@ class TestDirtyTracking:
             dm.update_display()  # identical frame -> panel push skipped
         assert spy.count == 0
         assert os.path.getmtime(dm._snapshot_path) > first_mtime
+
+
+class TestScrollLock:
+    """Dirty tracking must not skip the panel push while a scroll is running.
+
+    SwapOnVSync is what paces the render loop, so skipping it also skips the
+    wait for the panel. A duplicate frame therefore returns early -- ~8ms
+    instead of ~10ms on a 100Hz panel -- which advances the strip only 0.8px
+    instead of 1.0px, which makes the NEXT frame more likely to be a duplicate
+    too. That is self-sustaining: measured at ~20% duplicate frames mid-scroll
+    on the odds ticker against essentially zero on a lighter plugin with
+    identical scroll settings. Pushing an identical frame costs one canvas
+    copy; falling out of vsync lock costs smooth motion.
+    """
+
+    def test_identical_frames_still_push_while_scrolling(self, dm):
+        dm.draw.rectangle([0, 0, 12, 12], fill=(0, 0, 255))
+        dm.update_display()
+        dm.set_scrolling_state(True)
+        try:
+            with _SwapSpy(dm.matrix) as spy:
+                dm.update_display()
+                dm.update_display()
+                dm.update_display()
+            assert spy.count == 3, "scrolling must stay locked to the panel"
+        finally:
+            dm.set_scrolling_state(False)
+
+    def test_identical_frames_are_skipped_when_not_scrolling(self, dm):
+        """The optimisation still applies to static content."""
+        dm.set_scrolling_state(False)
+        dm.draw.rectangle([0, 0, 14, 14], fill=(255, 0, 255))
+        dm.update_display()
+        with _SwapSpy(dm.matrix) as spy:
+            dm.update_display()
+            dm.update_display()
+        assert spy.count == 0
+
+    def test_stale_scrolling_state_stops_forcing_pushes(self, dm):
+        """A plugin that stops scrolling without saying so must not pin the
+        panel into always-push forever. is_currently_scrolling() expires on
+        its own inactivity threshold, and the skip has to come back with it."""
+        dm.draw.rectangle([0, 0, 16, 16], fill=(0, 255, 255))
+        dm.update_display()
+        dm.set_scrolling_state(True)
+        try:
+            # Backdate the activity marker past the inactivity threshold.
+            dm._scrolling_state['last_scroll_activity'] = (
+                time.time() - dm._scrolling_state['scroll_inactivity_threshold'] - 1.0)
+            assert dm.is_currently_scrolling() is False
+            with _SwapSpy(dm.matrix) as spy:
+                dm.update_display()
+                dm.update_display()
+            assert spy.count == 0
+        finally:
+            dm.set_scrolling_state(False)
 
 
 class TestKillSwitch:
