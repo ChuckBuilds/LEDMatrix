@@ -27,7 +27,6 @@ fixes their version string. See `docs/SPORTS_UNIFICATION.md`, phase B4.
 
 from __future__ import annotations
 
-import os
 import re
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
