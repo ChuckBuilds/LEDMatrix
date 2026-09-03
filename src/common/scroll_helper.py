@@ -75,8 +75,19 @@ class ScrollHelper:
         # Pre-allocated buffer for output frame (reused to avoid allocations)
         self._frame_buffer: Optional[np.ndarray] = None
         
-        # Sub-pixel scrolling settings (disabled - using high FPS integer scrolling instead)
-        self.sub_pixel_scrolling = False  # Disabled - use high frame rate for smoothness
+        # Sub-pixel scrolling: OFF by default, and that is deliberate.
+        # Blending renders a half-step by mixing two adjacent columns 50/50.
+        # On a high-resolution screen that reads as smooth motion; on a coarse
+        # LED matrix showing pixel-font text it does not. A one-pixel stroke
+        # becomes two half-brightness pixels, so frames alternate between crisp
+        # and smeared and the text appears to shimmer and jump a pixel ahead --
+        # tested on a 2x128x64 panel and clearly worse than integer stepping.
+        #
+        # The rule this display obeys: motion is smooth when it advances a
+        # whole number of pixels per refresh. Anything slower must either
+        # blend (blur) or repeat frames (judder); blending is the worse of the
+        # two here. Vegas mode still opts in via set_sub_pixel_scrolling().
+        self.sub_pixel_scrolling = False
         self._last_integer_position = 0  # Cache for integer position to avoid repeated calculations
         
         # Frame-based scrolling settings
@@ -244,19 +255,31 @@ class ScrollHelper:
             if self.last_step_time == 0.0:
                 self.last_step_time = current_time
             
-            # Check if scroll_delay has passed
-            time_since_last_step = current_time - self.last_step_time
-            if time_since_last_step >= self.scroll_delay:
-                # Move pixels (can move multiple steps if lag occurred, but cap to prevent huge jumps)
-                steps = int(time_since_last_step / self.scroll_delay)
-                # Cap at reasonable number to prevent huge jumps from lag
-                max_steps = max(1, int(0.04 / self.scroll_delay))  # Limit to 0.04s (2 steps at 50 FPS) for smoother scrolling
-                steps = min(steps, max_steps)
-                pixels_to_move = self.scroll_speed * steps
-                # Update last_step_time, preserving fractional delay for smooth timing
-                self.last_step_time = current_time - (time_since_last_step % self.scroll_delay)
+            # Frame-based mode advances by elapsed time, exactly like the
+            # time-based branch below, at the same configured speed
+            # (scroll_speed px per scroll_delay seconds).
+            #
+            # It used to step discretely: 0, 1 or 2 whole pixels depending on
+            # whether a wall clock had passed scroll_delay. Plugins set
+            # scroll_delay to the target frame period, so that comparison sits
+            # exactly on its own threshold and the decision flips on sub-
+            # millisecond jitter -- a frame a hair early moved nothing and
+            # rendered an identical frame, a frame a hair late moved two
+            # pixels. Rounding the step count fixed the stalls but still
+            # discarded the remainder, so the error never corrected.
+            #
+            # Accumulating elapsed time keeps position exactly proportional to
+            # real time: jitter shifts a pixel boundary by a fraction of a
+            # frame instead of flipping a whole step, and nothing is lost or
+            # gained. This is what the one visibly smooth scroller on the
+            # hardware (the stock ticker) was already doing by virtue of never
+            # enabling frame-based mode.
+            if self.scroll_delay > 0:
+                pixels_per_second = self.scroll_speed / self.scroll_delay
             else:
-                pixels_to_move = 0.0
+                pixels_per_second = self.scroll_speed * 100.0
+            pixels_to_move = pixels_per_second * delta_time
+            self.last_step_time = current_time
         else:
             # Time-based: move based on time delta (correct speed over time)
             # scroll_speed is pixels per second

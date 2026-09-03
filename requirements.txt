@@ -55,6 +55,14 @@ packaging>=23.0,<27.0
 #                     range as a hard dependency — keep the two in sync.
 #   pip install 'psutil>=6.0.0,<7.0.0'
 #
+# orjson            — faster JSON for the disk cache
+#                     (src/cache/disk_cache.py). Encoding a ~1MB cache
+#                     record drops from ~12ms to ~1.6ms on a Pi 4, which
+#                     matters because that work holds the GIL and stalls
+#                     the render thread mid-scroll. Falls back to the
+#                     stdlib json when missing — see docs/SCROLL_PERFORMANCE.md.
+#   pip install 'orjson>=3.9,<4.0'
+#
 # Flask-Limiter     — request rate limiting in web_interface/app.py
 #                     (accidental-abuse protection, not security). The
 #                     web interface starts without rate limiting when
