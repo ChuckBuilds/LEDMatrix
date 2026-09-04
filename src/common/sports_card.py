@@ -17,9 +17,12 @@ deliberate difference is `crisp_size`, which takes the seven-plugin guard
 the extra guard only stops a None size raising TypeError.
 """
 
+import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 from zoneinfo import ZoneInfo
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "ELEMENT_FOR_FONT", "FAVORITE_RESULT_COLOR_DEFAULTS", "FONT_NAME_ALIASES",
@@ -395,7 +398,14 @@ def schema_font_size(schema_path: str, element_key) -> Optional[int]:
                 size = spec.get('properties', {}).get('font_size', {}).get('default')
                 if size is not None:
                     cache[key] = int(size)
-        except Exception:
+        except Exception as exc:
+            # See sports_shared._schema_font_size: an unreadable schema
+            # silently disables the pixel-grid snap for every element.
+            # Built once per schema path, so this cannot repeat per frame.
+            logger.warning(
+                "could not read %s (%s: %s); font sizes will skip their "
+                "pixel grid snap and may render a pixel narrow",
+                schema_path, type(exc).__name__, exc)
             cache = {}
         _SCHEMA_FONT_SIZE_CACHE[schema_path] = cache
     return cache.get(element_key)

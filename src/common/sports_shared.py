@@ -288,7 +288,23 @@ class SportsCoreSharedMixin:
                     size = spec.get('properties', {}).get('font_size', {}).get('default')
                     if size is not None:
                         cache[key] = int(size)
-            except Exception:
+            except Exception as exc:
+                # Say so. An unreadable schema is not cosmetic: every element's
+                # configured size then stops matching "the schema default", is
+                # treated as a deliberate user choice, and skips the snap to the
+                # font's pixel grid -- which renders 4x6-font.ttf at 6 instead
+                # of 7, a 3px-wide glyph instead of 4px. That shipped once,
+                # silently, and was found by a user counting pixels on a photo
+                # of the panel.
+                #
+                # Logged, not raised: a missing schema must not stop a plugin
+                # rendering. The cache is built once per class, so this cannot
+                # repeat per frame.
+                logger.warning(
+                    "%s: could not read config_schema.json (%s: %s); every font "
+                    "size will be treated as user-chosen and will skip its pixel "
+                    "grid snap. Font sizes may render a pixel narrow.",
+                    type(self).__name__, type(exc).__name__, exc)
                 cache = {}
             self.__class__._SCHEMA_FONT_SIZES = cache
         return cache.get(element_key)
