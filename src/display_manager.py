@@ -240,6 +240,14 @@ class DisplayManager:
         self._update_lock = threading.RLock()
         
         # Scrolling state tracking for graceful updates
+        # How many panel refreshes each pushed frame is held for. 1 means a new
+        # frame every refresh. Higher values are how a scroll runs slower than
+        # one pixel per refresh WITHOUT fractional pixel positions: the panel
+        # keeps refreshing at full rate (so flicker is unchanged) but motion
+        # advances a whole pixel every Nth refresh instead of every one.
+        # See src/common/scroll_config.py and scripts/scroll_speeds.py.
+        self._frame_hold = 1
+
         self._scrolling_state = {
             'is_scrolling': False,
             'last_scroll_activity': 0,
@@ -771,16 +779,33 @@ class DisplayManager:
                     return  # Skip hardware write — content is being captured off-screen
 
                 digest = None
+                frame_checksum = None
                 if self._dirty_tracking_enabled:
                     try:
                         brightness = getattr(self.matrix, 'brightness', None)
                     except AttributeError:
                         brightness = None
-                    digest = (zlib.adler32(self.image.tobytes()), brightness)
-                    if digest == self._last_pushed_digest:
+                    frame_checksum = zlib.adler32(self.image.tobytes())
+                    digest = (frame_checksum, brightness)
+                    if digest == self._last_pushed_digest and not self.is_currently_scrolling():
                         # Nothing changed since the last push — the panel is
                         # already showing exactly this frame.
-                        self._write_snapshot_if_due()
+                        #
+                        # Never taken mid-scroll, and that exception is the
+                        # point. SwapOnVSync is what paces the render loop, so
+                        # skipping it also skips the wait: a duplicate frame
+                        # returns in ~8ms instead of ~10ms on a 100Hz panel,
+                        # advances only 0.8px instead of 1.0px, and so makes
+                        # the *next* frame more likely to repeat as well. That
+                        # is self-sustaining -- measured at ~20% duplicate
+                        # frames mid-scroll on the odds ticker, against
+                        # essentially zero on a lighter plugin with identical
+                        # scroll settings. Swapping an identical frame costs
+                        # one canvas copy and keeps the loop locked to the
+                        # panel; falling out of that lock costs smooth motion.
+                        # Static content is unaffected: is_currently_scrolling()
+                        # expires on its own inactivity threshold.
+                        self._write_snapshot_if_due(frame_checksum)
                         return
 
                 # Copy the current image to the offscreen canvas. In double-sided
@@ -790,8 +815,10 @@ class DisplayManager:
                 else:
                     self.offscreen_canvas.SetImage(self.image)
 
-                # Swap buffers immediately
-                self.matrix.SwapOnVSync(self.offscreen_canvas)
+                # Swap buffers immediately. framerate_fraction holds the frame
+                # for N refreshes; SwapOnVSync blocks for all of them, which is
+                # what paces the render loop to the chosen frame rate.
+                self.matrix.SwapOnVSync(self.offscreen_canvas, self._frame_hold)
 
                 # Swap our canvas references
                 self.offscreen_canvas, self.current_canvas = self.current_canvas, self.offscreen_canvas
@@ -799,7 +826,7 @@ class DisplayManager:
                 self._last_pushed_digest = digest
 
                 # Write a snapshot for the web preview (throttled)
-                self._write_snapshot_if_due()
+                self._write_snapshot_if_due(frame_checksum)
         except Exception as e:
             logger.error(f"Error updating display: {e}")
 
@@ -1280,12 +1307,65 @@ class DisplayManager:
         
         return dt.strftime(f"%b %-d{suffix}") 
 
-    def set_scrolling_state(self, is_scrolling: bool):
-        """Set the current scrolling state. Call this when a display starts/stops scrolling."""
+    @property
+    def refresh_hz(self) -> float:
+        """The panel's refresh rate in Hz, from the hardware config.
+
+        The authoritative place to ask, because a plugin only receives its own
+        config section and cannot see display.hardware. Scroll pacing needs
+        this: the speeds a panel can show in whole pixels are refresh_hz
+        divided by the frame hold, so getting it wrong silently produces
+        fractional-pixel motion. See src/common/scroll_config.py.
+
+        Note this is the configured *cap*, not necessarily what the panel
+        achieves -- scripts/scroll_speeds.py --measure reports the real rate.
+        """
+        hardware = (self.config.get('display') or {}).get('hardware') or {}
+        try:
+            value = float(hardware.get('limit_refresh_rate_hz') or 0)
+        except (TypeError, ValueError):
+            value = 0.0
+        return value if value > 0 else 100.0
+
+    def set_frame_hold(self, refreshes: int) -> None:
+        """Hold each pushed frame for this many panel refreshes (>=1).
+
+        Set by the scroll configuration so a plugin can run at, say, 50px/s on
+        a 100Hz panel as one whole pixel every second refresh, rather than half
+        a pixel every refresh (which has to be blended or repeated unevenly).
+
+        Reset to 1 whenever scrolling stops, so one plugin's pacing cannot
+        leak into the next thing on screen.
+        """
+        try:
+            value = int(refreshes)
+        except (TypeError, ValueError):
+            logger.warning("Ignoring unusable frame hold: %r", refreshes)
+            return
+        self._frame_hold = max(1, min(255, value))
+
+    def set_scrolling_state(self, is_scrolling: bool, frame_hold: int = 1):
+        """Set the current scrolling state, and this scroll's frame pacing.
+
+        Call this when a display starts or stops scrolling. ``frame_hold`` is
+        how many panel refreshes each frame is held for -- 2 gives one whole
+        pixel every second refresh, which is how a scroll runs at half the
+        refresh rate without fractional pixel positions.
+
+        The hold is set here rather than once at plugin construction because
+        it must not outlive the scroll that asked for it: plugins share one
+        display manager, so a hold left set by whoever scrolled last would
+        silently re-pace the next plugin. Passing it alongside the state makes
+        the lifetime exactly the scroll, and the default of 1 means any caller
+        that does not care gets a new frame every refresh.
+        """
         current_time = time.time()
         self._scrolling_state['is_scrolling'] = is_scrolling
         if is_scrolling:
             self._scrolling_state['last_scroll_activity'] = current_time
+            self.set_frame_hold(frame_hold)
+        else:
+            self._frame_hold = 1
         logger.debug(f"Scrolling state set to: {is_scrolling}")
 
     def is_currently_scrolling(self) -> bool:
@@ -1416,11 +1496,20 @@ class DisplayManager:
                 self._viewer_fresh = False
         return self._viewer_fresh
 
-    def _write_snapshot_if_due(self) -> None:
+    def _write_snapshot_if_due(self, frame_checksum: Optional[int] = None) -> None:
         """Mirror the current frame to the preview snapshot when the policy
         says it's worth it — see src/common/snapshot_policy.py. Unchanged
         frames are never re-encoded; without viewers the cadence drops to
-        the idle keepalive."""
+        the idle keepalive.
+
+        Args:
+            frame_checksum: adler32 of the current frame, when the caller has
+                already computed one. Dirty tracking checksums every frame a
+                few lines above the call site, and re-deriving it here meant a
+                second tobytes() plus a second pass over the whole framebuffer
+                on every single frame — ~0.17ms per frame of the two combined
+                at 256x64, paid 100 times a second to reach the same number.
+        """
         try:
             now = time.time()
             viewer_fresh = self._viewer_is_fresh(now)
@@ -1430,7 +1519,8 @@ class DisplayManager:
                 self._last_snapshot_ts = 0.0
             self._viewer_was_fresh = viewer_fresh
 
-            digest = zlib.adler32(self.image.tobytes())
+            digest = (frame_checksum if frame_checksum is not None
+                      else zlib.adler32(self.image.tobytes()))
             action = snapshot_policy.decide(
                 now, self._last_snapshot_ts, self._last_snapshot_touch_ts,
                 viewer_fresh, digest != self._last_snapshot_digest)

@@ -23,6 +23,13 @@ from src.common.error_handler import (
 )
 from src.common.api_helper import APIHelper
 from src.common.scroll_helper import ScrollHelper
+from src.common import scroll_config
+from src.common.scroll_config import (
+    ScrollSettings,
+    configure as configure_scroll,
+    resolve as resolve_scroll_settings,
+    refresh_hz_from_config,
+)
 from src.common.logo_helper import LogoHelper
 from src.common.text_helper import TextHelper
 
@@ -60,6 +67,11 @@ __all__ = [
     'log_and_raise',
     'APIHelper',
     'ScrollHelper',
+    'scroll_config',
+    'ScrollSettings',
+    'configure_scroll',
+    'resolve_scroll_settings',
+    'refresh_hz_from_config',
     'LogoHelper',
     'TextHelper',
     # adaptive layout & images

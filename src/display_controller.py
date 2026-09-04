@@ -2405,6 +2405,7 @@ class DisplayController:
                             )
 
                             while True:
+                                _frame_start = time.perf_counter()
                                 try:
                                     with self._display_lock_or_skip(plugin_id) as can_display:
                                         if can_display:
@@ -2425,10 +2426,25 @@ class DisplayController:
                                 # Multi-display sync: send follower frame after each render
                                 self._send_follower_frame(manager_to_display)
 
-                                time.sleep(display_interval)
                                 self._tick_plugin_updates()
                                 self._poll_on_demand_requests()
                                 self._check_on_demand_expiration()
+
+                                # Pace to the frame deadline rather than sleeping a flat
+                                # interval on top of the work. display() has already
+                                # blocked on the panel's vsync by this point, so an
+                                # unconditional sleep is added to a wait that already
+                                # happened. Measured on a 2x128x64 chain at
+                                # limit_refresh_rate_hz=100: ~4ms of render plus a flat
+                                # 8ms put each iteration at ~12ms against a 10ms refresh
+                                # grid, so every swap missed a refresh and the loop
+                                # settled at 50fps where display_interval asks for 125 --
+                                # and with zero headroom, ~14% of frames slipped a
+                                # further refresh, which is what reads as scroll stutter.
+                                _remaining = display_interval - (time.perf_counter() - _frame_start)
+                                # Yield even when the frame overran its budget, so plugin
+                                # update threads and the web UI are not starved of the GIL.
+                                time.sleep(_remaining if _remaining > 0 else 0.001)
 
                                 if self.current_display_mode != active_mode:
                                     logger.debug("Mode changed during high-FPS loop, breaking early")
