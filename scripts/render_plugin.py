@@ -155,7 +155,10 @@ def main() -> int:
             try:
                 plugin_instance.display(display_mode=args.display_mode,
                                         force_clear=True)
-            except TypeError:
+            except TypeError as error:
+                if ("unexpected keyword argument" not in str(error)
+                        or "display_mode" not in str(error)):
+                    raise
                 logger.warning(
                     "%s.display() does not accept display_mode; rendering its "
                     "default screen instead", args.plugin)
