@@ -116,6 +116,9 @@ class ScrollHelper:
         self.last_frame_time = time.time()
         self.last_fps_log_time = time.time()
         self.frame_times = []
+        # Every frame time since the last stats line, so the 5s summary can
+        # report the tail rather than one arbitrary sample. Cleared on log.
+        self._window: list = []
         
         # Scrolling state management
         self.is_scrolling = False
@@ -1040,18 +1043,42 @@ class ScrollHelper:
         # Keep only last 100 frames for average
         if len(self.frame_times) > 100:
             self.frame_times.pop(0)
+
+        # Every frame since the last log, not just the last 100 and not just
+        # the one that happens to land on the 5s boundary. The old line
+        # reported a single instantaneous sample -- roughly 1 frame in 500 --
+        # which cannot see a stall that hits 1% of frames, and reported it
+        # next to an average that hides the same stall by construction (a 2ms
+        # duplicate and a 21ms double-wait mean exactly 10ms). Chasing scroll
+        # judder needs the tail, so keep the window and report percentiles.
+        self._window.append(frame_time)
         
         # Log FPS every 5 seconds to avoid spam
         if current_time - self.last_fps_log_time >= 5.0:
-            avg_frame_time = sum(self.frame_times) / len(self.frame_times)
-            avg_fps = 1.0 / avg_frame_time if avg_frame_time > 0 else 0
-            instant_fps = 1.0 / frame_time if frame_time > 0 else 0
-            
-            self.logger.info(f"Scroll frame stats - Avg FPS: {avg_fps:.1f}, "
-                           f"Current FPS: {instant_fps:.1f}, "
-                           f"Frame time: {frame_time*1000:.2f}ms")
+            window = sorted(self._window) if self._window else [frame_time]
+            n = len(window)
+            median = window[n // 2]
+            p95 = window[min(n - 1, int(n * 0.95))]
+            worst = window[-1]
+            best = window[0]
+            mean = sum(window) / n
+            # Anything past 1.5x the median missed a panel refresh; anything
+            # under half of it never reached the panel at all (dirty tracking
+            # skipped the swap, so the frame did not wait for vsync).
+            stalls = sum(1 for f in window if f > median * 1.5)
+            skips = sum(1 for f in window if f < median * 0.5)
+
+            self.logger.info(
+                "Scroll frame stats - %.1f fps over %d frames | "
+                "median %.2fms p95 %.2fms max %.2fms min %.2fms | "
+                "stalls %d (%.1f%%) skips %d (%.1f%%)",
+                (1.0 / mean) if mean > 0 else 0.0, n,
+                median * 1000, p95 * 1000, worst * 1000, best * 1000,
+                stalls, 100.0 * stalls / n, skips, 100.0 * skips / n,
+            )
             self.last_fps_log_time = current_time
             self.frame_count = 0
+            self._window = []
         
         self.last_frame_time = current_time
         self.frame_count += 1

@@ -15,11 +15,17 @@
 # Measured on a Pi 4 driving a 2x128x64 chain at limit_refresh_rate_hz=100:
 #
 #     before   ~44 fps average, 14-17% of frames 41-53ms
-#     after    100 fps locked,  no stalls observed
+#     after    100 fps, median 10.00ms, p95 10.05ms, 0% stalls
 #
-# This script also releases the GIL across the per-pixel blit
-# (SetPixelsPillow) and walks the Pillow buffer row-major instead of
-# column-major so each row is contiguous.
+# The per-pixel blit (SetPixelsPillow) can also release the GIL and walk the
+# Pillow buffer row-major, but that is OFF by default and you almost certainly
+# want to leave it that way. Row-major changes what a partially-written frame
+# looks like: column-major tearing shows as a vertical seam, row-major tearing
+# shows as a horizontal split between the panel's upper and lower halves. On a
+# 1/32 scan panel that reads as a one-pixel "fold" across the middle of every
+# panel -- reported on hardware, and it went away when the blit was reverted.
+# Enable with RGB_PATCH_BLIT=1 only if you have measured that you need it;
+# essentially all of the gain above comes from the SwapOnVSync change alone.
 #
 # SAFETY
 # ------
@@ -35,10 +41,19 @@
 #
 set -uo pipefail
 
-SRC_TREE="${RGB_SRC_TREE:-$HOME/LEDMatrix/rpi-rgb-led-matrix-master}"
-BUILD_DIR="${RGB_BUILD_DIR:-$HOME/rgbmatrix-nogil-build}"
-VENV="${RGB_CYTHON_VENV:-$HOME/.cache/ledmatrix-cython}"
-BACKUP="${RGB_BACKUP:-$HOME/rgbmatrix-core.so.ORIGINAL}"
+# Resolve the invoking user's home, not root's. --install runs under sudo,
+# where $HOME is /root, so every default path below pointed somewhere the
+# build had never written and the install died with "no built module found".
+if [ -n "${SUDO_USER:-}" ]; then
+    OWNER_HOME="$(getent passwd "$SUDO_USER" | cut -d: -f6)"
+fi
+OWNER_HOME="${OWNER_HOME:-$HOME}"
+
+SRC_TREE="${RGB_SRC_TREE:-$OWNER_HOME/LEDMatrix/rpi-rgb-led-matrix-master}"
+BUILD_DIR="${RGB_BUILD_DIR:-$OWNER_HOME/rgbmatrix-nogil-build}"
+VENV="${RGB_CYTHON_VENV:-$OWNER_HOME/.cache/ledmatrix-cython}"
+BACKUP="${RGB_BACKUP:-$OWNER_HOME/rgbmatrix-core.so.ORIGINAL}"
+PATCH_BLIT="${RGB_PATCH_BLIT:-0}"
 
 die() { echo "FATAL: $*" >&2; exit 1; }
 
@@ -51,7 +66,7 @@ abi_so() {
 }
 
 do_rollback() {
-    local dst; dst="$(py_site)" || die "rgbmatrix not importable"
+    local dst; dst="$(py_site)"
     [ -n "$dst" ] || die "could not locate the installed rgbmatrix package"
     [ -f "$BACKUP" ] || die "no backup at $BACKUP"
     systemctl stop ledmatrix 2>/dev/null
@@ -115,83 +130,100 @@ rm -rf "$BUILD_DIR"
 cp -r "$SRC_TREE" "$BUILD_DIR" || die "copy failed"
 
 echo "==> patching the bindings to release the GIL"
-python3 - "$BUILD_DIR" <<'PYEOF' || die "patch failed"
-import io, sys
-base = sys.argv[1] + "/bindings/python/rgbmatrix/"
+python3 - "$BUILD_DIR" "$PATCH_BLIT" <<'PYEOF' || die "patch failed"
+import io
+import sys
 
+base = sys.argv[1] + "/bindings/python/rgbmatrix/"
+patch_blit = len(sys.argv) > 2 and sys.argv[2] == "1"
+
+# --- declare SwapOnVSync as nogil ---------------------------------------
 p = base + "cppinc.pxd"
 s = io.open(p, encoding="utf-8").read()
-old = "        FrameCanvas *SwapOnVSync(FrameCanvas*, uint8_t)\n"
-new = "        FrameCanvas *SwapOnVSync(FrameCanvas*, uint8_t) nogil\n"
-if old in s:
-    io.open(p, "w", encoding="utf-8", newline="\n").write(s.replace(old, new, 1))
+OLD_DECL = "        FrameCanvas *SwapOnVSync(FrameCanvas*, uint8_t)\n"
+NEW_DECL = "        FrameCanvas *SwapOnVSync(FrameCanvas*, uint8_t) nogil\n"
+if OLD_DECL in s:
+    io.open(p, "w", encoding="utf-8", newline="\n").write(s.replace(OLD_DECL, NEW_DECL, 1))
     print("   cppinc.pxd: SwapOnVSync declared nogil")
-elif new in s:
+elif NEW_DECL in s:
     print("   cppinc.pxd: already nogil")
 else:
     sys.exit("could not find the SwapOnVSync declaration")
 
+# --- release the GIL across the vsync wait ------------------------------
 p = base + "core.pyx"
 s = io.open(p, encoding="utf-8").read()
 
-old = """    def SwapOnVSync(self, FrameCanvas newFrame, uint8_t framerate_fraction = 1):
-        return __createFrameCanvas(self.__matrix.SwapOnVSync(newFrame.__canvas, framerate_fraction))
-"""
-new = """    def SwapOnVSync(self, FrameCanvas newFrame, uint8_t framerate_fraction = 1):
-        # Blocks until the panel's next vertical sync. Holding the GIL across
-        # that wait starves every other Python thread for most of each frame.
-        cdef cppinc.RGBMatrix* matrix = self.__matrix
-        cdef cppinc.FrameCanvas* frame = newFrame.__canvas
-        cdef uint8_t fraction = framerate_fraction
-        cdef cppinc.FrameCanvas* swapped
-        with nogil:
-            swapped = matrix.SwapOnVSync(frame, fraction)
-        return __createFrameCanvas(swapped)
-"""
-if old in s:
-    s = s.replace(old, new, 1)
+OLD_SWAP = (
+    "    def SwapOnVSync(self, FrameCanvas newFrame, uint8_t framerate_fraction = 1):\n"
+    "        return __createFrameCanvas("
+    "self.__matrix.SwapOnVSync(newFrame.__canvas, framerate_fraction))\n"
+)
+NEW_SWAP = (
+    "    def SwapOnVSync(self, FrameCanvas newFrame, uint8_t framerate_fraction = 1):\n"
+    "        # Blocks until the panel's next vertical sync. Holding the GIL\n"
+    "        # across that wait starves every other Python thread for most of\n"
+    "        # each frame. Pointers are hoisted into C locals so the blocking\n"
+    "        # call itself needs no Python state.\n"
+    "        cdef cppinc.RGBMatrix* matrix = self.__matrix\n"
+    "        cdef cppinc.FrameCanvas* frame = newFrame.__canvas\n"
+    "        cdef uint8_t fraction = framerate_fraction\n"
+    "        cdef cppinc.FrameCanvas* swapped\n"
+    "        with nogil:\n"
+    "            swapped = matrix.SwapOnVSync(frame, fraction)\n"
+    "        return __createFrameCanvas(swapped)\n"
+)
+if OLD_SWAP in s:
+    s = s.replace(OLD_SWAP, NEW_SWAP, 1)
     print("   core.pyx: SwapOnVSync releases the GIL")
-elif "with nogil:\n            swapped = matrix.SwapOnVSync" in s:
+elif "swapped = matrix.SwapOnVSync(frame, fraction)" in s:
     print("   core.pyx: SwapOnVSync already patched")
 else:
     sys.exit("could not find the SwapOnVSync body")
 
-old = """        buffer = get_pillow_buffer(image_capsule)
-
-        for col in range(max(0, -xstart), min(width, frame_width - xstart)):
-            for row in range(max(0, -ystart), min(height, frame_height - ystart)):
-                pixel = buffer[row][col]
-                r = (pixel ) & 0xFF
-                g = (pixel >> 8) & 0xFF
-                b = (pixel >> 16) & 0xFF
-                my_canvas.SetPixel(xstart+col, ystart+row, r, g, b)
-"""
-new = """        buffer = get_pillow_buffer(image_capsule)
-
-        # Bounds hoisted so the blit needs no Python state and can run without
-        # the GIL: it touches only a C buffer and a C++ canvas. Row-major order
-        # walks each row contiguously; col-outer re-strided the whole buffer.
-        cdef int col_start = max(0, -xstart)
-        cdef int col_end = min(width, frame_width - xstart)
-        cdef int row_start = max(0, -ystart)
-        cdef int row_end = min(height, frame_height - ystart)
-
-        with nogil:
-            for row in range(row_start, row_end):
-                for col in range(col_start, col_end):
-                    pixel = buffer[row][col]
-                    r = (pixel ) & 0xFF
-                    g = (pixel >> 8) & 0xFF
-                    b = (pixel >> 16) & 0xFF
-                    my_canvas.SetPixel(xstart+col, ystart+row, r, g, b)
-"""
-if old in s:
-    s = s.replace(old, new, 1)
-    print("   core.pyx: pixel blit releases the GIL, row-major")
-elif "with nogil:\n            for row in range(row_start, row_end):" in s:
-    print("   core.pyx: blit already patched")
+# --- optional: release the GIL across the blit --------------------------
+OLD_BLIT = (
+    "        buffer = get_pillow_buffer(image_capsule)\n"
+    "\n"
+    "        for col in range(max(0, -xstart), min(width, frame_width - xstart)):\n"
+    "            for row in range(max(0, -ystart), min(height, frame_height - ystart)):\n"
+    "                pixel = buffer[row][col]\n"
+    "                r = (pixel ) & 0xFF\n"
+    "                g = (pixel >> 8) & 0xFF\n"
+    "                b = (pixel >> 16) & 0xFF\n"
+    "                my_canvas.SetPixel(xstart+col, ystart+row, r, g, b)\n"
+)
+NEW_BLIT = (
+    "        buffer = get_pillow_buffer(image_capsule)\n"
+    "\n"
+    "        # Bounds hoisted so the blit needs no Python state and can run\n"
+    "        # without the GIL: it touches only a C buffer and a C++ canvas.\n"
+    "        # NOTE: row-major order makes a torn frame show as a horizontal\n"
+    "        # split across the panel's halves. See the header before enabling.\n"
+    "        cdef int col_start = max(0, -xstart)\n"
+    "        cdef int col_end = min(width, frame_width - xstart)\n"
+    "        cdef int row_start = max(0, -ystart)\n"
+    "        cdef int row_end = min(height, frame_height - ystart)\n"
+    "\n"
+    "        with nogil:\n"
+    "            for row in range(row_start, row_end):\n"
+    "                for col in range(col_start, col_end):\n"
+    "                    pixel = buffer[row][col]\n"
+    "                    r = (pixel ) & 0xFF\n"
+    "                    g = (pixel >> 8) & 0xFF\n"
+    "                    b = (pixel >> 16) & 0xFF\n"
+    "                    my_canvas.SetPixel(xstart+col, ystart+row, r, g, b)\n"
+)
+if patch_blit:
+    if OLD_BLIT in s:
+        s = s.replace(OLD_BLIT, NEW_BLIT, 1)
+        print("   core.pyx: pixel blit releases the GIL, row-major")
+    elif "for row in range(row_start, row_end):" in s:
+        print("   core.pyx: blit already patched")
+    else:
+        sys.exit("could not find the SetPixelsPillow loop")
 else:
-    sys.exit("could not find the SetPixelsPillow loop")
+    print("   core.pyx: blit left unpatched (RGB_PATCH_BLIT=1 to enable)")
 
 io.open(p, "w", encoding="utf-8", newline="\n").write(s)
 PYEOF
@@ -231,12 +263,15 @@ echo "==> compiling the extension"
 SO="$(abi_so)"; [ -n "$SO" ] || die "no .so produced"
 
 # Verify the GIL really is released before anyone installs this.
-PAIRS=$(grep -c "PyEval_SaveThread\|Py_UNBLOCK_THREADS" "$BUILD_DIR/bindings/python/rgbmatrix/core.cpp")
-[ "$PAIRS" -ge 2 ] || die "generated C++ has only $PAIRS GIL releases, expected >= 2"
+EXPECTED=1; [ "$PATCH_BLIT" = "1" ] && EXPECTED=2
+PAIRS=$(grep -c "PyEval_SaveThread\|Py_UNBLOCK_THREADS" \
+        "$BUILD_DIR/bindings/python/rgbmatrix/core.cpp")
+[ "$PAIRS" -ge "$EXPECTED" ] \
+    || die "generated C++ has $PAIRS GIL-release sites, expected >= $EXPECTED"
 
 echo
 echo "BUILT: $SO"
-echo "       ($PAIRS GIL-release sites in the generated C++)"
+echo "       ($PAIRS GIL-release site(s) in the generated C++)"
 echo
-echo "Install with:  sudo bash $0 --install"
+echo "Install with:   sudo bash $0 --install"
 echo "Roll back with: sudo bash $0 --rollback"
