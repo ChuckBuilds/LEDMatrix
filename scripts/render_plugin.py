@@ -52,6 +52,10 @@ def main() -> int:
     parser.add_argument('--height', type=int, default=32, help='Display height (default: 32)')
     parser.add_argument('--skip-update', action='store_true',
                         help='Skip calling update() (render display only)')
+    parser.add_argument('--display-mode', default=None,
+                        help='Display mode to render, for plugins that declare '
+                             'more than one in their manifest (e.g. nrl_live). '
+                             'Omitted, the plugin picks its own default.')
 
     args = parser.parse_args()
 
@@ -141,8 +145,23 @@ def main() -> int:
         except Exception as e:
             logger.warning("update() raised: %s — continuing to display()", e)
 
+    # A plugin that declares several display modes usually renders nothing
+    # useful without being told which one to draw: the scoreboards keep their
+    # state on per-mode sub-managers and their no-argument path returns False.
+    # Only pass the argument when asked for, so the many plugins whose display()
+    # takes no display_mode keep working untouched.
     try:
-        plugin_instance.display(force_clear=True)
+        if args.display_mode:
+            try:
+                plugin_instance.display(display_mode=args.display_mode,
+                                        force_clear=True)
+            except TypeError:
+                logger.warning(
+                    "%s.display() does not accept display_mode; rendering its "
+                    "default screen instead", args.plugin)
+                plugin_instance.display(force_clear=True)
+        else:
+            plugin_instance.display(force_clear=True)
         logger.debug("display() completed")
     except Exception as e:
         logger.error("Error in display(): %s", e)
