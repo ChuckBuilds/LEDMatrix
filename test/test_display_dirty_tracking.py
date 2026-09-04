@@ -272,3 +272,43 @@ class TestFrameHold:
     def test_unusable_holds_are_ignored_or_floored(self, dm, bad, expected):
         dm.set_frame_hold(bad)
         assert dm._frame_hold == expected
+
+
+class TestFrameHoldLifetime:
+    """The hold must last exactly as long as the scroll that asked for it.
+
+    Plugins share one display manager. A hold applied at plugin construction is
+    wiped the moment any *other* plugin finishes scrolling, so by the time the
+    first plugin renders it is back to one pixel per refresh -- the speed reads
+    correct in the log and is wrong on the panel.
+    """
+
+    def test_scrolling_state_carries_the_hold(self, dm):
+        dm.set_scrolling_state(True, frame_hold=4)
+        try:
+            dm.draw.rectangle([0, 0, 7, 7], fill=(10, 200, 10))
+            with _SwapSpy(dm.matrix) as spy:
+                dm.update_display()
+            assert spy.last_frame_hold == 4
+        finally:
+            dm.set_scrolling_state(False)
+
+    def test_another_plugin_stopping_does_not_strand_a_hold(self, dm):
+        dm.set_scrolling_state(True, frame_hold=3)
+        dm.set_scrolling_state(False)          # some other plugin finishes
+        dm.set_scrolling_state(True)           # a plugin that wants no hold
+        try:
+            dm.draw.rectangle([0, 0, 6, 6], fill=(200, 10, 10))
+            with _SwapSpy(dm.matrix) as spy:
+                dm.update_display()
+            assert spy.last_frame_hold == 1
+        finally:
+            dm.set_scrolling_state(False)
+
+    def test_default_keeps_previous_behaviour(self, dm):
+        """Callers that never heard of frame holds get one frame per refresh."""
+        dm.set_scrolling_state(True)
+        try:
+            assert dm._frame_hold == 1
+        finally:
+            dm.set_scrolling_state(False)

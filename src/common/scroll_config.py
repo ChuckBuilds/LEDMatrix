@@ -196,6 +196,11 @@ class ScrollSettings:
     #: What the config asked for, before snapping.
     requested_pixels_per_second: Optional[float] = None
 
+    @property
+    def frame_hold(self) -> int:
+        """Refreshes to hold each frame for; pass to set_scrolling_state()."""
+        return self.crisp.frame_hold if self.crisp else 1
+
     def describe(self) -> str:
         text = f"{self.pixels_per_second:.1f} px/s (from {self.source})"
         if self.pixels_per_frame is not None:
@@ -345,7 +350,13 @@ def configure(
         refresh_hz=refresh_hz,
     )
 
-    hz = _coerce(refresh_hz) or settings.target_fps or DEFAULT_REFRESH_HZ
+    # Refresh rate, most authoritative first: what the caller passed, then the
+    # display manager (which can see display.hardware; a plugin cannot), then
+    # whatever resolve() inferred, then the default.
+    hz = _coerce(refresh_hz)
+    if hz is None and display_manager is not None:
+        hz = _coerce(getattr(display_manager, "refresh_hz", None))
+    hz = hz or settings.target_fps or DEFAULT_REFRESH_HZ
     applied = settings.pixels_per_second
     choice = None
 
@@ -371,8 +382,11 @@ def configure(
     elif settings.target_fps and hasattr(scroll_helper, "set_target_fps"):
         scroll_helper.set_target_fps(settings.target_fps)
 
-    if choice and display_manager is not None and hasattr(display_manager, "set_frame_hold"):
-        display_manager.set_frame_hold(choice.frame_hold)
+    # Deliberately NOT applied here. The hold belongs to a scroll, not to a
+    # plugin's lifetime: plugins share one display manager, and one left set at
+    # construction is reset the moment any other plugin finishes scrolling.
+    # Callers pass settings.frame_hold to set_scrolling_state(True, ...) when
+    # they start scrolling. configure() only reports what is needed.
 
     if choice:
         requested = settings.requested_pixels_per_second
@@ -385,12 +399,10 @@ def configure(
         else:
             log.info("Scroll configured: %s (from %s)",
                      choice.describe(), settings.source)
-        if choice.frame_hold > 1 and (
-            display_manager is None or not hasattr(display_manager, "set_frame_hold")
-        ):
-            log.warning(
-                "Scroll wants a frame hold of %d but no display manager was "
-                "given to apply it; motion will use fractional pixels and judder",
+        if choice.frame_hold > 1:
+            log.debug(
+                "Scroll needs a frame hold of %d - pass settings.frame_hold to "
+                "display_manager.set_scrolling_state(True, ...) each scroll",
                 choice.frame_hold,
             )
     else:

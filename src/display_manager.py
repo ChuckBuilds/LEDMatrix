@@ -1301,6 +1301,26 @@ class DisplayManager:
         
         return dt.strftime(f"%b %-d{suffix}") 
 
+    @property
+    def refresh_hz(self) -> float:
+        """The panel's refresh rate in Hz, from the hardware config.
+
+        The authoritative place to ask, because a plugin only receives its own
+        config section and cannot see display.hardware. Scroll pacing needs
+        this: the speeds a panel can show in whole pixels are refresh_hz
+        divided by the frame hold, so getting it wrong silently produces
+        fractional-pixel motion. See src/common/scroll_config.py.
+
+        Note this is the configured *cap*, not necessarily what the panel
+        achieves -- scripts/scroll_speeds.py --measure reports the real rate.
+        """
+        hardware = (self.config.get('display') or {}).get('hardware') or {}
+        try:
+            value = float(hardware.get('limit_refresh_rate_hz') or 0)
+        except (TypeError, ValueError):
+            value = 0.0
+        return value if value > 0 else 100.0
+
     def set_frame_hold(self, refreshes: int) -> None:
         """Hold each pushed frame for this many panel refreshes (>=1).
 
@@ -1318,14 +1338,27 @@ class DisplayManager:
             return
         self._frame_hold = max(1, min(255, value))
 
-    def set_scrolling_state(self, is_scrolling: bool):
-        """Set the current scrolling state. Call this when a display starts/stops scrolling."""
+    def set_scrolling_state(self, is_scrolling: bool, frame_hold: int = 1):
+        """Set the current scrolling state, and this scroll's frame pacing.
+
+        Call this when a display starts or stops scrolling. ``frame_hold`` is
+        how many panel refreshes each frame is held for -- 2 gives one whole
+        pixel every second refresh, which is how a scroll runs at half the
+        refresh rate without fractional pixel positions.
+
+        The hold is set here rather than once at plugin construction because
+        it must not outlive the scroll that asked for it: plugins share one
+        display manager, so a hold left set by whoever scrolled last would
+        silently re-pace the next plugin. Passing it alongside the state makes
+        the lifetime exactly the scroll, and the default of 1 means any caller
+        that does not care gets a new frame every refresh.
+        """
         current_time = time.time()
         self._scrolling_state['is_scrolling'] = is_scrolling
         if is_scrolling:
             self._scrolling_state['last_scroll_activity'] = current_time
+            self.set_frame_hold(frame_hold)
         else:
-            # Whatever pacing the finished scroll asked for must not carry over.
             self._frame_hold = 1
         logger.debug(f"Scrolling state set to: {is_scrolling}")
 

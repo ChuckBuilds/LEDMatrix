@@ -217,24 +217,25 @@ class TestConfigure:
         assert settings.warning is None
         assert not [r for r in caplog.records if "judder" in r.getMessage()]
 
-    def test_warns_when_a_hold_is_needed_but_cannot_be_applied(self, caplog):
-        """Without a display manager the hold silently does not happen, and the
-        motion falls back to fractional pixels. That must not pass quietly."""
-        with caplog.at_level(logging.WARNING):
-            configure(FakeHelper(), {"display_options": {"scroll_pixels_per_second": 50.0}})
-        assert any("frame hold" in r.getMessage() for r in caplog.records)
-
-    def test_applies_the_frame_hold_to_the_display_manager(self):
+    def test_reports_the_hold_without_applying_it(self):
+        """The hold belongs to a scroll, not a plugin's lifetime -- one left set
+        at construction is wiped as soon as any other plugin stops scrolling.
+        configure() reports it; the caller passes it to set_scrolling_state."""
         dm = FakeDisplayManager()
-        configure(FakeHelper(), {"display_options": {"scroll_pixels_per_second": 25.0}},
-                  display_manager=dm)
-        assert dm.hold == 4, "25px/s at 100Hz is 1px every 4th refresh"
+        s = configure(FakeHelper(), {"display_options": {"scroll_pixels_per_second": 25.0}},
+                      display_manager=dm)
+        assert s.frame_hold == 4, "25px/s at 100Hz is 1px every 4th refresh"
+        assert dm.hold is None, "must not apply the hold behind the caller's back"
 
     def test_full_speed_needs_no_hold(self):
-        dm = FakeDisplayManager()
-        configure(FakeHelper(), {"display_options": {"scroll_pixels_per_second": 100.0}},
-                  display_manager=dm)
-        assert dm.hold == 1
+        s = configure(FakeHelper(), {"display_options": {"scroll_pixels_per_second": 100.0}},
+                      display_manager=FakeDisplayManager())
+        assert s.frame_hold == 1
+
+    def test_frame_hold_is_one_when_snapping_is_off(self):
+        s = configure(FakeHelper(), {"display_options": {"scroll_pixels_per_second": 50.0}},
+                      snap_to_crisp=False)
+        assert s.frame_hold == 1
 
     def test_snaps_to_the_nearest_crisp_speed_and_reports_both(self):
         s = configure(FakeHelper(), {"display_options": {"scroll_pixels_per_second": 45.0}},
@@ -350,3 +351,40 @@ class TestSolveCrisp:
     def test_steppiness_labels_are_sane(self):
         assert solve_crisp(100, 100).steppiness == "smooth"
         assert crisp_ladder(100)[0].steppiness == "stepped"
+
+
+class TestRefreshFromDisplayManager:
+    """A plugin sees only its own config section, so the display manager is the
+    authoritative source for the panel's refresh rate."""
+
+    class DM:
+        def __init__(self, hz):
+            self.refresh_hz = hz
+            self.hold = None
+
+        def set_frame_hold(self, refreshes):
+            self.hold = refreshes
+
+    def test_uses_the_display_manager_rate(self):
+        dm = self.DM(60.0)
+        s = configure(FakeHelper(), {"display_options": {"scroll_pixels_per_second": 30.0}},
+                      display_manager=dm)
+        # 30px/s on a 60Hz panel is 1px every 2nd refresh, exactly.
+        assert s.pixels_per_second == pytest.approx(30.0)
+        assert s.frame_hold == 2
+
+    def test_explicit_refresh_hz_wins_over_the_display_manager(self):
+        dm = self.DM(60.0)
+        s = configure(FakeHelper(), {"display_options": {"scroll_pixels_per_second": 25.0}},
+                      display_manager=dm, refresh_hz=100)
+        assert s.frame_hold == 4, "25px/s at 100Hz is 1px every 4th refresh"
+
+    def test_missing_attribute_falls_back_to_the_default(self):
+        class Bare:
+            def set_frame_hold(self, refreshes):
+                self.hold = refreshes
+
+        bare = Bare()
+        s = configure(FakeHelper(), {"display_options": {"scroll_pixels_per_second": 50.0}},
+                      display_manager=bare)
+        assert s.frame_hold == 2, "assumed 100Hz"
