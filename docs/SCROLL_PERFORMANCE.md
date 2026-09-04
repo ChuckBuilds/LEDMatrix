@@ -20,8 +20,10 @@ Measured on a Raspberry Pi 4 driving a 2×128×64 chain (256×64 logical) at
 **Motion is smooth when the strip advances a whole number of pixels per panel
 refresh.**
 
-On a 100 Hz panel the crisp speeds are 100 px/s, 200 px/s, 300 px/s. A speed
-that does not divide evenly has to do one of two bad things:
+Advancing one pixel per refresh on a 100 Hz panel gives 100 px/s. Slower crisp
+speeds come from holding each frame for several refreshes -- 50 px/s is one
+pixel every second refresh -- which is covered under *Choosing a speed* below.
+A speed that lands on no such combination has to do one of two bad things:
 
 - **blend** two adjacent columns to render a half-step — on pixel-font text
   this alternates crisp and smeared frames and reads as shimmer, or as the
@@ -31,8 +33,76 @@ that does not divide evenly has to do one of two bad things:
 
 Neither is tunable away. Pick a speed that divides evenly.
 
-`src.common.scroll_config.resolve()` warns when a configured speed will not,
-and names the nearest speed that will.
+`src.common.scroll_config` solves this for you: `configure()` snaps a requested
+speed to the nearest one the panel can actually show in whole pixels, and
+`scripts/scroll_speeds.py` prints the full ladder for your hardware.
+
+## Choosing a speed
+
+The crisp speeds are not a fixed list -- they depend on how fast *your* panel
+refreshes, which depends on its size, `pwm_bits`, `gpio_slowdown` and the Pi
+model. A Pi Zero driving a long chain has a completely different set of good
+speeds from a Pi 4 driving a short one.
+
+```bash
+# what can this panel do? (reads your configured refresh rate)
+python3 scripts/scroll_speeds.py
+
+# what does it ACTUALLY manage, rather than what is configured?
+sudo systemctl stop ledmatrix
+sudo python3 scripts/scroll_speeds.py --measure
+sudo systemctl start ledmatrix
+
+# highlight the closest option to the speed you want
+python3 scripts/scroll_speeds.py --want 45
+
+# try one on the panel
+sudo systemctl stop ledmatrix
+sudo python3 scripts/scroll_speeds.py --demo 50
+sudo systemctl start ledmatrix
+```
+
+Sample ladder for a 100 Hz panel:
+
+```
+  20.0 px/s  (1px every 5 refreshes =  20.0 fps, slightly stepped)
+  25.0 px/s  (1px every 4 refreshes =  25.0 fps, slightly stepped)
+  33.3 px/s  (1px every 3 refreshes =  33.3 fps, smooth)
+  50.0 px/s  (1px every 2 refreshes =  50.0 fps, smooth)
+  66.7 px/s  (2px every 3 refreshes =  33.3 fps, smooth)
+ 100.0 px/s  (1px every 1 refresh  = 100.0 fps, smooth)
+```
+
+### How a slow speed stays crisp
+
+`SwapOnVSync(canvas, framerate_fraction)` holds each frame for N panel
+refreshes. **The panel keeps refreshing at its full rate either way**, so
+holding a frame costs nothing in flicker -- it only changes how often a *new*
+image is presented. That is what allows 50 px/s to be one whole pixel every
+second refresh, instead of half a pixel every refresh (which has no good
+rendering, only a choice between blur and judder).
+
+`scroll_config.configure()` snaps the requested speed to the nearest entry on
+the ladder and applies the hold, provided it is given the display manager:
+
+```python
+scroll_config.configure(
+    self.scroll_helper,
+    plugin_config=self.config,
+    global_config=self.global_config,
+    display_manager=self.display_manager,   # required for the hold to apply
+)
+```
+
+Without `display_manager` a sub-refresh speed still resolves, but the hold is
+never applied and the motion falls back to fractional pixels -- so `configure`
+logs a warning rather than failing quietly. Pass `snap_to_crisp=False` to keep
+an exact requested speed and accept the artefacts.
+
+Speeds slower than about 20 px/s are stepped no matter what, because a 1-pixel
+advance at 20 fps is simply a coarse increment. That is the pixel pitch, not a
+software limit; the only way to move in smaller increments is sub-pixel
+blending, which this display does not tolerate (see above).
 
 ## Configuring a plugin
 

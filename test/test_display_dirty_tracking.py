@@ -47,12 +47,17 @@ class _SwapSpy:
     def __init__(self, matrix):
         self.matrix = matrix
         self.count = 0
+        self.last_frame_hold = None
         self._orig = matrix.SwapOnVSync
 
     def __enter__(self):
-        def counting(canvas):
+        def counting(canvas, *args):
+            # *args carries framerate_fraction, which display_manager passes so
+            # a frame can be held for several refreshes. Signature must match
+            # the real binding or the spy hides a TypeError as a failed push.
             self.count += 1
-            return self._orig(canvas)
+            self.last_frame_hold = args[0] if args else 1
+            return self._orig(canvas, *args)
         self.matrix.SwapOnVSync = counting
         return self
 
@@ -221,3 +226,49 @@ class TestKillSwitch:
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+class TestFrameHold:
+    """Holding a frame for N refreshes is how a scroll runs slower than one
+    pixel per refresh without fractional pixel positions."""
+
+    def test_hold_reaches_swap_on_vsync(self, dm):
+        dm.set_scrolling_state(True)
+        dm.set_frame_hold(3)
+        try:
+            dm.draw.rectangle([0, 0, 9, 9], fill=(120, 0, 200))
+            with _SwapSpy(dm.matrix) as spy:
+                dm.update_display()
+            assert spy.count == 1
+            assert spy.last_frame_hold == 3
+        finally:
+            dm.set_scrolling_state(False)
+
+    def test_default_is_every_refresh(self, dm):
+        dm.set_scrolling_state(True)
+        try:
+            dm.draw.rectangle([0, 0, 11, 11], fill=(0, 120, 200))
+            with _SwapSpy(dm.matrix) as spy:
+                dm.update_display()
+            assert spy.last_frame_hold == 1
+        finally:
+            dm.set_scrolling_state(False)
+
+    def test_hold_resets_when_scrolling_stops(self, dm):
+        """One plugin's pacing must not leak into whatever is on screen next."""
+        dm.set_scrolling_state(True)
+        dm.set_frame_hold(5)
+        dm.set_scrolling_state(False)
+        dm.set_scrolling_state(True)
+        try:
+            dm.draw.rectangle([0, 0, 13, 13], fill=(200, 120, 0))
+            with _SwapSpy(dm.matrix) as spy:
+                dm.update_display()
+            assert spy.last_frame_hold == 1
+        finally:
+            dm.set_scrolling_state(False)
+
+    @pytest.mark.parametrize("bad,expected", [(0, 1), (-4, 1), (None, 1), ("x", 1)])
+    def test_unusable_holds_are_ignored_or_floored(self, dm, bad, expected):
+        dm.set_frame_hold(bad)
+        assert dm._frame_hold == expected

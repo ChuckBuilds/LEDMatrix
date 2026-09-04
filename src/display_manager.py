@@ -240,6 +240,14 @@ class DisplayManager:
         self._update_lock = threading.RLock()
         
         # Scrolling state tracking for graceful updates
+        # How many panel refreshes each pushed frame is held for. 1 means a new
+        # frame every refresh. Higher values are how a scroll runs slower than
+        # one pixel per refresh WITHOUT fractional pixel positions: the panel
+        # keeps refreshing at full rate (so flicker is unchanged) but motion
+        # advances a whole pixel every Nth refresh instead of every one.
+        # See src/common/scroll_config.py and scripts/scroll_speeds.py.
+        self._frame_hold = 1
+
         self._scrolling_state = {
             'is_scrolling': False,
             'last_scroll_activity': 0,
@@ -804,8 +812,10 @@ class DisplayManager:
                 else:
                     self.offscreen_canvas.SetImage(self.image)
 
-                # Swap buffers immediately
-                self.matrix.SwapOnVSync(self.offscreen_canvas)
+                # Swap buffers immediately. framerate_fraction holds the frame
+                # for N refreshes; SwapOnVSync blocks for all of them, which is
+                # what paces the render loop to the chosen frame rate.
+                self.matrix.SwapOnVSync(self.offscreen_canvas, self._frame_hold)
 
                 # Swap our canvas references
                 self.offscreen_canvas, self.current_canvas = self.current_canvas, self.offscreen_canvas
@@ -1291,12 +1301,32 @@ class DisplayManager:
         
         return dt.strftime(f"%b %-d{suffix}") 
 
+    def set_frame_hold(self, refreshes: int) -> None:
+        """Hold each pushed frame for this many panel refreshes (>=1).
+
+        Set by the scroll configuration so a plugin can run at, say, 50px/s on
+        a 100Hz panel as one whole pixel every second refresh, rather than half
+        a pixel every refresh (which has to be blended or repeated unevenly).
+
+        Reset to 1 whenever scrolling stops, so one plugin's pacing cannot
+        leak into the next thing on screen.
+        """
+        try:
+            value = int(refreshes)
+        except (TypeError, ValueError):
+            logger.warning("Ignoring unusable frame hold: %r", refreshes)
+            return
+        self._frame_hold = max(1, min(255, value))
+
     def set_scrolling_state(self, is_scrolling: bool):
         """Set the current scrolling state. Call this when a display starts/stops scrolling."""
         current_time = time.time()
         self._scrolling_state['is_scrolling'] = is_scrolling
         if is_scrolling:
             self._scrolling_state['last_scroll_activity'] = current_time
+        else:
+            # Whatever pacing the finished scroll asked for must not carry over.
+            self._frame_hold = 1
         logger.debug(f"Scrolling state set to: {is_scrolling}")
 
     def is_currently_scrolling(self) -> bool:
