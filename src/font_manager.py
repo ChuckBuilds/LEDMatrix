@@ -96,7 +96,8 @@ class FontManager:
         self.common_fonts = {
             "press_start": "assets/fonts/PressStart2P-Regular.ttf",
             "four_by_six": "assets/fonts/4x6-font.ttf",
-            "five_by_seven": "assets/fonts/5x7.bdf"
+            "five_by_seven": "assets/fonts/5x7.bdf",
+            "tom_thumb": "assets/fonts/tom-thumb.bdf"
             # Note: cozette_bdf removed - font file not available
             # To re-enable: download cozette.bdf from https://github.com/the-moonwitch/Cozette
             # and add: "cozette_bdf": "assets/fonts/cozette.bdf"

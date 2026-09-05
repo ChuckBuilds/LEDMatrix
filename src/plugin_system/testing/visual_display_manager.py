@@ -506,9 +506,16 @@ class VisualTestDisplayManager:
     # Scrolling state (no-op interface compat)
     # ------------------------------------------------------------------
 
-    def set_scrolling_state(self, is_scrolling: bool):
-        """Set the current scrolling state (no-op for testing)."""
+    def set_scrolling_state(self, is_scrolling: bool, frame_hold: int = 1):
+        """Set the current scrolling state (no-op for testing).
+
+        ``frame_hold`` mirrors DisplayManager.set_scrolling_state so a plugin
+        that paces its scroll can be rendered here. Without it every such
+        plugin raised TypeError at render time and failed every size, which is
+        invisible until a plugin happens to pass the argument.
+        """
         self._scrolling_state['is_scrolling'] = is_scrolling
+        self._scrolling_state['frame_hold'] = frame_hold
         if is_scrolling:
             self._scrolling_state['last_scroll_activity'] = time.time()
 
