@@ -1271,8 +1271,16 @@ class DisplayController:
         """Poll cache for new on-demand requests from external controllers."""
         try:
             # Use a long max_age (1 hour) to ensure requests aren't expired before processing
-            # The request_id check prevents duplicate processing
-            request = self.cache_manager.get('display_on_demand_request', max_age=3600)
+            # The request_id check prevents duplicate processing.
+            #
+            # memory_ttl=0 is required, not optional: this key is a mailbox the
+            # web process writes and this process reads. get() defaults the
+            # in-memory TTL to max_age, so without it the first request read was
+            # pinned in memory for the full hour and every later poll returned
+            # that stale copy -- meaning no second on-demand request was honoured
+            # for an hour, while the API still reported success.
+            request = self.cache_manager.get('display_on_demand_request',
+                                             max_age=3600, memory_ttl=0)
         except (OSError, RuntimeError, ValueError, TypeError) as err:
             logger.error("Failed to read on-demand request: %s", err, exc_info=True)
             return
@@ -1318,6 +1326,15 @@ class DisplayController:
         # Mark as processed BEFORE processing (to prevent duplicate processing)
         self.cache_manager.set('display_on_demand_processed_id', request_id, ttl=3600)
         self.on_demand_request_id = request_id
+        # Consume the mailbox entry. Leaving it on disk meant a restart replayed
+        # the previous request: the fresh controller read it, activated it and
+        # cached it, so the request the caller had just made was ignored and the
+        # panel silently showed the earlier plugin. processed_id still guards
+        # against double-processing if this delete fails.
+        try:
+            self.cache_manager.delete('display_on_demand_request')
+        except Exception as err:  # pragma: no cover - best-effort cleanup
+            logger.debug("Could not clear the on-demand request mailbox: %s", err)
         
         if action == 'start':
             logger.info("Processing on-demand start request for plugin: %s", request.get('plugin_id'))
