@@ -116,14 +116,23 @@ def list_modes(plugin_instance: Any, manifest: Dict[str, Any], plugin_id: str) -
 
 def _instantiate(plugin_id: str, manifest: Dict[str, Any], plugin_dir: Path,
                  config: Dict[str, Any], mock_data: Dict[str, Any],
-                 display_manager: Any) -> Any:
-    """Load and construct a plugin instance with mocked managers."""
+                 display_manager: Any, cache_manager: Any = None) -> Any:
+    """Load and construct a plugin instance with mocked managers.
+
+    Pass ``cache_manager`` to share one cache across the renders of a plugin.
+    Building a fresh one per (size, mode) made every render a cold start, so a
+    plugin that fetches per game or per player re-fetched everything N times --
+    baseball-scoreboard took 840s for nine renders where ~72s was the arithmetic
+    -- and the cache-hit path, which is what a running rig executes almost
+    always, was never exercised.
+    """
     from src.plugin_system.plugin_loader import PluginLoader
     from src.plugin_system.testing import MockCacheManager, MockPluginManager
 
-    cache_manager = MockCacheManager()
-    for key, value in (mock_data or {}).items():
-        cache_manager.set(key, value)
+    if cache_manager is None:
+        cache_manager = MockCacheManager()
+        for key, value in (mock_data or {}).items():
+            cache_manager.set(key, value)
 
     loader = PluginLoader()
     plugin_instance, _module = loader.load_plugin(
@@ -202,25 +211,35 @@ def render_plugin_matrix(
     # rendering a smaller one, instead of being clipped into a false pass.
     extent = (max(w for w, _ in sizes), max(h for _, h in sizes))
 
+    # One cache for the whole matrix: see _instantiate. The display manager
+    # stays per-render (the bounds checking depends on that); only fetched data
+    # is shared.
+    from src.plugin_system.testing import MockCacheManager
+    cache_manager = MockCacheManager()
+    for key, value in (mock_data or {}).items():
+        cache_manager.set(key, value)
+
     with _freeze(freeze_time):
         for width, height in sizes:
             results.extend(_render_size(
                 plugin_id, manifest, plugin_dir, config, mock_data or {},
-                width, height, run_update, extent,
+                width, height, run_update, extent, cache_manager,
             ))
 
     return results
 
 
 def _render_size(plugin_id, manifest, plugin_dir, config, mock_data,
-                 width, height, run_update, extent) -> List[RenderResult]:
+                 width, height, run_update, extent,
+                 cache_manager=None) -> List[RenderResult]:
     """Render every mode at one size. A fresh instance per mode avoids state leaks."""
     results: List[RenderResult] = []
 
     # Discover modes once per size (instance build can depend on config).
     try:
         probe_dm = BoundsCheckingDisplayManager(width=width, height=height, overflow_extent=extent)
-        probe = _instantiate(plugin_id, manifest, plugin_dir, config, mock_data, probe_dm)
+        probe = _instantiate(plugin_id, manifest, plugin_dir, config, mock_data, probe_dm,
+                             cache_manager)
         modes = list_modes(probe, manifest, plugin_id)
     except Exception as e:  # noqa: BLE001 — surface any load failure as a result
         return [RenderResult(plugin_id, width, height, "<load>", error=repr(e))]
@@ -229,7 +248,8 @@ def _render_size(plugin_id, manifest, plugin_dir, config, mock_data,
         result = RenderResult(plugin_id, width, height, mode)
         dm = BoundsCheckingDisplayManager(width=width, height=height, overflow_extent=extent)
         try:
-            inst = _instantiate(plugin_id, manifest, plugin_dir, config, mock_data, dm)
+            inst = _instantiate(plugin_id, manifest, plugin_dir, config, mock_data, dm,
+                                cache_manager)
             if run_update:
                 try:
                     inst.update()
