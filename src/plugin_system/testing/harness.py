@@ -14,6 +14,8 @@ via BoundsCheckingDisplayManager, and golden-image comparison.
 import contextlib
 import http.client
 import inspect
+import time
+from datetime import timedelta
 import socket
 import ssl
 import urllib.error
@@ -169,6 +171,96 @@ def _render_mode(plugin_instance: Any, mode: str) -> Any:
     return plugin_instance.display(force_clear=False)
 
 
+# How many extra frames to drive before believing a mode really draws nothing.
+# A scroll starts with its content off-panel, so frame 1 is legitimately blank;
+# measured across the fleet, content appears by frame 2-4 (f1-scoreboard),
+# frame 4 (ledmatrix-elections) and frame 38 at 64px (ledmatrix-leaderboard).
+EMPTY_RECHECK_FRAMES = 48
+# Seconds to advance the clock between those frames. Scroll position is usually
+# driven by elapsed time, which a frozen clock never provides.
+EMPTY_RECHECK_STEP = 0.05
+
+
+def _has_content(image) -> bool:
+    """True when any pixel is lit above the threshold."""
+    if image is None:
+        return False
+    return image.convert("L").point(
+        lambda p: 255 if p > _LIT_THRESHOLD else 0).getbbox() is not None
+
+
+def _render_mode_again(plugin_instance: Any, mode: str) -> Any:
+    """Draw one more frame WITHOUT force_clear.
+
+    _render_mode passes force_clear=True, which for a scrolling plugin means
+    "reset the scroll to the start" -- so repeating it would redraw frame 1 for
+    ever. The re-check needs the plugin to advance.
+    """
+    sig = inspect.signature(plugin_instance.display)
+    if "display_mode" in sig.parameters:
+        return plugin_instance.display(force_clear=False, display_mode=mode)
+    return plugin_instance.display(force_clear=False)
+
+
+def _settle_empty_frame(inst, mode, dm, result, freezer) -> None:
+    """Give an apparently-empty mode a few frames to draw before believing it.
+
+    One frame is not evidence: a scroll's first frame is its blank scroll-in
+    buffer. Without this, every scrolling plugin was warned about -- 60 of 76
+    warnings on a 44-plugin rig were false, which is the rate at which people
+    stop reading a warning.
+    """
+    if result.error is not None or result.display_returned is False:
+        return
+    if _has_content(result.image):
+        return
+    # The frozen clock is shared by every render in the matrix, so any time this
+    # probe borrows has to be given back -- otherwise a mode that scrolls in
+    # leaves the clock advanced and every later mode renders at the wrong
+    # instant, drifting its golden. Seen as 5 spurious f1_upcoming drifts.
+    resume_at = None
+    if freezer is not None:
+        try:
+            resume_at = freezer()
+        except Exception:  # noqa: BLE001 - only to restore, never load-bearing
+            resume_at = None
+    try:
+        _settle_loop(inst, mode, dm, result, freezer)
+    finally:
+        if resume_at is not None:
+            try:
+                freezer.move_to(resume_at)
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def _settle_loop(inst, mode, dm, result, freezer) -> None:
+    tick = getattr(freezer, "tick", None) if freezer is not None else None
+    for _ in range(EMPTY_RECHECK_FRAMES):
+        if tick is not None:
+            # timedelta rather than a bare float: freezegun has accepted a
+            # number only since 1.x, and a stale pin would raise here.
+            try:
+                tick(timedelta(seconds=EMPTY_RECHECK_STEP))
+            except Exception:  # noqa: BLE001 - pacing is best-effort
+                pass
+        else:
+            # No frozen clock, so the real one has to do the advancing. Without
+            # this the 48 frames run in microseconds, elapsed time stays ~0, and
+            # a scroll driven by elapsed time never moves -- which is exactly
+            # the plugin this check is trying not to slander.
+            time.sleep(EMPTY_RECHECK_STEP)
+        try:
+            result.display_returned = _render_mode_again(inst, mode)
+        except Exception:  # noqa: BLE001 - the first frame already succeeded
+            return
+        image = dm.get_image()
+        if _has_content(image):
+            result.image = image
+            result.overflow = dm.check_overflow()
+            return
+
+
 def _freeze(freeze_time: Optional[str]):
     """Context manager that freezes wall-clock time when freeze_time is given,
     so time-dependent plugins (clocks, countdowns) render deterministic goldens."""
@@ -219,11 +311,11 @@ def render_plugin_matrix(
     for key, value in (mock_data or {}).items():
         cache_manager.set(key, value)
 
-    with _freeze(freeze_time):
+    with _freeze(freeze_time) as freezer:
         for width, height in sizes:
             results.extend(_render_size(
                 plugin_id, manifest, plugin_dir, config, mock_data or {},
-                width, height, run_update, extent, cache_manager,
+                width, height, run_update, extent, cache_manager, freezer,
             ))
 
     return results
@@ -231,7 +323,7 @@ def render_plugin_matrix(
 
 def _render_size(plugin_id, manifest, plugin_dir, config, mock_data,
                  width, height, run_update, extent,
-                 cache_manager=None) -> List[RenderResult]:
+                 cache_manager=None, freezer=None) -> List[RenderResult]:
     """Render every mode at one size. A fresh instance per mode avoids state leaks."""
     results: List[RenderResult] = []
 
@@ -268,6 +360,9 @@ def _render_size(plugin_id, manifest, plugin_dir, config, mock_data,
                 result.display_returned = _render_mode(inst, mode)
                 result.image = dm.get_image()
                 result.overflow = dm.check_overflow()
+                # A blank first frame is not proof of a blank mode; see
+                # _settle_empty_frame.
+                _settle_empty_frame(inst, mode, dm, result, freezer)
         except Exception as e:  # noqa: BLE001 — a display crash is a real failure
             result.error = repr(e)
         results.append(result)
