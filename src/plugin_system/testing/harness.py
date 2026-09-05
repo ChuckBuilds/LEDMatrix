@@ -27,7 +27,7 @@ from PIL import Image, ImageChops
 
 from src.logging_config import get_logger
 from .bounds_display_manager import BoundsCheckingDisplayManager
-from .loading import load_config_defaults, load_manifest
+from .loading import load_config_defaults, load_manifest, merge_config
 from .sizes import DEFAULT_TEST_SIZES, safe_mode_filename, size_label
 
 logger = get_logger("[Plugin Harness]")
@@ -294,7 +294,9 @@ def render_plugin_matrix(
     manifest = load_manifest(plugin_dir)
     # Start from config_schema.json defaults so the plugin behaves like a real
     # install; explicit caller config still wins over a schema default.
-    config = {"enabled": True, **load_config_defaults(plugin_dir), **(config or {})}
+    config = merge_config(
+        merge_config({"enabled": True}, load_config_defaults(plugin_dir)),
+        config or {})
     sizes = sizes or DEFAULT_TEST_SIZES
     results: List[RenderResult] = []
 
