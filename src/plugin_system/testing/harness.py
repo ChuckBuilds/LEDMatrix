@@ -222,7 +222,9 @@ def _settle_empty_frame(inst, mode, dm, result, freezer) -> None:
     if freezer is not None:
         try:
             resume_at = freezer()
-        except Exception:  # noqa: BLE001 - only to restore, never load-bearing
+        except (AttributeError, TypeError, ValueError):
+            # Not a freezegun factory, or a version whose factory is not
+            # callable. Only used to restore the clock, never load-bearing.
             resume_at = None
     try:
         _settle_loop(inst, mode, dm, result, freezer)
@@ -230,7 +232,7 @@ def _settle_empty_frame(inst, mode, dm, result, freezer) -> None:
         if resume_at is not None:
             try:
                 freezer.move_to(resume_at)
-            except Exception:  # noqa: BLE001
+            except (AttributeError, TypeError, ValueError):
                 pass
 
 
@@ -242,7 +244,9 @@ def _settle_loop(inst, mode, dm, result, freezer) -> None:
             # number only since 1.x, and a stale pin would raise here.
             try:
                 tick(timedelta(seconds=EMPTY_RECHECK_STEP))
-            except Exception:  # noqa: BLE001 - pacing is best-effort
+            except (AttributeError, TypeError, ValueError):
+                # Pacing is best-effort; a freezegun that will not take a
+                # timedelta just means this probe runs without advancing time.
                 pass
         else:
             # No frozen clock, so the real one has to do the advancing. Without
@@ -252,7 +256,11 @@ def _settle_loop(inst, mode, dm, result, freezer) -> None:
             time.sleep(EMPTY_RECHECK_STEP)
         try:
             result.display_returned = _render_mode_again(inst, mode)
-        except Exception:  # noqa: BLE001 - the first frame already succeeded
+        except Exception:  # noqa: BLE001
+            # Deliberately broad: this calls a plugin's display(), which can
+            # raise anything. The first frame already rendered, so whatever
+            # happens on a re-draw must not turn a good result into an error --
+            # keep the frame we have and stop probing.
             return
         image = dm.get_image()
         if _has_content(image):

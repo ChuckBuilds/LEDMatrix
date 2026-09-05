@@ -1333,7 +1333,9 @@ class DisplayController:
         # against double-processing if this delete fails.
         try:
             self.cache_manager.delete('display_on_demand_request')
-        except Exception as err:  # pragma: no cover - best-effort cleanup
+        except (OSError, AttributeError, KeyError) as err:
+            # Best-effort: processed_id still guards against reprocessing if the
+            # mailbox cannot be cleared.
             logger.debug("Could not clear the on-demand request mailbox: %s", err)
         
         if action == 'start':
