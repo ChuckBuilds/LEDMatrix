@@ -8,7 +8,7 @@ Supports both unittest and pytest.
 
 import os
 import re
-import subprocess
+import subprocess  # nosec B404 - runs repo-local test files, never a shell
 import sys
 import argparse
 from pathlib import Path
@@ -97,14 +97,25 @@ def run_script_tests(test_files: list, verbose: bool = False) -> int:
     a script that needs a tty or an LED matrix is not a regression.
     """
     env = dict(os.environ)
-    env.setdefault("PYTHONPATH", str(PROJECT_ROOT))
-    env.setdefault("LEDMATRIX_CORE", str(PROJECT_ROOT))
+    # Prepend rather than setdefault. An inherited PYTHONPATH -- a developer's
+    # shell, a tox run, another checkout -- otherwise wins outright, and the
+    # subprocess imports a different copy of the core than the one under test.
+    # That is exactly the failure ledmatrix-plugins#467 describes, and it is
+    # invisible: the tests pass or fail against a tree nobody meant to test.
+    inherited = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = (f"{PROJECT_ROOT}{os.pathsep}{inherited}"
+                         if inherited else str(PROJECT_ROOT))
+    env["LEDMATRIX_CORE"] = str(PROJECT_ROOT)
 
     passed = skipped = failed = 0
     failures = []
     for path in test_files:
         try:
-            proc = subprocess.run([sys.executable, str(path)], cwd=str(Path(path).parent),
+            # nosec B603 - fixed interpreter (sys.executable) plus a test path
+            # this script discovered by globbing the repo; argument list, no
+            # shell, so nothing is word-split or expanded.
+            proc = subprocess.run([sys.executable, str(path)],  # nosec B603
+                                  cwd=str(Path(path).parent),
                                   capture_output=True, text=True, env=env,
                                   stdin=subprocess.DEVNULL, timeout=300)
             rc = proc.returncode

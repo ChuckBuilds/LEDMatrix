@@ -506,16 +506,17 @@ class VisualTestDisplayManager:
     # Scrolling state (no-op interface compat)
     # ------------------------------------------------------------------
 
-    def set_scrolling_state(self, is_scrolling: bool, frame_hold: int = 1):
+    def set_scrolling_state(self, is_scrolling: bool):
         """Set the current scrolling state (no-op for testing).
 
-        ``frame_hold`` mirrors DisplayManager.set_scrolling_state so a plugin
-        that paces its scroll can be rendered here. Without it every such
-        plugin raised TypeError at render time and failed every size, which is
-        invisible until a plugin happens to pass the argument.
+        Deliberately mirrors DisplayManager.set_scrolling_state exactly. A
+        double that accepts arguments production does not lets a call pass
+        every harness run and then raise TypeError on the panel, which is the
+        one failure a safety harness exists to prevent. ``frame_hold`` arrives
+        here in the same change that adds it to DisplayManager (#523), not
+        before.
         """
         self._scrolling_state['is_scrolling'] = is_scrolling
-        self._scrolling_state['frame_hold'] = frame_hold
         if is_scrolling:
             self._scrolling_state['last_scroll_activity'] = time.time()
 

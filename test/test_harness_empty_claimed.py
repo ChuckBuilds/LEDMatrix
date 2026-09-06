@@ -101,3 +101,61 @@ class TestSkippedResults:
         r = _result(None, returned=None)
         check_empty_claimed([r], strict=True)
         assert r.empty_claimed is None
+
+
+class TestSettleRecordsLaterFailures:
+    """A mode that renders one good frame and then crashes is broken.
+
+    _settle_loop re-renders a mode that came back blank, to give a scroll or an
+    animation time to put something on the panel. Swallowing an exception from
+    those later frames meant the harness reported a passing result for a mode
+    that crashes as soon as it is asked for a second frame -- exactly the kind
+    of defect the harness exists to catch.
+    """
+
+    class Boom:
+        """Renders once, then raises."""
+
+        def __init__(self):
+            self.calls = 0
+
+        def display(self, force_clear=False):
+            self.calls += 1
+            raise RuntimeError("second frame exploded")
+
+    def _settle(self, inst, dm, result):
+        from src.plugin_system.testing import harness
+        harness._settle_loop(inst, "mode", dm, result, None)
+
+    def test_the_exception_is_recorded_on_the_result(self, monkeypatch):
+        from src.plugin_system.testing import harness
+        # Keep the probe short; this test is about the error, not the pacing.
+        monkeypatch.setattr(harness, "EMPTY_RECHECK_FRAMES", 1)
+        monkeypatch.setattr(harness, "EMPTY_RECHECK_STEP", 0)
+
+        result = _result(_blank())
+        assert result.error is None
+        self._settle(self.Boom(), _FakeDM(), result)
+
+        assert result.error is not None, "a crash on a later frame was swallowed"
+        assert "second frame exploded" in result.error
+
+    def test_the_already_captured_frame_is_kept(self, monkeypatch):
+        from src.plugin_system.testing import harness
+        monkeypatch.setattr(harness, "EMPTY_RECHECK_FRAMES", 1)
+        monkeypatch.setattr(harness, "EMPTY_RECHECK_STEP", 0)
+
+        image = _blank()
+        result = _result(image)
+        self._settle(self.Boom(), _FakeDM(), result)
+        assert result.image is image, "the good frame was discarded along with the error"
+
+
+class _FakeDM:
+    """Minimal display-manager double for _settle_loop."""
+
+    def get_image(self):
+        return _blank()
+
+    def check_overflow(self):
+        return None

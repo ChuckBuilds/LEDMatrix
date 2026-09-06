@@ -256,11 +256,14 @@ def _settle_loop(inst, mode, dm, result, freezer) -> None:
             time.sleep(EMPTY_RECHECK_STEP)
         try:
             result.display_returned = _render_mode_again(inst, mode)
-        except Exception:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001
             # Deliberately broad: this calls a plugin's display(), which can
-            # raise anything. The first frame already rendered, so whatever
-            # happens on a re-draw must not turn a good result into an error --
-            # keep the frame we have and stop probing.
+            # raise anything. Recorded rather than swallowed -- a mode that
+            # renders one good frame and then crashes on the next is broken,
+            # and returning silently here reported it as passing. The frame
+            # already captured stays on the result so the failure is still
+            # inspectable.
+            result.error = repr(e)
             return
         image = dm.get_image()
         if _has_content(image):

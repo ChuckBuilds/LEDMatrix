@@ -714,9 +714,11 @@ class StarlarkAppsPlugin(BasePlugin):
                     self.logger.error(f"Failed to render app: {self.current_app.app_id}")
                     return False
 
-            # Display current frame
-            self._display_frame()
-            return True
+            # Display current frame. The result is propagated: a failed frame
+            # update is not a displayed frame, and returning True regardless
+            # told the controller the mode had rendered, so it held the dead
+            # frame for the whole display_duration instead of rotating on.
+            return self._display_frame()
 
         except Exception as e:
             self.logger.error(f"Error displaying Starlark app: {e}")
@@ -843,10 +845,13 @@ class StarlarkAppsPlugin(BasePlugin):
             self.logger.error(f"Error loading frames for {app.app_id}: {e}")
             return False
 
-    def _display_frame(self) -> None:
-        """Display the current frame of the current app."""
+    def _display_frame(self) -> bool:
+        """Display the current frame of the current app.
+
+        :returns: whether a frame actually reached the display manager.
+        """
         if not self.current_app or not self.current_app.frames:
-            return
+            return False
 
         try:
             current_time = time.time()
@@ -864,8 +869,11 @@ class StarlarkAppsPlugin(BasePlugin):
                 )
                 self.current_app.last_frame_time = current_time
 
+            return True
+
         except Exception as e:
             self.logger.error(f"Error displaying frame: {e}")
+            return False
 
     def install_app(self, app_id: str, star_file_path: str, metadata: Optional[Dict[str, Any]] = None, assets_dir: Optional[str] = None) -> bool:
         """
