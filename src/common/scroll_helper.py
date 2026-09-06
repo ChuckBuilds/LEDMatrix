@@ -16,6 +16,7 @@ Features:
 """
 
 import logging
+import math
 import time
 from typing import Optional, Dict, Any
 from PIL import Image
@@ -27,6 +28,49 @@ try:
     HAS_SCIPY = True
 except ImportError:
     HAS_SCIPY = False
+
+
+def frame_stats(frame_times: list) -> Dict[str, Any]:
+    """Summary statistics over one window of frame durations (seconds).
+
+    Split out of log_frame_rate() so the arithmetic can be tested without a
+    clock. Median and p95 are the real ones: the median takes both middle
+    samples on an even window, and p95 is nearest-rank, so a 100-frame window
+    reports the 95th sorted sample rather than the 96th. That matters twice
+    over, because the median is also the threshold the stall and skip counts
+    are measured against.
+    """
+    window = sorted(frame_times)
+    n = len(window)
+    median = (window[n // 2] if n % 2
+              else (window[n // 2 - 1] + window[n // 2]) / 2.0)
+    mean = sum(window) / n
+    # Anything past 1.5x the median missed a panel refresh; anything under
+    # half of it never reached the panel at all (dirty tracking skipped the
+    # swap, so the frame did not wait for vsync).
+    return {
+        "frames": n,
+        "fps": (1.0 / mean) if mean > 0 else 0.0,
+        "median": median,
+        "p95": window[max(0, math.ceil(0.95 * n) - 1)],
+        "max": window[-1],
+        "min": window[0],
+        "stalls": sum(1 for f in window if f > median * 1.5),
+        "skips": sum(1 for f in window if f < median * 0.5),
+    }
+
+
+def format_frame_stats(frame_times: list) -> str:
+    """The one-line rendering of frame_stats(), in milliseconds."""
+    s = frame_stats(frame_times)
+    n = s["frames"]
+    return (
+        f"{s['fps']:.1f} fps over {n} frames | "
+        f"median {s['median'] * 1000:.2f}ms p95 {s['p95'] * 1000:.2f}ms "
+        f"max {s['max'] * 1000:.2f}ms min {s['min'] * 1000:.2f}ms | "
+        f"stalls {s['stalls']} ({100.0 * s['stalls'] / n:.1f}%) "
+        f"skips {s['skips']} ({100.0 * s['skips'] / n:.1f}%)"
+    )
 
 
 class ScrollHelper:
@@ -1055,26 +1099,9 @@ class ScrollHelper:
         
         # Log FPS every 5 seconds to avoid spam
         if current_time - self.last_fps_log_time >= 5.0:
-            window = sorted(self._window) if self._window else [frame_time]
-            n = len(window)
-            median = window[n // 2]
-            p95 = window[min(n - 1, int(n * 0.95))]
-            worst = window[-1]
-            best = window[0]
-            mean = sum(window) / n
-            # Anything past 1.5x the median missed a panel refresh; anything
-            # under half of it never reached the panel at all (dirty tracking
-            # skipped the swap, so the frame did not wait for vsync).
-            stalls = sum(1 for f in window if f > median * 1.5)
-            skips = sum(1 for f in window if f < median * 0.5)
-
             self.logger.info(
-                "Scroll frame stats - %.1f fps over %d frames | "
-                "median %.2fms p95 %.2fms max %.2fms min %.2fms | "
-                "stalls %d (%.1f%%) skips %d (%.1f%%)",
-                (1.0 / mean) if mean > 0 else 0.0, n,
-                median * 1000, p95 * 1000, worst * 1000, best * 1000,
-                stalls, 100.0 * stalls / n, skips, 100.0 * skips / n,
+                "Scroll frame stats - %s",
+                format_frame_stats(self._window or [frame_time]),
             )
             self.last_fps_log_time = current_time
             self.frame_count = 0

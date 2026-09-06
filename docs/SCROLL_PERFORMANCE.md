@@ -83,21 +83,29 @@ second refresh, instead of half a pixel every refresh (which has no good
 rendering, only a choice between blur and judder).
 
 `scroll_config.configure()` snaps the requested speed to the nearest entry on
-the ladder and applies the hold, provided it is given the display manager:
+the ladder and reports the hold that speed needs. It does **not** apply the
+hold: the hold belongs to a scroll, not to a plugin's lifetime, and plugins
+share one display manager -- one set at construction is reset the moment any
+other plugin finishes scrolling. Apply it yourself when the scroll starts:
 
 ```python
-scroll_config.configure(
+settings = scroll_config.configure(
     self.scroll_helper,
     plugin_config=self.config,
     global_config=self.global_config,
-    display_manager=self.display_manager,   # required for the hold to apply
+    display_manager=self.display_manager,   # supplies the panel refresh rate
 )
+
+# ...then, each time this plugin begins scrolling:
+self.display_manager.set_scrolling_state(True, frame_hold=settings.frame_hold)
 ```
 
-Without `display_manager` a sub-refresh speed still resolves, but the hold is
-never applied and the motion falls back to fractional pixels -- so `configure`
-logs a warning rather than failing quietly. Pass `snap_to_crisp=False` to keep
-an exact requested speed and accept the artefacts.
+Passing `display_manager` only lets `configure` read the true refresh rate from
+`display.hardware`, which a plugin config cannot see. Skipping the
+`set_scrolling_state` call is the mistake that matters: the speed still
+resolves, but the panel keeps presenting a new frame every refresh, so a slow
+snapped speed falls back to fractional pixels. Pass `snap_to_crisp=False` to
+keep an exact requested speed and accept the artefacts.
 
 Speeds slower than about 20 px/s are stepped no matter what, because a 1-pixel
 advance at 20 fps is simply a coarse increment. That is the pixel pitch, not a

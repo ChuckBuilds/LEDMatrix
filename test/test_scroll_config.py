@@ -275,6 +275,20 @@ class TestRefreshFromConfig:
     def test_falls_back_to_the_default(self, cfg):
         assert refresh_hz_from_config(cfg) == 100.0
 
+    @pytest.mark.parametrize("cfg", [
+        {"display": "nonsense"},
+        {"display": ["nonsense"]},
+        {"display": 60},
+        {"display": {"hardware": "nonsense"}},
+        {"display": {"hardware": ["nonsense"]}},
+        {"display": {"hardware": 60}},
+    ])
+    def test_malformed_nesting_falls_back_rather_than_raising(self, cfg):
+        # Truthy-but-not-a-mapping at either level used to reach .get() on a
+        # str/list and raise AttributeError out of a function whose whole
+        # contract is "a refresh rate, or the default".
+        assert refresh_hz_from_config(cfg) == 100.0
+
 
 class TestCrispLadder:
     """Whole-pixel speeds available on a given panel."""
@@ -388,3 +402,66 @@ class TestRefreshFromDisplayManager:
         s = configure(FakeHelper(), {"display_options": {"scroll_pixels_per_second": 50.0}},
                       display_manager=bare)
         assert s.frame_hold == 2, "assumed 100Hz"
+
+    def test_reported_settings_describe_the_display_manager_rate(self):
+        """Without snapping, nothing downstream corrects a wrong refresh rate.
+
+        The rate used to be read *after* resolve() had already filled in
+        target_fps, pixels_per_frame and the judder warning from the 100Hz
+        default -- so on a 60Hz panel every one of those described 100Hz, and
+        set_target_fps() paced the helper to 100 FPS.
+        """
+        dm = self.DM(60.0)
+        helper = FakeHelper()
+        s = configure(helper, {"display_options": {"scroll_pixels_per_second": 30.0}},
+                      display_manager=dm, snap_to_crisp=False)
+
+        assert s.target_fps == pytest.approx(60.0)
+        assert s.pixels_per_frame == pytest.approx(0.5), "30px/s over 60 frames"
+        assert helper.target_fps == pytest.approx(60.0)
+
+    def test_judder_warning_is_computed_at_the_real_refresh_rate(self):
+        dm = self.DM(60.0)
+        # 60px/s is exactly 1px per refresh at 60Hz -- crisp, no warning. At
+        # the 100Hz default it is 0.6px per refresh and would be flagged.
+        s = configure(FakeHelper(), {"display_options": {"scroll_pixels_per_second": 60.0}},
+                      display_manager=dm, snap_to_crisp=False)
+        assert s.warning is None, s.warning
+
+    def test_global_config_supplies_the_rate_without_a_display_manager(self):
+        s = configure(
+            FakeHelper(),
+            {"display_options": {"scroll_pixels_per_second": 30.0}},
+            {"display": {"hardware": {"limit_refresh_rate_hz": 60}}},
+            snap_to_crisp=False,
+        )
+        assert s.target_fps == pytest.approx(60.0)
+
+
+class TestFrameHoldIsReportedNotApplied:
+    """configure() reports the hold; the caller applies it when it scrolls.
+
+    The hold belongs to a scroll, not to a plugin's lifetime -- plugins share
+    one display manager, so one set at construction is reset the moment any
+    other plugin stops scrolling.
+    """
+
+    class RecordingDM:
+        refresh_hz = 100.0
+
+        def __init__(self):
+            self.calls = []
+
+        def set_scrolling_state(self, is_scrolling, frame_hold=1):
+            self.calls.append((is_scrolling, frame_hold))
+
+        def set_frame_hold(self, refreshes):
+            self.calls.append(("set_frame_hold", refreshes))
+
+    def test_configure_does_not_touch_the_display_manager(self):
+        dm = self.RecordingDM()
+        settings = configure(
+            FakeHelper(), {"display_options": {"scroll_pixels_per_second": 25.0}},
+            display_manager=dm)
+        assert dm.calls == [], "configure() must not apply the hold itself"
+        assert settings.frame_hold == 4, "but it must report what to apply"

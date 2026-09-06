@@ -5,6 +5,7 @@ Handles persistent disk-based caching with atomic writes and error recovery.
 """
 
 import json
+import math
 import os
 import time
 import tempfile
@@ -62,6 +63,38 @@ def _datetime_default(obj: Any) -> Any:
     raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
 
+def _replace_nonfinite(obj: Any) -> Any:
+    """Non-finite floats -> None, matching what ``orjson.dumps`` writes.
+
+    Only reached once a strict pass has proved there is something to replace,
+    so the ordinary write path never pays for this walk.
+    """
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: _replace_nonfinite(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_replace_nonfinite(v) for v in obj]
+    return obj
+
+
+# NON-FINITE FLOATS
+# -----------------
+# JSON has no NaN or Infinity. The stdlib emits them anyway as an extension;
+# orjson refuses to and writes null. That divergence is not acceptable in a
+# cache whose files outlive the decision of which encoder is installed, so the
+# policy here is one behaviour on both paths:
+#
+#   writing  non-finite floats become null, whichever encoder is in use
+#   reading  files already on disk that carry the stdlib's NaN/Infinity
+#            tokens stay readable, whichever encoder is in use
+#
+# Without the write half, installing orjson silently changed cached values.
+# Without the read half, installing orjson turned every legacy record holding a
+# NaN into a "corrupted cache file" that DiskCache.get logged as an error and
+# deleted. Both halves are covered by test/test_cache_nonfinite_floats.py.
+
+
 if orjson is not None:
     # Encoding the cache record dominated the background fetch worker: on a
     # Pi 4, stdlib json.dumps runs ~12ms per MB and holds the GIL for all of
@@ -82,10 +115,23 @@ if orjson is not None:
         return orjson.dumps(data, default=_datetime_default, option=_DUMPS_OPTS)
 
     def _loads(raw: bytes) -> Any:
-        return orjson.loads(raw)
+        try:
+            return orjson.loads(raw)
+        except orjson.JSONDecodeError:
+            # Legacy record written by the stdlib path, carrying NaN or
+            # Infinity. Genuinely malformed files raise again from here, as
+            # json.JSONDecodeError, which is what DiskCache.get expects.
+            return json.loads(raw)
 else:
     def _dumps(data: Any) -> bytes:
-        return json.dumps(data, cls=DateTimeEncoder).encode("utf-8")
+        try:
+            return json.dumps(data, cls=DateTimeEncoder,
+                              allow_nan=False).encode("utf-8")
+        except ValueError:
+            # allow_nan=False is what detects the non-finite values; the walk
+            # runs only now that we know there is one to replace.
+            return json.dumps(_replace_nonfinite(data), cls=DateTimeEncoder,
+                              allow_nan=False).encode("utf-8")
 
     def _loads(raw: bytes) -> Any:
         return json.loads(raw)

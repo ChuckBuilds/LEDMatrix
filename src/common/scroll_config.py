@@ -331,11 +331,13 @@ def configure(
     stepping is not used. ``hasattr`` guards keep this usable against older
     ScrollHelper builds that a plugin may be running on.
 
-    :param display_manager: when given, the frame hold for the chosen speed is
-        applied to it. Without this a sub-refresh speed still resolves, but the
-        panel keeps presenting a new frame every refresh, so the motion falls
-        back to fractional pixels and judders -- the hold is what makes slow
-        speeds crisp.
+    :param display_manager: consulted for the panel's refresh rate only (it can
+        see display.hardware; a plugin cannot). The frame hold is NOT applied
+        here -- see the note in the body. The caller must pass
+        ``settings.frame_hold`` to ``display_manager.set_scrolling_state(True,
+        ...)`` when it starts scrolling, or a sub-refresh speed still presents
+        a new frame every refresh and the motion falls back to fractional
+        pixels.
     :param snap_to_crisp: move the requested speed to the nearest speed the
         panel can show in whole pixels. On by default because a speed that does
         not divide evenly has no good rendering, only a choice of artefacts.
@@ -343,20 +345,28 @@ def configure(
     :returns: the settings applied, so the caller can log or assert on them.
     """
     log = plugin_logger or logger
+
+    # Refresh rate, most authoritative first: what the caller passed, then the
+    # display manager (which can see display.hardware; a plugin cannot), then
+    # the global config, then the default.
+    #
+    # This has to be settled BEFORE resolve(), not after. resolve() uses the
+    # refresh to fill in target_fps, pixels_per_frame and the judder warning,
+    # so deriving it afterwards described a 100Hz panel to everyone running at
+    # 60 -- and with snap_to_crisp=False nothing downstream corrected it, so
+    # set_target_fps() paced the helper to 100 FPS on a 60Hz panel.
+    hz = _coerce(refresh_hz)
+    if hz is None and display_manager is not None:
+        hz = _coerce(getattr(display_manager, "refresh_hz", None))
+    if hz is None:
+        hz = refresh_hz_from_config(global_config)
+
     settings = resolve(
         plugin_config,
         global_config,
         default_pixels_per_second=default_pixels_per_second,
-        refresh_hz=refresh_hz,
+        refresh_hz=hz,
     )
-
-    # Refresh rate, most authoritative first: what the caller passed, then the
-    # display manager (which can see display.hardware; a plugin cannot), then
-    # whatever resolve() inferred, then the default.
-    hz = _coerce(refresh_hz)
-    if hz is None and display_manager is not None:
-        hz = _coerce(getattr(display_manager, "refresh_hz", None))
-    hz = hz or settings.target_fps or DEFAULT_REFRESH_HZ
     applied = settings.pixels_per_second
     choice = None
 
@@ -417,5 +427,14 @@ def refresh_hz_from_config(global_config: Optional[Dict[str, Any]]) -> float:
     """The panel's refresh cap from the global config, or the default."""
     if not isinstance(global_config, dict):
         return DEFAULT_REFRESH_HZ
-    hardware = (global_config.get("display") or {}).get("hardware") or {}
+    # Each level is checked for being a mapping rather than merely truthy: a
+    # malformed config where display or display.hardware is a string or a list
+    # raised AttributeError out of what is meant to be a total function with a
+    # default, taking down every caller that asked for the refresh rate.
+    display = global_config.get("display")
+    if not isinstance(display, dict):
+        return DEFAULT_REFRESH_HZ
+    hardware = display.get("hardware")
+    if not isinstance(hardware, dict):
+        return DEFAULT_REFRESH_HZ
     return _coerce(hardware.get("limit_refresh_rate_hz")) or DEFAULT_REFRESH_HZ

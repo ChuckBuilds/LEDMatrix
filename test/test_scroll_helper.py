@@ -11,7 +11,11 @@ import time
 from unittest.mock import patch
 from PIL import Image
 
-from src.common.scroll_helper import ScrollHelper
+from src.common.scroll_helper import (
+    ScrollHelper,
+    format_frame_stats,
+    frame_stats,
+)
 
 
 DISPLAY_W = 64
@@ -315,3 +319,77 @@ class TestGetScrollInfo:
         helper.scroll_position = 42.0
         info = helper.get_scroll_info()
         assert info["scroll_position"] == 42.0
+
+
+class TestFrameStatsPercentiles:
+    """The stats line is the instrument this whole scroll change is measured
+    with, so its median and p95 have to be the real ones.
+
+    Both are also thresholds: stalls are counted at 1.5x the median and skips
+    at 0.5x, so an off-by-one in the median biases the counts as well as the
+    printed numbers.
+    """
+
+    # 100 samples of 1..100ms. True median 50.5ms (the mean of the two middle
+    # samples, not the upper one at 51ms); nearest-rank p95 is the 95th
+    # sample at 95ms, not the 96th at 96ms.
+    HUNDRED = [i / 1000.0 for i in range(1, 101)]
+
+    def test_even_window_median_averages_both_middle_samples(self):
+        assert frame_stats(self.HUNDRED)["median"] == pytest.approx(0.0505)
+
+    def test_p95_uses_nearest_rank(self):
+        assert frame_stats(self.HUNDRED)["p95"] == pytest.approx(0.095)
+
+    def test_odd_window_median_is_the_middle_sample(self):
+        times = [i / 1000.0 for i in range(1, 102)]  # 101 samples
+        assert frame_stats(times)["median"] == pytest.approx(0.051)
+
+    def test_single_sample_window_does_not_index_out_of_range(self):
+        stats = frame_stats([0.010])
+        assert stats["median"] == pytest.approx(0.010)
+        assert stats["p95"] == pytest.approx(0.010)
+        assert stats["min"] == stats["max"] == pytest.approx(0.010)
+
+    def test_two_sample_window(self):
+        stats = frame_stats([0.010, 0.020])
+        assert stats["median"] == pytest.approx(0.015)
+        assert stats["p95"] == pytest.approx(0.020)
+
+    def test_input_order_does_not_matter(self):
+        assert frame_stats(list(reversed(self.HUNDRED))) == frame_stats(self.HUNDRED)
+
+    def test_caller_window_is_not_mutated(self):
+        times = [0.030, 0.010, 0.020]
+        frame_stats(times)
+        assert times == [0.030, 0.010, 0.020]
+
+    def test_stall_threshold_follows_the_median(self):
+        # Ten 10ms frames and two 30ms stalls: median 10ms, so >15ms is a
+        # stall -- exactly the two.
+        stats = frame_stats([0.010] * 10 + [0.030] * 2)
+        assert stats["stalls"] == 2
+        assert stats["skips"] == 0
+
+    def test_skips_are_frames_that_never_reached_the_panel(self):
+        stats = frame_stats([0.010] * 10 + [0.002] * 3)
+        assert stats["skips"] == 3
+        assert stats["stalls"] == 0
+
+    def test_fps_is_the_reciprocal_of_the_mean(self):
+        assert frame_stats([0.010] * 50)["fps"] == pytest.approx(100.0)
+
+    def test_formatted_line_reports_the_corrected_values(self):
+        line = format_frame_stats(self.HUNDRED)
+        assert "median 50.50ms" in line, line
+        assert "p95 95.00ms" in line, line
+        assert "over 100 frames" in line, line
+
+    def test_log_frame_rate_emits_the_line_and_clears_the_window(self, helper):
+        helper._window = [0.010] * 20
+        helper.last_fps_log_time = 0.0  # force the 5s boundary
+        with patch.object(helper.logger, "info") as info:
+            helper.log_frame_rate()
+        assert info.called
+        assert "Scroll frame stats" in info.call_args[0][0]
+        assert helper._window == []

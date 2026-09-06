@@ -61,7 +61,11 @@ packaging>=23.0,<27.0
 #                     matters because that work holds the GIL and stalls
 #                     the render thread mid-scroll. Falls back to the
 #                     stdlib json when missing — see docs/SCROLL_PERFORMANCE.md.
-#   pip install 'orjson>=3.9,<4.0'
+#                     The 3.11.6 floor is CVE-2025-67221: orjson.dumps did not
+#                     limit recursion on deeply nested documents, and the disk
+#                     cache encodes payloads parsed straight from third-party
+#                     APIs. 3.11.6 covers the Python range above.
+#   pip install 'orjson>=3.11.6,<4.0'
 #
 # Flask-Limiter     — request rate limiting in web_interface/app.py
 #                     (accidental-abuse protection, not security). The

@@ -57,22 +57,64 @@ PATCH_BLIT="${RGB_PATCH_BLIT:-0}"
 
 die() { echo "FATAL: $*" >&2; exit 1; }
 
+# This script runs under `set -uo pipefail` -- no -e -- so an unchecked
+# systemctl failure is silently ignored. That matters most for `stop`: leaving
+# the old service running means cp overwrites a module the running process has
+# mapped, the following `start` succeeds as a no-op, and the health check sees
+# an active unit and reports SUCCESS for a binding that was never loaded.
+# A machine with no ledmatrix.service at all is a normal build host, so that
+# case is skipped rather than treated as a failure.
+service_present() { systemctl cat ledmatrix.service >/dev/null 2>&1; }
+
+service_do() {
+    local verb="$1"
+    if ! service_present; then
+        echo "   (no ledmatrix.service installed - skipping $verb)"
+        return 0
+    fi
+    systemctl "$verb" ledmatrix || die "systemctl $verb ledmatrix failed"
+}
+
 py_site() {
     python3 -c 'import rgbmatrix, os; print(os.path.dirname(rgbmatrix.__file__))' 2>/dev/null
 }
 
+# The extension filename the interpreter that builds -- and then loads -- this
+# module actually uses, e.g. core.cpython-313-aarch64-linux-gnu.so. The build
+# venv is made with --system-site-packages from python3, so the two agree;
+# falling back keeps --install working when the venv has been cleaned up.
+abi_name() {
+    local py="$VENV/bin/python"
+    [ -x "$py" ] || py=python3
+    "$py" -c \
+        'import sysconfig; print("core" + sysconfig.get_config_var("EXT_SUFFIX"))' \
+        2>/dev/null
+}
+
+# Exactly the current interpreter's artifact, never merely the first one that
+# sorts. Staging copies $SRC_TREE wholesale, so a core.cpython-*.so left in the
+# source tree by an earlier build comes along for the ride; build_ext --inplace
+# only ever overwrites the current ABI's name, and a glob piped to `head -1`
+# sorts cpython-311 ahead of cpython-313. That installed a stale, unpatched
+# module as core.so while the GIL check below -- which reads the freshly
+# generated core.cpp, not the .so -- still reported success.
 abi_so() {
-    ls "$BUILD_DIR"/bindings/python/rgbmatrix/core.cpython-*.so 2>/dev/null | head -1
+    local name path
+    name="$(abi_name)" || return 1
+    [ -n "$name" ] || return 1
+    path="$BUILD_DIR/bindings/python/rgbmatrix/$name"
+    [ -f "$path" ] || return 1
+    printf '%s\n' "$path"
 }
 
 do_rollback() {
     local dst; dst="$(py_site)"
     [ -n "$dst" ] || die "could not locate the installed rgbmatrix package"
     [ -f "$BACKUP" ] || die "no backup at $BACKUP"
-    systemctl stop ledmatrix 2>/dev/null
+    service_do stop
     cp -a "$BACKUP" "$dst/core.so" || die "restore failed"
     find "$dst" -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null
-    systemctl start ledmatrix 2>/dev/null
+    service_do start
     echo "rolled back to the original core.so"
     exit 0
 }
@@ -89,10 +131,10 @@ do_install() {
         echo "backup already present at $BACKUP (keeping the true original)"
     fi
 
-    systemctl stop ledmatrix 2>/dev/null
+    service_do stop
     cp "$so" "$dst/core.so" || die "install failed"
     find "$dst" -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null
-    systemctl start ledmatrix 2>/dev/null
+    service_do start
 
     echo "waiting 25s for the display to come back..."
     sleep 25
@@ -106,8 +148,12 @@ do_install() {
         echo "SUCCESS - running on the rebuilt binding"
     else
         echo "UNHEALTHY - rolling back"
-        cp -a "$BACKUP" "$dst/core.so"
-        systemctl restart ledmatrix
+        cp -a "$BACKUP" "$dst/core.so" \
+            || echo "ROLLBACK FAILED: could not restore $BACKUP -> $dst/core.so" >&2
+        if service_present && ! systemctl restart ledmatrix; then
+            echo "ROLLBACK FAILED: ledmatrix did not restart - the display is" \
+                 "down; restore manually with 'sudo bash $0 --rollback'" >&2
+        fi
         journalctl -u ledmatrix --since "90 sec ago" --no-pager | tail -25
         exit 1
     fi
@@ -128,6 +174,12 @@ command -v g++ >/dev/null || die "g++ not installed (apt install build-essential
 echo "==> staging a scratch copy at $BUILD_DIR"
 rm -rf "$BUILD_DIR"
 cp -r "$SRC_TREE" "$BUILD_DIR" || die "copy failed"
+
+# Drop any extension artifacts that came across from the source tree. Nothing
+# downstream should be able to pick one up, and build_ext --inplace can decide
+# a copied .so is already up to date and skip the compile entirely.
+find "$BUILD_DIR/bindings/python/rgbmatrix" -maxdepth 1 \
+     -name 'core*.so' -delete 2>/dev/null
 
 echo "==> patching the bindings to release the GIL"
 python3 - "$BUILD_DIR" "$PATCH_BLIT" <<'PYEOF' || die "patch failed"
@@ -260,7 +312,8 @@ echo "==> compiling the extension"
 ( cd "$BUILD_DIR/bindings/python" && "$VENV/bin/python" setup.py build_ext --inplace ) \
     >/dev/null 2>&1 || die "extension build failed"
 
-SO="$(abi_so)"; [ -n "$SO" ] || die "no .so produced"
+SO="$(abi_so)" || true
+[ -n "$SO" ] || die "no .so produced - expected $(abi_name) in $BUILD_DIR/bindings/python/rgbmatrix"
 
 # Verify the GIL really is released before anyone installs this.
 EXPECTED=1; [ "$PATCH_BLIT" = "1" ] && EXPECTED=2
