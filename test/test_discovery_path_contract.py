@@ -116,6 +116,77 @@ class TestFallbackDivergence:
             plugin_dir / "config_schema.json"
 
 
+class TestRegistryIdVersusDirectoryName:
+    """install_plugin() renames a plugin's directory to the MANIFEST id when it
+    differs from the REGISTRY id, so `stocks` in the registry lands in
+    `ledmatrix-stocks/`. Every path lookup is by directory name, so
+    update_plugin("stocks") used to find nothing and report the plugin as not
+    installed -- silently. Four installed plugins hit this in practice
+    (leaderboard, music, stocks, weather): the user clicks update, nothing
+    happens, no error, and they stay on a stale version indefinitely.
+    """
+
+    def test_resolves_a_plugin_whose_directory_name_differs_from_its_id(self, tmp_path):
+        configured = tmp_path / "plugin-repos"
+        configured.mkdir()
+        plugin_dir = _write_plugin(configured, "stocks", dir_name="ledmatrix-stocks")
+
+        store = PluginStoreManager(plugins_dir=str(configured))
+        assert store._find_plugin_path("stocks") == plugin_dir
+
+    def test_direct_directory_hit_still_wins(self, tmp_path):
+        """The manifest scan is a last resort. A directory named for the id
+        must still be preferred, so the two documented lookups above keep
+        their exact meaning."""
+        configured = tmp_path / "plugin-repos"
+        configured.mkdir()
+        direct = _write_plugin(configured, "demo", dir_name="demo")
+        # A second directory whose manifest claims the same id.
+        _write_plugin(configured, "demo", dir_name="zz-other-demo")
+
+        store = PluginStoreManager(plugins_dir=str(configured))
+        assert store._find_plugin_path("demo") == direct
+
+    def test_unknown_id_is_still_not_found(self, tmp_path):
+        configured = tmp_path / "plugin-repos"
+        configured.mkdir()
+        _write_plugin(configured, "stocks", dir_name="ledmatrix-stocks")
+
+        store = PluginStoreManager(plugins_dir=str(configured))
+        assert store._find_plugin_path("no-such-plugin") is None
+
+    def test_half_finished_installs_are_not_resurrected(self, tmp_path):
+        """A directory renamed aside during install/rollback carries a valid
+        manifest. Matching one would report a ghost plugin as installed."""
+        configured = tmp_path / "plugin-repos"
+        configured.mkdir()
+        _write_plugin(configured, "ghost",
+                      dir_name="ghost.standalone-backup-1234")
+
+        store = PluginStoreManager(plugins_dir=str(configured))
+        assert store._find_plugin_path("ghost") is None
+
+    def test_unreadable_manifest_does_not_break_the_scan(self, tmp_path):
+        configured = tmp_path / "plugin-repos"
+        configured.mkdir()
+        broken = configured / "broken-plugin"
+        broken.mkdir()
+        (broken / "manifest.json").write_text("{ not json")
+        wanted = _write_plugin(configured, "stocks", dir_name="ledmatrix-stocks")
+
+        store = PluginStoreManager(plugins_dir=str(configured))
+        assert store._find_plugin_path("stocks") == wanted
+
+    def test_sibling_plugins_dir_is_searched_too(self, tmp_path):
+        configured = tmp_path / "plugin-repos"
+        configured.mkdir()
+        legacy = _write_plugin(tmp_path / "plugins", "weather",
+                               dir_name="ledmatrix-weather")
+
+        store = PluginStoreManager(plugins_dir=str(configured))
+        assert store._find_plugin_path("weather") == legacy
+
+
 class TestStandaloneBackupContract:
     def test_discovery_skips_backup_dirs(self, tmp_path):
         plugins_dir = tmp_path / "plugins"
