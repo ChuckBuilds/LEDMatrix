@@ -115,7 +115,7 @@ def run_script_tests(test_files: list, verbose: bool = False) -> int:
             # discovered by globbing the repo; argument list, no shell, so
             # nothing is word-split or expanded. Same suppression pair the
             # rest of the repo uses for this shape (see permission_utils.py).
-            proc = subprocess.run(  # nosec B603 - no shell invoked (list-form argv)  # nosemgrep
+            proc = subprocess.run(  # noqa: S603  # nosec B603 - no shell invoked (list-form argv)  # nosemgrep
                 [sys.executable, str(path)],  # nosemgrep
                 cwd=str(Path(path).parent),
                 capture_output=True, text=True, env=env,
