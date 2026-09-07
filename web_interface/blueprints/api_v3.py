@@ -8892,34 +8892,38 @@ def _validate_timing_value(value: Any, field_name: str, min_val: int = 1, max_va
         return None, f"{field_name} must be at most {max_val}"
     return int_value, None
 
-def _validate_starlark_app_path(app_id: str) -> Tuple[bool, Optional[str]]:
-    """
-    Validate app_id for path traversal attacks before filesystem access.
+def _validate_starlark_app_path(app_id: str) -> Tuple[Optional[Path], Optional[str]]:
+    """The app's directory, or an error if app_id could escape the base dir.
 
-    Args:
-        app_id: App identifier from user input
+    Returns the *resolved* path rather than a boolean, and every caller uses
+    what it returns instead of re-joining ``_STARLARK_APPS_DIR / app_id``
+    afterwards. The old shape validated in one place and rebuilt the path in
+    another, which is two things that have to stay in step -- and is why
+    CodeQL reported twenty-four path-injection alerts across these handlers
+    even though the guard was effective: a boolean is not a sanitiser it can
+    follow, and the value reaching the filesystem was the raw one.
 
-    Returns:
-        Tuple of (is_valid, error_message)
+    The name is unchanged so the call sites read the same.
     """
-    # Check for path traversal characters
+    if not isinstance(app_id, str) or not app_id:
+        return None, "Invalid app_id"
+
+    # Reject the traversal characters outright before touching the filesystem.
     if '..' in app_id or '/' in app_id or '\\' in app_id:
-        return False, f"Invalid app_id: contains path traversal characters"
+        return None, "Invalid app_id: contains path traversal characters"
 
-    # Construct and resolve the path
     try:
-        app_path = (_STARLARK_APPS_DIR / app_id).resolve()
         base_path = _STARLARK_APPS_DIR.resolve()
-
-        # Verify the resolved path is within the base directory
+        app_path = (base_path / app_id).resolve()
         try:
             app_path.relative_to(base_path)
-            return True, None
         except ValueError:
-            return False, f"Invalid app_id: path traversal attempt"
-    except Exception as e:
-        logger.warning(f"Path validation error for app_id '{app_id}': {e}")
-        return False, f"Invalid app_id"
+            return None, "Invalid app_id: path traversal attempt"
+        return app_path, None
+    except OSError as e:
+        logger.warning("Path validation error for app_id %r: %s", app_id, e)
+        return None, "Invalid app_id"
+
 
 def _standalone_render_starlark_app(app_id: str) -> Tuple[bool, int, Optional[str]]:
     """Render a Starlark app via pixlet directly (no plugin required).
@@ -8940,7 +8944,11 @@ def _standalone_render_starlark_app(app_id: str) -> Tuple[bool, int, Optional[st
     if not app_data:
         return False, 404, f"App not found: {app_id}"
 
-    app_dir = _STARLARK_APPS_DIR / app_id
+    # Validated here as well as at the handler: this is reachable on its own,
+    # and a path built from app_id should never be assembled without it.
+    app_dir, path_error = _validate_starlark_app_path(app_id)
+    if path_error:
+        return False, 400, path_error
     star_file = app_dir / app_data.get('star_file', f'{app_id}.star')
     if not star_file.exists():
         return False, 404, f"Star file not found: {star_file}"
@@ -8972,9 +8980,11 @@ def _standalone_render_starlark_app(app_id: str) -> Tuple[bool, int, Optional[st
             with open(config_file) as f:
                 app_config = json.load(f)
         except json.JSONDecodeError as e:
-            return False, 400, f"Invalid config.json for {app_id} ({config_file}): {e}"
+            logger.warning("Invalid config.json for %r at %s: %s", app_id, config_file, e)
+            return False, 400, f"Invalid config.json for {app_id}"
         except OSError as e:
-            return False, 400, f"Cannot read config.json for {app_id} ({config_file}): {e}"
+            logger.warning("Cannot read config.json for %r at %s: %s", app_id, config_file, e)
+            return False, 400, f"Cannot read config.json for {app_id}"
         if not isinstance(app_config, dict):
             return False, 400, (
                 f"config.json for {app_id} must be a JSON object, "
@@ -9003,7 +9013,8 @@ def _standalone_render_starlark_app(app_id: str) -> Tuple[bool, int, Optional[st
     except subprocess.TimeoutExpired:
         return False, 504, "Render timed out after 30s"
     except Exception as e:
-        return False, 500, f"Render error: {e}"
+        logger.exception("Starlark render failed for %r", app_id)
+        return False, 500, "Render error"
 
 def _write_starlark_manifest(manifest: Dict[str, Any]) -> bool:
     """Write the starlark-apps manifest.json to disk with atomic write."""
@@ -9035,7 +9046,10 @@ def _install_star_file(app_id: str, star_file_path: str, metadata: Dict[str, Any
     """Install a .star file and update the manifest (standalone, no plugin needed)."""
     import shutil
     import json
-    app_dir = _STARLARK_APPS_DIR / app_id
+    app_dir, path_error = _validate_starlark_app_path(app_id)
+    if path_error:
+        logger.warning("Refusing to install %r: %s", app_id, path_error)
+        return False
     app_dir.mkdir(parents=True, exist_ok=True)
     dest = app_dir / f"{app_id}.star"
     shutil.copy2(star_file_path, str(dest))
@@ -9139,8 +9153,8 @@ def get_starlark_app(app_id):
     """Get details for a specific Starlark app."""
     try:
         # Validate app_id before any filesystem access
-        is_valid, error_msg = _validate_starlark_app_path(app_id)
-        if not is_valid:
+        app_dir, error_msg = _validate_starlark_app_path(app_id)
+        if error_msg:
             return jsonify({'status': 'error', 'message': error_msg}), 400
 
         starlark_plugin = _get_starlark_plugin()
@@ -9172,7 +9186,7 @@ def get_starlark_app(app_id):
 
         # Load schema from schema.json if it exists (path already validated above)
         schema = None
-        schema_file = _STARLARK_APPS_DIR / app_id / 'schema.json'
+        schema_file = app_dir / 'schema.json'
         if schema_file.exists():
             try:
                 with open(schema_file, 'r') as f:
@@ -9279,18 +9293,17 @@ def uninstall_starlark_app(app_id):
     """Uninstall a Starlark app."""
     try:
         # Validate app_id before any filesystem access
-        is_valid, error_msg = _validate_starlark_app_path(app_id)
-        if not is_valid:
+        app_dir, error_msg = _validate_starlark_app_path(app_id)
+        if error_msg:
             return jsonify({'status': 'error', 'message': error_msg}), 400
 
         starlark_plugin = _get_starlark_plugin()
         if starlark_plugin:
             success = starlark_plugin.uninstall_app(app_id)
         else:
-            # Standalone: remove app dir and manifest entry (path already validated)
+            # Standalone: remove app dir and manifest entry. app_dir is the
+            # path _validate_starlark_app_path checked, not a fresh join.
             import shutil
-            app_dir = _STARLARK_APPS_DIR / app_id
-
             if app_dir.exists():
                 shutil.rmtree(app_dir)
             manifest = _read_starlark_manifest()
@@ -9311,8 +9324,8 @@ def get_starlark_app_config(app_id):
     """Get configuration for a Starlark app."""
     try:
         # Validate app_id before any filesystem access
-        is_valid, error_msg = _validate_starlark_app_path(app_id)
-        if not is_valid:
+        app_dir, error_msg = _validate_starlark_app_path(app_id)
+        if error_msg:
             return jsonify({'status': 'error', 'message': error_msg}), 400
 
         starlark_plugin = _get_starlark_plugin()
@@ -9322,8 +9335,8 @@ def get_starlark_app_config(app_id):
                 return jsonify({'status': 'error', 'message': f'App not found: {app_id}'}), 404
             return jsonify({'status': 'success', 'config': app.config, 'schema': app.schema})
 
-        # Standalone: read from config.json file (path already validated)
-        app_dir = _STARLARK_APPS_DIR / app_id
+        # Standalone: read from config.json. app_dir is the path
+        # _validate_starlark_app_path checked, not a fresh join.
         config_file = app_dir / "config.json"
 
         if not app_dir.exists():
@@ -9358,8 +9371,8 @@ def update_starlark_app_config(app_id):
     """Update configuration for a Starlark app."""
     try:
         # Validate app_id before any filesystem access
-        is_valid, error_msg = _validate_starlark_app_path(app_id)
-        if not is_valid:
+        app_dir, error_msg = _validate_starlark_app_path(app_id)
+        if error_msg:
             return jsonify({'status': 'error', 'message': error_msg}), 400
 
         data = request.get_json(silent=True)
@@ -9436,8 +9449,8 @@ def update_starlark_app_config(app_id):
         if display_duration is not None:
             app_data['display_duration'] = display_duration
 
-        # Load current config from config.json
-        app_dir = _STARLARK_APPS_DIR / app_id
+        # Load current config from config.json. app_dir is the path
+        # _validate_starlark_app_path checked, not a fresh join.
         config_file = app_dir / "config.json"
         current_config = {}
         if config_file.exists():
@@ -9514,8 +9527,8 @@ def toggle_starlark_app(app_id):
 def render_starlark_app(app_id):
     """Force render a Starlark app."""
     try:
-        is_valid, err = _validate_starlark_app_path(app_id)
-        if not is_valid:
+        app_dir, err = _validate_starlark_app_path(app_id)
+        if err:
             return jsonify({'status': 'error', 'message': err}), 400
 
         starlark_plugin = _get_starlark_plugin()
