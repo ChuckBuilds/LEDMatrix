@@ -15,6 +15,7 @@ reads, so a future rewrite of this file cannot silently drop them again.
 """
 
 import json
+import os
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -305,4 +306,90 @@ class TestInstalledAppsAppearWithTheOtherPlugins:
         resp = client.post('/api/v3/plugins/toggle',
                            json={'plugin_id': 'starlark:../../etc/passwd', 'enabled': True})
         assert resp.status_code == 400
-        assert 'invalid characters' in resp.get_json()['message']
+        assert 'traversal' in resp.get_json()['message']
+
+    def test_an_app_id_the_listing_published_can_be_toggled(self, client):
+        """The id here is exactly what _starlark_virtual_plugins publishes.
+
+        It used to be re-slugified on the way back in -- lowercased, with every
+        character outside [a-z0-9_] replaced -- so an app stored as 'My-App'
+        was listed as 'starlark:My-App' and looked up as 'my_app'. Toggling an
+        app the page had just drawn answered 404.
+        """
+        manifest = {'apps': {'My-App': {'name': 'My App', 'enabled': False}}}
+        with patch('web_interface.blueprints.api_v3._get_starlark_plugin', return_value=None), \
+             patch('web_interface.blueprints.api_v3._read_starlark_manifest',
+                   return_value=manifest), \
+             patch('web_interface.blueprints.api_v3._write_starlark_manifest',
+                   return_value=True) as write:
+            resp = client.post('/api/v3/plugins/toggle',
+                               json={'plugin_id': 'starlark:My-App', 'enabled': True})
+        assert resp.status_code == 200, resp.get_json()
+        assert write.called, "the toggle never reached the manifest"
+        assert manifest['apps']['My-App']['enabled'] is True
+
+    def test_a_loaded_app_missing_from_the_manifest_does_not_500(self, client):
+        """_update_manifest_safe does not catch KeyError, so indexing an entry
+        that is not on disk yet escaped as a 500 instead of writing it."""
+        app = MagicMock()
+        app.manifest = {'enabled': False}
+        plugin = MagicMock()
+        plugin.apps = {'demo': app}
+        written = {}
+
+        def run_updater(fn):
+            fn(written)
+            return True
+
+        plugin._update_manifest_safe.side_effect = run_updater
+
+        with patch('web_interface.blueprints.api_v3._get_starlark_plugin', return_value=plugin):
+            resp = client.post('/api/v3/plugins/toggle',
+                               json={'plugin_id': 'starlark:demo', 'enabled': True})
+        assert resp.status_code == 200, resp.get_json()
+        assert written['apps']['demo']['enabled'] is True
+
+
+class TestTheManifestStaysRelocatable:
+    """`star_file` is joined to the app's own directory by its readers.
+
+    _standalone_render_starlark_app does `app_dir / app_data.get('star_file',
+    f'{app_id}.star')`, so the key's default is a bare filename. Storing an
+    absolute path gave it a second meaning, and Path.__truediv__ discards the
+    left side when the right is absolute -- which pinned the manifest to the
+    PROJECT_ROOT that installed it.
+    """
+
+    @pytest.fixture
+    def starlark_dir(self, tmp_path, monkeypatch):
+        from web_interface.blueprints import api_v3 as module
+        apps_dir = tmp_path / "starlark-apps"
+        apps_dir.mkdir()
+        monkeypatch.setattr(module, '_STARLARK_APPS_DIR', apps_dir)
+        monkeypatch.setattr(module, '_STARLARK_MANIFEST_FILE', apps_dir / 'manifest.json')
+        return apps_dir
+
+    def _install(self, tmp_path):
+        from web_interface.blueprints import api_v3 as module
+        source = tmp_path / "source.star"
+        source.write_text("# app")
+        with patch.object(module, '_get_pixlet_renderer_class',
+                          side_effect=ImportError("no pixlet here")):
+            assert module._install_star_file('demo', str(source), {'name': 'Demo'})
+        return json.loads((module._STARLARK_MANIFEST_FILE).read_text())['apps']['demo']
+
+    def test_the_star_file_is_recorded_by_name(self, starlark_dir, tmp_path):
+        assert self._install(tmp_path)['star_file'] == 'demo.star'
+
+    def test_the_recorded_path_is_not_absolute(self, starlark_dir, tmp_path):
+        """An absolute value survives a move only by accident."""
+        assert not os.path.isabs(self._install(tmp_path)['star_file'])
+
+    def test_the_value_resolves_against_the_app_directory(self, starlark_dir, tmp_path):
+        """Which is the one thing every reader of this key does with it."""
+        entry = self._install(tmp_path)
+        assert (starlark_dir / 'demo' / entry['star_file']).is_file()
+
+    def test_it_matches_the_default_a_reader_falls_back_to(self, starlark_dir, tmp_path):
+        """Stored and defaulted values must mean the same thing."""
+        assert self._install(tmp_path)['star_file'] == 'demo.star'
