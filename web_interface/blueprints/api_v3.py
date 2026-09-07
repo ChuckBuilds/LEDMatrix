@@ -9144,7 +9144,13 @@ def _install_star_file(app_id: str, star_file_path: str, metadata: Dict[str, Any
         'render_interval': metadata.get('render_interval', 300),
         'display_duration': metadata.get('display_duration', 15),
         'config': metadata.get('config', {}),
-        'star_file': str(dest),
+        # The filename, not the full path. Readers join this to the app's own
+        # directory and fall back to a bare '<app_id>.star', so an absolute
+        # value gave the key two meanings -- and Path.__truediv__ discards the
+        # left side when the right is absolute, which pinned the manifest to
+        # whatever PROJECT_ROOT installed it. Moving or redeploying the install
+        # then left the app unable to find its own file.
+        'star_file': dest.name,
     }
     return _write_starlark_manifest(manifest)
 
@@ -9796,14 +9802,28 @@ def _starlark_virtual_plugins() -> list:
 
 def _toggle_starlark_app(app_id: str, enabled: bool):
     """Enable or disable one Starlark app, loaded or not."""
-    safe_id, err = _validate_and_sanitize_app_id(app_id)
+    # Check for traversal, but toggle the key that was listed.
+    # _starlark_virtual_plugins publishes the raw manifest key, while
+    # _validate_and_sanitize_app_id lowercases it and rewrites every character
+    # outside [a-z0-9_]: an app stored as 'My-App' was offered to the UI as
+    # 'starlark:My-App' and looked up here as 'my_app', so toggling an app the
+    # page had just drawn answered 404. Keys written by _install_star_file are
+    # already sanitised; ones written by the plugin, or edited by hand, are
+    # not. _validate_starlark_app_path rejects traversal without rewriting.
+    _, err = _validate_starlark_app_path(app_id)
     if err:
-        return jsonify({'status': 'error', 'message': f'Invalid app_id: {err}'}), 400
+        # err already names app_id; do not prefix it a second time.
+        return jsonify({'status': 'error', 'message': err}), 400
+    safe_id = app_id
 
     plugin = _get_starlark_plugin()
     if plugin is not None and safe_id in getattr(plugin, 'apps', {}):
         def _update(manifest):
-            manifest['apps'][safe_id]['enabled'] = enabled
+            # setdefault rather than indexing: the app is loaded, but its
+            # on-disk entry need not exist, and _update_manifest_safe does not
+            # catch KeyError -- it would escape as a 500 rather than the error
+            # this returns.
+            manifest.setdefault('apps', {}).setdefault(safe_id, {})['enabled'] = enabled
 
         if plugin._update_manifest_safe(_update) is False:
             return jsonify({'status': 'error',
