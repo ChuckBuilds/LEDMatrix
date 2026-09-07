@@ -1740,12 +1740,15 @@ journald_effective() {
        systemd-analyze cat-config systemd/journald.conf >/dev/null 2>&1; then
         systemd-analyze cat-config systemd/journald.conf 2>/dev/null
     else
-        cat /etc/systemd/journald.conf /etc/systemd/journald.conf.d/*.conf 2>/dev/null
+        cat /etc/systemd/journald.conf /etc/systemd/journald.conf.d/*.conf 2>/dev/null || true
     fi
 }
 journald_conf="$(journald_effective)"
-journald_storage="$(printf '%s\n' "$journald_conf" | grep -E '^[[:space:]]*Storage=' | tail -n1 | cut -d= -f2 | tr -d '[:space:]')"
-journald_cap="$(printf '%s\n' "$journald_conf" | grep -E '^[[:space:]]*SystemMaxUse=' | tail -n1 | cut -d= -f2 | tr -d '[:space:]')"
+# Both settings are optional, and stock images ship them commented out. grep
+# exits 1 on no match, which pipefail turns fatal under set -e — an absent
+# setting must read as empty, not abort the install.
+journald_storage="$(printf '%s\n' "$journald_conf" | grep -E '^[[:space:]]*Storage=' | tail -n1 | cut -d= -f2 | tr -d '[:space:]' || true)"
+journald_cap="$(printf '%s\n' "$journald_conf" | grep -E '^[[:space:]]*SystemMaxUse=' | tail -n1 | cut -d= -f2 | tr -d '[:space:]' || true)"
 
 if [ "$journald_storage" = "persistent" ] && [ -n "$journald_cap" ]; then
     echo "Persistent journald storage already configured (SystemMaxUse=$journald_cap)"
@@ -1771,7 +1774,7 @@ else
     # after ledmatrix-persistent.conf (zz-local.conf and friends) still wins.
     # Writing the file is not evidence it took effect -- re-read and say so
     # plainly rather than reporting success we cannot confirm.
-    journald_now="$(journald_effective | grep -E '^[[:space:]]*Storage=' | tail -n1 | cut -d= -f2 | tr -d '[:space:]')"
+    journald_now="$(journald_effective | grep -E '^[[:space:]]*Storage=' | tail -n1 | cut -d= -f2 | tr -d '[:space:]' || true)"
     if [ "$journald_now" = "persistent" ]; then
         echo "  Persistent journald storage active"
     else

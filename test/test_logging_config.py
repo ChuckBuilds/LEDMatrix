@@ -89,11 +89,17 @@ class TestContextualFormatter:
         assert "hello" in out
 
     def test_location_toggle(self):
+        # Assert on the whole "module.func:lineno" token, not a bare ":42".
+        # The formatted line starts with an HH:MM:SS timestamp, so a bare
+        # ":{lineno}" also matches the clock whenever the minute or second
+        # happens to equal the line number -- about 3% of runs, which is a
+        # flaky failure with nothing wrong.
         record = make_record()
+        location = f"{record.module}.{record.funcName}:{record.lineno}"
         with_loc = ContextualFormatter(include_location=True).format(record)
         without = ContextualFormatter(include_location=False).format(record)
-        assert f":{record.lineno}" in with_loc
-        assert f":{record.lineno}" not in without
+        assert location in with_loc
+        assert location not in without
 
     def test_record_not_mutated_no_double_prefix(self):
         # Regression: a record is formatted once PER HANDLER. The formatter

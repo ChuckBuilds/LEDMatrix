@@ -229,6 +229,44 @@ class TestSavePluginConfig:
             "REAL-KEY-0123456789", "an unrelated edit destroyed the API key"
         assert env.fresh_load()[PLUGIN_ID]["city"] == "Dallas"
 
+    def test_an_unrelated_edit_does_not_erase_array_item_secrets(self, env):
+        """The scalar api_key case above, but for a list of credentials.
+
+        remove_empty_secrets recursed into dicts only, so a list went into
+        deep_merge untouched -- and lists merge by *replacement*. Saving any
+        unrelated field posted [{"token": ""}, ...] straight over the stored
+        array and destroyed every token in it at once.
+        """
+        assert self._save(env, {"accounts": [
+            {"name": "a", "token": "REAL-A"},
+            {"name": "b", "token": "REAL-B"},
+        ], "city": "Austin"}).status_code == 200
+
+        # the user changes the city; both masked tokens ride along blank
+        assert self._save(env, {"accounts": [
+            {"name": "a", "token": ""},
+            {"name": "b", "token": ""},
+        ], "city": "Dallas"}).status_code == 200
+
+        merged = env.fresh_load()[PLUGIN_ID]
+        assert [a.get("token") for a in merged["accounts"]] == \
+            ["REAL-A", "REAL-B"], "an unrelated edit destroyed the array secrets"
+        assert [a["name"] for a in merged["accounts"]] == ["a", "b"]
+        assert merged["city"] == "Dallas"
+
+    def test_one_array_secret_can_be_changed_without_losing_the_rest(self, env):
+        assert self._save(env, {"accounts": [
+            {"name": "a", "token": "REAL-A"},
+            {"name": "b", "token": "REAL-B"},
+        ]}).status_code == 200
+        assert self._save(env, {"accounts": [
+            {"name": "a", "token": ""},
+            {"name": "b", "token": "NEW-B"},
+        ]}).status_code == 200
+
+        merged = env.fresh_load()[PLUGIN_ID]
+        assert [a.get("token") for a in merged["accounts"]] == ["REAL-A", "NEW-B"]
+
     def test_a_secret_can_still_be_changed(self, env):
         """Dropping blanks must not stop a real new value from being saved."""
         self._save(env, {"api_key": "first-key"})

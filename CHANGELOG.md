@@ -17,6 +17,81 @@ release that ships it.
 accepts both, but the store flags the old spelling as deprecated
 (`store_manager.py`) and only the new one is in `schema/manifest_schema.json`.
 
+## 3.3.0
+
+**The release the sports scoreboards floor on to delete their bundled copies.**
+3.2.0 shipped the unified sports library and made `ledmatrix_min_version`
+enforceable; this ships the last three shared modules and completes the store
+gate, so a scoreboard can now floor here and carry no fallback at all.
+
+New modules a plugin may import via `src.*` and floor on 3.3.0 for:
+
+- `src/common/sports_card.py` — settings, colour, font and date helpers for a
+  scoreboard's `game_renderer.py`. Free functions taking `config`/`fonts`
+  explicitly, so nothing about the caller's class is assumed.
+- `src/common/sports_game_renderer.py` — `SportsGameRendererMixin`: scroll/Vegas
+  card geometry (centre gap, logo slot and cache key, layout offsets, the
+  upcoming-card date and time layout). No `__init__` and no state, so adoption
+  is one line on the class statement.
+- `src/common/sports_shared.py` — `SportsCoreSharedMixin`,
+  `SportsLiveSharedMixin`, `SportsRecentSharedMixin`: the `sports.py` bodies
+  byte-identical in all eight lineage-sharing scoreboards.
+
+All three sit under `src/common/` rather than `src/base_classes/sports/`,
+deliberately: importing that package pulls `core.py` → `DisplayManager` →
+`rgbmatrix`, and these are pure logic. Plugins importing them must not acquire a
+hardware dependency.
+
+Three notes for anyone adopting `sports_shared`:
+
+- `SportsRecentSharedMixin` defines `__init__`. Its bare `super()` binds to the
+  mixin, so it reaches the host only when the mixin is listed **first** in the
+  bases. Reversing that order silently skips the host constructor.
+- Methods that resolve the plugin's `config_schema.json` use `_plugin_dir()`,
+  which walks the MRO rather than reading `__file__` — `__file__` is now
+  `src/common/`. It walks because `SportsCore` is an ABC: a subclass built with
+  `type(name, bases, ns)` reports `__module__` as `"abc"`.
+- `_get_timezone`, `_extract_game_details` and `_fetch_data` are byte-identical
+  across the eight but stay in the plugins. The first binds a per-plugin
+  timezone module whose contents differ; the other two are the abstract stubs
+  that define the sport.
+
+**The store's compatibility gate is now on every registry-managed route.** 3.2.0
+gated `install_plugin`. This release gates the git-pull update path and
+`install_from_url`, so a plugin whose floor the core cannot meet is refused
+after download with no partial directory left behind.
+
+### Fixed
+
+- **ESPN 403s.** `site.api` began rejecting the User-Agent strings this repo
+  sent on 2026-08-04; every shared-data-source scoreboard returned
+  `403 Forbidden`. Requests now send an identifying token with a project URL —
+  browser-style strings and bare custom tokens are both refused.
+- **Low-memory boards becoming unreachable under load** while still answering
+  pings and serving the web UI. Fetched payloads are released after delivery
+  rather than pinned on the completed request for up to an hour, malloc arenas
+  are capped, and log volume and SD writes are reduced. Available memory is now
+  reported in Tools diagnostics.
+- **A failed logo download pinning a team to a grey box**: the placeholder was
+  written under the real logo's filename, so later attempts found a file and
+  reported success without retrying.
+- **A plugin enabled but never loaded is retried** rather than staying absent
+  with `error = null`.
+- `ttl` now controls cache expiry; abandoned cache writes no longer leave temp
+  files; one cache-cleanup thread per directory rather than per manager.
+- Odds are fetched for the games displayed, not the whole schedule window, and a
+  stalled ESPN no longer stalls the whole plugin update.
+- Array-item secrets are no longer wiped or logged.
+- A restored backup matches the device it was taken from.
+- The web UI reports the real error instead of "unknown", rejects non-finite
+  JSON numbers, and stops checkbox groups posting back hidden options.
+
+### Added
+
+- `display.hardware.orientation` for panels mounted upside down.
+- Vegas keeps live content in the ticker rather than being preempted by it.
+- Schemas can label enum dropdown options.
+
 ## 3.2.0
 
 **The first release shipping the unified sports library.** This is the version

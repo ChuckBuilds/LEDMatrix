@@ -70,6 +70,7 @@ class VisualTestDisplayManager:
         # Canvas
         self.image = Image.new('RGB', (width, height), (0, 0, 0))
         self.draw = ImageDraw.Draw(self.image)
+        self.draw.fontmode = "1"  # Match production: 1-bit text, so goldens show what the panel shows.
 
         # Matrix proxy (plugins access display_manager.matrix.width/height)
         self.matrix = _MatrixProxy(width, height)
@@ -184,6 +185,7 @@ class VisualTestDisplayManager:
         self.clear_called = True
         self.image = Image.new('RGB', (self._width, self._height), (0, 0, 0))
         self.draw = ImageDraw.Draw(self.image)
+        self.draw.fontmode = "1"  # Match production: 1-bit text, so goldens show what the panel shows.
 
     def update_display(self):
         """No-op for hardware; marks that display was updated."""
@@ -211,6 +213,7 @@ class VisualTestDisplayManager:
             self.matrix = _MatrixProxy(target_w, target_h)
             self.image = Image.new('RGB', (target_w, target_h), (0, 0, 0))
             self.draw = ImageDraw.Draw(self.image)
+            self.draw.fontmode = "1"  # Match production: 1-bit text, so goldens show what the panel shows.
             yield
         finally:
             self._width, self._height = prev_w, prev_h
@@ -569,6 +572,7 @@ class VisualTestDisplayManager:
         self.draw_calls = []
         self.image = Image.new('RGB', (self._width, self._height), (0, 0, 0))
         self.draw = ImageDraw.Draw(self.image)
+        self.draw.fontmode = "1"  # Match production: 1-bit text, so goldens show what the panel shows.
         self._scrolling_state = {
             'is_scrolling': False,
             'last_scroll_activity': 0,
@@ -582,3 +586,4 @@ class VisualTestDisplayManager:
         """Clean up resources."""
         self.image = Image.new('RGB', (self._width, self._height), (0, 0, 0))
         self.draw = ImageDraw.Draw(self.image)
+        self.draw.fontmode = "1"  # Match production: 1-bit text, so goldens show what the panel shows.

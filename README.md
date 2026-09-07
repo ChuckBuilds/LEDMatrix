@@ -161,9 +161,11 @@ The system supports live, recent, and upcoming game information for multiple spo
 ### LED Matrix Panels  
 (2x in a horizontal chain is recommended)
 - [Adafruit 64×32](https://www.adafruit.com/product/2278) – designed for 128×32 but works with dynamic scaling on many displays (pixel pitch is user preference)
+**Warning: Lately the Waveshare Panels have had different variations - only some are compatible with this project. I hope to identify what is different to fix it but so far there is a decent chance you get a mis-matched set of panels if you don't buy them all at once! **
 - [Waveshare 64×32](https://amzn.to/3Kw55jK) - Does not require E addressable pad
-- [Waveshare 96×48](https://amzn.to/4bydNcv) – higher resolution, requires soldering the **E addressable pad** on the [Adafruit RGB Bonnet](https://www.adafruit.com/product/3211) to “8” **OR** toggling the DIP switch on the Adafruit Triple LED Matrix Bonnet *(no soldering required!)*  
-  > Amazon Affiliate Link – ChuckBuilds receives a small commission on purchases  
+- [Waveshare 96×48](https://amzn.to/4bydNcv) – higher resolution, requires soldering the **E addressable pad** on the [Adafruit RGB Bonnet](https://www.adafruit.com/product/3211) to “8” **OR** toggling the DIP switch on the Adafruit Triple LED Matrix Bonnet *(no soldering required!)*
+- There are some Panels on Aliexpress that have worked fine for me, shop around! I think Adafruit is probably the "safest" but they do have some limitation on resolution and layout.
+  > Amazon Affiliate Links – ChuckBuilds receives a small commission on purchases  
 
 ### Power Supply
 - [5V 4A DC Power Supply](https://www.adafruit.com/product/658) (good for 2 -3 displays, depending on brightness and pixel density, you'll need higher amperage for more)

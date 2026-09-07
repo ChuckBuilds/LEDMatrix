@@ -28,11 +28,51 @@ fixes their version string. See `docs/SPORTS_UNIFICATION.md`, phase B4.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 # Below this, the core's self-reported version is not evidence of anything.
 # See the module docstring.
 TRUSTWORTHY_FLOOR: Tuple[int, int, int] = (2, 0, 0)
+
+
+# ``src/__init__.py`` relative to this file: src/plugin_system/ -> src/
+_VERSION_FILE = Path(__file__).resolve().parent.parent / "__init__.py"
+_VERSION_RE = re.compile(r'^__version__\s*=\s*["\']([^"\']+)["\']', re.M)
+
+
+def current_core_version() -> str:
+    """The core version as it is on disk right now, not as it was at import.
+
+    ``from src import __version__`` binds whatever the process loaded at start.
+    The web UI runs as its own long-lived service (``ledmatrix-web.service``),
+    and updating the core replaces files on disk without restarting it -- the
+    update route says so explicitly and asks the user to restart. Its prompt
+    names the *display* service, so a user who follows it leaves the web
+    process holding the old number.
+
+    The plugin store's gate lives in that web process. Stale by one release is
+    exactly the case that matters: every plugin flooring on the release you
+    just installed gets refused, with a message blaming a core version that is
+    already correct on disk. 3.3.0 is the first release where that hits a whole
+    plugin family at once -- all eight sports scoreboards floor there.
+
+    Reading the file costs one stat and a small read per call, and only on the
+    install/update path. Any failure falls back to the imported value, so this
+    can only ever be as wrong as before, never worse.
+    """
+    try:
+        text = _VERSION_FILE.read_text(encoding="utf-8")
+        match = _VERSION_RE.search(text)
+        if match:
+            return match.group(1)
+    except (OSError, UnicodeDecodeError):
+        pass
+    try:
+        from src import __version__ as imported
+        return imported
+    except Exception:            # noqa: BLE001 - never let this raise
+        return "0.0.0"
 
 
 def parse_semver(value: Any) -> Optional[Tuple[int, int, int]]:

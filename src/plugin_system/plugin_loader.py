@@ -772,8 +772,8 @@ class PluginLoader:
         newer than the running core. Advisory only — never raises — so a
         plugin that guards optional features with try/except keeps working.
         """
-        from src import __version__ as core_version
         from src.plugin_system import compatibility
+        core_version = compatibility.current_core_version()
 
         compatible, _reason = compatibility.check(manifest, core_version)
         if compatible:

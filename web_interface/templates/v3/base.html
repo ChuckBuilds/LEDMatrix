@@ -1164,9 +1164,16 @@
                 // The pull replaced files on disk; the running services still
                 // hold the code they loaded at boot. Ask for the restart that
                 // makes the update actually take effect.
+                //
+                // Both services, not just the display. The plugin store's
+                // compatibility gate runs in the web process, so a web service
+                // still holding the previous version refuses every plugin that
+                // floors on the release just installed -- blaming a core
+                // version that is already correct on disk.
                 if (data.restart_required && typeof window.showRestartPending === 'function') {
                     window.showRestartPending(
-                        'Update installed \u2014 restart the display to run the new code');
+                        'Update installed \u2014 restart the display and web ' +
+                        'services to run the new code');
                 }
             }
             if (typeof showNotification === 'function') {

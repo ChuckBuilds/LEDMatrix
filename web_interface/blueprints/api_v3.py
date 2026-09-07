@@ -22,7 +22,8 @@ logger = logging.getLogger(__name__)
 from src.web_interface.api_helpers import success_response, error_response, validate_request_json
 from src.web_interface.errors import ErrorCode
 from src.web_interface.secret_helpers import (find_secret_fields, mask_all_secret_values,
-                                              remove_empty_secrets, separate_secrets,
+                                              merge_secrets, remove_empty_secrets,
+                                              separate_secrets,
                                               strip_masked_values)
 from src.web_interface.error_handler import describe_exception, redact_text
 from src.plugin_system.operation_types import OperationType
@@ -597,7 +598,7 @@ def save_dim_schedule_config():
                 dim_brightness = 30
             else:
                 dim_brightness = int(dim_brightness_raw)
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, OverflowError):
             return error_response(
                 ErrorCode.VALIDATION_ERROR,
                 "dim_brightness must be an integer between 0 and 100",
@@ -797,7 +798,7 @@ def save_main_config():
                 }), 400
             try:
                 target_fps = int(raw_target_fps)
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, OverflowError):
                 return jsonify({
                     'status': 'error',
                     'message': "Invalid value for target_fps: must be an integer"
@@ -867,7 +868,7 @@ def save_main_config():
                     mux_val = int(data['multiplexing'])
                     if mux_val < 0 or mux_val > 22:
                         return jsonify({'status': 'error', 'message': f"Invalid multiplexing value '{data['multiplexing']}'. Must be an integer from 0 to 22."}), 400
-                except (ValueError, TypeError):
+                except (ValueError, TypeError, OverflowError):
                     return jsonify({'status': 'error', 'message': f"Invalid multiplexing value '{data['multiplexing']}'. Must be an integer from 0 to 22."}), 400
 
             # Validate pixel_mapper_config (free-form mapper string, e.g. "U-mapper;Rotate:90")
@@ -885,7 +886,7 @@ def save_main_config():
                     rat_val = int(data['row_address_type'])
                     if rat_val < 0 or rat_val > 4:
                         return jsonify({'status': 'error', 'message': f"Invalid row_address_type '{data['row_address_type']}'. Must be an integer from 0 to 4."}), 400
-                except (ValueError, TypeError):
+                except (ValueError, TypeError, OverflowError):
                     return jsonify({'status': 'error', 'message': f"Invalid row_address_type '{data['row_address_type']}'. Must be an integer from 0 to 4."}), 400
 
             # Handle hardware settings
@@ -910,7 +911,7 @@ def save_main_config():
                     if rp1_val not in (0, 1):
                         return jsonify({'status': 'error', 'message': "rp1_rio must be 0 (PIO) or 1 (RIO)"}), 400
                     current_config['display']['runtime']['rp1_rio'] = rp1_val
-                except (ValueError, TypeError):
+                except (ValueError, TypeError, OverflowError):
                     return jsonify({'status': 'error', 'message': "rp1_rio must be 0 or 1"}), 400
 
             # Handle checkboxes - coerce to bool to ensure proper JSON types
@@ -963,7 +964,7 @@ def save_main_config():
                 copies = None
                 try:
                     copies = int(data['double_sided_copies'])
-                except (ValueError, TypeError):
+                except (ValueError, TypeError, OverflowError):
                     if enabled:
                         return jsonify({'status': 'error', 'message': "Double-sided copies must be an integer"}), 400
                 if copies is not None and not (2 <= copies <= 8):
@@ -1036,7 +1037,7 @@ def save_main_config():
             if data.get('vegas_extend_threshold_screens') not in ('', None):
                 try:
                     screens = float(data['vegas_extend_threshold_screens'])
-                except (ValueError, TypeError):
+                except (ValueError, TypeError, OverflowError):
                     return jsonify({
                         'status': 'error',
                         'message': "Invalid value for vegas_extend_threshold_screens: "
@@ -1053,7 +1054,7 @@ def save_main_config():
             if data.get('vegas_max_plugin_width_ratio') not in ('', None):
                 try:
                     ratio = float(data['vegas_max_plugin_width_ratio'])
-                except (ValueError, TypeError):
+                except (ValueError, TypeError, OverflowError):
                     return jsonify({
                         'status': 'error',
                         'message': "Invalid value for vegas_max_plugin_width_ratio: "
@@ -1101,7 +1102,7 @@ def save_main_config():
                         continue
                     try:
                         int_value = int(raw_value)
-                    except (ValueError, TypeError):
+                    except (ValueError, TypeError, OverflowError):
                         return jsonify({
                             'status': 'error',
                             'message': f"Invalid value for {field_name}: must be an integer"
@@ -1153,7 +1154,7 @@ def save_main_config():
                     if not (1024 <= port_val <= 65535):
                         return jsonify({'status': 'error', 'message': "sync_port must be between 1024 and 65535"}), 400
                     current_config['sync']['port'] = port_val
-                except (ValueError, TypeError):
+                except (ValueError, TypeError, OverflowError):
                     return jsonify({'status': 'error', 'message': "sync_port must be an integer"}), 400
 
             if "sync_follower_position" in data:
@@ -1197,7 +1198,7 @@ def save_main_config():
                 raw_value = data.pop(field)
                 try:
                     int_value = int(raw_value)
-                except (ValueError, TypeError):
+                except (ValueError, TypeError, OverflowError):
                     return jsonify({'status': 'error',
                                     'message': f"Invalid duration for {field}: must be an integer"}), 400
                 current_config['display']['display_durations'][field] = int_value
@@ -1220,7 +1221,7 @@ def save_main_config():
                     continue
                 try:
                     int_value = int(raw_value)
-                except (ValueError, TypeError):
+                except (ValueError, TypeError, OverflowError):
                     return jsonify({'status': 'error',
                                     'message': f"Invalid duration for mode '{mode_key}': must be an integer"}), 400
                 current_config['display']['display_durations'][mode_key] = int_value
@@ -1296,7 +1297,10 @@ def save_main_config():
                 if secrets_config:
                     if plugin_id not in current_secrets:
                         current_secrets[plugin_id] = {}
-                    current_secrets[plugin_id] = deep_merge(current_secrets[plugin_id], secrets_config)
+                    # Lists merge by replacement, so deep_merge here wrote a
+                    # blanked array straight over the stored credentials.
+                    current_secrets[plugin_id] = merge_secrets(
+                        current_secrets[plugin_id], secrets_config)
                     # Save secrets file
                     api_v3.config_manager.save_raw_file_content('secrets', current_secrets)
 
@@ -1559,6 +1563,11 @@ def get_system_status():
             'memory_used_percent': round(memory_percent, 1),
             'memory_total_mb': round(memory.total / (1024 * 1024), 1),
             'memory_used_mb': round(memory.used / (1024 * 1024), 1),
+            # MemAvailable, not total-minus-used: it accounts for reclaimable
+            # page cache, so it is what actually predicts memory trouble. A
+            # board can read 70% "used" and be fine, or read the same and be
+            # about to fail fork(), and only this number tells them apart.
+            'memory_available_mb': round(memory.available / (1024 * 1024), 1),
             'cpu_temp': round(cpu_temp, 1) if cpu_temp is not None else None,
             'disk_used_percent': round(disk_percent, 1),
             'disk_total_gb': round(disk.total / (1024 * 1024 * 1024), 1),
@@ -5118,7 +5127,7 @@ def save_plugin_config():
                                                                 converted_array.append(int(v))
                                                             else:
                                                                 converted_array.append(float(v))
-                                                        except (ValueError, TypeError):
+                                                        except (ValueError, TypeError, OverflowError):
                                                             converted_array.append(v)
                                                     else:
                                                         converted_array.append(v)
@@ -5143,7 +5152,7 @@ def save_plugin_config():
                                                         converted_array.append(int(v))
                                                     else:
                                                         converted_array.append(float(v))
-                                                except (ValueError, TypeError):
+                                                except (ValueError, TypeError, OverflowError):
                                                     converted_array.append(v)
                                             else:
                                                 converted_array.append(v)
@@ -5180,7 +5189,7 @@ def save_plugin_config():
                                                                 converted_array.append(int(v))
                                                             else:
                                                                 converted_array.append(float(v))
-                                                        except (ValueError, TypeError):
+                                                        except (ValueError, TypeError, OverflowError):
                                                             converted_array.append(v)
                                                     else:
                                                         converted_array.append(v)
@@ -5204,7 +5213,7 @@ def save_plugin_config():
                                                         converted_array.append(int(v))
                                                     else:
                                                         converted_array.append(float(v))
-                                                except (ValueError, TypeError):
+                                                except (ValueError, TypeError, OverflowError):
                                                     converted_array.append(v)
                                             else:
                                                 converted_array.append(v)
@@ -5371,7 +5380,7 @@ def save_plugin_config():
                                         if isinstance(v, str):
                                             try:
                                                 converted.append(int(v) if item_type == 'integer' else float(v))
-                                            except (ValueError, TypeError):
+                                            except (ValueError, TypeError, OverflowError):
                                                 converted.append(v)
                                         else:
                                             converted.append(v)
@@ -5496,7 +5505,7 @@ def save_plugin_config():
                             try:
                                 normalized[key] = int(value_stripped)
                                 continue
-                            except (ValueError, TypeError):
+                            except (ValueError, TypeError, OverflowError):
                                 pass
                         elif isinstance(value, (int, float)):
                             normalized[key] = int(value)
@@ -5514,7 +5523,7 @@ def save_plugin_config():
                             try:
                                 normalized[key] = float(value_stripped)
                                 continue
-                            except (ValueError, TypeError):
+                            except (ValueError, TypeError, OverflowError):
                                 pass
                         elif isinstance(value, (int, float)):
                             normalized[key] = float(value)
@@ -5569,7 +5578,7 @@ def save_plugin_config():
                                     try:
                                         normalized_array.append(int(v))
                                         continue
-                                    except (ValueError, TypeError):
+                                    except (ValueError, TypeError, OverflowError):
                                         pass
                                 elif isinstance(v, (int, float)):
                                     normalized_array.append(int(v))
@@ -5579,7 +5588,7 @@ def save_plugin_config():
                                     try:
                                         normalized_array.append(float(v))
                                         continue
-                                    except (ValueError, TypeError):
+                                    except (ValueError, TypeError, OverflowError):
                                         pass
                                 elif isinstance(v, (int, float)):
                                     normalized_array.append(float(v))
@@ -5595,7 +5604,7 @@ def save_plugin_config():
                             if isinstance(v, str):
                                 try:
                                     normalized_array.append(int(v))
-                                except (ValueError, TypeError):
+                                except (ValueError, TypeError, OverflowError):
                                     normalized_array.append(v)
                             elif isinstance(v, (int, float)):
                                 normalized_array.append(int(v))
@@ -5609,7 +5618,7 @@ def save_plugin_config():
                             if isinstance(v, str):
                                 try:
                                     normalized_array.append(float(v))
-                                except (ValueError, TypeError):
+                                except (ValueError, TypeError, OverflowError):
                                     normalized_array.append(v)
                             else:
                                 normalized_array.append(v)
@@ -5632,7 +5641,7 @@ def save_plugin_config():
                     if isinstance(value, str):
                         try:
                             normalized[key] = int(value)
-                        except (ValueError, TypeError):
+                        except (ValueError, TypeError, OverflowError):
                             normalized[key] = value
                     else:
                         normalized[key] = value
@@ -5641,7 +5650,7 @@ def save_plugin_config():
                     if isinstance(value, str):
                         try:
                             normalized[key] = float(value)
-                        except (ValueError, TypeError):
+                        except (ValueError, TypeError, OverflowError):
                             normalized[key] = value
                     else:
                         normalized[key] = value
@@ -5675,8 +5684,10 @@ def save_plugin_config():
         if schema:
             # Log what we're validating for debugging
             logger.info(f"Validating config for {plugin_id}")
+            # Only the shape. plugin_config still holds the submitted secret
+            # values at this point -- separate_secrets does not run until
+            # below -- so logging it wrote live credentials to the journal.
             logger.info(f"Config keys being validated: {list(plugin_config.keys())}")
-            logger.info(f"Full config: {plugin_config}")
 
             # Get enhanced schema keys (including injected core properties)
             # We need to create an enhanced schema to get the actual allowed keys
@@ -5699,7 +5710,8 @@ def save_plugin_config():
                 # Log validation errors for debugging
                 logger.error(f"Config validation failed for {plugin_id}")
                 logger.error(f"Validation errors: {validation_errors}")
-                logger.error(f"Config that failed: {plugin_config}")
+                # Keys only, for the same reason as above.
+                logger.error(f"Config keys that failed: {list(plugin_config.keys())}")
                 logger.error(f"Schema properties: {list(enhanced_schema.get('properties', {}).keys())}")
 
                 # Also print to console for immediate visibility
@@ -5750,7 +5762,9 @@ def save_plugin_config():
         if secrets_config:
             if plugin_id not in current_secrets:
                 current_secrets[plugin_id] = {}
-            current_secrets[plugin_id] = deep_merge(current_secrets[plugin_id], secrets_config)
+            # See above -- secrets lists must merge element-wise.
+            current_secrets[plugin_id] = merge_secrets(
+                current_secrets[plugin_id], secrets_config)
             # Save secrets file
             try:
                 api_v3.config_manager.save_raw_file_content('secrets', current_secrets)
@@ -6779,7 +6793,7 @@ def get_font_preview() -> tuple[Response, int] | Response:
         # Safe integer parsing for size
         try:
             size = int(request.args.get('size', 12))
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, OverflowError):
             return jsonify({'status': 'error', 'message': 'Invalid font size'}), 400
 
         if not font_filename:
@@ -8360,7 +8374,7 @@ def clear_old_errors():
                     context={'provided_value': raw_max_age},
                     status_code=400
                 )
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, OverflowError):
             return error_response(
                 error_code=ErrorCode.INVALID_INPUT,
                 message="max_age_hours must be a valid integer",
