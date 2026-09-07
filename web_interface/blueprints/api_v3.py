@@ -8834,7 +8834,15 @@ def _get_tronbyte_repository_class() -> Type[Any]:
         raise ImportError("Failed to create module from spec for tronbyte_repository")
 
     sys.modules["tronbyte_repository"] = module
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        # A module that failed to execute must not stay in sys.modules: the
+        # cache branch above would hand back the half-initialised object for
+        # the rest of the process, so one transient failure would disable
+        # this path permanently and surface as AttributeError, not ImportError.
+        sys.modules.pop("tronbyte_repository", None)
+        raise
     return module.TronbyteRepository
 
 def _get_pixlet_renderer_class() -> Type[Any]:
@@ -8859,7 +8867,15 @@ def _get_pixlet_renderer_class() -> Type[Any]:
         raise ImportError("Failed to create module from spec for pixlet_renderer")
 
     sys.modules["pixlet_renderer"] = module
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        # A module that failed to execute must not stay in sys.modules: the
+        # cache branch above would hand back the half-initialised object for
+        # the rest of the process, so one transient failure would disable
+        # this path permanently and surface as AttributeError, not ImportError.
+        sys.modules.pop("pixlet_renderer", None)
+        raise
     return module.PixletRenderer
 
 def _validate_and_sanitize_app_id(app_id: Optional[str], fallback_source: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
@@ -9032,12 +9048,20 @@ def _write_starlark_manifest(manifest: Dict[str, Any]) -> bool:
     try:
         _STARLARK_APPS_DIR.mkdir(parents=True, exist_ok=True)
 
-        # Atomic write pattern: write to temp file, then rename
-        temp_file = _STARLARK_MANIFEST_FILE.with_suffix('.tmp')
-        with open(temp_file, 'w') as f:
+        # Atomic write: unique temp file in the target directory, then rename.
+        # with_suffix('.tmp') gave every caller the same manifest.tmp, and
+        # Flask serves concurrently -- upload, uninstall, config, toggle and
+        # the plugin toggle all reach here. Two writers shared one file,
+        # interleaved their json.dump output, and both renamed it, so the
+        # rename was atomic over content that was a mix of two manifests.
+        fd, temp_name = tempfile.mkstemp(
+            dir=str(_STARLARK_APPS_DIR), prefix='.manifest.', suffix='.tmp')
+        temp_file = Path(temp_name)
+        with os.fdopen(fd, 'w') as f:
             json.dump(manifest, f, indent=2)
             f.flush()
             os.fsync(f.fileno())  # Ensure data is written to disk
+        os.chmod(temp_name, 0o644)  # mkstemp creates 0600; match a normal write
 
         # Atomic rename (overwrites destination)
         temp_file.replace(_STARLARK_MANIFEST_FILE)
@@ -9414,6 +9438,13 @@ def update_starlark_app_config(app_id):
             render_interval = data.pop('render_interval', None)
             display_duration = data.pop('display_duration', None)
 
+            # Snapshot before mutating. save_config() can fail, and the route
+            # answers 500 below when it does -- but the loaded app kept the new
+            # values anyway, so a later GET returned configuration that was
+            # never persisted and the plugin rendered with it.
+            prev_config = dict(app.config)
+            prev_manifest = dict(app.manifest)
+
             # Update config with non-timing fields only
             app.config.update(data)
 
@@ -9425,7 +9456,11 @@ def update_starlark_app_config(app_id):
             if display_duration is not None:
                 app.manifest['display_duration'] = display_duration
                 timing_changed = True
-            if app.save_config():
+            saved = app.save_config()
+            if not saved:
+                app.config.clear(); app.config.update(prev_config)
+                app.manifest.clear(); app.manifest.update(prev_manifest)
+            if saved:
                 # Persist manifest if timing changed (same pattern as toggle endpoint)
                 if timing_changed:
                     try:
@@ -9759,12 +9794,14 @@ def _toggle_starlark_app(app_id: str, enabled: bool):
 
     plugin = _get_starlark_plugin()
     if plugin is not None and safe_id in getattr(plugin, 'apps', {}):
-        plugin.apps[safe_id].manifest['enabled'] = enabled
-
         def _update(manifest):
             manifest['apps'][safe_id]['enabled'] = enabled
 
-        plugin._update_manifest_safe(_update)
+        if plugin._update_manifest_safe(_update) is False:
+            return jsonify({'status': 'error',
+                            'message': 'Failed to save app state'}), 500
+        # Only now is the in-memory copy allowed to disagree with disk.
+        plugin.apps[safe_id].manifest['enabled'] = enabled
     else:
         manifest = _read_starlark_manifest()
         app_data = manifest.get('apps', {}).get(safe_id)

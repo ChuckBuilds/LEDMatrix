@@ -133,15 +133,51 @@ class TestTheAppStoreFlow:
     an empty store.
     """
 
-    def test_browse_does_not_404(self, client):
+    @pytest.fixture
+    def offline_repo(self):
+        """No live GitHub calls from the test suite.
+
+        browse and categories reach _get_tronbyte_repository_class() and then
+        list_all_apps_cached(); with a cold server-side cache that is a real
+        network request, which makes the run slow, rate-limitable, and able to
+        pass on a 500 because these assertions only check for a 404.
+        """
+        repo = MagicMock()
+        # Matches what the real list_all_apps_cached returns; the handler
+        # indexes every one of these keys.
+        repo.return_value.list_all_apps_cached.return_value = {
+            'apps': [{'id': 'quoteoftheday', 'name': 'A Quote A Day',
+                      'category': 'text'}],
+            'categories': ['text'],
+            'authors': ['someone'],
+            'count': 1,
+            'cached': True,
+        }
+        repo.return_value.get_rate_limit_info.return_value = {'remaining': 5000}
+        with patch('web_interface.blueprints.api_v3._get_tronbyte_repository_class',
+                   return_value=repo):
+            yield repo
+
+    def test_browse_does_not_404(self, client, offline_repo):
         resp = client.get('/api/v3/starlark/repository/browse')
         assert resp.status_code != 404, "the store cannot list anything"
         assert resp.get_json().get('message') != 'Resource not found'
 
-    def test_categories_does_not_404(self, client):
+    def test_browse_returns_the_apps_the_store_lists(self, client, offline_repo):
+        resp = client.get('/api/v3/starlark/repository/browse')
+        body = resp.get_json()
+        assert body['status'] == 'success', body
+        assert any(a.get('id') == 'quoteoftheday' for a in body.get('apps', [])), body
+
+    def test_categories_does_not_404(self, client, offline_repo):
         resp = client.get('/api/v3/starlark/repository/categories')
         assert resp.status_code != 404
         assert resp.get_json().get('message') != 'Resource not found'
+
+    def test_no_live_network_call_is_made(self, client, offline_repo):
+        client.get('/api/v3/starlark/repository/browse')
+        assert offline_repo.called, \
+            "the route did not go through the patched repository class"
 
     def test_installed_apps_list_does_not_404(self, client):
         resp = client.get('/api/v3/starlark/apps')
