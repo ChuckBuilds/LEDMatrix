@@ -507,15 +507,7 @@ class VisualTestDisplayManager:
     # ------------------------------------------------------------------
 
     def set_scrolling_state(self, is_scrolling: bool):
-        """Set the current scrolling state (no-op for testing).
-
-        Deliberately mirrors DisplayManager.set_scrolling_state exactly. A
-        double that accepts arguments production does not lets a call pass
-        every harness run and then raise TypeError on the panel, which is the
-        one failure a safety harness exists to prevent. ``frame_hold`` arrives
-        here in the same change that adds it to DisplayManager (#523), not
-        before.
-        """
+        """Set the current scrolling state (no-op for testing)."""
         self._scrolling_state['is_scrolling'] = is_scrolling
         if is_scrolling:
             self._scrolling_state['last_scroll_activity'] = time.time()
