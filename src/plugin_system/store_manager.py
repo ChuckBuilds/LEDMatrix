@@ -1589,6 +1589,7 @@ class PluginStoreManager:
             with open(manifest_path, 'r') as f:
                 manifest = json.load(f)
             
+            requested_id = plugin_id
             plugin_id = plugin_id or manifest.get('id')
             if not plugin_id:
                 return {
@@ -1664,6 +1665,15 @@ class PluginStoreManager:
             
             branch_info = f" (branch: {branch_used})" if branch_used else ""
             self.logger.info(f"Successfully installed plugin from URL: {plugin_id}{branch_info}")
+            # User deliberately (re)installed this plugin -- clear any persistent
+            # uninstall record, exactly as install_plugin() does. Without this the
+            # id stays in config/uninstalled_plugins.json and
+            # purge_uninstalled_plugins(), which runs at every web-app startup,
+            # deletes the directory again: the plugin works for the rest of the
+            # session and is gone after the next reboot.
+            self.forget_uninstalled_plugin(
+                *(pid for pid in (requested_id, plugin_id, manifest.get('id')) if pid)
+            )
             result = {
                 'success': True,
                 'plugin_id': plugin_id,
@@ -2423,7 +2433,66 @@ class PluginStoreManager:
                     return plugin_path
         except (OSError, ValueError):
             pass
-        
+
+        # Last resort: the directory name may differ from the id being looked
+        # up. install_plugin() deliberately renames a plugin's directory to the
+        # MANIFEST id when it differs from the REGISTRY id (see the rename near
+        # "doesn't match registry ID" above), so `stocks` in the registry lands
+        # in `ledmatrix-stocks/`. Every lookup above is by directory name, so
+        # update_plugin("stocks") found nothing and reported the plugin as not
+        # installed -- silently, and for good: the user sees no error and stays
+        # on a stale version. Four installed plugins hit this in practice
+        # (leaderboard, music, stocks, weather).
+        #
+        # Deliberately last so the two lookups above keep their exact meaning;
+        # this only runs when a direct hit already failed. See
+        # test_discovery_path_contract.py, which pins that ordering.
+        for search_dir in self._candidate_plugin_dirs():
+            match = self._find_by_manifest_id(search_dir, plugin_id)
+            if match is not None:
+                self.logger.debug(
+                    "Resolved plugin '%s' to %s via its manifest id "
+                    "(directory name differs from the id)", plugin_id, match)
+                return match
+
+        return None
+
+    def _candidate_plugin_dirs(self) -> List[Path]:
+        """Directories that may hold installed plugins, configured one first."""
+        dirs = [self.plugins_dir]
+        try:
+            base = self.plugins_dir if self.plugins_dir.is_absolute()                 else self.plugins_dir.resolve()
+            sibling = base.parent / 'plugins'
+            if sibling != self.plugins_dir:
+                dirs.append(sibling)
+        except (OSError, ValueError):
+            pass
+        return [d for d in dirs if d.exists()]
+
+    @staticmethod
+    def _find_by_manifest_id(search_dir: Path, plugin_id: str) -> Optional[Path]:
+        """A subdirectory of `search_dir` whose manifest declares `plugin_id`.
+
+        Skips half-finished installs: store_manager renames a directory aside
+        with '.standalone-backup-' during install and rollback, and treating
+        one as installed would resurrect a ghost plugin.
+        """
+        try:
+            entries = sorted(search_dir.iterdir())
+        except (OSError, ValueError):
+            return None
+        for entry in entries:
+            if not entry.is_dir() or '.standalone-backup-' in entry.name:
+                continue
+            manifest = entry / 'manifest.json'
+            if not manifest.is_file():
+                continue
+            try:
+                with open(manifest, 'r', encoding='utf-8') as handle:
+                    if json.load(handle).get('id') == plugin_id:
+                        return entry
+            except (OSError, ValueError):
+                continue
         return None
     
     _SKIN_ID_PATTERN = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$')
