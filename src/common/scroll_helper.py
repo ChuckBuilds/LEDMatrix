@@ -16,6 +16,7 @@ Features:
 """
 
 import logging
+import math
 import time
 from typing import Optional, Dict, Any
 from PIL import Image
@@ -27,6 +28,49 @@ try:
     HAS_SCIPY = True
 except ImportError:
     HAS_SCIPY = False
+
+
+def frame_stats(frame_times: list) -> Dict[str, Any]:
+    """Summary statistics over one window of frame durations (seconds).
+
+    Split out of log_frame_rate() so the arithmetic can be tested without a
+    clock. Median and p95 are the real ones: the median takes both middle
+    samples on an even window, and p95 is nearest-rank, so a 100-frame window
+    reports the 95th sorted sample rather than the 96th. That matters twice
+    over, because the median is also the threshold the stall and skip counts
+    are measured against.
+    """
+    window = sorted(frame_times)
+    n = len(window)
+    median = (window[n // 2] if n % 2
+              else (window[n // 2 - 1] + window[n // 2]) / 2.0)
+    mean = sum(window) / n
+    # Anything past 1.5x the median missed a panel refresh; anything under
+    # half of it never reached the panel at all (dirty tracking skipped the
+    # swap, so the frame did not wait for vsync).
+    return {
+        "frames": n,
+        "fps": (1.0 / mean) if mean > 0 else 0.0,
+        "median": median,
+        "p95": window[max(0, math.ceil(0.95 * n) - 1)],
+        "max": window[-1],
+        "min": window[0],
+        "stalls": sum(1 for f in window if f > median * 1.5),
+        "skips": sum(1 for f in window if f < median * 0.5),
+    }
+
+
+def format_frame_stats(frame_times: list) -> str:
+    """The one-line rendering of frame_stats(), in milliseconds."""
+    s = frame_stats(frame_times)
+    n = s["frames"]
+    return (
+        f"{s['fps']:.1f} fps over {n} frames | "
+        f"median {s['median'] * 1000:.2f}ms p95 {s['p95'] * 1000:.2f}ms "
+        f"max {s['max'] * 1000:.2f}ms min {s['min'] * 1000:.2f}ms | "
+        f"stalls {s['stalls']} ({100.0 * s['stalls'] / n:.1f}%) "
+        f"skips {s['skips']} ({100.0 * s['skips'] / n:.1f}%)"
+    )
 
 
 class ScrollHelper:
@@ -75,8 +119,19 @@ class ScrollHelper:
         # Pre-allocated buffer for output frame (reused to avoid allocations)
         self._frame_buffer: Optional[np.ndarray] = None
         
-        # Sub-pixel scrolling settings (disabled - using high FPS integer scrolling instead)
-        self.sub_pixel_scrolling = False  # Disabled - use high frame rate for smoothness
+        # Sub-pixel scrolling: OFF by default, and that is deliberate.
+        # Blending renders a half-step by mixing two adjacent columns 50/50.
+        # On a high-resolution screen that reads as smooth motion; on a coarse
+        # LED matrix showing pixel-font text it does not. A one-pixel stroke
+        # becomes two half-brightness pixels, so frames alternate between crisp
+        # and smeared and the text appears to shimmer and jump a pixel ahead --
+        # tested on a 2x128x64 panel and clearly worse than integer stepping.
+        #
+        # The rule this display obeys: motion is smooth when it advances a
+        # whole number of pixels per refresh. Anything slower must either
+        # blend (blur) or repeat frames (judder); blending is the worse of the
+        # two here. Vegas mode still opts in via set_sub_pixel_scrolling().
+        self.sub_pixel_scrolling = False
         self._last_integer_position = 0  # Cache for integer position to avoid repeated calculations
         
         # Frame-based scrolling settings
@@ -105,6 +160,9 @@ class ScrollHelper:
         self.last_frame_time = time.time()
         self.last_fps_log_time = time.time()
         self.frame_times = []
+        # Every frame time since the last stats line, so the 5s summary can
+        # report the tail rather than one arbitrary sample. Cleared on log.
+        self._window: list = []
         
         # Scrolling state management
         self.is_scrolling = False
@@ -244,19 +302,31 @@ class ScrollHelper:
             if self.last_step_time == 0.0:
                 self.last_step_time = current_time
             
-            # Check if scroll_delay has passed
-            time_since_last_step = current_time - self.last_step_time
-            if time_since_last_step >= self.scroll_delay:
-                # Move pixels (can move multiple steps if lag occurred, but cap to prevent huge jumps)
-                steps = int(time_since_last_step / self.scroll_delay)
-                # Cap at reasonable number to prevent huge jumps from lag
-                max_steps = max(1, int(0.04 / self.scroll_delay))  # Limit to 0.04s (2 steps at 50 FPS) for smoother scrolling
-                steps = min(steps, max_steps)
-                pixels_to_move = self.scroll_speed * steps
-                # Update last_step_time, preserving fractional delay for smooth timing
-                self.last_step_time = current_time - (time_since_last_step % self.scroll_delay)
+            # Frame-based mode advances by elapsed time, exactly like the
+            # time-based branch below, at the same configured speed
+            # (scroll_speed px per scroll_delay seconds).
+            #
+            # It used to step discretely: 0, 1 or 2 whole pixels depending on
+            # whether a wall clock had passed scroll_delay. Plugins set
+            # scroll_delay to the target frame period, so that comparison sits
+            # exactly on its own threshold and the decision flips on sub-
+            # millisecond jitter -- a frame a hair early moved nothing and
+            # rendered an identical frame, a frame a hair late moved two
+            # pixels. Rounding the step count fixed the stalls but still
+            # discarded the remainder, so the error never corrected.
+            #
+            # Accumulating elapsed time keeps position exactly proportional to
+            # real time: jitter shifts a pixel boundary by a fraction of a
+            # frame instead of flipping a whole step, and nothing is lost or
+            # gained. This is what the one visibly smooth scroller on the
+            # hardware (the stock ticker) was already doing by virtue of never
+            # enabling frame-based mode.
+            if self.scroll_delay > 0:
+                pixels_per_second = self.scroll_speed / self.scroll_delay
             else:
-                pixels_to_move = 0.0
+                pixels_per_second = self.scroll_speed * 100.0
+            pixels_to_move = pixels_per_second * delta_time
+            self.last_step_time = current_time
         else:
             # Time-based: move based on time delta (correct speed over time)
             # scroll_speed is pixels per second
@@ -1017,18 +1087,25 @@ class ScrollHelper:
         # Keep only last 100 frames for average
         if len(self.frame_times) > 100:
             self.frame_times.pop(0)
+
+        # Every frame since the last log, not just the last 100 and not just
+        # the one that happens to land on the 5s boundary. The old line
+        # reported a single instantaneous sample -- roughly 1 frame in 500 --
+        # which cannot see a stall that hits 1% of frames, and reported it
+        # next to an average that hides the same stall by construction (a 2ms
+        # duplicate and a 21ms double-wait mean exactly 10ms). Chasing scroll
+        # judder needs the tail, so keep the window and report percentiles.
+        self._window.append(frame_time)
         
         # Log FPS every 5 seconds to avoid spam
         if current_time - self.last_fps_log_time >= 5.0:
-            avg_frame_time = sum(self.frame_times) / len(self.frame_times)
-            avg_fps = 1.0 / avg_frame_time if avg_frame_time > 0 else 0
-            instant_fps = 1.0 / frame_time if frame_time > 0 else 0
-            
-            self.logger.info(f"Scroll frame stats - Avg FPS: {avg_fps:.1f}, "
-                           f"Current FPS: {instant_fps:.1f}, "
-                           f"Frame time: {frame_time*1000:.2f}ms")
+            self.logger.info(
+                "Scroll frame stats - %s",
+                format_frame_stats(self._window or [frame_time]),
+            )
             self.last_fps_log_time = current_time
             self.frame_count = 0
+            self._window = []
         
         self.last_frame_time = current_time
         self.frame_count += 1

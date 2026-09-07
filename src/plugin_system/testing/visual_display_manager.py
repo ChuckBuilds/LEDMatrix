@@ -506,9 +506,18 @@ class VisualTestDisplayManager:
     # Scrolling state (no-op interface compat)
     # ------------------------------------------------------------------
 
-    def set_scrolling_state(self, is_scrolling: bool):
-        """Set the current scrolling state (no-op for testing)."""
+    def set_scrolling_state(self, is_scrolling: bool, frame_hold: int = 1):
+        """Set the current scrolling state (no-op for testing).
+
+        ``frame_hold`` mirrors the DisplayManager signature this change adds.
+        The two are kept in step deliberately: a double that accepts arguments
+        production does not lets a call pass every harness run and then raise
+        TypeError on the panel, and a double that lacks one production has
+        fails every render of a plugin that legitimately paces its scroll.
+        Plugins begin passing it in ledmatrix-plugins#462.
+        """
         self._scrolling_state['is_scrolling'] = is_scrolling
+        self._scrolling_state['frame_hold'] = frame_hold
         if is_scrolling:
             self._scrolling_state['last_scroll_activity'] = time.time()
 

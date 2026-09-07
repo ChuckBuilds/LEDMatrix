@@ -47,12 +47,17 @@ class _SwapSpy:
     def __init__(self, matrix):
         self.matrix = matrix
         self.count = 0
+        self.last_frame_hold = None
         self._orig = matrix.SwapOnVSync
 
     def __enter__(self):
-        def counting(canvas):
+        def counting(canvas, *args):
+            # *args carries framerate_fraction, which display_manager passes so
+            # a frame can be held for several refreshes. Signature must match
+            # the real binding or the spy hides a TypeError as a failed push.
             self.count += 1
-            return self._orig(canvas)
+            self.last_frame_hold = args[0] if args else 1
+            return self._orig(canvas, *args)
         self.matrix.SwapOnVSync = counting
         return self
 
@@ -109,6 +114,11 @@ class TestDirtyTracking:
         dm.draw.rectangle([0, 0, 30, 8], fill=(255, 255, 0))
         dm.update_display()   # push + snapshot write (first frame)
         assert os.path.exists(dm._snapshot_path)
+        # Backdate the file so the "was it bumped?" check below cannot be
+        # defeated by filesystem mtime granularity -- on Windows two writes in
+        # the same tick get identical timestamps, which made this test fail
+        # roughly two runs in three regardless of the code under test.
+        os.utime(dm._snapshot_path, (time.time() - 60, time.time() - 60))
         first_mtime = os.path.getmtime(dm._snapshot_path)
 
         # Age the write/touch bookkeeping past TOUCH_INTERVAL so the next
@@ -123,6 +133,62 @@ class TestDirtyTracking:
             dm.update_display()  # identical frame -> panel push skipped
         assert spy.count == 0
         assert os.path.getmtime(dm._snapshot_path) > first_mtime
+
+
+class TestScrollLock:
+    """Dirty tracking must not skip the panel push while a scroll is running.
+
+    SwapOnVSync is what paces the render loop, so skipping it also skips the
+    wait for the panel. A duplicate frame therefore returns early -- ~8ms
+    instead of ~10ms on a 100Hz panel -- which advances the strip only 0.8px
+    instead of 1.0px, which makes the NEXT frame more likely to be a duplicate
+    too. That is self-sustaining: measured at ~20% duplicate frames mid-scroll
+    on the odds ticker against essentially zero on a lighter plugin with
+    identical scroll settings. Pushing an identical frame costs one canvas
+    copy; falling out of vsync lock costs smooth motion.
+    """
+
+    def test_identical_frames_still_push_while_scrolling(self, dm):
+        dm.draw.rectangle([0, 0, 12, 12], fill=(0, 0, 255))
+        dm.update_display()
+        dm.set_scrolling_state(True)
+        try:
+            with _SwapSpy(dm.matrix) as spy:
+                dm.update_display()
+                dm.update_display()
+                dm.update_display()
+            assert spy.count == 3, "scrolling must stay locked to the panel"
+        finally:
+            dm.set_scrolling_state(False)
+
+    def test_identical_frames_are_skipped_when_not_scrolling(self, dm):
+        """The optimisation still applies to static content."""
+        dm.set_scrolling_state(False)
+        dm.draw.rectangle([0, 0, 14, 14], fill=(255, 0, 255))
+        dm.update_display()
+        with _SwapSpy(dm.matrix) as spy:
+            dm.update_display()
+            dm.update_display()
+        assert spy.count == 0
+
+    def test_stale_scrolling_state_stops_forcing_pushes(self, dm):
+        """A plugin that stops scrolling without saying so must not pin the
+        panel into always-push forever. is_currently_scrolling() expires on
+        its own inactivity threshold, and the skip has to come back with it."""
+        dm.draw.rectangle([0, 0, 16, 16], fill=(0, 255, 255))
+        dm.update_display()
+        dm.set_scrolling_state(True)
+        try:
+            # Backdate the activity marker past the inactivity threshold.
+            dm._scrolling_state['last_scroll_activity'] = (
+                time.time() - dm._scrolling_state['scroll_inactivity_threshold'] - 1.0)
+            assert dm.is_currently_scrolling() is False
+            with _SwapSpy(dm.matrix) as spy:
+                dm.update_display()
+                dm.update_display()
+            assert spy.count == 0
+        finally:
+            dm.set_scrolling_state(False)
 
 
 class TestKillSwitch:
@@ -160,3 +226,89 @@ class TestKillSwitch:
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+class TestFrameHold:
+    """Holding a frame for N refreshes is how a scroll runs slower than one
+    pixel per refresh without fractional pixel positions."""
+
+    def test_hold_reaches_swap_on_vsync(self, dm):
+        dm.set_scrolling_state(True)
+        dm.set_frame_hold(3)
+        try:
+            dm.draw.rectangle([0, 0, 9, 9], fill=(120, 0, 200))
+            with _SwapSpy(dm.matrix) as spy:
+                dm.update_display()
+            assert spy.count == 1
+            assert spy.last_frame_hold == 3
+        finally:
+            dm.set_scrolling_state(False)
+
+    def test_default_is_every_refresh(self, dm):
+        dm.set_scrolling_state(True)
+        try:
+            dm.draw.rectangle([0, 0, 11, 11], fill=(0, 120, 200))
+            with _SwapSpy(dm.matrix) as spy:
+                dm.update_display()
+            assert spy.last_frame_hold == 1
+        finally:
+            dm.set_scrolling_state(False)
+
+    def test_hold_resets_when_scrolling_stops(self, dm):
+        """One plugin's pacing must not leak into whatever is on screen next."""
+        dm.set_scrolling_state(True)
+        dm.set_frame_hold(5)
+        dm.set_scrolling_state(False)
+        dm.set_scrolling_state(True)
+        try:
+            dm.draw.rectangle([0, 0, 13, 13], fill=(200, 120, 0))
+            with _SwapSpy(dm.matrix) as spy:
+                dm.update_display()
+            assert spy.last_frame_hold == 1
+        finally:
+            dm.set_scrolling_state(False)
+
+    @pytest.mark.parametrize("bad,expected", [(0, 1), (-4, 1), (None, 1), ("x", 1)])
+    def test_unusable_holds_are_ignored_or_floored(self, dm, bad, expected):
+        dm.set_frame_hold(bad)
+        assert dm._frame_hold == expected
+
+
+class TestFrameHoldLifetime:
+    """The hold must last exactly as long as the scroll that asked for it.
+
+    Plugins share one display manager. A hold applied at plugin construction is
+    wiped the moment any *other* plugin finishes scrolling, so by the time the
+    first plugin renders it is back to one pixel per refresh -- the speed reads
+    correct in the log and is wrong on the panel.
+    """
+
+    def test_scrolling_state_carries_the_hold(self, dm):
+        dm.set_scrolling_state(True, frame_hold=4)
+        try:
+            dm.draw.rectangle([0, 0, 7, 7], fill=(10, 200, 10))
+            with _SwapSpy(dm.matrix) as spy:
+                dm.update_display()
+            assert spy.last_frame_hold == 4
+        finally:
+            dm.set_scrolling_state(False)
+
+    def test_another_plugin_stopping_does_not_strand_a_hold(self, dm):
+        dm.set_scrolling_state(True, frame_hold=3)
+        dm.set_scrolling_state(False)          # some other plugin finishes
+        dm.set_scrolling_state(True)           # a plugin that wants no hold
+        try:
+            dm.draw.rectangle([0, 0, 6, 6], fill=(200, 10, 10))
+            with _SwapSpy(dm.matrix) as spy:
+                dm.update_display()
+            assert spy.last_frame_hold == 1
+        finally:
+            dm.set_scrolling_state(False)
+
+    def test_default_keeps_previous_behaviour(self, dm):
+        """Callers that never heard of frame holds get one frame per refresh."""
+        dm.set_scrolling_state(True)
+        try:
+            assert dm._frame_hold == 1
+        finally:
+            dm.set_scrolling_state(False)

@@ -5,6 +5,7 @@ Handles persistent disk-based caching with atomic writes and error recovery.
 """
 
 import json
+import math
 import os
 import time
 import tempfile
@@ -13,6 +14,11 @@ import threading
 import zlib
 from typing import Dict, Any, Optional, Protocol
 from datetime import datetime
+
+try:  # optional: large speedup on the cache write path, see _dumps below
+    import orjson
+except ImportError:  # pragma: no cover - exercised on hosts without the wheel
+    orjson = None
 
 # How old an abandoned write's temp file must be before the sweep removes it.
 # A real write holds its temp file for milliseconds, so an hour is far beyond
@@ -40,11 +46,95 @@ class CacheStrategyProtocol(Protocol):
 
 
 class DateTimeEncoder(json.JSONEncoder):
-    """JSON encoder that handles datetime objects."""
+    """JSON encoder that handles datetime objects.
+
+    Retained for the stdlib fallback path and for any caller importing it.
+    """
     def default(self, obj: Any) -> Any:
         if isinstance(obj, datetime):
             return obj.isoformat()
         return super().default(obj)
+
+
+def _datetime_default(obj: Any) -> Any:
+    """Serialise datetimes exactly as DateTimeEncoder did."""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+
+def _replace_nonfinite(obj: Any) -> Any:
+    """Non-finite floats -> None, matching what ``orjson.dumps`` writes.
+
+    Only reached once a strict pass has proved there is something to replace,
+    so the ordinary write path never pays for this walk.
+    """
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: _replace_nonfinite(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_replace_nonfinite(v) for v in obj]
+    return obj
+
+
+# NON-FINITE FLOATS
+# -----------------
+# JSON has no NaN or Infinity. The stdlib emits them anyway as an extension;
+# orjson refuses to and writes null. That divergence is not acceptable in a
+# cache whose files outlive the decision of which encoder is installed, so the
+# policy here is one behaviour on both paths:
+#
+#   writing  non-finite floats become null, whichever encoder is in use
+#   reading  files already on disk that carry the stdlib's NaN/Infinity
+#            tokens stay readable, whichever encoder is in use
+#
+# Without the write half, installing orjson silently changed cached values.
+# Without the read half, installing orjson turned every legacy record holding a
+# NaN into a "corrupted cache file" that DiskCache.get logged as an error and
+# deleted. Both halves are covered by test/test_cache_nonfinite_floats.py.
+
+
+if orjson is not None:
+    # Encoding the cache record dominated the background fetch worker: on a
+    # Pi 4, stdlib json.dumps runs ~12ms per MB and holds the GIL for all of
+    # it, which stalls the render thread mid-scroll. orjson measures ~7x
+    # faster on the same payloads (11.9ms -> 1.6ms for 985KB). Decoding gains
+    # far less (~1.3x on large payloads) because the cost there is building
+    # the Python objects, not scanning the text, but it is still free to take.
+    #
+    # OPT_NON_STR_KEYS: stdlib json coerces int/float dict keys to strings;
+    # orjson raises without this, and cache records do carry numeric keys.
+    # OPT_PASSTHROUGH_DATETIME: orjson would otherwise emit its own RFC 3339
+    # form for datetimes instead of calling default(). Routing them through
+    # _datetime_default keeps byte-for-byte parity with the records already
+    # on disk.
+    _DUMPS_OPTS = orjson.OPT_NON_STR_KEYS | orjson.OPT_PASSTHROUGH_DATETIME
+
+    def _dumps(data: Any) -> bytes:
+        return orjson.dumps(data, default=_datetime_default, option=_DUMPS_OPTS)
+
+    def _loads(raw: bytes) -> Any:
+        try:
+            return orjson.loads(raw)
+        except orjson.JSONDecodeError:
+            # Legacy record written by the stdlib path, carrying NaN or
+            # Infinity. Genuinely malformed files raise again from here, as
+            # json.JSONDecodeError, which is what DiskCache.get expects.
+            return json.loads(raw)
+else:
+    def _dumps(data: Any) -> bytes:
+        try:
+            return json.dumps(data, cls=DateTimeEncoder,
+                              allow_nan=False).encode("utf-8")
+        except ValueError:
+            # allow_nan=False is what detects the non-finite values; the walk
+            # runs only now that we know there is one to replace.
+            return json.dumps(_replace_nonfinite(data), cls=DateTimeEncoder,
+                              allow_nan=False).encode("utf-8")
+
+    def _loads(raw: bytes) -> Any:
+        return json.loads(raw)
 
 
 class DiskCache:
@@ -99,8 +189,8 @@ class DiskCache:
         
         try:
             with self._lock:
-                with open(cache_path, 'r', encoding='utf-8') as f:
-                    record = json.load(f)
+                with open(cache_path, 'rb') as f:
+                    record = _loads(f.read())
             
             # Determine record timestamp (prefer embedded, else file mtime)
             record_ts = None
@@ -189,12 +279,12 @@ class DiskCache:
         # write path below, and cache files are machine-read only — indenting
         # them just multiplied the bytes written to the SD card.
         try:
-            payload = json.dumps(data, cls=DateTimeEncoder)
+            payload = _dumps(data)
         except (TypeError, ValueError) as e:
             self.logger.warning("Cache data for key '%s' not serializable: %s", key, e)
             return
 
-        digest = zlib.adler32(payload.encode('utf-8'))
+        digest = zlib.adler32(payload)
 
         try:
             # Atomic write to avoid partial/corrupt files
@@ -242,7 +332,7 @@ class DiskCache:
                         # wear source (dozens of fsyncs/min on API-heavy
                         # installs) for data that can be re-downloaded.
                         try:
-                            with os.fdopen(fd, 'w', encoding='utf-8') as tmp_file:
+                            with os.fdopen(fd, 'wb') as tmp_file:
                                 tmp_file.write(payload)
                             os.replace(tmp_path, cache_path)
                             self._write_digests[key] = digest
@@ -260,7 +350,7 @@ class DiskCache:
                     else:
                         # Fallback: direct write (not atomic, but better than failing)
                         try:
-                            with open(cache_path, 'w', encoding='utf-8') as cache_file:
+                            with open(cache_path, 'wb') as cache_file:
                                 cache_file.write(payload)
                             self._write_digests[key] = digest
                             # Set proper permissions: 660 (rw-rw----) for group-readable cache files
@@ -290,7 +380,7 @@ class DiskCache:
                             # is a different path, so future sets must keep
                             # retrying the primary location.
                             fallback_path = os.path.join(fallback_dir, os.path.basename(cache_path))
-                            with open(fallback_path, 'w', encoding='utf-8') as tmp_file:
+                            with open(fallback_path, 'wb') as tmp_file:
                                 tmp_file.write(payload)
                             # Set proper permissions: 660 (rw-rw----) for group-readable cache files
                             try:
