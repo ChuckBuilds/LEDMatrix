@@ -29,11 +29,27 @@ def client():
 
 
 class TestRoutesAreRegistered:
-    """The failure was a missing route, so check the URL map directly."""
+    """The failure was a missing route, so check the URL map directly.
+
+    All thirteen, not just the two the Pixlet button needs: #330 dropped the
+    lot, and the app store page is built on repository/browse,
+    repository/categories and repository/install, which 404 the same way.
+    """
 
     @pytest.mark.parametrize("rule,method", [
         ("/api/v3/starlark/install-pixlet", "POST"),
         ("/api/v3/starlark/status", "GET"),
+        ("/api/v3/starlark/apps", "GET"),
+        ("/api/v3/starlark/upload", "POST"),
+        ("/api/v3/starlark/repository/browse", "GET"),
+        ("/api/v3/starlark/repository/categories", "GET"),
+        ("/api/v3/starlark/repository/install", "POST"),
+        ("/api/v3/starlark/apps/<app_id>", "GET"),
+        ("/api/v3/starlark/apps/<app_id>", "DELETE"),
+        ("/api/v3/starlark/apps/<app_id>/config", "GET"),
+        ("/api/v3/starlark/apps/<app_id>/config", "PUT"),
+        ("/api/v3/starlark/apps/<app_id>/toggle", "POST"),
+        ("/api/v3/starlark/apps/<app_id>/render", "POST"),
     ])
     def test_route_exists(self, rule, method):
         from web_interface.app import app
@@ -107,3 +123,79 @@ class TestTheInstallerScriptIsActuallyThere:
         script = Path(PROJECT_ROOT) / 'scripts' / 'download_pixlet.sh'
         assert script.is_file(), f"{script} is missing; install_pixlet would 404"
         assert os.access(script, os.R_OK)
+
+
+class TestTheAppStoreFlow:
+    """Browsing and installing from the Tronbyte repository.
+
+    These are the calls the app store page makes. Each returned the generic
+    "Resource not found" before this change, which is indistinguishable from
+    an empty store.
+    """
+
+    def test_browse_does_not_404(self, client):
+        resp = client.get('/api/v3/starlark/repository/browse')
+        assert resp.status_code != 404, "the store cannot list anything"
+        assert resp.get_json().get('message') != 'Resource not found'
+
+    def test_categories_does_not_404(self, client):
+        resp = client.get('/api/v3/starlark/repository/categories')
+        assert resp.status_code != 404
+        assert resp.get_json().get('message') != 'Resource not found'
+
+    def test_installed_apps_list_does_not_404(self, client):
+        resp = client.get('/api/v3/starlark/apps')
+        assert resp.status_code != 404
+        assert resp.get_json().get('message') != 'Resource not found'
+
+    def test_repository_install_rejects_a_missing_body_rather_than_404ing(self, client):
+        # A 400/422 here is the route working: it received the call and said
+        # what was wrong. A 404 means it was never reached at all.
+        resp = client.post('/api/v3/starlark/repository/install',
+                           json={}, content_type='application/json')
+        assert resp.status_code != 404, "the install route is still missing"
+        assert resp.get_json().get('message') != 'Resource not found'
+
+    def test_upload_rejects_an_empty_post_rather_than_404ing(self, client):
+        resp = client.post('/api/v3/starlark/upload')
+        assert resp.status_code != 404
+        assert resp.get_json().get('message') != 'Resource not found'
+
+
+class TestNoStarlarkRouteIsMissing:
+    """A single check that the whole set is present.
+
+    #330 removed all thirteen at once by rewriting this file. One assertion
+    over the frontend's own list is what would have caught that.
+    """
+
+    def test_every_endpoint_the_frontend_calls_is_registered(self):
+        import re
+        from pathlib import Path
+        from werkzeug.exceptions import MethodNotAllowed, NotFound
+        from web_interface.app import app
+
+        root = Path(__file__).resolve().parent.parent.parent
+        js = (root / 'web_interface' / 'static' / 'v3' / 'plugins_manager.js').read_text()
+
+        # The frontend builds some of these with template literals, e.g.
+        # `/api/v3/starlark/apps/${appId}/toggle`. Substitute a placeholder so
+        # the URL is concrete, then let Werkzeug match it the way a request
+        # would -- string comparison cannot see <app_id> rules.
+        raw = set(re.findall(r"[\'\"`](/api/v3/starlark/[^\'\"`\s]*)", js))
+        urls = set()
+        for u in raw:
+            u = re.sub(r"\$\{[^}]*\}", "probe", u)
+            urls.add(u.rstrip('/') or u)
+        assert urls, "found no starlark calls in the frontend -- did the file move?"
+
+        adapter = app.url_map.bind('localhost')
+        missing = []
+        for u in sorted(urls):
+            try:
+                adapter.match(u, method='GET')
+            except MethodNotAllowed:
+                pass          # route exists, just not for GET -- fine
+            except NotFound:
+                missing.append(u)
+        assert not missing, f"the frontend calls these and they are not registered: {missing}"
