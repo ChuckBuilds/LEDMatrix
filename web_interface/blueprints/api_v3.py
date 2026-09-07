@@ -9289,11 +9289,14 @@ def upload_starlark_app():
                 pass
 
     except (OSError, IOError) as err:
+        # The detail goes to the log, not the response: it names absolute
+        # paths on the device, which the caller has no business seeing. The
+        # generic Exception arm below already did this; these two did not.
         logger.exception("[Starlark] File error uploading starlark app: %s", err)
-        return jsonify({'status': 'error', 'message': f'File error during upload: {err}'}), 500
+        return jsonify({'status': 'error', 'message': 'File error during upload'}), 500
     except ImportError as err:
         logger.exception("[Starlark] Module load error uploading starlark app: %s", err)
-        return jsonify({'status': 'error', 'message': f'Failed to load app module: {err}'}), 500
+        return jsonify({'status': 'error', 'message': 'Failed to load app module'}), 500
     except Exception as err:
         logger.exception("[Starlark] Unexpected error uploading starlark app: %s", err)
         return jsonify({'status': 'error', 'message': 'Failed to upload app'}), 500
@@ -9479,7 +9482,8 @@ def update_starlark_app_config(app_id):
                 json.dump(current_config, f, indent=2)
         except Exception as e:
             logger.error(f"Failed to save config.json for {app_id}: {e}")
-            return jsonify({'status': 'error', 'message': f'Failed to save configuration: {e}'}), 500
+            logger.exception("Failed to save Starlark configuration for %r", app_id)
+            return jsonify({'status': 'error', 'message': 'Failed to save configuration'}), 500
 
         # Also update manifest for backward compatibility
         app_data.setdefault('config', {}).update(data)
