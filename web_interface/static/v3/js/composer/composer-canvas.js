@@ -15,6 +15,12 @@
  *
  * Resize handles: drawn on selected rectangles; 8 handles (corners + edge mids).
  */
+/* eslint-disable security/detect-object-injection --
+   Every hit in this file is either an array index (this.elements[idx],
+   rawVals[i]) or a lookup on a module-private map keyed by an internal
+   element type (_HANDLE_CURSORS, ELEMENT_DEFAULTS, previewValues). None of
+   them takes an attacker-supplied property name, so none can reach a
+   prototype. Disabled per file rather than eight times inline. */
 window.ComposerCanvas = (() => {
   'use strict';
 
@@ -318,6 +324,7 @@ window.ComposerCanvas = (() => {
     }
 
     // Helper: compute draw X for text alignment
+    // biome-ignore lint/correctness/useQwikValidLexicalScope: not Qwik -- this is an Alpine.js component, and the rule is about Qwik's $() serialization boundary, which does not exist here.
     const _textX = (text, finfo) => {
       const tw = text.length * finfo.charW * s;
       if (el.textAlign === 'center') return ax * s - tw / 2;
@@ -346,6 +353,7 @@ window.ComposerCanvas = (() => {
           const key = el.binding?.key || '?';
           const pv = opts.previewValues?.[key];
           // Substitute {variable} tokens in text using previewValues
+          // biome-ignore lint/correctness/useQwikValidLexicalScope: not Qwik -- this is an Alpine.js component, and the rule is about Qwik's $() serialization boundary, which does not exist here.
           const _subVars = str => (str || '').replace(/\{(\w+)\}/g, (_, k) => {
             const v = opts.previewValues?.[k];
             return v !== undefined && v !== '' ? String(v) : `{${k}}`;
@@ -552,6 +560,7 @@ window.ComposerCanvas = (() => {
             ? Math.max(0, Math.min(100, parseFloat(pvGauge) || 0)) / 100
             : Math.max(0, Math.min(100, el.previewPct ?? 65)) / 100;
           const fillSweep = totalSweep * pct;
+          // biome-ignore lint/correctness/useQwikValidLexicalScope: not Qwik -- this is an Alpine.js component, and the rule is about Qwik's $() serialization boundary, which does not exist here.
           const toRad = deg => (deg - 90) * Math.PI / 180; // canvas 0=top, PIL 0=right → offset -90
 
           // Track arc

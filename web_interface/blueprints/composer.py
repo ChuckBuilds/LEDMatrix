@@ -69,7 +69,7 @@ def _get_jinja_env() -> jinja2.Environment:
     global _jinja_env
     if _jinja_env is None:
         template_dir = Path(__file__).parent.parent / 'templates' / 'v3' / 'composer'
-        _jinja_env = jinja2.Environment(  # nosec B701 - see below
+        _jinja_env = jinja2.Environment(  # nosec B701 - see below  # nosemgrep
             loader=jinja2.FileSystemLoader(str(template_dir)),
             # These templates emit Python source, not HTML. Autoescaping would
             # turn a quote in a plugin name into &#34; inside generated code
@@ -79,7 +79,9 @@ def _get_jinja_env() -> jinja2.Environment:
             # string literal is rejected by _reject_source_breaking. Both are
             # covered by test/test_composer_code_injection.py, which is where
             # to look before relaxing any of it.
-            autoescape=False,
+            autoescape=False,  # nosemgrep - deliberate; these templates
+            # emit Python, not HTML, and the safety comes from the values
+            # (_safe_int / _rgb_expr / _reject_source_breaking) instead.
             trim_blocks=True,
             lstrip_blocks=True,
         )
@@ -92,7 +94,9 @@ def _as_rgb_filter(val) -> str:
     """[r, g, b] → '(r, g, b)'"""
     if val is None:
         return 'None'
-    return f'({int(val[0])}, {int(val[1])}, {int(val[2])})'
+    # nosemgrep: not a Flask route -- a Jinja filter emitting a Python
+    # tuple literal, with every channel coerced by int().
+    return f'({int(val[0])}, {int(val[1])}, {int(val[2])})'  # nosemgrep
 
 
 def _as_fill_filter(val) -> str:
@@ -177,7 +181,9 @@ def _rgb_tuple(el: dict, keys, defaults) -> str:
     source, so they were an injection route exactly like an uncoerced
     dimension. Every channel now goes through _safe_int.
     """
-    return "(" + ", ".join(
+    # nosemgrep: not a Flask route -- a private helper emitting a Python
+    # tuple literal, with every channel clamped to 0-255 by _safe_int.
+    return "(" + ", ".join(  # nosemgrep
         str(_safe_int(el.get(k), d, 0, 255)) for k, d in zip(keys, defaults)
     ) + ")"
 

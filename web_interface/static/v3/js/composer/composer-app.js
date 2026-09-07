@@ -7,6 +7,12 @@
  *   - localStorage autosaves on every mutation (debounced 1.5s)
  *   - composer_version in payload allows future server-side migration
  */
+/* eslint-disable security/detect-object-injection --
+   Every hit in this file is either an array index (this.elements[idx],
+   rawVals[i]) or a lookup on a module-private map keyed by an internal
+   element type (_HANDLE_CURSORS, ELEMENT_DEFAULTS, previewValues). None of
+   them takes an attacker-supplied property name, so none can reach a
+   prototype. Disabled per file rather than eight times inline. */
 
 // ── Template library ─────────────────────────────────────────────────────────
 const COMPOSER_TEMPLATES = [
@@ -186,6 +192,7 @@ function _debouncedAutosave(payload) {
 }
 
 // ── Main component ───────────────────────────────────────────────────────────
+// biome-ignore lint/correctness/noUnusedVariables: called from the template as x-data="composerApp()" (composer.html), which the linter cannot see.
 function composerApp() {
   return {
     // ── Plugin metadata ───────────────────────────────────────────────
@@ -836,7 +843,9 @@ function composerApp() {
         x = Math.round(x / this.snapSize) * this.snapSize;
         y = Math.round(y / this.snapSize) * this.snapSize;
       }
+      // biome-ignore lint/correctness/useQwikValidLexicalScope: not Qwik -- this is an Alpine.js component, and the rule is about Qwik's $() serialization boundary, which does not exist here.
       const clampX = v => Math.max(-this.MATRIX_W, Math.min(this.MATRIX_W * 2, v));
+      // biome-ignore lint/correctness/useQwikValidLexicalScope: not Qwik -- this is an Alpine.js component, and the rule is about Qwik's $() serialization boundary, which does not exist here.
       const clampY = v => Math.max(-this.MATRIX_H, Math.min(this.MATRIX_H * 2, v));
       if (el.type === 'line') {
         el.x0 = clampX(x); el.y0 = clampY(y);
