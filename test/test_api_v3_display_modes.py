@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from test._api_v3_test_helpers import (  # noqa: F401 - fixtures
-    api_v3_client, api_v3_module, build_app,
+    api_v3_client, api_v3_module,
 )
 
 

@@ -41,7 +41,6 @@ import os
 import signal
 import sys
 import threading
-import time
 from typing import Any, Callable, Dict, List, Optional
 
 import requests
@@ -61,7 +60,7 @@ DEFAULTS = {
     "mqtt_host": "localhost",
     "mqtt_port": 1883,
     "mqtt_username": None,
-    "mqtt_password": None,
+    "mqtt_password": None,  # nosec B105 - "no password configured", not a credential
     "mqtt_client_id": "ledmatrix-mqtt-bridge",
     "mqtt_topic": "ledmatrix/command",
     "mqtt_tls": False,
