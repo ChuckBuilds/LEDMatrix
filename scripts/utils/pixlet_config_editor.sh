@@ -15,11 +15,14 @@
 # actually editing.
 #
 # Usage:
-#   ./scripts/utils/pixlet_config_editor.sh                 # list installed apps
-#   ./scripts/utils/pixlet_config_editor.sh <app_id>        # edit, on localhost
-#   ./scripts/utils/pixlet_config_editor.sh <app_id> --lan  # reachable from the LAN
+#   ./scripts/utils/pixlet_config_editor.sh            # list installed apps
+#   ./scripts/utils/pixlet_config_editor.sh <app_id>   # edit
 #
-# On localhost, reach it from another machine over SSH instead of --lan:
+# Binds loopback only, and there is deliberately no flag to change that:
+# `pixlet serve` has no authentication, and anything that can reach it can
+# rewrite the app's config. To edit from another machine, forward the port --
+# which authenticates as SSH and leaves nothing listening on the LAN:
+#
 #   ssh -L 8080:localhost:8080 pi@ledpi.local
 
 set -eu
@@ -27,12 +30,10 @@ set -eu
 PROJECT_ROOT_DIR=$(cd "$(dirname "$0")/../.." && pwd)
 APPS_DIR="$PROJECT_ROOT_DIR/starlark-apps"
 PORT="${PIXLET_EDITOR_PORT:-8080}"
+# Loopback only. See the header: pixlet serve is unauthenticated.
 BIND_HOST="127.0.0.1"
 
 APP_ID="${1:-}"
-if [ "${2:-}" = "--lan" ]; then
-    BIND_HOST="0.0.0.0"
-fi
 
 list_apps() {
     if [ -d "$APPS_DIR" ]; then
@@ -41,7 +42,7 @@ list_apps() {
 }
 
 if [ -z "$APP_ID" ]; then
-    echo "Usage: $0 <app_id> [--lan]"
+    echo "Usage: $0 <app_id>"
     echo ""
     echo "Installed apps:"
     list_apps || true
@@ -124,17 +125,11 @@ fi
 echo ""
 echo "Editing:  $APP_ID"
 echo "App file: $STAR_FILE"
-if [ "$BIND_HOST" = "0.0.0.0" ]; then
-    echo "URL:      http://$(hostname):$PORT/"
-    echo ""
-    echo "⚠ Listening on all interfaces with no authentication. Anyone on this"
-    echo "  network can change this app's config while the session is open."
-else
-    echo "URL:      http://localhost:$PORT/"
-    echo ""
-    echo "Listening on localhost only. From another machine, forward the port:"
-    echo "  ssh -L $PORT:localhost:$PORT $(whoami)@$(hostname)"
-fi
+echo "URL:      http://localhost:$PORT/"
+echo ""
+echo "Listening on localhost only -- pixlet serve has no authentication."
+echo "From another machine, forward the port:"
+echo "  ssh -L $PORT:localhost:$PORT $(whoami)@$(hostname)"
 echo ""
 echo "Changes save straight to the real config as you make them."
 echo "Press Ctrl+C when finished - the display restarts automatically."

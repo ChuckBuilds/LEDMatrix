@@ -354,6 +354,23 @@ def discovery_messages(command_topic: str, state_topic: str, availability_topic:
     ]
 
 
+def warn_if_cleartext(config: Dict[str, Any]) -> bool:
+    """Say so, once, when a broker password is going over an unencrypted link.
+
+    The shipped example has TLS on, so reaching here means somebody turned it
+    off deliberately -- which is legitimate (the Mosquitto add-on is plaintext
+    on 1883) but should not be silent when there is a password to lose. Returns
+    whether it warned, so the decision is testable without a broker.
+    """
+    if config.get("mqtt_tls") or not config.get("mqtt_password"):
+        return False
+    logger.warning(
+        'mqtt_tls is off and a password is set: the broker password and every '
+        'command are sent unencrypted. Set "mqtt_tls": true (port 8883 on most '
+        'brokers) unless this is a trusted, isolated network.')
+    return True
+
+
 def read_state(client: LEDMatrixClient) -> Dict[str, Any]:
     """The state every entity reads, so HA opens on real values.
 
@@ -471,6 +488,8 @@ class Bridge:
             if self.config.get("mqtt_tls_insecure"):
                 logger.warning("TLS certificate verification is disabled (mqtt_tls_insecure)")
                 self._mqtt.tls_insecure_set(True)
+        else:
+            warn_if_cleartext(self.config)
 
         self._mqtt.will_set(self.availability_topic, "offline", qos=1, retain=True)
         self._mqtt.on_connect = self._on_connect

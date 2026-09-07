@@ -9,9 +9,10 @@ fake API client and a pure function.
 
 import importlib.util
 import json
+import logging
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -264,3 +265,65 @@ class TestConfigLoading:
         path.write_text(json.dumps({"mqtt_port": "not-a-port"}))
         with pytest.raises(bridge_module.ConfigError):
             bridge_module.load_config(str(path))
+
+
+class TestTheExampleConfigIsSecureByDefault:
+    """The installer copies bridge_config.example.json verbatim on first run.
+
+    Without TLS the broker password and every display command cross the network
+    in cleartext, so the shipped default has to be the safe one -- a plaintext
+    broker is a deliberate edit, not something you get by not reading.
+    """
+
+    @pytest.fixture
+    def example(self):
+        path = (Path(__file__).resolve().parent.parent
+                / "integrations" / "mqtt_bridge" / "bridge_config.example.json")
+        if not path.exists():
+            pytest.skip("mqtt bridge example config is not present")
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def test_tls_is_on(self, example):
+        assert example["mqtt_tls"] is True
+
+    def test_the_port_is_the_tls_one(self, example):
+        """1883 with mqtt_tls on would just fail to connect."""
+        assert example["mqtt_port"] == 8883
+
+    def test_certificate_verification_is_not_disabled(self, example):
+        assert example.get("mqtt_tls_insecure", False) is False
+
+    def test_no_password_ships_in_the_example(self, example):
+        assert example["mqtt_password"] is None
+
+    def test_the_example_loads(self, bridge_module, tmp_path):
+        """It is copied verbatim, so it must survive load_config."""
+        path = (Path(__file__).resolve().parent.parent
+                / "integrations" / "mqtt_bridge" / "bridge_config.example.json")
+        config = bridge_module.load_config(str(path))
+        assert config["mqtt_tls"] is True and config["mqtt_port"] == 8883
+
+
+class TestCleartextIsCalledOut:
+    """Turning TLS off is allowed -- the Mosquitto add-on is plaintext on 1883 --
+    but it should not be silent when a password is going over it."""
+
+    def test_a_password_without_tls_warns(self, bridge_module, caplog):
+        with caplog.at_level(logging.WARNING):
+            warned = bridge_module.warn_if_cleartext(
+                {"mqtt_tls": False, "mqtt_password": "hunter2"})
+        assert warned is True
+        assert "unencrypted" in caplog.text
+
+    def test_the_warning_does_not_repeat_the_password(self, bridge_module, caplog):
+        with caplog.at_level(logging.WARNING):
+            bridge_module.warn_if_cleartext({"mqtt_tls": False, "mqtt_password": "hunter2"})
+        assert "hunter2" not in caplog.text
+
+    def test_no_password_means_nothing_to_lose(self, bridge_module):
+        assert bridge_module.warn_if_cleartext(
+            {"mqtt_tls": False, "mqtt_password": None}) is False
+
+    def test_tls_on_does_not_warn(self, bridge_module):
+        assert bridge_module.warn_if_cleartext(
+            {"mqtt_tls": True, "mqtt_password": "hunter2"}) is False

@@ -6,6 +6,7 @@ one. /plugins/installed carries neither, so callers read every plugin's
 manifest.json off disk and reimplemented PluginManager's own fallbacks.
 """
 
+import json
 from unittest.mock import MagicMock
 
 import pytest
@@ -102,3 +103,55 @@ class TestItWorksForACallerThatNeverOpensTheDashboard:
 
         modes = _modes(client.get('/api/v3/display/modes'))
         assert modes['starlark-apps']['plugin_id'] == 'starlark-apps'
+
+
+class TestOneBadConfigSectionDoesNotBlankTheList:
+    """config.json can hold a non-dict under a plugin id.
+
+    DisplayController guards the same shape, so it happens in practice. Here it
+    used to raise AttributeError mid-loop and answer 500 with no modes at all --
+    and the MQTT bridge builds every one of its entities from this list, so one
+    hand-edited section would empty the Home Assistant dropdown.
+    """
+
+    @pytest.fixture
+    def client_with_bad_section(self, api_v3_module, api_v3_client):
+        pm = api_v3_module.api_v3.plugin_manager
+        pm.plugin_manifests = MANIFESTS
+        pm.discover_plugins = MagicMock(return_value=list(MANIFESTS))
+        pm.get_plugin_display_modes = MagicMock(
+            side_effect=lambda pid: MANIFESTS[pid]['display_modes'])
+        api_v3_module.api_v3.config_manager.load_config = MagicMock(return_value={
+            'clock-simple': {'enabled': True},
+            'football-scoreboard': "true",          # a string, not an object
+            'ledmatrix-weather': {'enabled': True},
+        })
+        return api_v3_client
+
+    def test_the_endpoint_still_answers(self, client_with_bad_section):
+        assert client_with_bad_section.get('/api/v3/display/modes').status_code == 200
+
+    def test_the_healthy_plugins_are_still_listed(self, client_with_bad_section):
+        modes = _modes(client_with_bad_section.get('/api/v3/display/modes'))
+        assert 'clock-simple' in modes and 'weather' in modes
+
+    def test_the_bad_section_is_treated_as_disabled(self, client_with_bad_section):
+        modes = _modes(client_with_bad_section.get('/api/v3/display/modes'))
+        assert 'nfl_live' not in modes
+
+    def test_a_failure_is_reported_the_way_every_other_handler_reports_one(
+            self, api_v3_module, api_v3_client):
+        """describe_exception, per test_web_error_detail's contract -- an
+        opaque "see logs for details" is what that test exists to prevent."""
+        api_v3_module.api_v3.plugin_manager.discover_plugins = MagicMock(
+            side_effect=RuntimeError("disk is gone"))
+        resp = api_v3_client.get('/api/v3/display/modes')
+        assert resp.status_code == 500
+        assert 'disk is gone' in resp.get_json()['details']
+
+    def test_credentials_in_the_exception_are_redacted(self, api_v3_module, api_v3_client):
+        """describe_exception is what makes returning detail safe."""
+        api_v3_module.api_v3.plugin_manager.discover_plugins = MagicMock(
+            side_effect=RuntimeError("GET https://x/y?api_key=SEC123 failed"))
+        body = api_v3_client.get('/api/v3/display/modes').get_json()
+        assert 'SEC123' not in json.dumps(body)

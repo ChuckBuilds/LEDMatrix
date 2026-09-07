@@ -35,7 +35,6 @@ render preview, cascading dropdowns -- rather than the LEDMatrix one.
 ```bash
 ./scripts/utils/pixlet_config_editor.sh                 # list installed apps
 ./scripts/utils/pixlet_config_editor.sh penndot_signs   # edit, on localhost:8080
-./scripts/utils/pixlet_config_editor.sh penndot_signs --lan   # reachable from the LAN
 ```
 
 Deliberately not a service. It stops the display for the length of the
@@ -43,7 +42,10 @@ session and `pixlet serve` listens with no authentication, so it should only
 be running while you are actually editing. It backs the config up first and
 restarts the display on exit, however it exits.
 
-From another machine, forward the port rather than using `--lan`:
+It binds loopback only, with no flag to change that: anything that can reach
+`pixlet serve` can rewrite the app's config, and a printed warning is not
+access control. To edit from another machine, forward the port -- SSH does the
+authenticating and nothing is left listening on the LAN:
 
 ```bash
 ssh -L 8080:localhost:8080 pi@ledpi.local

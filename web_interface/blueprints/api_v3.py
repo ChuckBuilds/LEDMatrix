@@ -2552,7 +2552,20 @@ def get_display_modes():
 
         modes = []
         for plugin_id, manifest in sorted(api_v3.plugin_manager.plugin_manifests.items()):
-            enabled = bool(full_config.get(plugin_id, {}).get('enabled', False))
+            # A hand-edited or migrated config.json can hold a non-dict under a
+            # plugin id; DisplayController._reconcile guards the same shape, so
+            # it happens in practice. Without this, .get() raises AttributeError,
+            # the loop aborts and the endpoint answers 500 with no modes at all
+            # -- one bad section would blank every entity the MQTT bridge builds
+            # from this list.
+            plugin_config = full_config.get(plugin_id)
+            if not isinstance(plugin_config, dict):
+                if plugin_config is not None:
+                    logger.warning(
+                        "Config for plugin %r is %s, not an object; treating it as disabled",
+                        plugin_id, type(plugin_config).__name__)
+                plugin_config = {}
+            enabled = bool(plugin_config.get('enabled', False))
             if not enabled and not include_disabled:
                 continue
             plugin_name = (manifest or {}).get('name') or plugin_id
@@ -2571,6 +2584,12 @@ def get_display_modes():
 
         return jsonify({'status': 'success', 'data': {'modes': modes}})
     except Exception as exc:
+        # describe_exception, not a bare message: test_web_error_detail.py
+        # enforces that every handler here returns it, because a device whose
+        # storage is failing otherwise answers "see logs for details" from the
+        # log viewer too. It redacts credentials out of the exception text.
+        # CodeQL flags this as stack-trace exposure across all ~75 handlers;
+        # it is the project's deliberate, reviewed trade-off.
         logger.error('Error in get_display_modes', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(exc)}), 500
 

@@ -76,14 +76,20 @@ Edit the config with your broker details and re-run it.
 ```json
 {
   "mqtt_host": "192.168.1.10",
-  "mqtt_port": 1883,
+  "mqtt_port": 8883,
   "mqtt_username": "ledmatrix",
   "mqtt_password": null,
   "mqtt_topic": "ledmatrix/command",
-  "mqtt_tls": false,
+  "mqtt_tls": true,
   "ledmatrix_api_base": "http://localhost:5000"
 }
 ```
+
+**TLS is on by default.** Without it the broker password and every display
+command cross the network in cleartext. If your broker only listens on plain
+1883 — which the Mosquitto add-on does out of the box — set `"mqtt_tls": false`
+and `"mqtt_port": 1883`. The bridge logs a warning at startup when a password
+is configured without TLS.
 
 `bridge_config.json` is gitignored. Any key can also be supplied through the
 environment as `LEDMATRIX_MQTT_<KEY>` (`LEDMATRIX_MQTT_MQTT_PASSWORD`, say),
