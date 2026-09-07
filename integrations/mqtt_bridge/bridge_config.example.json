@@ -1,0 +1,13 @@
+{
+  "mqtt_host": "192.168.1.10",
+  "mqtt_port": 1883,
+  "mqtt_username": "ledmatrix",
+  "mqtt_password": null,
+  "mqtt_client_id": "ledmatrix-mqtt-bridge",
+  "mqtt_topic": "ledmatrix/command",
+  "mqtt_tls": false,
+  "ledmatrix_api_base": "http://localhost:5000",
+  "request_timeout": 15,
+  "on_demand_duration": null,
+  "log_level": "INFO"
+}

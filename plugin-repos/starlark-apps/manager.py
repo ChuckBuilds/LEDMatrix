@@ -194,6 +194,15 @@ class StarlarkAppsPlugin(BasePlugin):
     Each installed app becomes a dynamic display mode.
     """
 
+    #: Starlark apps are animations: a .webp render carries per-frame delays
+    #: and _display_frame advances at most one frame per call. The controller
+    #: reads this attribute to decide whether a mode needs its high-FPS loop;
+    #: without it display() was called once per rotation slot, so a multi-frame
+    #: app showed a single frame and never moved. static-image is force-run at
+    #: high FPS for the same reason (GIFs), but that plugin is special-cased by
+    #: name in the controller and this one has to declare it.
+    enable_scrolling = True
+
     def __init__(self, plugin_id: str, config: Dict[str, Any],
                  display_manager, cache_manager, plugin_manager):
         """Initialize the Starlark Apps plugin."""
@@ -681,12 +690,19 @@ class StarlarkAppsPlugin(BasePlugin):
                 if app.is_enabled() and app.should_render(current_time):
                     self._render_app(app, force=False)
 
-    def display(self, force_clear: bool = False) -> bool:
+    def display(self, display_mode: Optional[str] = None, force_clear: bool = False) -> bool:
         """
         Display current Starlark app.
 
         This method is called during the display rotation.
         Displays frames from the currently active app.
+
+        `display_mode` names the app to show when it matches an installed
+        app_id. The controller passes the mode it is rotating to and inspects
+        this signature to decide whether to, so accepting it is what lets a
+        specific app be addressed -- including by an on-demand request pinned
+        to one app. Anything else (the plugin id itself, when the plugin
+        exposes no per-app modes) falls through to normal rotation.
 
         Returns False when there is no app to show -- which is the state of
         every install without Pixlet, and of a fresh one before any app is
@@ -698,8 +714,15 @@ class StarlarkAppsPlugin(BasePlugin):
             if force_clear:
                 self.display_manager.clear()
 
-            # If no current app, try to select one
-            if not self.current_app:
+            if display_mode and display_mode in self.apps:
+                self.current_app = self.apps[display_mode]
+            elif force_clear or not self.current_app:
+                # Advance on entry to the mode. _select_next_app only ran when
+                # current_app was unset, so the first enabled app was picked
+                # once and then shown forever -- every other installed app was
+                # rendered on schedule and never displayed. force_clear is the
+                # controller's "we just switched to you" signal (it is reset
+                # immediately after this call), so one app gets each turn.
                 self._select_next_app()
 
             if not self.current_app:

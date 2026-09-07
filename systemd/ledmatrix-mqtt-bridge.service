@@ -1,0 +1,18 @@
+[Unit]
+Description=LED Matrix Home Assistant MQTT Bridge
+After=network-online.target ledmatrix-web.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=__PROJECT_ROOT_DIR__
+ExecStart=/usr/bin/python3 __PROJECT_ROOT_DIR__/integrations/mqtt_bridge/ledmatrix_mqtt_bridge.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ledmatrix-mqtt-bridge
+
+[Install]
+WantedBy=multi-user.target

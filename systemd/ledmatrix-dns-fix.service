@@ -1,0 +1,16 @@
+[Unit]
+Description=LED Matrix DNS single-request fix (works around slow A/AAAA lookups)
+After=network-online.target NetworkManager.service
+Wants=network-online.target
+Before=ledmatrix.service
+
+[Service]
+Type=oneshot
+ExecStart=__PROJECT_ROOT_DIR__/scripts/utils/apply_dns_single_request.sh
+RemainAfterExit=yes
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ledmatrix-dns-fix
+
+[Install]
+WantedBy=multi-user.target

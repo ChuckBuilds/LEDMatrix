@@ -33,7 +33,7 @@ All endpoints return JSON responses with a standard format:
 
 > The API blueprint is mounted at `/api/v3` (`web_interface/app.py:199`).
 > SSE stream endpoints (`/api/v3/stream/*`) are defined directly on the
-> Flask app at `app.py:799-809`. There are 94 routes total — see
+> Flask app at `app.py:799-809`. There are 111 routes total — see
 > `web_interface/blueprints/api_v3.py` for the canonical list.
 
 ---
@@ -222,6 +222,56 @@ Get the current display state and preview image.
   }
 }
 ```
+
+### List Display Modes
+
+**GET** `/api/v3/display/modes`
+
+Every display mode that can be requested on-demand, with the plugin that owns
+it. This is the list the force-display dialog offers.
+
+Send the reported `plugin_id` alongside `mode` when starting an on-demand
+display: `/display/on-demand/start` falls back to `find_plugin_for_mode` when
+`plugin_id` is omitted, and that lookup only sees modes declared in a static
+manifest — a plugin whose modes are generated (each installed Starlark app is
+one) returns 404 there.
+
+Triggers plugin discovery, which is otherwise lazy — so a caller that never
+opens the dashboard still gets the full list.
+
+**Query Parameters**:
+- `include_disabled` (optional): `1` to include modes belonging to disabled
+  plugins. They are still valid on-demand targets — the controller enables the
+  plugin for the duration of the request — and are reported with
+  `"enabled": false`.
+
+**Response**:
+```json
+{
+  "status": "success",
+  "data": {
+    "modes": [
+      {
+        "mode": "nfl_live",
+        "plugin_id": "football-scoreboard",
+        "plugin_name": "Football Scoreboard",
+        "name": "nfl_live",
+        "enabled": true
+      },
+      {
+        "mode": "clock-simple",
+        "plugin_id": "clock-simple",
+        "plugin_name": "Simple Clock",
+        "name": "Simple Clock",
+        "enabled": true
+      }
+    ]
+  }
+}
+```
+
+`name` is a label for a dropdown: a single-mode plugin's own name, or the raw
+mode string for a multi-mode plugin, since there is no per-mode name anywhere.
 
 ### On-Demand Display Status
 
