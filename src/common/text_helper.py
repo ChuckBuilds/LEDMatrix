@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
 from PIL import Image, ImageDraw, ImageFont
+from src.common.font_layout import load_truetype
 
 # Shared throwaway draw surface for measuring text without a target canvas.
 _measure_draw = ImageDraw.Draw(Image.new("RGB", (1, 1)))
@@ -60,7 +61,7 @@ class TextHelper:
                 size = config['size']
                 
                 if font_path.exists():
-                    font = ImageFont.truetype(str(font_path), size)
+                    font = load_truetype(str(font_path), size)
                     fonts[font_name] = font
                     self.logger.debug(f"Loaded font: {font_name} ({font_path}, size {size})")
                 else:

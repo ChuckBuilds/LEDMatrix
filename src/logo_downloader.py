@@ -14,6 +14,7 @@ import json
 from typing import Dict, List, Optional, Tuple
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
+from src.common.font_layout import load_truetype
 from PIL.PngImagePlugin import PngInfo
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -747,7 +748,7 @@ class LogoDownloader:
             
             # Try to load a font, fallback to default
             try:
-                font = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 12)
+                font = load_truetype("assets/fonts/PressStart2P-Regular.ttf", 12)
             except (OSError, IOError):
                 try:
                     font = ImageFont.load_default()

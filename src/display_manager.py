@@ -34,6 +34,7 @@ else:
 from contextlib import contextmanager
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
+from src.common.font_layout import load_truetype
 import threading
 import time
 from collections import OrderedDict
@@ -54,6 +55,27 @@ from src.common.permission_utils import (
 # Get logger without configuring
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)  # Set to INFO level
+
+#: The strike 5x7.bdf is drawn at. FreeType renders a BDF at its own fixed
+#: size regardless, but a Face needs an active size before its metrics --
+#: and therefore get_font_height() -- report anything but 0.
+_CALENDAR_FONT_PX = 7
+
+
+def _bdf_native_size(face) -> int:
+    """The pixel height a BDF Face declares, or 0 if it does not say.
+
+    Used only to rescue a Face that was built without ``set_char_size``, so a
+    zero line height never reaches layout code.
+    """
+    try:
+        sizes = getattr(face, "available_sizes", None) or []
+        if sizes:
+            return int(getattr(sizes[0], "height", 0) or 0)
+    except Exception:  # pylint: disable=broad-except
+        pass
+    return 0
+
 
 
 class _LogicalMatrix:
@@ -377,7 +399,7 @@ class DisplayManager:
             
             # Initialize font with Press Start 2P
             try:
-                self.font = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 8)
+                self.font = load_truetype("assets/fonts/PressStart2P-Regular.ttf", 8)
                 logger.info("Initial Press Start 2P font loaded successfully")
             except Exception as e:
                 logger.error(f"Failed to load initial font: {e}")
@@ -564,7 +586,7 @@ class DisplayManager:
             try:
                 font = candidate
                 if isinstance(candidate, tuple):
-                    font = ImageFont.truetype(candidate[0], candidate[1])
+                    font = load_truetype(candidate[0], candidate[1])
                 if all(self.draw.textlength(t, font=font) <= width for t in lines):
                     return font
             except (OSError, ValueError, AttributeError):
@@ -933,11 +955,11 @@ class DisplayManager:
         self._text_width_cache.clear()
         try:
             # Load Press Start 2P font
-            self.regular_font = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 8)
+            self.regular_font = load_truetype("assets/fonts/PressStart2P-Regular.ttf", 8)
             logger.info("Press Start 2P font loaded successfully")
             
             # Use the same font for small text (currently same size; adjust size here if needed)
-            self.small_font = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 8)
+            self.small_font = load_truetype("assets/fonts/PressStart2P-Regular.ttf", 8)
             logger.info("Press Start 2P small font loaded successfully")
 
             # Load 5x7 BDF font for calendar events
@@ -950,6 +972,17 @@ class DisplayManager:
                 
                 # Load with freetype for proper BDF handling
                 face = freetype.Face(self.calendar_font_path)
+                # A freshly constructed Face has no active size, so
+                # face.size.height is 0 until set_char_size is called -- and
+                # get_font_height() reads exactly that. Without this, every
+                # caller measuring the 5x7 face got 0 and stacked rows on top
+                # of one another; the "Calendar font size: 0 pixels" line
+                # below has been printing the symptom on every start-up.
+                # font_manager._load_bdf_font already does this; the two paths
+                # disagreed about whether a Face was usable for measurement.
+                # 5x7.bdf is a fixed strike, so FreeType renders 7px whatever
+                # is asked for -- this sets the metrics, not the raster.
+                face.set_char_size(_CALENDAR_FONT_PX * 64, _CALENDAR_FONT_PX * 64, 72, 72)
                 logger.info(f"5x7 calendar font loaded successfully from {self.calendar_font_path}")
                 logger.info(f"Calendar font size: {face.size.height >> 6} pixels")
                 
@@ -970,7 +1003,7 @@ class DisplayManager:
             try:
                 font_path = "assets/fonts/4x6-font.ttf"
                 logger.info(f"Attempting to load 4x6 TTF font from: {font_path} at size 6")
-                self.extra_small_font = ImageFont.truetype(font_path, 6)
+                self.extra_small_font = load_truetype(font_path, 6)
                 logger.info(f"4x6 TTF extra small font loaded successfully from {font_path}")
             except Exception as font_err:
                 logger.error(f"Failed to load 4x6 TTF font: {font_err}. Falling back.")
@@ -1028,7 +1061,13 @@ class DisplayManager:
         try:
             if isinstance(font, freetype.Face):
                 # For FreeType faces (BDF), the 'height' metric gives the recommended line spacing.
-                return font.size.height >> 6
+                height = font.size.height >> 6
+                if height:
+                    return height
+                # A Face constructed without set_char_size reports 0, and a
+                # zero line height collapses every stacked row onto one line.
+                # Fall back to the strike the file declares.
+                return _bdf_native_size(font) or 8
             else:
                 # For PIL TTF fonts, getmetrics() provides ascent and descent.
                 # The line height is the sum of ascent and descent.

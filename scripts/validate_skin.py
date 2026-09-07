@@ -27,6 +27,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from PIL import Image, ImageDraw, ImageFont  # noqa: E402
 
+from src.common.font_layout import load_truetype  # noqa: E402
+
 FIXTURES_DIR = PROJECT_ROOT / "src" / "skin_system" / "fixtures"
 MODES = ("live", "recent", "upcoming")
 SPORTS = ("baseball", "basketball", "football", "hockey")
@@ -52,12 +54,12 @@ class FixtureHost:
         try:
             press = str(PROJECT_ROOT / "assets/fonts/PressStart2P-Regular.ttf")
             small = str(PROJECT_ROOT / "assets/fonts/4x6-font.ttf")
-            fonts['score'] = ImageFont.truetype(press, 10)
-            fonts['time'] = ImageFont.truetype(press, 8)
-            fonts['team'] = ImageFont.truetype(press, 8)
-            fonts['status'] = ImageFont.truetype(small, 6)
-            fonts['detail'] = ImageFont.truetype(small, 6)
-            fonts['rank'] = ImageFont.truetype(press, 10)
+            fonts['score'] = load_truetype(press, 10)
+            fonts['time'] = load_truetype(press, 8)
+            fonts['team'] = load_truetype(press, 8)
+            fonts['status'] = load_truetype(small, 6)
+            fonts['detail'] = load_truetype(small, 6)
+            fonts['rank'] = load_truetype(press, 10)
         except IOError:
             default = ImageFont.load_default()
             for key in ('score', 'time', 'team', 'status', 'detail', 'rank'):

@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any, List, Optional, Tuple
 
 from PIL import Image, ImageDraw, ImageFont
+from src.common.font_layout import load_truetype
 
 from src.logging_config import get_logger
 
@@ -141,8 +142,8 @@ class VisualTestDisplayManager:
 
             # Press Start 2P — regular and small (both 8px)
             ttf_path = str(fonts_dir / 'PressStart2P-Regular.ttf')
-            self.regular_font = ImageFont.truetype(ttf_path, 8)
-            self.small_font = ImageFont.truetype(ttf_path, 8)
+            self.regular_font = load_truetype(ttf_path, 8)
+            self.small_font = load_truetype(ttf_path, 8)
             self.font = self.regular_font  # alias used by some code paths
 
             # 5x7 BDF font via freetype
@@ -162,7 +163,7 @@ class VisualTestDisplayManager:
             # 4x6 extra small TTF
             try:
                 xs_path = str(fonts_dir / '4x6-font.ttf')
-                self.extra_small_font = ImageFont.truetype(xs_path, 6)
+                self.extra_small_font = load_truetype(xs_path, 6)
             except (FileNotFoundError, OSError) as e:
                 logger.debug("Extra small font not available, using fallback: %s", e)
                 self.extra_small_font = self.small_font
