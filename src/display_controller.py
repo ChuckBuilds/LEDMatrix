@@ -198,6 +198,10 @@ class DisplayController:
         # the main run loop reconciles (loads/unloads) on its own thread so
         # mutating available_modes never races with rendering.
         self._pending_plugin_reconcile = False
+        # Monotonic stamp of the last mailbox disk read; see
+        # _poll_on_demand_requests. None means "never polled", so the first
+        # call always goes through.
+        self._last_on_demand_poll: Optional[float] = None
         self.on_demand_active = False
         self.on_demand_mode: Optional[str] = None
         self.on_demand_modes: List[str] = []  # All modes for the on-demand plugin
@@ -1267,12 +1271,34 @@ class DisplayController:
         self.on_demand_schedule_override = False
         self._publish_on_demand_state()
 
+    #: Shortest gap between mailbox disk reads. This is called after every
+    #: frame -- about 125 times a second on a scrolling mode -- and the read
+    #: below is deliberately uncached, so without a floor it was 125 disk reads
+    #: per second to find nothing. An on-demand request comes from a person
+    #: clicking in the web UI, so a quarter second of latency is not
+    #: perceptible, and it cuts the read rate by 30x.
+    ON_DEMAND_POLL_INTERVAL = 0.25
+
     def _poll_on_demand_requests(self) -> None:
         """Poll cache for new on-demand requests from external controllers."""
+        now = time.monotonic()
+        if (self._last_on_demand_poll is not None
+                and now - self._last_on_demand_poll < self.ON_DEMAND_POLL_INTERVAL):
+            return
+        self._last_on_demand_poll = now
+
         try:
             # Use a long max_age (1 hour) to ensure requests aren't expired before processing
-            # The request_id check prevents duplicate processing
-            request = self.cache_manager.get('display_on_demand_request', max_age=3600)
+            # The request_id check prevents duplicate processing.
+            #
+            # memory_ttl=0 is required, not optional: this key is a mailbox the
+            # web process writes and this process reads. get() defaults the
+            # in-memory TTL to max_age, so without it the first request read was
+            # pinned in memory for the full hour and every later poll returned
+            # that stale copy -- meaning no second on-demand request was honoured
+            # for an hour, while the API still reported success.
+            request = self.cache_manager.get('display_on_demand_request',
+                                             max_age=3600, memory_ttl=0)
         except (OSError, RuntimeError, ValueError, TypeError) as err:
             logger.error("Failed to read on-demand request: %s", err, exc_info=True)
             return
@@ -1318,6 +1344,36 @@ class DisplayController:
         # Mark as processed BEFORE processing (to prevent duplicate processing)
         self.cache_manager.set('display_on_demand_processed_id', request_id, ttl=3600)
         self.on_demand_request_id = request_id
+        # Consume the mailbox entry. Leaving it on disk meant a restart replayed
+        # the previous request: the fresh controller read it, activated it and
+        # cached it, so the request the caller had just made was ignored and the
+        # panel silently showed the earlier plugin. processed_id still guards
+        # against double-processing if this delete fails.
+        try:
+            # Compare before deleting. The web process can post a newer request
+            # between the read above and this delete; an unconditional delete
+            # threw that one away and it was never processed -- the user's
+            # second click did nothing. Re-reading uncached and only deleting
+            # our own request_id means a newer request is left in the mailbox
+            # for the next poll instead.
+            #
+            # This narrows the window rather than closing it: a request landing
+            # between this re-read and the delete is still lost. Closing it
+            # properly needs an atomic claim (a rename, or a compare-and-delete
+            # primitive) that the cache layer does not currently offer, so the
+            # honest fix is a smaller window plus this note, not a bigger lock.
+            current = self.cache_manager.get('display_on_demand_request',
+                                             max_age=3600, memory_ttl=0)
+            if not current or current.get('request_id') == request_id:
+                self.cache_manager.delete('display_on_demand_request')
+            else:
+                logger.debug("Newer on-demand request %s arrived while processing "
+                             "%s; leaving it in the mailbox",
+                             current.get('request_id'), request_id)
+        except (OSError, AttributeError, KeyError) as err:
+            # Best-effort: processed_id still guards against reprocessing if the
+            # mailbox cannot be cleared.
+            logger.debug("Could not clear the on-demand request mailbox: %s", err)
         
         if action == 'start':
             logger.info("Processing on-demand start request for plugin: %s", request.get('plugin_id'))

@@ -14,6 +14,8 @@ via BoundsCheckingDisplayManager, and golden-image comparison.
 import contextlib
 import http.client
 import inspect
+import time
+from datetime import timedelta
 import socket
 import ssl
 import urllib.error
@@ -25,7 +27,7 @@ from PIL import Image, ImageChops
 
 from src.logging_config import get_logger
 from .bounds_display_manager import BoundsCheckingDisplayManager
-from .loading import load_config_defaults, load_manifest
+from .loading import load_config_defaults, load_manifest, merge_config
 from .sizes import DEFAULT_TEST_SIZES, safe_mode_filename, size_label
 
 logger = get_logger("[Plugin Harness]")
@@ -116,14 +118,23 @@ def list_modes(plugin_instance: Any, manifest: Dict[str, Any], plugin_id: str) -
 
 def _instantiate(plugin_id: str, manifest: Dict[str, Any], plugin_dir: Path,
                  config: Dict[str, Any], mock_data: Dict[str, Any],
-                 display_manager: Any) -> Any:
-    """Load and construct a plugin instance with mocked managers."""
+                 display_manager: Any, cache_manager: Any = None) -> Any:
+    """Load and construct a plugin instance with mocked managers.
+
+    Pass ``cache_manager`` to share one cache across the renders of a plugin.
+    Building a fresh one per (size, mode) made every render a cold start, so a
+    plugin that fetches per game or per player re-fetched everything N times --
+    baseball-scoreboard took 840s for nine renders where ~72s was the arithmetic
+    -- and the cache-hit path, which is what a running rig executes almost
+    always, was never exercised.
+    """
     from src.plugin_system.plugin_loader import PluginLoader
     from src.plugin_system.testing import MockCacheManager, MockPluginManager
 
-    cache_manager = MockCacheManager()
-    for key, value in (mock_data or {}).items():
-        cache_manager.set(key, value)
+    if cache_manager is None:
+        cache_manager = MockCacheManager()
+        for key, value in (mock_data or {}).items():
+            cache_manager.set(key, value)
 
     loader = PluginLoader()
     plugin_instance, _module = loader.load_plugin(
@@ -160,6 +171,107 @@ def _render_mode(plugin_instance: Any, mode: str) -> Any:
     return plugin_instance.display(force_clear=False)
 
 
+# How many extra frames to drive before believing a mode really draws nothing.
+# A scroll starts with its content off-panel, so frame 1 is legitimately blank;
+# measured across the fleet, content appears by frame 2-4 (f1-scoreboard),
+# frame 4 (ledmatrix-elections) and frame 38 at 64px (ledmatrix-leaderboard).
+EMPTY_RECHECK_FRAMES = 48
+# Seconds to advance the clock between those frames. Scroll position is usually
+# driven by elapsed time, which a frozen clock never provides.
+EMPTY_RECHECK_STEP = 0.05
+
+
+def _has_content(image) -> bool:
+    """True when any pixel is lit above the threshold."""
+    if image is None:
+        return False
+    return image.convert("L").point(
+        lambda p: 255 if p > _LIT_THRESHOLD else 0).getbbox() is not None
+
+
+def _render_mode_again(plugin_instance: Any, mode: str) -> Any:
+    """Draw one more frame WITHOUT force_clear.
+
+    _render_mode passes force_clear=True, which for a scrolling plugin means
+    "reset the scroll to the start" -- so repeating it would redraw frame 1 for
+    ever. The re-check needs the plugin to advance.
+    """
+    sig = inspect.signature(plugin_instance.display)
+    if "display_mode" in sig.parameters:
+        return plugin_instance.display(force_clear=False, display_mode=mode)
+    return plugin_instance.display(force_clear=False)
+
+
+def _settle_empty_frame(inst, mode, dm, result, freezer) -> None:
+    """Give an apparently-empty mode a few frames to draw before believing it.
+
+    One frame is not evidence: a scroll's first frame is its blank scroll-in
+    buffer. Without this, every scrolling plugin was warned about -- 60 of 76
+    warnings on a 44-plugin rig were false, which is the rate at which people
+    stop reading a warning.
+    """
+    if result.error is not None or result.display_returned is False:
+        return
+    if _has_content(result.image):
+        return
+    # The frozen clock is shared by every render in the matrix, so any time this
+    # probe borrows has to be given back -- otherwise a mode that scrolls in
+    # leaves the clock advanced and every later mode renders at the wrong
+    # instant, drifting its golden. Seen as 5 spurious f1_upcoming drifts.
+    resume_at = None
+    if freezer is not None:
+        try:
+            resume_at = freezer()
+        except (AttributeError, TypeError, ValueError):
+            # Not a freezegun factory, or a version whose factory is not
+            # callable. Only used to restore the clock, never load-bearing.
+            resume_at = None
+    try:
+        _settle_loop(inst, mode, dm, result, freezer)
+    finally:
+        if resume_at is not None:
+            try:
+                freezer.move_to(resume_at)
+            except (AttributeError, TypeError, ValueError):
+                pass
+
+
+def _settle_loop(inst, mode, dm, result, freezer) -> None:
+    tick = getattr(freezer, "tick", None) if freezer is not None else None
+    for _ in range(EMPTY_RECHECK_FRAMES):
+        if tick is not None:
+            # timedelta rather than a bare float: freezegun has accepted a
+            # number only since 1.x, and a stale pin would raise here.
+            try:
+                tick(timedelta(seconds=EMPTY_RECHECK_STEP))
+            except (AttributeError, TypeError, ValueError):
+                # Pacing is best-effort; a freezegun that will not take a
+                # timedelta just means this probe runs without advancing time.
+                pass
+        else:
+            # No frozen clock, so the real one has to do the advancing. Without
+            # this the 48 frames run in microseconds, elapsed time stays ~0, and
+            # a scroll driven by elapsed time never moves -- which is exactly
+            # the plugin this check is trying not to slander.
+            time.sleep(EMPTY_RECHECK_STEP)
+        try:
+            result.display_returned = _render_mode_again(inst, mode)
+        except Exception as e:  # noqa: BLE001
+            # Deliberately broad: this calls a plugin's display(), which can
+            # raise anything. Recorded rather than swallowed -- a mode that
+            # renders one good frame and then crashes on the next is broken,
+            # and returning silently here reported it as passing. The frame
+            # already captured stays on the result so the failure is still
+            # inspectable.
+            result.error = repr(e)
+            return
+        image = dm.get_image()
+        if _has_content(image):
+            result.image = image
+            result.overflow = dm.check_overflow()
+            return
+
+
 def _freeze(freeze_time: Optional[str]):
     """Context manager that freezes wall-clock time when freeze_time is given,
     so time-dependent plugins (clocks, countdowns) render deterministic goldens."""
@@ -193,7 +305,9 @@ def render_plugin_matrix(
     manifest = load_manifest(plugin_dir)
     # Start from config_schema.json defaults so the plugin behaves like a real
     # install; explicit caller config still wins over a schema default.
-    config = {"enabled": True, **load_config_defaults(plugin_dir), **(config or {})}
+    config = merge_config(
+        merge_config({"enabled": True}, load_config_defaults(plugin_dir)),
+        config or {})
     sizes = sizes or DEFAULT_TEST_SIZES
     results: List[RenderResult] = []
 
@@ -202,25 +316,35 @@ def render_plugin_matrix(
     # rendering a smaller one, instead of being clipped into a false pass.
     extent = (max(w for w, _ in sizes), max(h for _, h in sizes))
 
-    with _freeze(freeze_time):
+    # One cache for the whole matrix: see _instantiate. The display manager
+    # stays per-render (the bounds checking depends on that); only fetched data
+    # is shared.
+    from src.plugin_system.testing import MockCacheManager
+    cache_manager = MockCacheManager()
+    for key, value in (mock_data or {}).items():
+        cache_manager.set(key, value)
+
+    with _freeze(freeze_time) as freezer:
         for width, height in sizes:
             results.extend(_render_size(
                 plugin_id, manifest, plugin_dir, config, mock_data or {},
-                width, height, run_update, extent,
+                width, height, run_update, extent, cache_manager, freezer,
             ))
 
     return results
 
 
 def _render_size(plugin_id, manifest, plugin_dir, config, mock_data,
-                 width, height, run_update, extent) -> List[RenderResult]:
+                 width, height, run_update, extent,
+                 cache_manager=None, freezer=None) -> List[RenderResult]:
     """Render every mode at one size. A fresh instance per mode avoids state leaks."""
     results: List[RenderResult] = []
 
     # Discover modes once per size (instance build can depend on config).
     try:
         probe_dm = BoundsCheckingDisplayManager(width=width, height=height, overflow_extent=extent)
-        probe = _instantiate(plugin_id, manifest, plugin_dir, config, mock_data, probe_dm)
+        probe = _instantiate(plugin_id, manifest, plugin_dir, config, mock_data, probe_dm,
+                             cache_manager)
         modes = list_modes(probe, manifest, plugin_id)
     except Exception as e:  # noqa: BLE001 — surface any load failure as a result
         return [RenderResult(plugin_id, width, height, "<load>", error=repr(e))]
@@ -229,7 +353,8 @@ def _render_size(plugin_id, manifest, plugin_dir, config, mock_data,
         result = RenderResult(plugin_id, width, height, mode)
         dm = BoundsCheckingDisplayManager(width=width, height=height, overflow_extent=extent)
         try:
-            inst = _instantiate(plugin_id, manifest, plugin_dir, config, mock_data, dm)
+            inst = _instantiate(plugin_id, manifest, plugin_dir, config, mock_data, dm,
+                                cache_manager)
             if run_update:
                 try:
                     inst.update()
@@ -248,6 +373,9 @@ def _render_size(plugin_id, manifest, plugin_dir, config, mock_data,
                 result.display_returned = _render_mode(inst, mode)
                 result.image = dm.get_image()
                 result.overflow = dm.check_overflow()
+                # A blank first frame is not proof of a blank mode; see
+                # _settle_empty_frame.
+                _settle_empty_frame(inst, mode, dm, result, freezer)
         except Exception as e:  # noqa: BLE001 — a display crash is a real failure
             result.error = repr(e)
         results.append(result)

@@ -1453,12 +1453,30 @@ class DisplayManager:
                 if parent_dir and str(parent_dir) != '/tmp':  # nosec B108 - guard to skip /tmp for permission ops
                     ensure_directory_permissions(parent_dir, get_assets_dir_mode())
                 self._snapshot_dir_prepared = True
-            # Write atomically: temp then replace
-            tmp_path = f"{self._snapshot_path}.tmp"
-            self.image.save(tmp_path, format='PNG')
+            # Write atomically: temp then replace. The temp name must be
+            # unique, not "<snapshot>.tmp": /tmp is world-writable and sticky,
+            # and this file is written by whichever user the display service
+            # runs as while tests and tooling run as someone else. A leftover
+            # fixed-name temp owned by another user is then unopenable even by
+            # root (fs.protected_regular refuses O_CREAT on a foreign file in a
+            # sticky dir), which froze the preview and the health check's
+            # liveness proxy until somebody deleted it by hand. Same pattern as
+            # the hardware-status write above.
+            _fd, tmp_path = tempfile.mkstemp(
+                dir=str(snapshot_path_obj.parent),
+                prefix=f".{snapshot_path_obj.name}.", suffix=".tmp")
             try:
+                with os.fdopen(_fd, "wb") as _f:
+                    self.image.save(_f, format='PNG')
+                os.chmod(tmp_path, 0o644)
                 os.replace(tmp_path, self._snapshot_path)
             except Exception:
+                # Never leave the temp behind -- that is what made the failure
+                # permanent rather than transient.
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
                 # Fallback to direct save if replace not supported
                 self.image.save(self._snapshot_path, format='PNG')
             # Set proper file permissions after saving

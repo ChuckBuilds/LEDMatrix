@@ -681,12 +681,18 @@ class StarlarkAppsPlugin(BasePlugin):
                 if app.is_enabled() and app.should_render(current_time):
                     self._render_app(app, force=False)
 
-    def display(self, force_clear: bool = False) -> None:
+    def display(self, force_clear: bool = False) -> bool:
         """
         Display current Starlark app.
 
         This method is called during the display rotation.
         Displays frames from the currently active app.
+
+        Returns False when there is no app to show -- which is the state of
+        every install without Pixlet, and of a fresh one before any app is
+        added. The display controller only skips a mode on a boolean False
+        (it checks isinstance(result, bool)), so returning None held a black
+        panel for the full display_duration instead of rotating on.
         """
         try:
             if force_clear:
@@ -699,20 +705,24 @@ class StarlarkAppsPlugin(BasePlugin):
             if not self.current_app:
                 # No apps available
                 self.logger.debug("No Starlark apps to display")
-                return
+                return False
 
             # Render app if needed
             if not self.current_app.frames:
                 success = self._render_app(self.current_app, force=True)
                 if not success:
                     self.logger.error(f"Failed to render app: {self.current_app.app_id}")
-                    return
+                    return False
 
-            # Display current frame
-            self._display_frame()
+            # Display current frame. The result is propagated: a failed frame
+            # update is not a displayed frame, and returning True regardless
+            # told the controller the mode had rendered, so it held the dead
+            # frame for the whole display_duration instead of rotating on.
+            return self._display_frame()
 
         except Exception as e:
             self.logger.error(f"Error displaying Starlark app: {e}")
+            return False
 
     def _select_next_app(self) -> None:
         """Select the next enabled app for display."""
@@ -835,10 +845,13 @@ class StarlarkAppsPlugin(BasePlugin):
             self.logger.error(f"Error loading frames for {app.app_id}: {e}")
             return False
 
-    def _display_frame(self) -> None:
-        """Display the current frame of the current app."""
+    def _display_frame(self) -> bool:
+        """Display the current frame of the current app.
+
+        :returns: whether a frame actually reached the display manager.
+        """
         if not self.current_app or not self.current_app.frames:
-            return
+            return False
 
         try:
             current_time = time.time()
@@ -856,8 +869,11 @@ class StarlarkAppsPlugin(BasePlugin):
                 )
                 self.current_app.last_frame_time = current_time
 
+            return True
+
         except Exception as e:
             self.logger.error(f"Error displaying frame: {e}")
+            return False
 
     def install_app(self, app_id: str, star_file_path: str, metadata: Optional[Dict[str, Any]] = None, assets_dir: Optional[str] = None) -> bool:
         """

@@ -78,8 +78,11 @@ def _scrub_git_remote_url(url: str) -> str:
     return url
 
 # Will be initialized when blueprint is registered
-config_manager = None
-plugin_manager = None
+# NOTE: the managers live on the blueprint object (app.py sets
+# api_v3.config_manager / api_v3.plugin_manager). Deliberately not
+# mirrored as module globals: a bare `config_manager` used to resolve to
+# a None that was never assigned, which silently disabled the /health
+# checks and made /display/current fall back to a hardcoded 128x64.
 plugin_store_manager = None
 saved_repositories_manager = None
 cache_manager = None
@@ -1598,11 +1601,16 @@ def get_health():
         }
 
         # Check web interface service
+        # Stamp the start time before measuring against it -- reading it with a
+        # fallback of time.time() and only assigning afterwards made the very
+        # first call subtract two separate clock reads, reporting a small
+        # negative uptime.
+        if not hasattr(get_health, '_start_time'):
+            get_health._start_time = time.time()
         health_status['services']['web_interface'] = {
             'status': 'running',
-            'uptime_seconds': time.time() - (getattr(get_health, '_start_time', time.time()))
+            'uptime_seconds': time.time() - get_health._start_time
         }
-        get_health._start_time = getattr(get_health, '_start_time', time.time())
 
         # Check display service
         display_service_status = _get_display_service_status()
@@ -1613,8 +1621,8 @@ def get_health():
 
         # Check config file accessibility
         try:
-            if config_manager:
-                test_config = config_manager.load_config()
+            if api_v3.config_manager:
+                test_config = api_v3.config_manager.load_config()
                 health_status['checks']['config_file'] = {
                     'status': 'accessible',
                     'readable': True
@@ -1633,9 +1641,9 @@ def get_health():
 
         # Check plugin system
         try:
-            if plugin_manager:
+            if api_v3.plugin_manager:
                 # Try to discover plugins (lightweight check)
-                plugin_count = len(plugin_manager.get_available_plugins()) if hasattr(plugin_manager, 'get_available_plugins') else 0
+                plugin_count = len(api_v3.plugin_manager.get_available_plugins()) if hasattr(api_v3.plugin_manager, 'get_available_plugins') else 0
                 health_status['checks']['plugin_system'] = {
                     'status': 'operational',
                     'plugin_count': plugin_count
@@ -2468,8 +2476,8 @@ def get_display_current():
 
         # Get display dimensions from config
         try:
-            if config_manager:
-                main_config = config_manager.load_config()
+            if api_v3.config_manager:
+                main_config = api_v3.config_manager.load_config()
                 hardware_config = main_config.get('display', {}).get('hardware', {})
                 cols = hardware_config.get('cols', 64)
                 chain_length = hardware_config.get('chain_length', 2)
