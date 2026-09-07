@@ -8833,8 +8833,21 @@ def _get_tronbyte_repository_class() -> Type[Any]:
     if module is None:
         raise ImportError("Failed to create module from spec for tronbyte_repository")
 
+    # The entry has to come out again if execution fails. It is inserted
+    # first because a module has to be in sys.modules before it runs (its own
+    # imports can reach back for it), but leaving a half-initialised module
+    # cached means every later call takes the branch above and raises
+    # AttributeError on the missing class instead of retrying -- one transient
+    # failure would disable the repository for the life of the process.
+    #
+    # The key stays unprefixed to match _get_pixlet_renderer_class, where the
+    # short name is load-bearing (see the note there).
     sys.modules["tronbyte_repository"] = module
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        sys.modules.pop("tronbyte_repository", None)
+        raise
     return module.TronbyteRepository
 
 def _get_pixlet_renderer_class() -> Type[Any]:
@@ -8858,8 +8871,19 @@ def _get_pixlet_renderer_class() -> Type[Any]:
     if module is None:
         raise ImportError("Failed to create module from spec for pixlet_renderer")
 
+    # Uncache on failure, as in _get_tronbyte_repository_class, so a transient
+    # import error does not disable rendering for the rest of the process.
+    #
+    # The short key is load-bearing here: the plugin's own manager.py does
+    # `from pixlet_renderer import PixletRenderer`, and this key is what makes
+    # both loaders share one module object. Prefixing it would quietly produce
+    # a second copy of the class, so isinstance across the two would fail.
     sys.modules["pixlet_renderer"] = module
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        sys.modules.pop("pixlet_renderer", None)
+        raise
     return module.PixletRenderer
 
 def _validate_and_sanitize_app_id(app_id: Optional[str], fallback_source: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
@@ -9032,9 +9056,20 @@ def _write_starlark_manifest(manifest: Dict[str, Any]) -> bool:
     try:
         _STARLARK_APPS_DIR.mkdir(parents=True, exist_ok=True)
 
-        # Atomic write pattern: write to temp file, then rename
-        temp_file = _STARLARK_MANIFEST_FILE.with_suffix('.tmp')
-        with open(temp_file, 'w') as f:
+        # Atomic write pattern: write to temp file, then rename.
+        #
+        # The temp name has to be unique per writer, not a fixed
+        # manifest.tmp. Flask serves requests concurrently and this is called
+        # from the upload, uninstall, config, toggle and plugin-toggle routes,
+        # so two writers shared one file: both wrote into it, their json.dump
+        # output interleaved, and both renamed. The rename is still atomic --
+        # what it publishes is the mixture, which the next read cannot parse.
+        # mkstemp in the destination directory gives each writer its own file
+        # while keeping the rename on one filesystem.
+        fd, temp_name = tempfile.mkstemp(
+            dir=str(_STARLARK_APPS_DIR), prefix='.manifest-', suffix='.tmp')
+        temp_file = Path(temp_name)
+        with os.fdopen(fd, 'w') as f:
             json.dump(manifest, f, indent=2)
             f.flush()
             os.fsync(f.fileno())  # Ensure data is written to disk
@@ -9112,7 +9147,13 @@ def _install_star_file(app_id: str, star_file_path: str, metadata: Dict[str, Any
         'render_interval': metadata.get('render_interval', 300),
         'display_duration': metadata.get('display_duration', 15),
         'config': metadata.get('config', {}),
-        'star_file': str(dest),
+        # The filename, not the full path. Readers join this to the app's own
+        # directory and default to a bare '<app_id>.star', so an absolute
+        # value gave the key two meanings -- and Path.__truediv__ discards the
+        # left side when the right is absolute, which pinned the manifest to
+        # whatever PROJECT_ROOT was at install time. Moving or redeploying the
+        # install then left the app unable to find its own file.
+        'star_file': dest.name,
     }
     return _write_starlark_manifest(manifest)
 
@@ -9414,6 +9455,15 @@ def update_starlark_app_config(app_id):
             render_interval = data.pop('render_interval', None)
             display_duration = data.pop('display_duration', None)
 
+            # Snapshot before mutating, so a failed save leaves nothing
+            # behind. save_config() returning False answers 500, but the
+            # loaded app kept the new values: the config endpoint then
+            # reported configuration that was never written, and the plugin
+            # went on rendering with it until the next restart silently put
+            # the old values back.
+            previous_config = dict(app.config)
+            previous_manifest = dict(app.manifest)
+
             # Update config with non-timing fields only
             app.config.update(data)
 
@@ -9425,26 +9475,31 @@ def update_starlark_app_config(app_id):
             if display_duration is not None:
                 app.manifest['display_duration'] = display_duration
                 timing_changed = True
-            if app.save_config():
-                # Persist manifest if timing changed (same pattern as toggle endpoint)
-                if timing_changed:
-                    try:
-                        # Use safe manifest update to prevent race conditions
-                        timing_updates = {}
-                        if render_interval is not None:
-                            timing_updates['render_interval'] = render_interval
-                        if display_duration is not None:
-                            timing_updates['display_duration'] = display_duration
-
-                        def update_fn(manifest):
-                            manifest['apps'][app_id].update(timing_updates)
-                        starlark_plugin._update_manifest_safe(update_fn)
-                    except Exception as e:
-                        logger.warning(f"Failed to persist timing to manifest for {app_id}: {e}")
-                starlark_plugin._render_app(app, force=True)
-                return jsonify({'status': 'success', 'message': 'Configuration updated', 'config': app.config})
-            else:
+            if not app.save_config():
+                app.config.clear()
+                app.config.update(previous_config)
+                app.manifest.clear()
+                app.manifest.update(previous_manifest)
                 return jsonify({'status': 'error', 'message': 'Failed to save configuration'}), 500
+
+            # Persist manifest if timing changed (same pattern as toggle endpoint)
+            if timing_changed:
+                try:
+                    # Use safe manifest update to prevent race conditions
+                    timing_updates = {}
+                    if render_interval is not None:
+                        timing_updates['render_interval'] = render_interval
+                    if display_duration is not None:
+                        timing_updates['display_duration'] = display_duration
+
+                    def update_fn(manifest):
+                        manifest['apps'][app_id].update(timing_updates)
+                    if not starlark_plugin._update_manifest_safe(update_fn):
+                        logger.warning("Timing for %s was not persisted to the manifest", app_id)
+                except Exception as e:
+                    logger.warning(f"Failed to persist timing to manifest for {app_id}: {e}")
+            starlark_plugin._render_app(app, force=True)
+            return jsonify({'status': 'success', 'message': 'Configuration updated', 'config': app.config})
 
         # Standalone: update both config.json and manifest
         manifest = _read_starlark_manifest()
@@ -9753,18 +9808,36 @@ def _starlark_virtual_plugins() -> list:
 
 def _toggle_starlark_app(app_id: str, enabled: bool):
     """Enable or disable one Starlark app, loaded or not."""
-    safe_id, err = _validate_and_sanitize_app_id(app_id)
+    # Check for traversal but keep the key as it was listed.
+    # _validate_and_sanitize_app_id lowercases and rewrites every character
+    # outside [a-z0-9_], while _starlark_virtual_plugins publishes the raw
+    # manifest key -- so an app stored as 'My-App' was offered to the UI as
+    # 'starlark:My-App' and looked up here as 'my_app', and toggling it
+    # answered 404 for an app the page had just drawn. Keys written by
+    # _install_star_file are already sanitised; ones written by the plugin or
+    # edited by hand are not.
+    _, err = _validate_starlark_app_path(app_id)
     if err:
-        return jsonify({'status': 'error', 'message': f'Invalid app_id: {err}'}), 400
+        # err already names app_id; do not prefix it a second time.
+        return jsonify({'status': 'error', 'message': err}), 400
+    safe_id = app_id
 
     plugin = _get_starlark_plugin()
     if plugin is not None and safe_id in getattr(plugin, 'apps', {}):
-        plugin.apps[safe_id].manifest['enabled'] = enabled
-
         def _update(manifest):
-            manifest['apps'][safe_id]['enabled'] = enabled
+            # setdefault rather than indexing: the app is loaded, but the
+            # on-disk entry may not exist yet, and _update_manifest_safe does
+            # not catch KeyError -- it would escape as a 500 instead of the
+            # error this returns.
+            manifest.setdefault('apps', {}).setdefault(safe_id, {})['enabled'] = enabled
 
-        plugin._update_manifest_safe(_update)
+        # Persist first, then update what is loaded. The other order reported
+        # success and left the in-memory app disagreeing with the manifest
+        # whenever the write failed, so the UI showed a toggle that reverted
+        # itself on the next restart.
+        if not plugin._update_manifest_safe(_update):
+            return jsonify({'status': 'error', 'message': 'Failed to save manifest'}), 500
+        plugin.apps[safe_id].manifest['enabled'] = enabled
     else:
         manifest = _read_starlark_manifest()
         app_data = manifest.get('apps', {}).get(safe_id)

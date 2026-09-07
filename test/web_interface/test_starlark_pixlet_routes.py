@@ -15,6 +15,11 @@ reads, so a future rewrite of this file cannot silently drop them again.
 """
 
 import json
+import os
+import sys
+import tempfile
+import threading
+import types
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -26,6 +31,24 @@ def client():
     app.config['TESTING'] = True
     with app.test_client() as c:
         yield c
+
+
+@pytest.fixture
+def offline_repository():
+    """Stand in for TronbyteRepository so the store routes stay offline.
+
+    The browse and categories routes call list_all_apps_cached(), which on a
+    cold server-side cache fetches the app index from GitHub. That would make
+    the suite slow, network-dependent and rate-limitable -- and because these
+    tests only assert "not a 404", a rate-limited 500 would pass and hide it.
+    """
+    repo = MagicMock()
+    repo.list_all_apps_cached.return_value = {
+        'apps': [], 'categories': [], 'authors': [], 'count': 0, 'cached': True,
+    }
+    with patch('web_interface.blueprints.api_v3._get_tronbyte_repository_class',
+               return_value=lambda *a, **kw: repo):
+        yield repo
 
 
 class TestRoutesAreRegistered:
@@ -133,12 +156,12 @@ class TestTheAppStoreFlow:
     an empty store.
     """
 
-    def test_browse_does_not_404(self, client):
+    def test_browse_does_not_404(self, client, offline_repository):
         resp = client.get('/api/v3/starlark/repository/browse')
         assert resp.status_code != 404, "the store cannot list anything"
         assert resp.get_json().get('message') != 'Resource not found'
 
-    def test_categories_does_not_404(self, client):
+    def test_categories_does_not_404(self, client, offline_repository):
         resp = client.get('/api/v3/starlark/repository/categories')
         assert resp.status_code != 404
         assert resp.get_json().get('message') != 'Resource not found'
@@ -269,4 +292,216 @@ class TestInstalledAppsAppearWithTheOtherPlugins:
         resp = client.post('/api/v3/plugins/toggle',
                            json={'plugin_id': 'starlark:../../etc/passwd', 'enabled': True})
         assert resp.status_code == 400
-        assert 'invalid characters' in resp.get_json()['message']
+        assert 'traversal' in resp.get_json()['message']
+
+    def test_an_app_id_the_listing_published_can_be_toggled(self, client):
+        """The id here is the one _starlark_virtual_plugins publishes.
+
+        It used to be re-slugified on the way in -- lowercased, with every
+        character outside [a-z0-9_] replaced -- so 'My-App' was listed as
+        'starlark:My-App' and looked up as 'my_app', and toggling an app the
+        page had just drawn answered 404.
+        """
+        manifest = {'apps': {'My-App': {'name': 'My App', 'enabled': False}}}
+        with patch('web_interface.blueprints.api_v3._get_starlark_plugin', return_value=None), \
+             patch('web_interface.blueprints.api_v3._read_starlark_manifest',
+                   return_value=manifest), \
+             patch('web_interface.blueprints.api_v3._write_starlark_manifest',
+                   return_value=True) as write:
+            resp = client.post('/api/v3/plugins/toggle',
+                               json={'plugin_id': 'starlark:My-App', 'enabled': True})
+        assert resp.status_code == 200, resp.get_json()
+        assert write.called, "the toggle never reached the manifest"
+        assert manifest['apps']['My-App']['enabled'] is True
+
+    def test_a_failed_manifest_write_is_not_reported_as_success(self, client):
+        """The toggle answered 200 while the change was never persisted."""
+        manifest = {'apps': {'demo': {'name': 'Demo', 'enabled': False}}}
+        with patch('web_interface.blueprints.api_v3._get_starlark_plugin', return_value=None), \
+             patch('web_interface.blueprints.api_v3._read_starlark_manifest',
+                   return_value=manifest), \
+             patch('web_interface.blueprints.api_v3._write_starlark_manifest',
+                   return_value=False):
+            resp = client.post('/api/v3/plugins/toggle',
+                               json={'plugin_id': 'starlark:demo', 'enabled': True})
+        assert resp.status_code == 500
+
+    def test_a_loaded_app_is_not_flipped_when_the_manifest_write_fails(self, client):
+        """Persist first, then update memory -- otherwise the UI shows a
+        toggle that silently reverts on the next restart."""
+        app = MagicMock()
+        app.manifest = {'enabled': False}
+        plugin = MagicMock()
+        plugin.apps = {'demo': app}
+        plugin._update_manifest_safe.return_value = False
+
+        with patch('web_interface.blueprints.api_v3._get_starlark_plugin', return_value=plugin):
+            resp = client.post('/api/v3/plugins/toggle',
+                               json={'plugin_id': 'starlark:demo', 'enabled': True})
+        assert resp.status_code == 500
+        assert app.manifest['enabled'] is False, "in-memory state changed without being saved"
+
+
+class TestTheManifestSurvivesConcurrentWriters:
+    """Flask serves requests concurrently and five routes write this file.
+
+    The atomic-write pattern used one fixed temp name, `manifest.tmp`, shared
+    by every writer: two of them opened it, interleaved their json.dump output,
+    and both renamed. The rename is atomic; the content it published was the
+    mixture, which the next read could not parse.
+    """
+
+    @pytest.fixture
+    def starlark_dir(self, tmp_path, monkeypatch):
+        from web_interface.blueprints import api_v3 as module
+        apps_dir = tmp_path / "starlark-apps"
+        apps_dir.mkdir()
+        monkeypatch.setattr(module, '_STARLARK_APPS_DIR', apps_dir)
+        monkeypatch.setattr(module, '_STARLARK_MANIFEST_FILE', apps_dir / 'manifest.json')
+        return apps_dir
+
+    def test_each_writer_gets_its_own_temp_file(self, starlark_dir):
+        from web_interface.blueprints import api_v3 as module
+
+        seen = []
+        real_mkstemp = tempfile.mkstemp
+
+        def recording_mkstemp(*args, **kwargs):
+            fd, name = real_mkstemp(*args, **kwargs)
+            seen.append(name)
+            return fd, name
+
+        with patch.object(module.tempfile, 'mkstemp', side_effect=recording_mkstemp):
+            for i in range(5):
+                assert module._write_starlark_manifest({'apps': {f'app{i}': {}}})
+
+        assert len(set(seen)) == 5, f"writers shared a temp file: {seen}"
+
+    def test_concurrent_writes_leave_readable_json(self, starlark_dir):
+        from web_interface.blueprints import api_v3 as module
+
+        manifests = [{'apps': {f'app{i}': {'name': 'x' * 400}}} for i in range(8)]
+        errors = []
+
+        def write(m):
+            try:
+                module._write_starlark_manifest(m)
+            except Exception as exc:  # noqa: BLE001 - surfaced by the assert below
+                errors.append(exc)
+
+        threads = [threading.Thread(target=write, args=(m,)) for m in manifests]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors
+        loaded = json.loads((starlark_dir / 'manifest.json').read_text())
+        assert loaded in manifests, "the published manifest was a mix of two writers"
+
+    def test_no_temp_files_are_left_behind(self, starlark_dir):
+        from web_interface.blueprints import api_v3 as module
+        module._write_starlark_manifest({'apps': {}})
+        assert list(starlark_dir.glob('*.tmp')) == []
+
+    def test_the_installed_star_file_is_recorded_by_name(self, starlark_dir, tmp_path):
+        """Readers join this to the app's own directory and default to a bare
+        '<app_id>.star'. An absolute value gave the key two meanings and, since
+        Path.__truediv__ discards the left side when the right is absolute,
+        pinned the manifest to the PROJECT_ROOT it was installed under."""
+        from web_interface.blueprints import api_v3 as module
+
+        source = tmp_path / "source.star"
+        source.write_text("# app")
+        with patch.object(module, '_get_pixlet_renderer_class',
+                          side_effect=ImportError("no pixlet here")):
+            assert module._install_star_file('demo', str(source), {'name': 'Demo'})
+
+        entry = json.loads((starlark_dir / 'manifest.json').read_text())['apps']['demo']
+        assert entry['star_file'] == 'demo.star'
+        assert not os.path.isabs(entry['star_file'])
+
+
+class TestATransientImportFailureIsNotPermanent:
+    """Both importers insert into sys.modules before executing the module.
+
+    That order is required -- a module has to be findable while it runs -- but
+    a failure left the half-initialised object cached, so every later call took
+    the cache branch and raised AttributeError on the missing class instead of
+    retrying. One transient failure disabled the repository or the renderer for
+    the life of the process.
+    """
+
+    @pytest.mark.parametrize("getter,key", [
+        ('_get_tronbyte_repository_class', 'tronbyte_repository'),
+        ('_get_pixlet_renderer_class', 'pixlet_renderer'),
+    ])
+    def test_a_failed_import_leaves_no_entry_behind(self, getter, key):
+        from web_interface.blueprints import api_v3 as module
+
+        original = sys.modules.pop(key, None)
+        try:
+            with patch('importlib.util.module_from_spec') as from_spec:
+                from_spec.return_value = types.ModuleType(key)
+                with patch('importlib.util.spec_from_file_location') as spec_from:
+                    spec = MagicMock()
+                    spec.loader.exec_module.side_effect = RuntimeError("network down")
+                    spec_from.return_value = spec
+
+                    with pytest.raises(RuntimeError):
+                        getattr(module, getter)()
+
+            assert key not in sys.modules, "a half-initialised module stayed cached"
+        finally:
+            if original is not None:
+                sys.modules[key] = original
+            else:
+                sys.modules.pop(key, None)
+
+
+class TestConfigIsNotAppliedUntilItIsSaved:
+    """save_config() returning False answers 500, but the loaded app kept the
+    new values -- so GET config reported settings that were never written and
+    the plugin rendered with them until a restart silently reverted them."""
+
+    def _plugin_with_app(self, save_ok):
+        app = MagicMock()
+        app.config = {'city': 'Philadelphia'}
+        app.manifest = {'render_interval': 300, 'display_duration': 15}
+        app.save_config.return_value = save_ok
+        plugin = MagicMock()
+        plugin.apps = {'demo': app}
+        plugin._update_manifest_safe.return_value = True
+        return plugin, app
+
+    def test_a_failed_save_leaves_the_config_untouched(self, client):
+        plugin, app = self._plugin_with_app(save_ok=False)
+        with patch('web_interface.blueprints.api_v3._get_starlark_plugin', return_value=plugin):
+            resp = client.put('/api/v3/starlark/apps/demo/config',
+                              json={'city': 'Pittsburgh'})
+        assert resp.status_code == 500
+        assert app.config == {'city': 'Philadelphia'}
+
+    def test_a_failed_save_leaves_the_timing_untouched(self, client):
+        plugin, app = self._plugin_with_app(save_ok=False)
+        with patch('web_interface.blueprints.api_v3._get_starlark_plugin', return_value=plugin):
+            resp = client.put('/api/v3/starlark/apps/demo/config',
+                              json={'render_interval': 60})
+        assert resp.status_code == 500
+        assert app.manifest['render_interval'] == 300
+
+    def test_a_failed_save_does_not_re_render_with_values_it_did_not_keep(self, client):
+        plugin, _ = self._plugin_with_app(save_ok=False)
+        with patch('web_interface.blueprints.api_v3._get_starlark_plugin', return_value=plugin):
+            client.put('/api/v3/starlark/apps/demo/config', json={'city': 'Pittsburgh'})
+        plugin._render_app.assert_not_called()
+
+    def test_a_successful_save_still_applies(self, client):
+        plugin, app = self._plugin_with_app(save_ok=True)
+        with patch('web_interface.blueprints.api_v3._get_starlark_plugin', return_value=plugin):
+            resp = client.put('/api/v3/starlark/apps/demo/config',
+                              json={'city': 'Pittsburgh', 'render_interval': 60})
+        assert resp.status_code == 200
+        assert app.config['city'] == 'Pittsburgh'
+        assert app.manifest['render_interval'] == 60
+        plugin._render_app.assert_called_once()
