@@ -579,19 +579,33 @@ class DisplayManager:
                     pass
 
     def _fitting_font(self, lines, width):
-        """The largest font from the usual ladder that fits every line."""
+        """The largest font from the usual ladder that fits every line.
+
+        The ladder ends at 4x6 at 5px because a full dotted-quad address --
+        "255.255.255.255", the widest this screen ever shows -- is 66px at
+        6px and a 64px panel has 62 to give it. That used to squeak in only
+        because the measurement depended on which text layout engine the host
+        Pillow had; with the engine pinned it does not, so the rung the
+        worst case actually needs is here rather than implied.
+        """
         candidates = [self.font,
-                      ("assets/fonts/4x6-font.ttf", 6)]
+                      ("assets/fonts/4x6-font.ttf", 6),
+                      ("assets/fonts/4x6-font.ttf", 5)]
+        narrowest = None
         for candidate in candidates:
             try:
                 font = candidate
                 if isinstance(candidate, tuple):
                     font = load_truetype(candidate[0], candidate[1])
+                narrowest = font
                 if all(self.draw.textlength(t, font=font) <= width for t in lines):
                     return font
             except (OSError, ValueError, AttributeError):
                 continue
-        return self.font
+        # Nothing fit. Return the smallest face that loaded, not self.font --
+        # falling back to the widest option is how "Initializing" ran off the
+        # side of a 64px panel in the first place.
+        return narrowest or self.font
 
     def _draw_startup_banner(self, lines, width: int, height: int) -> None:
         """Centre `lines` over whatever the test pattern already drew.
