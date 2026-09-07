@@ -72,8 +72,12 @@ def _bdf_native_size(face) -> int:
         sizes = getattr(face, "available_sizes", None) or []
         if sizes:
             return int(getattr(sizes[0], "height", 0) or 0)
-    except Exception:  # pylint: disable=broad-except
-        pass
+    except (AttributeError, IndexError, TypeError, ValueError) as exc:
+        # This runs on the measurement path for a face the caller already
+        # holds, so a malformed strike table must degrade to "unknown" rather
+        # than take the display down. Say which face, so a font that is
+        # actually broken is diagnosable rather than silently 8px.
+        logger.debug("Could not read BDF strike size from %r: %s", face, exc)
     return 0
 
 
