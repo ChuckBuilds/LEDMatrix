@@ -8655,3 +8655,144 @@ def backup_delete(filename):
         logger.error("backup_delete failed: %s", e, exc_info=True)
         return jsonify({'status': 'error', 'message': 'An internal error occurred; see logs for details'}), 500
     return jsonify({'status': 'error', 'message': 'Backup not found'}), 404
+
+
+# ── Starlark / Pixlet ────────────────────────────────────────────────────────
+# These routes were added by #253 and removed by #330, which rewrote this file
+# and dropped all thirteen of them. Nothing else changed: the frontend still
+# calls them and plugin-repos/starlark-apps still implements the work behind
+# them, so every call has been landing on Flask's 404 handler and coming back
+# as the generic "Resource not found" -- which is what the Pixlet install
+# button reports.
+#
+# Restored verbatim from 1c4d5c52^ (the commit before the removal). The other
+# eleven are still missing; see the PR description.
+
+_STARLARK_APPS_DIR = PROJECT_ROOT / 'starlark-apps'
+_STARLARK_MANIFEST_FILE = _STARLARK_APPS_DIR / 'manifest.json'
+
+def _get_starlark_plugin() -> Optional[Any]:
+    """Get the starlark-apps plugin instance, or None."""
+    if not api_v3.plugin_manager:
+        return None
+    return api_v3.plugin_manager.get_plugin('starlark-apps')
+
+def _find_pixlet_binary(explicit_path: Optional[str] = None) -> Optional[str]:
+    """Find pixlet binary: explicit path → bundled binary → system PATH."""
+    import platform
+    if explicit_path and os.path.isfile(explicit_path) and os.access(explicit_path, os.X_OK):
+        return explicit_path
+    bin_dir = PROJECT_ROOT / "bin" / "pixlet"
+    system = platform.system().lower()
+    machine = platform.machine().lower()
+    if system == "linux":
+        if "aarch64" in machine or "arm64" in machine:
+            name = "pixlet-linux-arm64"
+        elif "x86_64" in machine or "amd64" in machine:
+            name = "pixlet-linux-amd64"
+        else:
+            name = None
+    elif system == "darwin":
+        name = "pixlet-darwin-arm64" if "arm64" in machine else "pixlet-darwin-amd64"
+    else:
+        name = None
+    if name:
+        bundled = bin_dir / name
+        if bundled.is_file():
+            if os.access(str(bundled), os.X_OK):
+                return str(bundled)
+            try:
+                bundled.chmod(0o755)
+            except OSError:
+                logger.warning("Could not make pixlet bundled binary executable (%s); falling back to PATH", bundled)
+            else:
+                if os.access(str(bundled), os.X_OK):
+                    return str(bundled)
+                logger.warning("Pixlet bundled binary still not executable after chmod (%s); falling back to PATH", bundled)
+    return shutil.which("pixlet")
+
+def _read_starlark_manifest() -> Dict[str, Any]:
+    """Read the starlark-apps manifest.json directly from disk."""
+    try:
+        if _STARLARK_MANIFEST_FILE.exists():
+            with open(_STARLARK_MANIFEST_FILE, 'r') as f:
+                return json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        logger.error(f"Error reading starlark manifest: {e}")
+    return {'apps': {}}
+
+@api_v3.route('/starlark/status', methods=['GET'])
+def get_starlark_status():
+    """Get Starlark plugin status and Pixlet availability."""
+    try:
+        starlark_plugin = _get_starlark_plugin()
+        if starlark_plugin:
+            info = starlark_plugin.get_info()
+            magnify_info = starlark_plugin.get_magnify_recommendation()
+            return jsonify({
+                'status': 'success',
+                'pixlet_available': info.get('pixlet_available', False),
+                'pixlet_version': info.get('pixlet_version'),
+                'installed_apps': info.get('installed_apps', 0),
+                'enabled_apps': info.get('enabled_apps', 0),
+                'current_app': info.get('current_app'),
+                'plugin_enabled': starlark_plugin.enabled,
+                'display_info': magnify_info
+            })
+
+        # Plugin not loaded - check Pixlet availability via shared resolver
+        # (respects user-configured pixlet_path, bundled binary, and system PATH)
+        full_config = api_v3.config_manager.load_config() if api_v3.config_manager else {}
+        pixlet_path = _find_pixlet_binary(full_config.get('starlark-apps', {}).get('pixlet_path'))
+        pixlet_available = pixlet_path is not None
+
+        # Read app counts from manifest
+        manifest = _read_starlark_manifest()
+        apps = manifest.get('apps', {})
+        installed_count = len(apps)
+        enabled_count = sum(1 for a in apps.values() if a.get('enabled', True))
+
+        return jsonify({
+            'status': 'success',
+            'pixlet_available': pixlet_available,
+            'pixlet_version': None,
+            'installed_apps': installed_count,
+            'enabled_apps': enabled_count,
+            'plugin_enabled': True,
+            'plugin_loaded': False,
+            'display_info': {}
+        })
+
+    except Exception as e:
+        logger.exception("[Starlark] get_starlark_status failed")
+        return jsonify({'status': 'error', 'message': 'Failed to get Starlark status'}), 500
+
+@api_v3.route('/starlark/install-pixlet', methods=['POST'])
+def install_pixlet():
+    """Download and install Pixlet binary."""
+    try:
+        script_path = PROJECT_ROOT / 'scripts' / 'download_pixlet.sh'
+        if not script_path.exists():
+            return jsonify({'status': 'error', 'message': 'Installation script not found'}), 404
+
+        os.chmod(script_path, 0o755)
+
+        result = subprocess.run(
+            [str(script_path)],
+            cwd=str(PROJECT_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=300
+        )
+
+        if result.returncode == 0:
+            logger.info("Pixlet downloaded successfully")
+            return jsonify({'status': 'success', 'message': 'Pixlet installed successfully!', 'output': result.stdout})
+        else:
+            return jsonify({'status': 'error', 'message': f'Failed to download Pixlet: {result.stderr}'}), 500
+
+    except subprocess.TimeoutExpired:
+        return jsonify({'status': 'error', 'message': 'Download timed out'}), 500
+    except Exception as e:
+        logger.exception("[Starlark] install_pixlet failed")
+        return jsonify({'status': 'error', 'message': 'Failed to install Pixlet'}), 500
