@@ -199,3 +199,74 @@ class TestNoStarlarkRouteIsMissing:
             except NotFound:
                 missing.append(u)
         assert not missing, f"the frontend calls these and they are not registered: {missing}"
+
+
+class TestInstalledAppsAppearWithTheOtherPlugins:
+    """An installed .star app must be manageable like any other plugin.
+
+    #253 surfaced installed apps in /plugins/installed as `starlark:<app_id>`
+    entries, so they could be seen and enabled/disabled from the same list as
+    everything else, and routed `starlark:` toggles to the Starlark manifest.
+    #330 removed both. The result was an app that installs successfully, then
+    appears nowhere and cannot be turned on or off.
+    """
+
+    APPS = {'apps': {'quoteoftheday': {'name': 'A Quote A Day', 'enabled': True}}}
+
+    def test_an_installed_app_is_listed(self, client):
+        with patch('web_interface.blueprints.api_v3._get_starlark_plugin', return_value=None), \
+             patch('web_interface.blueprints.api_v3._read_starlark_manifest', return_value=self.APPS):
+            resp = client.get('/api/v3/plugins/installed')
+        ids = [p['id'] for p in resp.get_json()['data']['plugins']]
+        assert 'starlark:quoteoftheday' in ids, \
+            "an installed Starlark app does not appear among the plugins"
+
+    def test_the_entry_carries_what_the_ui_needs(self, client):
+        with patch('web_interface.blueprints.api_v3._get_starlark_plugin', return_value=None), \
+             patch('web_interface.blueprints.api_v3._read_starlark_manifest', return_value=self.APPS):
+            resp = client.get('/api/v3/plugins/installed')
+        entry = next(p for p in resp.get_json()['data']['plugins']
+                     if p['id'] == 'starlark:quoteoftheday')
+        assert entry['name'] == 'A Quote A Day'
+        assert entry['enabled'] is True
+        assert entry['is_starlark_app'] is True, "the UI keys its Starlark handling off this"
+        assert entry['category'] == 'Starlark App'
+
+    def test_a_starlark_failure_does_not_empty_the_plugin_list(self, client):
+        # The virtual entries are appended to the real ones; a broken manifest
+        # must cost the Starlark rows, not everybody else's.
+        with patch('web_interface.blueprints.api_v3._get_starlark_plugin',
+                   side_effect=RuntimeError('boom')):
+            resp = client.get('/api/v3/plugins/installed')
+        assert resp.status_code == 200
+        assert resp.get_json()['status'] == 'success'
+
+    def test_toggling_an_app_does_not_report_plugin_not_found(self, client):
+        written = {}
+        with patch('web_interface.blueprints.api_v3._get_starlark_plugin', return_value=None), \
+             patch('web_interface.blueprints.api_v3._read_starlark_manifest',
+                   return_value={'apps': {'quoteoftheday': {'enabled': True}}}), \
+             patch('web_interface.blueprints.api_v3._write_starlark_manifest',
+                   side_effect=lambda m: written.update(m) or True):
+            resp = client.post('/api/v3/plugins/toggle',
+                               json={'plugin_id': 'starlark:quoteoftheday', 'enabled': False})
+        body = resp.get_json()
+        assert body['status'] == 'success', body
+        assert body['enabled'] is False
+        assert written['apps']['quoteoftheday']['enabled'] is False, \
+            "the manifest was not actually updated"
+
+    def test_toggling_an_unknown_app_says_so(self, client):
+        with patch('web_interface.blueprints.api_v3._get_starlark_plugin', return_value=None), \
+             patch('web_interface.blueprints.api_v3._read_starlark_manifest',
+                   return_value={'apps': {}}):
+            resp = client.post('/api/v3/plugins/toggle',
+                               json={'plugin_id': 'starlark:nope', 'enabled': True})
+        assert resp.status_code == 404
+        assert 'nope' in resp.get_json()['message']
+
+    def test_a_traversal_app_id_is_rejected_before_touching_the_manifest(self, client):
+        resp = client.post('/api/v3/plugins/toggle',
+                           json={'plugin_id': 'starlark:../../etc/passwd', 'enabled': True})
+        assert resp.status_code == 400
+        assert 'invalid characters' in resp.get_json()['message']

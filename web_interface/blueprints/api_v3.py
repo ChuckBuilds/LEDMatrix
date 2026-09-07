@@ -2813,6 +2813,7 @@ def get_installed_plugins():
         with ThreadPoolExecutor(max_workers=8) as executor:
             results = list(executor.map(_build_plugin_entry, all_plugin_info))
         plugins = [r for r in results if r is not None]
+        plugins.extend(_starlark_virtual_plugins())
 
         return jsonify({'status': 'success', 'data': {'plugins': plugins}})
     except Exception as e:
@@ -3118,6 +3119,13 @@ def toggle_plugin():
                 config = api_v3.config_manager.load_config()
                 current_enabled = config.get(plugin_id, {}).get('enabled', False)
                 enabled = not current_enabled
+
+        # A Starlark app is not a plugin in plugin_manager's sense -- it is an
+        # entry in starlark-apps' own manifest -- so its enable/disable is
+        # handled here rather than falling through to the check below, which
+        # would answer "Plugin not found".
+        if plugin_id.startswith('starlark:'):
+            return _toggle_starlark_app(plugin_id[len('starlark:'):], enabled)
 
         # Check if plugin exists in manifests (discovered but may not be loaded)
         if plugin_id not in api_v3.plugin_manager.plugin_manifests:
@@ -9667,3 +9675,79 @@ def get_tronbyte_categories():
     except Exception as e:
         logger.exception("[Starlark] get_tronbyte_categories failed")
         return jsonify({'status': 'error', 'message': 'Failed to fetch categories'}), 500
+
+
+def _starlark_virtual_plugins() -> list:
+    """Installed Starlark apps, shaped like plugin entries.
+
+    #253 surfaced these alongside real plugins so an installed .star app can
+    be seen, enabled and disabled from the same list as everything else; #330
+    dropped it with the rest of the Starlark code, which is why an app
+    installs successfully and then appears nowhere.
+
+    Reads the loaded plugin when there is one and the on-disk manifest
+    otherwise, so the list is right before starlark-apps has been loaded too.
+    """
+    entries = []
+    base = {
+        'version': 'starlark', 'category': 'Starlark App', 'tags': ['starlark'],
+        'verified': False, 'last_updated': None, 'last_commit': None,
+        'last_commit_message': None, 'branch': None, 'web_ui_actions': [],
+        'vegas_mode': 'fixed', 'vegas_content_type': 'multi',
+        'is_starlark_app': True,
+    }
+    try:
+        plugin = _get_starlark_plugin()
+        if plugin is not None and hasattr(plugin, 'apps'):
+            for app_id, app in plugin.apps.items():
+                m = getattr(app, 'manifest', {}) or {}
+                entries.append({**base,
+                                'id': f'starlark:{app_id}',
+                                'name': m.get('name', app_id),
+                                'author': m.get('author', 'Tronbyte Community'),
+                                'description': m.get('summary', 'Starlark app'),
+                                'enabled': app.is_enabled(),
+                                'loaded': True})
+            return entries
+
+        for app_id, data in (_read_starlark_manifest().get('apps', {}) or {}).items():
+            entries.append({**base,
+                            'id': f'starlark:{app_id}',
+                            'name': data.get('name', app_id),
+                            'author': data.get('author', 'Tronbyte Community'),
+                            'description': data.get('summary', 'Starlark app'),
+                            'enabled': data.get('enabled', True),
+                            'loaded': False})
+    except Exception:
+        # Never let a Starlark problem empty the whole plugins list.
+        logger.exception('Could not build Starlark virtual plugin entries')
+    return entries
+
+
+def _toggle_starlark_app(app_id: str, enabled: bool):
+    """Enable or disable one Starlark app, loaded or not."""
+    safe_id, err = _validate_and_sanitize_app_id(app_id)
+    if err:
+        return jsonify({'status': 'error', 'message': f'Invalid app_id: {err}'}), 400
+
+    plugin = _get_starlark_plugin()
+    if plugin is not None and safe_id in getattr(plugin, 'apps', {}):
+        plugin.apps[safe_id].manifest['enabled'] = enabled
+
+        def _update(manifest):
+            manifest['apps'][safe_id]['enabled'] = enabled
+
+        plugin._update_manifest_safe(_update)
+    else:
+        manifest = _read_starlark_manifest()
+        app_data = manifest.get('apps', {}).get(safe_id)
+        if not app_data:
+            return jsonify({'status': 'error',
+                            'message': f'Starlark app not found: {safe_id}'}), 404
+        app_data['enabled'] = enabled
+        if not _write_starlark_manifest(manifest):
+            return jsonify({'status': 'error', 'message': 'Failed to save manifest'}), 500
+
+    return jsonify({'status': 'success',
+                    'message': f"Starlark app {'enabled' if enabled else 'disabled'}",
+                    'enabled': enabled})
