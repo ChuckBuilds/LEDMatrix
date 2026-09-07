@@ -8912,9 +8912,19 @@ def _validate_starlark_app_path(app_id: str) -> Tuple[Optional[Path], Optional[s
     if '..' in app_id or '/' in app_id or '\\' in app_id:
         return None, "Invalid app_id: contains path traversal characters"
 
+    # os.path.basename strips any directory component, so what is joined below
+    # cannot carry one. The equality check means this rejects rather than
+    # silently truncates -- behaviour is identical to the character test above,
+    # and it is the sanitiser CodeQL's path-injection query actually follows.
+    # relative_to() alone is a check it cannot trace, which is why twenty-four
+    # of these stayed flagged after the value was threaded through properly.
+    safe_name = os.path.basename(app_id)
+    if safe_name != app_id or safe_name in ('', '.', '..'):
+        return None, "Invalid app_id: contains path traversal characters"
+
     try:
         base_path = _STARLARK_APPS_DIR.resolve()
-        app_path = (base_path / app_id).resolve()
+        app_path = (base_path / safe_name).resolve()
         try:
             app_path.relative_to(base_path)
         except ValueError:
