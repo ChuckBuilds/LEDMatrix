@@ -8,7 +8,7 @@ Supports both unittest and pytest.
 
 import os
 import re
-import subprocess  # nosec B404 - runs repo-local test files, never a shell
+import subprocess  # nosec B404 - list-form argv only, no shell  # nosemgrep
 import sys
 import argparse
 from pathlib import Path
@@ -111,13 +111,16 @@ def run_script_tests(test_files: list, verbose: bool = False) -> int:
     failures = []
     for path in test_files:
         try:
-            # nosec B603 - fixed interpreter (sys.executable) plus a test path
-            # this script discovered by globbing the repo; argument list, no
-            # shell, so nothing is word-split or expanded.
-            proc = subprocess.run([sys.executable, str(path)],  # nosec B603
-                                  cwd=str(Path(path).parent),
-                                  capture_output=True, text=True, env=env,
-                                  stdin=subprocess.DEVNULL, timeout=300)
+            # Fixed interpreter (sys.executable) plus a test path this script
+            # discovered by globbing the repo; argument list, no shell, so
+            # nothing is word-split or expanded. Same suppression pair the
+            # rest of the repo uses for this shape (see permission_utils.py).
+            proc = subprocess.run(  # nosec B603 - no shell invoked (list-form argv)  # nosemgrep
+                [sys.executable, str(path)],  # nosemgrep
+                cwd=str(Path(path).parent),
+                capture_output=True, text=True, env=env,
+                stdin=subprocess.DEVNULL, timeout=300,
+            )
             rc = proc.returncode
             tail = " | ".join((proc.stdout or proc.stderr or "").strip().splitlines()[-2:])[:200]
         except subprocess.TimeoutExpired:
