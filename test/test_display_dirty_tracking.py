@@ -293,6 +293,29 @@ class TestFrameHoldLifetime:
         finally:
             dm.set_scrolling_state(False)
 
+    def test_a_scroll_that_times_out_does_not_strand_a_hold(self, dm):
+        """The hold must go when the state does, however the scroll ended.
+
+        set_scrolling_state(False) is the polite exit. The other one is
+        is_currently_scrolling() deciding, after scroll_inactivity_threshold
+        of silence, that the scroll is over -- which is what happens when the
+        rotation moves on mid-scroll or a plugin is torn down. That path used
+        to clear the flag and keep the hold, so every later plugin, scrolling
+        or static, was presented at refresh/N by whoever scrolled last.
+        """
+        dm.set_scrolling_state(True, frame_hold=5)
+        # Age the scroll past the inactivity threshold rather than sleeping.
+        dm._scrolling_state['last_scroll_activity'] -= (
+            dm._scrolling_state['scroll_inactivity_threshold'] + 1.0)
+
+        assert dm.is_currently_scrolling() is False
+        dm.draw.rectangle([0, 0, 5, 5], fill=(10, 10, 200))
+        with _SwapSpy(dm.matrix) as spy:
+            dm.update_display()
+        assert spy.last_frame_hold == 1, (
+            "a timed-out scroll left its frame hold behind; the next plugin "
+            "is being presented at a fraction of the refresh rate")
+
     def test_another_plugin_stopping_does_not_strand_a_hold(self, dm):
         dm.set_scrolling_state(True, frame_hold=3)
         dm.set_scrolling_state(False)          # some other plugin finishes

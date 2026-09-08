@@ -1436,6 +1436,14 @@ class DisplayManager:
         # If we've been inactive for the threshold period, consider it not scrolling
         if current_time - self._scrolling_state['last_scroll_activity'] > self._scrolling_state['scroll_inactivity_threshold']:
             self._scrolling_state['is_scrolling'] = False
+            # Drop the hold with the state, exactly as set_scrolling_state(False)
+            # does. This path is the one a scroll takes when it ends without
+            # saying so -- the rotation moves on mid-scroll, or the plugin is
+            # torn down -- and leaving the hold set there means every later
+            # plugin, scrolling or static, is presented at refresh/N until
+            # somebody calls set_scrolling_state(False). The hold must not
+            # outlive the scroll that asked for it, however that scroll ends.
+            self._frame_hold = 1
             return False
             
         return True
