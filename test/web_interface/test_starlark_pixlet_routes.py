@@ -393,3 +393,358 @@ class TestTheManifestStaysRelocatable:
     def test_it_matches_the_default_a_reader_falls_back_to(self, starlark_dir, tmp_path):
         """Stored and defaulted values must mean the same thing."""
         assert self._install(tmp_path)['star_file'] == 'demo.star'
+
+
+# ---------------------------------------------------------------------------
+# The store loaded, then stopped loading, and nothing anywhere said why.
+#
+# #535 restored the routes, so the 404 was gone -- but two failure modes
+# underneath it produce the same blank grid, and neither could be read from
+# outside. On the device this was diagnosed on, /repository/browse answered
+# 200 with 1000 apps in 27s while GitHub reported 18 of 60 unauthenticated
+# requests remaining, with 48 installed plugins checking for updates against
+# the same budget. When that budget runs out the store goes blank and says
+# nothing at all.
+# ---------------------------------------------------------------------------
+
+def _repository_module():
+    """Load tronbyte_repository.py the way the blueprint does."""
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    path = (Path(__file__).resolve().parents[2]
+            / 'plugin-repos' / 'starlark-apps' / 'tronbyte_repository.py')
+    spec = importlib.util.spec_from_file_location('_tronbyte_repo_under_test', path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules['_tronbyte_repo_under_test'] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+class _Resp:
+    """Enough of requests.Response for the paths under test."""
+
+    def __init__(self, status_code=200, payload=None, headers=None, raises=None):
+        self.status_code = status_code
+        self._payload = payload
+        self.headers = headers or {}
+        self._raises = raises
+
+    def json(self):
+        if self._raises is not None:
+            raise self._raises
+        return self._payload
+
+
+class TestTheJsonGuardIsNotItselfACrash:
+    """`except (json.JSONDecodeError, ValueError)` with no `import json`.
+
+    Evaluating that tuple raises NameError, so the guard written for exactly
+    this case never ran: a non-JSON body -- a captive portal, a proxy error
+    page, a DNS-hijacking router answering for api.github.com -- came out as
+    a 500 instead of the None the caller was written to handle.
+    """
+
+    def test_a_non_json_body_returns_none(self):
+        repo = _repository_module().TronbyteRepository()
+        repo.session.get = lambda *a, **k: _Resp(
+            raises=ValueError("Expecting value: line 1 column 1 (char 0)"))
+
+        assert repo._make_request("https://api.github.com/anything") is None
+
+    def test_it_says_the_response_was_not_json(self):
+        repo = _repository_module().TronbyteRepository()
+        repo.session.get = lambda *a, **k: _Resp(raises=ValueError("nope"))
+
+        repo._make_request("https://api.github.com/anything")
+        assert 'JSON' in (repo.last_error or ''), repo.last_error
+
+
+class TestAnExhaustedRateLimitSaysSo:
+    """60 requests/hour unauthenticated, shared with every update check."""
+
+    def test_the_message_names_the_rate_limit(self):
+        repo = _repository_module().TronbyteRepository()
+        repo.session.get = lambda *a, **k: _Resp(
+            status_code=403,
+            headers={'X-RateLimit-Remaining': '0', 'X-RateLimit-Limit': '60'})
+
+        assert repo._make_request("https://api.github.com/anything") is None
+        assert 'rate limit' in (repo.last_error or '').lower(), repo.last_error
+
+    def test_it_mentions_being_unauthenticated_when_there_is_no_token(self):
+        repo = _repository_module().TronbyteRepository()
+        repo.session.get = lambda *a, **k: _Resp(
+            status_code=403,
+            headers={'X-RateLimit-Remaining': '0', 'X-RateLimit-Limit': '60'})
+
+        repo._make_request("https://api.github.com/anything")
+        assert 'unauthenticated' in (repo.last_error or ''), repo.last_error
+
+    def test_a_plain_403_is_not_reported_as_a_rate_limit(self):
+        repo = _repository_module().TronbyteRepository()
+        repo.session.get = lambda *a, **k: _Resp(
+            status_code=403, headers={'X-RateLimit-Remaining': '57'})
+
+        repo._make_request("https://api.github.com/anything")
+        assert 'rate limit' not in (repo.last_error or '').lower(), repo.last_error
+
+
+class TestAFailedFetchIsNotAnEmptyRepository:
+    """list_all_apps_cached turned every failure into an empty app list.
+
+    The route then reported that as a success, so a rate limit, a DNS failure
+    and a genuinely empty repository were all drawn as the same blank grid.
+    """
+
+    def test_the_reason_comes_back_with_the_empty_list(self):
+        module = _repository_module()
+        repo = module.TronbyteRepository()
+        repo.list_apps = lambda: (False, None, "GitHub API rate limit exceeded")
+
+        result = repo.list_all_apps_cached()
+        assert result['count'] == 0
+        assert 'rate limit' in result['error'].lower(), result
+
+    def test_a_failure_is_not_cached_as_an_empty_repository(self):
+        module = _repository_module()
+        repo = module.TronbyteRepository()
+        repo.list_apps = lambda: (False, None, "boom")
+        repo.list_all_apps_cached()
+
+        assert module._apps_cache['data'] is None, \
+            "a failed fetch was cached, so the store stays empty for 2 hours"
+
+    def test_a_successful_fetch_reports_no_error(self):
+        module = _repository_module()
+        repo = module.TronbyteRepository()
+        repo.list_apps = lambda: (True, [{'id': 'a', 'path': 'apps/a'}], None)
+        repo._fetch_raw_file = lambda *a, **k: "name: A\nsummary: s\n"
+
+        assert repo.list_all_apps_cached().get('error') is None
+
+
+class TestTheStoreReportsWhyItIsEmpty:
+    """The route's half of the same failure."""
+
+    @pytest.fixture
+    def failing_repo(self):
+        repo = MagicMock()
+        repo.return_value.list_all_apps_cached.return_value = {
+            'apps': [], 'categories': [], 'authors': [], 'count': 0,
+            'cached': False,
+            'error': 'GitHub API rate limit exceeded (60 requests/hour, '
+                     'unauthenticated).',
+        }
+        repo.return_value.get_rate_limit_info.return_value = {'remaining': 0}
+        with patch('web_interface.blueprints.api_v3._get_tronbyte_repository_class',
+                   return_value=repo):
+            yield repo
+
+    def test_browse_does_not_call_a_failure_a_success(self, client, failing_repo):
+        body = client.get('/api/v3/starlark/repository/browse').get_json()
+        assert body['status'] == 'error', body
+
+    def test_browse_answers_502_not_200(self, client, failing_repo):
+        resp = client.get('/api/v3/starlark/repository/browse')
+        assert resp.status_code == 502, resp.get_json()
+
+    def test_the_reason_reaches_the_page(self, client, failing_repo):
+        body = client.get('/api/v3/starlark/repository/browse').get_json()
+        assert 'rate limit' in body['message'].lower(), body
+
+    def test_categories_reports_it_too(self, client, failing_repo):
+        resp = client.get('/api/v3/starlark/repository/categories')
+        assert resp.status_code == 502
+        assert 'rate limit' in resp.get_json()['message'].lower()
+
+    @pytest.fixture
+    def working_repo(self):
+        repo = MagicMock()
+        repo.return_value.list_all_apps_cached.return_value = {
+            'apps': [{'id': 'quoteoftheday'}], 'categories': [], 'authors': [],
+            'count': 1, 'cached': False, 'error': None,
+        }
+        repo.return_value.get_rate_limit_info.return_value = {'remaining': 57}
+        with patch('web_interface.blueprints.api_v3._get_tronbyte_repository_class',
+                   return_value=repo):
+            yield repo
+
+    def test_a_working_fetch_is_still_a_success(self, client, working_repo):
+        resp = client.get('/api/v3/starlark/repository/browse')
+        assert resp.status_code == 200
+        assert resp.get_json()['status'] == 'success'
+
+
+class TestACrashCarriesItsDetail:
+    """Seventeen Starlark handlers answered 5xx with no detail at all."""
+
+    def test_browse_returns_the_exception_detail(self, client):
+        with patch('web_interface.blueprints.api_v3._get_tronbyte_repository_class',
+                   side_effect=ImportError("No module named 'yaml'")):
+            body = client.get('/api/v3/starlark/repository/browse').get_json()
+
+        assert 'yaml' in body.get('details', ''), body
+
+    def test_status_returns_the_exception_detail(self, client):
+        with patch('web_interface.blueprints.api_v3._get_starlark_plugin',
+                   side_effect=RuntimeError("plugin manager is not attached")):
+            body = client.get('/api/v3/starlark/status').get_json()
+
+        assert 'plugin manager is not attached' in body.get('details', ''), body
+
+
+class TestTheListingIsNotCappedAtOneThousand:
+    """The contents API caps a directory at 1000 entries and does not say so.
+
+    tronbyt/apps returns exactly 1000 through that endpoint, which is the cap
+    rather than the app count -- the store looked complete while showing a
+    truncated repository.
+    """
+
+    def _repo_with_tree(self, module, count):
+        repo = module.TronbyteRepository()
+        entries = [{'path': 'app%04d' % i, 'type': 'tree'} for i in range(count)]
+
+        def fake_request(url, timeout=10):
+            if url.endswith('/git/trees/main'):
+                return {'tree': [{'path': 'apps', 'type': 'tree', 'sha': 'deadbeef'}]}
+            if url.endswith('/git/trees/deadbeef'):
+                return {'tree': entries, 'truncated': False}
+            raise AssertionError("unexpected request: %s" % url)
+
+        repo._make_request = fake_request
+        return repo
+
+    def test_more_than_a_thousand_apps_are_listed(self):
+        module = _repository_module()
+        repo = self._repo_with_tree(module, 1400)
+
+        ok, apps, err = repo.list_apps()
+        assert ok, err
+        assert len(apps) == 1400
+
+    def test_the_path_is_still_the_one_manifest_fetches_use(self):
+        module = _repository_module()
+        repo = self._repo_with_tree(module, 3)
+
+        _, apps, _ = repo.list_apps()
+        assert apps[0]['path'] == 'apps/app0000', apps[0]
+
+    def test_dotfiles_and_files_are_skipped(self):
+        module = _repository_module()
+        repo = module.TronbyteRepository()
+
+        def fake_request(url, timeout=10):
+            if url.endswith('/git/trees/main'):
+                return {'tree': [{'path': 'apps', 'type': 'tree', 'sha': 'x'}]}
+            return {'tree': [{'path': '.github', 'type': 'tree'},
+                             {'path': 'realapp', 'type': 'tree'},
+                             {'path': 'README.md', 'type': 'blob'}]}
+
+        repo._make_request = fake_request
+        _, apps, _ = repo.list_apps()
+        assert [a['id'] for a in apps] == ['realapp']
+
+    def test_it_falls_back_to_the_contents_api(self):
+        """A trees outage must not take the store down with it."""
+        module = _repository_module()
+        repo = module.TronbyteRepository()
+
+        def fake_request(url, timeout=10):
+            if '/git/trees/' in url:
+                repo.last_error = "GitHub API error 500"
+                return None
+            return [{'name': 'fallbackapp', 'path': 'apps/fallbackapp', 'type': 'dir'}]
+
+        repo._make_request = fake_request
+        ok, apps, err = repo.list_apps()
+        assert ok, err
+        assert [a['id'] for a in apps] == ['fallbackapp']
+
+    def test_both_paths_failing_reports_the_reason(self):
+        module = _repository_module()
+        repo = module.TronbyteRepository()
+
+        def fake_request(url, timeout=10):
+            repo.last_error = "Timed out reaching GitHub"
+            return None
+
+        repo._make_request = fake_request
+        ok, apps, err = repo.list_apps()
+        assert not ok
+        assert 'Timed out' in err, err
+
+
+class TestTheStoreUsesTheTokenTheUserConfigured:
+    """The store authenticated with a key nothing ever writes.
+
+    The three repository routes read `github_token` off config.json. Nothing
+    writes that key: config.template.json has no such field, no setting
+    offers it, and the token the user actually configures goes to
+    config_secrets.json as `github.api_token`, which PluginStoreManager loads
+    and every other GitHub caller uses.
+
+    So the store ran unauthenticated at 60 requests/hour on the same per-IP
+    budget as 48 plugins' update checks, while the configured token sat
+    unused raising that same budget to 5000. On the device this was found on,
+    /plugins/store/github-status reported `authenticated: true` with a
+    rate_limit of 5000 while /starlark/repository/browse reported a limit of
+    60 -- the store going blank was that 60 running out.
+    """
+
+    def test_the_store_managers_token_is_used(self):
+        from web_interface.blueprints import api_v3 as mod
+
+        with patch.object(mod.api_v3, 'plugin_store_manager',
+                          MagicMock(github_token='ghp_configured')):
+            assert mod._starlark_github_token() == 'ghp_configured'
+
+    def test_a_hand_edited_config_key_still_works(self):
+        from web_interface.blueprints import api_v3 as mod
+
+        cfg = MagicMock()
+        cfg.load_config.return_value = {'github_token': 'ghp_by_hand'}
+        with patch.object(mod.api_v3, 'plugin_store_manager',
+                          MagicMock(github_token=None)), \
+             patch.object(mod.api_v3, 'config_manager', cfg):
+            assert mod._starlark_github_token() == 'ghp_by_hand'
+
+    def test_no_token_anywhere_is_not_an_error(self):
+        from web_interface.blueprints import api_v3 as mod
+
+        cfg = MagicMock()
+        cfg.load_config.return_value = {}
+        with patch.object(mod.api_v3, 'plugin_store_manager',
+                          MagicMock(github_token=None)), \
+             patch.object(mod.api_v3, 'config_manager', cfg):
+            assert mod._starlark_github_token() is None
+
+    def test_an_unreadable_config_does_not_take_the_store_down(self):
+        from web_interface.blueprints import api_v3 as mod
+
+        cfg = MagicMock()
+        cfg.load_config.side_effect = OSError("config.json is unreadable")
+        with patch.object(mod.api_v3, 'plugin_store_manager',
+                          MagicMock(github_token=None)), \
+             patch.object(mod.api_v3, 'config_manager', cfg):
+            assert mod._starlark_github_token() is None
+
+    def test_browse_hands_the_token_to_the_repository(self, client):
+        from web_interface.blueprints import api_v3 as mod
+
+        repo = MagicMock()
+        repo.return_value.list_all_apps_cached.return_value = {
+            'apps': [], 'categories': [], 'authors': [], 'count': 0,
+            'cached': False, 'error': None,
+        }
+        repo.return_value.get_rate_limit_info.return_value = {'remaining': 4999}
+
+        with patch.object(mod.api_v3, 'plugin_store_manager',
+                          MagicMock(github_token='ghp_configured')), \
+             patch('web_interface.blueprints.api_v3._get_tronbyte_repository_class',
+                   return_value=repo):
+            client.get('/api/v3/starlark/repository/browse')
+
+        repo.assert_called_once_with(github_token='ghp_configured')

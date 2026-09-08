@@ -8858,7 +8858,7 @@ def get_starlark_status():
 
     except Exception as e:
         logger.exception("[Starlark] get_starlark_status failed")
-        return jsonify({'status': 'error', 'message': 'Failed to get Starlark status'}), 500
+        return jsonify({'status': 'error', 'message': 'Failed to get Starlark status', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/starlark/install-pixlet', methods=['POST'])
 def install_pixlet():
@@ -8884,11 +8884,13 @@ def install_pixlet():
         else:
             return jsonify({'status': 'error', 'message': f'Failed to download Pixlet: {result.stderr}'}), 500
 
-    except subprocess.TimeoutExpired:
-        return jsonify({'status': 'error', 'message': 'Download timed out'}), 500
+    except subprocess.TimeoutExpired as err:
+        logger.exception("[Starlark] Pixlet download timed out")
+        return jsonify({'status': 'error', 'message': 'Download timed out',
+                        'details': describe_exception(err)}), 500
     except Exception as e:
         logger.exception("[Starlark] install_pixlet failed")
-        return jsonify({'status': 'error', 'message': 'Failed to install Pixlet'}), 500
+        return jsonify({'status': 'error', 'message': 'Failed to install Pixlet', 'details': describe_exception(e)}), 500
 
 
 # The remaining eleven routes #330 dropped, restored the same way: apps CRUD,
@@ -8896,6 +8898,32 @@ def install_pixlet():
 # repository browse/categories/install the app store page is built on. Without
 # these the store lists nothing and installing anything answers with the same
 # generic 404 the Pixlet button did.
+
+def _starlark_github_token() -> Optional[str]:
+    """The GitHub token the Starlark store should authenticate with.
+
+    These routes used to read `github_token` off config.json, a key that is
+    written nowhere and offered by no setting -- so the store always ran
+    unauthenticated at 60 requests/hour, on the same per-IP budget every
+    plugin update check spends, while the token the user had actually
+    configured sat in config_secrets.json raising the same budget to 5000.
+    The store going blank was that budget running out.
+
+    Prefer the store manager's token, which is the one the settings UI
+    writes and validates; keep the config.json key as a fallback so a
+    hand-edited config still works.
+    """
+    token = getattr(api_v3.plugin_store_manager, 'github_token', None)
+    if token:
+        return token
+
+    try:
+        config = api_v3.config_manager.load_config() if api_v3.config_manager else {}
+        return config.get('github_token')
+    except Exception:
+        logger.warning("[Starlark] Could not read config for a GitHub token", exc_info=True)
+        return None
+
 
 def _get_tronbyte_repository_class() -> Type[Any]:
     """Import TronbyteRepository from plugin-repos directory."""
@@ -9271,7 +9299,7 @@ def get_starlark_apps():
 
     except Exception as e:
         logger.exception("[Starlark] get_starlark_apps failed")
-        return jsonify({'status': 'error', 'message': 'Failed to get Starlark apps'}), 500
+        return jsonify({'status': 'error', 'message': 'Failed to get Starlark apps', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/starlark/apps/<app_id>', methods=['GET'])
 def get_starlark_app(app_id):
@@ -9337,7 +9365,7 @@ def get_starlark_app(app_id):
 
     except Exception as e:
         logger.exception("[Starlark] get_starlark_app failed")
-        return jsonify({'status': 'error', 'message': 'Failed to get Starlark app'}), 500
+        return jsonify({'status': 'error', 'message': 'Failed to get Starlark app', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/starlark/upload', methods=['POST'])
 def upload_starlark_app():
@@ -9404,17 +9432,19 @@ def upload_starlark_app():
                 pass
 
     except (OSError, IOError) as err:
-        # The detail goes to the log, not the response: it names absolute
-        # paths on the device, which the caller has no business seeing. The
-        # generic Exception arm below already did this; these two did not.
+        # This used to withhold the detail because it names absolute paths on
+        # the device. A full disk and a bad permission are indistinguishable
+        # without it, though, and describe_exception redacts credentials and
+        # truncates -- the same trade-off every other handler here makes.
         logger.exception("[Starlark] File error uploading starlark app: %s", err)
-        return jsonify({'status': 'error', 'message': 'File error during upload'}), 500
+        return jsonify({'status': 'error', 'message': 'File error during upload',
+                        'details': describe_exception(err)}), 500
     except ImportError as err:
         logger.exception("[Starlark] Module load error uploading starlark app: %s", err)
-        return jsonify({'status': 'error', 'message': 'Failed to load app module'}), 500
+        return jsonify({'status': 'error', 'message': 'Failed to load app module', 'details': describe_exception(err)}), 500
     except Exception as err:
         logger.exception("[Starlark] Unexpected error uploading starlark app: %s", err)
-        return jsonify({'status': 'error', 'message': 'Failed to upload app'}), 500
+        return jsonify({'status': 'error', 'message': 'Failed to upload app', 'details': describe_exception(err)}), 500
 
 @api_v3.route('/starlark/apps/<app_id>', methods=['DELETE'])
 def uninstall_starlark_app(app_id):
@@ -9445,7 +9475,7 @@ def uninstall_starlark_app(app_id):
 
     except Exception as e:
         logger.exception("[Starlark] uninstall_starlark_app failed")
-        return jsonify({'status': 'error', 'message': 'Failed to uninstall Starlark app'}), 500
+        return jsonify({'status': 'error', 'message': 'Failed to uninstall Starlark app', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/starlark/apps/<app_id>/config', methods=['GET'])
 def get_starlark_app_config(app_id):
@@ -9492,7 +9522,7 @@ def get_starlark_app_config(app_id):
 
     except Exception as e:
         logger.exception("[Starlark] get_starlark_app_config failed")
-        return jsonify({'status': 'error', 'message': 'Failed to get Starlark app config'}), 500
+        return jsonify({'status': 'error', 'message': 'Failed to get Starlark app config', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/starlark/apps/<app_id>/config', methods=['PUT'])
 def update_starlark_app_config(app_id):
@@ -9609,7 +9639,8 @@ def update_starlark_app_config(app_id):
         except Exception as e:
             logger.error(f"Failed to save config.json for {app_id}: {e}")
             logger.exception("Failed to save Starlark configuration for %r", app_id)
-            return jsonify({'status': 'error', 'message': 'Failed to save configuration'}), 500
+            return jsonify({'status': 'error', 'message': 'Failed to save configuration',
+                            'details': describe_exception(e)}), 500
 
         # Also update manifest for backward compatibility
         app_data.setdefault('config', {}).update(data)
@@ -9621,7 +9652,7 @@ def update_starlark_app_config(app_id):
 
     except Exception as e:
         logger.exception("[Starlark] update_starlark_app_config failed")
-        return jsonify({'status': 'error', 'message': 'Failed to update Starlark app config'}), 500
+        return jsonify({'status': 'error', 'message': 'Failed to update Starlark app config', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/starlark/apps/<app_id>/toggle', methods=['POST'])
 def toggle_starlark_app(app_id):
@@ -9661,7 +9692,7 @@ def toggle_starlark_app(app_id):
 
     except Exception as e:
         logger.exception("[Starlark] toggle_starlark_app failed")
-        return jsonify({'status': 'error', 'message': 'Failed to toggle Starlark app'}), 500
+        return jsonify({'status': 'error', 'message': 'Failed to toggle Starlark app', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/starlark/apps/<app_id>/render', methods=['POST'])
 def render_starlark_app(app_id):
@@ -9690,7 +9721,7 @@ def render_starlark_app(app_id):
 
     except Exception as e:
         logger.exception("[Starlark] render_starlark_app failed")
-        return jsonify({'status': 'error', 'message': 'Failed to render Starlark app'}), 500
+        return jsonify({'status': 'error', 'message': 'Failed to render Starlark app', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/starlark/repository/browse', methods=['GET'])
 def browse_tronbyte_repository():
@@ -9703,13 +9734,21 @@ def browse_tronbyte_repository():
     try:
         TronbyteRepository = _get_tronbyte_repository_class()
 
-        config = api_v3.config_manager.load_config() if api_v3.config_manager else {}
-        github_token = config.get('github_token')
-        repo = TronbyteRepository(github_token=github_token)
+        repo = TronbyteRepository(github_token=_starlark_github_token())
 
         result = repo.list_all_apps_cached()
 
         rate_limit = repo.get_rate_limit_info()
+
+        # An upstream failure used to arrive here as an empty app list and go
+        # out as 'success', so the store drew an empty grid and said nothing.
+        # 502: the request was fine, GitHub was not.
+        if result.get('error'):
+            return jsonify({
+                'status': 'error',
+                'message': result['error'],
+                'rate_limit': rate_limit,
+            }), 502
 
         return jsonify({
             'status': 'success',
@@ -9723,7 +9762,7 @@ def browse_tronbyte_repository():
 
     except Exception as e:
         logger.exception("[Starlark] browse_tronbyte_repository failed")
-        return jsonify({'status': 'error', 'message': 'Failed to browse repository'}), 500
+        return jsonify({'status': 'error', 'message': 'Failed to browse repository', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/starlark/repository/install', methods=['POST'])
 def install_from_tronbyte_repository():
@@ -9740,9 +9779,7 @@ def install_from_tronbyte_repository():
         TronbyteRepository = _get_tronbyte_repository_class()
         import tempfile
 
-        config = api_v3.config_manager.load_config() if api_v3.config_manager else {}
-        github_token = config.get('github_token')
-        repo = TronbyteRepository(github_token=github_token)
+        repo = TronbyteRepository(github_token=_starlark_github_token())
 
         success, metadata, error = repo.get_app_metadata(data['app_id'])
         if not success:
@@ -9811,23 +9848,25 @@ def install_from_tronbyte_repository():
 
     except Exception as e:
         logger.exception("[Starlark] install_from_tronbyte_repository failed")
-        return jsonify({'status': 'error', 'message': 'Failed to install from repository'}), 500
+        return jsonify({'status': 'error', 'message': 'Failed to install from repository', 'details': describe_exception(e)}), 500
 
 @api_v3.route('/starlark/repository/categories', methods=['GET'])
 def get_tronbyte_categories():
     """Get list of available app categories (uses bulk cache)."""
     try:
         TronbyteRepository = _get_tronbyte_repository_class()
-        config = api_v3.config_manager.load_config() if api_v3.config_manager else {}
-        repo = TronbyteRepository(github_token=config.get('github_token'))
+        repo = TronbyteRepository(github_token=_starlark_github_token())
 
         result = repo.list_all_apps_cached()
+
+        if result.get('error'):
+            return jsonify({'status': 'error', 'message': result['error']}), 502
 
         return jsonify({'status': 'success', 'categories': result['categories']})
 
     except Exception as e:
         logger.exception("[Starlark] get_tronbyte_categories failed")
-        return jsonify({'status': 'error', 'message': 'Failed to fetch categories'}), 500
+        return jsonify({'status': 'error', 'message': 'Failed to fetch categories', 'details': describe_exception(e)}), 500
 
 
 def _starlark_virtual_plugins() -> list:

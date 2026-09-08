@@ -5,6 +5,7 @@ Handles interaction with the Tronbyte apps repository on GitHub.
 Fetches app listings, metadata, and downloads .star files.
 """
 
+import json
 import logging
 import time
 import requests
@@ -49,6 +50,13 @@ class TronbyteRepository:
         self.base_url = "https://api.github.com"
         self.raw_url = "https://raw.githubusercontent.com"
 
+        # Why the last GitHub API call failed, in words a user can act on.
+        # _make_request used to log the reason and return a bare None, so
+        # every caller up the stack knew only that "something" went wrong --
+        # which is how an exhausted rate limit reached the store page as an
+        # empty grid with no explanation.
+        self.last_error: Optional[str] = None
+
         self.session = requests.Session()
         if github_token:
             self.session.headers.update({
@@ -70,29 +78,50 @@ class TronbyteRepository:
         Returns:
             JSON response or None on error
         """
+        self.last_error = None
         try:
             response = self.session.get(url, timeout=timeout)
 
-            if response.status_code == 403:
-                # Rate limit exceeded
-                logger.warning("[Tronbyte Repo] GitHub API rate limit exceeded")
+            if response.status_code in (403, 429):
+                # 403 is both "rate limited" and "forbidden"; the remaining
+                # counter is what tells them apart, and the difference matters
+                # to whoever reads the message -- one is fixed by waiting or
+                # adding a token, the other is not.
+                remaining = response.headers.get('X-RateLimit-Remaining')
+                if remaining == '0':
+                    self.last_error = (
+                        "GitHub API rate limit exceeded"
+                        f" ({response.headers.get('X-RateLimit-Limit', '?')} requests/hour"
+                        f"{'' if self.github_token else ', unauthenticated'})."
+                        " Add a GitHub token in settings, or wait for the limit to reset."
+                    )
+                else:
+                    self.last_error = f"GitHub refused the request ({response.status_code})"
+                logger.warning(f"[Tronbyte Repo] {self.last_error}")
                 return None
             elif response.status_code == 404:
+                self.last_error = "Not found on GitHub"
                 logger.warning(f"[Tronbyte Repo] Resource not found: {url}")
                 return None
             elif response.status_code != 200:
+                self.last_error = f"GitHub API error {response.status_code}"
                 logger.error(f"[Tronbyte Repo] GitHub API error: {response.status_code}")
                 return None
 
             return response.json()
 
         except requests.Timeout:
+            self.last_error = "Timed out reaching GitHub"
             logger.error(f"[Tronbyte Repo] Request timeout: {url}")
             return None
         except requests.RequestException as e:
+            self.last_error = f"Network error reaching GitHub: {e.__class__.__name__}"
             logger.error(f"[Tronbyte Repo] Request error: {e}", exc_info=True)
             return None
         except (json.JSONDecodeError, ValueError) as e:
+            # Reachable whenever something on the path answers with HTML --
+            # a captive portal, a proxy error page, a DNS-hijacking router.
+            self.last_error = "GitHub returned a response that was not JSON"
             logger.error(f"[Tronbyte Repo] JSON parse error for {url}: {e}", exc_info=True)
             return None
 
@@ -125,6 +154,61 @@ class TronbyteRepository:
             logger.error(f"[Tronbyte Repo] Network error fetching raw file {file_path}: {e}", exc_info=True)
             return None
 
+    def _list_app_dirs_via_trees(self) -> Optional[List[Dict[str, Any]]]:
+        """App directories via the git trees API, or None on failure.
+
+        The contents API caps a directory listing at 1000 entries and says
+        nothing about having truncated it, so the store showed the first 1000
+        apps of a repository that has more and looked complete while doing it.
+        The trees API caps far higher and sets `truncated` when it does, at
+        the cost of one extra call to resolve the `apps` tree.
+        """
+        repo = f"{self.base_url}/repos/{self.REPO_OWNER}/{self.REPO_NAME}"
+
+        root = self._make_request(f"{repo}/git/trees/{self.DEFAULT_BRANCH}")
+        if not isinstance(root, dict):
+            return None
+
+        apps_sha = next(
+            (e.get('sha') for e in root.get('tree', []) or []
+             if e.get('path') == self.APPS_PATH and e.get('type') == 'tree'),
+            None)
+        if not apps_sha:
+            self.last_error = f"No '{self.APPS_PATH}' directory in the repository"
+            return None
+
+        tree = self._make_request(f"{repo}/git/trees/{apps_sha}")
+        if not isinstance(tree, dict):
+            return None
+
+        if tree.get('truncated'):
+            logger.warning(
+                "[Tronbyte Repo] GitHub truncated the app tree; the listing is incomplete")
+
+        return [
+            {'id': e['path'], 'path': f"{self.APPS_PATH}/{e['path']}", 'url': None}
+            for e in tree.get('tree', []) or []
+            if e.get('type') == 'tree' and e.get('path') and not e['path'].startswith('.')
+        ]
+
+    def _list_app_dirs_via_contents(self) -> Optional[List[Dict[str, Any]]]:
+        """App directories via the contents API. Capped at 1000 entries."""
+        url = f"{self.base_url}/repos/{self.REPO_OWNER}/{self.REPO_NAME}/contents/{self.APPS_PATH}"
+
+        data = self._make_request(url)
+        if data is None:
+            return None
+        if not isinstance(data, list):
+            self.last_error = "GitHub returned an unexpected listing format"
+            return None
+
+        return [
+            {'id': item.get('name'), 'path': item.get('path'), 'url': item.get('url')}
+            for item in data
+            if item.get('type') == 'dir' and item.get('name')
+            and not item['name'].startswith('.')
+        ]
+
     def list_apps(self) -> Tuple[bool, Optional[List[Dict[str, Any]]], Optional[str]]:
         """
         List all available apps in the repository.
@@ -132,26 +216,17 @@ class TronbyteRepository:
         Returns:
             Tuple of (success, apps_list, error_message)
         """
-        url = f"{self.base_url}/repos/{self.REPO_OWNER}/{self.REPO_NAME}/contents/{self.APPS_PATH}"
-
-        data = self._make_request(url)
-        if data is None:
-            return False, None, "Failed to fetch repository contents"
-
-        if not isinstance(data, list):
-            return False, None, "Invalid response format"
-
-        # Filter directories (apps)
-        apps = []
-        for item in data:
-            if item.get('type') == 'dir':
-                app_id = item.get('name')
-                if app_id and not app_id.startswith('.'):
-                    apps.append({
-                        'id': app_id,
-                        'path': item.get('path'),
-                        'url': item.get('url')
-                    })
+        apps = self._list_app_dirs_via_trees()
+        if apps is None:
+            # Fall back rather than fail: the contents API was what shipped,
+            # so a trees-only outage should not take the store down with it.
+            trees_error = self.last_error
+            logger.warning(
+                f"[Tronbyte Repo] Trees listing failed ({trees_error}); "
+                "falling back to the contents API")
+            apps = self._list_app_dirs_via_contents()
+            if apps is None:
+                return False, None, self.last_error or trees_error or "Failed to fetch repository contents"
 
         logger.info(f"Found {len(apps)} apps in repository")
         return True, apps, None
@@ -267,14 +342,22 @@ class TronbyteRepository:
                     'categories': _apps_cache['categories'],
                     'authors': _apps_cache['authors'],
                     'count': len(_apps_cache['data']),
-                    'cached': True
+                    'cached': True,
+                    'error': None,
                 }
 
-        # Fetch directory listing (1 GitHub API call)
+        # Fetch directory listing (a small number of GitHub API calls)
         success, app_dirs, error = self.list_apps()
         if not success or not app_dirs:
-            logger.error(f"Failed to list apps for bulk fetch: {error}")
-            return {'apps': [], 'categories': [], 'authors': [], 'count': 0, 'cached': False}
+            # Returning an empty list here used to read downstream as "the
+            # repository has no apps", and the route reported that as a
+            # success -- so a rate limit, a DNS failure and an empty
+            # repository were all drawn as the same blank grid. Hand the
+            # reason back instead and let the caller surface it.
+            reason = error or "No apps found in the repository"
+            logger.error(f"Failed to list apps for bulk fetch: {reason}")
+            return {'apps': [], 'categories': [], 'authors': [],
+                    'count': 0, 'cached': False, 'error': reason}
 
         logger.info(f"Bulk-fetching manifests for {len(app_dirs)} apps...")
 
@@ -341,7 +424,8 @@ class TronbyteRepository:
             'categories': categories,
             'authors': authors,
             'count': len(apps_with_metadata),
-            'cached': False
+            'cached': False,
+            'error': None,
         }
 
     def download_star_file(self, app_id: str, output_path: Path, filename: Optional[str] = None) -> Tuple[bool, Optional[str]]:
