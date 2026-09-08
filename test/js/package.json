@@ -1,0 +1,12 @@
+{
+  "name": "ledmatrix-webui-js-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "JS tests for the v3 web interface (ListFilter and the plugin-manager grids)",
+  "scripts": {
+    "test": "node run_all.js"
+  },
+  "devDependencies": {
+    "jsdom": "^24.1.3"
+  }
+}

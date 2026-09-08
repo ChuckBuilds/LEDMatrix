@@ -49,3 +49,7 @@ config/backups/
 # Starlark apps runtime storage (installed .star files and cached renders)
 /starlark-apps/
 skin_renders/
+
+# JS test deps (test/js)
+node_modules/
+package-lock.json
