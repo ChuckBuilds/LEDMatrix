@@ -55,16 +55,18 @@ const ListFilter = (function () {
 
     // Build the lowercased search haystack. Array fields (e.g. tags) are
     // flattened in, matching the existing store/starlark search behaviour.
-    // Walks the item's own entries and keeps the wanted ones, rather than reading
-    // item[field] for each configured field. Same haystack (order is irrelevant
-    // to the substring test), minus the computed member access that static
-    // analysers flag as an object-injection sink.
+    //
+    // Values are read out of a Map rather than via item[field], which keeps
+    // static analysers from flagging a computed member access as an
+    // object-injection sink. Iteration follows `fields`, NOT the object's own
+    // key order: the fields are concatenated, so their order decides which
+    // values end up adjacent, and a multi-word query can span a field boundary.
     function haystack(item, fields) {
         if (!item) return '';
-        const wanted = new Set(fields || []);
+        const values = new Map(Object.entries(item));
         const parts = [];
-        Object.entries(item).forEach(([key, value]) => {
-            if (!wanted.has(key)) return;
+        (fields || []).forEach(field => {
+            const value = values.get(field);
             if (Array.isArray(value)) {
                 value.forEach(v => { if (v) parts.push(String(v)); });
             } else if (value) {
