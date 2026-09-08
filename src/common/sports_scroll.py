@@ -43,6 +43,7 @@ from typing import Any, Dict, List, Optional
 
 from PIL import Image
 
+from src.common import scroll_config
 from src.common.scroll_helper import ScrollHelper
 
 logger = logging.getLogger(__name__)
@@ -58,13 +59,9 @@ DEFAULT_SCROLL_SETTINGS: Dict[str, Any] = {
     "dynamic_duration": True,
 }
 
-#: Bounds on the px/second -> px/frame conversion, applied before the helper
-#: sees the value. FPS is *not* clamped here — ScrollHelper.set_target_fps
-#: already does that, and a second copy of the range would drift from it.
-MIN_PIXELS_PER_FRAME = 0.1
-MAX_PIXELS_PER_FRAME = 5.0
-
 #: Pacing to assume when scroll_delay is 0, i.e. the plugin has not set one.
+#: Only used to interpret this module's own px/frame config shape; the speed
+#: bounds and the px/s -> px/frame conversion belong to scroll_config now.
 ASSUMED_FPS_WHEN_UNPACED = 100.0
 
 
@@ -236,51 +233,75 @@ class SportsScrollDisplay:
         """Apply config to the scroll helper. Safe to call again after a change."""
         settings = self._get_scroll_settings()
 
-        scroll_speed = self._coerce_float(settings.get("scroll_speed"), 50.0)
-        scroll_delay = self._coerce_float(settings.get("scroll_delay"), 0.01)
         dynamic_duration = bool(settings.get("dynamic_duration", True))
-
-        self.scroll_helper.set_scroll_delay(scroll_delay)
         self.scroll_helper.set_dynamic_duration_settings(
             enabled=dynamic_duration,
             min_duration=settings.get("min_duration", 30),
             max_duration=settings.get("max_duration", 600),
             buffer=0.2,  # ensure the strip clears the panel completely
         )
-        # Frame-based scrolling: motion advances per rendered frame rather than
-        # per wall-clock second, which is what makes the pacing stable.
-        self.scroll_helper.set_frame_based_scrolling(True)
 
-        # Config states speed in px/second; frame-based mode wants px/frame.
-        if scroll_delay > 0:
-            pixels_per_frame = scroll_speed * scroll_delay
-        else:
-            pixels_per_frame = scroll_speed / ASSUMED_FPS_WHEN_UNPACED
-        pixels_per_frame = max(
-            MIN_PIXELS_PER_FRAME, min(MAX_PIXELS_PER_FRAME, pixels_per_frame)
-        )
-        self.scroll_helper.set_scroll_speed(pixels_per_frame)
+        # Speed goes through scroll_config, which every other scrolling plugin
+        # already uses. What must NOT happen is handing it this module's
+        # settings dict: the two read the same key names with different
+        # meanings, and the collision is a factor of 1/scroll_delay.
+        #
+        #   sports_scroll: scroll_speed is px/SECOND; scroll_delay is only the
+        #                  frame period used to reach px/frame.
+        #   scroll_config: scroll_speed is px per STEP, so px/s = speed/delay.
+        #
+        # Passing {"scroll_speed": 50.0, "scroll_delay": 0.01} straight through
+        # resolves to 5000 px/s (clamped to 500) instead of 50. So this module
+        # keeps ownership of reading its own config -- _get_scroll_settings
+        # merges the league overrides -- and hands the resolver a plain px/s.
+        pixels_per_second = self._resolve_pixels_per_second(settings)
 
-        effective_pps = (
-            pixels_per_frame / scroll_delay
-            if scroll_delay > 0
-            else pixels_per_frame * ASSUMED_FPS_WHEN_UNPACED
+        resolved = scroll_config.configure(
+            self.scroll_helper,
+            plugin_config=None,
+            global_config=self.global_config,
+            default_pixels_per_second=pixels_per_second,
+            display_manager=self.display_manager,
+            plugin_logger=self.logger,
+            refresh_hz=self._resolve_refresh_hz(),
         )
+        self._scroll_settings = resolved
         self.logger.info(
-            f"ScrollHelper configured: {pixels_per_frame:.2f} px/frame, "
-            f"delay={scroll_delay}s (effective {effective_pps:.1f} px/s from "
-            f"{scroll_speed} px/s config), dynamic_duration={dynamic_duration}"
+            "ScrollHelper configured: %s (requested %.1f px/s), "
+            "dynamic_duration=%s",
+            resolved.describe(),
+            pixels_per_second, dynamic_duration,
         )
 
-        # The reason this module exists upstream: the bundled copies hardcode
-        # ~100 FPS via scroll_delay and never consult the global target.
-        # No hasattr guard here, unlike the plugin copies: they probe because
-        # they may run against an older core, whereas this module ships in the
-        # same release as the ScrollHelper it calls. The helper clamps.
-        target_fps = self._resolve_target_fps()
-        if target_fps:
-            self.scroll_helper.set_target_fps(target_fps)
-            self.logger.info(f"Target FPS set to {target_fps}")
+    def _resolve_pixels_per_second(self, settings: Dict[str, Any]) -> float:
+        """This module's config shape, expressed as plain pixels per second.
+
+        ``scroll_speed`` is already px/s here. ``scroll_delay`` only matters
+        when a caller supplied px/frame instead, which the 0 case covers.
+        """
+        scroll_speed = self._coerce_float(settings.get("scroll_speed"), 50.0)
+        scroll_delay = self._coerce_float(settings.get("scroll_delay"), 0.01)
+        if scroll_delay <= 0:
+            return scroll_speed * ASSUMED_FPS_WHEN_UNPACED
+        return scroll_speed
+
+    def _resolve_refresh_hz(self) -> Optional[float]:
+        """The panel refresh the crisp ladder should be computed against.
+
+        Prefers the configured hardware refresh. Falls back to the global
+        ``target_fps``/``scroll_target_fps`` this module has always honoured:
+        under the old model that key *was* the rate frames were presented at,
+        so it is the faithful translation for anyone who set it. Returning
+        None lets scroll_config apply its own default.
+        """
+        hardware = scroll_config.refresh_hz_from_config(self.global_config)
+        if hardware and hardware != scroll_config.DEFAULT_REFRESH_HZ:
+            return hardware
+        return self._resolve_target_fps() or hardware or None
+
+    def _scroll_frame_hold(self) -> int:
+        """Refreshes to hold each frame for, from the resolved settings."""
+        return getattr(getattr(self, "_scroll_settings", None), "frame_hold", 1)
 
     # ------------------------------------------------------------------
     # Frame pumping
@@ -304,6 +325,16 @@ class SportsScrollDisplay:
             visible = self.scroll_helper.get_visible_portion()
             if not visible:
                 return False
+
+            # Tell the core the panel is scrolling, and for how many
+            # refreshes to hold each frame. Without this the frame hold is
+            # never applied -- so a speed the ladder made crisp still presents
+            # a new frame every refresh and judders -- and, because deferred
+            # updates only run while nothing is scrolling, core would run
+            # blocking work in the middle of this scroll.
+            if hasattr(self.display_manager, "set_scrolling_state"):
+                self.display_manager.set_scrolling_state(
+                    True, frame_hold=self._scroll_frame_hold())
 
             self.display_manager.image = visible
             self.display_manager.update_display()
@@ -331,7 +362,19 @@ class SportsScrollDisplay:
 
     def is_scroll_complete(self) -> bool:
         """True when the strip has scrolled fully past the panel."""
-        return self.scroll_helper.is_scroll_complete()
+        complete = self.scroll_helper.is_scroll_complete()
+        if complete:
+            self._release_scrolling_state()
+        return complete
+
+    def _release_scrolling_state(self) -> None:
+        """Tell the core this display is no longer scrolling.
+
+        The scrolling flag and the frame hold are global to the display
+        manager, so leaving them set holds every other plugin's frames too.
+        """
+        if hasattr(self.display_manager, "set_scrolling_state"):
+            self.display_manager.set_scrolling_state(False)
 
     def reset_scroll(self) -> None:
         """Return the strip to its starting position, keeping the content."""
@@ -349,6 +392,7 @@ class SportsScrollDisplay:
         self._vegas_content_items = []
         self._is_scrolling = False
         self._scroll_start_time = None
+        self._release_scrolling_state()
         self.logger.debug("Scroll display cleared")
 
     # ------------------------------------------------------------------
