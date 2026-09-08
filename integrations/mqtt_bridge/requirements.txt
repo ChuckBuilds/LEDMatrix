@@ -1,0 +1,5 @@
+# Floors are security floors, not API floors. requests < 2.33.0 carries
+# CVE-2024-35195, CVE-2024-47081 and CVE-2026-25645; matches the pin in the
+# project's own requirements.txt.
+paho-mqtt>=2.0.0,<3.0.0
+requests>=2.33.0,<3.0.0

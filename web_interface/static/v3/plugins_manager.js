@@ -5945,7 +5945,10 @@ document.addEventListener('htmx:afterSettle', function() {
                 <div class="flex items-start justify-between mb-4">
                     <div class="flex-1 min-w-0">
                         <div class="flex items-center flex-wrap gap-1.5 mb-2">
-                            <h4 class="font-semibold text-gray-900 text-base">${escapeHtml(app.name || app.id)}</h4>
+                            <!-- break-words: Starlark app names come from the
+                                 community repo and some are long single tokens,
+                                 which overflowed the card instead of wrapping. -->
+                            <h4 class="font-semibold text-gray-900 text-base break-words">${escapeHtml(app.name || app.id)}</h4>
                             <span class="badge badge-warning"><i class="fas fa-star mr-1"></i>Starlark</span>
                             ${installed ? '<span class="badge badge-success"><i class="fas fa-check mr-1"></i>Installed</span>' : ''}
                         </div>

@@ -264,10 +264,18 @@ class PixletRenderer:
                     else:
                         value_str = str(value)
 
-                    # Validate value doesn't contain dangerous shell metacharacters
-                    # Block: backticks, $(), pipes, redirects, semicolons, ampersands, null bytes
-                    # Allow: most printable chars including spaces, quotes, brackets, braces
-                    if re.search(r'[`$|<>&;\x00]|\$\(', value_str):
+                    # Validate value doesn't contain dangerous shell metacharacters.
+                    # Kept as defence in depth only: cmd is a list and there is no
+                    # shell=True below, so nothing here is ever interpreted by a
+                    # shell. That made the list worth trimming rather than growing
+                    # -- "|" is a normal character inside a config value, and apps
+                    # do use it as a separator (a PennDOT sign id is
+                    # "I-476 North|175659"). Blocking it dropped the whole key
+                    # silently, and the app then rendered its own "not configured"
+                    # screen with nothing to say why.
+                    # Block: backticks, $(), redirects, semicolons, ampersands, null bytes
+                    # Allow: most printable chars including spaces, quotes, brackets, braces, pipes
+                    if re.search(r'[`$<>&;\x00]|\$\(', value_str):
                         logger.warning(f"Skipping config value with unsafe shell characters for key {key}: {value_str}")
                         continue
 
@@ -299,13 +307,21 @@ class PixletRenderer:
             )
 
             if result.returncode == 0:
-                if os.path.isfile(output_path):
-                    logger.debug(f"Successfully rendered: {star_file} -> {output_path}")
-                    return True, None
-                else:
+                if not os.path.isfile(output_path):
                     error = "Rendering succeeded but output file not found"
                     logger.error(error)
                     return False, error
+                # Pixlet exits 0 and writes a 0-byte file when the app renders
+                # nothing -- an app whose config leaves it with no content to
+                # show does exactly that. Treating existence alone as success
+                # handed the caller a file with no frames in it, which reads
+                # downstream as a working app that draws a black panel.
+                if os.path.getsize(output_path) == 0:
+                    error = "Rendering produced an empty (0-byte) file - the app rendered no content"
+                    logger.error(error)
+                    return False, error
+                logger.debug(f"Successfully rendered: {star_file} -> {output_path}")
+                return True, None
             else:
                 error = f"Pixlet failed (exit {result.returncode}): {result.stderr}"
                 logger.error(error)
@@ -319,11 +335,76 @@ class PixletRenderer:
             logger.exception("Rendering exception")
             return False, "Rendering failed - see logs for details"
 
+    #: Schema extraction runs an app's own get_schema(), which may make a
+    #: network call. Short enough that a hung app does not stall an upload,
+    #: long enough for a real API round trip on a slow connection.
+    SCHEMA_TIMEOUT = 20
+
+    def extract_schema_via_pixlet(self, star_file: str) -> Optional[Dict[str, Any]]:
+        """Ask Pixlet itself for the app's schema, or None if it cannot say.
+
+        `pixlet schema` executes get_schema() instead of reading it, which is
+        the only way to see options an app computes at runtime -- a dropdown
+        whose choices come from a live API call has no option list anywhere in
+        the source for the regex parser below to find, so that parser reports
+        an empty dropdown and the config form offers nothing to pick.
+
+        Pixlet's own field keys are remapped to the ones the rest of this
+        plugin and the config UI already use ("typeOf"/"desc"), so the two
+        extractors return the same shape and callers cannot tell them apart.
+        """
+        if not self.pixlet_binary:
+            return None
+        try:
+            result = subprocess.run(
+                [self.pixlet_binary, "schema", star_file],
+                capture_output=True, text=True, timeout=self.SCHEMA_TIMEOUT,
+                cwd=self._get_safe_working_directory(star_file),
+            )
+        except subprocess.TimeoutExpired:
+            logger.warning(
+                "pixlet schema timed out after %ss for %s - get_schema() may be "
+                "making a slow network call", self.SCHEMA_TIMEOUT, star_file)
+            return None
+        except (subprocess.SubprocessError, OSError) as e:
+            logger.warning(f"Could not run pixlet schema for {star_file}: {e}")
+            return None
+
+        if result.returncode != 0:
+            # Not an error worth failing on: older Pixlet builds have no
+            # `schema` subcommand at all, and the source parser still works.
+            logger.debug(
+                "pixlet schema exited %d for %s: %s",
+                result.returncode, star_file, (result.stderr or '').strip()[:300])
+            return None
+
+        try:
+            schema = json.loads(result.stdout)
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning(f"pixlet schema returned unparseable output for {star_file}: {e}")
+            return None
+
+        if not isinstance(schema, dict) or not isinstance(schema.get("schema"), list):
+            logger.warning(f"pixlet schema returned an unexpected shape for {star_file}")
+            return None
+
+        for field in schema["schema"]:
+            if not isinstance(field, dict):
+                continue
+            if "type" in field and "typeOf" not in field:
+                field["typeOf"] = field.pop("type")
+            if "description" in field and "desc" not in field:
+                field["desc"] = field.pop("description")
+        return schema
+
     def extract_schema(self, star_file: str) -> Tuple[bool, Optional[Dict[str, Any]], Optional[str]]:
         """
-        Extract configuration schema from a .star file by parsing source code.
+        Extract configuration schema from a .star file.
 
-        Supports:
+        Prefers `pixlet schema`, which runs the app and therefore sees options
+        it computes at runtime. Falls back to parsing the source when Pixlet is
+        unavailable, too old to have the subcommand, or the app fails to run --
+        that parser handles:
         - Static field definitions (location, text, toggle, dropdown, color, datetime)
         - Variable-referenced dropdown options
         - Graceful degradation for unsupported field types
@@ -336,6 +417,13 @@ class PixletRenderer:
         """
         if not os.path.isfile(star_file):
             return False, None, f"Star file not found: {star_file}"
+
+        schema = self.extract_schema_via_pixlet(star_file)
+        if schema is not None:
+            logger.debug(
+                "Extracted schema with %d field(s) from %s via pixlet schema",
+                len(schema.get('schema', [])), star_file)
+            return True, schema, None
 
         try:
             # Read .star file

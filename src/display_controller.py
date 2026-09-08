@@ -307,40 +307,8 @@ class DisplayController:
 
             # Check for on-demand plugin filter from cache
             on_demand_config = self.cache_manager.get('display_on_demand_config', max_age=3600)
-            on_demand_plugin_id = on_demand_config.get('plugin_id') if on_demand_config else None
+            enabled_plugins = self._select_startup_plugins(discovered_plugins, on_demand_config)
 
-            if on_demand_plugin_id:
-                logger.info("On-demand mode detected during initialization: filtering to plugin '%s' only", on_demand_plugin_id)
-                # Only load the on-demand plugin, but ensure it's enabled
-                if on_demand_plugin_id not in discovered_plugins:
-                    error_msg = f"On-demand plugin '{on_demand_plugin_id}' not found in discovered plugins"
-                    logger.error(error_msg)
-                    logger.warning("Falling back to normal mode (all enabled plugins)")
-                    on_demand_plugin_id = None
-                    enabled_plugins = [p for p in discovered_plugins if self.config.get(p, {}).get('enabled', False)]
-                else:
-                    plugin_config = self.config.get(on_demand_plugin_id, {})
-                    was_disabled = not plugin_config.get('enabled', False)
-                    if was_disabled:
-                        logger.info("Temporarily enabling plugin '%s' for on-demand mode", on_demand_plugin_id)
-                        if on_demand_plugin_id not in self.config:
-                            self.config[on_demand_plugin_id] = {}
-                        self.config[on_demand_plugin_id]['enabled'] = True
-                    enabled_plugins = [on_demand_plugin_id]
-                    # Set on-demand state from cached config
-                    self.on_demand_active = True
-                    self.on_demand_plugin_id = on_demand_plugin_id
-                    self.on_demand_mode = on_demand_config.get('mode')
-                    self.on_demand_duration = on_demand_config.get('duration')
-                    self.on_demand_pinned = on_demand_config.get('pinned', False)
-                    self.on_demand_requested_at = on_demand_config.get('requested_at')
-                    self.on_demand_expires_at = on_demand_config.get('expires_at')
-                    self.on_demand_status = 'active'
-                    self.on_demand_schedule_override = True
-                    logger.info("On-demand mode: loading only plugin '%s'", on_demand_plugin_id)
-            else:
-                enabled_plugins = [p for p in discovered_plugins if self.config.get(p, {}).get('enabled', False)]
-            
             # Count enabled plugins for progress tracking
             enabled_count = len(enabled_plugins)
             logger.info("Loading %d enabled plugin(s) in parallel (max 4 concurrent)...", enabled_count)
@@ -1279,6 +1247,91 @@ class DisplayController:
     #: perceptible, and it cuts the read rate by 30x.
     ON_DEMAND_POLL_INTERVAL = 0.25
 
+    def _select_startup_plugins(self, discovered_plugins: List[str],
+                                on_demand_config: Optional[Dict[str, Any]]) -> List[str]:
+        """Which plugins to load at startup, restoring on-demand state if any.
+
+        Every normally-enabled plugin loads, on-demand or not. Loading only the
+        on-demand plugin left every other plugin unavailable for the rest of
+        the process's life whenever the service was restarted while on-demand
+        was still active -- and a restart during an on-demand session is
+        routine, since that is how updates and config changes are applied. The
+        panel came back cycling that one plugin's modes and nothing else, with
+        no way out but clearing the on-demand cache by hand.
+
+        On-demand still resumes on its saved mode; this only widens what gets
+        loaded, so normal rotation has somewhere to return to when it ends.
+        A plugin that is disabled in config but named by the on-demand request
+        is still enabled and added, since otherwise the mode being resumed
+        would have nothing behind it.
+        """
+        enabled_plugins = [p for p in discovered_plugins
+                           if self.config.get(p, {}).get('enabled', False)]
+
+        on_demand_plugin_id = on_demand_config.get('plugin_id') if on_demand_config else None
+        if not on_demand_plugin_id:
+            return enabled_plugins
+
+        if on_demand_plugin_id not in discovered_plugins:
+            logger.error("On-demand plugin '%s' not found in discovered plugins",
+                         on_demand_plugin_id)
+            logger.warning("Falling back to normal mode (all enabled plugins)")
+            return enabled_plugins
+
+        if not self.config.get(on_demand_plugin_id, {}).get('enabled', False):
+            logger.info("Temporarily enabling plugin '%s' for on-demand mode", on_demand_plugin_id)
+            self.config.setdefault(on_demand_plugin_id, {})['enabled'] = True
+            if on_demand_plugin_id not in enabled_plugins:
+                enabled_plugins.append(on_demand_plugin_id)
+
+        # Restore on-demand state from the cached request so it resumes.
+        self.on_demand_active = True
+        self.on_demand_plugin_id = on_demand_plugin_id
+        self.on_demand_mode = on_demand_config.get('mode')
+        self.on_demand_duration = on_demand_config.get('duration')
+        self.on_demand_pinned = on_demand_config.get('pinned', False)
+        self.on_demand_requested_at = on_demand_config.get('requested_at')
+        self.on_demand_expires_at = on_demand_config.get('expires_at')
+        self.on_demand_status = 'active'
+        self.on_demand_schedule_override = True
+        logger.info("On-demand mode detected during initialization: resuming on plugin '%s'; "
+                    "all %d enabled plugin(s) still load normally",
+                    on_demand_plugin_id, len(enabled_plugins))
+        return enabled_plugins
+
+    def _consume_on_demand_request(self, request_id: str) -> None:
+        """Remove the request we just handled from the mailbox.
+
+        Leaving it on disk meant a restart replayed the previous request: the
+        fresh controller read it, activated it and cached it, so the request
+        the caller had just made was ignored and the panel silently showed the
+        earlier plugin.
+
+        Compare before deleting. The web process can post a newer request
+        between the read and this delete; an unconditional delete threw that
+        one away and it was never processed -- the user's second click did
+        nothing. Re-reading uncached and only deleting our own request_id
+        leaves a newer request in the mailbox for the next poll instead.
+
+        This narrows the window rather than closing it: a request landing
+        between the re-read and the delete is still lost. Closing it properly
+        needs an atomic claim (a rename, or a compare-and-delete primitive)
+        that the cache layer does not currently offer, so the honest fix is a
+        smaller window plus this note, not a bigger lock. For start requests
+        processed_id still guards against reprocessing if the delete fails.
+        """
+        try:
+            current = self.cache_manager.get('display_on_demand_request',
+                                             max_age=3600, memory_ttl=0)
+            if not current or current.get('request_id') == request_id:
+                self.cache_manager.delete('display_on_demand_request')
+            else:
+                logger.debug("Newer on-demand request %s arrived while processing "
+                             "%s; leaving it in the mailbox",
+                             current.get('request_id'), request_id)
+        except (OSError, AttributeError, KeyError) as err:
+            logger.debug("Could not clear the on-demand request mailbox: %s", err)
+
     def _poll_on_demand_requests(self) -> None:
         """Poll cache for new on-demand requests from external controllers."""
         now = time.monotonic()
@@ -1325,8 +1378,15 @@ class DisplayController:
                 logger.debug("Stop request %s received but on-demand is not active", request_id)
                 # Still update request_id to acknowledge the request
                 self.on_demand_request_id = request_id
+            # Stop requests are deliberately exempt from the request_id/
+            # processed_id guards above, so that a second click stops a mode
+            # that a race left running. Consuming the mailbox is therefore the
+            # only thing that ends the request: without it the same stop was
+            # re-read and re-processed on every poll, forever, logging at
+            # ON_DEMAND_POLL_INTERVAL for the life of the process.
+            self._consume_on_demand_request(request_id)
             return
-        
+
         # For start requests, check if already processed
         if request_id == self.on_demand_request_id:
             logger.debug("On-demand start request %s already processed (instance check)", request_id)
@@ -1344,37 +1404,8 @@ class DisplayController:
         # Mark as processed BEFORE processing (to prevent duplicate processing)
         self.cache_manager.set('display_on_demand_processed_id', request_id, ttl=3600)
         self.on_demand_request_id = request_id
-        # Consume the mailbox entry. Leaving it on disk meant a restart replayed
-        # the previous request: the fresh controller read it, activated it and
-        # cached it, so the request the caller had just made was ignored and the
-        # panel silently showed the earlier plugin. processed_id still guards
-        # against double-processing if this delete fails.
-        try:
-            # Compare before deleting. The web process can post a newer request
-            # between the read above and this delete; an unconditional delete
-            # threw that one away and it was never processed -- the user's
-            # second click did nothing. Re-reading uncached and only deleting
-            # our own request_id means a newer request is left in the mailbox
-            # for the next poll instead.
-            #
-            # This narrows the window rather than closing it: a request landing
-            # between this re-read and the delete is still lost. Closing it
-            # properly needs an atomic claim (a rename, or a compare-and-delete
-            # primitive) that the cache layer does not currently offer, so the
-            # honest fix is a smaller window plus this note, not a bigger lock.
-            current = self.cache_manager.get('display_on_demand_request',
-                                             max_age=3600, memory_ttl=0)
-            if not current or current.get('request_id') == request_id:
-                self.cache_manager.delete('display_on_demand_request')
-            else:
-                logger.debug("Newer on-demand request %s arrived while processing "
-                             "%s; leaving it in the mailbox",
-                             current.get('request_id'), request_id)
-        except (OSError, AttributeError, KeyError) as err:
-            # Best-effort: processed_id still guards against reprocessing if the
-            # mailbox cannot be cleared.
-            logger.debug("Could not clear the on-demand request mailbox: %s", err)
-        
+        self._consume_on_demand_request(request_id)
+
         if action == 'start':
             logger.info("Processing on-demand start request for plugin: %s", request.get('plugin_id'))
             self._activate_on_demand(request)
@@ -1416,34 +1447,28 @@ class DisplayController:
                 return modes[0]
         return plugin_id
 
-    def _populate_on_demand_modes_from_plugin(self) -> None:
+    def _on_demand_modes_for_plugin(self, plugin_id: str) -> List[str]:
+        """Every loaded display mode belonging to `plugin_id`, in rotation order.
+
+        Live modes that actually have content lead, then the rest, then live
+        modes with nothing to show -- so an on-demand request for a sports
+        plugin opens on a game in progress rather than an empty live screen.
+        Returns an empty list when the plugin has no loaded modes.
         """
-        Populate on_demand_modes from the on-demand plugin's display modes.
-        Called after plugin loading completes when on-demand state is restored from cache.
-        """
-        if not self.on_demand_active or not self.on_demand_plugin_id:
-            return
-        
-        plugin_id = self.on_demand_plugin_id
-        
-        # Get all modes for this plugin
         plugin_modes = self.plugin_display_modes.get(plugin_id, [])
         if not plugin_modes:
             # Fallback: find all modes that belong to this plugin
             plugin_modes = [mode for mode, pid in self.mode_to_plugin_id.items() if pid == plugin_id]
-        
+
         # Filter to only include modes that exist in plugin_modes
         available_plugin_modes = [m for m in plugin_modes if m in self.plugin_modes]
-        
         if not available_plugin_modes:
-            logger.warning("No valid display modes found for on-demand plugin '%s' after restoration", plugin_id)
-            self.on_demand_modes = []
-            return
-        
+            return []
+
         # Prioritize live modes if they exist and have content
         live_modes = [m for m in available_plugin_modes if m.endswith('_live')]
         other_modes = [m for m in available_plugin_modes if not m.endswith('_live')]
-        
+
         # Check if live modes have content
         live_with_content = []
         for live_mode in live_modes:
@@ -1454,18 +1479,57 @@ class DisplayController:
                         live_with_content.append(live_mode)
                 except Exception:
                     pass
-        
+
         # Build mode list: live modes with content first, then other modes, then live modes without content
         if live_with_content:
             ordered_modes = live_with_content + other_modes + [m for m in live_modes if m not in live_with_content]
         else:
             # No live content, skip live modes
             ordered_modes = other_modes
-        
+
         if not ordered_modes:
             # Only live modes available but no content - use them anyway
             ordered_modes = live_modes
-        
+
+        return ordered_modes
+
+    def _apply_on_demand_pin(self, ordered_modes: List[str], resolved_mode: Optional[str],
+                             pinned: bool) -> List[str]:
+        """Narrow an on-demand rotation to the single requested mode when pinned.
+
+        `pinned` reaches the controller from the API and was stored and
+        republished but never acted on, so a pinned request still rotated
+        through every mode the resolved plugin owns. That is the right default
+        for a sports plugin, whose modes are views of one subject
+        (nfl_live/nfl_recent/nfl_upcoming), and the wrong one for a plugin
+        whose modes are unrelated -- each Starlark app is its own widget, so
+        asking for one and getting all of them is not what was requested.
+        """
+        if not pinned or not resolved_mode or resolved_mode not in ordered_modes:
+            return ordered_modes
+        return [resolved_mode]
+
+    def _populate_on_demand_modes_from_plugin(self) -> None:
+        """
+        Populate on_demand_modes from the on-demand plugin's display modes.
+        Called after plugin loading completes when on-demand state is restored from cache.
+        """
+        if not self.on_demand_active or not self.on_demand_plugin_id:
+            return
+
+        plugin_id = self.on_demand_plugin_id
+
+        ordered_modes = self._on_demand_modes_for_plugin(plugin_id)
+        if not ordered_modes:
+            logger.warning("No valid display modes found for on-demand plugin '%s' after restoration", plugin_id)
+            self.on_demand_modes = []
+            return
+
+        # A restart must not silently un-pin: the pin is part of the request
+        # being resumed, and it is restored from the same cached config above.
+        ordered_modes = self._apply_on_demand_pin(
+            ordered_modes, self.on_demand_mode, self.on_demand_pinned)
+
         self.on_demand_modes = ordered_modes
         # Set index to match the restored mode if available, otherwise start at 0
         if self.on_demand_mode and self.on_demand_mode in ordered_modes:
@@ -1520,46 +1584,14 @@ class DisplayController:
         if resolved_mode in self.available_modes:
             self.current_mode_index = self.available_modes.index(resolved_mode)
 
-        # Get all modes for this plugin
-        plugin_modes = self.plugin_display_modes.get(resolved_plugin_id, [])
-        if not plugin_modes:
-            # Fallback: find all modes that belong to this plugin
-            plugin_modes = [mode for mode, pid in self.mode_to_plugin_id.items() if pid == resolved_plugin_id]
-        
-        # Filter to only include modes that exist in plugin_modes
-        available_plugin_modes = [m for m in plugin_modes if m in self.plugin_modes]
-        
-        if not available_plugin_modes:
+        ordered_modes = self._on_demand_modes_for_plugin(resolved_plugin_id)
+        if not ordered_modes:
             logger.error("No valid display modes found for plugin '%s'", resolved_plugin_id)
             self._set_on_demand_error("no-modes")
             return
-        
-        # Prioritize live modes if they exist and have content
-        live_modes = [m for m in available_plugin_modes if m.endswith('_live')]
-        other_modes = [m for m in available_plugin_modes if not m.endswith('_live')]
-        
-        # Check if live modes have content
-        live_with_content = []
-        for live_mode in live_modes:
-            plugin_instance = self.plugin_modes.get(live_mode)
-            if plugin_instance and hasattr(plugin_instance, 'has_live_content'):
-                try:
-                    if plugin_instance.has_live_content():
-                        live_with_content.append(live_mode)
-                except Exception:
-                    pass
-        
-        # Build mode list: live modes with content first, then other modes, then live modes without content
-        if live_with_content:
-            ordered_modes = live_with_content + other_modes + [m for m in live_modes if m not in live_with_content]
-        else:
-            # No live content, skip live modes
-            ordered_modes = other_modes
-        
-        if not ordered_modes:
-            # Only live modes available but no content - use them anyway
-            ordered_modes = live_modes
-        
+
+        ordered_modes = self._apply_on_demand_pin(ordered_modes, resolved_mode, pinned)
+
         self.on_demand_active = True
         self.on_demand_mode = resolved_mode  # Keep for backward compatibility
         self.on_demand_modes = ordered_modes
