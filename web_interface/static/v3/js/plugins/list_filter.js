@@ -55,10 +55,16 @@ const ListFilter = (function () {
 
     // Build the lowercased search haystack. Array fields (e.g. tags) are
     // flattened in, matching the existing store/starlark search behaviour.
+    // Walks the item's own entries and keeps the wanted ones, rather than reading
+    // item[field] for each configured field. Same haystack (order is irrelevant
+    // to the substring test), minus the computed member access that static
+    // analysers flag as an object-injection sink.
     function haystack(item, fields) {
+        if (!item) return '';
+        const wanted = new Set(fields || []);
         const parts = [];
-        (fields || []).forEach(field => {
-            const value = item ? item[field] : null;
+        Object.entries(item).forEach(([key, value]) => {
+            if (!wanted.has(key)) return;
             if (Array.isArray(value)) {
                 value.forEach(v => { if (v) parts.push(String(v)); });
             } else if (value) {
@@ -132,8 +138,7 @@ const ListFilter = (function () {
                     return false;
                 }
             }
-            for (let i = 0; i < controls.length; i++) {
-                const c = controls[i];
+            for (const c of controls) {
                 const value = state[c.key];
                 if (sameValue(value, defaults[c.key])) continue;   // axis inactive
                 if (typeof c.test === 'function' && !c.test(item, value)) return false;
@@ -227,21 +232,54 @@ const ListFilter = (function () {
             if (typeof cfg.onChrome === 'function') cfg.onChrome(state, list, total);
         }
 
-        // Page-number strip with leading/trailing ellipsis, matching the markup
-        // the plugin store has always produced.
+        // Page-number strip with leading/trailing ellipsis, producing the same
+        // controls the plugin store has always rendered.
+        //
+        // Built with createElement rather than by concatenating an HTML string.
+        // Nothing interpolated here is user-controlled — only page integers and
+        // these class constants — but assembling markup into innerHTML is the
+        // pattern static analysers flag as an XSS sink, and building nodes is no
+        // less clear. It also lets each button own its listener directly instead
+        // of re-querying the container afterwards.
+        const PAGE_BTN_CLASS = 'px-3 py-1 text-sm rounded-md border transition-colors';
+        const PAGE_ACTIVE_CLASS = 'bg-blue-600 text-white border-blue-600';
+        const PAGE_NORMAL_CLASS = 'bg-white text-gray-700 border-gray-300 hover:bg-gray-100 cursor-pointer';
+        const PAGE_DISABLED_CLASS = 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed';
+
         function renderPagination(containerId, totalPages, currentPage) {
             const container = byId(containerId);
             if (!container) return;
 
-            if (totalPages <= 1) { container.innerHTML = ''; return; }
+            // textContent = '' drops the previous strip without parsing markup.
+            container.textContent = '';
+            if (totalPages <= 1) return;
 
-            const btnClass = 'px-3 py-1 text-sm rounded-md border transition-colors';
-            const activeClass = 'bg-blue-600 text-white border-blue-600';
-            const normalClass = 'bg-white text-gray-700 border-gray-300 hover:bg-gray-100 cursor-pointer';
-            const disabledClass = 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed';
+            const goTo = target => {
+                if (target >= 1 && target <= totalPages && target !== currentPage) {
+                    state.page = target;
+                    // Page moves re-slice only; filters and sort are unchanged.
+                    apply(true);
+                    const grid = byId(pageCfg && pageCfg.scrollToEl);
+                    if (grid && typeof grid.scrollIntoView === 'function') {
+                        grid.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }
+                }
+            };
 
-            let html = '';
-            html += `<button class="${btnClass} ${currentPage <= 1 ? disabledClass : normalClass}" data-list-page="${currentPage - 1}" ${currentPage <= 1 ? 'disabled' : ''}>&laquo;</button>`;
+            const addPageButton = (label, target, variant) => {
+                const btn = document.createElement('button');
+                btn.className = PAGE_BTN_CLASS + ' ' + (
+                    variant === 'active' ? PAGE_ACTIVE_CLASS
+                    : variant === 'disabled' ? PAGE_DISABLED_CLASS
+                    : PAGE_NORMAL_CLASS);
+                btn.setAttribute('data-list-page', String(target));
+                if (variant === 'disabled') btn.disabled = true;
+                btn.textContent = label;
+                btn.addEventListener('click', () => goTo(target));
+                container.appendChild(btn);
+            };
+
+            addPageButton('\u00ab', currentPage - 1, currentPage <= 1 ? 'disabled' : 'normal');
 
             const pages = [];
             pages.push(1);
@@ -252,32 +290,18 @@ const ListFilter = (function () {
             if (currentPage < totalPages - 2) pages.push('...');
             if (totalPages > 1) pages.push(totalPages);
 
-            pages.forEach(p => {
-                if (p === '...') {
-                    html += `<span class="px-2 py-1 text-sm text-gray-400">&hellip;</span>`;
+            pages.forEach(entry => {
+                if (entry === '...') {
+                    const gap = document.createElement('span');
+                    gap.className = 'px-2 py-1 text-sm text-gray-400';
+                    gap.textContent = '\u2026';
+                    container.appendChild(gap);
                 } else {
-                    html += `<button class="${btnClass} ${p === currentPage ? activeClass : normalClass}" data-list-page="${p}">${p}</button>`;
+                    addPageButton(String(entry), entry, entry === currentPage ? 'active' : 'normal');
                 }
             });
 
-            html += `<button class="${btnClass} ${currentPage >= totalPages ? disabledClass : normalClass}" data-list-page="${currentPage + 1}" ${currentPage >= totalPages ? 'disabled' : ''}>&raquo;</button>`;
-
-            container.innerHTML = html;
-
-            container.querySelectorAll('[data-list-page]').forEach(btn => {
-                btn.addEventListener('click', function () {
-                    const p = parseInt(this.getAttribute('data-list-page'));
-                    if (p >= 1 && p <= totalPages && p !== currentPage) {
-                        state.page = p;
-                        // Page moves re-slice only; filters and sort are unchanged.
-                        apply(true);
-                        const grid = byId(pageCfg && pageCfg.scrollToEl);
-                        if (grid && typeof grid.scrollIntoView === 'function') {
-                            grid.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                        }
-                    }
-                });
-            });
+            addPageButton('\u00bb', currentPage + 1, currentPage >= totalPages ? 'disabled' : 'normal');
         }
 
         function apply(skipPageReset) {
