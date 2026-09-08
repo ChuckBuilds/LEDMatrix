@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import json
 import statistics
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -80,6 +81,41 @@ class _HoldSpy:
         return False
 
 
+MESSAGE = """ledmatrix is running and owns the panel's GPIO.
+
+Stop it first, or this run can leave the display dark:
+
+    sudo systemctl stop ledmatrix
+    sudo python3 scripts/sports_scroll_check.py
+    sudo systemctl start ledmatrix
+
+Use --fallback to check the pacing logic without the panel, or --force if
+you really mean it."""
+
+
+def _refuse_if_the_service_is_running(force):
+    """Refuse to touch the panel while ledmatrix has it.
+
+    rpi-rgb-led-matrix configures GPIO directions and the hardware PWM inside
+    RGBMatrix(), and on the root check it calls exit() from C -- no cleanup.
+    Do that while the service is driving those same pins and the panel goes
+    dark while the service carries on rendering happily: fresh framebuffer,
+    every pixel lit, "RGB Matrix initialized successfully", nothing in the log.
+    A restart brings it back, but only once you work out that is what happened.
+
+    The module docstring says to stop the service first. This makes it true.
+    """
+    if force:
+        return
+    try:
+        active = subprocess.run(["systemctl", "is-active", "ledmatrix"],
+                                capture_output=True, text=True).stdout.strip()
+    except OSError:
+        return  # not a systemd box; nothing to protect
+    if active == "active":
+        sys.exit(MESSAGE)
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -87,12 +123,18 @@ def main():
     ap.add_argument("--speed", type=float, default=None,
                     help="px/s to request; default is the module's own")
     ap.add_argument("--games", type=int, default=6)
+    ap.add_argument("--force", action="store_true",
+                    help="run even though the display service is up. It owns "
+                         "the GPIO; expect a dark panel until you restart it.")
     ap.add_argument("--fallback", action="store_true",
                     help="run without the panel. Driving the real matrix needs "
                          "root; this checks everything except the vsync pacing "
                          "-- what speed resolves to, that the hold is published, "
                          "and that it is released afterwards.")
     args = ap.parse_args()
+
+    if not args.fallback:
+        _refuse_if_the_service_is_running(args.force)
 
     root = Path(__file__).resolve().parent.parent
     config = json.loads((root / "config" / "config.json").read_text(encoding="utf-8"))
