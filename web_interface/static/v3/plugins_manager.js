@@ -1180,18 +1180,12 @@ function initializePlugins() {
             }
         });
 
-    // Setup search functionality (with guard against duplicate listeners)
-    const searchInput = document.getElementById('plugin-search');
-    const categorySelect = document.getElementById('plugin-category');
-
-    if (searchInput && !searchInput._listenerSetup) {
-        searchInput._listenerSetup = true;
-        searchInput.addEventListener('input', debounce(searchPluginStore, 300));
-    }
-    if (categorySelect && !categorySelect._listenerSetup) {
-        categorySelect._listenerSetup = true;
-        categorySelect.addEventListener('change', searchPluginStore);
-    }
+    // #plugin-search and #plugin-category are wired by the store's ListFilter
+    // controller (setupStoreFilterListeners). They used to ALSO be bound here to
+    // searchPluginStore; because that binding passed the DOM event as the
+    // `fetchCommitInfo` argument, every keystroke and category change skipped the
+    // cached-filter fast path and refetched /api/v3/plugins/store/list with commit
+    // info. Filtering the cached list is the controller's job — leave it to it.
 
     // Setup GitHub installation handlers
     debugLog('[initializePlugins] About to call setupGitHubInstallHandlers...');

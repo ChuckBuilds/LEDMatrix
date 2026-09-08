@@ -79,7 +79,10 @@ const ListFilter = (function () {
 
         // Defaults double as the "inactive" value for each axis.
         const defaults = {};
-        if (searchCfg) defaults.search = '';
+        if (searchCfg) {
+            defaults.search = '';      // trimmed — what filtering and activeCount use
+            defaults.searchRaw = '';   // exactly what the user typed — what the input shows
+        }
         if (sortCfg) defaults.sort = sortCfg.default !== undefined ? sortCfg.default : 'a-z';
         controls.forEach(c => {
             defaults[c.key] = c.default !== undefined ? c.default : null;
@@ -162,7 +165,8 @@ const ListFilter = (function () {
                 // The toolbar markup is rebuilt on every HTMX partial swap while
                 // this controller (and its state) survives — put the text back.
                 const el = byId(searchCfg.el);
-                if (el && el.value !== state.search) el.value = state.search;
+                const text = state.searchRaw !== undefined ? state.searchRaw : state.search;
+                if (el && el.value !== text) el.value = text;
             }
             if (sortCfg) {
                 const el = byId(sortCfg.el);
@@ -314,7 +318,11 @@ const ListFilter = (function () {
         }
 
         function setSearch(value) {
-            state.search = (value || '').trim();
+            // Keep the raw text so syncControls can put it back verbatim. Writing
+            // the trimmed value into the input would eat a trailing space (and
+            // reset the caret) mid-word, which makes multi-word terms untypable.
+            state.searchRaw = value || '';
+            state.search = state.searchRaw.trim();
             sticky.clear();
             apply();
         }
