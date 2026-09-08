@@ -51,6 +51,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple, Union
 
 from PIL import ImageFont
+from src.common.font_layout import load_truetype
 
 try:
     import freetype
@@ -155,7 +156,7 @@ def load_font(font_name: str, size: int) -> Any:
             face.set_char_size(size * 64, size * 64, 72, 72)
             font: Any = face
         else:
-            font = ImageFont.truetype(path, size)
+            font = load_truetype(path, size)
     except Exception as e:
         logger.warning("Error loading font %s at %spx: %s, using fallback",
                        path, size, e)
@@ -174,7 +175,7 @@ def _load_fallback_font(size: int) -> Any:
         if cached is not None:
             return cached
         try:
-            font = ImageFont.truetype(path, size)
+            font = load_truetype(path, size)
             _font_cache[cache_key] = font
             return font
         except Exception as e:

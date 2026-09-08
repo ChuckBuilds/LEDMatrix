@@ -123,6 +123,8 @@ def demo(hardware, target, seconds):
     """Scroll text at the crisp speed nearest `target`."""
     from PIL import Image, ImageDraw, ImageFont
 
+    from src.common.font_layout import load_truetype
+
     hz = float(hardware.get("limit_refresh_rate_hz") or scroll_config.DEFAULT_REFRESH_HZ)
     choice = scroll_config.solve_crisp(target, hz)
     print("asked for {:.0f} px/s -> {}".format(target, choice.describe()))
@@ -137,7 +139,7 @@ def demo(hardware, target, seconds):
         ("/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf", 26),
     ):
         try:
-            font = ImageFont.truetype(path, size)
+            font = load_truetype(path, size)
             break
         except OSError:
             continue

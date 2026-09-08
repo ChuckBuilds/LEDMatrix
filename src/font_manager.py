@@ -38,6 +38,7 @@ import time
 from collections import OrderedDict
 from pathlib import Path
 from PIL import ImageFont
+from src.common.font_layout import load_truetype
 from typing import Dict, Tuple, Optional, Union, Any, List
 
 logger = logging.getLogger(__name__)
@@ -479,7 +480,7 @@ class FontManager:
                 if font_path.endswith('.bdf'):
                     font = self._load_bdf_font(font_path, size_px)
                 else:
-                    font = ImageFont.truetype(font_path, size_px)
+                    font = load_truetype(font_path, size_px)
             except Exception as e:
                 logger.error(f"Error loading font {font_path}: {e}")
                 self.performance_stats["failed_loads"] += 1
@@ -859,7 +860,7 @@ class FontManager:
                 return {"valid": True, "type": "bdf", "family": "unknown"}
             elif font_path.endswith('.ttf'):
                 # Try to load TTF font
-                ImageFont.truetype(font_path, 12)
+                load_truetype(font_path, 12)
                 return {"valid": True, "type": "ttf", "family": "unknown"}
             else:
                 return {"valid": False, "error": "Unsupported font format"}

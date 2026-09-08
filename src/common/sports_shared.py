@@ -86,6 +86,7 @@ from typing import Any, ClassVar, Dict, List, Optional, Tuple
 import pytz
 import requests
 from PIL import Image, ImageDraw, ImageFont
+from src.common.font_layout import load_truetype
 
 logger = logging.getLogger(__name__)
 
@@ -712,11 +713,11 @@ class SportsCoreSharedMixin:
                 while size > grid:
                     if probe.textlength(
                             self._SCORE_PROBE_TEXT,
-                            font=ImageFont.truetype(path, size)) <= budget:
+                            font=load_truetype(path, size)) <= budget:
                         break
                     size -= grid
                 if size != getattr(fonts['score'], 'size', size):
-                    fonts['score'] = ImageFont.truetype(path, size)
+                    fonts['score'] = load_truetype(path, size)
                     self._score_grew = True
 
             if not self._score_grew and not self._user_chose_size('score_text') \
@@ -736,7 +737,7 @@ class SportsCoreSharedMixin:
                     if _size <= current:
                         continue
                     _path = _resolve_font_path(f"assets/fonts/{_name}")
-                    _candidate = ImageFont.truetype(_path, _size)
+                    _candidate = load_truetype(_path, _size)
                     if probe.textlength(self._SCORE_PROBE_TEXT,
                                         font=_candidate) <= budget:
                         fonts['score'] = _candidate
@@ -751,7 +752,7 @@ class SportsCoreSharedMixin:
                 if ceiling and size >= ceiling:
                     size = max(grid, ceiling - grid)
                 if size != getattr(fonts['time'], 'size', size):
-                    fonts['time'] = ImageFont.truetype(path, size)
+                    fonts['time'] = load_truetype(path, size)
         except Exception:
             self.logger.debug("Headline font scaling skipped", exc_info=True)
         return fonts

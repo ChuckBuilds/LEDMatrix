@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import pytz
 import requests
 from PIL import Image, ImageDraw, ImageFont
+from src.common.font_layout import load_truetype
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -449,12 +450,12 @@ class SportsCore(ABC):
         press_start = self._resolve_font_path("PressStart2P-Regular.ttf")
         four_by_six = self._resolve_font_path("4x6-font.ttf")
         try:
-            fonts['score'] = ImageFont.truetype(press_start, 10)
-            fonts['time'] = ImageFont.truetype(press_start, 8)
-            fonts['team'] = ImageFont.truetype(press_start, 8)
-            fonts['status'] = ImageFont.truetype(four_by_six, 6) # Using 4x6 for status
-            fonts['detail'] = ImageFont.truetype(four_by_six, 6) # Added detail font
-            fonts['rank'] = ImageFont.truetype(press_start, 10)
+            fonts['score'] = load_truetype(press_start, 10)
+            fonts['time'] = load_truetype(press_start, 8)
+            fonts['team'] = load_truetype(press_start, 8)
+            fonts['status'] = load_truetype(four_by_six, 6) # Using 4x6 for status
+            fonts['detail'] = load_truetype(four_by_six, 6) # Added detail font
+            fonts['rank'] = load_truetype(press_start, 10)
             self.logger.info("Successfully loaded fonts")
         except OSError:
             # Name the directory we searched: the usual cause is an install
@@ -1031,7 +1032,7 @@ class SportsCore(ABC):
             if os.path.exists(font_path):
                 # Try loading as TTF first (works for both TTF and some BDF files with PIL)
                 if font_path.lower().endswith('.ttf'):
-                    font = ImageFont.truetype(font_path, font_size)
+                    font = load_truetype(font_path, font_size)
                     self.logger.debug(f"Loaded font: {font_name} at size {font_size}")
                     self._font_cache[cache_key] = font
                     return font
@@ -1049,7 +1050,7 @@ class SportsCore(ABC):
                     # correct one: the newer copies call truetype() on a BDF at
                     # any size (which simply fails) or refuse BDF outright.
                     try:
-                        font = ImageFont.truetype(font_path, font_size)
+                        font = load_truetype(font_path, font_size)
                         self.logger.debug(f"Loaded BDF font: {font_name} at size {font_size}")
                         self._font_cache[cache_key] = font
                         return font
@@ -1061,7 +1062,7 @@ class SportsCore(ABC):
                             self._bdf_native_size_cache[font_path] = native_size
                         if native_size and native_size != font_size:
                             try:
-                                font = ImageFont.truetype(font_path, native_size)
+                                font = load_truetype(font_path, native_size)
                                 self.logger.debug(
                                     f"Loaded BDF font: {font_name} at its native size {native_size} "
                                     f"(requested {font_size} isn't a valid strike for this file)"
@@ -1089,7 +1090,7 @@ class SportsCore(ABC):
             _resolve_font_family_alias(base_default))
         try:
             if os.path.exists(default_font_path):
-                font = ImageFont.truetype(default_font_path, font_size)
+                font = load_truetype(default_font_path, font_size)
             else:
                 self.logger.warning("Default font not found, using PIL default")
                 font = ImageFont.load_default()
