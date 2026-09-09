@@ -233,6 +233,46 @@
         </div>
     </div>
 
+    <!-- MQTT Bridge -->
+    <div class="bg-white rounded-lg shadow p-6">
+        <div class="border-b border-gray-200 pb-4 mb-6">
+            <div class="flex items-center justify-between gap-4">
+                <h2 class="text-lg font-semibold text-gray-900">MQTT Bridge</h2>
+                <span id="mqtt-bridge-state" class="text-xs px-2 py-1 rounded-full bg-gray-100 text-gray-600">checking&hellip;</span>
+            </div>
+            <p class="mt-1 text-sm text-gray-600">
+                Exposes the display to Home Assistant over MQTT &mdash; force a mode on demand, set
+                brightness, toggle power. Runs as <code class="bg-gray-100 px-1 rounded">ledmatrix-mqtt-bridge.service</code>.
+            </p>
+        </div>
+
+        <div id="mqtt-bridge-body" class="space-y-4">
+            <p class="text-sm text-gray-500">Loading settings&hellip;</p>
+        </div>
+    </div>
+
+    <!-- Pixlet Config Editor -->
+    <div class="bg-white rounded-lg shadow p-6">
+        <div class="border-b border-gray-200 pb-4 mb-6">
+            <h2 class="text-lg font-semibold text-gray-900">Pixlet Config Editor</h2>
+            <p class="mt-1 text-sm text-gray-600">
+                Opens a Starlark app in Pixlet's own config form, which runs the app for real &mdash;
+                so dropdowns that build their options at runtime work, and you see the render update
+                as you type.
+            </p>
+            <p class="mt-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-md p-2">
+                <i class="fas fa-exclamation-triangle mr-1"></i>
+                The display stops while a session is open, and the editor has no password &mdash; the
+                same footing as this page. Sessions end by themselves after 30&nbsp;minutes, so the
+                panel is never left dark.
+            </p>
+        </div>
+
+        <div id="pixlet-editor-body" class="space-y-4">
+            <p class="text-sm text-gray-500">Loading apps&hellip;</p>
+        </div>
+    </div>
+
     <!-- System Power -->
     <div class="bg-white rounded-lg shadow p-6">
         <div class="border-b border-gray-200 pb-4 mb-6">
@@ -962,5 +1002,339 @@
 
     // WiFi radio current state.
     window.loadWifiRadio();
+
+    // ── MQTT bridge ───────────────────────────────────────────────────────────
+
+    const MQTT_BRIDGE_URL = '/api/v3/integrations/mqtt-bridge';
+
+    function mqttBadge(service, configExists) {
+        if (!service.installed) return ['bg-gray-100 text-gray-600', 'not installed'];
+        if (service.active) return ['bg-green-100 text-green-700', 'running'];
+        if (!configExists) return ['bg-amber-100 text-amber-700', 'not configured'];
+        return ['bg-amber-100 text-amber-700', 'stopped'];
+    }
+
+    function renderMqttBridge(data) {
+        const badge = document.getElementById('mqtt-bridge-state');
+        const [cls, label] = mqttBadge(data.service, data.config_exists);
+        if (badge) {
+            badge.className = 'text-xs px-2 py-1 rounded-full ' + cls;
+            badge.textContent = label;
+        }
+
+        const c = data.config || {};
+        const field = (id, label, value, type, extra) => `
+            <label class="block">
+                <span class="text-xs font-medium text-gray-700">${escHtml(label)}</span>
+                <input id="${id}" type="${type || 'text'}" value="${value === null || value === undefined ? '' : escHtml(String(value))}"
+                       ${extra || ''}
+                       class="mt-1 w-full px-2 py-1.5 text-sm border border-gray-300 rounded-md">
+            </label>`;
+
+        document.getElementById('mqtt-bridge-body').innerHTML = `
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                ${field('mqtt-host', 'Broker host', c.mqtt_host)}
+                ${field('mqtt-port', 'Port', c.mqtt_port, 'number', 'min="1" max="65535"')}
+                ${field('mqtt-username', 'Username (optional)', c.mqtt_username)}
+                <label class="block">
+                    <span class="text-xs font-medium text-gray-700">Password</span>
+                    <input id="mqtt-password" type="password" value=""
+                           placeholder="${data.password_set ? 'unchanged — leave blank to keep' : 'none set'}"
+                           class="mt-1 w-full px-2 py-1.5 text-sm border border-gray-300 rounded-md">
+                    <span class="text-xs text-gray-500">
+                        Never sent back to the browser.
+                        ${data.password_set ? '<button type="button" id="mqtt-clear-password" class="text-red-600 hover:underline ml-1">Clear it</button>' : ''}
+                    </span>
+                </label>
+                ${field('mqtt-topic', 'Command topic', c.mqtt_topic)}
+                ${field('mqtt-client-id', 'Client ID', c.mqtt_client_id)}
+                ${field('mqtt-api-base', 'LEDMatrix API base', c.ledmatrix_api_base)}
+                ${field('mqtt-timeout', 'Request timeout (s)', c.request_timeout, 'number', 'min="1" max="300"')}
+                ${field('mqtt-duration', 'On-demand duration (s, blank = default)', c.on_demand_duration, 'number', 'min="1" max="86400"')}
+                <label class="block">
+                    <span class="text-xs font-medium text-gray-700">Log level</span>
+                    <select id="mqtt-log-level" class="mt-1 w-full px-2 py-1.5 text-sm border border-gray-300 rounded-md bg-white">
+                        ${['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'].map(l =>
+                            `<option value="${l}" ${c.log_level === l ? 'selected' : ''}>${l}</option>`).join('')}
+                    </select>
+                </label>
+            </div>
+
+            <label class="flex items-center gap-2 text-sm text-gray-700">
+                <input id="mqtt-tls" type="checkbox" ${c.mqtt_tls ? 'checked' : ''}
+                       class="rounded border-gray-300">
+                Use TLS
+                <span class="text-xs text-gray-500">(a password without TLS crosses the network in the clear)</span>
+            </label>
+
+            <div class="flex items-center justify-between gap-4 pt-2">
+                <p class="text-xs text-gray-500">
+                    Saved to <code class="bg-gray-100 px-1 rounded">${escHtml(data.config_path)}</code>.
+                    Any field can also be set as
+                    <code class="bg-gray-100 px-1 rounded">${escHtml(data.env_override_prefix)}&lt;KEY&gt;</code>,
+                    which wins over the file.
+                </p>
+                <button id="btn-mqtt-save" onclick="saveMqttBridge()"
+                        class="shrink-0 inline-flex items-center px-3 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700">
+                    <i class="fas fa-save mr-2"></i>Save settings
+                </button>
+            </div>
+            <div id="result-mqtt-save" class="hidden"></div>
+
+            <div class="flex flex-wrap items-center gap-2 pt-4 border-t border-gray-100">
+                ${data.service.installed ? `
+                    <button id="btn-mqtt-restart" onclick="toolsAction('mqtt_bridge_restart','btn-mqtt-restart','result-mqtt-service')"
+                            class="inline-flex items-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
+                        <i class="fas fa-sync-alt mr-2"></i>Restart
+                    </button>
+                    <button id="btn-mqtt-startstop"
+                            onclick="toolsAction('${data.service.active ? 'mqtt_bridge_stop' : 'mqtt_bridge_start'}','btn-mqtt-startstop','result-mqtt-service')"
+                            class="inline-flex items-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
+                        <i class="fas fa-${data.service.active ? 'stop' : 'play'} mr-2"></i>${data.service.active ? 'Stop' : 'Start'}
+                    </button>` : `
+                    <button id="btn-mqtt-install" onclick="installMqttBridge()"
+                            class="inline-flex items-center px-3 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700">
+                        <i class="fas fa-download mr-2"></i>Install &amp; start bridge
+                    </button>
+                    <span class="text-xs text-gray-500">Installs dependencies, enables the unit and starts it.</span>`}
+            </div>
+            <div id="result-mqtt-service" class="hidden"></div>
+        `;
+
+        const clearBtn = document.getElementById('mqtt-clear-password');
+        if (clearBtn) clearBtn.addEventListener('click', () => clearMqttPassword());
+    }
+
+    window.loadMqttBridge = function() {
+        fetch(MQTT_BRIDGE_URL)
+            .then(r => r.json())
+            .then(d => {
+                if (d.status !== 'success') throw new Error(d.message || 'Failed');
+                renderMqttBridge(d.data);
+            })
+            .catch(err => {
+                document.getElementById('mqtt-bridge-body').innerHTML =
+                    `<p class="text-sm text-red-600">Could not load bridge settings: ${escHtml(err.message)}</p>`;
+            });
+    };
+
+    function mqttBody() {
+        const val = id => (document.getElementById(id) || {}).value;
+        const body = {
+            mqtt_host: val('mqtt-host'),
+            mqtt_port: val('mqtt-port'),
+            mqtt_username: val('mqtt-username'),
+            mqtt_topic: val('mqtt-topic'),
+            mqtt_client_id: val('mqtt-client-id'),
+            ledmatrix_api_base: val('mqtt-api-base'),
+            request_timeout: val('mqtt-timeout'),
+            on_demand_duration: val('mqtt-duration') === '' ? null : val('mqtt-duration'),
+            log_level: val('mqtt-log-level'),
+            mqtt_tls: !!(document.getElementById('mqtt-tls') || {}).checked,
+        };
+        // Only send a password when one was typed; blank means "leave it alone".
+        const pw = val('mqtt-password');
+        if (pw) body.mqtt_password = pw;
+        return body;
+    }
+
+    window.saveMqttBridge = function() {
+        setBusy('btn-mqtt-save', true);
+        fetch(MQTT_BRIDGE_URL + '/config', {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(mqttBody())
+        })
+        .then(r => r.json().then(d => ({ok: r.ok, d})))
+        .then(({ok, d}) => {
+            showResult('result-mqtt-save', ok && d.status === 'success',
+                       d.message || (ok ? 'Saved' : 'Failed'));
+            if (ok && d.status === 'success') loadMqttBridge();
+        })
+        .catch(err => showResult('result-mqtt-save', false, 'Request failed: ' + err.message))
+        .finally(() => setBusy('btn-mqtt-save', false));
+    };
+
+    function clearMqttPassword() {
+        if (!confirm('Remove the stored MQTT password?')) return;
+        fetch(MQTT_BRIDGE_URL + '/config', {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({clear_password: true})
+        })
+        .then(r => r.json())
+        .then(d => {
+            showResult('result-mqtt-save', d.status === 'success', d.message || 'Password cleared');
+            loadMqttBridge();
+        })
+        .catch(err => showResult('result-mqtt-save', false, 'Request failed: ' + err.message));
+    }
+
+    window.installMqttBridge = function() {
+        // Installing pulls dependencies, so it is slower than the other actions
+        // and worth saying so rather than leaving a spinner unexplained.
+        showResult('result-mqtt-service', true, 'Installing — this pulls Python dependencies and can take a minute…');
+        setBusy('btn-mqtt-install', true);
+        fetch('/api/v3/system/action', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({action: 'mqtt_bridge_install'})
+        })
+        .then(r => r.json())
+        .then(d => {
+            showResult('result-mqtt-service', d.status === 'success',
+                       d.message || (d.status === 'success' ? 'Installed' : 'Failed'), d.output || '');
+            loadMqttBridge();
+        })
+        .catch(err => showResult('result-mqtt-service', false, 'Request failed: ' + err.message))
+        .finally(() => setBusy('btn-mqtt-install', false));
+    };
+
+    // ── Pixlet config editor ──────────────────────────────────────────────────
+
+    const PIXLET_EDITOR_URL = '/api/v3/starlark/editor';
+    let pixletPollTimer = null;
+
+    function fmtRemaining(seconds) {
+        if (seconds === null || seconds === undefined) return '';
+        const m = Math.floor(seconds / 60), s = seconds % 60;
+        return `${m}:${String(s).padStart(2, '0')}`;
+    }
+
+    function editorHost(port) {
+        // The session binds 0.0.0.0, so whatever host reached this page reaches
+        // the editor too -- no tunnel, and no guessing the device's address.
+        return `${window.location.protocol}//${window.location.hostname}:${port}/`;
+    }
+
+    function renderPixletEditor(status, apps, pixletAvailable, appsDir) {
+        const body = document.getElementById('pixlet-editor-body');
+        if (!body) return;
+
+        if (!pixletAvailable) {
+            body.innerHTML = `
+                <p class="text-sm text-gray-700">
+                    Pixlet is not installed, so there is nothing to edit with. Install it from the
+                    Starlark Apps section of the Plugins tab, or run
+                    <code class="bg-gray-100 px-1 rounded">./scripts/download_pixlet.sh</code>.
+                </p>`;
+            return;
+        }
+
+        const active = status.running ? `
+            <div class="rounded-md border border-amber-300 bg-amber-50 p-3">
+                <div class="flex items-start justify-between gap-4">
+                    <div>
+                        <p class="text-sm font-medium text-amber-900">
+                            <i class="fas fa-circle-notch fa-spin mr-1"></i>
+                            Editing <code class="bg-amber-100 px-1 rounded">${escHtml(status.app_id)}</code> — the display is stopped
+                        </p>
+                        <p class="text-xs text-amber-800 mt-1">
+                            <a href="${editorHost(status.port)}" target="_blank" rel="noopener"
+                               class="underline font-medium">Open the editor &rarr;</a>
+                            <span class="ml-2">stops on its own in
+                                <span id="pixlet-countdown">${fmtRemaining(status.seconds_remaining)}</span></span>
+                        </p>
+                    </div>
+                    <button id="btn-pixlet-stop" onclick="stopPixletEditor()"
+                            class="shrink-0 inline-flex items-center px-3 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700">
+                        <i class="fas fa-stop mr-2"></i>Stop now
+                    </button>
+                </div>
+            </div>` : '';
+
+        const rows = apps.length ? apps.map(a => `
+            <div class="flex items-center justify-between gap-4 py-2 border-t border-gray-100 first:border-t-0">
+                <div class="min-w-0">
+                    <p class="text-sm font-medium text-gray-900 truncate">${escHtml(a.name)}</p>
+                    <p class="text-xs text-gray-500 truncate">${escHtml(a.id)}${a.editable ? '' : ' — no .star file'}</p>
+                </div>
+                <button id="btn-pixlet-edit-${escHtml(a.id)}"
+                        ${(!a.editable || status.running) ? 'disabled' : ''}
+                        onclick="startPixletEditor('${escHtml(a.id)}')"
+                        class="shrink-0 inline-flex items-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
+                    <i class="fas fa-sliders-h mr-2"></i>Edit
+                </button>
+            </div>`).join('') : `
+            <p class="text-sm text-gray-500">
+                No Starlark apps installed. Install one from the Plugins tab first
+                (looked in <code class="bg-gray-100 px-1 rounded">${escHtml(appsDir)}</code>).
+            </p>`;
+
+        body.innerHTML = active + `<div class="mt-2">${rows}</div>
+            <div id="result-pixlet" class="hidden"></div>`;
+    }
+
+    window.loadPixletEditor = function() {
+        Promise.all([
+            fetch(PIXLET_EDITOR_URL + '/status').then(r => r.json()),
+            fetch(PIXLET_EDITOR_URL + '/apps').then(r => r.json())
+        ])
+        .then(([s, a]) => {
+            const status = (s.data || {});
+            const apps = (a.data || {}).apps || [];
+            renderPixletEditor(status, apps, (a.data || {}).pixlet_available, (a.data || {}).apps_dir || '');
+            schedulePixletPoll(status.running);
+        })
+        .catch(err => {
+            const body = document.getElementById('pixlet-editor-body');
+            if (body) body.innerHTML = `<p class="text-sm text-red-600">Could not load: ${escHtml(err.message)}</p>`;
+        });
+    };
+
+    function schedulePixletPoll(running) {
+        // Poll only while a session is open: that is the state worth watching,
+        // and it is what makes the banner survive a page reload.
+        if (pixletPollTimer) { clearInterval(pixletPollTimer); pixletPollTimer = null; }
+        if (!running) return;
+        pixletPollTimer = setInterval(() => {
+            fetch(PIXLET_EDITOR_URL + '/status')
+                .then(r => r.json())
+                .then(d => {
+                    const st = d.data || {};
+                    if (!st.running) { loadPixletEditor(); return; }
+                    const el = document.getElementById('pixlet-countdown');
+                    if (el) el.textContent = fmtRemaining(st.seconds_remaining);
+                })
+                .catch(() => {});
+        }, 5000);
+    }
+
+    window.startPixletEditor = function(appId) {
+        const btnId = 'btn-pixlet-edit-' + appId;
+        setBusy(btnId, true);
+        fetch(PIXLET_EDITOR_URL + '/start', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({app_id: appId})
+        })
+        .then(r => r.json().then(d => ({ok: r.ok, d})))
+        .then(({ok, d}) => {
+            if (!ok || d.status !== 'success') {
+                showResult('result-pixlet', false, d.message || 'Could not start the editor');
+                return;
+            }
+            loadPixletEditor();
+        })
+        .catch(err => showResult('result-pixlet', false, 'Request failed: ' + err.message))
+        .finally(() => setBusy(btnId, false));
+    };
+
+    window.stopPixletEditor = function() {
+        setBusy('btn-pixlet-stop', true);
+        fetch(PIXLET_EDITOR_URL + '/stop', {method: 'POST'})
+            .then(r => r.json())
+            .then(d => { showResult('result-pixlet', d.status === 'success', d.message || 'Stopped'); loadPixletEditor(); })
+            .catch(err => showResult('result-pixlet', false, 'Request failed: ' + err.message))
+            .finally(() => setBusy('btn-pixlet-stop', false));
+    };
+
+    // Initial load for both sections. Down here rather than at the shared init
+    // site above, because these are assignments to window rather than hoisted
+    // declarations -- calling them earlier in the file throws.
+    loadMqttBridge();
+    loadPixletEditor();
+
 })();
+
 </script>

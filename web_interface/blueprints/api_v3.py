@@ -1,4 +1,6 @@
 from flask import Blueprint, request, jsonify, Response
+import contextlib
+import signal
 import json
 import os
 import re
@@ -2250,6 +2252,21 @@ def execute_system_action():
             # Try to restart the web service (assuming it's ledmatrix-web.service)
             result = subprocess.run(['sudo', 'systemctl', 'restart', 'ledmatrix-web.service'],
                                  capture_output=True, text=True, timeout=10)
+        elif action in ('mqtt_bridge_start', 'mqtt_bridge_stop', 'mqtt_bridge_restart'):
+            verb = action.rsplit('_', 1)[1]
+            result = subprocess.run(['sudo', 'systemctl', verb, _MQTT_BRIDGE_SERVICE],
+                                 capture_output=True, text=True, timeout=20)
+        elif action == 'mqtt_bridge_install':
+            # Runs the same installer the docs point at: it seeds
+            # bridge_config.json from the example at 0600 if absent, installs
+            # requirements, then enables and starts the unit.
+            installer = PROJECT_ROOT / 'scripts' / 'install' / 'install_mqtt_bridge.sh'
+            if not installer.is_file():
+                return jsonify({'status': 'error',
+                                'message': 'install_mqtt_bridge.sh not found'}), 404
+            result = subprocess.run(['/bin/bash', str(installer)],  # nosec B603 - fixed path
+                                 cwd=str(PROJECT_ROOT), capture_output=True, text=True,
+                                 timeout=300)
         elif action == 'install_base_requirements':
             # Base + web interface requirements: flask-compress and friends
             # live in web_interface/requirements.txt, not the root file.
@@ -9868,6 +9885,497 @@ def get_tronbyte_categories():
         logger.exception("[Starlark] get_tronbyte_categories failed")
         return jsonify({'status': 'error', 'message': 'Failed to fetch categories', 'details': describe_exception(e)}), 500
 
+
+
+# ── Pixlet config editor sessions ───────────────────────────────────────────
+# `pixlet serve` gives an app its own config form, executed for real, with a
+# live render -- worth having for apps whose options only exist at runtime.
+# It also stops the display for the duration, which is the whole risk: a
+# session nobody closes leaves the panel dark and reads as broken hardware.
+#
+# The hard stop lives in the script (it runs pixlet under `timeout` and restarts
+# the display from an EXIT trap), not here, so a session outlives neither its
+# timeout nor this process. These routes only start, stop and report.
+
+_PIXLET_EDITOR_SCRIPT = PROJECT_ROOT / 'scripts' / 'utils' / 'pixlet_config_editor.sh'
+# Deliberately under /tmp: a session cannot survive a reboot, so neither should
+# the record of one.
+_PIXLET_EDITOR_STATE = Path(tempfile.gettempdir()) / 'ledmatrix_pixlet_editor.json'
+_PIXLET_EDITOR_DEFAULT_PORT = 8080
+_PIXLET_EDITOR_DEFAULT_TIMEOUT = 1800
+_PIXLET_EDITOR_MAX_TIMEOUT = 14400
+
+
+def _read_pixlet_editor_state() -> Optional[Dict[str, Any]]:
+    try:
+        if _PIXLET_EDITOR_STATE.is_file():
+            with open(_PIXLET_EDITOR_STATE, encoding='utf-8') as handle:
+                state = json.load(handle)
+            return state if isinstance(state, dict) else None
+    except (OSError, json.JSONDecodeError):
+        logger.debug('Unreadable pixlet editor state; treating as no session', exc_info=True)
+    return None
+
+
+def _clear_pixlet_editor_state() -> None:
+    with contextlib.suppress(OSError):
+        _PIXLET_EDITOR_STATE.unlink()
+
+
+def _pixlet_editor_alive(pid: Optional[int]) -> bool:
+    """Is the recorded session still running?
+
+    os.kill(pid, 0) is not enough on its own: the script is a child of this
+    process, so once it exits it stays a zombie until reaped, and signal 0
+    succeeds against a zombie. Left at that, a finished session would read as
+    running forever and the UI would keep offering a Stop button for it.
+    """
+    if not pid:
+        return False
+
+    # Reap it if it is ours and already finished; harmless if it is not.
+    with contextlib.suppress(ChildProcessError, OSError):
+        reaped, _ = os.waitpid(pid, os.WNOHANG)
+        if reaped == pid:
+            return False
+
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # Exists but is not ours to signal, which still counts as running.
+        return True
+
+    # Not our child (e.g. the web service restarted under a live session), so
+    # waitpid told us nothing -- ask /proc whether it is merely a zombie.
+    with contextlib.suppress(OSError, IndexError, ValueError):
+        with open(f'/proc/{pid}/stat', encoding='utf-8') as handle:
+            # The comm field can contain spaces and parens; everything after
+            # the final ')' is positional, and state is the first of those.
+            fields = handle.read().rsplit(')', 1)[1].split()
+        if fields and fields[0] == 'Z':
+            return False
+    return True
+
+
+def _pixlet_editor_status() -> Dict[str, Any]:
+    """Current session, reconciled against reality.
+
+    The state file records what we started; the process may have ended on its
+    own (its timeout, a crash, a manual kill). Anything stale is cleared here so
+    the UI never offers a Stop button for a session that is already over.
+    """
+    state = _read_pixlet_editor_state()
+    if not state:
+        return {'running': False}
+    if not _pixlet_editor_alive(state.get('pid')):
+        _clear_pixlet_editor_state()
+        return {'running': False}
+
+    remaining = None
+    deadline = state.get('deadline')
+    if isinstance(deadline, (int, float)):
+        remaining = max(0, int(deadline - time.time()))
+    return {
+        'running': True,
+        'app_id': state.get('app_id'),
+        'port': state.get('port', _PIXLET_EDITOR_DEFAULT_PORT),
+        'pid': state.get('pid'),
+        'started_at': state.get('started_at'),
+        'timeout': state.get('timeout'),
+        'seconds_remaining': remaining,
+        'host_bound': state.get('host', '0.0.0.0'),
+    }
+
+
+@api_v3.route('/starlark/editor/apps', methods=['GET'])
+def list_pixlet_editor_apps():
+    """Apps on disk that the editor can open.
+
+    Read from the directory rather than the loaded plugin: the editor works on
+    files, and the plugin may not be loaded in this process at all.
+    """
+    try:
+        apps = []
+        if _STARLARK_APPS_DIR.is_dir():
+            for entry in sorted(_STARLARK_APPS_DIR.iterdir()):
+                if not entry.is_dir():
+                    continue
+                star_files = sorted(entry.glob('*.star'))
+                name = entry.name
+                manifest = entry / 'manifest.json'
+                if manifest.is_file():
+                    try:
+                        with open(manifest, encoding='utf-8') as handle:
+                            data = json.load(handle)
+                        if isinstance(data, dict):
+                            name = data.get('name') or name
+                    except (OSError, json.JSONDecodeError):
+                        pass
+                apps.append({
+                    'id': entry.name,
+                    'name': name,
+                    'editable': bool(star_files),
+                    'has_config': (entry / 'config.json').is_file(),
+                })
+        return jsonify({'status': 'success', 'data': {
+            'apps': apps,
+            'apps_dir': str(_STARLARK_APPS_DIR),
+            'pixlet_available': _find_pixlet_binary() is not None,
+        }})
+    except Exception as e:
+        logger.exception('Error listing editor apps')
+        return jsonify({'status': 'error', 'message': 'Could not list apps',
+                        'details': describe_exception(e)}), 500
+
+
+@api_v3.route('/starlark/editor/status', methods=['GET'])
+def get_pixlet_editor_status():
+    """Whether a session is running, and how long it has left."""
+    try:
+        return jsonify({'status': 'success', 'data': _pixlet_editor_status()})
+    except Exception as e:
+        logger.exception('Error reading editor status')
+        return jsonify({'status': 'error', 'message': 'Could not read editor status',
+                        'details': describe_exception(e)}), 500
+
+
+@api_v3.route('/starlark/editor/start', methods=['POST'])
+def start_pixlet_editor():
+    """Start an editing session for one app."""
+    try:
+        data = request.get_json(silent=True) or {}
+        app_id = data.get('app_id')
+
+        app_dir, err = _validate_starlark_app_path(app_id or '')
+        if err or not app_dir:
+            return jsonify({'status': 'error', 'message': err or 'Invalid app_id'}), 400
+        if not app_dir.is_dir():
+            return jsonify({'status': 'error', 'message': f'No such app: {app_id}'}), 404
+        if not any(app_dir.glob('*.star')):
+            return jsonify({'status': 'error',
+                            'message': f'{app_id} has no .star file to edit'}), 400
+        if not _PIXLET_EDITOR_SCRIPT.is_file():
+            return jsonify({'status': 'error', 'message': 'Editor script not found'}), 404
+        if _find_pixlet_binary() is None:
+            return jsonify({'status': 'error',
+                            'message': 'Pixlet is not installed - install it first'}), 503
+
+        current = _pixlet_editor_status()
+        if current.get('running'):
+            return jsonify({'status': 'error',
+                            'message': f"An editor session for '{current.get('app_id')}' is "
+                                       f"already running; stop it first"}), 409
+
+        try:
+            timeout_s = int(data.get('timeout') or _PIXLET_EDITOR_DEFAULT_TIMEOUT)
+        except (TypeError, ValueError):
+            return jsonify({'status': 'error', 'message': 'timeout must be a whole number'}), 400
+        if not 60 <= timeout_s <= _PIXLET_EDITOR_MAX_TIMEOUT:
+            return jsonify({'status': 'error',
+                            'message': f'timeout must be between 60 and '
+                                       f'{_PIXLET_EDITOR_MAX_TIMEOUT} seconds'}), 400
+        try:
+            port = int(data.get('port') or _PIXLET_EDITOR_DEFAULT_PORT)
+        except (TypeError, ValueError):
+            return jsonify({'status': 'error', 'message': 'port must be a whole number'}), 400
+        if not 1024 <= port <= 65535:
+            return jsonify({'status': 'error', 'message': 'port must be between 1024 and 65535'}), 400
+
+        env = dict(os.environ)
+        env['PIXLET_EDITOR_PORT'] = str(port)
+        env['PIXLET_EDITOR_TIMEOUT'] = str(timeout_s)
+        # A browser reaching this endpoint is remote by definition, so the
+        # session has to listen on more than loopback to be usable at all.
+        env['PIXLET_EDITOR_HOST'] = '0.0.0.0'
+
+        log_path = Path(tempfile.gettempdir()) / 'ledmatrix_pixlet_editor.log'
+        log_handle = open(log_path, 'w', encoding='utf-8')  # noqa: SIM115 - owned by the child
+        try:
+            # start_new_session so the script leads its own process group: the
+            # stop route signals the group, which is what lets the EXIT trap run
+            # and hand the display back.
+            process = subprocess.Popen(  # nosec B603 - fixed script path, validated app_id
+                ['/bin/bash', str(_PIXLET_EDITOR_SCRIPT), app_dir.name],
+                cwd=str(PROJECT_ROOT), env=env,
+                stdout=log_handle, stderr=subprocess.STDOUT,
+                start_new_session=True)
+        finally:
+            log_handle.close()
+
+        now = time.time()
+        state = {'pid': process.pid, 'app_id': app_dir.name, 'port': port,
+                 'timeout': timeout_s, 'started_at': now, 'deadline': now + timeout_s,
+                 'host': '0.0.0.0', 'log': str(log_path)}
+        try:
+            with open(_PIXLET_EDITOR_STATE, 'w', encoding='utf-8') as handle:
+                json.dump(state, handle)
+        except OSError as err:
+            logger.warning('Started an editor session but could not record it: %s', err)
+
+        logger.info('Pixlet editor started for %s on port %s (pid %s, %ss limit)',
+                    app_dir.name, port, process.pid, timeout_s)
+        return jsonify({'status': 'success',
+                        'message': f"Editing '{app_dir.name}'. The display is stopped until "
+                                   f"the session ends.",
+                        'data': _pixlet_editor_status()})
+    except Exception as e:
+        logger.exception('Error starting the pixlet editor')
+        return jsonify({'status': 'error', 'message': 'Could not start the editor',
+                        'details': describe_exception(e)}), 500
+
+
+@api_v3.route('/starlark/editor/stop', methods=['POST'])
+def stop_pixlet_editor():
+    """End the running session and give the display back."""
+    try:
+        state = _read_pixlet_editor_state()
+        if not state or not _pixlet_editor_alive(state.get('pid')):
+            _clear_pixlet_editor_state()
+            return jsonify({'status': 'success', 'message': 'No editor session was running.',
+                            'data': {'running': False}})
+
+        pid = int(state['pid'])
+        # SIGTERM the group, not the pid: bash forwards nothing to `timeout` and
+        # its child on its own, and the trap needs to run to restart the display.
+        try:
+            os.killpg(os.getpgid(pid), signal.SIGTERM)
+        except (ProcessLookupError, PermissionError, OSError) as err:
+            logger.debug('Could not signal the editor process group: %s', err)
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.kill(pid, signal.SIGTERM)
+
+        # Give the trap a moment to stop pixlet and restart ledmatrix.
+        deadline = time.time() + 10
+        while time.time() < deadline and _pixlet_editor_alive(pid):
+            time.sleep(0.25)
+
+        if _pixlet_editor_alive(pid):
+            logger.warning('Editor session %s ignored SIGTERM; sending SIGKILL. The display '
+                           'may need a manual restart.', pid)
+            with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+                os.killpg(os.getpgid(pid), signal.SIGKILL)
+
+        _clear_pixlet_editor_state()
+        return jsonify({'status': 'success',
+                        'message': 'Editor stopped; the display is restarting.',
+                        'data': {'running': False}})
+    except Exception as e:
+        logger.exception('Error stopping the pixlet editor')
+        return jsonify({'status': 'error', 'message': 'Could not stop the editor',
+                        'details': describe_exception(e)}), 500
+
+
+# ── Home Assistant MQTT bridge ──────────────────────────────────────────────
+# The bridge is a standalone service (integrations/mqtt_bridge) with its own
+# config file; these routes exist so the Tools tab can manage it without an
+# SSH session. The password is deliberately never returned: this interface has
+# no authentication, so anything it hands back is readable by anyone who can
+# reach the port. Setting one is fine; reading it back is not.
+
+_MQTT_BRIDGE_DIR = PROJECT_ROOT / 'integrations' / 'mqtt_bridge'
+_MQTT_BRIDGE_CONFIG = _MQTT_BRIDGE_DIR / 'bridge_config.json'
+_MQTT_BRIDGE_EXAMPLE = _MQTT_BRIDGE_DIR / 'bridge_config.example.json'
+_MQTT_BRIDGE_SERVICE = 'ledmatrix-mqtt-bridge.service'
+
+# Mirrors DEFAULTS in ledmatrix_mqtt_bridge.py. Duplicated rather than imported
+# because that module pulls in paho-mqtt, which the web process does not need
+# installed just to render a settings form.
+_MQTT_BRIDGE_DEFAULTS = {
+    'mqtt_host': 'localhost',
+    'mqtt_port': 1883,
+    'mqtt_username': None,
+    'mqtt_client_id': 'ledmatrix-mqtt-bridge',
+    'mqtt_topic': 'ledmatrix/command',
+    'mqtt_tls': False,
+    'mqtt_tls_insecure': False,
+    'ledmatrix_api_base': 'http://localhost:5000',
+    'request_timeout': 15,
+    'on_demand_duration': None,
+    'log_level': 'INFO',
+}
+_MQTT_BRIDGE_LOG_LEVELS = ('DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL')
+
+
+def _mqtt_bridge_service_state() -> Dict[str, Any]:
+    """installed / active / enabled for the bridge unit."""
+    state = {'installed': False, 'active': False, 'enabled': False}
+    try:
+        listed = _run_systemctl_command(
+            ['systemctl', 'list-unit-files', _MQTT_BRIDGE_SERVICE, '--no-legend'])
+        state['installed'] = bool((listed.get('stdout') or '').strip())
+        state['active'] = _run_systemctl_command(
+            ['systemctl', 'is-active', _MQTT_BRIDGE_SERVICE]).get('stdout', '').strip() == 'active'
+        state['enabled'] = _run_systemctl_command(
+            ['systemctl', 'is-enabled', _MQTT_BRIDGE_SERVICE]).get('stdout', '').strip() == 'enabled'
+    except Exception:
+        logger.debug('Could not read %s state', _MQTT_BRIDGE_SERVICE, exc_info=True)
+    return state
+
+
+def _read_mqtt_bridge_config() -> Dict[str, Any]:
+    """Stored config overlaid on the defaults. Missing file is not an error."""
+    config = dict(_MQTT_BRIDGE_DEFAULTS)
+    config['mqtt_password'] = None
+    try:
+        if _MQTT_BRIDGE_CONFIG.is_file():
+            with open(_MQTT_BRIDGE_CONFIG, encoding='utf-8') as handle:
+                stored = json.load(handle)
+            if isinstance(stored, dict):
+                config.update(stored)
+    except (OSError, json.JSONDecodeError) as err:
+        logger.warning('Could not read %s: %s', _MQTT_BRIDGE_CONFIG, err)
+    return config
+
+
+@api_v3.route('/integrations/mqtt-bridge', methods=['GET'])
+def get_mqtt_bridge():
+    """Bridge service state and its settings, minus the password."""
+    try:
+        config = _read_mqtt_bridge_config()
+        password = config.get('mqtt_password')
+        safe = {key: config.get(key, default)
+                for key, default in _MQTT_BRIDGE_DEFAULTS.items()}
+        return jsonify({
+            'status': 'success',
+            'data': {
+                'service': _mqtt_bridge_service_state(),
+                'config_exists': _MQTT_BRIDGE_CONFIG.is_file(),
+                'config_path': str(_MQTT_BRIDGE_CONFIG),
+                'config': safe,
+                # Enough to render "a password is set" without disclosing it.
+                'password_set': bool(password),
+                'env_override_prefix': 'LEDMATRIX_MQTT_',
+            }
+        })
+    except Exception as e:
+        logger.exception('Error reading MQTT bridge settings')
+        return jsonify({'status': 'error', 'message': 'Could not read bridge settings',
+                        'details': describe_exception(e)}), 500
+
+
+def _coerce_mqtt_bridge_value(key: str, raw: Any) -> Tuple[Any, Optional[str]]:
+    """Validate one submitted field. Returns (value, error)."""
+    if key in ('mqtt_port',):
+        try:
+            port = int(raw)
+        except (TypeError, ValueError):
+            return None, 'Port must be a whole number'
+        if not 1 <= port <= 65535:
+            return None, 'Port must be between 1 and 65535'
+        return port, None
+    if key in ('request_timeout',):
+        try:
+            timeout = int(raw)
+        except (TypeError, ValueError):
+            return None, 'Request timeout must be a whole number'
+        if not 1 <= timeout <= 300:
+            return None, 'Request timeout must be between 1 and 300 seconds'
+        return timeout, None
+    if key == 'on_demand_duration':
+        if raw in (None, ''):
+            return None, None
+        try:
+            duration = int(raw)
+        except (TypeError, ValueError):
+            return None, 'On-demand duration must be a whole number of seconds'
+        if not 1 <= duration <= 86400:
+            return None, 'On-demand duration must be between 1 and 86400 seconds'
+        return duration, None
+    if key in ('mqtt_tls', 'mqtt_tls_insecure'):
+        return bool(raw) if isinstance(raw, bool) else str(raw).lower() in ('1', 'true', 'yes', 'on'), None
+    if key == 'log_level':
+        level = str(raw or '').upper()
+        if level not in _MQTT_BRIDGE_LOG_LEVELS:
+            return None, f"Log level must be one of {', '.join(_MQTT_BRIDGE_LOG_LEVELS)}"
+        return level, None
+    if key == 'ledmatrix_api_base':
+        base = str(raw or '').strip().rstrip('/')
+        if not base.startswith(('http://', 'https://')):
+            return None, 'API base must start with http:// or https://'
+        if len(base) > 300:
+            return None, 'API base is too long'
+        return base, None
+    # Remaining keys are free text; empty means "unset" for the optional ones.
+    text = '' if raw is None else str(raw).strip()
+    if len(text) > 300:
+        return None, f'{key} is too long'
+    if key == 'mqtt_username' and not text:
+        return None, None
+    if key in ('mqtt_host', 'mqtt_client_id', 'mqtt_topic') and not text:
+        return None, f'{key.replace("_", " ")} cannot be empty'
+    return text, None
+
+
+@api_v3.route('/integrations/mqtt-bridge/config', methods=['PUT'])
+def update_mqtt_bridge_config():
+    """Write bridge_config.json.
+
+    The password is write-only: omit it to leave whatever is stored alone, send
+    a value to replace it, or send clear_password to remove it. It is never
+    returned by the GET above, so a form that round-tripped it would otherwise
+    have to blank it on every save.
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        if not isinstance(data, dict):
+            return jsonify({'status': 'error', 'message': 'Body must be a JSON object'}), 400
+
+        config = _read_mqtt_bridge_config()
+        existing_password = config.get('mqtt_password')
+
+        updates = {}
+        for key in _MQTT_BRIDGE_DEFAULTS:
+            if key not in data:
+                continue
+            value, err = _coerce_mqtt_bridge_value(key, data[key])
+            if err:
+                return jsonify({'status': 'error', 'message': err}), 400
+            updates[key] = value
+
+        config.update(updates)
+
+        if data.get('clear_password'):
+            config['mqtt_password'] = None
+        elif 'mqtt_password' in data and str(data['mqtt_password']) != '':
+            new_password = str(data['mqtt_password'])
+            if len(new_password) > 300:
+                return jsonify({'status': 'error', 'message': 'Password is too long'}), 400
+            config['mqtt_password'] = new_password
+        else:
+            config['mqtt_password'] = existing_password
+
+        if config.get('mqtt_password') and not config.get('mqtt_tls'):
+            logger.warning('MQTT bridge: a password is set without TLS; '
+                           'credentials will cross the network in cleartext')
+
+        _MQTT_BRIDGE_DIR.mkdir(parents=True, exist_ok=True)
+        # Write via a temp file in the same directory so a crash mid-write
+        # cannot leave a half-written config the bridge would refuse to load.
+        fd, tmp_path = tempfile.mkstemp(dir=str(_MQTT_BRIDGE_DIR), prefix='.bridge_config.')
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+                json.dump(config, handle, indent=2, sort_keys=True)
+                handle.write('\n')
+            os.chmod(tmp_path, 0o600)
+            os.replace(tmp_path, _MQTT_BRIDGE_CONFIG)
+        except Exception:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp_path)
+            raise
+
+        service = _mqtt_bridge_service_state()
+        message = 'Bridge settings saved.'
+        if service['active']:
+            message += ' Restart the bridge for them to take effect.'
+        return jsonify({'status': 'success', 'message': message,
+                        'data': {'password_set': bool(config.get('mqtt_password')),
+                                 'restart_required': service['active']}})
+    except Exception as e:
+        logger.exception('Error saving MQTT bridge settings')
+        return jsonify({'status': 'error', 'message': 'Could not save bridge settings',
+                        'details': describe_exception(e)}), 500
 
 def _starlark_virtual_plugins() -> list:
     """Installed Starlark apps, shaped like plugin entries.
