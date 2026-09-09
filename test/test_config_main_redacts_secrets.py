@@ -130,7 +130,8 @@ def test_the_endpoint_itself_redacts():
     app = flask.Flask(__name__)
     try:
         with app.test_request_context("/config/main"):
-            response = mod.get_main_config()
+            # get_main_config is a route; it lives in the config module now.
+            response = mod.config.get_main_config()
         payload = response.get_json() if hasattr(response, "get_json") else _json.loads(response[0].data)
     finally:
         mod.api_v3.config_manager = previous

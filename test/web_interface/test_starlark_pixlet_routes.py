@@ -63,14 +63,14 @@ class TestRoutesAreRegistered:
 
 class TestInstallPixlet:
     def test_it_does_not_404(self, client):
-        with patch('web_interface.blueprints.api_v3.subprocess.run') as run:
+        with patch('web_interface.blueprints.api_v3.starlark.subprocess.run') as run:
             run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
             resp = client.post('/api/v3/starlark/install-pixlet')
         assert resp.status_code != 404, "the route is still missing"
         assert resp.get_json().get('message') != 'Resource not found'
 
     def test_success_is_reported_in_the_shape_the_button_reads(self, client):
-        with patch('web_interface.blueprints.api_v3.subprocess.run') as run:
+        with patch('web_interface.blueprints.api_v3.starlark.subprocess.run') as run:
             run.return_value = MagicMock(returncode=0, stdout="done", stderr="")
             resp = client.post('/api/v3/starlark/install-pixlet')
         body = resp.get_json()
@@ -78,7 +78,7 @@ class TestInstallPixlet:
         assert 'message' in body, "the JS shows data.message on success"
 
     def test_a_failed_download_says_why(self, client):
-        with patch('web_interface.blueprints.api_v3.subprocess.run') as run:
+        with patch('web_interface.blueprints.api_v3.starlark.subprocess.run') as run:
             run.return_value = MagicMock(returncode=1, stdout="", stderr="no such release")
             resp = client.post('/api/v3/starlark/install-pixlet')
         body = resp.get_json()
@@ -88,7 +88,7 @@ class TestInstallPixlet:
 
     def test_a_timeout_is_reported_rather_than_hanging(self, client):
         import subprocess as sp
-        with patch('web_interface.blueprints.api_v3.subprocess.run',
+        with patch('web_interface.blueprints.api_v3.starlark.subprocess.run',
                    side_effect=sp.TimeoutExpired(cmd='x', timeout=300)):
             resp = client.post('/api/v3/starlark/install-pixlet')
         assert resp.get_json()['status'] == 'error'

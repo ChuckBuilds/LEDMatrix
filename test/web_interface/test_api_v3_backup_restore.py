@@ -230,7 +230,7 @@ class TestPluginReinstall:
     def test_missing_store_manager_is_reported_per_plugin(self, client, restore):
         restore.return_value = FakeResult(plugins_to_install=[{"plugin_id": "clock"}])
         api_v3.plugin_store_manager = None
-        with patch("web_interface.blueprints.api_v3.plugin_store_manager", None):
+        with patch("web_interface.blueprints.api_v3.backup.plugin_store_manager", None):
             body = post(client).get_json()
         assert body["data"]["plugins_failed"][0]["error"] == "Store manager unavailable"
 

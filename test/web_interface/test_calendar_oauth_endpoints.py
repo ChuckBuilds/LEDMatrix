@@ -77,7 +77,10 @@ class TestTheRoutesExistAtAll:
         oauth = Path(project_root) / 'web_interface/static/v3/js/widgets/google-oauth.js'
         assert '/api/v3/plugins/calendar/list-calendars' in picker.read_text(encoding='utf-8')
         assert '/api/v3/plugins/calendar/authenticate' in oauth.read_text(encoding='utf-8')
-        source = (Path(project_root) / 'web_interface/blueprints/api_v3.py').read_text(encoding='utf-8')
+        # api_v3 is a package now, so the route strings are spread across its
+        # modules; read the whole directory rather than one file.
+        pkg = Path(project_root) / 'web_interface/blueprints/api_v3'
+        source = "\n".join(f.read_text(encoding='utf-8') for f in sorted(pkg.glob('*.py')))
         assert "'/plugins/calendar/list-calendars'" in source
         assert "'/plugins/calendar/authenticate'" in source
 

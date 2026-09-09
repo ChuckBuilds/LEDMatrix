@@ -114,7 +114,11 @@ class TestHandlersCarryDetail:
         """
         import ast
 
-        src = open("web_interface/blueprints/api_v3.py").read()
+        # api_v3 is a package; the routes are spread across its modules.
+        import pathlib
+        src = "\n".join(
+            p.read_text() for p in
+            sorted(pathlib.Path("web_interface/blueprints/api_v3").glob("*.py")))
         tree = ast.parse(src)
 
         # This used to match one exact message string, so a handler that wrote
