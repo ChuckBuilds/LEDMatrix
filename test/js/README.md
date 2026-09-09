@@ -39,6 +39,7 @@ nothing is listening, so it stays useful in a bare checkout.
 | `dom/test_installed_dom.js` | yes | The toolbar in a real DOM: pill/search/sort interaction, the HTMX partial re-swap, and a `getComputedStyle` check that `.filter-pill[data-active]` really matches the emitted markup |
 | `dom/test_store_dom.js` | yes | Store pagination, per-page, category, tri-state Installed button, and persistence across a re-boot, against the live registry |
 | `dom/test_no_double_fetch.js` | yes | Loads the **whole** `plugins_manager.js` and counts requests: typing in the store search must filter the cached list, not refetch `/api/v3/plugins/store/list` |
+| `dom/test_tools_sections.js` | yes | The Tools tab's MQTT bridge and Pixlet editor sections: form prefill, the write-only password (blank means unchanged), the running-session banner and countdown, and that the editor link points at the host you loaded the page from |
 
 Point the DOM suites at a rig with a full plugin set when it matters — a dev box
 with two plugins installed will pass while exercising very little.

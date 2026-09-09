@@ -18,6 +18,8 @@ everything they need has to exist first.
 from flask import Blueprint, request, jsonify, Response
 import contextlib
 import json
+import signal
+import contextlib
 import os
 import re
 import stat
@@ -1833,6 +1835,206 @@ def _toggle_starlark_app(app_id: str, enabled: bool):
     return jsonify({'status': 'success',
                     'message': f"Starlark app {'enabled' if enabled else 'disabled'}",
                     'enabled': enabled})
+
+
+_PIXLET_EDITOR_SCRIPT = PROJECT_ROOT / 'scripts' / 'utils' / 'pixlet_config_editor.sh'
+
+# Deliberately under /tmp: a session cannot survive a reboot, so neither should
+# the record of one.
+_PIXLET_EDITOR_STATE = Path(tempfile.gettempdir()) / 'ledmatrix_pixlet_editor.json'
+
+_PIXLET_EDITOR_DEFAULT_PORT = 8080
+
+_PIXLET_EDITOR_DEFAULT_TIMEOUT = 1800
+
+_PIXLET_EDITOR_MAX_TIMEOUT = 14400
+
+def _read_pixlet_editor_state() -> Optional[Dict[str, Any]]:
+    try:
+        if _PIXLET_EDITOR_STATE.is_file():
+            with open(_PIXLET_EDITOR_STATE, encoding='utf-8') as handle:
+                state = json.load(handle)
+            return state if isinstance(state, dict) else None
+    except (OSError, json.JSONDecodeError):
+        logger.debug('Unreadable pixlet editor state; treating as no session', exc_info=True)
+    return None
+
+def _clear_pixlet_editor_state() -> None:
+    with contextlib.suppress(OSError):
+        _PIXLET_EDITOR_STATE.unlink()
+
+def _pixlet_editor_alive(pid: Optional[int]) -> bool:
+    """Is the recorded session still running?
+
+    os.kill(pid, 0) is not enough on its own: the script is a child of this
+    process, so once it exits it stays a zombie until reaped, and signal 0
+    succeeds against a zombie. Left at that, a finished session would read as
+    running forever and the UI would keep offering a Stop button for it.
+    """
+    if not pid:
+        return False
+
+    # Reap it if it is ours and already finished; harmless if it is not.
+    with contextlib.suppress(ChildProcessError, OSError):
+        reaped, _ = os.waitpid(pid, os.WNOHANG)
+        if reaped == pid:
+            return False
+
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # Exists but is not ours to signal, which still counts as running.
+        return True
+
+    # Not our child (e.g. the web service restarted under a live session), so
+    # waitpid told us nothing -- ask /proc whether it is merely a zombie.
+    with contextlib.suppress(OSError, IndexError, ValueError):
+        with open(f'/proc/{pid}/stat', encoding='utf-8') as handle:
+            # The comm field can contain spaces and parens; everything after
+            # the final ')' is positional, and state is the first of those.
+            fields = handle.read().rsplit(')', 1)[1].split()
+        if fields and fields[0] == 'Z':
+            return False
+    return True
+
+def _pixlet_editor_status() -> Dict[str, Any]:
+    """Current session, reconciled against reality.
+
+    The state file records what we started; the process may have ended on its
+    own (its timeout, a crash, a manual kill). Anything stale is cleared here so
+    the UI never offers a Stop button for a session that is already over.
+    """
+    state = _read_pixlet_editor_state()
+    if not state:
+        return {'running': False}
+    if not _pixlet_editor_alive(state.get('pid')):
+        _clear_pixlet_editor_state()
+        return {'running': False}
+
+    remaining = None
+    deadline = state.get('deadline')
+    if isinstance(deadline, (int, float)):
+        remaining = max(0, int(deadline - time.time()))
+    return {
+        'running': True,
+        'app_id': state.get('app_id'),
+        'port': state.get('port', _PIXLET_EDITOR_DEFAULT_PORT),
+        'pid': state.get('pid'),
+        'started_at': state.get('started_at'),
+        'timeout': state.get('timeout'),
+        'seconds_remaining': remaining,
+        'host_bound': state.get('host', '0.0.0.0'),
+    }
+
+_MQTT_BRIDGE_DIR = PROJECT_ROOT / 'integrations' / 'mqtt_bridge'
+
+_MQTT_BRIDGE_CONFIG = _MQTT_BRIDGE_DIR / 'bridge_config.json'
+
+_MQTT_BRIDGE_EXAMPLE = _MQTT_BRIDGE_DIR / 'bridge_config.example.json'
+
+_MQTT_BRIDGE_SERVICE = 'ledmatrix-mqtt-bridge.service'
+
+# Mirrors DEFAULTS in ledmatrix_mqtt_bridge.py. Duplicated rather than imported
+# because that module pulls in paho-mqtt, which the web process does not need
+# installed just to render a settings form.
+_MQTT_BRIDGE_DEFAULTS = {
+    'mqtt_host': 'localhost',
+    'mqtt_port': 1883,
+    'mqtt_username': None,
+    'mqtt_client_id': 'ledmatrix-mqtt-bridge',
+    'mqtt_topic': 'ledmatrix/command',
+    'mqtt_tls': False,
+    'mqtt_tls_insecure': False,
+    'ledmatrix_api_base': 'http://localhost:5000',
+    'request_timeout': 15,
+    'on_demand_duration': None,
+    'log_level': 'INFO',
+}
+
+_MQTT_BRIDGE_LOG_LEVELS = ('DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL')
+
+def _mqtt_bridge_service_state() -> Dict[str, Any]:
+    """installed / active / enabled for the bridge unit."""
+    state = {'installed': False, 'active': False, 'enabled': False}
+    try:
+        listed = _run_systemctl_command(
+            ['systemctl', 'list-unit-files', _MQTT_BRIDGE_SERVICE, '--no-legend'])
+        state['installed'] = bool((listed.get('stdout') or '').strip())
+        state['active'] = _run_systemctl_command(
+            ['systemctl', 'is-active', _MQTT_BRIDGE_SERVICE]).get('stdout', '').strip() == 'active'
+        state['enabled'] = _run_systemctl_command(
+            ['systemctl', 'is-enabled', _MQTT_BRIDGE_SERVICE]).get('stdout', '').strip() == 'enabled'
+    except Exception:
+        logger.debug('Could not read %s state', _MQTT_BRIDGE_SERVICE, exc_info=True)
+    return state
+
+def _read_mqtt_bridge_config() -> Dict[str, Any]:
+    """Stored config overlaid on the defaults. Missing file is not an error."""
+    config = dict(_MQTT_BRIDGE_DEFAULTS)
+    config['mqtt_password'] = None
+    try:
+        if _MQTT_BRIDGE_CONFIG.is_file():
+            with open(_MQTT_BRIDGE_CONFIG, encoding='utf-8') as handle:
+                stored = json.load(handle)
+            if isinstance(stored, dict):
+                config.update(stored)
+    except (OSError, json.JSONDecodeError) as err:
+        logger.warning('Could not read %s: %s', _MQTT_BRIDGE_CONFIG, err)
+    return config
+
+def _coerce_mqtt_bridge_value(key: str, raw: Any) -> Tuple[Any, Optional[str]]:
+    """Validate one submitted field. Returns (value, error)."""
+    if key in ('mqtt_port',):
+        try:
+            port = int(raw)
+        except (TypeError, ValueError):
+            return None, 'Port must be a whole number'
+        if not 1 <= port <= 65535:
+            return None, 'Port must be between 1 and 65535'
+        return port, None
+    if key in ('request_timeout',):
+        try:
+            timeout = int(raw)
+        except (TypeError, ValueError):
+            return None, 'Request timeout must be a whole number'
+        if not 1 <= timeout <= 300:
+            return None, 'Request timeout must be between 1 and 300 seconds'
+        return timeout, None
+    if key == 'on_demand_duration':
+        if raw in (None, ''):
+            return None, None
+        try:
+            duration = int(raw)
+        except (TypeError, ValueError):
+            return None, 'On-demand duration must be a whole number of seconds'
+        if not 1 <= duration <= 86400:
+            return None, 'On-demand duration must be between 1 and 86400 seconds'
+        return duration, None
+    if key in ('mqtt_tls', 'mqtt_tls_insecure'):
+        return bool(raw) if isinstance(raw, bool) else str(raw).lower() in ('1', 'true', 'yes', 'on'), None
+    if key == 'log_level':
+        level = str(raw or '').upper()
+        if level not in _MQTT_BRIDGE_LOG_LEVELS:
+            return None, f"Log level must be one of {', '.join(_MQTT_BRIDGE_LOG_LEVELS)}"
+        return level, None
+    if key == 'ledmatrix_api_base':
+        base = str(raw or '').strip().rstrip('/')
+        if not base.startswith(('http://', 'https://')):
+            return None, 'API base must start with http:// or https://'
+        if len(base) > 300:
+            return None, 'API base is too long'
+        return base, None
+    # Remaining keys are free text; empty means "unset" for the optional ones.
+    text = '' if raw is None else str(raw).strip()
+    if len(text) > 300:
+        return None, f'{key} is too long'
+    if key == 'mqtt_username' and not text:
+        return None, None
+    if key in ('mqtt_host', 'mqtt_client_id', 'mqtt_topic') and not text:
+        return None, f'{key.replace("_", " ")} cannot be empty'
+    return text, None
 
 
 # Imported last, and for their side effect: each registers its routes on

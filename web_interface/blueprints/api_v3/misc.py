@@ -5,9 +5,12 @@ Routes decorate the shared `api_v3` Blueprint from ._common, so their
 endpoint names are unchanged by living here.
 """
 from web_interface.blueprints.api_v3 import (
-    ErrorCode, Path, _JOURNALCTL, _SUDO, _get_display_service_status, api_v3,
-    describe_exception, error_response, get_error_aggregator, json, jsonify,
-    logger, os, request, subprocess, success_response,
+    ErrorCode, Path, _JOURNALCTL, _MQTT_BRIDGE_CONFIG, _MQTT_BRIDGE_DEFAULTS,
+    _MQTT_BRIDGE_DIR, _SUDO, _coerce_mqtt_bridge_value,
+    _get_display_service_status, _mqtt_bridge_service_state,
+    _read_mqtt_bridge_config, api_v3, contextlib, describe_exception,
+    error_response, get_error_aggregator, json, jsonify, logger, os, request,
+    subprocess, success_response, tempfile,
 )
 import web_interface.blueprints.api_v3 as _pkg
 # Read through the module rather than bound by value: tests patch these
@@ -396,3 +399,98 @@ def clear_old_errors():
             message="Failed to clear old errors",
             status_code=500
         )
+
+
+@api_v3.route('/integrations/mqtt-bridge', methods=['GET'])
+def get_mqtt_bridge():
+    """Bridge service state and its settings, minus the password."""
+    try:
+        config = _read_mqtt_bridge_config()
+        password = config.get('mqtt_password')
+        safe = {key: config.get(key, default)
+                for key, default in _MQTT_BRIDGE_DEFAULTS.items()}
+        return jsonify({
+            'status': 'success',
+            'data': {
+                'service': _mqtt_bridge_service_state(),
+                'config_exists': _MQTT_BRIDGE_CONFIG.is_file(),
+                'config_path': str(_MQTT_BRIDGE_CONFIG),
+                'config': safe,
+                # Enough to render "a password is set" without disclosing it.
+                'password_set': bool(password),
+                'env_override_prefix': 'LEDMATRIX_MQTT_',
+            }
+        })
+    except Exception as e:
+        logger.exception('Error reading MQTT bridge settings')
+        return jsonify({'status': 'error', 'message': 'Could not read bridge settings',
+                        'details': describe_exception(e)}), 500
+
+@api_v3.route('/integrations/mqtt-bridge/config', methods=['PUT'])
+def update_mqtt_bridge_config():
+    """Write bridge_config.json.
+
+    The password is write-only: omit it to leave whatever is stored alone, send
+    a value to replace it, or send clear_password to remove it. It is never
+    returned by the GET above, so a form that round-tripped it would otherwise
+    have to blank it on every save.
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        if not isinstance(data, dict):
+            return jsonify({'status': 'error', 'message': 'Body must be a JSON object'}), 400
+
+        config = _read_mqtt_bridge_config()
+        existing_password = config.get('mqtt_password')
+
+        updates = {}
+        for key in _MQTT_BRIDGE_DEFAULTS:
+            if key not in data:
+                continue
+            value, err = _coerce_mqtt_bridge_value(key, data[key])
+            if err:
+                return jsonify({'status': 'error', 'message': err}), 400
+            updates[key] = value
+
+        config.update(updates)
+
+        if data.get('clear_password'):
+            config['mqtt_password'] = None
+        elif 'mqtt_password' in data and str(data['mqtt_password']) != '':
+            new_password = str(data['mqtt_password'])
+            if len(new_password) > 300:
+                return jsonify({'status': 'error', 'message': 'Password is too long'}), 400
+            config['mqtt_password'] = new_password
+        else:
+            config['mqtt_password'] = existing_password
+
+        if config.get('mqtt_password') and not config.get('mqtt_tls'):
+            logger.warning('MQTT bridge: a password is set without TLS; '
+                           'credentials will cross the network in cleartext')
+
+        _MQTT_BRIDGE_DIR.mkdir(parents=True, exist_ok=True)
+        # Write via a temp file in the same directory so a crash mid-write
+        # cannot leave a half-written config the bridge would refuse to load.
+        fd, tmp_path = tempfile.mkstemp(dir=str(_MQTT_BRIDGE_DIR), prefix='.bridge_config.')
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+                json.dump(config, handle, indent=2, sort_keys=True)
+                handle.write('\n')
+            os.chmod(tmp_path, 0o600)
+            os.replace(tmp_path, _MQTT_BRIDGE_CONFIG)
+        except Exception:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp_path)
+            raise
+
+        service = _mqtt_bridge_service_state()
+        message = 'Bridge settings saved.'
+        if service['active']:
+            message += ' Restart the bridge for them to take effect.'
+        return jsonify({'status': 'success', 'message': message,
+                        'data': {'password_set': bool(config.get('mqtt_password')),
+                                 'restart_required': service['active']}})
+    except Exception as e:
+        logger.exception('Error saving MQTT bridge settings')
+        return jsonify({'status': 'error', 'message': 'Could not save bridge settings',
+                        'details': describe_exception(e)}), 500
