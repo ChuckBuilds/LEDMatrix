@@ -64,30 +64,18 @@ if [ ${#MISSING_PACKAGES[@]} -gt 0 ]; then
     echo "✓ Package installation completed"
 fi
 
-# Create service file with correct paths
+# Render the unit from systemd/ledmatrix-wifi-monitor.service rather than
+# inlining a second copy here. The copy this replaced had already drifted --
+# it wrote StandardOutput/StandardError=syslog where the template says journal.
 echo ""
 echo "Creating systemd service file..."
-SERVICE_FILE_CONTENT=$(cat <<EOF
-[Unit]
-Description=LED Matrix WiFi Monitor Daemon
-After=network.target
-Wants=network.target
+TEMPLATE="$PROJECT_ROOT_DIR/systemd/ledmatrix-wifi-monitor.service"
+if [ ! -f "$TEMPLATE" ]; then
+    echo "ERROR: unit template not found at $TEMPLATE"
+    exit 1
+fi
 
-[Service]
-Type=simple
-User=root
-WorkingDirectory=$PROJECT_ROOT_DIR
-ExecStart=/usr/bin/python3 $PROJECT_ROOT_DIR/scripts/utils/wifi_monitor_daemon.py --interval 30
-Restart=on-failure
-RestartSec=10
-StandardOutput=syslog
-StandardError=syslog
-SyslogIdentifier=ledmatrix-wifi-monitor
-
-[Install]
-WantedBy=multi-user.target
-EOF
-)
+SERVICE_FILE_CONTENT=$(sed "s|__PROJECT_ROOT_DIR__|$PROJECT_ROOT_DIR|g; s|__USER__|root|g" "$TEMPLATE")
 
 if [ "$EUID" -eq 0 ]; then
     echo "$SERVICE_FILE_CONTENT" | tee /etc/systemd/system/ledmatrix-wifi-monitor.service > /dev/null

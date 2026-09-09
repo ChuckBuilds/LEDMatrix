@@ -20,10 +20,12 @@ echo "Installing LED Matrix Display Service for user: $ACTUAL_USER"
 echo "Using home directory: $USER_HOME"
 echo "Project root directory: $PROJECT_ROOT_DIR"
 
-# Create a temporary service file for the main display with the correct paths
-# Assuming ledmatrix.service template exists and uses /home/ledpi as a placeholder for user home
+# Render the main display unit from its template. The display service runs as
+# root (it needs GPIO), so __USER__ is always root here -- unlike the web unit
+# below, which runs as whoever installed it.
 if [ -f "$PROJECT_ROOT_DIR/systemd/ledmatrix.service" ]; then
-    sed "s|/home/ledpi|$USER_HOME|g; s|__PROJECT_ROOT_DIR__|$PROJECT_ROOT_DIR|g; s|__USER__|root|g" "$PROJECT_ROOT_DIR/systemd/ledmatrix.service" > /tmp/ledmatrix.service.tmp
+    sed "s|__PROJECT_ROOT_DIR__|$PROJECT_ROOT_DIR|g; s|__USER__|root|g" \
+        "$PROJECT_ROOT_DIR/systemd/ledmatrix.service" > /tmp/ledmatrix.service.tmp
     # Copy the service file to the systemd directory
     sudo cp /tmp/ledmatrix.service.tmp /etc/systemd/system/ledmatrix.service
     # Clean up
@@ -48,42 +50,36 @@ fi
 # === LEDMatrix Web Interface service (ledmatrix-web.service) ===
 echo "Installing LEDMatrix Web Interface service (ledmatrix-web.service)..."
 
-WEB_SERVICE_FILE_CONTENT=$(cat <<EOF
-[Unit]
-Description=LED Matrix Web Interface (Conditional Start)
-After=network.target
-# Wants=ledmatrix.service
-# After=network.target ledmatrix.service
-
-[Service]
-Type=simple
-ExecStart=/usr/bin/python3 ${PROJECT_ROOT_DIR}/scripts/utils/start_web_conditionally.py
-WorkingDirectory=${PROJECT_ROOT_DIR}
-StandardOutput=journal
-StandardError=journal
-User=${ACTUAL_USER}
-Restart=on-failure
-# Environment="PYTHONUNBUFFERED=1"
-
-[Install]
-WantedBy=multi-user.target
-EOF
-)
-
-# Write the new service file
-echo "$WEB_SERVICE_FILE_CONTENT" | sudo tee /etc/systemd/system/ledmatrix-web.service > /dev/null
+# Rendered from systemd/ledmatrix-web.service, the same template
+# install_web_service.sh uses. This was an inline heredoc until it drifted from
+# the template: it had lost Wants=network-online.target, RestartSec,
+# SyslogIdentifier, CacheDirectory and Environment=USE_THREADING. Because
+# src/startup_validator.py compares the installed unit against the template,
+# every boot warned "re-run install_service.sh" -- and doing so reinstalled the
+# same stale copy, so the warning could never clear.
+if [ -f "$PROJECT_ROOT_DIR/systemd/ledmatrix-web.service" ]; then
+    sed "s|__PROJECT_ROOT_DIR__|$PROJECT_ROOT_DIR|g; s|__USER__|$ACTUAL_USER|g" \
+        "$PROJECT_ROOT_DIR/systemd/ledmatrix-web.service" \
+        | sudo tee /etc/systemd/system/ledmatrix-web.service > /dev/null
+else
+    echo "WARNING: ledmatrix-web.service template not found at $PROJECT_ROOT_DIR/systemd/ledmatrix-web.service. Web interface service not configured."
+fi
 
 echo "Reloading systemd daemon for web service..."
 sudo systemctl daemon-reload
 
-echo "Enabling ledmatrix-web.service to start on boot..."
-sudo systemctl enable ledmatrix-web.service
+if [ -f "/etc/systemd/system/ledmatrix-web.service" ]; then
+    echo "Enabling ledmatrix-web.service to start on boot..."
+    sudo systemctl enable ledmatrix-web.service
 
-echo "Starting ledmatrix-web.service..."
-sudo systemctl start ledmatrix-web.service
+    echo "Starting ledmatrix-web.service..."
+    sudo systemctl start ledmatrix-web.service
 
-echo "LEDMatrix Web Interface service (ledmatrix-web.service) installation complete."
-echo "It will start based on the 'web_display_autostart' setting in config/config.json."
+    echo "LEDMatrix Web Interface service (ledmatrix-web.service) installation complete."
+    echo "It will start based on the 'web_display_autostart' setting in config/config.json."
+else
+    echo "Skipping enable/start for ledmatrix-web.service as it was not configured."
+fi
 # === End of LEDMatrix Web Interface service ===
 
 
