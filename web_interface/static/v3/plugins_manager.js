@@ -884,40 +884,11 @@ window.currentPluginConfig = null;
     let pluginStoreCache = null; // Cache for plugin store to speed up subsequent loads
     let cacheTimestamp = null;
     const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes in milliseconds
-    let storeFilteredList = [];
 
     function storeCacheExpired() {
         return !cacheTimestamp || (Date.now() - cacheTimestamp >= CACHE_DURATION);
     }
 
-    // ── Plugin Store Filter State ───────────────────────────────────────────
-    const storeFilterState = {
-        sort: safeLocalStorage.getItem('storeSort') || 'a-z',
-        filterCategory: '',
-        filterInstalled: null,   // null=all, true=installed, false=not-installed
-        searchQuery: '',
-        page: 1,
-        perPage: parseInt(safeLocalStorage.getItem('storePerPage')) || 12,
-        persist() {
-            safeLocalStorage.setItem('storeSort', this.sort);
-            safeLocalStorage.setItem('storePerPage', this.perPage);
-        },
-        reset() {
-            this.sort = 'a-z';
-            this.filterCategory = '';
-            this.filterInstalled = null;
-            this.searchQuery = '';
-            this.page = 1;
-        },
-        activeCount() {
-            let n = 0;
-            if (this.searchQuery) n++;
-            if (this.filterInstalled !== null) n++;
-            if (this.filterCategory) n++;
-            if (this.sort !== 'a-z') n++;
-            return n;
-        }
-    };
     let onDemandStatusInterval = null;
     let currentOnDemandPluginId = null;
     let hasLoadedOnDemandStatus = false;
@@ -1069,11 +1040,8 @@ window.initPluginsPage = function() {
         restartBtn.replaceWith(restartBtn.cloneNode(true));
         document.getElementById('restart-display-btn').addEventListener('click', restartDisplay);
     }
-    // Restore persisted store sort/perPage
-    const storeSortEl = document.getElementById('store-sort');
-    if (storeSortEl) storeSortEl.value = storeFilterState.sort;
-    const storePpEl = document.getElementById('store-per-page');
-    if (storePpEl) storePpEl.value = storeFilterState.perPage;
+    // Persisted store sort/perPage are restored by the controller's syncControls().
+    setupInstalledFilterListeners();
     setupStoreFilterListeners();
 
     if (closeOnDemandModalBtn) {
@@ -1212,18 +1180,12 @@ function initializePlugins() {
             }
         });
 
-    // Setup search functionality (with guard against duplicate listeners)
-    const searchInput = document.getElementById('plugin-search');
-    const categorySelect = document.getElementById('plugin-category');
-
-    if (searchInput && !searchInput._listenerSetup) {
-        searchInput._listenerSetup = true;
-        searchInput.addEventListener('input', debounce(searchPluginStore, 300));
-    }
-    if (categorySelect && !categorySelect._listenerSetup) {
-        categorySelect._listenerSetup = true;
-        categorySelect.addEventListener('change', searchPluginStore);
-    }
+    // #plugin-search and #plugin-category are wired by the store's ListFilter
+    // controller (setupStoreFilterListeners). They used to ALSO be bound here to
+    // searchPluginStore; because that binding passed the DOM event as the
+    // `fetchCommitInfo` argument, every keystroke and category change skipped the
+    // cached-filter fast path and refetched /api/v3/plugins/store/list with commit
+    // info. Filtering the cached list is the controller's job — leave it to it.
 
     // Setup GitHub installation handlers
     debugLog('[initializePlugins] About to call setupGitHubInstallHandlers...');
@@ -1328,13 +1290,9 @@ function loadInstalledPlugins(forceRefresh = false) {
                     });
                 }
 
+                // Also refreshes the '#installed-count' text via the filter controller.
                 renderInstalledPlugins(installedPlugins);
 
-                // Update count
-                const countEl = document.getElementById('installed-count');
-                if (countEl) {
-                    countEl.textContent = installedPlugins.length + ' installed';
-                }
                 return installedPlugins;
             } else {
                 const errorMsg = 'Failed to load installed plugins: ' + data.message;
@@ -1369,6 +1327,142 @@ function refreshInstalledPlugins() {
 window.pluginManager.loadInstalledPlugins = loadInstalledPlugins;
 // Note: searchPluginStore will be exposed after its definition (see below)
 
+// ── Installed Plugins: search / filter / sort ───────────────────────────
+// Sort comparators for the installed-plugins toolbar. Kept beside the render
+// code they drive rather than inside the ListFilter helper, which stays
+// section-agnostic.
+function installedSortName(plugin) {
+    return String((plugin && (plugin.name || plugin.id)) || '').toLowerCase();
+}
+
+// last_updated is the plugin's local git commit date (date_iso from
+// _get_local_git_info, see api_v3.py). It can be absent or unparseable.
+function installedUpdatedAt(plugin) {
+    const raw = plugin ? plugin.last_updated : null;
+    if (!raw) return null;
+    const t = Date.parse(raw);
+    return Number.isNaN(t) ? null : t;
+}
+
+const INSTALLED_COMPARATORS = {
+    'a-z': (a, b) => installedSortName(a).localeCompare(installedSortName(b)),
+    'z-a': (a, b) => installedSortName(b).localeCompare(installedSortName(a)),
+    'status': (a, b) => {
+        const rank = p => (p.update_available ? 0 : (p.enabled ? 1 : 2));
+        const diff = rank(a) - rank(b);
+        return diff !== 0 ? diff : installedSortName(a).localeCompare(installedSortName(b));
+    },
+    'recent': (a, b) => {
+        const ta = installedUpdatedAt(a);
+        const tb = installedUpdatedAt(b);
+        // Plugins with no usable timestamp sort to the end, never to the top.
+        if (ta === null && tb === null) return installedSortName(a).localeCompare(installedSortName(b));
+        if (ta === null) return 1;
+        if (tb === null) return -1;
+        return tb - ta;
+    },
+    'category': (a, b) => {
+        const catCmp = String(a.category || '').localeCompare(String(b.category || ''));
+        return catCmp !== 0 ? catCmp : installedSortName(a).localeCompare(installedSortName(b));
+    },
+};
+
+let _installedFilter = null;
+
+// Created lazily so a script load-order problem degrades to "no filtering"
+// instead of throwing while this file is still being evaluated.
+function getInstalledFilter() {
+    if (_installedFilter) return _installedFilter;
+    if (!window.ListFilter || typeof window.ListFilter.create !== 'function') {
+        console.warn('[PLUGINS] ListFilter helper unavailable — installed plugin filters disabled');
+        return null;
+    }
+    _installedFilter = window.ListFilter.create({
+        // Always read the canonical list, never a captured snapshot.
+        getItems: () => window.installedPlugins || installedPlugins || [],
+        render: renderInstalledCards,
+        search: {
+            el: 'installed-search',
+            clearEl: 'installed-search-clear',
+            fields: ['name', 'id', 'description', 'author', 'category', 'tags'],
+            debounceMs: 200,
+        },
+        sort: {
+            el: 'installed-sort',
+            default: 'a-z',
+            comparators: INSTALLED_COMPARATORS,
+        },
+        controls: [{
+            type: 'pills',
+            el: '#installed-filter-pills',
+            attr: 'data-installed-filter',
+            key: 'status',
+            default: 'all',
+            test: (plugin, value) => {
+                if (value === 'enabled') return Boolean(plugin.enabled);
+                if (value === 'disabled') return !plugin.enabled;
+                // update_available is computed server-side (api_v3.py) — never
+                // recompute it from version strings here.
+                if (value === 'updates') return Boolean(plugin.update_available);
+                return true;
+            },
+        }],
+        clearEl: 'installed-clear-filters',
+        countEl: 'installed-count',
+        countFormat: (shown, total, filtered) =>
+            filtered ? `${shown} of ${total} shown` : `${total} installed`,
+        onChrome: updateInstalledUpdatesBadge,
+    });
+    return _installedFilter;
+}
+
+// The Updates pill counts against the *full* list, not the filtered view, so
+// the badge keeps telling you how much work is outstanding while you browse.
+function updateInstalledUpdatesBadge() {
+    const all = window.installedPlugins || installedPlugins || [];
+    const n = all.filter(p => p && p.update_available).length;
+
+    const badge = document.getElementById('installed-updates-count');
+    if (badge) {
+        badge.textContent = String(n);
+        badge.classList.toggle('hidden', n === 0);
+    }
+
+    const pill = document.querySelector('#installed-filter-pills [data-installed-filter="updates"]');
+    if (pill) {
+        pill.classList.toggle('opacity-50', n === 0);
+        pill.title = n === 0
+            ? 'No plugins have updates available'
+            : `Show only the ${n} plugin${n !== 1 ? 's' : ''} with a newer version available`;
+    }
+}
+
+function applyInstalledFiltersAndRender() {
+    const ctl = getInstalledFilter();
+    if (ctl) {
+        ctl.apply();
+        return;
+    }
+    // Fallback: render everything, so the section still works without the helper.
+    const all = window.installedPlugins || installedPlugins || [];
+    renderInstalledCards(all, all.length);
+    const countEl = document.getElementById('installed-count');
+    if (countEl) countEl.textContent = all.length + ' installed';
+}
+
+function setupInstalledFilterListeners() {
+    const ctl = getInstalledFilter();
+    if (!ctl) return;
+    // Both are idempotent — the plugins partial is HTMX-swapped, so this runs
+    // again on every return to the tab.
+    ctl.bind();
+    ctl.syncControls();
+}
+
+// Publishes the canonical installed-plugin list, then renders through the
+// active filters. Everything that reads window.installedPlugins (the toggle
+// handler, isStorePluginInstalled, runUpdateAllPlugins, the Alpine config tabs)
+// depends on this receiving the FULL list — never a filtered subset.
 function renderInstalledPlugins(plugins) {
     const container = document.getElementById('installed-plugins-grid');
     if (!container) {
@@ -1399,17 +1493,43 @@ function renderInstalledPlugins(plugins) {
         }
     }
 
+    applyInstalledFiltersAndRender();
+}
+
+// Renders the card grid only. `plugins` is the visible (filtered) subset and
+// `total` the full installed count — this must NOT touch window.installedPlugins.
+function renderInstalledCards(plugins, total) {
+    const container = document.getElementById('installed-plugins-grid');
+    if (!container) return;
+
+    const totalCount = (typeof total === 'number') ? total : plugins.length;
+
     // Remove skeleton cards before rendering real content
     container.querySelectorAll('.installed-skeleton').forEach(el => el.remove());
 
+    // Attached before the early returns so the empty state's Clear button works.
+    setupInstalledEventDelegation();
+
     if (plugins.length === 0) {
-        container.innerHTML = `
+        container.innerHTML = totalCount === 0 ? `
             <div class="col-span-full empty-state">
                 <div class="empty-state-icon">
                     <i class="fas fa-plug"></i>
                 </div>
                 <p class="text-lg font-medium text-gray-700 mb-1">No plugins installed</p>
                 <p class="text-sm text-gray-500">Install plugins from the store to get started</p>
+            </div>
+        ` : `
+            <div class="col-span-full empty-state">
+                <div class="empty-state-icon">
+                    <i class="fas fa-filter"></i>
+                </div>
+                <p class="text-lg font-medium text-gray-700 mb-1">No plugins match your filters</p>
+                <p class="text-sm text-gray-500 mb-4">${totalCount} plugin${totalCount !== 1 ? 's' : ''} installed, none matching the current search or filters.</p>
+                <button class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-semibold"
+                        data-action="clear-installed-filters">
+                    <i class="fas fa-times mr-2"></i>Clear filters
+                </button>
             </div>
         `;
         return;
@@ -1519,38 +1639,33 @@ function renderInstalledPlugins(plugins) {
         </div>
         `;
     }).join('');
-
-    // Set up event delegation for plugin action buttons (fallback if onclick doesn't work)
-    // Only set up once per container to avoid redundant listeners
-    const setupEventDelegation = () => {
-        const container = document.getElementById('installed-plugins-grid');
-        if (!container) {
-            pluginLog('[RENDER] installed-plugins-grid not found for event delegation');
-            return;
-        }
-
-        // Skip if already set up (guard against multiple calls)
-        if (container._eventDelegationSetup) {
-            pluginLog('[RENDER] Event delegation already set up, skipping');
-            return;
-        }
-
-        // Mark as set up
-        container._eventDelegationSetup = true;
-        container._pluginActionHandler = handlePluginAction;
-
-        // Add listeners for both click and change events
-        container.addEventListener('click', handlePluginAction, true);
-        container.addEventListener('change', handlePluginAction, true);
-        pluginLog('[RENDER] Event delegation set up for installed-plugins-grid');
-    };
-
-    // Set up immediately
-    setupEventDelegation();
-
-    // Also retry after a short delay to ensure it's attached even if container wasn't ready
-    setTimeout(setupEventDelegation, 100);
 }
+
+// Set up event delegation for plugin action buttons (fallback if onclick doesn't work)
+// Only set up once per container to avoid redundant listeners, which is what
+// makes it safe to rebuild the grid's innerHTML on every keystroke.
+function setupInstalledEventDelegation() {
+    const container = document.getElementById('installed-plugins-grid');
+    if (!container) {
+        pluginLog('[RENDER] installed-plugins-grid not found for event delegation');
+        return;
+    }
+
+    // Skip if already set up (guard against multiple calls)
+    if (container._eventDelegationSetup) {
+        return;
+    }
+
+    // Mark as set up
+    container._eventDelegationSetup = true;
+    container._pluginActionHandler = handlePluginAction;
+
+    // Add listeners for both click and change events
+    container.addEventListener('click', handlePluginAction, true);
+    container.addEventListener('change', handlePluginAction, true);
+    pluginLog('[RENDER] Event delegation set up for installed-plugins-grid');
+}
+
 
 function handlePluginAction(event) {
     // Check for both button and input (for toggle)
@@ -1559,6 +1674,15 @@ function handlePluginAction(event) {
 
     const action = button.getAttribute('data-action');
     const pluginId = button.getAttribute('data-plugin-id');
+
+    // Grid-level actions have no plugin id (the empty state's Clear button).
+    if (action === 'clear-installed-filters') {
+        event.preventDefault();
+        event.stopPropagation();
+        const ctl = getInstalledFilter();
+        if (ctl) ctl.reset();
+        return;
+    }
 
     if (!pluginId) return;
 
@@ -1587,6 +1711,13 @@ function handlePluginAction(event) {
 
     switch(action) {
         case 'toggle':
+            // Toggling under an Enabled/Disabled filter would otherwise make the
+            // card vanish the moment the server confirms. Pin it until the user
+            // next touches the toolbar.
+            {
+                const ctl = getInstalledFilter();
+                if (ctl) ctl.sticky.add(pluginId);
+            }
             // Get the current enabled state from plugin data (source of truth)
             // rather than from the checkbox DOM which might be out of sync
             const plugin = (window.installedPlugins || []).find(p => p.id === pluginId);
@@ -3494,249 +3625,130 @@ function isStorePluginInstalled(pluginIdOrPlugin) {
     return installed.some(p => p.id === storeId || (pathDerivedId && p.id === pathDerivedId));
 }
 
+// ── Plugin Store: search / filter / sort ────────────────────────────────
+// Behaviour, element ids and localStorage keys are unchanged from the
+// hand-rolled version this replaces — only the machinery is now shared.
+const STORE_COMPARATORS = {
+    'a-z': (a, b) => storeSortName(a).localeCompare(storeSortName(b)),
+    'z-a': (a, b) => storeSortName(b).localeCompare(storeSortName(a)),
+    'category': (a, b) => {
+        const catCmp = (a.category || '').localeCompare(b.category || '');
+        return catCmp !== 0 ? catCmp : storeSortName(a).localeCompare(storeSortName(b));
+    },
+    'author': (a, b) => {
+        const authCmp = (a.author || '').localeCompare(b.author || '');
+        return authCmp !== 0 ? authCmp : storeSortName(a).localeCompare(storeSortName(b));
+    },
+    'newest': (a, b) => {
+        // Missing dates count as epoch 0, so they land last under a descending
+        // sort — same as before.
+        const dateA = a.last_updated ? new Date(a.last_updated).getTime() : 0;
+        const dateB = b.last_updated ? new Date(b.last_updated).getTime() : 0;
+        return dateB - dateA; // newest first
+    },
+};
+
+function storeSortName(plugin) {
+    return (plugin.name || plugin.id || '').toLowerCase();
+}
+
+let _storeFilter = null;
+
+function getStoreFilter() {
+    if (_storeFilter) return _storeFilter;
+    if (!window.ListFilter || typeof window.ListFilter.create !== 'function') {
+        console.warn('[PLUGINS] ListFilter helper unavailable — store filters disabled');
+        return null;
+    }
+    _storeFilter = window.ListFilter.create({
+        getItems: () => pluginStoreCache || [],
+        render: renderPluginStore,
+        search: {
+            el: 'plugin-search',
+            fields: ['name', 'description', 'author', 'id', 'category', 'tags'],
+            debounceMs: 300,
+        },
+        sort: {
+            el: 'store-sort',
+            default: 'a-z',
+            comparators: STORE_COMPARATORS,
+        },
+        controls: [
+            {
+                type: 'select',
+                el: 'plugin-category',
+                key: 'filterCategory',
+                default: '',
+                test: (plugin, value) => (plugin.category || '').toLowerCase() === value.toLowerCase(),
+            },
+            {
+                // Cycles All → Installed → Not Installed → All.
+                type: 'cycle',
+                el: 'store-filter-installed',
+                key: 'filterInstalled',
+                default: null,
+                values: [null, true, false],
+                test: (plugin, value) => (value === true ? isStorePluginInstalled(plugin) : !isStorePluginInstalled(plugin)),
+                render: (btn, value) => {
+                    if (value === true) {
+                        btn.innerHTML = '<i class="fas fa-check-circle mr-1 text-green-500"></i>Installed';
+                        btn.classList.add('border-green-400', 'bg-green-50');
+                        btn.classList.remove('border-gray-300', 'bg-white', 'border-red-400', 'bg-red-50');
+                    } else if (value === false) {
+                        btn.innerHTML = '<i class="fas fa-times-circle mr-1 text-red-500"></i>Not Installed';
+                        btn.classList.add('border-red-400', 'bg-red-50');
+                        btn.classList.remove('border-gray-300', 'bg-white', 'border-green-400', 'bg-green-50');
+                    } else {
+                        btn.innerHTML = '<i class="fas fa-filter mr-1 text-gray-400"></i>All';
+                        btn.classList.add('border-gray-300', 'bg-white');
+                        btn.classList.remove('border-green-400', 'bg-green-50', 'border-red-400', 'bg-red-50');
+                    }
+                },
+            },
+        ],
+        pagination: {
+            perPageEl: 'store-per-page',
+            defaultPerPage: 12,
+            topEl: 'store-pagination-top',
+            bottomEl: 'store-pagination-bottom',
+            infoEl: 'store-results-info',
+            infoBottomEl: 'store-results-info-bottom',
+            scrollToEl: 'plugin-store-grid',
+            infoFormat: (start, end, total) => `Showing ${start}\u2013${end} of ${total} plugins`,
+            emptyText: 'No plugins match your filters',
+        },
+        persist: {
+            read: () => ({
+                sort: safeLocalStorage.getItem('storeSort') || undefined,
+                perPage: parseInt(safeLocalStorage.getItem('storePerPage')) || undefined,
+            }),
+            write: (state) => {
+                safeLocalStorage.setItem('storeSort', state.sort);
+                safeLocalStorage.setItem('storePerPage', state.perPage);
+            },
+        },
+        clearEl: 'store-clear-filters',
+        activeCountEl: 'store-active-filters',
+    });
+    return _storeFilter;
+}
+
 function applyStoreFiltersAndSort(skipPageReset) {
     if (!pluginStoreCache) return;
-    const st = storeFilterState;
-
-    let list = pluginStoreCache.slice();
-
-    // Text search
-    if (st.searchQuery) {
-        const q = st.searchQuery.toLowerCase();
-        list = list.filter(plugin => {
-            const hay = [
-                plugin.name, plugin.description, plugin.author,
-                plugin.id, plugin.category,
-                ...(plugin.tags || [])
-            ].filter(Boolean).join(' ').toLowerCase();
-            return hay.includes(q);
-        });
+    const ctl = getStoreFilter();
+    if (ctl) {
+        ctl.apply(skipPageReset);
+        return;
     }
-
-    // Category filter
-    if (st.filterCategory) {
-        const cat = st.filterCategory.toLowerCase();
-        list = list.filter(plugin => (plugin.category || '').toLowerCase() === cat);
-    }
-
-    // Installed filter
-    if (st.filterInstalled === true) {
-        list = list.filter(plugin => isStorePluginInstalled(plugin));
-    } else if (st.filterInstalled === false) {
-        list = list.filter(plugin => !isStorePluginInstalled(plugin));
-    }
-
-    // Sort
-    list.sort((a, b) => {
-        const nameA = (a.name || a.id || '').toLowerCase();
-        const nameB = (b.name || b.id || '').toLowerCase();
-        switch (st.sort) {
-            case 'z-a': return nameB.localeCompare(nameA);
-            case 'category': {
-                const catCmp = (a.category || '').localeCompare(b.category || '');
-                return catCmp !== 0 ? catCmp : nameA.localeCompare(nameB);
-            }
-            case 'author': {
-                const authCmp = (a.author || '').localeCompare(b.author || '');
-                return authCmp !== 0 ? authCmp : nameA.localeCompare(nameB);
-            }
-            case 'newest': {
-                const dateA = a.last_updated ? new Date(a.last_updated).getTime() : 0;
-                const dateB = b.last_updated ? new Date(b.last_updated).getTime() : 0;
-                return dateB - dateA; // newest first
-            }
-            default: return nameA.localeCompare(nameB);
-        }
-    });
-
-    storeFilteredList = list;
-    if (!skipPageReset) st.page = 1;
-
-    renderStorePage();
-    updateStoreFilterUI();
-}
-
-function renderStorePage() {
-    const st = storeFilterState;
-    const total = storeFilteredList.length;
-    const totalPages = Math.max(1, Math.ceil(total / st.perPage));
-    if (st.page > totalPages) st.page = totalPages;
-
-    const start = (st.page - 1) * st.perPage;
-    const end = Math.min(start + st.perPage, total);
-    const pagePlugins = storeFilteredList.slice(start, end);
-
-    // Results info
-    const info = total > 0
-        ? `Showing ${start + 1}\u2013${end} of ${total} plugins`
-        : 'No plugins match your filters';
-    const infoEl = document.getElementById('store-results-info');
-    const infoElBot = document.getElementById('store-results-info-bottom');
-    if (infoEl) infoEl.textContent = info;
-    if (infoElBot) infoElBot.textContent = info;
-
-    // Pagination
-    renderStorePagination('store-pagination-top', totalPages, st.page);
-    renderStorePagination('store-pagination-bottom', totalPages, st.page);
-
-    // Grid
-    renderPluginStore(pagePlugins);
-}
-
-function renderStorePagination(containerId, totalPages, currentPage) {
-    const container = document.getElementById(containerId);
-    if (!container) return;
-
-    if (totalPages <= 1) { container.innerHTML = ''; return; }
-
-    const btnClass = 'px-3 py-1 text-sm rounded-md border transition-colors';
-    const activeClass = 'bg-blue-600 text-white border-blue-600';
-    const normalClass = 'bg-white text-gray-700 border-gray-300 hover:bg-gray-100 cursor-pointer';
-    const disabledClass = 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed';
-
-    let html = '';
-    html += `<button class="${btnClass} ${currentPage <= 1 ? disabledClass : normalClass}" data-store-page="${currentPage - 1}" ${currentPage <= 1 ? 'disabled' : ''}>&laquo;</button>`;
-
-    const pages = [];
-    pages.push(1);
-    if (currentPage > 3) pages.push('...');
-    for (let i = Math.max(2, currentPage - 1); i <= Math.min(totalPages - 1, currentPage + 1); i++) {
-        pages.push(i);
-    }
-    if (currentPage < totalPages - 2) pages.push('...');
-    if (totalPages > 1) pages.push(totalPages);
-
-    pages.forEach(p => {
-        if (p === '...') {
-            html += `<span class="px-2 py-1 text-sm text-gray-400">&hellip;</span>`;
-        } else {
-            html += `<button class="${btnClass} ${p === currentPage ? activeClass : normalClass}" data-store-page="${p}">${p}</button>`;
-        }
-    });
-
-    html += `<button class="${btnClass} ${currentPage >= totalPages ? disabledClass : normalClass}" data-store-page="${currentPage + 1}" ${currentPage >= totalPages ? 'disabled' : ''}>&raquo;</button>`;
-
-    container.innerHTML = html;
-
-    container.querySelectorAll('[data-store-page]').forEach(btn => {
-        btn.addEventListener('click', function() {
-            const p = parseInt(this.getAttribute('data-store-page'));
-            if (p >= 1 && p <= totalPages && p !== currentPage) {
-                storeFilterState.page = p;
-                renderStorePage();
-                const grid = document.getElementById('plugin-store-grid');
-                if (grid) grid.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            }
-        });
-    });
-}
-
-function updateStoreFilterUI() {
-    const st = storeFilterState;
-    const count = st.activeCount();
-
-    const badge = document.getElementById('store-active-filters');
-    const clearBtn = document.getElementById('store-clear-filters');
-    if (badge) {
-        badge.classList.toggle('hidden', count === 0);
-        badge.textContent = count + ' filter' + (count !== 1 ? 's' : '') + ' active';
-    }
-    if (clearBtn) clearBtn.classList.toggle('hidden', count === 0);
-
-    const instBtn = document.getElementById('store-filter-installed');
-    if (instBtn) {
-        if (st.filterInstalled === true) {
-            instBtn.innerHTML = '<i class="fas fa-check-circle mr-1 text-green-500"></i>Installed';
-            instBtn.classList.add('border-green-400', 'bg-green-50');
-            instBtn.classList.remove('border-gray-300', 'bg-white', 'border-red-400', 'bg-red-50');
-        } else if (st.filterInstalled === false) {
-            instBtn.innerHTML = '<i class="fas fa-times-circle mr-1 text-red-500"></i>Not Installed';
-            instBtn.classList.add('border-red-400', 'bg-red-50');
-            instBtn.classList.remove('border-gray-300', 'bg-white', 'border-green-400', 'bg-green-50');
-        } else {
-            instBtn.innerHTML = '<i class="fas fa-filter mr-1 text-gray-400"></i>All';
-            instBtn.classList.add('border-gray-300', 'bg-white');
-            instBtn.classList.remove('border-green-400', 'bg-green-50', 'border-red-400', 'bg-red-50');
-        }
-    }
+    // Fallback: no helper, render the cache unfiltered rather than nothing.
+    renderPluginStore(pluginStoreCache);
 }
 
 function setupStoreFilterListeners() {
-    // Search with debounce
-    const searchEl = document.getElementById('plugin-search');
-    if (searchEl && !searchEl._storeFilterInit) {
-        searchEl._storeFilterInit = true;
-        let debounce = null;
-        searchEl.addEventListener('input', function() {
-            clearTimeout(debounce);
-            debounce = setTimeout(() => {
-                storeFilterState.searchQuery = this.value.trim();
-                applyStoreFiltersAndSort();
-            }, 300);
-        });
-    }
-
-    // Category dropdown
-    const catEl = document.getElementById('plugin-category');
-    if (catEl && !catEl._storeFilterInit) {
-        catEl._storeFilterInit = true;
-        catEl.addEventListener('change', function() {
-            storeFilterState.filterCategory = this.value;
-            applyStoreFiltersAndSort();
-        });
-    }
-
-    // Sort dropdown
-    const sortEl = document.getElementById('store-sort');
-    if (sortEl && !sortEl._storeFilterInit) {
-        sortEl._storeFilterInit = true;
-        sortEl.addEventListener('change', function() {
-            storeFilterState.sort = this.value;
-            storeFilterState.persist();
-            applyStoreFiltersAndSort();
-        });
-    }
-
-    // Installed toggle (cycle: all → installed → not-installed → all)
-    const instBtn = document.getElementById('store-filter-installed');
-    if (instBtn && !instBtn._storeFilterInit) {
-        instBtn._storeFilterInit = true;
-        instBtn.addEventListener('click', function() {
-            const st = storeFilterState;
-            if (st.filterInstalled === null) st.filterInstalled = true;
-            else if (st.filterInstalled === true) st.filterInstalled = false;
-            else st.filterInstalled = null;
-            applyStoreFiltersAndSort();
-        });
-    }
-
-    // Clear filters
-    const clearBtn = document.getElementById('store-clear-filters');
-    if (clearBtn && !clearBtn._storeFilterInit) {
-        clearBtn._storeFilterInit = true;
-        clearBtn.addEventListener('click', function() {
-            storeFilterState.reset();
-            const searchEl = document.getElementById('plugin-search');
-            if (searchEl) searchEl.value = '';
-            const catEl = document.getElementById('plugin-category');
-            if (catEl) catEl.value = '';
-            const sortEl = document.getElementById('store-sort');
-            if (sortEl) sortEl.value = 'a-z';
-            storeFilterState.persist();
-            applyStoreFiltersAndSort();
-        });
-    }
-
-    // Per-page selector
-    const ppEl = document.getElementById('store-per-page');
-    if (ppEl && !ppEl._storeFilterInit) {
-        ppEl._storeFilterInit = true;
-        ppEl.addEventListener('change', function() {
-            storeFilterState.perPage = parseInt(this.value) || 12;
-            storeFilterState.persist();
-            applyStoreFiltersAndSort();
-        });
-    }
+    const ctl = getStoreFilter();
+    if (!ctl) return;
+    ctl.bind();
+    ctl.syncControls();
 }
 
 // Expose searchPluginStore on window.pluginManager for Alpine.js integration
@@ -5608,40 +5620,7 @@ document.addEventListener('htmx:afterSettle', function() {
 
     let starlarkSectionVisible = false;
     let starlarkFullCache = null;       // All apps from server
-    let starlarkFilteredList = [];       // After filters applied
     let starlarkDataLoaded = false;
-
-    // ── Filter State ────────────────────────────────────────────────────────
-    const starlarkFilterState = {
-        sort: safeLocalStorage.getItem('starlarkSort') || 'a-z',
-        filterInstalled: null,   // null=all, true=installed, false=not-installed
-        filterAuthor: '',
-        filterCategory: '',
-        searchQuery: '',
-        page: 1,
-        perPage: parseInt(safeLocalStorage.getItem('starlarkPerPage')) || 24,
-        persist() {
-            safeLocalStorage.setItem('starlarkSort', this.sort);
-            safeLocalStorage.setItem('starlarkPerPage', this.perPage);
-        },
-        reset() {
-            this.sort = 'a-z';
-            this.filterInstalled = null;
-            this.filterAuthor = '';
-            this.filterCategory = '';
-            this.searchQuery = '';
-            this.page = 1;
-        },
-        activeCount() {
-            let n = 0;
-            if (this.searchQuery) n++;
-            if (this.filterInstalled !== null) n++;
-            if (this.filterAuthor) n++;
-            if (this.filterCategory) n++;
-            if (this.sort !== 'a-z') n++;
-            return n;
-        }
-    };
 
     // ── Helpers ─────────────────────────────────────────────────────────────
     function escapeHtml(str) {
@@ -5681,12 +5660,7 @@ document.addEventListener('htmx:afterSettle', function() {
             });
         }
 
-        // Restore persisted sort/perPage
-        const sortEl = document.getElementById('starlark-sort');
-        if (sortEl) sortEl.value = starlarkFilterState.sort;
-        const ppEl = document.getElementById('starlark-per-page');
-        if (ppEl) ppEl.value = starlarkFilterState.perPage;
-
+        // Persisted sort/perPage are restored by the controller's syncControls().
         setupStarlarkFilterListeners();
 
         const uploadBtn = document.getElementById('starlark-upload-btn');
@@ -5787,147 +5761,126 @@ document.addEventListener('htmx:afterSettle', function() {
     }
 
     // ── Apply Filters + Sort ────────────────────────────────────────────────
+    // ── Filter / Sort / Paginate ────────────────────────────────────────────
+    // Same behaviour, element ids and localStorage keys as the hand-rolled
+    // version this replaces; the machinery is now shared with the store and
+    // the installed-plugins list.
+    function starlarkSortName(app) {
+        return (app.name || app.id || '').toLowerCase();
+    }
+
+    const STARLARK_COMPARATORS = {
+        'a-z': (a, b) => starlarkSortName(a).localeCompare(starlarkSortName(b)),
+        'z-a': (a, b) => starlarkSortName(b).localeCompare(starlarkSortName(a)),
+        'category': (a, b) => {
+            const catCmp = (a.category || '').localeCompare(b.category || '');
+            return catCmp !== 0 ? catCmp : starlarkSortName(a).localeCompare(starlarkSortName(b));
+        },
+        'author': (a, b) => {
+            const authCmp = (a.author || '').localeCompare(b.author || '');
+            return authCmp !== 0 ? authCmp : starlarkSortName(a).localeCompare(starlarkSortName(b));
+        },
+    };
+
+    function renderInstalledCycleButton(btn, value) {
+        if (value === true) {
+            btn.innerHTML = '<i class="fas fa-check-circle mr-1 text-green-500"></i>Installed';
+            btn.classList.add('border-green-400', 'bg-green-50');
+            btn.classList.remove('border-gray-300', 'bg-white', 'border-red-400', 'bg-red-50');
+        } else if (value === false) {
+            btn.innerHTML = '<i class="fas fa-times-circle mr-1 text-red-500"></i>Not Installed';
+            btn.classList.add('border-red-400', 'bg-red-50');
+            btn.classList.remove('border-gray-300', 'bg-white', 'border-green-400', 'bg-green-50');
+        } else {
+            btn.innerHTML = '<i class="fas fa-filter mr-1 text-gray-400"></i>All';
+            btn.classList.add('border-gray-300', 'bg-white');
+            btn.classList.remove('border-green-400', 'bg-green-50', 'border-red-400', 'bg-red-50');
+        }
+    }
+
+    let _starlarkFilter = null;
+
+    function getStarlarkFilter() {
+        if (_starlarkFilter) return _starlarkFilter;
+        if (!window.ListFilter || typeof window.ListFilter.create !== 'function') {
+            console.warn('[STARLARK] ListFilter helper unavailable — filters disabled');
+            return null;
+        }
+        _starlarkFilter = window.ListFilter.create({
+            getItems: () => starlarkFullCache || [],
+            render: (pageApps) => renderStarlarkApps(pageApps, document.getElementById('starlark-apps-grid')),
+            search: {
+                el: 'starlark-search',
+                fields: ['name', 'summary', 'desc', 'author', 'id', 'category'],
+                debounceMs: 300,
+            },
+            sort: {
+                el: 'starlark-sort',
+                default: 'a-z',
+                comparators: STARLARK_COMPARATORS,
+            },
+            controls: [
+                {
+                    type: 'select',
+                    el: 'starlark-category',
+                    key: 'filterCategory',
+                    default: '',
+                    test: (app, value) => (app.category || '').toLowerCase() === value.toLowerCase(),
+                },
+                {
+                    // Author matching is exact/case-sensitive — the options come
+                    // straight from the server's author list.
+                    type: 'select',
+                    el: 'starlark-filter-author',
+                    key: 'filterAuthor',
+                    default: '',
+                    test: (app, value) => app.author === value,
+                },
+                {
+                    type: 'cycle',
+                    el: 'starlark-filter-installed',
+                    key: 'filterInstalled',
+                    default: null,
+                    values: [null, true, false],
+                    test: (app, value) => (value === true ? isStarlarkInstalled(app.id) : !isStarlarkInstalled(app.id)),
+                    render: renderInstalledCycleButton,
+                },
+            ],
+            pagination: {
+                perPageEl: 'starlark-per-page',
+                defaultPerPage: 24,
+                topEl: 'starlark-pagination-top',
+                bottomEl: 'starlark-pagination-bottom',
+                infoEl: 'starlark-results-info',
+                infoBottomEl: 'starlark-results-info-bottom',
+                scrollToEl: 'starlark-apps-grid',
+                infoFormat: (start, end, total) => `Showing ${start}\u2013${end} of ${total} apps`,
+                emptyText: 'No apps match your filters',
+            },
+            persist: {
+                read: () => ({
+                    sort: safeLocalStorage.getItem('starlarkSort') || undefined,
+                    perPage: parseInt(safeLocalStorage.getItem('starlarkPerPage')) || undefined,
+                }),
+                write: (state) => {
+                    safeLocalStorage.setItem('starlarkSort', state.sort);
+                    safeLocalStorage.setItem('starlarkPerPage', state.perPage);
+                },
+            },
+            clearEl: 'starlark-clear-filters',
+            activeCountEl: 'starlark-active-filters',
+        });
+        return _starlarkFilter;
+    }
+
     function applyStarlarkFiltersAndSort(skipPageReset) {
         if (!starlarkFullCache) return;
-        const st = starlarkFilterState;
-
-        let list = starlarkFullCache.slice();
-
-        // Text search
-        if (st.searchQuery) {
-            const q = st.searchQuery.toLowerCase();
-            list = list.filter(app => {
-                const hay = [app.name, app.summary, app.desc, app.author, app.id, app.category]
-                    .filter(Boolean).join(' ').toLowerCase();
-                return hay.includes(q);
-            });
+        const ctl = getStarlarkFilter();
+        if (ctl) {
+            ctl.apply(skipPageReset);
+            return;
         }
-
-        // Category filter
-        if (st.filterCategory) {
-            const cat = st.filterCategory.toLowerCase();
-            list = list.filter(app => (app.category || '').toLowerCase() === cat);
-        }
-
-        // Author filter
-        if (st.filterAuthor) {
-            list = list.filter(app => app.author === st.filterAuthor);
-        }
-
-        // Installed filter
-        if (st.filterInstalled === true) {
-            list = list.filter(app => isStarlarkInstalled(app.id));
-        } else if (st.filterInstalled === false) {
-            list = list.filter(app => !isStarlarkInstalled(app.id));
-        }
-
-        // Sort
-        list.sort((a, b) => {
-            const nameA = (a.name || a.id || '').toLowerCase();
-            const nameB = (b.name || b.id || '').toLowerCase();
-            switch (st.sort) {
-                case 'z-a': return nameB.localeCompare(nameA);
-                case 'category': {
-                    const catCmp = (a.category || '').localeCompare(b.category || '');
-                    return catCmp !== 0 ? catCmp : nameA.localeCompare(nameB);
-                }
-                case 'author': {
-                    const authCmp = (a.author || '').localeCompare(b.author || '');
-                    return authCmp !== 0 ? authCmp : nameA.localeCompare(nameB);
-                }
-                default: return nameA.localeCompare(nameB); // a-z
-            }
-        });
-
-        starlarkFilteredList = list;
-        if (!skipPageReset) st.page = 1;
-
-        renderStarlarkPage();
-        updateStarlarkFilterUI();
-    }
-
-    // ── Render Current Page ─────────────────────────────────────────────────
-    function renderStarlarkPage() {
-        const st = starlarkFilterState;
-        const total = starlarkFilteredList.length;
-        const totalPages = Math.max(1, Math.ceil(total / st.perPage));
-        if (st.page > totalPages) st.page = totalPages;
-
-        const start = (st.page - 1) * st.perPage;
-        const end = Math.min(start + st.perPage, total);
-        const pageApps = starlarkFilteredList.slice(start, end);
-
-        // Results info
-        const info = total > 0
-            ? `Showing ${start + 1}\u2013${end} of ${total} apps`
-            : 'No apps match your filters';
-        const infoEl = document.getElementById('starlark-results-info');
-        const infoElBot = document.getElementById('starlark-results-info-bottom');
-        if (infoEl) infoEl.textContent = info;
-        if (infoElBot) infoElBot.textContent = info;
-
-        // Pagination
-        renderStarlarkPagination('starlark-pagination-top', totalPages, st.page);
-        renderStarlarkPagination('starlark-pagination-bottom', totalPages, st.page);
-
-        // Grid
-        const grid = document.getElementById('starlark-apps-grid');
-        renderStarlarkApps(pageApps, grid);
-    }
-
-    // ── Pagination Controls ─────────────────────────────────────────────────
-    function renderStarlarkPagination(containerId, totalPages, currentPage) {
-        const container = document.getElementById(containerId);
-        if (!container) return;
-
-        if (totalPages <= 1) { container.innerHTML = ''; return; }
-
-        const btnClass = 'px-3 py-1 text-sm rounded-md border transition-colors';
-        const activeClass = 'bg-blue-600 text-white border-blue-600';
-        const normalClass = 'bg-white text-gray-700 border-gray-300 hover:bg-gray-100 cursor-pointer';
-        const disabledClass = 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed';
-
-        let html = '';
-
-        // Prev
-        html += `<button class="${btnClass} ${currentPage <= 1 ? disabledClass : normalClass}" data-starlark-page="${currentPage - 1}" ${currentPage <= 1 ? 'disabled' : ''}>&laquo;</button>`;
-
-        // Page numbers with ellipsis
-        const pages = [];
-        pages.push(1);
-        if (currentPage > 3) pages.push('...');
-        for (let i = Math.max(2, currentPage - 1); i <= Math.min(totalPages - 1, currentPage + 1); i++) {
-            pages.push(i);
-        }
-        if (currentPage < totalPages - 2) pages.push('...');
-        if (totalPages > 1) pages.push(totalPages);
-
-        pages.forEach(p => {
-            if (p === '...') {
-                html += `<span class="px-2 py-1 text-sm text-gray-400">&hellip;</span>`;
-            } else {
-                html += `<button class="${btnClass} ${p === currentPage ? activeClass : normalClass}" data-starlark-page="${p}">${p}</button>`;
-            }
-        });
-
-        // Next
-        html += `<button class="${btnClass} ${currentPage >= totalPages ? disabledClass : normalClass}" data-starlark-page="${currentPage + 1}" ${currentPage >= totalPages ? 'disabled' : ''}>&raquo;</button>`;
-
-        container.innerHTML = html;
-
-        // Event delegation for page buttons
-        container.querySelectorAll('[data-starlark-page]').forEach(btn => {
-            btn.addEventListener('click', function() {
-                const p = parseInt(this.getAttribute('data-starlark-page'));
-                if (p >= 1 && p <= totalPages && p !== currentPage) {
-                    starlarkFilterState.page = p;
-                    renderStarlarkPage();
-                    // Scroll to top of grid
-                    const grid = document.getElementById('starlark-apps-grid');
-                    if (grid) grid.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                }
-            });
-        });
+        renderStarlarkApps(starlarkFullCache, document.getElementById('starlark-apps-grid'));
     }
 
     // ── Card Rendering ──────────────────────────────────────────────────────
@@ -5994,127 +5947,12 @@ document.addEventListener('htmx:afterSettle', function() {
     }
 
     // ── Filter UI Updates ───────────────────────────────────────────────────
-    function updateStarlarkFilterUI() {
-        const st = starlarkFilterState;
-        const count = st.activeCount();
-
-        const badge = document.getElementById('starlark-active-filters');
-        const clearBtn = document.getElementById('starlark-clear-filters');
-        if (badge) {
-            badge.classList.toggle('hidden', count === 0);
-            badge.textContent = count + ' filter' + (count !== 1 ? 's' : '') + ' active';
-        }
-        if (clearBtn) clearBtn.classList.toggle('hidden', count === 0);
-
-        // Update installed toggle button text
-        const instBtn = document.getElementById('starlark-filter-installed');
-        if (instBtn) {
-            if (st.filterInstalled === true) {
-                instBtn.innerHTML = '<i class="fas fa-check-circle mr-1 text-green-500"></i>Installed';
-                instBtn.classList.add('border-green-400', 'bg-green-50');
-                instBtn.classList.remove('border-gray-300', 'bg-white', 'border-red-400', 'bg-red-50');
-            } else if (st.filterInstalled === false) {
-                instBtn.innerHTML = '<i class="fas fa-times-circle mr-1 text-red-500"></i>Not Installed';
-                instBtn.classList.add('border-red-400', 'bg-red-50');
-                instBtn.classList.remove('border-gray-300', 'bg-white', 'border-green-400', 'bg-green-50');
-            } else {
-                instBtn.innerHTML = '<i class="fas fa-filter mr-1 text-gray-400"></i>All';
-                instBtn.classList.add('border-gray-300', 'bg-white');
-                instBtn.classList.remove('border-green-400', 'bg-green-50', 'border-red-400', 'bg-red-50');
-            }
-        }
-    }
-
     // ── Event Listeners ─────────────────────────────────────────────────────
     function setupStarlarkFilterListeners() {
-        // Search with debounce
-        const searchEl = document.getElementById('starlark-search');
-        if (searchEl && !searchEl._starlarkInit) {
-            searchEl._starlarkInit = true;
-            let debounce = null;
-            searchEl.addEventListener('input', function() {
-                clearTimeout(debounce);
-                debounce = setTimeout(() => {
-                    starlarkFilterState.searchQuery = this.value.trim();
-                    applyStarlarkFiltersAndSort();
-                }, 300);
-            });
-        }
-
-        // Category dropdown
-        const catEl = document.getElementById('starlark-category');
-        if (catEl && !catEl._starlarkInit) {
-            catEl._starlarkInit = true;
-            catEl.addEventListener('change', function() {
-                starlarkFilterState.filterCategory = this.value;
-                applyStarlarkFiltersAndSort();
-            });
-        }
-
-        // Sort dropdown
-        const sortEl = document.getElementById('starlark-sort');
-        if (sortEl && !sortEl._starlarkInit) {
-            sortEl._starlarkInit = true;
-            sortEl.addEventListener('change', function() {
-                starlarkFilterState.sort = this.value;
-                starlarkFilterState.persist();
-                applyStarlarkFiltersAndSort();
-            });
-        }
-
-        // Author dropdown
-        const authEl = document.getElementById('starlark-filter-author');
-        if (authEl && !authEl._starlarkInit) {
-            authEl._starlarkInit = true;
-            authEl.addEventListener('change', function() {
-                starlarkFilterState.filterAuthor = this.value;
-                applyStarlarkFiltersAndSort();
-            });
-        }
-
-        // Installed toggle (cycle: all → installed → not-installed → all)
-        const instBtn = document.getElementById('starlark-filter-installed');
-        if (instBtn && !instBtn._starlarkInit) {
-            instBtn._starlarkInit = true;
-            instBtn.addEventListener('click', function() {
-                const st = starlarkFilterState;
-                if (st.filterInstalled === null) st.filterInstalled = true;
-                else if (st.filterInstalled === true) st.filterInstalled = false;
-                else st.filterInstalled = null;
-                applyStarlarkFiltersAndSort();
-            });
-        }
-
-        // Clear filters
-        const clearBtn = document.getElementById('starlark-clear-filters');
-        if (clearBtn && !clearBtn._starlarkInit) {
-            clearBtn._starlarkInit = true;
-            clearBtn.addEventListener('click', function() {
-                starlarkFilterState.reset();
-                // Reset UI elements
-                const searchEl = document.getElementById('starlark-search');
-                if (searchEl) searchEl.value = '';
-                const catEl = document.getElementById('starlark-category');
-                if (catEl) catEl.value = '';
-                const sortEl = document.getElementById('starlark-sort');
-                if (sortEl) sortEl.value = 'a-z';
-                const authEl = document.getElementById('starlark-filter-author');
-                if (authEl) authEl.value = '';
-                starlarkFilterState.persist();
-                applyStarlarkFiltersAndSort();
-            });
-        }
-
-        // Per-page selector
-        const ppEl = document.getElementById('starlark-per-page');
-        if (ppEl && !ppEl._starlarkInit) {
-            ppEl._starlarkInit = true;
-            ppEl.addEventListener('change', function() {
-                starlarkFilterState.perPage = parseInt(this.value) || 24;
-                starlarkFilterState.persist();
-                applyStarlarkFiltersAndSort();
-            });
-        }
+        const ctl = getStarlarkFilter();
+        if (!ctl) return;
+        ctl.bind();
+        ctl.syncControls();
     }
 
     // ── Install / Upload / Pixlet ───────────────────────────────────────────

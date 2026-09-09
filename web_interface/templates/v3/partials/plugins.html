@@ -29,6 +29,58 @@
                     <span id="installed-count" class="text-sm text-gray-500 font-medium">0 installed</span>
                 </div>
             </div>
+
+            <!-- Search / Filter / Sort Bar -->
+            <div id="installed-filter-bar" class="flex flex-wrap items-center gap-3 mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                <!-- Search -->
+                <div class="relative flex-1 min-w-[12rem]">
+                    <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none"></i>
+                    <input type="text"
+                           id="installed-search"
+                           class="form-control text-sm pl-9 pr-8 py-2"
+                           placeholder="Search installed plugins&hellip;"
+                           autocomplete="off"
+                           aria-label="Search installed plugins">
+                    <button type="button" id="installed-search-clear"
+                            class="hidden absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                            aria-label="Clear search">
+                        <i class="fas fa-times-circle"></i>
+                    </button>
+                </div>
+
+                <!-- Status filter pills -->
+                <div id="installed-filter-pills" class="flex items-center gap-1.5" role="group" aria-label="Filter installed plugins by status">
+                    <button type="button" class="filter-pill text-sm px-3 py-1.5 rounded-md border border-gray-300 bg-white"
+                            data-installed-filter="all" data-active="true" aria-pressed="true">All</button>
+                    <button type="button" class="filter-pill text-sm px-3 py-1.5 rounded-md border border-gray-300 bg-white"
+                            data-installed-filter="enabled" data-active="false" aria-pressed="false">Enabled</button>
+                    <button type="button" class="filter-pill text-sm px-3 py-1.5 rounded-md border border-gray-300 bg-white"
+                            data-installed-filter="disabled" data-active="false" aria-pressed="false">Disabled</button>
+                    <button type="button" class="filter-pill text-sm px-3 py-1.5 rounded-md border border-gray-300 bg-white"
+                            data-installed-filter="updates" data-active="false" aria-pressed="false"
+                            title="Show only plugins with a newer version available">
+                        Updates<span id="installed-updates-count" class="badge badge-info ml-1.5 hidden">0</span>
+                    </button>
+                </div>
+
+                <!-- Sort -->
+                <select id="installed-sort" class="text-sm px-3 py-1.5 border border-gray-300 rounded-md bg-white" aria-label="Sort installed plugins">
+                    <option value="a-z">A &rarr; Z</option>
+                    <option value="z-a">Z &rarr; A</option>
+                    <option value="status">Updates first</option>
+                    <option value="recent">Recently updated</option>
+                    <option value="category">Category</option>
+                </select>
+
+                <div class="flex-1"></div>
+
+                <!-- Clear -->
+                <button type="button" id="installed-clear-filters"
+                        class="hidden text-sm px-3 py-1.5 rounded-md border border-red-300 bg-white text-red-600 hover:bg-red-50 transition-colors">
+                    <i class="fas fa-times mr-1"></i>Clear
+                </button>
+            </div>
+
             <div id="installed-plugins-content" class="block">
                 <div id="installed-plugins-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6">
                     <!-- Skeleton cards shown while installed plugins load -->
