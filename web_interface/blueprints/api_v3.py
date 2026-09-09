@@ -352,20 +352,6 @@ def _validate_time_format(time_str):
     except (ValueError, TypeError):
         return False, f"Invalid time format: {time_str}. Expected HH:MM format."
 
-def _validate_time_range(start_time_str, end_time_str, allow_overnight=True):
-    """Validate time range. Returns (is_valid, error_message)"""
-    try:
-        start_time = datetime.strptime(start_time_str, '%H:%M').time()
-        end_time = datetime.strptime(end_time_str, '%H:%M').time()
-
-        # Allow overnight schedules (start > end) or same-day schedules
-        if not allow_overnight and start_time >= end_time:
-            return False, f"Start time ({start_time_str}) must be before end time ({end_time_str}) for same-day schedules"
-
-        return True, None
-    except (ValueError, TypeError) as e:
-        return False, f"Invalid time format: {str(e)}"
-
 @api_v3.route('/config/schedule', methods=['POST'])
 def save_schedule_config():
     """Save schedule configuration"""
