@@ -26,7 +26,7 @@ from __future__ import annotations
 import argparse
 import json
 import statistics
-import subprocess
+import subprocess  # nosec B404 - list-form argv only, no shell  # nosemgrep
 import sys
 import time
 from pathlib import Path
@@ -108,8 +108,9 @@ def _refuse_if_the_service_is_running(force):
     if force:
         return
     try:
-        active = subprocess.run(["systemctl", "is-active", "ledmatrix"],
-                                capture_output=True, text=True).stdout.strip()
+        active = subprocess.run(  # nosec B603 B607 - hardcoded systemctl args  # nosemgrep
+            ["systemctl", "is-active", "ledmatrix"],
+            capture_output=True, text=True).stdout.strip()
     except OSError:
         return  # not a systemd box; nothing to protect
     if active == "active":
