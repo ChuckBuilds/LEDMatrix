@@ -135,7 +135,10 @@ class ScrollHelper:
         self._last_integer_position = 0  # Cache for integer position to avoid repeated calculations
         
         # Frame-based scrolling settings
-        self.frame_based_scrolling = False  # If True, use scroll_delay to throttle and move scroll_speed pixels
+        self.frame_based_scrolling = False
+        #: Whole pixels to advance per presented frame, or None to pace
+        #: off elapsed time. See set_pixels_per_frame.
+        self.fixed_pixels_per_frame = None  # If True, use scroll_delay to throttle and move scroll_speed pixels
         self.last_step_time = 0.0  # Track last step time for frame-based throttling
         
         # Time tracking for scroll updates
@@ -295,7 +298,13 @@ class ScrollHelper:
             self.last_progress_log_time = current_time
         
         # Update scroll position
-        if self.frame_based_scrolling:
+        if self.fixed_pixels_per_frame:
+            # One presented frame, one fixed whole-pixel step. No clock is
+            # consulted, so no jitter reaches the position and every frame
+            # moves the eye by the same amount. See set_pixels_per_frame.
+            pixels_to_move = self.fixed_pixels_per_frame
+            self.last_step_time = current_time
+        elif self.frame_based_scrolling:
             # Frame-based: move fixed amount when scroll_delay has passed
             # This matches stock ticker behavior: move pixels, then wait scroll_delay
             # Initialize last_step_time on first call to prevent huge initial jump
@@ -979,6 +988,13 @@ class ScrollHelper:
         Args:
             speed: Scroll speed (interpretation depends on frame_based_scrolling mode)
         """
+        # A speed set directly is a request to pace off that speed, so drop any
+        # fixed per-frame step left by an earlier configure(). scroll_config
+        # calls this first and set_pixels_per_frame second, so the crisp path
+        # is unaffected; what this protects is a legacy caller changing speed
+        # on a helper that scroll_config had already put in fixed-step mode,
+        # where the new speed would otherwise be silently ignored.
+        self.fixed_pixels_per_frame = None
         if self.frame_based_scrolling:
             # In frame-based mode, clamp to reasonable pixels per frame (0.1-5)
             # Higher values cause visible jumps - 1-2 pixels/frame is ideal for smoothness
@@ -999,6 +1015,35 @@ class ScrollHelper:
         self.scroll_delay = max(0.001, min(1.0, delay))
         self.logger.debug(f"Scroll delay set to: {self.scroll_delay}")
     
+    def set_pixels_per_frame(self, pixels) -> None:
+        """Advance exactly `pixels` per presented frame, ignoring the clock.
+
+        Pass None to go back to pacing off elapsed time.
+
+        Smooth motion is not a frame-rate property. The strip has to advance
+        the same number of WHOLE pixels every frame, and deriving that from a
+        wall clock cannot deliver it: the position accumulates
+        ``speed * delta_time`` and is then truncated to a pixel, so any jitter
+        in delta_time lands either side of an integer boundary. Measured on
+        hardware at a rock-steady 100.0 fps, individual frames still ranged
+        5.6ms to 15.2ms -- 0.57px to 1.44px of movement -- and 53% of frames
+        advanced by something other than one pixel: about half moved nothing
+        at all and then jumped two. That is the micro-stutter, and it survived
+        every frame-timing fix because frame timing was never the problem.
+
+        It is worst precisely at a crisp speed. At 100 px/s on a 100Hz panel
+        the accumulator sits exactly on integer boundaries, so sub-millisecond
+        jitter flips it either way and the motion beats at around 50Hz.
+
+        Stepping per frame is only correct because SwapOnVSync blocks until
+        the panel has taken the frame, which makes the frame count a truer
+        clock than time.time(). Before the swap was locked to vsync this would
+        have run at whatever speed the loop happened to spin at.
+        """
+        self.fixed_pixels_per_frame = int(pixels) if pixels else None
+        self.logger.debug("Fixed step set to: %s px/frame",
+                          self.fixed_pixels_per_frame)
+
     def set_target_fps(self, fps: float) -> None:
         """
         Set the target frames per second for scrolling.

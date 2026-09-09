@@ -387,6 +387,15 @@ def configure(
     if hasattr(scroll_helper, "set_frame_based_scrolling"):
         scroll_helper.set_frame_based_scrolling(False)
     scroll_helper.set_scroll_speed(applied)
+
+    # A crisp speed is a whole number of pixels per presented frame, so step by
+    # that number rather than by speed * elapsed time. Snapping alone only
+    # fixes the average: the wall clock puts the accumulator back on an integer
+    # boundary every frame, where jitter of a fraction of a millisecond decides
+    # whether the pixel moves. That is what the ladder was bought to prevent.
+    if hasattr(scroll_helper, "set_pixels_per_frame"):
+        scroll_helper.set_pixels_per_frame(
+            choice.pixels_per_frame if choice else None)
     if choice and hasattr(scroll_helper, "set_target_fps"):
         scroll_helper.set_target_fps(choice.frames_per_second)
     elif settings.target_fps and hasattr(scroll_helper, "set_target_fps"):
