@@ -21,12 +21,19 @@ from src.common.permission_utils import (
     get_assets_file_mode
 )
 
-# How long a missing logo stays remembered as missing. Long enough that a file
-# nobody is going to add costs one warning rather than one per rotation; short
-# enough that a logo written at runtime by logo_downloader shows up without a
-# restart. Downloads through this class clear the entry immediately, so this
-# only bounds the case where something else put the file there.
-MISSING_LOGO_RECHECK_SECONDS = 600.0
+# How long a missing logo stays remembered as missing.
+#
+# This was 600s, and measured on a live rig that turned out to suppress nothing:
+# the display rotation is ~618s, so every recheck landed just as the plugin came
+# round again and the warning rate was unchanged at ~6/hour. A TTL has to be long
+# relative to the loop that does the asking, not merely "a while".
+#
+# An hour is safe because the TTL is not the main way an entry clears. A download
+# through load_logo_with_download() drops it immediately, and clear_cache() drops
+# all of them; the TTL only covers a file that appeared some other way -- someone
+# copying one in by hand. Waiting up to an hour for that, or restarting, is a fair
+# trade for not re-warning about a file nobody is going to add.
+MISSING_LOGO_RECHECK_SECONDS = 3600.0
 
 
 
