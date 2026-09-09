@@ -116,7 +116,56 @@ class TestHandlersCarryDetail:
 
         src = open("web_interface/blueprints/api_v3.py").read()
         tree = ast.parse(src)
-        generic = "An error occurred; see logs for details"
+
+        # This used to match one exact message string, so a handler that wrote
+        # its own wording was never checked. All thirteen Starlark routes did
+        # -- "Failed to browse repository" and friends -- and every one of them
+        # answered a 500 with no detail at all, which is how the app store
+        # spent three releases failing for reasons nobody could read. The rule
+        # is now the shape that matters: if it returns 5xx, it says why.
+        PRE_EXISTING = {
+            # Not part of this change. This set may shrink, never grow.
+            'backup_delete', 'backup_export', 'backup_list', 'backup_preview',
+            'backup_restore', 'backup_validate', 'checkout_branch',
+            'execute_system_action', 'get_git_branches', 'get_git_info',
+            'get_hardware_status', 'get_logs', 'get_system_status',
+            'get_system_version', 'scan_wifi_networks',
+        }
+
+        def enclosing_function(handler):
+            """Innermost function containing `handler`."""
+            best = None
+            for fn in [n for n in ast.walk(tree)
+                       if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]:
+                if any(h is handler for h in ast.walk(fn)):
+                    if best is None or fn.lineno > best.lineno:
+                        best = fn
+            return best.name if best else '<module>'
+
+        def only_catches_importerror(handler):
+            """An `except ImportError` arm and nothing else.
+
+            A missing optional dependency is a configuration fact, not a
+            crash: the module name is the whole diagnosis and it is already
+            in the response, so a stack trace would be noise. Detail is still
+            required -- only the traceback log is excused.
+            """
+            t = handler.type
+            names = ([t] if isinstance(t, ast.Name)
+                     else list(t.elts) if isinstance(t, ast.Tuple) else [])
+            return bool(names) and all(
+                isinstance(n, ast.Name) and n.id == 'ImportError' for n in names)
+
+        def returns_5xx(handler):
+            for r in [n for n in ast.walk(handler) if isinstance(n, ast.Return)]:
+                v = r.value
+                if isinstance(v, ast.Tuple) and len(v.elts) == 2:
+                    code = v.elts[1]
+                    if (isinstance(code, ast.Constant)
+                            and isinstance(code.value, int)
+                            and 500 <= code.value < 600):
+                        return True
+            return False
 
         def logs_a_traceback(handler):
             """An error/exception-level log call carrying exc_info."""
@@ -161,11 +210,12 @@ class TestHandlersCarryDetail:
 
         offenders = []
         for h in [n for n in ast.walk(tree) if isinstance(n, ast.ExceptHandler)]:
-            seg = ast.get_source_segment(src, h) or ""
-            if generic not in seg:
+            if not returns_5xx(h):
+                continue
+            if enclosing_function(h) in PRE_EXISTING:
                 continue
             missing = []
-            if not logs_a_traceback(h):
+            if not logs_a_traceback(h) and not only_catches_importerror(h):
                 missing.append("error-level log with exc_info")
             if not returns_the_detail(h):
                 missing.append("describe_exception(e) in the response")
