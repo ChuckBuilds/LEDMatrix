@@ -7,3 +7,8 @@ freezegun>=1.2,<2        # deterministic time for golden-image tests
 psutil>=6.0.0,<8.0.0     # optional at runtime; installed for tests so the
                          # /system/status endpoint's real path is exercised
 mypy>=1.5.0,<2.0.0       # static type checking (also pinned in .pre-commit-config.yaml)
+PyYAML>=6.0.2,<7.0.0     # not a core dependency: test_starlark_pixlet_routes loads
+                         # plugin-repos/starlark-apps/tronbyte_repository.py the way
+                         # the blueprint does, and that plugin imports yaml. The
+                         # plugin declares it in its own requirements.txt, which the
+                         # store installs on a real rig but CI never does.
