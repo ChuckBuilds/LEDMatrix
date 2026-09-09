@@ -218,7 +218,9 @@ class PixletRenderer:
         star_file: str,
         output_path: str,
         config: Optional[Dict[str, Any]] = None,
-        magnify: int = 1
+        magnify: int = 1,
+        width: Optional[int] = None,
+        height: Optional[int] = None
     ) -> Tuple[bool, Optional[str]]:
         """
         Render a .star file to WebP output.
@@ -228,6 +230,21 @@ class PixletRenderer:
             output_path: Where to save WebP output
             config: Configuration dictionary to pass to app
             magnify: Magnification factor (default 1)
+            width: Optional native render width in pixels. Previously
+                there was no way to tell Pixlet to render at anything
+                other than its own default (64), relying entirely on
+                magnify to scale up afterward -- fine for apps designed
+                at that native size, but wrong for an app whose own
+                declared canvas size is genuinely different (confirmed
+                on real hardware, 2026-09-06, with an imported app
+                declaring width=128: rendering at the default 64 and
+                then magnifying silently clipped half the app's own
+                content before scaling ever happened, rather than
+                producing a correctly-sized image). Passed through as
+                Pixlet's own -w flag when provided; omitted (Pixlet's
+                default) otherwise, preserving existing behavior for
+                every other app.
+            height: Same as width, for Pixlet's -t flag.
 
         Returns:
             Tuple of (success: bool, error_message: Optional[str])
@@ -287,6 +304,10 @@ class PixletRenderer:
                 "-o", output_path,
                 "-m", str(magnify)
             ])
+            if width is not None:
+                cmd.extend(["-w", str(width)])
+            if height is not None:
+                cmd.extend(["-t", str(height)])
 
             # Build sanitized command for logging (redact sensitive values)
             sanitized_cmd = [self.pixlet_binary, "render", star_file]
@@ -294,6 +315,10 @@ class PixletRenderer:
                 config_keys = list(config.keys())
                 sanitized_cmd.append(f"[{len(config_keys)} config entries: {', '.join(config_keys)}]")
             sanitized_cmd.extend(["-o", output_path, "-m", str(magnify)])
+            if width is not None:
+                sanitized_cmd.extend(["-w", str(width)])
+            if height is not None:
+                sanitized_cmd.extend(["-t", str(height)])
             logger.debug(f"Executing Pixlet: {' '.join(sanitized_cmd)}")
 
             # Execute rendering
