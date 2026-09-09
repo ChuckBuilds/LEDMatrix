@@ -34,10 +34,12 @@ class _Panel:
     refresh_hz = 100.0
 
     def set_frame_hold(self, refreshes):
+        """Recorded so a test can assert on it; the panel is not involved."""
         self.hold = refreshes
 
 
 def _helper():
+    """A helper with a strip long enough that no sample can consume it."""
     helper = ScrollHelper(128, 64)
     helper.cached_image = Image.new("RGB", (STRIP_WIDTH, 64))
     helper.cached_array = np.zeros((64, STRIP_WIDTH, 3), dtype=np.uint8)
@@ -65,9 +67,20 @@ def _measured_frame_times(count, seed=7):
 
 
 def _advances(helper, frame_times):
-    """Histogram of whole-pixel movement per presented frame."""
-    counts, last, now = Counter(), int(helper.scroll_position), 1000.0
+    """Histogram of whole-pixel movement per presented frame.
+
+    The first call is primed and discarded. update_scroll_position sets
+    last_update_time on its way through, so the very first call sees a
+    delta_time of zero and moves nothing in time-based mode. Counting that
+    synthetic frame put a guaranteed zero in every histogram, which was enough
+    on its own to satisfy "time-based stepping produces uneven motion" -- the
+    pin below would have passed against perfectly uniform motion.
+    """
+    counts, now = Counter(), 1000.0
     with patch("src.common.scroll_helper.time.time") as clock:
+        clock.return_value = now
+        helper.update_scroll_position()
+        last = int(helper.scroll_position)
         for gap_ms in frame_times:
             now += gap_ms / 1000.0
             clock.return_value = now
@@ -83,6 +96,7 @@ def _advances(helper, frame_times):
 
 class TestWholePixelStepping:
     def test_a_crisp_speed_moves_the_same_pixels_every_frame(self):
+        """The whole point: identical movement on every frame, jitter or not."""
         helper = _helper()
         scroll_config.configure(helper, plugin_config=None,
                                 default_pixels_per_second=100.0,
@@ -103,6 +117,7 @@ class TestWholePixelStepping:
         assert set(_advances(helper, savage)) == {1}
 
     def test_two_pixels_per_frame_is_also_uniform(self):
+        """Uniformity is not special to one pixel; 200 px/s steps by two."""
         helper = _helper()
         scroll_config.configure(helper, plugin_config=None,
                                 default_pixels_per_second=200.0,
@@ -116,15 +131,24 @@ class TestWholePixelStepping:
         helper.set_scroll_speed(100.0)          # the old path: px/s off the clock
         assert helper.fixed_pixels_per_frame is None
         counts = _advances(helper, _measured_frame_times(3000))
+        total = sum(counts.values())
         uneven = sum(n for px, n in counts.items() if px != 1)
-        assert uneven > 0, (
-            "time-based stepping no longer produces uneven motion against real "
-            "frame times; if that is genuinely fixed elsewhere, this test and "
-            "the fixed-step mode both deserve re-examining")
+
+        # A proportion, not "more than zero". Against these frame times the
+        # old path misses roughly one frame in twenty; 1% is comfortably below
+        # that and still far above anything a stray frame could produce, so
+        # this fails if the defect is genuinely gone rather than merely rare.
+        assert uneven > total * 0.01, (
+            "time-based stepping produced only %d uneven frames in %d against "
+            "real measured frame times. If that is genuinely fixed elsewhere, "
+            "this test and the fixed-step mode both deserve re-examining"
+            % (uneven, total))
 
 
 class TestItStaysOptIn:
     def test_a_speed_that_is_not_crisp_keeps_pacing_off_time(self):
+        """Without a whole-pixel step to take, elapsed time is still the best
+        available answer -- fixed stepping is opt-in, not a global switch."""
         helper = _helper()
         scroll_config.configure(helper, plugin_config=None,
                                 default_pixels_per_second=100.0,
@@ -145,6 +169,7 @@ class TestItStaysOptIn:
 
     @pytest.mark.parametrize("value", [None, 0])
     def test_clearing_the_step_restores_time_based_motion(self, value):
+        """Zero and None both mean "no fixed step", not "advance zero pixels"."""
         helper = _helper()
         helper.set_pixels_per_frame(3)
         helper.set_pixels_per_frame(value)
@@ -153,10 +178,19 @@ class TestItStaysOptIn:
     def test_an_older_core_without_the_setter_still_configures(self):
         """Plugins ship independently of the core they run against."""
         class Old:
+            """A helper from before set_pixels_per_frame existed."""
+
             scroll_speed = None
-            def set_scroll_speed(self, v): self.scroll_speed = v
-            def set_frame_based_scrolling(self, v): pass
-            def set_target_fps(self, v): pass
+
+            def set_scroll_speed(self, v):
+                """The one call this old helper does understand."""
+                self.scroll_speed = v
+
+            def set_frame_based_scrolling(self, v):
+                """Accepted and ignored; the mode is not what is under test."""
+
+            def set_target_fps(self, v):
+                """Accepted and ignored; the rate is not what is under test."""
 
         old = Old()
         scroll_config.configure(old, plugin_config=None,

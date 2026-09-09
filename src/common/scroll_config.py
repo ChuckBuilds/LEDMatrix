@@ -86,6 +86,7 @@ class CrispSpeed:
 
     @property
     def frames_per_second(self) -> float:
+        """Distinct frames per second: the refresh divided by the hold."""
         return self.refresh_hz / self.frame_hold
 
     @property
@@ -100,6 +101,7 @@ class CrispSpeed:
         return "smooth"
 
     def describe(self) -> str:
+        """This speed as a line for the speed ladder, aligned for a column."""
         return (
             f"{self.pixels_per_second:6.1f} px/s  "
             f"({self.pixels_per_frame}px every {self.frame_hold} refresh"
@@ -202,6 +204,7 @@ class ScrollSettings:
         return self.crisp.frame_hold if self.crisp else 1
 
     def describe(self) -> str:
+        """One log line: the speed applied, and which config key produced it."""
         text = f"{self.pixels_per_second:.1f} px/s (from {self.source})"
         if self.pixels_per_frame is not None:
             text += f" = {self.pixels_per_frame:.2f} px/frame"
