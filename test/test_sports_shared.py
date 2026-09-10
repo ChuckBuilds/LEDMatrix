@@ -374,3 +374,51 @@ class TestPluginDirIsToldNotDeduced:
         assert host._schema_font_size("score") == 16, (
             "without the schema this is None, which is what made a configured "
             "size look user-chosen and skipped the grid snap")
+class TestUnshareKeepsTheLayoutEngine:
+    """``_unshare_element_fonts`` rebuilds a face; the rebuild must be pinned.
+
+    This body did move verbatim from the plugins, but it is the one that
+    rebuilds a font, and it rebuilt through bare ``ImageFont.truetype`` --
+    taking PIL's default layout engine rather than the one
+    ``src.common.font_layout`` pins. Raqm and Basic disagree on fractional
+    advances, so a re-instantiated face could measure differently from the
+    shared face it replaced, on any machine where Raqm is installed. That is
+    invisible on a Raqm-less runner, which is why this asserts on the loader
+    rather than on the resulting engine value.
+    """
+
+    def _host(self):
+        import logging
+        return type("H", (SportsCoreSharedMixin,), {
+            "logger": logging.getLogger("test_sports_shared")})()
+
+    def _face(self, size=10):
+        from src.common.font_layout import load_truetype
+        return load_truetype(
+            os.path.join("assets", "fonts", "PressStart2P-Regular.ttf"), size)
+
+    def test_rebuild_goes_through_the_pinned_loader(self, monkeypatch):
+        import src.common.font_layout as fl
+
+        # Built before patching: _face() uses the same loader, so patching
+        # first would let the fixture's own call satisfy the assertion.
+        shared = self._face()
+
+        calls = []
+        real = fl.load_truetype
+
+        def spy(font, size, **kwargs):
+            calls.append((font, size))
+            return real(font, size, **kwargs)
+
+        monkeypatch.setattr(fl, "load_truetype", spy)
+        fonts = {"score": shared, "time": shared}
+        self._host()._unshare_element_fonts(fonts)
+        assert fonts["time"] is not shared, "the duplicate should have been rebuilt"
+        assert calls, "the rebuild must go through the pinned loader"
+
+    def test_rebuilt_face_measures_like_the_one_it_replaced(self):
+        shared = self._face()
+        fonts = {"score": shared, "time": shared}
+        self._host()._unshare_element_fonts(fonts)
+        assert fonts["time"].getlength("88-88") == shared.getlength("88-88")

@@ -193,3 +193,72 @@ class TestTables:
 
     def test_month_and_weekday_tables_are_complete(self):
         assert len(C.MONTH_ABBR) == 12 and len(C.WEEKDAY_ABBR) == 7
+
+
+class TestUnshareElementFonts:
+    """Re-instantiated faces must match the ones they replace.
+
+    ``unshare_element_fonts`` rebuilds a duplicate face purely so two elements
+    can be told apart by ``id()``. That is only safe while the rebuilt face
+    lays text out identically -- and PIL's two layout engines disagree on
+    fractional advances, which is why ``src.common.font_layout`` exists and
+    pins one. Rebuilding through bare ``ImageFont.truetype`` took the default
+    engine instead, so a re-instantiated face could measure differently from
+    the shared face it replaced.
+    """
+
+    def _face(self, size=10):
+        from src.common.font_layout import load_truetype
+        path = os.path.join("assets", "fonts", "PressStart2P-Regular.ttf")
+        return load_truetype(path, size)
+
+    def test_rebuilt_face_goes_through_the_pinned_loader(self, log, monkeypatch):
+        """Asserted on the loader, not on the resulting engine value.
+
+        PIL only selects Raqm when it is installed; where it is not, a bare
+        ``ImageFont.truetype`` returns BASIC too, so comparing engine values
+        passes on those machines whether or not the pin is honoured -- this
+        test did exactly that before it was rewritten. Spying on the pinned
+        loader fails on every machine when the pin is bypassed, which is the
+        point: the cross-machine mismatch font_layout exists to prevent
+        cannot be reproduced on a Raqm-less runner.
+        """
+        import src.common.font_layout as fl
+
+        # Build the face BEFORE patching: _face() loads through the same
+        # pinned loader, so patching first would let the fixture's own call
+        # satisfy the assertion and the test would pass either way.
+        shared = self._face()
+
+        calls = []
+        real = fl.load_truetype
+
+        def spy(font, size, **kwargs):
+            calls.append((font, size))
+            return real(font, size, **kwargs)
+
+        monkeypatch.setattr(fl, "load_truetype", spy)
+        fonts = {"score": shared, "time": shared}
+        C.unshare_element_fonts(log, fonts)
+        assert fonts["time"] is not shared, "the duplicate should have been rebuilt"
+        assert calls, "the rebuild must go through the pinned loader"
+
+    def test_rebuilt_face_keeps_the_shared_faces_layout_engine(self, log):
+        shared = self._face()
+        fonts = {"score": shared, "time": shared}
+        C.unshare_element_fonts(log, fonts)
+        assert fonts["time"].layout_engine == shared.layout_engine
+
+    def test_rebuilt_face_measures_identically(self, log):
+        shared = self._face()
+        fonts = {"score": shared, "time": shared}
+        C.unshare_element_fonts(log, fonts)
+        text = "88-88"
+        assert (fonts["time"].getlength(text)
+                == shared.getlength(text)), "metrics must not shift"
+
+    def test_distinct_faces_are_left_alone(self, log):
+        a, b = self._face(10), self._face(8)
+        fonts = {"score": a, "time": b}
+        C.unshare_element_fonts(log, fonts)
+        assert fonts["score"] is a and fonts["time"] is b

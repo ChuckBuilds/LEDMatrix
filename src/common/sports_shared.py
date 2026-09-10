@@ -787,7 +787,7 @@ class SportsCoreSharedMixin:
         path) are left shared, and their draws stay white as before.
         """
         try:
-            from PIL import ImageFont as _IF
+            from src.common.font_layout import load_truetype as _load
         except ImportError:  # pragma: no cover
             return fonts
         seen = {}
@@ -802,7 +802,7 @@ class SportsCoreSharedMixin:
             if not path or not size:
                 continue
             try:
-                fonts[key] = _IF.truetype(path, size)
+                fonts[key] = _load(path, size)
             except (OSError, ValueError, TypeError):
                 self.logger.debug(
                     "Could not un-share the %s face; it keeps the default colour", key)
