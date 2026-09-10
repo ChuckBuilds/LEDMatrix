@@ -779,15 +779,63 @@ class PluginManager:
 
         return None
 
+    def _dynamic_update_interval(self, plugin_id: str, plugin_instance: Any) -> Optional[float]:
+        """The interval a plugin asks for right now, or None if it has no view."""
+        hook = getattr(plugin_instance, 'get_update_interval', None)
+        if not callable(hook):
+            return None
+        try:
+            requested = hook()
+        except Exception as exc:  # pylint: disable=broad-except
+            self.logger.debug(
+                "get_update_interval() failed for %s, using the static interval: %s",
+                plugin_id, exc)
+            return None
+        if requested is None:
+            return None
+        try:
+            requested = float(requested)
+        except (TypeError, ValueError):
+            self.logger.debug(
+                "get_update_interval() returned %r for %s, which is not a number",
+                requested, plugin_id)
+            return None
+        if requested != requested or requested == float('inf'):  # NaN / inf
+            return None
+        return max(requested, self.MIN_DYNAMIC_UPDATE_INTERVAL)
+
+    #: Floor for a plugin-requested interval. A plugin asking for 0 (or a
+    #: negative) would otherwise be re-entered on every tick of the render
+    #: loop, which is a busy-wait against whatever API it fetches.
+    MIN_DYNAMIC_UPDATE_INTERVAL = 5.0
+
     def _get_plugin_update_interval(self, plugin_id: str, plugin_instance: Any) -> Optional[float]:
         """
         Get the data-fetch interval for a plugin (seconds between update() calls).
 
-        Result is cached per plugin_id after the first lookup to avoid calling
-        config_manager.get_config() — which returns a full dict copy — on every
-        tick of the 30-fps display loop.  The cache is invalidated when a plugin
-        is loaded or unloaded.
+        A plugin may implement ``get_update_interval()`` to vary its own cadence
+        at runtime, which the static manifest value cannot express. The case
+        this exists for: a sports scoreboard needs to poll every 15s while a
+        game is in progress and every 15 minutes when nothing is on, and only
+        the plugin knows which is true right now. Returning None from the hook
+        means "no opinion", and the static resolution below applies.
+
+        The hook is called on every scheduling tick, so implementations must be
+        cheap — attribute reads, no config lookups and no I/O. A raising or
+        non-numeric hook is ignored rather than allowed to stop the plugin
+        updating, since a scheduler that propagates a plugin bug stops every
+        other plugin too.
+
+        The static result is cached per plugin_id after the first lookup to
+        avoid calling config_manager.get_config() — which returns a full dict
+        copy — on every tick of the 30-fps display loop. The cache is
+        invalidated when a plugin is loaded or unloaded. The dynamic hook is
+        deliberately *not* cached: caching it would defeat its only purpose.
         """
+        dynamic = self._dynamic_update_interval(plugin_id, plugin_instance)
+        if dynamic is not None:
+            return dynamic
+
         if plugin_id in self._update_interval_cache:
             return self._update_interval_cache[plugin_id]
 
