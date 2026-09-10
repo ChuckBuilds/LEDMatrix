@@ -91,7 +91,7 @@ def _cache_put(key: Tuple[str, int], value: Tuple[Any, int]) -> None:
         _font_cache.popitem(last=False)
 
 # Config keys a style element block carries, in schema/UI order.
-_STYLE_KEYS = ('font', 'font_size', 'text_color')
+_STYLE_KEYS = ('font', 'font_size', 'text_color', 'visible', 'align')
 
 
 @dataclass(frozen=True)
@@ -105,6 +105,14 @@ class ElementStyle:
     font_size: int                  # resolved pixel size
     user_forced: bool               # font or size genuinely overridden
     user_forced_color: bool         # color genuinely overridden
+
+    # The three below default to "change nothing", so a caller that ignores
+    # them renders exactly as it did before they existed, and a caller that
+    # honours them sees a neutral value until the user actually asks for
+    # something. That is what keeps an untouched config byte-identical.
+    visible: bool = True            # False hides the element entirely
+    align: Optional[str] = None     # 'left'|'center'|'right'; None = caller's own
+    scale: float = 1.0              # size multiplier for images/logos
 
 
 # ---------------------------------------------------------------------------
@@ -412,6 +420,35 @@ def _element_block_from_spec(element_key: str,
         properties['text_color'] = color_prop
         order.append('text_color')
 
+    # ``"visible": true`` is accepted as shorthand for
+    # ``{"default": true}`` -- the common case is a plugin saying only that
+    # the element can be hidden.
+    visible_spec = spec.get('visible')
+    if visible_spec is True or isinstance(visible_spec, dict):
+        default = True
+        if isinstance(visible_spec, dict):
+            default = bool(visible_spec.get('default', True))
+        properties['visible'] = {
+            'type': 'boolean',
+            'title': 'Show',
+            'default': default,
+            'x-widget': 'toggle-switch',
+        }
+        order.append('visible')
+
+    align_spec = spec.get('align')
+    if align_spec is True or isinstance(align_spec, dict):
+        align_prop: Dict[str, Any] = {
+            'type': 'string',
+            'title': 'Align',
+            'enum': list(_ALIGNMENTS),
+            'x-advanced': True,
+        }
+        if isinstance(align_spec, dict) and 'default' in align_spec:
+            align_prop['default'] = align_spec['default']
+        properties['align'] = align_prop
+        order.append('align')
+
     return {
         'type': 'object',
         'title': spec.get('title', element_key),
@@ -424,21 +461,44 @@ def _element_block_from_spec(element_key: str,
 
 def _offset_block_from_spec(element_key: str,
                             spec: Dict[str, Any]) -> Dict[str, Any]:
-    """Build one layout.<element> offset block (x/y, default 0)."""
+    """Build one layout.<element> block: x/y offsets, and scale if declared."""
     axis = {
         'type': 'integer',
         'default': 0,
         'x-advanced': True,
     }
+    properties: Dict[str, Any] = {
+        'x_offset': dict(axis, title='X Offset'),
+        'y_offset': dict(axis, title='Y Offset'),
+    }
+
+    # scale sits here rather than in the element block because it is
+    # geometry, like the offsets: a logo has a scale and no font, and the
+    # renderer applies both when it places the thing.
+    scale_spec = spec.get('scale')
+    if scale_spec is True or isinstance(scale_spec, dict):
+        scale_prop: Dict[str, Any] = {
+            'type': 'number',
+            'title': 'Scale',
+            'description': 'Size multiplier; 1 is the shipped size.',
+            'default': 1.0,
+            'minimum': 0.1,
+            'maximum': 10.0,
+            'x-advanced': True,
+        }
+        if isinstance(scale_spec, dict):
+            for key, prop_key in (('default', 'default'),
+                                  ('min', 'minimum'), ('max', 'maximum')):
+                if key in scale_spec:
+                    scale_prop[prop_key] = scale_spec[key]
+        properties['scale'] = scale_prop
+
     return {
         'type': 'object',
         'title': spec.get('title', element_key),
         'x-style-managed': True,
         'additionalProperties': False,
-        'properties': {
-            'x_offset': dict(axis, title='X Offset'),
-            'y_offset': dict(axis, title='Y Offset'),
-        },
+        'properties': properties,
     }
 
 
@@ -458,6 +518,13 @@ def _nullable(prop: Dict[str, Any]) -> Dict[str, Any]:
         types = list(types) + ['null']
     out['type'] = types
     out['default'] = None
+    # An enum constrains the value independently of the type, so widening
+    # the type is not enough: null has to be an allowed choice too, or the
+    # default this function just set fails its own schema. That is not a
+    # corner case -- the save flow writes the default into config, so a
+    # plugin declaring an enum field with modes could not save at all.
+    if isinstance(out.get('enum'), list) and None not in out['enum']:
+        out['enum'] = list(out['enum']) + [None]
     return out
 
 
@@ -534,6 +601,9 @@ def defaults_from_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
     Elements with no declared defaults are omitted. Never raises.
     """
     elements: Dict[str, Dict[str, Any]] = {}
+    # Layout defaults live alongside the elements under the reserved
+    # 'layout' key, mirroring the config shape, so one dict carries both.
+    layout: Dict[str, Dict[str, Any]] = {}
     try:
         customization = schema.get('properties', {}).get('customization')
         if not isinstance(customization, dict):
@@ -554,11 +624,33 @@ def defaults_from_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
                 color_spec = spec.get('color')
                 if isinstance(color_spec, dict) and 'default' in color_spec:
                     defaults['text_color'] = list(color_spec['default'])
+                visible_spec = spec.get('visible')
+                if visible_spec is True:
+                    defaults['visible'] = True
+                elif isinstance(visible_spec, dict) and 'default' in visible_spec:
+                    defaults['visible'] = bool(visible_spec['default'])
+                align_spec = spec.get('align')
+                if isinstance(align_spec, dict) and 'default' in align_spec:
+                    defaults['align'] = align_spec['default']
+                scale_spec = spec.get('scale')
+                if isinstance(scale_spec, dict) and 'default' in scale_spec:
+                    layout.setdefault(element_key, {})['scale'] =                         scale_spec['default']
+                elif scale_spec is True:
+                    layout.setdefault(element_key, {})['scale'] = 1.0
                 if defaults:
                     elements[element_key] = defaults
 
         properties = customization.get('properties')
         if isinstance(properties, dict):
+            layout_block = properties.get('layout')
+            if isinstance(layout_block, dict):
+                for element_key, block in (
+                        layout_block.get('properties') or {}).items():
+                    if not isinstance(block, dict):
+                        continue
+                    scale_prop = (block.get('properties') or {}).get('scale')
+                    if isinstance(scale_prop, dict) and 'default' in scale_prop:
+                        layout.setdefault(element_key, {})['scale'] =                             scale_prop['default']
             for element_key, block in properties.items():
                 if element_key in ('layout', 'modes') or element_key in elements:
                     continue
@@ -576,6 +668,8 @@ def defaults_from_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
                     elements[element_key] = defaults
     except Exception as e:
         logger.warning("Error extracting style defaults from schema: %s", e)
+    if layout:
+        elements['layout'] = layout
     return {'customization': elements}
 
 
@@ -610,6 +704,55 @@ def _normalize_color(value: Any) -> Optional[Tuple[int, int, int]]:
         if all(0 <= c <= 255 for c in rgb):
             return rgb  # type: ignore[return-value]
     return None
+
+
+def _coerce_bool(value: Any, default: bool) -> bool:
+    """A real bool, or ``default``. Accepts the strings a form may post."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in ('true', 'yes', 'on', '1'):
+            return True
+        if lowered in ('false', 'no', 'off', '0'):
+            return False
+    return default
+
+
+_ALIGNMENTS = ('left', 'center', 'right')
+
+
+def _coerce_align(value: Any) -> Optional[str]:
+    """One of left/center/right, or None for anything else.
+
+    None means "no preference", which is what an unset value resolves to --
+    the caller keeps whatever alignment it already did.
+    """
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in _ALIGNMENTS:
+            return lowered
+        if lowered in ('centre', 'middle'):   # the spelling users try
+            return 'center'
+    return None
+
+
+def _coerce_scale(value: Any, default: float) -> float:
+    """A positive size multiplier, or ``default``.
+
+    Clamped rather than merely validated: a scale of 0 or a negative one is
+    a zero-or-inverted image, and the panel is 32 pixels tall -- a typo
+    should cost a wrong size, not a crash inside PIL.
+    """
+    if isinstance(value, bool) or value is None:
+        return default
+    try:
+        scale = float(value)
+    except (TypeError, ValueError):
+        return default
+    if scale <= 0:
+        return default
+    return min(scale, 10.0)
 
 
 class ElementStyleResolver:
@@ -797,6 +940,16 @@ class ElementStyleResolver:
                 return 0
 
     @staticmethod
+    def _layout_element(block: Dict[str, Any],
+                        element_key: str) -> Dict[str, Any]:
+        """``block['layout'][element]``, or {} if absent anywhere."""
+        layout = block.get('layout', {})
+        if not isinstance(layout, dict):
+            return {}
+        element = layout.get(element_key, {})
+        return element if isinstance(element, dict) else {}
+
+    @staticmethod
     def _layout_axis(block: Dict[str, Any], element_key: str,
                      axis: str) -> Any:
         """``block['layout'][element][axis]``, or None if absent anywhere."""
@@ -831,6 +984,29 @@ class ElementStyleResolver:
         return int(default)
 
     # -- resolution internals -----------------------------------------------
+
+    def _forced(self, element_config: Dict[str, Any],
+                element_defaults: Dict[str, Any],
+                mode_config: Dict[str, Any], key: str) -> Any:
+        """A field's value if the user genuinely chose one, else None.
+
+        Same two-layer rule the font/size/colour resolution uses: a mode
+        value counts whenever it is set, a base value only when it differs
+        from the schema default (the save flow writes that default in
+        whether or not the user touched it). Returning None for "not
+        chosen" lets the caller substitute a neutral value, which is how
+        an untouched config keeps rendering exactly as before.
+        """
+        mode_value = mode_config.get(key)
+        if mode_value is not None:
+            return mode_value
+        configured = element_config.get(key)
+        if configured is None:
+            return None
+        if key in element_defaults and configured == element_defaults[key]:
+            return None
+        return configured
+
 
     def _resolve(self, element_key: str, classic_font: str,
                  classic_size: int,
@@ -897,6 +1073,20 @@ class ElementStyleResolver:
         if mode_color is not None:
             color, color_forced = mode_color, True
 
+        visible = self._forced(element_config, element_defaults,
+                               mode_config, 'visible')
+        align = self._forced(element_config, element_defaults,
+                             mode_config, 'align')
+        # scale is geometry, so it lives with the offsets rather than in the
+        # element block -- a logo has a scale and no font.
+        layout_defaults = self._defaults.get('layout', {})
+        scale = self._forced(
+            self._layout_element(self._customization(), element_key),
+            layout_defaults.get(element_key, {})
+            if isinstance(layout_defaults, dict) else {},
+            self._layout_element(self._mode_block(mode), element_key),
+            'scale')
+
         # font_size reports what was actually realised, which differs from
         # the request only when a BDF snapped to its native strike. Callers
         # lay out from this value; reporting the request would reserve space
@@ -910,6 +1100,9 @@ class ElementStyleResolver:
             font_size=realised_size,
             user_forced=user_forced,
             user_forced_color=bool(color_forced),
+            visible=_coerce_bool(visible, True),
+            align=_coerce_align(align),
+            scale=_coerce_scale(scale, 1.0),
         )
 
     def _classic_style(self, classic_font: str, classic_size: int,

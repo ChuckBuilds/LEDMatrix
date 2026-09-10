@@ -1416,8 +1416,36 @@ button.bg-white {
 /* ---- Style editor widget -------------------------------------------- */
 /* One row per display element: label, font, size, colour, X, Y. The grid
    is declared once here so the header and the rows cannot drift apart. */
+/* The plugin config panel is narrower than nine columns of controls, and a
+   clipped table hides the offsets entirely -- scroll the table rather than
+   crushing the controls or dropping columns. */
+.style-editor {
+    overflow-x: auto;
+}
+.style-editor-table {
+    min-width: max-content;
+}
+/* Scrolled right, the element names would otherwise scroll away and the
+   row you are editing becomes anonymous. */
+.style-editor-label,
+.style-editor-head > :first-child {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background-color: #ffffff;
+}
+.style-editor-head > :first-child {
+    background-color: #f9fafb;
+}
 .style-editor-row {
-    grid-template-columns: minmax(7rem, 1.4fr) minmax(8rem, 2fr) 5.5rem 4.5rem 4rem 4rem;
+    /* Set by the widget: the column count depends on what the plugin
+       declares, so the track list cannot be fixed here. */
+    grid-template-columns: var(--style-editor-columns,
+        minmax(7rem, 1.4fr) minmax(8rem, 2fr) 5rem 4.5rem 5rem 5rem);
+}
+.style-editor-check {
+    width: 1rem;
+    height: 1rem;
 }
 .style-editor-row .form-control {
     padding: 0.2rem 0.4rem;

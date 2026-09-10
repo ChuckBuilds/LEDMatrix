@@ -1,13 +1,13 @@
 /**
  * Style Editor Widget
  *
- * One compact row per display element -- font, size, colour, X/Y nudge --
- * instead of the nested accordions the generic object renderer produces. A
- * realistic scoreboard declares seven elements with layout offsets and three
- * modes, which comes to 65 nested sections and five levels of clicking to
- * reach one per-mode font size.
+ * One compact row per display element -- font, size, colour, alignment,
+ * visibility, X/Y nudge, scale -- instead of the nested accordions the
+ * generic object renderer produces. A realistic scoreboard declares seven
+ * elements with layout offsets and three modes, which comes to 65 nested
+ * sections and five levels of clicking to reach one per-mode font size.
  *
- * Two things about this widget are load-bearing:
+ * Three things about this widget are load-bearing:
  *
  * 1. It emits ordinary inputs with the same dotted names the generic
  *    renderer would produce (`customization.score_text.font`,
@@ -16,13 +16,14 @@
  *    save/validate/merge pipeline is therefore untouched: no hidden JSON
  *    blob, no new server-side parsing.
  *
- * 2. It is driven entirely by the schema block it is handed. It renders
- *    whatever sub-fields each element declares, so fields added to the
- *    schema later appear here without touching this file.
+ * 2. Its columns come from the schema, not from a list in here. A column
+ *    appears when any element declares that field, so a plugin adding a
+ *    field to its schema gets a control without this file changing, and a
+ *    logo that declares only offsets and a scale gets no empty font cell.
  *
- * Mode tabs edit `customization.modes.<mode>`, whose fields mean "inherit"
- * when blank. Blank must therefore post as empty (-> null), never as 0, or
- * every mode would pin itself to the base the first time it was saved.
+ * 3. Mode tabs edit `customization.modes.<mode>`, whose fields mean
+ *    "inherit" when blank. Blank must post as empty (-> null), never as 0,
+ *    or every mode would pin itself to the base the first time it was saved.
  *
  * @module StyleEditorWidget
  */
@@ -78,6 +79,16 @@
         return node;
     }
 
+    /** Walk a nested value object by path segments. */
+    function at(value, path) {
+        var cur = value;
+        for (var i = 0; i < path.length; i++) {
+            if (cur === null || typeof cur !== 'object') { return undefined; }
+            cur = cur[path[i]];
+        }
+        return cur;
+    }
+
     /**
      * What a control should show: the configured value if there is one,
      * else the schema default.
@@ -96,16 +107,6 @@
         return prop ? prop.default : undefined;
     }
 
-    /** Walk a nested value object by path segments. */
-    function at(value, path) {
-        var cur = value;
-        for (var i = 0; i < path.length; i++) {
-            if (cur === null || typeof cur !== 'object') { return undefined; }
-            cur = cur[path[i]];
-        }
-        return cur;
-    }
-
     /**
      * Element blocks in a customization schema, in declared order.
      * `layout` and `modes` are containers, not elements.
@@ -115,7 +116,7 @@
         var order = schema['x-propertyOrder'] || Object.keys(props);
         return order.filter(function (k) {
             return k !== 'layout' && k !== 'modes'
-                && props[k] && props[k].type === 'object' && props[k].properties;
+                && props[k] && props[k].properties;
         });
     }
 
@@ -141,8 +142,56 @@
             select.appendChild(opt);
         });
         if (current) { select.value = current; }
-        select.addEventListener('change', onChange);
+        if (onChange) { select.addEventListener('change', onChange); }
         return select;
+    }
+
+    function enumControl(name, current, choices, optional) {
+        var select = el('select', {
+            name: name,
+            class: 'form-control text-sm style-editor-enum'
+        });
+        if (optional) {
+            select.appendChild(el('option', { value: '', text: 'Inherit' }));
+        }
+        choices.forEach(function (c) {
+            select.appendChild(el('option', {
+                value: c,
+                text: String(c).replace(/_/g, ' ')
+            }));
+        });
+        if (current !== undefined && current !== null) { select.value = current; }
+        return select;
+    }
+
+    function booleanControl(name, current, optional) {
+        if (optional) {
+            // Three states, not two: on, off, and "follow the base". A bare
+            // checkbox cannot say the third, and an unchecked box would read
+            // as "hide this in live mode" rather than "no preference".
+            return enumControl(name, boolAsString(current),
+                               ['true', 'false'], true);
+        }
+        // An unchecked checkbox posts nothing at all, so the hidden field
+        // carries the value and the checkbox drives it. The save path turns
+        // "true"/"false" into a real boolean.
+        var wrap = el('div', { class: 'flex items-center' });
+        var hidden = el('input', { type: 'hidden', name: name });
+        var box = el('input', { type: 'checkbox', class: 'style-editor-check' });
+        box.checked = current !== false;
+        hidden.value = box.checked ? 'true' : 'false';
+        box.addEventListener('change', function () {
+            hidden.value = box.checked ? 'true' : 'false';
+        });
+        wrap.appendChild(box);
+        wrap.appendChild(hidden);
+        return wrap;
+    }
+
+    function boolAsString(value) {
+        if (value === true) { return 'true'; }
+        if (value === false) { return 'false'; }
+        return undefined;
     }
 
     function numberControl(name, current, prop, placeholder) {
@@ -154,6 +203,10 @@
         });
         if (prop && prop.minimum !== undefined) { input.min = prop.minimum; }
         if (prop && prop.maximum !== undefined) { input.max = prop.maximum; }
+        if (prop && prop.type
+            && String(prop.type).indexOf('number') !== -1) {
+            input.step = 'any';
+        }
         // Blank stays blank. For a mode field that is the inherit sentinel;
         // writing 0 here would pin the mode to the base on the next save.
         if (current !== undefined && current !== null) { input.value = current; }
@@ -175,10 +228,7 @@
         var wrap = el('div', { class: 'flex items-center gap-1' });
         var has = Array.isArray(current) && current.length >= 3;
         var channels = [0, 1, 2].map(function (i) {
-            var input = el('input', {
-                type: 'hidden',
-                name: name + '.' + i
-            });
+            var input = el('input', { type: 'hidden', name: name + '.' + i });
             if (has) { input.value = current[i]; }
             return input;
         });
@@ -192,6 +242,7 @@
         }
         setSubmitted(!optional || has);
 
+        var clearBtn = null;
         var swatch = el('input', {
             type: 'color',
             class: 'style-editor-colour',
@@ -208,7 +259,6 @@
         wrap.appendChild(swatch);
         channels.forEach(function (c) { wrap.appendChild(c); });
 
-        var clearBtn = null;
         if (optional) {
             // A mode colour must be able to go back to "inherit", which means
             // posting nothing at all -- an <input type=color> has no empty
@@ -231,21 +281,86 @@
         return wrap;
     }
 
-    // ---- rows ------------------------------------------------------------
+    // ---- columns ---------------------------------------------------------
+
+    var COLUMN_ORDER = ['font', 'font_size', 'text_color', 'align', 'visible',
+                        'x_offset', 'y_offset', 'scale'];
+    var COLUMN_LABELS = {
+        font: 'Font', font_size: 'Size', text_color: 'Colour',
+        align: 'Align', visible: 'Show',
+        x_offset: 'X', y_offset: 'Y', scale: 'Scale'
+    };
+    var COLUMN_WIDTHS = {
+        font: 'minmax(8rem, 2fr)', text_color: '4.5rem', align: '6rem',
+        visible: '3.5rem'
+    };
 
     /**
-     * One element's row. `prefix` is the dotted path the inputs post under;
-     * `optional` marks a mode layer, where every field may be left blank.
+     * The columns a table needs, derived from the schema rather than fixed.
+     *
+     * Two sources: the sub-fields elements declare (font, font_size,
+     * text_color, visible, align) and the sub-fields their layout blocks
+     * declare (x_offset, y_offset, scale).
      */
+    function columnsFor(schema) {
+        var props = schema.properties || {};
+        var layoutProps = (props.layout || {}).properties || {};
+        var seen = {};
+        elementKeys(schema).forEach(function (key) {
+            Object.keys((props[key] || {}).properties || {}).forEach(
+                function (f) { seen[f] = 'element'; });
+            Object.keys((layoutProps[key] || {}).properties || {}).forEach(
+                function (f) { seen[f] = 'layout'; });
+        });
+        var known = COLUMN_ORDER.filter(function (f) { return seen[f]; });
+        // Anything the schema declares that this file has never heard of
+        // still gets a column, rather than silently vanishing.
+        var extra = Object.keys(seen).filter(function (f) {
+            return COLUMN_ORDER.indexOf(f) === -1;
+        }).sort();
+        return known.concat(extra).map(function (f) {
+            return {
+                key: f,
+                where: seen[f],
+                label: COLUMN_LABELS[f] || f.replace(/_/g, ' ')
+            };
+        });
+    }
+
+    /** Build the control for one cell from its schema property. */
+    function control(opts) {
+        var prop = opts.prop;
+        var declared = prop.type;
+        var types = Array.isArray(declared) ? declared : [declared];
+
+        if (opts.key === 'font' || prop['x-widget'] === 'font-selector') {
+            return fontControl(opts.name, opts.current, opts.fonts,
+                               opts.optional, opts.onFontChange);
+        }
+        if (types.indexOf('boolean') !== -1) {
+            return booleanControl(opts.name, opts.current, opts.optional);
+        }
+        if (types.indexOf('array') !== -1) {
+            return colourControl(opts.name, opts.current, opts.optional);
+        }
+        if (Array.isArray(prop.enum)) {
+            return enumControl(opts.name, opts.current, prop.enum,
+                               opts.optional);
+        }
+        return numberControl(opts.name, opts.current, prop,
+                             opts.optional ? 'inherit' : '');
+    }
+
     function elementRow(opts) {
         var schema = opts.schema;
         var key = opts.key;
-        var prefix = opts.prefix;
         var value = opts.value;
-        var fonts = opts.fonts;
         var optional = opts.optional;
 
         var props = ((schema.properties || {})[key] || {}).properties || {};
+        var layoutProps = ((schema.properties || {}).layout || {}).properties || {};
+        var axes = (layoutProps[key] || {}).properties || {};
+
         var row = el('div', {
             class: 'style-editor-row grid items-center gap-2 py-1',
             'data-element': key
@@ -257,10 +372,11 @@
 
         var sizeInput = null;
         var sizeNote = el('span', { class: 'text-xs text-gray-500 ml-1' });
+        var fontSelect = null;
 
         function syncSize(select) {
             // A BDF font has exactly one usable pixel size; offering a free
-            // number there is offering something that cannot take effect.
+            // number there offers something that cannot take effect.
             if (!sizeInput || !select) { return; }
             var opt = select.options[select.selectedIndex];
             var scalable = !opt || opt.dataset.scalable !== '0';
@@ -276,81 +392,73 @@
             }
         }
 
-        var fontSelect = null;
-        if (props.font) {
-            fontSelect = fontControl(prefix + '.font',
-                                     effective(value, [key, 'font'],
-                                               props.font, optional),
-                                     fonts, optional,
-                                     function () { syncSize(fontSelect); });
-            row.appendChild(fontSelect);
-        } else {
-            row.appendChild(el('span'));
-        }
-
-        if (props.font_size) {
-            var cell = el('div', { class: 'flex items-center' });
-            sizeInput = numberControl(prefix + '.font_size',
-                                      effective(value, [key, 'font_size'],
-                                                props.font_size, optional),
-                                      props.font_size,
-                                      optional ? 'inherit' : '');
-            cell.appendChild(sizeInput);
-            cell.appendChild(sizeNote);
-            row.appendChild(cell);
-        } else {
-            row.appendChild(el('span'));
-        }
-
-        if (props.text_color) {
-            row.appendChild(colourControl(prefix + '.text_color',
-                                          effective(value, [key, 'text_color'],
-                                                    props.text_color, optional),
-                                          optional));
-        } else {
-            row.appendChild(el('span'));
-        }
-
-        // Offsets live in a sibling `layout` block, not inside the element,
-        // which is exactly why this widget takes the whole customization
-        // object rather than being registered per element.
-        var layoutProps = ((schema.properties || {}).layout || {}).properties || {};
-        var axes = (layoutProps[key] || {}).properties || {};
-        ['x_offset', 'y_offset'].forEach(function (axis) {
-            if (!axes[axis]) { row.appendChild(el('span')); return; }
-            row.appendChild(numberControl(
-                opts.layoutPrefix + '.' + key + '.' + axis,
-                effective(value, ['layout', key, axis], axes[axis], optional),
-                axes[axis],
-                optional ? 'inherit' : '0'));
+        opts.columns.forEach(function (col) {
+            var inLayout = col.where === 'layout';
+            var prop = inLayout ? axes[col.key] : props[col.key];
+            if (!prop) {
+                // This element does not declare that field; keep the grid
+                // aligned with an empty cell.
+                row.appendChild(el('span'));
+                return;
+            }
+            var path = inLayout ? ['layout', key, col.key] : [key, col.key];
+            var base = inLayout ? opts.layoutPrefix + '.' + key
+                                : opts.prefix + '.' + key;
+            var node = control({
+                key: col.key,
+                prop: prop,
+                name: base + '.' + col.key,
+                current: effective(value, path, prop, optional),
+                optional: optional,
+                fonts: opts.fonts,
+                onFontChange: function () { syncSize(fontSelect); }
+            });
+            if (col.key === 'font') { fontSelect = node; }
+            if (col.key === 'font_size') {
+                sizeInput = node;
+                var cell = el('div', { class: 'flex items-center' });
+                cell.appendChild(node);
+                cell.appendChild(sizeNote);
+                node = cell;
+            }
+            row.appendChild(node);
         });
 
         if (fontSelect) { syncSize(fontSelect); }
         return row;
     }
 
-    function header(schema) {
-        var cols = ['Element', 'Font', 'Size', 'Colour', 'X', 'Y'];
+    function header(columns) {
         var row = el('div', {
             class: 'style-editor-row style-editor-head grid gap-2 pb-1 mb-1 border-b border-gray-300'
         });
-        cols.forEach(function (c) {
-            row.appendChild(el('div', {
-                class: 'text-xs font-semibold text-gray-500 uppercase',
-                text: c
-            }));
-        });
+        ['Element'].concat(columns.map(function (c) { return c.label; }))
+            .forEach(function (label) {
+                row.appendChild(el('div', {
+                    class: 'text-xs font-semibold text-gray-500 uppercase',
+                    text: label
+                }));
+            });
         return row;
     }
 
     function table(opts) {
         var wrap = el('div', { class: 'style-editor-table' });
-        wrap.appendChild(header(opts.schema));
+        var columns = columnsFor(opts.schema);
+        // Sized here rather than in CSS: the column count depends on what
+        // the plugin declared.
+        wrap.style.gridTemplateColumns = '';
+        wrap.style.setProperty('--style-editor-columns',
+            'minmax(7rem, 1.4fr) ' + columns.map(function (c) {
+                return COLUMN_WIDTHS[c.key] || '5rem';
+            }).join(' '));
+        wrap.appendChild(header(columns));
         elementKeys(opts.schema).forEach(function (key) {
             wrap.appendChild(elementRow({
                 schema: opts.schema,
                 key: key,
-                prefix: opts.prefix + '.' + key,
+                columns: columns,
+                prefix: opts.prefix,
                 layoutPrefix: opts.prefix + '.layout',
                 value: opts.value,
                 fonts: opts.fonts,
@@ -364,7 +472,7 @@
 
     window.LEDMatrixWidgets.register('style-editor', {
         name: 'Style Editor',
-        version: '1.0.0',
+        version: '1.1.0',
 
         render: function (container, config, value, options) {
             var schema = (config && config.schema) || {};
@@ -443,7 +551,7 @@
             });
         },
 
-        getValue: function (fieldId) {
+        getValue: function () {
             // The inputs are ordinary named form fields; the form itself is
             // the source of truth, so there is no separate value to hand back.
             return null;

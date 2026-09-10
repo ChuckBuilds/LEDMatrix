@@ -824,3 +824,160 @@ class TestModeSaveRoundTrip:
                 "font_size": 99}}}}}, defaults)
         ok, _errors = sm.validate_config_against_schema(merged, schema)
         assert not ok
+
+EXTRA_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "customization": {
+            "type": "object",
+            "x-style-modes": ["live"],
+            "x-style-elements": {
+                "score_text": {
+                    "title": "Score",
+                    "font": {"default": "PressStart2P-Regular.ttf"},
+                    "size": {"default": 10},
+                    "color": {"default": [255, 255, 255]},
+                    "visible": True,
+                    "align": {"default": "center"},
+                    "offsets": True,
+                },
+                "home_logo": {
+                    "title": "Home Logo",
+                    "offsets": True,
+                    "visible": True,
+                    "scale": {"default": 1.0, "min": 0.25, "max": 4},
+                },
+            },
+        },
+    },
+}
+
+
+@pytest.fixture
+def extra_schema_path(tmp_path):
+    path = tmp_path / "extra_schema.json"
+    path.write_text(json.dumps(EXTRA_SCHEMA), encoding="utf-8")
+    return str(path)
+
+
+class TestVisibleAlignScale:
+    """visible / align / scale all resolve to "change nothing" until asked.
+
+    That is the same invariant the font fields keep: a caller that honours
+    these must still render an untouched config exactly as it did before
+    they existed, so the neutral values are True / None / 1.0 rather than
+    whatever the schema happens to declare.
+    """
+
+    def _style(self, config, mode=None, schema=None):
+        defaults = defaults_from_schema_file(schema) if schema else {}
+        return ElementStyleResolver(config, defaults, mode=mode).style(
+            "score_text", classic_font="PressStart2P-Regular.ttf",
+            classic_size=10, classic_color=(255, 255, 255))
+
+    def test_an_untouched_config_is_neutral(self, extra_schema_path):
+        st = self._style({}, schema=extra_schema_path)
+        assert (st.visible, st.align, st.scale) == (True, None, 1.0)
+
+    def test_a_schema_default_is_not_a_choice(self, extra_schema_path):
+        """align defaults to 'center' in the schema, and the save flow writes
+        that into config -- which must not read as the user asking for it."""
+        config = {"customization": {"score_text": {"align": "center",
+                                                   "visible": True}}}
+        st = self._style(config, schema=extra_schema_path)
+        assert st.align is None, "the plugin keeps its own alignment"
+        assert st.visible is True
+
+    def test_hiding_an_element(self, extra_schema_path):
+        config = {"customization": {"score_text": {"visible": False}}}
+        assert self._style(config, schema=extra_schema_path).visible is False
+
+    def test_a_real_alignment_choice_comes_through(self, extra_schema_path):
+        config = {"customization": {"score_text": {"align": "right"}}}
+        assert self._style(config, schema=extra_schema_path).align == "right"
+
+    @pytest.mark.parametrize("written,expected", [
+        ("left", "left"), ("RIGHT", "right"), ("  center ", "center"),
+        ("centre", "center"), ("middle", "center"),
+        ("sideways", None), ("", None), (5, None), (None, None),
+    ])
+    def test_alignment_coercion(self, written, expected, extra_schema_path):
+        config = {"customization": {"score_text": {"align": written}}}
+        assert self._style(config, schema=extra_schema_path).align == expected
+
+    @pytest.mark.parametrize("written,expected", [
+        (2, 2.0), (0.5, 0.5), ("1.5", 1.5),
+        (0, 1.0), (-3, 1.0),          # nonsense degrades, never inverts
+        (999, 10.0),                  # clamped: the panel is 32px tall
+        ("huge", 1.0), (None, 1.0), (True, 1.0),
+    ])
+    def test_scale_coercion(self, written, expected, extra_schema_path):
+        config = {"customization": {"layout": {"score_text": {"scale": written}}}}
+        assert self._style(config, schema=extra_schema_path).scale == expected
+
+    def test_scale_reads_from_the_layout_block(self, extra_schema_path):
+        """scale is geometry, so it sits with the offsets -- a logo has a
+        scale and no font."""
+        config = {"customization": {"layout": {"score_text": {"scale": 2}}}}
+        assert self._style(config, schema=extra_schema_path).scale == 2.0
+
+    @pytest.mark.parametrize("field,value,attr,expected", [
+        ("visible", False, "visible", False),
+        ("align", "right", "align", "right"),
+    ])
+    def test_a_mode_overrides_them(self, field, value, attr, expected,
+                                   extra_schema_path):
+        config = {"customization": {"modes": {
+            "live": {"score_text": {field: value}}}}}
+        st = self._style(config, mode="live", schema=extra_schema_path)
+        assert getattr(st, attr) == expected
+
+    def test_a_mode_overrides_scale(self, extra_schema_path):
+        config = {"customization": {
+            "layout": {"score_text": {"scale": 2}},
+            "modes": {"live": {"layout": {"score_text": {"scale": 3}}}}}}
+        assert self._style(config, mode="live",
+                           schema=extra_schema_path).scale == 3.0
+
+    def test_an_unset_mode_field_inherits_the_base(self, extra_schema_path):
+        config = {"customization": {
+            "score_text": {"visible": False},
+            "modes": {"live": {"score_text": {"align": "right"}}}}}
+        st = self._style(config, mode="live", schema=extra_schema_path)
+        assert st.visible is False and st.align == "right"
+
+
+class TestExtraFieldSchema:
+    def _props(self):
+        return expand_style_elements(
+            EXTRA_SCHEMA)["properties"]["customization"]["properties"]
+
+    def test_only_declared_subfields_are_emitted(self):
+        """home_logo declares no font, so it gets no font control."""
+        assert list(self._props()["home_logo"]["properties"]) == ["visible"]
+
+    def test_a_text_element_gets_the_text_fields(self):
+        assert list(self._props()["score_text"]["properties"]) == [
+            "font", "font_size", "text_color", "visible", "align"]
+
+    def test_scale_is_emitted_with_the_offsets(self):
+        layout = self._props()["layout"]["properties"]
+        assert list(layout["home_logo"]["properties"]) == [
+            "x_offset", "y_offset", "scale"]
+        assert list(layout["score_text"]["properties"]) == [
+            "x_offset", "y_offset"], "scale is opt-in"
+
+    def test_declared_scale_bounds_are_kept(self):
+        scale = self._props()["layout"]["properties"]["home_logo"]["properties"]["scale"]
+        assert (scale["minimum"], scale["maximum"]) == (0.25, 4)
+
+    def test_align_offers_only_valid_choices(self):
+        align = self._props()["score_text"]["properties"]["align"]
+        assert align["enum"] == ["left", "center", "right"]
+
+    def test_the_mode_copies_are_nullable(self):
+        live = self._props()["modes"]["properties"]["live"]["properties"]
+        assert live["score_text"]["properties"]["visible"]["default"] is None
+        assert "null" in live["score_text"]["properties"]["visible"]["type"]
+        scale = live["layout"]["properties"]["home_logo"]["properties"]["scale"]
+        assert scale["default"] is None and "null" in scale["type"]
