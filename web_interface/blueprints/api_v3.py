@@ -4635,6 +4635,29 @@ def _is_field_required(key_path, schema):
 # Sentinel object to indicate a field should be skipped (not set in config)
 _SKIP_FIELD = object()
 
+def _schema_type_is(prop, wanted):
+    """Whether a schema property is of ``wanted`` type.
+
+    JSON Schema allows a union (``["array", "null"]``), which the per-element
+    style system uses for its per-mode override fields: null there means
+    "inherit the base", so the type genuinely is "an array or nothing". A
+    bare ``prop.get('type') == 'array'`` reads False for those, which meant
+    the indexed colour inputs a form posts as ``...text_color.0/.1/.2`` were
+    never recombined into a list.
+    """
+    if not isinstance(prop, dict):
+        return False
+    declared = prop.get('type')
+    if isinstance(declared, list):
+        return wanted in declared
+    return declared == wanted
+
+
+def _schema_allows_null(prop):
+    """Whether a schema property's declared type includes null."""
+    return _schema_type_is(prop, 'null')
+
+
 def _parse_form_value_with_schema(value, key_path, schema):
     """
     Parse a form value using schema information to determine correct type.
@@ -4655,11 +4678,17 @@ def _parse_form_value_with_schema(value, key_path, schema):
 
     # Handle None/empty values
     if value is None or (isinstance(value, str) and value.strip() == ''):
+        # A nullable field left blank means null, not an empty container.
+        # This is the inherit sentinel for per-mode style overrides: an
+        # empty list there would read as "the user chose no colour" rather
+        # than "follow the base element".
+        if _schema_allows_null(prop):
+            return None
         # If schema says it's an array, return empty array instead of None
-        if prop and prop.get('type') == 'array':
+        if prop and _schema_type_is(prop, 'array'):
             return []
         # If schema says it's an object, return empty dict instead of None
-        if prop and prop.get('type') == 'object':
+        if prop and _schema_type_is(prop, 'object'):
             return {}
         # If it's an optional string field, preserve empty string instead of None
         if prop and prop.get('type') == 'string':
@@ -4696,7 +4725,7 @@ def _parse_form_value_with_schema(value, key_path, schema):
                 return False
 
         # Handle arrays based on schema
-        if prop and prop.get('type') == 'array':
+        if prop and _schema_type_is(prop, 'array'):
             # Try parsing as JSON first (handles "[1,2,3]" format)
             if stripped.startswith('['):
                 try:
@@ -5135,7 +5164,7 @@ def save_plugin_config():
                         if last_part.isdigit():
                             # Get schema property for the base path to verify it's an array
                             base_prop = _get_schema_property(schema, base_path)
-                            if base_prop and base_prop.get('type') == 'array':
+                            if base_prop and _schema_type_is(base_prop, 'array'):
                                 # This is an array index field
                                 index = int(last_part)
                                 if base_path not in array_fields:
@@ -5150,6 +5179,16 @@ def save_plugin_config():
                 # Sort by index and extract values
                 index_values.sort(key=lambda x: x[0])
                 values = [v for _, v in index_values]
+                # Every channel blank on a nullable field means "unset", not
+                # an empty array: joining them would produce ", , ", which
+                # parses to [] and then fails the minItems the array
+                # declares. This is how a per-mode colour override says
+                # "inherit the base colour".
+                base_prop_for_null = _get_schema_property(schema, base_path)
+                if (_schema_allows_null(base_prop_for_null)
+                        and all(str(v).strip() == '' for v in values)):
+                    _set_nested_value(plugin_config, base_path, None)
+                    continue
                 # Combine values into comma-separated string for parsing
                 combined_value = ', '.join(str(v) for v in values)
                 # Parse as array using schema
@@ -6713,6 +6752,18 @@ def get_fonts_catalog():
                     # Check if this is a system font (cannot be deleted)
                     is_system = catalog_key.lower() in SYSTEM_FONTS
 
+                    # BDF files are fixed-size bitmap strikes: FreeType
+                    # accepts only the pixel size baked into the file. The
+                    # UI needs to know that before offering a size control,
+                    # or it offers a number that cannot take effect.
+                    native_size = None
+                    if font_type == 'bdf':
+                        try:
+                            from src.element_style import _read_bdf_native_size
+                            native_size = _read_bdf_native_size(str(filepath))
+                        except Exception:
+                            native_size = None
+
                     catalog[catalog_key] = {
                         'filename': filename,
                         'family_name': family_name,
@@ -6720,6 +6771,8 @@ def get_fonts_catalog():
                         'path': relative_path,
                         'type': font_type,
                         'is_system': is_system,
+                        'scalable': font_type != 'bdf',
+                        'native_size': native_size,
                         'metadata': metadata if metadata else None
                     }
 

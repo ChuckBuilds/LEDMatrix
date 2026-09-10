@@ -71,6 +71,54 @@
                 }
             })();
             </script>
+        {% elif obj_widget == 'style-editor' %}
+            {# Composite per-element style editor. It renders its own inputs
+               with the same dotted names the generic renderer would produce
+               (customization.score_text.font, ...text_color.0, ...), so the
+               save/validate/merge pipeline is untouched -- no hidden JSON
+               blob, no new server-side parsing. It falls back to the normal
+               nested rendering if the widget cannot be loaded. #}
+            {% set obj_value = value if value is not none else {} %}
+            <div class="form-group mb-4" id="setting-{{ field_id }}" data-setting-key="{{ full_key }}">
+                <label class="block text-sm font-medium text-gray-700 mb-1">{{ label }}{{ ui.help_tip(description, label) }}</label>
+                <div id="{{ field_id }}_container" class="style-editor-container mt-1"></div>
+                <div id="{{ field_id }}_fallback">
+                    {{ render_nested_section(key, prop, value, prefix, plugin_id) }}
+                </div>
+            </div>
+            <script>
+            (function() {
+                function initWidget() {
+                    if (!window.LEDMatrixWidgets) { setTimeout(initWidget, 50); return; }
+                    var widget = window.LEDMatrixWidgets.get('style-editor');
+                    if (!widget) { setTimeout(initWidget, 50); return; }
+                    var container = document.getElementById('{{ field_id }}_container');
+                    var fallback = document.getElementById('{{ field_id }}_fallback');
+                    if (!container) { return; }
+                    var value = {{ obj_value|tojson|safe }};
+                    var config = { schema: {{ prop|tojson|safe }} };
+                    try {
+                        widget.render(container, config, value, {
+                            fieldId: '{{ field_id }}',
+                            name: '{{ full_key }}',
+                            pluginId: '{{ plugin_id }}'
+                        });
+                    } catch (e) {
+                        console.error('[style-editor] render failed', e);
+                        container.remove();
+                        return;
+                    }
+                    // The widget owns these fields now; drop the generic
+                    // rendering so the form does not post both.
+                    if (fallback) { fallback.remove(); }
+                }
+                if (document.readyState === 'loading') {
+                    document.addEventListener('DOMContentLoaded', initWidget);
+                } else {
+                    setTimeout(initWidget, 50);
+                }
+            })();
+            </script>
         {% elif prop.properties %}
             {{ render_nested_section(key, prop, value, prefix, plugin_id) }}
         {% endif %}

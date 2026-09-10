@@ -304,6 +304,12 @@ def expand_style_elements(schema: Dict[str, Any]) -> Dict[str, Any]:
         expanded = copy.deepcopy(schema)
         customization = expanded['properties']['customization']
         customization.setdefault('type', 'object')
+        # One composite editor for the whole block. Rendered element by
+        # element, a realistic scoreboard is 65 nested accordions and five
+        # levels of clicking to reach one per-mode font size; the widget
+        # collapses that to a row per element. setdefault, so a plugin that
+        # names its own widget keeps it.
+        customization.setdefault('x-widget', 'style-editor')
         props = customization.setdefault('properties', {})
         layout_props: Dict[str, Any] = {}
 
@@ -334,6 +340,15 @@ def expand_style_elements(schema: Dict[str, Any]) -> Dict[str, Any]:
         if isinstance(modes, list) and modes:
             props.setdefault('modes',
                              _modes_block(declaration, modes))
+
+        # Declaration order, stated explicitly. Python preserves it in the
+        # dict, but the config form serialises the schema to JSON with
+        # Flask's provider, which sorts keys -- so without this the elements
+        # reach the browser alphabetised, and a scoreboard lists Detail and
+        # Odds above Score.
+        order = [k for k in declaration if isinstance(declaration.get(k), dict)]
+        order += [k for k in ('layout', 'modes') if k in props]
+        customization.setdefault('x-propertyOrder', order)
 
         return expanded
     except Exception as e:

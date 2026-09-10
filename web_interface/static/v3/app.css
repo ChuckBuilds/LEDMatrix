@@ -1412,3 +1412,57 @@ button.bg-white {
         max-width: calc(100vw - 2rem);
     }
 }
+
+/* ---- Style editor widget -------------------------------------------- */
+/* One row per display element: label, font, size, colour, X, Y. The grid
+   is declared once here so the header and the rows cannot drift apart. */
+.style-editor-row {
+    grid-template-columns: minmax(7rem, 1.4fr) minmax(8rem, 2fr) 5.5rem 4.5rem 4rem 4rem;
+}
+.style-editor-row .form-control {
+    padding: 0.2rem 0.4rem;
+    height: auto;
+}
+.style-editor-row input[type="number"] {
+    width: 100%;
+}
+.style-editor-row input[type="number"]:disabled {
+    background-color: #f3f4f6;
+    color: #9ca3af;
+    cursor: not-allowed;
+}
+.style-editor-colour {
+    width: 2rem;
+    height: 1.6rem;
+    padding: 0;
+    border: 1px solid #d1d5db;
+    border-radius: 0.25rem;
+    background: none;
+    cursor: pointer;
+}
+.style-editor-tab {
+    border: 1px solid #d1d5db;
+    background-color: #f9fafb;
+    color: #374151;
+}
+.style-editor-tab.is-active {
+    background-color: #2563eb;
+    border-color: #2563eb;
+    color: #ffffff;
+}
+.style-editor-panel[hidden] {
+    display: none;
+}
+@media (max-width: 768px) {
+    /* Stack rather than squeeze: six columns on a phone is unreadable. */
+    .style-editor-row {
+        grid-template-columns: 1fr 1fr;
+    }
+    .style-editor-head {
+        display: none;
+    }
+    .style-editor-label {
+        grid-column: 1 / -1;
+        font-weight: 600;
+    }
+}
