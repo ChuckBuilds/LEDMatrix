@@ -523,10 +523,27 @@ class ElementStyleResolver:
     from the schema default (see module docstring); otherwise ``style()``
     returns the caller's classic values verbatim, keeping untouched configs
     byte-identical to pre-customization rendering.
+
+    **Modes.** A plugin that displays the same element in more than one
+    situation — a scoreboard's live / upcoming / recent cards, weather's
+    current / hourly / daily screens — can let the user style each one
+    separately under ``customization.modes.<mode>``. The mode is normally
+    bound once at construction rather than passed per call, because the
+    natural owner already knows it: SportsUpcoming and SportsRecent are
+    distinct instances with distinct ``SKIN_MODE`` values, so binding here
+    makes every existing call site mode-aware without touching one of them.
+
+    A mode layer is pure override. Its fields default to ``None``, which
+    means *inherit*, and any non-None value wins over the base element.
+    That is why ``None`` and a real value must stay distinguishable: a mode
+    offset of ``0`` means "sit at the base position", not "no preference"
+    — the same distinction ``scroll_card.switch_*`` draws with its
+    ``"inherit"`` sentinel.
     """
 
     def __init__(self, config: Optional[Dict[str, Any]],
-                 defaults: Optional[Dict[str, Any]] = None):
+                 defaults: Optional[Dict[str, Any]] = None,
+                 mode: Optional[str] = None):
         # Keep the exact object for identity-based invalidation, even if the
         # caller hands us something odd; reads are guarded.
         self._config = config
@@ -536,7 +553,13 @@ class ElementStyleResolver:
             element_defaults = {}
         self._defaults: Dict[str, Any] = (
             element_defaults if isinstance(element_defaults, dict) else {})
+        self._mode = mode if isinstance(mode, str) and mode else None
         self._memo: Dict[Any, ElementStyle] = {}
+
+    @property
+    def mode(self) -> Optional[str]:
+        """The mode bound at construction, if any."""
+        return self._mode
 
     # -- internal accessors -------------------------------------------------
 
@@ -553,12 +576,34 @@ class ElementStyleResolver:
         defaults = self._defaults.get(element_key, {})
         return defaults if isinstance(defaults, dict) else {}
 
+    def _mode_block(self, mode: Optional[str]) -> Dict[str, Any]:
+        """``customization.modes.<mode>``, or {} when there is no such block."""
+        if not mode:
+            return {}
+        modes = self._customization().get('modes', {})
+        if not isinstance(modes, dict):
+            return {}
+        block = modes.get(mode, {})
+        return block if isinstance(block, dict) else {}
+
+    def _mode_element_config(self, element_key: str,
+                             mode: Optional[str]) -> Dict[str, Any]:
+        element = self._mode_block(mode).get(element_key, {})
+        return element if isinstance(element, dict) else {}
+
+    def _effective_mode(self, mode: Any) -> Optional[str]:
+        """A per-call mode overrides the bound one; anything else uses it."""
+        if isinstance(mode, str) and mode:
+            return mode
+        return self._mode
+
     # -- public API ---------------------------------------------------------
 
     def style(self, element_key: str,
               classic_font: str = _FALLBACK_FONT_NAME,
               classic_size: int = 8,
-              classic_color: Optional[Tuple[int, int, int]] = None) -> ElementStyle:
+              classic_color: Optional[Tuple[int, int, int]] = None,
+              mode: Optional[str] = None) -> ElementStyle:
         """Resolve one element's style. Never raises.
 
         Args:
@@ -570,14 +615,19 @@ class ElementStyleResolver:
             classic_color: Classic RGB color, or None when the caller only
                 cares about the font (``.color`` then falls back to the
                 schema default color, else white).
+            mode: Overrides the mode bound at construction for this call.
+                Rarely needed — a host that renders one mode should bind it
+                once instead.
 
         Returns:
             ElementStyle with the loaded font face, RGB color, (x, y)
             offset, and the ``user_forced`` / ``user_forced_color`` flags.
         """
+        effective_mode = self._effective_mode(mode)
         try:
             memo_key = (element_key, classic_font, classic_size,
-                        _normalize_color(classic_color) or classic_color)
+                        _normalize_color(classic_color) or classic_color,
+                        effective_mode)
             memoized = self._memo.get(memo_key)
             if memoized is not None:
                 return memoized
@@ -586,7 +636,8 @@ class ElementStyleResolver:
 
         try:
             resolved = self._resolve(element_key, classic_font,
-                                     classic_size, classic_color)
+                                     classic_size, classic_color,
+                                     effective_mode)
         except Exception as e:
             logger.warning("Error resolving style for element '%s': %s — "
                            "using classic style", element_key, e)
@@ -596,41 +647,45 @@ class ElementStyleResolver:
             self._memo[memo_key] = resolved
         return resolved
 
-    def offset(self, element_key: str) -> Tuple[int, int]:
+    def offset(self, element_key: str,
+               mode: Optional[str] = None) -> Tuple[int, int]:
         """The user's ``customization.layout.<element>`` (x, y) pixel
         offset, defaulting to (0, 0). Never raises."""
-        return (self.offset_value(element_key, 'x_offset', 0),
-                self.offset_value(element_key, 'y_offset', 0))
+        return (self.offset_value(element_key, 'x_offset', 0, mode),
+                self.offset_value(element_key, 'y_offset', 0, mode))
 
-    def offset_value(self, element_key: str, axis: str, default: int = 0) -> int:
+    def offset_value(self, element_key: str, axis: str, default: int = 0,
+                     mode: Optional[str] = None) -> int:
         """One ``customization.layout.<element>.<axis>`` value as an int.
 
         ``axis`` is usually ``'x_offset'`` / ``'y_offset'`` but any key is
         honored (e.g. the scoreboards' ``'away_x_offset'``). Numeric
         strings are coerced; anything else degrades to ``default``. Never
         raises.
+
+        When a mode is in play, ``customization.modes.<mode>.layout`` is
+        consulted first and wins if it carries a non-None value for this
+        axis — ``None`` there means inherit the base offset, which is what
+        lets a mode nudge one element without restating the rest.
         """
         try:
-            layout = self._customization().get('layout', {})
-            if not isinstance(layout, dict):
-                return int(default)
-            element = layout.get(element_key, {})
-            if not isinstance(element, dict):
-                return int(default)
-            value = element.get(axis, default)
-            if isinstance(value, bool):
-                return int(default)
-            if isinstance(value, (int, float)):
-                return int(value)
-            if isinstance(value, str):
-                try:
-                    return int(float(value))
-                except (TypeError, ValueError):
-                    logger.warning(
-                        "Invalid layout offset for %s.%s: %r, using %s",
-                        element_key, axis, value, default)
-                    return int(default)
-            return int(default)
+            # Base first, so it is the thing a malformed mode value falls
+            # back to. Resolving the mode first and passing the caller's
+            # default would let one bad string in a mode block silently
+            # discard a perfectly good base offset.
+            base = self._layout_axis(self._customization(), element_key, axis)
+            base_value = (int(default) if base is None
+                          else self._coerce_offset(base, default,
+                                                   element_key, axis))
+
+            effective_mode = self._effective_mode(mode)
+            if effective_mode:
+                override = self._layout_axis(
+                    self._mode_block(effective_mode), element_key, axis)
+                if override is not None:
+                    return self._coerce_offset(override, base_value,
+                                               element_key, axis)
+            return base_value
         except Exception as e:
             logger.warning("Error reading layout offset %s.%s: %s",
                            element_key, axis, e)
@@ -639,13 +694,56 @@ class ElementStyleResolver:
             except (TypeError, ValueError):
                 return 0
 
+    @staticmethod
+    def _layout_axis(block: Dict[str, Any], element_key: str,
+                     axis: str) -> Any:
+        """``block['layout'][element][axis]``, or None if absent anywhere."""
+        layout = block.get('layout', {})
+        if not isinstance(layout, dict):
+            return None
+        element = layout.get(element_key, {})
+        if not isinstance(element, dict):
+            return None
+        return element.get(axis)
+
+    @staticmethod
+    def _coerce_offset(value: Any, default: int, element_key: str,
+                       axis: str) -> int:
+        """A pixel offset as an int; anything nonsensical is ``default``.
+
+        A bool degrades rather than counting as 1/0 -- it is the more
+        correct reading of a pixel offset, and matches what the shared
+        resolver has always done relative to the classic inline read.
+        """
+        if isinstance(value, bool):
+            return int(default)
+        if isinstance(value, (int, float)):
+            return int(value)
+        if isinstance(value, str):
+            try:
+                return int(float(value))
+            except (TypeError, ValueError):
+                logger.warning("Invalid layout offset for %s.%s: %r, using %s",
+                               element_key, axis, value, default)
+                return int(default)
+        return int(default)
+
     # -- resolution internals -----------------------------------------------
 
     def _resolve(self, element_key: str, classic_font: str,
                  classic_size: int,
-                 classic_color: Optional[Tuple[int, int, int]]) -> ElementStyle:
+                 classic_color: Optional[Tuple[int, int, int]],
+                 mode: Optional[str] = None) -> ElementStyle:
         element_config = self._element_config(element_key)
         element_defaults = self._element_defaults(element_key)
+        mode_config = self._mode_element_config(element_key, mode)
+
+        # The two layers answer different questions. The base layer asks
+        # "does this differ from the schema default?", because the save flow
+        # writes the full default object into config.json whether or not the
+        # user touched it. The mode layer asks only "is it set?", because its
+        # schema default is None -- there is nothing for a stray write to
+        # make look deliberate.
 
         # Font family: forced only when it differs from the schema default
         # (falling back to the classic font as the reference when the
@@ -668,6 +766,15 @@ class ElementStyleResolver:
         font_name = configured_font if font_forced else classic_font
         font_size = configured_size if size_forced else self._coerce_size(
             classic_size, 8)
+
+        # Mode overrides sit on top of whatever the base layer settled on.
+        mode_font = mode_config.get('font')
+        if isinstance(mode_font, str) and mode_font:
+            font_name, font_forced = mode_font, True
+        mode_size = self._coerce_size(mode_config.get('font_size'), None)
+        if mode_size is not None:
+            font_size, size_forced = mode_size, True
+
         user_forced = bool(font_forced or size_forced)
 
         # Color: forced only when it differs from the schema default (or,
@@ -684,6 +791,10 @@ class ElementStyleResolver:
             color = (_normalize_color(classic_color) or default_color
                      or (255, 255, 255))
 
+        mode_color = _normalize_color(mode_config.get('text_color'))
+        if mode_color is not None:
+            color, color_forced = mode_color, True
+
         # font_size reports what was actually realised, which differs from
         # the request only when a BDF snapped to its native strike. Callers
         # lay out from this value; reporting the request would reserve space
@@ -692,7 +803,7 @@ class ElementStyleResolver:
         return ElementStyle(
             font=font,
             color=color,
-            offset=self.offset(element_key),
+            offset=self.offset(element_key, mode),
             font_name=font_name,
             font_size=realised_size,
             user_forced=user_forced,

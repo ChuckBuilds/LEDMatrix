@@ -506,3 +506,178 @@ class TestFontCacheIsBounded:
             assert load_font("PressStart2P-Regular.ttf", 1) is oldest
         finally:
             es._font_cache.clear()
+
+class TestModes:
+    """Per-mode overrides: one element styled differently per situation.
+
+    The motivating case is a scoreboard, where the score wants a bigger font
+    on a live card than on an upcoming one. Live/Upcoming/Recent are already
+    separate instances with distinct SKIN_MODE values, so the mode is bound
+    to the resolver rather than threaded through every call site.
+
+    A mode layer is pure override: its fields default to None, meaning
+    inherit. That is why None and 0 must stay distinct -- a mode y_offset of
+    0 means "sit at the base position", not "no preference".
+    """
+
+    def _resolver(self, config, mode=None, schema=None):
+        defaults = defaults_from_schema_file(schema) if schema else {}
+        return ElementStyleResolver(config, defaults, mode=mode)
+
+    def test_no_mode_block_resolves_exactly_as_before(self, style_schema_path):
+        config = {"customization": {"title_text": {"font_size": 12}}}
+        plain = self._resolver(config, schema=style_schema_path)
+        moded = self._resolver(config, mode="live", schema=style_schema_path)
+        a = plain.style("title_text", classic_size=8)
+        b = moded.style("title_text", classic_size=8)
+        assert (a.font_name, a.font_size, a.color) == (b.font_name, b.font_size,
+                                                       b.color)
+
+    def test_a_mode_overrides_the_base_size(self, style_schema_path):
+        config = {"customization": {
+            "title_text": {"font_size": 12},
+            "modes": {"live": {"title_text": {"font_size": 16}}}}}
+        r = self._resolver(config, mode="live", schema=style_schema_path)
+        assert r.style("title_text", classic_size=8).font_size == 16
+        assert r.style("title_text", classic_size=8).user_forced is True
+
+    def test_a_different_mode_is_unaffected(self, style_schema_path):
+        config = {"customization": {
+            "title_text": {"font_size": 12},
+            "modes": {"live": {"title_text": {"font_size": 16}}}}}
+        r = self._resolver(config, mode="upcoming", schema=style_schema_path)
+        assert r.style("title_text", classic_size=8).font_size == 12
+
+    def test_two_resolvers_share_a_config_and_differ_by_mode(
+            self, style_schema_path):
+        """The SportsUpcoming / SportsRecent case: same config dict, two
+        instances, two answers."""
+        config = {"customization": {
+            "title_text": {"font_size": 12},
+            "modes": {"live": {"title_text": {"font_size": 16}},
+                      "recent": {"title_text": {"font_size": 6}}}}}
+        live = self._resolver(config, mode="live", schema=style_schema_path)
+        recent = self._resolver(config, mode="recent", schema=style_schema_path)
+        assert live.style("title_text", classic_size=8).font_size == 16
+        assert recent.style("title_text", classic_size=8).font_size == 6
+
+    def test_a_mode_overrides_font_and_colour(self, style_schema_path):
+        config = {"customization": {
+            "modes": {"live": {"title_text": {"font": "4x6-font.ttf",
+                                              "text_color": [1, 2, 3]}}}}}
+        st = self._resolver(config, mode="live",
+                            schema=style_schema_path).style(
+            "title_text", classic_font="PressStart2P-Regular.ttf",
+            classic_color=(255, 255, 255))
+        assert st.font_name == "4x6-font.ttf"
+        assert st.color == (1, 2, 3)
+        assert st.user_forced and st.user_forced_color
+
+    def test_an_unset_mode_field_inherits_rather_than_resetting(
+            self, style_schema_path):
+        """Only font_size is overridden; the colour must survive."""
+        config = {"customization": {
+            "title_text": {"text_color": [9, 9, 9]},
+            "modes": {"live": {"title_text": {"font_size": 16}}}}}
+        st = self._resolver(config, mode="live",
+                            schema=style_schema_path).style(
+            "title_text", classic_color=(255, 255, 255))
+        assert st.font_size == 16
+        assert st.color == (9, 9, 9)
+
+    def test_a_null_mode_field_means_inherit(self, style_schema_path):
+        config = {"customization": {
+            "title_text": {"font_size": 12},
+            "modes": {"live": {"title_text": {"font_size": None}}}}}
+        st = self._resolver(config, mode="live",
+                            schema=style_schema_path).style("title_text")
+        assert st.font_size == 12
+
+    def test_a_per_call_mode_overrides_the_bound_one(self, style_schema_path):
+        config = {"customization": {"modes": {
+            "live": {"title_text": {"font_size": 16}},
+            "recent": {"title_text": {"font_size": 6}}}}}
+        r = self._resolver(config, mode="live", schema=style_schema_path)
+        assert r.style("title_text").font_size == 16
+        assert r.style("title_text", mode="recent").font_size == 6
+
+    def test_the_memo_does_not_leak_between_modes(self, style_schema_path):
+        config = {"customization": {"modes": {
+            "live": {"title_text": {"font_size": 16}},
+            "recent": {"title_text": {"font_size": 6}}}}}
+        r = self._resolver(config, mode="live", schema=style_schema_path)
+        assert r.style("title_text").font_size == 16
+        assert r.style("title_text", mode="recent").font_size == 6
+        assert r.style("title_text").font_size == 16
+
+    def test_mode_is_exposed(self):
+        assert ElementStyleResolver({}, {}, mode="live").mode == "live"
+        assert ElementStyleResolver({}, {}).mode is None
+
+
+class TestModeOffsets:
+    def _r(self, config, mode=None):
+        return ElementStyleResolver(config, {}, mode=mode)
+
+    def test_a_mode_offset_wins(self):
+        config = {"customization": {
+            "layout": {"score": {"y_offset": -2}},
+            "modes": {"live": {"layout": {"score": {"y_offset": 5}}}}}}
+        assert self._r(config, "live").offset_value("score", "y_offset") == 5
+
+    def test_an_absent_mode_offset_inherits_the_base(self):
+        config = {"customization": {
+            "layout": {"score": {"y_offset": -2}},
+            "modes": {"live": {"layout": {"score": {"x_offset": 1}}}}}}
+        r = self._r(config, "live")
+        assert r.offset_value("score", "y_offset") == -2
+        assert r.offset_value("score", "x_offset") == 1
+
+    def test_an_explicit_zero_is_an_override_not_an_absence(self):
+        """The reason None is the inherit sentinel: 0 has to mean something."""
+        config = {"customization": {
+            "layout": {"score": {"y_offset": -2}},
+            "modes": {"live": {"layout": {"score": {"y_offset": 0}}}}}}
+        assert self._r(config, "live").offset_value("score", "y_offset") == 0
+
+    def test_a_null_mode_offset_inherits(self):
+        config = {"customization": {
+            "layout": {"score": {"y_offset": -2}},
+            "modes": {"live": {"layout": {"score": {"y_offset": None}}}}}}
+        assert self._r(config, "live").offset_value("score", "y_offset") == -2
+
+    def test_offset_pair_is_mode_aware(self):
+        config = {"customization": {
+            "layout": {"score": {"x_offset": 1, "y_offset": 2}},
+            "modes": {"live": {"layout": {"score": {"y_offset": 9}}}}}}
+        assert self._r(config, "live").offset("score") == (1, 9)
+
+    def test_an_arbitrary_axis_is_mode_aware(self):
+        """The scoreboards use away_x_offset / home_x_offset."""
+        config = {"customization": {
+            "layout": {"records": {"away_x_offset": 3}},
+            "modes": {"recent": {"layout": {"records": {"away_x_offset": 7}}}}}}
+        assert self._r(config, "recent").offset_value(
+            "records", "away_x_offset") == 7
+
+    @pytest.mark.parametrize("modes", [
+        None, "nonsense", {"live": "nonsense"}, {"live": {"layout": 5}},
+        {"live": {"layout": {"score": {"y_offset": "bad"}}}},
+    ])
+    def test_garbage_modes_degrade_to_the_base(self, modes):
+        config = {"customization": {"layout": {"score": {"y_offset": -2}},
+                                    "modes": modes}}
+        assert self._r(config, "live").offset_value("score", "y_offset") == -2
+
+    @pytest.mark.parametrize("modes", [
+        None, "nonsense", {"live": "nonsense"},
+        {"live": {"title_text": "nonsense"}},
+        {"live": {"title_text": {"font_size": "huge", "text_color": "red"}}},
+    ])
+    def test_garbage_mode_styles_degrade(self, modes, style_schema_path):
+        config = {"customization": {"title_text": {"font_size": 12},
+                                    "modes": modes}}
+        st = ElementStyleResolver(
+            config, defaults_from_schema_file(style_schema_path),
+            mode="live").style("title_text", classic_size=8)
+        assert st.font_size == 12
