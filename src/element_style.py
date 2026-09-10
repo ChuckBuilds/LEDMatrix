@@ -330,6 +330,11 @@ def expand_style_elements(schema: Dict[str, Any]) -> Dict[str, Any]:
             for element_key, block in layout_props.items():
                 layout['properties'].setdefault(element_key, block)
 
+        modes = customization.get('x-style-modes')
+        if isinstance(modes, list) and modes:
+            props.setdefault('modes',
+                             _modes_block(declaration, modes))
+
         return expanded
     except Exception as e:
         logger.warning("Error expanding x-style-elements: %s", e)
@@ -348,6 +353,10 @@ def _element_block_from_spec(element_key: str,
             'type': 'string',
             'title': 'Font Family',
             'x-advanced': True,
+            # The core already ships this widget and the config form already
+            # allowlists it; without the hint the field rendered as a bare
+            # text box the user had to type a filename into.
+            'x-widget': 'font-selector',
         }
         if 'default' in font_spec:
             font_prop['default'] = font_spec['default']
@@ -418,6 +427,84 @@ def _offset_block_from_spec(element_key: str,
     }
 
 
+def _nullable(prop: Dict[str, Any]) -> Dict[str, Any]:
+    """The same property, retyped as "this or unset".
+
+    A mode field defaults to null, meaning inherit the base element. The
+    default has to be null rather than the base value: the save flow writes
+    schema defaults into config.json wholesale, so a concrete default here
+    would turn every mode into a copy of the base the moment a user pressed
+    Save, and the base would stop reaching them.
+    """
+    out = dict(prop)
+    declared = out.get('type', 'string')
+    types = declared if isinstance(declared, list) else [declared]
+    if 'null' not in types:
+        types = list(types) + ['null']
+    out['type'] = types
+    out['default'] = None
+    return out
+
+
+def _mode_element_block(element_key: str, spec: Dict[str, Any]) -> Dict[str, Any]:
+    """One element's override block for one mode: every field nullable."""
+    base = _element_block_from_spec(element_key, spec)
+    base['properties'] = {k: _nullable(v)
+                          for k, v in base.get('properties', {}).items()}
+    base['description'] = ('Leave blank to use the settings above for this '
+                           'mode.')
+    return base
+
+
+def _mode_offset_block(element_key: str, spec: Dict[str, Any]) -> Dict[str, Any]:
+    """One element's offset overrides for one mode: both axes nullable."""
+    base = _offset_block_from_spec(element_key, spec)
+    base['properties'] = {k: _nullable(v)
+                          for k, v in base.get('properties', {}).items()}
+    return base
+
+
+def _modes_block(declaration: Dict[str, Any],
+                 modes: Any) -> Dict[str, Any]:
+    """``customization.modes`` — one override group per declared mode."""
+    mode_props: Dict[str, Any] = {}
+    for mode in modes:
+        if not isinstance(mode, str) or not mode:
+            continue
+        element_props: Dict[str, Any] = {}
+        layout_props: Dict[str, Any] = {}
+        for element_key, spec in declaration.items():
+            if not isinstance(spec, dict):
+                continue
+            element_props[element_key] = _mode_element_block(element_key, spec)
+            if spec.get('offsets'):
+                layout_props[element_key] = _mode_offset_block(element_key, spec)
+        if layout_props:
+            element_props['layout'] = {
+                'type': 'object',
+                'title': 'Layout Offsets',
+                'x-advanced': True,
+                'additionalProperties': False,
+                'properties': layout_props,
+            }
+        mode_props[mode] = {
+            'type': 'object',
+            'title': mode.replace('_', ' ').title(),
+            'x-style-managed': True,
+            'additionalProperties': False,
+            'properties': element_props,
+        }
+    return {
+        'type': 'object',
+        'title': 'Per-Mode Overrides',
+        'description': 'Override the settings above for one display mode. '
+                       'Anything left blank follows the settings above.',
+        'x-advanced': True,
+        'additionalProperties': False,
+        'properties': mode_props,
+    }
+
+
 def defaults_from_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
     """Extract per-element style defaults from a config schema dict.
 
@@ -458,7 +545,7 @@ def defaults_from_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
         properties = customization.get('properties')
         if isinstance(properties, dict):
             for element_key, block in properties.items():
-                if element_key == 'layout' or element_key in elements:
+                if element_key in ('layout', 'modes') or element_key in elements:
                     continue
                 if not isinstance(block, dict):
                     continue

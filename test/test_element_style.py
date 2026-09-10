@@ -16,6 +16,7 @@ ledmatrix-music, football-scoreboard):
 - style() never raises; malformed input degrades to the classic style.
 """
 
+import copy
 import json
 import os
 
@@ -681,3 +682,145 @@ class TestModeOffsets:
             config, defaults_from_schema_file(style_schema_path),
             mode="live").style("title_text", classic_size=8)
         assert st.font_size == 12
+
+MODE_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "enabled": {"type": "boolean", "default": False},
+        "customization": {
+            "type": "object",
+            "x-style-modes": ["live", "recent"],
+            "x-style-elements": {
+                "score_text": {
+                    "title": "Score",
+                    "font": {"default": "PressStart2P-Regular.ttf"},
+                    "size": {"default": 10, "min": 4, "max": 16},
+                    "color": {"default": [255, 255, 255]},
+                    "offsets": True,
+                },
+            },
+        },
+    },
+}
+
+
+class TestModeSchemaEmission:
+    def _expanded(self):
+        return expand_style_elements(MODE_SCHEMA)["properties"]["customization"]
+
+    def test_a_modes_block_is_emitted_per_declared_mode(self):
+        assert sorted(self._expanded()["properties"]["modes"]["properties"]) == [
+            "live", "recent"]
+
+    def test_mode_fields_are_nullable_and_default_to_null(self):
+        """Null is the inherit sentinel. A concrete default here would turn
+        every mode into a copy of the base the moment the user pressed Save,
+        because the save flow writes schema defaults into config wholesale."""
+        live = self._expanded()["properties"]["modes"]["properties"]["live"]
+        block = live["properties"]["score_text"]["properties"]
+        for name, prop in block.items():
+            assert prop["default"] is None, name
+            assert "null" in prop["type"], name
+
+    def test_mode_offsets_are_nullable_too(self):
+        live = self._expanded()["properties"]["modes"]["properties"]["live"]
+        axes = live["properties"]["layout"]["properties"]["score_text"]["properties"]
+        assert set(axes) == {"x_offset", "y_offset"}
+        for prop in axes.values():
+            assert prop["default"] is None
+            assert "null" in prop["type"]
+
+    def test_the_base_block_keeps_its_real_defaults(self):
+        block = self._expanded()["properties"]["score_text"]["properties"]
+        assert block["font_size"]["default"] == 10
+        assert block["font"]["default"] == "PressStart2P-Regular.ttf"
+
+    def test_the_font_field_asks_for_the_font_selector_widget(self):
+        """The widget already existed and was already allowlisted by the
+        config form; without the hint the field was a bare text box the user
+        had to type a filename into."""
+        block = self._expanded()["properties"]["score_text"]["properties"]
+        assert block["font"]["x-widget"] == "font-selector"
+
+    def test_no_declared_modes_emits_no_modes_block(self):
+        schema = copy.deepcopy(MODE_SCHEMA)
+        del schema["properties"]["customization"]["x-style-modes"]
+        expanded = expand_style_elements(schema)["properties"]["customization"]
+        assert "modes" not in expanded["properties"]
+
+    @pytest.mark.parametrize("modes", ["nonsense", [], [None], [""], 5, {}])
+    def test_garbage_mode_declarations_do_not_break_expansion(self, modes):
+        schema = copy.deepcopy(MODE_SCHEMA)
+        schema["properties"]["customization"]["x-style-modes"] = modes
+        expanded = expand_style_elements(schema)["properties"]["customization"]
+        assert "score_text" in expanded["properties"]
+
+    def test_the_input_schema_is_not_mutated(self):
+        expand_style_elements(MODE_SCHEMA)
+        assert "properties" not in MODE_SCHEMA["properties"]["customization"]
+
+
+class TestModeSaveRoundTrip:
+    """The path a real save takes: schema -> defaults -> merge -> validate ->
+    resolve. The risk being covered is that the save flow writes schema
+    defaults into config.json wholesale, so a mode block has to survive that
+    still meaning "inherit"."""
+
+    @pytest.fixture
+    def plugin(self, tmp_path):
+        from src.plugin_system.schema_manager import SchemaManager
+        pdir = tmp_path / "plugins" / "demo"
+        pdir.mkdir(parents=True)
+        (pdir / "config_schema.json").write_text(json.dumps(MODE_SCHEMA),
+                                                 encoding="utf-8")
+        sm = SchemaManager(plugins_dir=tmp_path / "plugins",
+                           project_root=tmp_path)
+        schema = sm.load_schema("demo", use_cache=False)
+        return sm, schema, sm.extract_defaults_from_schema(schema), pdir
+
+    def test_a_save_leaves_mode_blocks_meaning_inherit(self, plugin):
+        sm, schema, defaults, pdir = plugin
+        merged = sm.merge_with_defaults(
+            {"enabled": True, "customization": {"score_text": {"font_size": 14}}},
+            defaults)
+        live = merged["customization"]["modes"]["live"]["score_text"]
+        assert live == {"font": None, "font_size": None, "text_color": None}
+
+        ok, errors = sm.validate_config_against_schema(merged, schema)
+        assert ok, errors
+
+        style = ElementStyleResolver(
+            merged, defaults_from_schema_file(str(pdir / "config_schema.json")),
+            mode="live").style("score_text",
+                               classic_font="PressStart2P-Regular.ttf",
+                               classic_size=10)
+        assert style.font_size == 14, "the base must still reach the mode"
+
+    def test_a_real_mode_override_validates_and_wins(self, plugin):
+        sm, schema, defaults, pdir = plugin
+        merged = sm.merge_with_defaults({"customization": {
+            "score_text": {"font_size": 14},
+            "modes": {"live": {"score_text": {"font_size": 16},
+                               "layout": {"score_text": {"y_offset": -3}}}},
+        }}, defaults)
+        ok, errors = sm.validate_config_against_schema(merged, schema)
+        assert ok, errors
+
+        schema_defaults = defaults_from_schema_file(
+            str(pdir / "config_schema.json"))
+        live = ElementStyleResolver(merged, schema_defaults, mode="live")
+        recent = ElementStyleResolver(merged, schema_defaults, mode="recent")
+        assert live.style("score_text", classic_size=10).font_size == 16
+        assert live.offset("score_text") == (0, -3)
+        assert recent.style("score_text", classic_size=10).font_size == 14
+        assert recent.offset("score_text") == (0, 0)
+
+    def test_a_mode_size_outside_the_declared_range_is_rejected(self, plugin):
+        """min/max from the declaration must carry into the mode blocks."""
+        sm, schema, defaults, _ = plugin
+        merged = sm.merge_with_defaults(
+            {"customization": {"modes": {"live": {"score_text": {
+                "font_size": 99}}}}}, defaults)
+        ok, _errors = sm.validate_config_against_schema(merged, schema)
+        assert not ok
