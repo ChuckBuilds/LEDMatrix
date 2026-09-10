@@ -872,6 +872,65 @@
                        name="{{ full_key }}"
                        value="{{ str_value }}"
                        class="form-input w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-white text-black placeholder:text-gray-500">
+                {% if str_widget %}
+                {# An x-widget the core does not ship may be supplied by the
+                   plugin itself (manifest "widgets", served from its widgets/
+                   directory). Ask the loader for it; the text input above is
+                   the fallback and stays put unless the widget really renders,
+                   so a missing or broken widget degrades to an editable field
+                   rather than dropping the value on save. #}
+                <div id="{{ field_id }}_container" class="{{ str_widget }}-container"></div>
+                <script>
+                (function() {
+                    var WIDGET = {{ str_widget|tojson|safe }};
+                    var PLUGIN = {{ plugin_id|tojson|safe }};
+                    function initPluginWidget() {
+                        if (!window.LEDMatrixWidgets || !window.LEDMatrixWidgets.ensureWidget) {
+                            setTimeout(initPluginWidget, 50);
+                            return;
+                        }
+                        var container = document.getElementById('{{ field_id }}_container');
+                        var fallback = document.getElementById('{{ field_id }}');
+                        if (!container) { return; }
+                        window.LEDMatrixWidgets.ensureWidget(WIDGET, PLUGIN).then(function(available) {
+                            if (!available) { container.remove(); return; }
+                            var widget = window.LEDMatrixWidgets.get(WIDGET);
+                            if (!widget || typeof widget.render !== 'function') { container.remove(); return; }
+                            var value = {{ str_value|tojson|safe }};
+                            var config = {
+                                'type': '{{ field_type }}',
+                                'enum': {{ (prop.enum or [])|tojson|safe }},
+                                'x-options': {{ (prop.get('x-options') or prop.get('x_options') or {})|tojson|safe }},
+                                'x-widget-config': {{ (prop.get('x-widget-config') or prop.get('x_widget_config') or {})|tojson|safe }}
+                            };
+                            try {
+                                widget.render(container, config, value, {
+                                    fieldId: '{{ field_id }}',
+                                    name: '{{ full_key }}',
+                                    pluginId: PLUGIN
+                                });
+                            } catch (e) {
+                                console.error('[PluginWidget] render failed for ' + WIDGET, e);
+                                container.remove();
+                                return;
+                            }
+                            // Only now is the widget authoritative for this
+                            // field; drop the fallback so the form posts one
+                            // value rather than two under the same name.
+                            if (fallback) { fallback.remove(); }
+                        }).catch(function(e) {
+                            console.warn('[PluginWidget] could not load ' + WIDGET, e);
+                            container.remove();
+                        });
+                    }
+                    if (document.readyState === 'loading') {
+                        document.addEventListener('DOMContentLoaded', initPluginWidget);
+                    } else {
+                        setTimeout(initPluginWidget, 50);
+                    }
+                })();
+                </script>
+                {% endif %}
             {% endif %}
             {% endif %}
         </div>

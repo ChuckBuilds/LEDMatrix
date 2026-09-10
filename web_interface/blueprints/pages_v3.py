@@ -12,6 +12,8 @@ from pathlib import Path
 # Strict allowlists for URL-derived values used in path and script operations.
 _SAFE_PLUGIN_ID_RE = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
 _SAFE_WEB_UI_FILE_RE = re.compile(r'^[a-zA-Z0-9_-]{1,64}\.html$')
+_SAFE_WIDGET_NAME_RE = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
+_SAFE_WIDGET_SCRIPT_RE = re.compile(r'^[a-zA-Z0-9_-]{1,64}\.js$')
 from src.web_interface.secret_helpers import mask_secret_fields
 
 logger = logging.getLogger(__name__)
@@ -357,6 +359,122 @@ def serve_plugin_web_ui(plugin_id, filename):
     except Exception:
         logger.error('Error serving plugin web_ui %s/%s', plugin_id, filename, exc_info=True)
         return 'Error serving file', 500, {'Content-Type': 'text/plain'}
+
+
+def _plugin_dir_for(safe_id):
+    """Resolve a sanitised plugin id to its directory, or None.
+
+    Mirrors serve_plugin_web_ui: containment-guarded against the configured
+    plugins directory, with PluginManager's ``ledmatrix-`` prefix fallback.
+    """
+    plugins_base = Path(pages_v3.plugin_manager.plugins_dir).resolve()
+    plugin_dir = (plugins_base / safe_id).resolve()
+    plugin_dir.relative_to(plugins_base)  # containment guard
+
+    if not plugin_dir.exists():
+        alt_id = os.path.basename(f'ledmatrix-{safe_id}')
+        alt = (plugins_base / alt_id).resolve()
+        try:
+            alt.relative_to(plugins_base)
+            plugin_dir = alt
+        except ValueError:
+            pass
+    return plugin_dir
+
+
+def _declared_widget_script(plugin_dir, widget_name):
+    """The script filename a plugin's manifest declares for ``widget_name``.
+
+    The manifest is the allowlist: only a widget the plugin actually declares
+    can be served, so this route never exposes arbitrary files under the
+    plugin directory even though the directory itself is attacker-influenced
+    (plugins are user-installed). Returns None when the widget is not
+    declared, the manifest is unreadable, or the declared script name is not
+    a plain ``<name>.js`` basename.
+    """
+    manifest_path = plugin_dir / 'manifest.json'
+    try:
+        with open(manifest_path, 'r', encoding='utf-8') as f:
+            manifest = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(manifest, dict):
+        return None
+
+    for entry in manifest.get('widgets') or ():
+        if not isinstance(entry, dict):
+            continue
+        if entry.get('name') != widget_name:
+            continue
+        script = entry.get('script') or f'{widget_name}.js'
+        if not isinstance(script, str) or not _SAFE_WIDGET_SCRIPT_RE.match(script):
+            return None
+        return script
+    return None
+
+
+@pages_v3.route('/static/plugin-widgets/<plugin_id>/<widget_name>.js')
+def serve_plugin_widget(plugin_id, widget_name):
+    """Serve a plugin-declared widget script from its ``widgets/`` directory.
+
+    This is the server half of ``LEDMatrixWidgets.loadPluginWidget`` (see
+    static/v3/js/widgets/plugin-loader.js), which fetches exactly this path.
+    The loader uses a dynamic ``import()``, so the response must carry a
+    JavaScript MIME type or the browser refuses the module.
+
+    The route is deliberately narrower than the plugin directory: a script is
+    served only when the plugin's own manifest declares a widget by that name,
+    so installing a plugin does not publish everything it ships.
+    """
+    if not _SAFE_PLUGIN_ID_RE.match(plugin_id):
+        return 'Invalid plugin ID', 400, {'Content-Type': 'text/plain'}
+    if not _SAFE_WIDGET_NAME_RE.match(widget_name):
+        return 'Invalid widget name', 400, {'Content-Type': 'text/plain'}
+
+    # os.path.basename() is the CodeQL-recognised path sanitizer used
+    # throughout this codebase; the allowlists above already exclude
+    # separators, this breaks the taint chain.
+    safe_id = os.path.basename(plugin_id)
+    safe_widget = os.path.basename(widget_name)
+    if not safe_id or not safe_widget:
+        return 'Invalid path component', 400, {'Content-Type': 'text/plain'}
+
+    if not pages_v3.plugin_manager:
+        return 'Plugin manager not available', 503, {'Content-Type': 'text/plain'}
+
+    try:
+        plugin_dir = _plugin_dir_for(safe_id)
+        if not plugin_dir.exists():
+            return 'Not found', 404, {'Content-Type': 'text/plain'}
+
+        script = _declared_widget_script(plugin_dir, safe_widget)
+        if script is None:
+            # Undeclared is a 404 rather than a 403: whether a plugin happens
+            # to ship an undeclared file is not something to confirm.
+            return 'Not found', 404, {'Content-Type': 'text/plain'}
+
+        widgets_dir = (plugin_dir / 'widgets').resolve()
+        script_path = (widgets_dir / os.path.basename(script)).resolve()
+        script_path.relative_to(widgets_dir)  # second containment guard
+
+        if not script_path.is_file():
+            return 'Not found', 404, {'Content-Type': 'text/plain'}
+
+        body = script_path.read_text(encoding='utf-8')
+        return body, 200, {
+            'Content-Type': 'text/javascript; charset=utf-8',
+            # Plugin updates replace this file in place; revalidate so a
+            # stale widget cannot outlive the plugin version that shipped it.
+            'Cache-Control': 'no-cache',
+        }
+
+    except ValueError:
+        return 'Forbidden', 403, {'Content-Type': 'text/plain'}
+    except Exception:
+        logger.error('Error serving plugin widget %s/%s', plugin_id, widget_name,
+                     exc_info=True)
+        return 'Error serving file', 500, {'Content-Type': 'text/plain'}
+
 
 def _load_overview_partial():
     """Load overview partial with system stats"""
