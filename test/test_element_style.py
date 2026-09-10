@@ -24,6 +24,8 @@ from PIL import ImageFont
 
 from src.element_style import (
     ElementStyleResolver,
+    _load_font_sized,
+    native_bdf_size,
     defaults_from_schema,
     defaults_from_schema_file,
     expand_style_elements,
@@ -410,3 +412,97 @@ class TestResolverPlumbing:
         cust = schema["properties"]["customization"]["properties"]
         assert cust["title_text"]["x-style-managed"] is True
         assert "title_text" in cust["layout"]["properties"]
+class TestBdfSizing:
+    """A BDF is a fixed-size bitmap strike, not a scalable outline.
+
+    FreeType accepts only the exact pixel size baked into the file and raises
+    for anything else, and 32 of the 35 shipped fonts are BDF -- so a size
+    picked in the web UI usually is not a valid strike. This used to fall
+    through to the generic font-load except and return *PressStart2P*, so
+    asking for 5x7.bdf at size 10 silently rendered a different typeface.
+    It now falls back to the file's own size instead, matching what
+    SportsCore._load_custom_font_from_element_config already did.
+    """
+
+    def test_a_valid_strike_loads_at_that_size(self):
+        import freetype
+        font, realised = _load_font_sized("5x7.bdf", 7)
+        assert isinstance(font, freetype.Face)
+        assert realised == 7
+
+    @pytest.mark.parametrize("requested", [4, 10, 16, 32])
+    def test_a_wrong_size_keeps_the_font_and_snaps_the_size(self, requested):
+        """The regression: the face must still be 5x7, not a substitute."""
+        import freetype
+        font, realised = _load_font_sized("5x7.bdf", requested)
+        assert isinstance(font, freetype.Face), (
+            "a BDF asked for a bad size used to come back as a PIL "
+            "PressStart2P face -- a different font entirely")
+        assert realised == 7
+
+    def test_the_reported_size_is_what_was_realised(self, style_schema_path):
+        """ElementStyle.font_size drives caller layout, so it must not report
+        a size nothing was drawn at."""
+        config = {"customization": {"title_text": {"font": "5x7.bdf",
+                                                   "font_size": 20}}}
+        style = ElementStyleResolver(
+            config, defaults_from_schema_file(style_schema_path)
+        ).style("title_text", classic_font="PressStart2P-Regular.ttf",
+                classic_size=8)
+        assert style.font_name == "5x7.bdf"
+        assert style.font_size == 7
+
+    def test_native_bdf_size_reads_the_file(self):
+        assert native_bdf_size("5x7.bdf") == 7
+
+    @pytest.mark.parametrize("name", ["PressStart2P-Regular.ttf",
+                                      "no-such-font.bdf", "", None])
+    def test_native_bdf_size_is_none_when_size_is_a_free_choice(self, name):
+        """None is the web UI's signal that the size field stays editable."""
+        assert native_bdf_size(name) is None
+
+    def test_a_scalable_font_realises_the_requested_size(self):
+        for size in (6, 8, 13):
+            font, realised = _load_font_sized("PressStart2P-Regular.ttf", size)
+            assert realised == size
+            assert not isinstance(font, type(None))
+
+
+class TestFontCacheIsBounded:
+    """The display process runs for weeks and every config save can add a new
+    (font, size) pair; this cache was unbounded, against the house style of
+    every other hot cache in the codebase."""
+
+    def test_the_cache_evicts_past_its_bound(self):
+        import src.element_style as es
+        es._font_cache.clear()
+        try:
+            for size in range(1, es._FONT_CACHE_MAX + 40):
+                load_font("PressStart2P-Regular.ttf", size)
+            assert len(es._font_cache) <= es._FONT_CACHE_MAX
+        finally:
+            es._font_cache.clear()
+
+    def test_a_repeated_load_is_the_same_object(self):
+        import src.element_style as es
+        es._font_cache.clear()
+        try:
+            first = load_font("PressStart2P-Regular.ttf", 8)
+            assert load_font("PressStart2P-Regular.ttf", 8) is first
+        finally:
+            es._font_cache.clear()
+
+    def test_eviction_is_least_recently_used(self):
+        import src.element_style as es
+        es._font_cache.clear()
+        try:
+            oldest = load_font("PressStart2P-Regular.ttf", 1)
+            for size in range(2, es._FONT_CACHE_MAX + 1):
+                load_font("PressStart2P-Regular.ttf", size)
+            # Touch the oldest so it is no longer the eviction candidate,
+            # then overflow by one.
+            assert load_font("PressStart2P-Regular.ttf", 1) is oldest
+            load_font("PressStart2P-Regular.ttf", es._FONT_CACHE_MAX + 1)
+            assert load_font("PressStart2P-Regular.ttf", 1) is oldest
+        finally:
+            es._font_cache.clear()

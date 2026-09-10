@@ -47,6 +47,7 @@ import copy
 import json
 import logging
 import os
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple, Union
 
@@ -69,9 +70,25 @@ _FONTS_SUBDIR = os.path.join('assets', 'fonts')
 # Last-resort font when a requested file can't be found or loaded.
 _FALLBACK_FONT_NAME = 'PressStart2P-Regular.ttf'
 
-# (resolved absolute path, size) -> loaded font face. BDF faces are stateful
-# in principle, but the core's own FontManager shares faces the same way.
-_font_cache: Dict[Tuple[str, int], Any] = {}
+# (resolved absolute path, requested size) -> (font face, realised size).
+# BDF faces are stateful in principle, but the core's own FontManager shares
+# faces the same way.
+#
+# Bounded LRU rather than the unbounded dict this started as: the display
+# process runs for weeks, and every config save can introduce a new
+# (font, size) pair. 256 is far above the working set -- a panel draws from a
+# handful of faces -- while still having a ceiling. Matches the house style of
+# every other hot cache (display_manager, font_manager, adaptive_layout).
+_FONT_CACHE_MAX = 256
+_font_cache: 'OrderedDict[Tuple[str, int], Tuple[Any, int]]' = OrderedDict()
+
+
+def _cache_put(key: Tuple[str, int], value: Tuple[Any, int]) -> None:
+    """Insert, evicting the least recently used entry past the bound."""
+    _font_cache[key] = value
+    _font_cache.move_to_end(key)
+    while len(_font_cache) > _FONT_CACHE_MAX:
+        _font_cache.popitem(last=False)
 
 # Config keys a style element block carries, in schema/UI order.
 _STYLE_KEYS = ('font', 'font_size', 'text_color')
@@ -124,13 +141,91 @@ def resolve_font_path(font_name: str) -> Optional[str]:
     return None
 
 
+def native_bdf_size(font_name: str) -> Optional[int]:
+    """The one pixel size a BDF font can render at, or None.
+
+    None means "not a BDF, not found, or unreadable" — i.e. the size is a
+    free choice. The web UI uses this to lock the size field for a bitmap
+    font instead of offering a number that cannot take effect.
+    """
+    path = resolve_font_path(font_name)
+    if path is None or not path.lower().endswith('.bdf'):
+        return None
+    return _read_bdf_native_size(path)
+
+
+def _read_bdf_native_size(path: str) -> Optional[int]:
+    """A BDF file's own pixel size, delegated to FontManager.
+
+    Deliberately not reimplemented: FontManager's reader prefers PIXEL_SIZE
+    over the SIZE line's point-size (they differ on the several bundled
+    fonts defined at 75dpi) and stops at the first STARTCHAR. Core always
+    ships it; the guard is for the plugin test harnesses that stub the
+    module out.
+    """
+    try:
+        from src.font_manager import FontManager
+        return FontManager._read_bdf_native_size(path)
+    except Exception:  # pragma: no cover - defensive
+        return None
+
+
+def _load_bdf(path: str, size: int) -> Tuple[Any, int]:
+    """A ``freetype.Face`` for a BDF file at the closest size it can do.
+
+    BDF fonts are fixed-size bitmap strikes, not scalable outlines:
+    FreeType accepts only the exact pixel size baked into the file and
+    raises for anything else. 32 of the 35 shipped fonts are BDF, so a
+    size the user picked in the web UI usually is not a valid strike.
+
+    Retrying at the file's native size is the behaviour SportsCore already
+    has (``_load_custom_font_from_element_config``). Without it this
+    function fell through to the generic except below and returned
+    *PressStart2P* — so choosing 5x7.bdf at size 10 silently rendered a
+    completely different typeface rather than 5x7 at 7px.
+    """
+    if freetype is None:
+        raise RuntimeError("freetype not available for BDF fonts")
+
+    def _face_at(px: int) -> Any:
+        face = freetype.Face(path)
+        # Character size in 1/64th points at 72dpi == pixel size.
+        face.set_char_size(px * 64, px * 64, 72, 72)
+        return face
+
+    try:
+        return _face_at(size), size
+    except Exception:
+        native = _read_bdf_native_size(path)
+        if not native or native == size:
+            raise
+        # A fresh Face: the first one already took a failed set_char_size.
+        face = _face_at(native)
+        logger.debug("BDF font %s loaded at its native size %s "
+                     "(requested %s is not a strike in this file)",
+                     path, native, size)
+        return face, native
+
+
 def load_font(font_name: str, size: int) -> Any:
     """Load a font by filename at a pixel size, with caching and fallback.
 
     ``.bdf`` files load as ``freetype.Face`` (matching FontManager), other
-    files through ``PIL.ImageFont.truetype``. A missing or unloadable font
-    degrades to ``PressStart2P-Regular.ttf`` at the requested size, then to
-    PIL's built-in default — this function never raises.
+    files through the pinned ``load_truetype``. A BDF asked for a size it
+    has no strike for falls back to its own native size (see
+    :func:`_load_bdf`), not to a different font. A missing or unloadable
+    font degrades to ``PressStart2P-Regular.ttf`` at the requested size,
+    then to PIL's built-in default — this function never raises.
+    """
+    return _load_font_sized(font_name, size)[0]
+
+
+def _load_font_sized(font_name: str, size: int) -> Tuple[Any, int]:
+    """``load_font`` plus the pixel size actually realised.
+
+    The two differ only for a BDF snapped to its native strike. Callers
+    that lay out by size (line heights, ladders) need the realised value,
+    or they reserve space for a size nothing was drawn at.
     """
     try:
         size = max(1, int(size))
@@ -140,47 +235,44 @@ def load_font(font_name: str, size: int) -> Any:
     path = resolve_font_path(font_name)
     if path is None:
         logger.warning("Font file not found: %s, using fallback", font_name)
-        return _load_fallback_font(size)
+        return _load_fallback_font(size), size
 
     cache_key = (path, size)
     cached = _font_cache.get(cache_key)
     if cached is not None:
+        _font_cache.move_to_end(cache_key)
         return cached
 
     try:
         if path.lower().endswith('.bdf'):
-            if freetype is None:
-                raise RuntimeError("freetype not available for BDF fonts")
-            face = freetype.Face(path)
-            # Character size in 1/64th points at 72dpi == pixel size.
-            face.set_char_size(size * 64, size * 64, 72, 72)
-            font: Any = face
+            font, effective = _load_bdf(path, size)
         else:
-            font = load_truetype(path, size)
+            font, effective = load_truetype(path, size), size
     except Exception as e:
         logger.warning("Error loading font %s at %spx: %s, using fallback",
                        path, size, e)
         return _load_fallback_font(size)
 
-    _font_cache[cache_key] = font
-    return font
+    _cache_put(cache_key, (font, effective))
+    return font, effective
 
 
-def _load_fallback_font(size: int) -> Any:
+def _load_fallback_font(size: int) -> Tuple[Any, int]:
     """PressStart2P at the requested size, else PIL's built-in default."""
     path = resolve_font_path(_FALLBACK_FONT_NAME)
     if path is not None:
         cache_key = (path, size)
         cached = _font_cache.get(cache_key)
         if cached is not None:
+            _font_cache.move_to_end(cache_key)
             return cached
         try:
-            font = load_truetype(path, size)
-            _font_cache[cache_key] = font
-            return font
+            entry = (load_truetype(path, size), size)
+            _cache_put(cache_key, entry)
+            return entry
         except Exception as e:
             logger.error("Error loading fallback font: %s", e)
-    return ImageFont.load_default()
+    return ImageFont.load_default(), size
 
 
 # ---------------------------------------------------------------------------
@@ -592,12 +684,17 @@ class ElementStyleResolver:
             color = (_normalize_color(classic_color) or default_color
                      or (255, 255, 255))
 
+        # font_size reports what was actually realised, which differs from
+        # the request only when a BDF snapped to its native strike. Callers
+        # lay out from this value; reporting the request would reserve space
+        # for a size nothing was drawn at.
+        font, realised_size = _load_font_sized(font_name, font_size)
         return ElementStyle(
-            font=load_font(font_name, font_size),
+            font=font,
             color=color,
             offset=self.offset(element_key),
             font_name=font_name,
-            font_size=font_size,
+            font_size=realised_size,
             user_forced=user_forced,
             user_forced_color=bool(color_forced),
         )
@@ -607,12 +704,13 @@ class ElementStyleResolver:
         """The untouched fallback style — used when resolution itself
         fails, so ``style()`` can keep its never-raises promise."""
         size = self._coerce_size(classic_size, 8)
+        font, realised_size = _load_font_sized(classic_font, size)
         return ElementStyle(
-            font=load_font(classic_font, size),
+            font=font,
             color=_normalize_color(classic_color) or (255, 255, 255),
             offset=(0, 0),
             font_name=classic_font,
-            font_size=size,
+            font_size=realised_size,
             user_forced=False,
             user_forced_color=False,
         )
