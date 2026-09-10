@@ -163,6 +163,7 @@ pages_v3.config_manager = config_manager
 pages_v3.plugin_manager = plugin_manager
 pages_v3.plugin_store_manager = plugin_store_manager
 pages_v3.saved_repositories_manager = saved_repositories_manager
+pages_v3.schema_manager = schema_manager
 
 api_v3.config_manager = config_manager
 api_v3.plugin_manager = plugin_manager

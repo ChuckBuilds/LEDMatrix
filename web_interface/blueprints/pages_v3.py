@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 config_manager = None
 plugin_manager = None
 plugin_store_manager = None
+schema_manager = None
 
 pages_v3 = Blueprint('pages_v3', __name__)
 
@@ -830,15 +831,40 @@ def _load_plugin_config_partial(plugin_id):
             except Exception as e:  # nosec B110 - metadata pre-load is optional; schema loads fully below
                 logger.debug("Metadata pre-load skipped for plugin %s: %s", plugin_id, e)
 
-        # Get plugin schema
+        # Get plugin schema.
+        #
+        # Through SchemaManager, not a raw json.load, because that is what
+        # the save route uses (api_v3.save_plugin_config) -- and the two
+        # disagreeing is not academic. SchemaManager applies
+        # expand_style_elements, which turns a compact
+        # customization.x-style-elements declaration into the per-element
+        # blocks this form renders. Reading the file directly meant a plugin
+        # using that form (of-the-day ships one) had a customization section
+        # that rendered nothing at all, while saving still validated against
+        # the expanded shape.
+        #
+        # use_cache=False matches the save route: a plugin's schema changes
+        # on disk during development, and a cached copy would keep serving
+        # the old form.
+        #
+        # The raw read stays as a fallback for callers that never set a
+        # schema_manager (several tests, and any embedder of this blueprint).
         schema = {}
-        schema_path = _plugin_dir / "config_schema.json"
-        if schema_path.exists():
+        schema_mgr = getattr(pages_v3, 'schema_manager', None)
+        if schema_mgr is not None:
             try:
-                with open(schema_path, 'r', encoding='utf-8') as f:
-                    schema = json.load(f)
+                schema = schema_mgr.load_schema(plugin_id, use_cache=False) or {}
             except Exception as e:
-                logger.warning("Could not load schema for plugin: %s", e)
+                logger.warning("SchemaManager could not load schema for %s: %s",
+                               plugin_id, e)
+        if not schema:
+            schema_path = _plugin_dir / "config_schema.json"
+            if schema_path.exists():
+                try:
+                    with open(schema_path, 'r', encoding='utf-8') as f:
+                        schema = json.load(f)
+                except Exception as e:
+                    logger.warning("Could not load schema for plugin: %s", e)
 
         # Get web UI actions from plugin manifest
         web_ui_actions = []
