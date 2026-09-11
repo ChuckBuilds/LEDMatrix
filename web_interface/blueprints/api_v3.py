@@ -10087,8 +10087,11 @@ def start_pixlet_editor():
         env['PIXLET_EDITOR_PORT'] = str(port)
         env['PIXLET_EDITOR_TIMEOUT'] = str(timeout_s)
         # A browser reaching this endpoint is remote by definition, so the
-        # session has to listen on more than loopback to be usable at all.
-        env['PIXLET_EDITOR_HOST'] = '0.0.0.0'
+        # session needs to listen on more than loopback to be usable at all --
+        # but only as a *default*. An operator who has already set
+        # PIXLET_EDITOR_HOST (e.g. to keep it loopback-only even from the web
+        # UI) must not have that overridden here.
+        env.setdefault('PIXLET_EDITOR_HOST', '0.0.0.0')
 
         log_path = Path(tempfile.gettempdir()) / 'ledmatrix_pixlet_editor.log'
         log_handle = open(log_path, 'w', encoding='utf-8')  # noqa: SIM115 - owned by the child
@@ -10107,7 +10110,7 @@ def start_pixlet_editor():
         now = time.time()
         state = {'pid': process.pid, 'app_id': app_dir.name, 'port': port,
                  'timeout': timeout_s, 'started_at': now, 'deadline': now + timeout_s,
-                 'host': '0.0.0.0', 'log': str(log_path)}
+                 'host': env['PIXLET_EDITOR_HOST'], 'log': str(log_path)}
         try:
             with open(_PIXLET_EDITOR_STATE, 'w', encoding='utf-8') as handle:
                 json.dump(state, handle)

@@ -63,7 +63,16 @@ const get = p => new Promise((res, rej) =>
      !/s3cret|mqtt_password"\s*:\s*"/.test(window.document.body.innerHTML));
   ok('state badge rendered', ($('mqtt-bridge-state').textContent || '').trim().length > 0,
      $('mqtt-bridge-state').textContent);
-  ok('not-installed shows an Install button', !!$('btn-mqtt-install'));
+  // The dev/test machine may or may not actually have the bridge service
+  // installed -- branch on the same `service.installed` flag the template
+  // itself renders from, rather than hard-assuming "not installed" (which
+  // fails on any host where the service happens to be present).
+  if (bridge.data.service.installed) {
+    ok('installed shows Restart/Start-Stop buttons, not Install',
+       !$('btn-mqtt-install') && !!$('btn-mqtt-restart') && !!$('btn-mqtt-startstop'));
+  } else {
+    ok('not-installed shows an Install button', !!$('btn-mqtt-install'));
+  }
   ok('config path shown', $('mqtt-bridge-body').textContent.includes('bridge_config.json'));
   ok('env override hint shown', $('mqtt-bridge-body').textContent.includes('LEDMATRIX_MQTT_'));
 
