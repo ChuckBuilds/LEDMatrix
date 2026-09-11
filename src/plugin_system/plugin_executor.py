@@ -76,6 +76,13 @@ class PluginExecutor:
         thread.start()
         thread.join(timeout=timeout)
         
+        # NB: this timeout is advisory. Nothing cancels the thread -- Python
+        # has no way to -- so on expiry the operation keeps running to
+        # completion in the background and only this caller gives up waiting.
+        # A plugin that hangs permanently leaks one daemon thread per attempt.
+        # Callers that hold a resource across the call must release it from
+        # inside the wrapped callable rather than after this returns; see the
+        # _release_display_lock guard inside DisplayController.run().
         if not result_container['completed']:
             error_msg = f"{plugin_context} operation timed out after {timeout}s"
             self.logger.error(error_msg)
@@ -148,7 +155,8 @@ class PluginExecutor:
         plugin_id: str,
         force_clear: bool = False,
         display_mode: Optional[str] = None,
-        timeout: Optional[float] = None
+        timeout: Optional[float] = None,
+        accepts_display_mode: Optional[bool] = None
     ) -> bool:
         """
         Execute plugin display() method with error handling.
@@ -159,6 +167,9 @@ class PluginExecutor:
             force_clear: Whether to force clear display
             display_mode: Optional display mode parameter
             timeout: Timeout in seconds (None = use default)
+            accepts_display_mode: Whether plugin.display() takes a
+                display_mode keyword. Pass it when the caller already knows;
+                None falls back to inspecting the callable.
             
         Returns:
             True if display succeeded, False otherwise
@@ -166,10 +177,20 @@ class PluginExecutor:
         try:
             start_time = time.time()
             
-            # Check if plugin accepts display_mode parameter
-            import inspect
-            sig = inspect.signature(plugin.display)
-            has_display_mode = 'display_mode' in sig.parameters
+            # Does display() take a display_mode keyword? The caller usually
+            # knows and caches the answer, so prefer what it passed.
+            #
+            # Inspecting here was not merely redundant, it could never be
+            # cached: display_controller wraps the real plugin in a fresh
+            # SimpleNamespace per call, so inspect.signature() saw a new
+            # callable every time and paid ~55us on a Pi 4 to re-derive a
+            # value the caller had computed one line earlier and stored in
+            # self._plugin_accepts_display_mode.
+            if accepts_display_mode is None:
+                import inspect
+                accepts_display_mode = (
+                    'display_mode' in inspect.signature(plugin.display).parameters)
+            has_display_mode = accepts_display_mode
             
             # Capture the return value from the plugin's display() method
             if has_display_mode and display_mode:

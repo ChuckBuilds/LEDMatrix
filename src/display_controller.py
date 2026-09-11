@@ -2169,7 +2169,14 @@ class DisplayController:
                                         types.SimpleNamespace(display=_display_target),
                                         plugin_id,
                                         force_clear=self.force_change,
-                                        display_mode=active_mode if _accepts_display_mode else None
+                                        display_mode=active_mode if _accepts_display_mode else None,
+                                        # Already resolved and cached above.
+                                        # Without this the executor re-derives
+                                        # it with inspect.signature() against
+                                        # the SimpleNamespace built two lines
+                                        # up -- a fresh callable every call, so
+                                        # nothing there can ever cache.
+                                        accepts_display_mode=_accepts_display_mode
                                     )
                                 except Exception:  # pragma: no cover - defensive;
                                     # execute_display catches everything
@@ -2492,6 +2499,15 @@ class DisplayController:
                                 1.0 / display_interval
                             )
 
+                            # Deliberate: frames after the first call
+                            # display() directly rather than through
+                            # PluginExecutor. The executor spawns a thread per
+                            # call, which at this loop's frame rate would cost
+                            # more than the advisory timeout it buys -- and
+                            # that timeout cannot cancel a hung plugin anyway
+                            # (see execute_with_timeout). The first dispatch
+                            # above still goes through it, so load-time
+                            # failures are still caught and recorded.
                             while True:
                                 _frame_start = time.perf_counter()
                                 try:
@@ -2564,6 +2580,15 @@ class DisplayController:
                                 display_interval
                             )
 
+                            # Deliberate: frames after the first call
+                            # display() directly rather than through
+                            # PluginExecutor. The executor spawns a thread per
+                            # call, which at this loop's frame rate would cost
+                            # more than the advisory timeout it buys -- and
+                            # that timeout cannot cancel a hung plugin anyway
+                            # (see execute_with_timeout). The first dispatch
+                            # above still goes through it, so load-time
+                            # failures are still caught and recorded.
                             while True:
                                 time.sleep(display_interval)
                                 self._tick_plugin_updates()
