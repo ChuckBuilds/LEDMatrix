@@ -520,6 +520,38 @@ class BasePlugin(ABC):
         """
         return
 
+    def get_update_interval(self) -> Optional[float]:
+        """
+        How often this plugin wants update() called, right now, in seconds.
+
+        The manifest's ``update_interval`` is a single static number, which
+        cannot say "poll me every 15 seconds while a game is in progress and
+        every 15 minutes when nothing is on". Only the plugin knows which is
+        true at any moment, so override this to say so.
+
+        Return None (the default) to accept the manifest/config value.
+
+        Two constraints, both because the scheduler calls this on every tick of
+        the render loop:
+
+        - It must be cheap. Attribute reads only -- no config lookups, no I/O,
+          no locks that a fetch might be holding.
+        - It must not raise. A raising hook is ignored and the static interval
+          used, but a hook that raises every tick also logs every tick.
+
+        Values below PluginManager.MIN_DYNAMIC_UPDATE_INTERVAL are clamped up:
+        a plugin asking for 0 would otherwise busy-wait against its own API.
+
+        Example::
+
+            def get_update_interval(self):
+                # Fast while something is actually live, manifest default otherwise.
+                if any(m.live_games for m in self._live_managers):
+                    return self.config.get("live_update_interval", 15)
+                return None
+        """
+        return None
+
     def has_live_priority(self) -> bool:
         """
         Check if this plugin has live priority enabled.

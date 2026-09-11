@@ -17,7 +17,6 @@ everything they need has to exist first.
 """
 from flask import Blueprint, request, jsonify, Response
 import contextlib
-import fcntl
 import json
 import os
 import re
@@ -340,19 +339,6 @@ def _validate_time_format(time_str):
         return True, None
     except (ValueError, TypeError):
         return False, f"Invalid time format: {time_str}. Expected HH:MM format."
-def _validate_time_range(start_time_str, end_time_str, allow_overnight=True):
-    """Validate time range. Returns (is_valid, error_message)"""
-    try:
-        start_time = datetime.strptime(start_time_str, '%H:%M').time()
-        end_time = datetime.strptime(end_time_str, '%H:%M').time()
-
-        # Allow overnight schedules (start > end) or same-day schedules
-        if not allow_overnight and start_time >= end_time:
-            return False, f"Start time ({start_time_str}) must be before end time ({end_time_str}) for same-day schedules"
-
-        return True, None
-    except (ValueError, TypeError) as e:
-        return False, f"Invalid time format: {str(e)}"
 def _git_current_branch(project_dir):
     """Current branch name, or '' when detached or git fails."""
     try:
@@ -1380,6 +1366,15 @@ def _starlark_manifest_lock():
     Callers should do their read, mutation and _write_starlark_manifest() call
     entirely inside the `with` block, mirroring the plugin's lock scope.
     """
+    # Imported here, not at module scope: fcntl is POSIX-only, and a top-level
+    # import made the whole api_v3 package unimportable on Windows -- which the
+    # monolithic blueprint never was, so the split would have broken local dev
+    # and the test suite there. Deliberately NOT degraded to a no-op lock off
+    # POSIX: the docstring above describes a real lost-update race, and silently
+    # not locking would be worse than failing loudly on a platform that cannot
+    # run the display anyway.
+    import fcntl
+
     _STARLARK_APPS_DIR.mkdir(parents=True, exist_ok=True)
     lock_fd = os.open(str(_STARLARK_MANIFEST_LOCK_FILE), os.O_CREAT | os.O_RDWR, 0o644)
     try:

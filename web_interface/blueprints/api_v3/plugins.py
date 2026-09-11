@@ -707,6 +707,35 @@ def reconcile_plugin_state():
             context=error.context,
             status_code=500
         )
+def _drop_stale_reconciliation_findings(unresolved):
+    """Re-check a stored reconciliation verdict against current state.
+
+    The verdict is a snapshot written once per run, and a run that could not
+    apply a fix also refuses to retry -- so a resolved condition was reported
+    indefinitely. Best-effort: any failure here returns the list untouched,
+    because showing a stale warning beats failing the endpoint.
+
+    The disk set is enumerated directly rather than through
+    _installed_plugin_ids(): this mirrors StateReconciliation._get_disk_state(),
+    whose verdict we are re-checking, and avoids triggering a discovery scan on
+    an endpoint the overview page polls.
+    """
+    try:
+        from src.plugin_system.state_reconciliation import still_unresolved
+
+        config_keys = set(api_v3.config_manager.load_config() or {})
+        installed = set()
+        plugins_dir = getattr(api_v3.plugin_manager, 'plugins_dir', None)
+        if plugins_dir:
+            for entry in Path(plugins_dir).iterdir():
+                if entry.is_dir() and (entry / 'manifest.json').exists():
+                    installed.add(entry.name)
+        return still_unresolved(unresolved, config_keys, installed)
+    except Exception:
+        logger.debug("[Reconciliation] Could not re-check stored findings", exc_info=True)
+        return unresolved
+
+
 @api_v3.route('/plugins/reconciliation-status', methods=['GET'])
 def get_reconciliation_status():
     """Return the result of the last startup reconciliation from /tmp status file."""
@@ -721,6 +750,8 @@ def get_reconciliation_status():
     try:
         with open(_recon_path) as _f:
             data = json.load(_f)
+        if data.get('unresolved'):
+            data['unresolved'] = _drop_stale_reconciliation_findings(data['unresolved'])
         return jsonify({'status': 'success', 'data': data})
     except json.JSONDecodeError:
         logger.exception("[Reconciliation] Failed to parse status file: %s", _recon_path)

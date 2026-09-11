@@ -24,7 +24,8 @@ import pytest
 import requests
 from PIL import Image, UnidentifiedImageError
 
-from src.common.logo_helper import MAX_LOGO_BYTES, LogoHelper
+from src.common.logo_helper import (MAX_LOGO_BYTES, MISSING_LOGO_RECHECK_SECONDS,
+                                    LogoHelper)
 
 
 @pytest.fixture(autouse=True)
@@ -494,3 +495,70 @@ class TestStalePlaceholderHandling:
             helper.load_logo_with_download("COLL", path, "http://x/c.png")
 
         assert should_attempt_download(path) is False
+
+
+class TestMissingLogosAreRememberedNotRewarned:
+    """A file that is not there does not become there by being asked again.
+
+    load_logo() stat'd the path and logged a WARNING on every call, so a
+    permanently absent logo produced one warning per rotation for as long as
+    the process ran -- measured at 114 lines in 24 hours for a single missing
+    ticker icon. The positive cache never covered this because a miss returns
+    None and caches nothing.
+    """
+
+    def test_a_missing_logo_warns_once(self, helper, tmp_path, caplog):
+        absent = tmp_path / "VOO.png"
+        with caplog.at_level(logging.WARNING):
+            for _ in range(50):
+                assert helper.load_logo("VOO", absent) is None
+        assert caplog.text.count("Logo not found for VOO") == 1, (
+            f"warned {caplog.text.count('Logo not found for VOO')} times in 50 calls")
+
+    def test_the_miss_is_not_remembered_forever(self, helper, tmp_path, monkeypatch):
+        """A logo written later -- logo_downloader does this at runtime -- must
+        still be picked up without a restart."""
+        path = tmp_path / "LATE.png"
+        assert helper.load_logo("LATE", path) is None
+
+        write_logo(path)
+        # Still inside the recheck window: the remembered miss stands.
+        assert helper.load_logo("LATE", path) is None
+
+        # Once it ages out, the next call stats the disk again and finds it.
+        for key in helper._missing_logos:
+            helper._missing_logos[key] -= MISSING_LOGO_RECHECK_SECONDS + 1
+        assert helper.load_logo("LATE", path) is not None
+
+    def test_a_download_clears_the_miss_immediately(self, helper, tmp_path):
+        """load_logo_with_download() must not be defeated by its own miss record.
+
+        load_logo() consults _missing_logos before it stats the disk, so a
+        logo we just downloaded would stay invisible for the whole recheck
+        window without the explicit invalidation.
+        """
+        path = tmp_path / "NEW.png"
+        assert helper.load_logo("NEW", path) is None
+        assert any(k.startswith("NEW_") for k in helper._missing_logos)
+
+        def _fake_download(url, file_path):
+            write_logo(Path(file_path))
+
+        with patch.object(helper, "_download_logo", side_effect=_fake_download):
+            got = helper.load_logo_with_download("NEW", path, logo_url="http://x/NEW.png")
+        assert got is not None, "a freshly downloaded logo was hidden by the miss record"
+        assert not any(k.startswith("NEW_") for k in helper._missing_logos)
+
+    def test_clear_cache_forgets_misses_too(self, helper, tmp_path):
+        helper.load_logo("GONE", tmp_path / "GONE.png")
+        assert helper._missing_logos
+        helper.clear_cache()
+        assert helper._missing_logos == {}
+
+    def test_a_present_logo_is_unaffected(self, helper, tmp_path, caplog):
+        path = write_logo(tmp_path / "OK.png")
+        with caplog.at_level(logging.WARNING):
+            for _ in range(10):
+                assert helper.load_logo("OK", path) is not None
+        assert "Logo not found" not in caplog.text
+        assert helper._missing_logos == {}
