@@ -105,27 +105,3 @@ def validate_request_json(required_fields: list, data: Optional[Dict] = None) ->
         )
     
     return data, None
-
-
-def validate_request_params(required_params: list) -> Tuple[Optional[Dict], Optional[Any]]:
-    """
-    Validate request has required query parameters.
-    
-    Args:
-        required_params: List of required parameter names
-    
-    Returns:
-        Tuple of (params_dict, error_response) or (params_dict, None) if valid
-    """
-    missing_params = [param for param in required_params if param not in request.args]
-    if missing_params:
-        return None, error_response(
-            ErrorCode.INVALID_INPUT,
-            f"Missing required parameters: {', '.join(missing_params)}",
-            context={'missing_params': missing_params},
-            status_code=400
-        )
-    
-    params = {param: request.args.get(param) for param in required_params}
-    return params, None
-
