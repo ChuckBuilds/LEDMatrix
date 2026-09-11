@@ -111,16 +111,24 @@ class StartupValidator:
                 if not template.is_file() or not installed.is_file():
                     continue
 
-                # The template carries placeholders the installer substitutes,
-                # so compare the substituted form rather than the raw file.
-                expected = template.read_text(encoding="utf-8")
-                expected = expected.replace("__PROJECT_ROOT_DIR__", str(project_root))
-                expected = expected.replace("__USER__", "root")
-
                 try:
                     actual = installed.read_text(encoding="utf-8")
                 except PermissionError:
                     continue
+
+                # The template carries placeholders the installer substitutes,
+                # so compare the substituted form rather than the raw file.
+                expected = template.read_text(encoding="utf-8")
+                expected = expected.replace("__PROJECT_ROOT_DIR__", str(project_root))
+                # User= is an install-time decision, not something the template
+                # dictates: the installers write whoever ran them, which on a
+                # non-root install is never "root". Substituting a fixed "root"
+                # here reported drift on every such install, permanently -- and
+                # re-running the installer, which is what the warning tells you
+                # to do, could not clear it. Taking the installed unit's own
+                # value keeps the comparison on the directives the template
+                # actually controls.
+                expected = expected.replace("__USER__", self._installed_user(actual))
 
                 if self._unit_body(expected) != self._unit_body(actual):
                     self.warnings.append(
@@ -131,6 +139,19 @@ class StartupValidator:
                     )
         except OSError as e:
             self.logger.debug("Could not compare systemd units: %s", e)
+
+    @staticmethod
+    def _installed_user(unit_text: str) -> str:
+        """The installed unit's ``User=``, or "root" when it does not set one.
+
+        systemd itself defaults to root for a system unit with no User=, so that
+        is the right fallback rather than an empty string.
+        """
+        for line in unit_text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("User="):
+                return stripped.split("=", 1)[1].strip()
+        return "root"
 
     @staticmethod
     def _unit_body(text: str) -> str:

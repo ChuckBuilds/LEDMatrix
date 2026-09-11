@@ -1,9 +1,13 @@
-# This is a template file. The actual service file is generated dynamically
-# by install_web_service.sh with the correct paths based on where the project
-# is installed. Do not use this file directly - use install_web_service.sh instead.
+# This is a template. Do not install it directly -- run
+# scripts/install/install_web_service.sh (or install_service.sh, which
+# renders this same file). Both substitute:
+#   __PROJECT_ROOT_DIR__  -> the directory the project is installed in
+#   __USER__              -> the user the web interface runs as
 #
-# Template - paths will be replaced dynamically:
-# __PROJECT_ROOT_DIR__ will be replaced with the actual project directory
+# This file is the only description of the unit. It used to be duplicated as
+# an inline heredoc in both installers, which drifted apart; src/startup_validator.py
+# compares the installed unit against this template, so a second copy means a
+# permanent, unclearable drift warning on every boot.
 
 [Unit]
 Description=LED Matrix Web Interface Service
@@ -12,7 +16,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=root
+User=__USER__
 WorkingDirectory=__PROJECT_ROOT_DIR__
 Environment=USE_THREADING=1
 ExecStart=/usr/bin/python3 __PROJECT_ROOT_DIR__/scripts/utils/start_web_conditionally.py

@@ -17,6 +17,8 @@ editing files under /etc and restarting services is the installer's job, not
 something a display process should do to a machine while it boots.
 """
 import logging
+import shlex
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -150,3 +152,122 @@ def test_a_missing_installed_unit_is_silent(validator, tmp_path):
     validator._validate_systemd_units()
     assert not validator.warnings
     assert not validator.errors
+
+
+# --- the web unit: one template, three copies, and a warning that never cleared ---
+#
+# install_service.sh and install_web_service.sh each carried their own inline
+# heredoc of ledmatrix-web.service. install_service.sh's had drifted -- no
+# Wants=network-online.target, RestartSec, SyslogIdentifier or CacheDirectory --
+# and that is what was installed on real rigs. The validator correctly reported
+# the drift and told the user to re-run install_service.sh, which reinstalled the
+# same stale copy, so the warning could never clear. Separately, the template
+# hardcoded User=root while the installers write whoever ran them, so even the
+# *correct* installer produced a permanent warning on any non-root install.
+
+
+def _render(template_text, project_root, user):
+    """Exactly what the installers' sed does."""
+    return (template_text
+            .replace("__PROJECT_ROOT_DIR__", str(project_root))
+            .replace("__USER__", user))
+
+
+def test_the_web_unit_installed_as_a_non_root_user_is_not_drift(validator, tmp_path):
+    """The web interface runs as whoever installed it, not as root.
+
+    This is the case that warned forever: nothing the user could do would make
+    an installed `User=pi` match a template that said `User=root`.
+    """
+    project_root = Path("src/startup_validator.py").resolve().parent.parent
+    template_rel = "systemd/ledmatrix-web.service"
+    template = project_root / template_rel
+    if not template.is_file():
+        pytest.skip("repo unit template not present")
+
+    installed = tmp_path / "ledmatrix-web.service"
+    installed.write_text(
+        _render(template.read_text(encoding="utf-8"), project_root, "hdpi"),
+        encoding="utf-8")
+
+    validator._UNITS = ((template_rel, str(installed)),)
+    validator._validate_systemd_units()
+    assert not validator.warnings, (
+        f"a correctly installed non-root web unit warned: {validator.warnings}")
+
+
+def test_the_web_unit_still_reports_a_real_changed_directive(validator, tmp_path):
+    """Ignoring User= must not make the check blind to everything else."""
+    project_root = Path("src/startup_validator.py").resolve().parent.parent
+    template_rel = "systemd/ledmatrix-web.service"
+    template = project_root / template_rel
+    if not template.is_file():
+        pytest.skip("repo unit template not present")
+
+    rendered = _render(template.read_text(encoding="utf-8"), project_root, "hdpi")
+    # Drop RestartSec -- one of the directives the stale heredoc was missing.
+    stale = "\n".join(line for line in rendered.splitlines() if not line.startswith("RestartSec="))
+    installed = tmp_path / "ledmatrix-web.service"
+    installed.write_text(stale + "\n", encoding="utf-8")
+
+    validator._UNITS = ((template_rel, str(installed)),)
+    validator._validate_systemd_units()
+    assert validator.warnings, "a web unit missing RestartSec= produced no warning"
+    assert not validator.errors
+
+
+def test_installed_user_falls_back_to_root():
+    """systemd defaults a system unit with no User= to root, so we must too."""
+    assert StartupValidator._installed_user("[Service]\nExecStart=/x\n") == "root"
+    assert StartupValidator._installed_user("[Service]\nUser=pi\n") == "pi"
+    assert StartupValidator._installed_user("[Service]\n  User=hdpi  \n") == "hdpi"
+
+
+def test_sed_escape_replacement_preserves_special_characters():
+    """A project path or username containing sed-special characters must render literally.
+
+    The installers build their sed expression by interpolating a shell
+    variable into the replacement side of `sed s|pattern|replacement|`.
+    Unescaped, sed treats `&` as "insert the whole match" and `\\` as an
+    escape character, so a path like `/opt/led&matrix` would corrupt the
+    rendered unit instead of being substituted as-is. lib_systemd_render.sh's
+    sed_escape_replacement exists to prevent exactly that.
+    """
+    project_root = Path("src/startup_validator.py").resolve().parent.parent
+    helper = project_root / "scripts" / "install" / "lib_systemd_render.sh"
+    if not helper.is_file():
+        pytest.skip("install helper not present")
+
+    value = "/opt/led&matrix\\pi|two"
+    escape_cmd = f'source {shlex.quote(str(helper))}; sed_escape_replacement {shlex.quote(value)}'
+    escaped = subprocess.run(
+        ["bash", "-c", escape_cmd], capture_output=True, text=True, check=True
+    ).stdout
+
+    rendered = subprocess.run(
+        ["sed", f"s|__X__|{escaped}|g"],
+        input="path=__X__\n", capture_output=True, text=True, check=True,
+    ).stdout
+
+    assert rendered == f"path={value}\n", (
+        "a sed-special character in the replacement was not preserved literally")
+
+
+def test_no_installer_carries_its_own_copy_of_a_unit():
+    """The regression guard.
+
+    Both installers used to inline the unit as a heredoc, and the two copies
+    drifted from the template and from each other. A unit body in a shell script
+    is the bug, so assert there isn't one rather than asserting the current
+    contents match -- matching contents is exactly what silently stops being
+    true.
+    """
+    project_root = Path("src/startup_validator.py").resolve().parent.parent
+    offenders = []
+    for script in sorted((project_root / "scripts" / "install").glob("*.sh")):
+        text = script.read_text(encoding="utf-8", errors="replace")
+        if "[Unit]" in text and "Description=" in text:
+            offenders.append(script.name)
+    assert not offenders, (
+        f"{offenders} contain an inline systemd unit; render "
+        f"systemd/*.service instead so there is one source of truth")
