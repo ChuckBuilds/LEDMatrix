@@ -8,6 +8,7 @@ Detects and fixes inconsistencies between:
 - State manager state
 """
 
+import json
 from typing import Dict, Any, List, Set
 from dataclasses import dataclass
 from enum import Enum
@@ -53,6 +54,35 @@ class ReconciliationResult:
     inconsistencies_manual: List[Inconsistency]
     reconciliation_successful: bool
     message: str
+
+
+def still_unresolved(entries: List[Dict[str, Any]],
+                     config_keys: Set[str],
+                     installed_ids: Set[str]) -> List[Dict[str, Any]]:
+    """Drop stored reconciliation findings that are no longer true.
+
+    The verdict is written once to a status file and served to the web UI from
+    there, and a run that fails to apply a fix also declares it "will not retry
+    automatically". Together those froze a single moment forever: a device whose
+    plugins were all present in config kept being told, for hours, that four of
+    them were missing and should be removed from config.json.
+
+    Entry kinds this cannot re-check are kept, so filtering only ever removes
+    findings that are provably stale.
+    """
+    live: List[Dict[str, Any]] = []
+    for entry in entries:
+        kind = entry.get('type')
+        plugin_id = entry.get('plugin_id')
+        if kind == InconsistencyType.PLUGIN_MISSING_IN_CONFIG.value:
+            if plugin_id not in config_keys:
+                live.append(entry)
+        elif kind == InconsistencyType.PLUGIN_MISSING_ON_DISK.value:
+            if plugin_id not in installed_ids:
+                live.append(entry)
+        else:
+            live.append(entry)
+    return live
 
 
 class StateReconciliation:
@@ -200,15 +230,37 @@ class StateReconciliation:
         'github', 'youtube',
     })
 
+    def _secrets_top_level_keys(self) -> Set[str]:
+        """Top-level keys that load_config() merges in from the secrets file.
+
+        load_config() merges config_secrets.json into the config it returns, so
+        those keys sit alongside plugin ids. _SYSTEM_CONFIG_KEYS named them
+        individually ('github', 'youtube'), which broke the moment anything else
+        was written there: a 'data' key became a phantom plugin, permanently
+        reported as "in config but not on disk". Reading the file keeps this
+        correct no matter what it holds.
+        """
+        try:
+            path = self.config_manager.get_secrets_path()
+            with open(path, 'r') as f:
+                secrets = json.load(f)
+        except (AttributeError, OSError, TypeError, ValueError):
+            # Deliberately broad: an unreadable, absent, malformed or
+            # non-path secrets location must narrow this set, never break
+            # reconciliation. ValueError covers json.JSONDecodeError.
+            return set()
+        return set(secrets) if isinstance(secrets, dict) else set()
+
     def _get_config_state(self) -> Dict[str, Dict[str, Any]]:
         """Get plugin state from config file."""
         state = {}
         try:
             config = self.config_manager.load_config()
+            ignored = self._SYSTEM_CONFIG_KEYS | self._secrets_top_level_keys()
             for plugin_id, plugin_config in config.items():
                 if not isinstance(plugin_config, dict):
                     continue
-                if plugin_id in self._SYSTEM_CONFIG_KEYS:
+                if plugin_id in ignored:
                     continue
                 state[plugin_id] = {
                     'enabled': plugin_config.get('enabled', True),
@@ -367,8 +419,18 @@ class StateReconciliation:
         """Attempt to fix an inconsistency."""
         try:
             if inconsistency.inconsistency_type == InconsistencyType.PLUGIN_MISSING_IN_CONFIG:
-                # Add plugin to config with default disabled state
                 config = self.config_manager.load_config()
+                if inconsistency.plugin_id in config:
+                    # Detection said "not in config" but it is there -- the
+                    # config changed under us, or the id came from a key merged
+                    # in from elsewhere. Assigning the stub below would replace
+                    # the real entry: one reported case would have traded 4.9KB
+                    # of league settings for {'enabled': False}. Nothing to fix.
+                    self.logger.info(
+                        "Skipped: %s is already in config; not overwriting it",
+                        inconsistency.plugin_id)
+                    return True
+                # Add plugin to config with default disabled state
                 config[inconsistency.plugin_id] = {
                     'enabled': False
                 }

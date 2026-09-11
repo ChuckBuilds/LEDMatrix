@@ -30,10 +30,33 @@
                 if (!d.unresolved || d.unresolved.length === 0) return;
                 var key = d.unresolved.map(function (i) { return i.plugin_id; }).sort().join(',');
                 if (sessionStorage.getItem(DISMISS_KEY) === key) return;
-                var ids = d.unresolved.map(function (i) { return i.plugin_id; }).join(', ');
-                document.getElementById('reconciliation-banner-text').textContent =
-                    'Stale plugin config entries found: ' + ids +
-                    '. Remove them from config.json or reinstall via the Plugin Store.';
+                // These are opposite problems and need opposite advice. Lumping
+                // them together told users to delete config.json entries for
+                // plugins that were installed and correctly configured.
+                function idsOfType(t) {
+                    return d.unresolved.filter(function (i) { return i.type === t; })
+                                       .map(function (i) { return i.plugin_id; });
+                }
+                var notConfigured = idsOfType('plugin_missing_in_config');
+                var notInstalled = idsOfType('plugin_missing_on_disk');
+                var other = d.unresolved.filter(function (i) {
+                    return i.type !== 'plugin_missing_in_config'
+                        && i.type !== 'plugin_missing_on_disk';
+                }).map(function (i) { return i.plugin_id; });
+
+                var parts = [];
+                if (notConfigured.length) {
+                    parts.push('Installed but missing from config: ' + notConfigured.join(', ')
+                        + '. Configure them in the Plugin Store - do not remove anything from config.json.');
+                }
+                if (notInstalled.length) {
+                    parts.push('In config but not installed: ' + notInstalled.join(', ')
+                        + '. Reinstall via the Plugin Store, or remove these entries from config.json.');
+                }
+                if (other.length) {
+                    parts.push('Needs attention: ' + other.join(', ') + '.');
+                }
+                document.getElementById('reconciliation-banner-text').textContent = parts.join(' ');
                 var banner = document.getElementById('reconciliation-banner');
                 banner.dataset.dismissKey = key;
                 banner.style.setProperty('display', 'flex', 'important');
