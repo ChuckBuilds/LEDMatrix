@@ -139,6 +139,23 @@ class TestRequestValidation:
         assert post(client, options="{}").status_code == 200
         assert restore.call_args[0][2].restore_config is True
 
+    def test_unknown_option_key_is_refused(self, client, restore):
+        # Regression: opts_dict.get('restore_secrets', True) silently
+        # ignores a typo'd/renamed key like "restoreSecrets" and keeps the
+        # True default, restoring secrets a caller's request clearly meant
+        # to exclude -- with no indication anything was wrong.
+        response = post(client, options=json.dumps({"restoreSecrets": False}))
+        assert response.status_code == 400
+        assert "Unknown restore option" in response.get_json()["message"]
+        assert "restoreSecrets" in response.get_json()["message"]
+        restore.assert_not_called()
+
+    def test_known_and_unknown_keys_together_are_refused(self, client, restore):
+        response = post(client, options=json.dumps({
+            "restore_secrets": False, "restore_everything": True}))
+        assert response.status_code == 400
+        restore.assert_not_called()
+
 
 class TestOptionsAreBooleanAware:
     """Regression: bool("false") is True in Python.

@@ -90,6 +90,14 @@ def backup_validate():
     except Exception as e:
         logger.error("backup_validate failed: %s", e, exc_info=True)
         return jsonify({'status': 'error', 'message': 'An internal error occurred; see logs for details'}), 500
+#: The only keys RestoreOptions recognizes. A typo'd or renamed key (e.g.
+#: "restoreSecrets") would otherwise be silently ignored by opts_dict.get(),
+#: leaving that flag at its True default -- restoring secrets a caller's
+#: request clearly meant to exclude, with no indication anything was wrong.
+_RESTORE_OPTION_KEYS = frozenset((
+    'restore_config', 'restore_secrets', 'restore_wifi', 'restore_fonts',
+    'restore_plugin_uploads', 'reinstall_plugins',
+))
 @api_v3.route('/backup/restore', methods=['POST'])
 def backup_restore():
     """Restore a backup ZIP with optional RestoreOptions."""
@@ -111,6 +119,12 @@ def backup_restore():
             return jsonify({
                 'status': 'error',
                 'message': 'Invalid options: expected a JSON object',
+            }), 400
+        unknown_keys = set(opts_dict) - _RESTORE_OPTION_KEYS
+        if unknown_keys:
+            return jsonify({
+                'status': 'error',
+                'message': f'Unknown restore option(s): {", ".join(sorted(unknown_keys))}',
             }), 400
         # _coerce_to_bool (not bare bool()) because a request can send these
         # as JSON strings: bool("false") is True in Python, so a caller who
