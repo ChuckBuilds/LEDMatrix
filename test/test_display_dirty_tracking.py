@@ -44,6 +44,20 @@ def dm(tmp_path_factory):
     # this session; the individual tests that care still override it further.
     manager._snapshot_path = str(
         tmp_path_factory.mktemp("dirty_tracking") / "led_matrix_preview.png")
+    # _setup_matrix() swallows every construction failure and falls back to
+    # matrix=None, so a broken environment reaches the tests as fifteen
+    # identical "'NoneType' object has no attribute 'SwapOnVSync'" errors that
+    # name neither this fixture nor the real cause. Fail here instead, once,
+    # and say where to look.
+    if manager.matrix is None:
+        pytest.fail(
+            "DisplayManager fell back to matrix=None: RGBMatrix construction "
+            "raised (the 'Failed to initialize RGB Matrix' log line above "
+            "carries the reason). Known causes: the emulator adapter losing a "
+            "fixed TCP port to another process -- see pytest_configure in "
+            "test/conftest.py, which pins the port-free 'raw' adapter -- or a "
+            "patch('src.display_manager.RGBMatrix') leaked from an earlier "
+            "test module.")
     yield manager
     DisplayManager._instance = None
     DisplayManager._initialized = False

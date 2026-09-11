@@ -7,7 +7,7 @@ Provides common fixtures for mocking core components and test setup.
 import pytest
 import sys
 from pathlib import Path
-from unittest.mock import Mock, MagicMock
+from unittest.mock import Mock, MagicMock, NonCallableMock
 from typing import Dict, Any, Optional
 
 # Add project root to path
@@ -68,6 +68,61 @@ def pytest_unconfigure(config):
     if tmp_dir is not None:
         import shutil
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+# DisplayManager is a process-wide singleton, and the RGBMatrix /
+# RGBMatrixOptions names it builds through are module globals bound once at
+# import to either the emulator or the hardware library. All three are shared
+# by every test module in the run, so a module that leaves a live instance in
+# _instance -- or leaves patch('src.display_manager.RGBMatrix') standing --
+# changes what the NEXT module constructs. None of that is visible when the
+# affected file is run on its own; it surfaces as a full-suite failure that
+# does not reproduce. The full-run failure diff is how a change is confirmed
+# non-regressive, so it has to mean the same thing on every run.
+_PRISTINE_MATRIX_BINDINGS = {}
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _reset_display_manager_globals():
+    """Undo any DisplayManager global state a test module leaves behind.
+
+    Autouse fixtures are set up ahead of the fixtures a test asks for, so this
+    one is finalised after them -- including after a module-scoped fixture that
+    owns a real DisplayManager (test_display_dirty_tracking.py's ``dm``).
+    Module-scoped rather than per-test: files that deliberately share one
+    manager across their own tests keep doing so; only the leak across the
+    module boundary is cut.
+    """
+    # Record the real bindings on the way in, while no patch of this module's
+    # is active yet -- reading them on the way out would record the leak.
+    _remember_matrix_bindings()
+    yield
+
+    dm_mod = sys.modules.get("src.display_manager")
+    if dm_mod is None:
+        return  # Module never imported it; nothing to reset.
+
+    # An instance left here is what the next module's DisplayManager() call
+    # gets back -- potentially one built against a MagicMock matrix.
+    dm_mod.DisplayManager._instance = None
+    dm_mod.DisplayManager._initialized = False
+
+    # Put a binding back if a patch outlived the module that started it.
+    # Restoring rather than failing: a leak reported against an innocent module
+    # later in the run is the diagnosis problem, not the fix for it.
+    for name, pristine in _PRISTINE_MATRIX_BINDINGS.items():
+        if isinstance(getattr(dm_mod, name, None), NonCallableMock):
+            setattr(dm_mod, name, pristine)
+
+
+def _remember_matrix_bindings():
+    dm_mod = sys.modules.get("src.display_manager")
+    if dm_mod is None:
+        return
+    for name in ("RGBMatrix", "RGBMatrixOptions"):
+        current = getattr(dm_mod, name, None)
+        if current is not None and not isinstance(current, NonCallableMock):
+            _PRISTINE_MATRIX_BINDINGS.setdefault(name, current)
 
 
 @pytest.fixture
