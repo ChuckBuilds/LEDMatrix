@@ -5,6 +5,7 @@ Routes decorate the shared `api_v3` Blueprint from ._common, so their
 endpoint names are unchanged by living here.
 """
 from web_interface.blueprints.api_v3 import (
+    _coerce_to_bool,
     ErrorCode, Path, _JOURNALCTL, _MQTT_BRIDGE_CONFIG, _MQTT_BRIDGE_DEFAULTS,
     _MQTT_BRIDGE_DIR, _SUDO, _coerce_mqtt_bridge_value,
     _get_display_service_status, _mqtt_bridge_service_state,
@@ -436,7 +437,11 @@ def update_mqtt_bridge_config():
     have to blank it on every save.
     """
     try:
-        data = request.get_json(silent=True) or {}
+        # No `or {}` here: get_json(silent=True) returns None for a missing or
+        # unparseable body, and `None or {}` produced an empty dict that then
+        # satisfied the isinstance check below -- so malformed JSON, `null`,
+        # `[]` and `false` all reported success while applying nothing.
+        data = request.get_json(silent=True)
         if not isinstance(data, dict):
             return jsonify({'status': 'error', 'message': 'Body must be a JSON object'}), 400
 
@@ -454,7 +459,10 @@ def update_mqtt_bridge_config():
 
         config.update(updates)
 
-        if data.get('clear_password'):
+        # Coerced, not merely truthy: the string "false" is truthy in Python,
+        # so a client echoing the field back as a string would have wiped a
+        # stored password it meant to keep.
+        if _coerce_to_bool(data.get('clear_password')):
             config['mqtt_password'] = None
         elif 'mqtt_password' in data and str(data['mqtt_password']) != '':
             new_password = str(data['mqtt_password'])
