@@ -1993,6 +1993,33 @@ def check_for_update():
         return jsonify(_update_check_failed(
             "Could not check for updates; see logs for details."))
 
+#: sudo's own wording when it needs a password it cannot ask for. The web
+#: interface runs unprivileged, so its systemctl/reboot/journalctl calls only
+#: work once scripts/install/configure_web_sudo.sh has granted NOPASSWD --
+#: which first_time_install.sh does not do. That makes this the common case on
+#: a fresh device, and "Action failed; see logs for details" named none of it,
+#: while the log viewer was broken for the very same reason.
+_SUDO_NEEDS_PASSWORD = (
+    'a password is required',
+    'no tty present',
+    'a terminal is required',
+)
+
+_SUDO_HINT = (
+    'Passwordless sudo is not configured for the web interface user, so this '
+    'action cannot run. Run scripts/install/configure_web_sudo.sh as that user, '
+    'then retry.'
+)
+
+
+def _sudo_hint_for(text):
+    """An actionable hint when `text` is sudo refusing to prompt, else None."""
+    lowered = (text or '').lower()
+    if any(marker in lowered for marker in _SUDO_NEEDS_PASSWORD):
+        return _SUDO_HINT
+    return None
+
+
 @api_v3.route('/system/action', methods=['POST'])
 def execute_system_action():
     """Execute system actions (start/stop/reboot/etc)"""
@@ -2360,6 +2387,9 @@ def execute_system_action():
         if result.returncode != 0:
             resp['returncode'] = result.returncode
             resp['stderr'] = result.stderr.strip()
+            hint = _sudo_hint_for(result.stderr)
+            if hint:
+                resp['message'] = hint
         return jsonify(resp)
 
     except subprocess.TimeoutExpired as e:
@@ -2367,7 +2397,13 @@ def execute_system_action():
         return jsonify({'status': 'error', 'message': 'Command timed out', 'returncode': -1, 'stderr': 'timeout'})
     except Exception as e:
         logger.error("execute_system_action failed: %s", e, exc_info=True)
-        return jsonify({'status': 'error', 'message': 'Action failed; see logs for details'}), 500
+        detail = describe_exception(e)
+        resp = {
+            'status': 'error',
+            'message': _sudo_hint_for(detail) or 'Action failed; see logs for details',
+            'details': detail,
+        }
+        return jsonify(resp), 500
 
 @api_v3.route('/system/git-info', methods=['GET'])
 def get_git_info():
