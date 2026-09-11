@@ -805,15 +805,25 @@ class StarlarkAppsPlugin(BasePlugin):
             magnify = self._get_effective_magnify()
             self.logger.debug(f"Using magnify={magnify} for {app.app_id}")
 
-            # Filter out LEDMatrix-internal timing keys before passing to pixlet
-            INTERNAL_KEYS = {'render_interval', 'display_duration'}
+            # Optional native render size for an app whose own declared canvas
+            # differs from Pixlet's 64x32 default -- without this an app
+            # declaring a wider native canvas got half its own content
+            # clipped at render time, before magnify ever got a chance to
+            # scale anything.
+            render_width = app.config.get("render_width")
+            render_height = app.config.get("render_height")
+
+            # Filter out LEDMatrix-internal timing/sizing keys before passing to pixlet
+            INTERNAL_KEYS = {'render_interval', 'display_duration', 'render_width', 'render_height'}
             pixlet_config = {k: v for k, v in app.config.items() if k not in INTERNAL_KEYS}
 
             success, error = self.pixlet.render(
                 star_file=str(app.star_file),
                 output_path=str(app.cache_file),
                 config=pixlet_config,
-                magnify=magnify
+                magnify=magnify,
+                width=render_width,
+                height=render_height
             )
 
             if not success:
