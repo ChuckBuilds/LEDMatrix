@@ -8,6 +8,7 @@ import os
 import tempfile
 import time
 from abc import ABC, abstractmethod
+from collections import OrderedDict
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -167,7 +168,14 @@ class SportsCore(ABC):
         self.session.mount("https://", adapter)
         self.session.mount("http://", adapter)
 
-        self._logo_cache = {}
+        # LRU-bounded: entries are decoded RGBA thumbnails, not file bytes.
+        # Each is up to display_width*1.5 x display_height*1.5 -- about 36KB on
+        # a 256x64 panel, more for wide wordmarks. The key is a team
+        # abbreviation and assets/sports/ncaa_logos alone ships 307 of them, so
+        # an unbounded dict here held the whole league: ~11-18MB per manager
+        # instance, and a league runs three (live/recent/upcoming) each with
+        # its own cache. That is real money on a 1GB Pi.
+        self._logo_cache: "OrderedDict[str, Image.Image]" = OrderedDict()
 
         # Font caches for _load_custom_font_from_element_config: per-frame
         # callers (font-ladder walks) resolve the same (name, size) over and
@@ -560,11 +568,17 @@ class SportsCore(ABC):
             draw.text((x + dx, y + dy), text, font=font, fill=outline_color)
         draw.text((x, y), text, font=font, fill=fill)
 
+    #: Decoded logos to keep. A scroll of "other games" shows on the order of
+    #: 20 games (40 teams), so this holds a full cycle without thrashing while
+    #: capping the cache well below a 307-team league.
+    _LOGO_CACHE_MAX = 64
+
     def _load_and_resize_logo(self, team_id: str, team_abbrev: str, logo_path: Path, logo_url: str | None ) -> Optional[Image.Image]:
         """Load and resize a team logo, with caching and automatic download if missing."""
         self.logger.debug(f"Logo path: {logo_path}")
         if team_abbrev in self._logo_cache:
             self.logger.debug(f"Using cached logo for {team_abbrev}")
+            self._logo_cache.move_to_end(team_abbrev)
             return self._logo_cache[team_abbrev]
 
         try:
@@ -604,6 +618,8 @@ class SportsCore(ABC):
             max_height = int(self.display_height * 1.5)
             logo.thumbnail((max_width, max_height), Image.Resampling.LANCZOS)
             self._logo_cache[team_abbrev] = logo
+            while len(self._logo_cache) > self._LOGO_CACHE_MAX:
+                self._logo_cache.popitem(last=False)
             return logo
 
         except Exception as e:
