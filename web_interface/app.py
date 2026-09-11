@@ -32,6 +32,8 @@ _JOURNALCTL = shutil.which('journalctl')
 _SYSTEMCTL = shutil.which('systemctl')
 _VCGENCMD = shutil.which('vcgencmd')
 
+from web_interface.system_metrics import collect_system_metrics
+
 # Create Flask app
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
@@ -606,26 +608,12 @@ def system_status_generator():
     """Generate system status updates"""
     while True:
         try:
-            # Try to import psutil for system stats
-            try:
-                import psutil
-                # interval=None is non-blocking; primed at module startup above
-                cpu_percent = round(psutil.cpu_percent(interval=None), 1)
-                memory = psutil.virtual_memory()
-                memory_used_percent = round(memory.percent, 1)
-
-                # Try to get CPU temperature (Raspberry Pi specific)
-                cpu_temp = 0
-                try:
-                    with open('/sys/class/thermal/thermal_zone0/temp', 'r') as f:
-                        cpu_temp = round(float(f.read()) / 1000.0, 1)
-                except (OSError, ValueError):
-                    pass
-
-            except ImportError:
-                cpu_percent = 0
-                memory_used_percent = 0
-                cpu_temp = 0
+            metrics = collect_system_metrics()
+            cpu_percent = metrics['cpu_percent']
+            memory_used_percent = metrics['memory_used_percent']
+            memory_available_mb = metrics['memory_available_mb']
+            disk_used_percent = metrics['disk_used_percent']
+            cpu_temp = metrics['cpu_temp']
 
             # Check if display service is running (cached to avoid per-client subprocess forks)
             now = time.time()
@@ -646,8 +634,9 @@ def system_status_generator():
                 'service_active': service_active,
                 'cpu_percent': cpu_percent,
                 'memory_used_percent': memory_used_percent,
+                'memory_available_mb': memory_available_mb,
                 'cpu_temp': cpu_temp,
-                'disk_used_percent': 0,
+                'disk_used_percent': disk_used_percent,
                 'power': _get_power_status()
             }
             yield status
