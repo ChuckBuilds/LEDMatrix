@@ -18,8 +18,6 @@ everything they need has to exist first.
 from flask import Blueprint, request, jsonify, Response
 import contextlib
 import json
-import signal
-import contextlib
 import os
 import re
 import stat
@@ -1971,18 +1969,23 @@ def _mqtt_bridge_service_state() -> Dict[str, Any]:
     return state
 
 def _read_mqtt_bridge_config() -> Dict[str, Any]:
-    """Stored config overlaid on the defaults. Missing file is not an error."""
-    config = dict(_MQTT_BRIDGE_DEFAULTS)
-    config['mqtt_password'] = None
+    """Stored config overlaid on the defaults. Missing file is not an error.
+
+    Named `settings`, not `config`: this module imports a submodule called
+    `config` at the bottom for its route side effects, and a local of the same
+    name shadows it.
+    """
+    settings = dict(_MQTT_BRIDGE_DEFAULTS)
+    settings['mqtt_password'] = None
     try:
         if _MQTT_BRIDGE_CONFIG.is_file():
             with open(_MQTT_BRIDGE_CONFIG, encoding='utf-8') as handle:
                 stored = json.load(handle)
             if isinstance(stored, dict):
-                config.update(stored)
+                settings.update(stored)
     except (OSError, json.JSONDecodeError) as err:
         logger.warning('Could not read %s: %s', _MQTT_BRIDGE_CONFIG, err)
-    return config
+    return settings
 
 def _coerce_mqtt_bridge_value(key: str, raw: Any) -> Tuple[Any, Optional[str]]:
     """Validate one submitted field. Returns (value, error)."""
