@@ -206,10 +206,15 @@
         else console.log(`[PFM][${type}] ${msg}`);
     }
 
+    // Quotes too: the result lands in quoted attribute values (id=, value=,
+    // data-col=), and the textContent/innerHTML round-trip only escapes
+    // &, < and >.
     function escHtml(s) {
         const d = document.createElement('div');
         d.textContent = String(s ?? '');
-        return d.innerHTML;
+        return d.innerHTML
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     function formatSize(bytes) {
