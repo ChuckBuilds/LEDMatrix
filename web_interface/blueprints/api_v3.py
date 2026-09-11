@@ -2055,7 +2055,14 @@ def execute_system_action():
                     logger.error("start_display (%s) stderr: %s", mode, result.stderr.strip())
                 resp = {
                     'status': 'success' if result.returncode == 0 else 'error',
-                    'message': 'Display started' if result.returncode == 0 else 'Failed to start display',
+                    # This branch returns before the shared nonzero-result
+                    # response below, so it needs the hint of its own or an
+                    # on-demand start reports "Failed to start display" and
+                    # says nothing about the sudo that actually refused it.
+                    'message': (
+                        'Display started' if result.returncode == 0
+                        else _sudo_hint_for(result.stderr) or 'Failed to start display'
+                    ),
                 }
                 if result.returncode != 0:
                     resp['returncode'] = result.returncode

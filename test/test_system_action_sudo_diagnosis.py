@@ -94,6 +94,35 @@ class TestTheExceptionPathNamesTheCause:
         assert 'configure_web_sudo.sh' in body['message']
 
 
+class TestTheEarlyReturnPathsAlsoGetTheHint:
+    """start_display with a mode builds its own response and returns before the
+    shared nonzero-result path, so it needed the hint separately. Found by
+    CodeRabbit on #560; verified against the code before fixing."""
+
+    def test_on_demand_start_reports_the_sudo_cause(self, client):
+        with patch('subprocess.run',
+                   side_effect=lambda a, **k: _result(a, 1, "sudo: a password is required")):
+            body = client.post('/api/v3/system/action',
+                               json={'action': 'start_display', 'mode': 'nfl_live'}).get_json()
+
+        assert 'configure_web_sudo.sh' in body['message'],             "the on-demand branch still reported only 'Failed to start display'"
+        assert body['status'] == 'error'
+
+    def test_on_demand_start_keeps_its_success_message(self, client):
+        with patch('subprocess.run', side_effect=lambda a, **k: _result(a, 0)):
+            body = client.post('/api/v3/system/action',
+                               json={'action': 'start_display', 'mode': 'nfl_live'}).get_json()
+        assert body['status'] == 'success'
+        assert body['message'] == 'Display started'
+
+    def test_an_unrelated_on_demand_failure_is_not_blamed_on_sudo(self, client):
+        with patch('subprocess.run',
+                   side_effect=lambda a, **k: _result(a, 5, "Unit not found.")):
+            body = client.post('/api/v3/system/action',
+                               json={'action': 'start_display', 'mode': 'nfl_live'}).get_json()
+        assert body['message'] == 'Failed to start display'
+
+
 class TestSuccessIsUnchanged:
     def test_a_working_action_still_reports_success(self, client):
         with patch('subprocess.run', side_effect=lambda a, **k: _result(a, 0)):
