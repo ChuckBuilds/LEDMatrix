@@ -257,9 +257,20 @@
                 const protocols = normalizeProtocols(widgetEl?.dataset.protocols);
 
                 if (previewEl && previewLink) {
-                    const href = value ? safeHref(value, protocols) : '';
-                    if (href) {
-                        previewLink.href = href;
+                    // Scheme checked inline, right where the value reaches the DOM sink,
+                    // rather than through safeHref/isValidUrl -- CodeQL's DOM-based-XSS
+                    // sanitizer recognition does not trace a boolean-returning helper two
+                    // calls deep, so it kept flagging this assignment even though the
+                    // scriptable-scheme check (see SCRIPTABLE_SCHEMES) already covered it.
+                    let scheme = '';
+                    try {
+                        scheme = value ? new URL(value).protocol.replace(':', '').toLowerCase() : '';
+                    } catch (_) {
+                        scheme = '';
+                    }
+                    const schemeIsSafe = !!scheme && !SCRIPTABLE_SCHEMES.includes(scheme) && protocols.includes(scheme);
+                    if (schemeIsSafe) {
+                        previewLink.href = value;
                         previewEl.classList.remove('hidden');
                     } else {
                         previewLink.removeAttribute('href');

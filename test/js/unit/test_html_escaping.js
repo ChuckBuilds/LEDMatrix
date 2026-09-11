@@ -169,5 +169,80 @@ console.log('\n5. url-input never treats a scriptable scheme as a valid URL');
   ok('safeHref blanks an unparseable value', safeHref('not a url', ['http', 'https']) === '');
 }
 
+// ── url-input onInput: the sink itself, not just the pulled-out helpers ────
+// The scheme check now lives inline in onInput, right where the value reaches
+// `previewLink.href`, instead of behind safeHref/isValidUrl -- see the comment
+// at that assignment in url-input.js for why. Run the handler as shipped so a
+// regression that reintroduces an unguarded `previewLink.href = value` fails
+// here, not just in a scanner run weeks later.
+console.log('\n6. url-input onInput: previewLink.href is guarded at the sink');
+{
+  class FakeClassList {
+    constructor() { this.classes = new Set(['hidden']); }
+    add(c) { this.classes.add(c); }
+    remove(c) { this.classes.delete(c); }
+    contains(c) { return this.classes.has(c); }
+  }
+  const mockDoc = (value, protocolsAttr) => {
+    const elements = {
+      _input: { value, checkValidity: () => true, validationMessage: '', classList: new FakeClassList() },
+      _preview: { classList: new FakeClassList() },
+      _preview_link: {
+        classList: new FakeClassList(),
+        _href: undefined,
+        set href(v) { this._href = v; },
+        get href() { return this._href; },
+        removeAttribute(name) { if (name === 'href') this._href = undefined; },
+      },
+      _widget: { dataset: { protocols: protocolsAttr } },
+      _error: { classList: new FakeClassList(), textContent: '' },
+    };
+    return {
+      elements,
+      getElementById: (id) => elements[Object.keys(elements).find(k => id === `field${k}`)] || null,
+    };
+  };
+
+  function runOnInput(value, protocolsAttr) {
+    const { elements, getElementById } = mockDoc(value, protocolsAttr);
+    const savedDocument = global.document;
+    const savedWindow = global.window;
+    let registered = null;
+    global.document = { createElement: () => new FakeEl(), getElementById };
+    global.window = {
+      LEDMatrixWidgets: {
+        register: (name, obj) => { registered = obj; },
+        get: () => registered,
+        getHandlers: () => registered.handlers,
+      },
+    };
+    try {
+      const src = fs.readFileSync(path.join(ROOT, 'static/v3/js/widgets/url-input.js'), 'utf8');
+      // eslint-disable-next-line no-eval
+      eval(src);
+      registered.handlers.onInput('field');
+    } finally {
+      global.document = savedDocument;
+      global.window = savedWindow;
+    }
+    return elements;
+  }
+
+  let els = runOnInput('javascript:alert(1)', 'http,https');
+  ok('javascript: never reaches previewLink.href', els._preview_link.href === undefined, els._preview_link.href);
+  ok('javascript: leaves the preview hidden', els._preview.classList.contains('hidden'));
+
+  els = runOnInput('https://example.com', 'http,https');
+  ok('an ordinary https URL reaches previewLink.href', els._preview_link.href === 'https://example.com', els._preview_link.href);
+  ok('an ordinary https URL unhides the preview', !els._preview.classList.contains('hidden'));
+
+  els = runOnInput('data:text/html,<script>alert(1)</script>', 'http,https,data');
+  ok('data: never reaches previewLink.href even when the schema allows it',
+     els._preview_link.href === undefined, els._preview_link.href);
+
+  els = runOnInput('not a url', 'http,https');
+  ok('an unparseable value never reaches previewLink.href', els._preview_link.href === undefined, els._preview_link.href);
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);
