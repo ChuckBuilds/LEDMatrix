@@ -229,6 +229,61 @@ class TestRadio:
         assert api_v3_client.post(self.URL, json={"enabled": True}).status_code == 500
 
 
+class TestAutoEnableApMode:
+    URL = "/api/v3/wifi/ap/auto-enable"
+
+    def test_requires_the_field(self, api_v3_client, wifi_manager):
+        response = api_v3_client.post(self.URL, json={})
+        assert response.status_code == 400
+
+    @pytest.mark.parametrize("raw,expected", [
+        (True, True), (False, False),
+        ("true", True), ("True", True), ("1", True), ("yes", True),
+        ("false", False), ("False", False), ("0", False), ("no", False),
+        (1, True), (0, False),
+    ])
+    def test_value_is_coerced_not_just_truthy(
+            self, api_v3_client, wifi_manager, raw, expected):
+        # Regression: bool(data['auto_enable_ap_mode']) meant a caller who
+        # sent the JSON string "false" got it stored as True — bool("false")
+        # is True, since any non-empty string is truthy.
+        wifi_manager.config = {}
+        response = api_v3_client.post(self.URL, json={"auto_enable_ap_mode": raw})
+        assert response.status_code == 200, response.get_json()
+        assert response.get_json()["data"]["auto_enable_ap_mode"] is expected
+        assert wifi_manager.config["auto_enable_ap_mode"] is expected
+
+    def test_a_string_false_does_not_enable_it(self, api_v3_client, wifi_manager):
+        # The exact shape of the bug.
+        wifi_manager.config = {}
+        api_v3_client.post(self.URL, json={"auto_enable_ap_mode": "false"})
+        assert wifi_manager.config["auto_enable_ap_mode"] is False
+
+
+class TestRadioEnabledAndForceAcceptIntegers:
+    """`{"enabled": 1}` / `{"enabled": 0}` used to be mishandled: the old
+    coercion was `raw is True or (isinstance(raw, str) and ...)`, and
+    `1 is True` is False in Python -- an int is never the `True` singleton
+    even though it equals it -- so a plain integer fell through to False
+    regardless of its value.
+    """
+    URL = "/api/v3/wifi/radio"
+
+    @pytest.mark.parametrize("raw,expected", [(1, True), (0, False)])
+    def test_enabled_as_an_integer(self, api_v3_client, wifi_manager, raw, expected):
+        wifi_manager.set_wifi_radio.return_value = (True, "ok", None)
+        wifi_manager.get_wifi_radio_state.return_value = {}
+        api_v3_client.post(self.URL, json={"enabled": raw})
+        wifi_manager.set_wifi_radio.assert_called_once_with(expected, force=False)
+
+    @pytest.mark.parametrize("raw,expected", [(1, True), (0, False)])
+    def test_force_as_an_integer(self, api_v3_client, wifi_manager, raw, expected):
+        wifi_manager.set_wifi_radio.return_value = (True, "ok", None)
+        wifi_manager.get_wifi_radio_state.return_value = {}
+        api_v3_client.post(self.URL, json={"enabled": True, "force": raw})
+        wifi_manager.set_wifi_radio.assert_called_once_with(True, force=expected)
+
+
 class TestNoRealNetworking:
     def test_wifi_manager_is_never_constructed_for_real(self, api_v3_client):
         # Guard against a future refactor moving the import to module level,

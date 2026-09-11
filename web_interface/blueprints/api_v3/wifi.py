@@ -8,6 +8,36 @@ from web_interface.blueprints.api_v3 import (
 )
 
 
+def _parse_bool_ish(value, default=False):
+    """Coerce a JSON value that is supposed to be a boolean.
+
+    A JSON boolean arrives as a real Python bool, but these routes are a
+    public HTTP contract and not every caller sends one. `bool(value)` gets
+    two common cases wrong: `bool("false")` is True (a non-empty string is
+    always truthy), and a plain int does not match an `is True` check
+    (`1 is True` is False, since `True` is a distinct singleton from the int
+    `1`) -- so a caller sending `{"enabled": 1}` was silently treated as
+    False. Recognizes a real bool, "true"/"false"/"1"/"0"/"yes"/"no"
+    case-insensitively, and int 1/0; anything else falls back to `default`.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in ('true', '1', 'yes'):
+            return True
+        if lowered in ('false', '0', 'no'):
+            return False
+        return default
+    if isinstance(value, int):
+        if value == 1:
+            return True
+        if value == 0:
+            return False
+        return default
+    return default
+
+
 # WiFi Management Endpoints
 @api_v3.route('/wifi/status', methods=['GET'])
 def get_wifi_status():
@@ -273,7 +303,7 @@ def set_auto_enable_ap_mode():
                 'message': 'auto_enable_ap_mode is required'
             }), 400
 
-        auto_enable = bool(data['auto_enable_ap_mode'])
+        auto_enable = _parse_bool_ish(data['auto_enable_ap_mode'], default=False)
 
         wifi_manager = WiFiManager()
         wifi_manager.config["auto_enable_ap_mode"] = auto_enable
@@ -330,13 +360,12 @@ def set_wifi_radio():
                 'message': 'enabled is required'
             }), 400
 
-        # Parse defensively: bool("false") is True, so mirror the string-aware
-        # coercion used for `force` — the endpoint is a public contract, not just
-        # the shipped UI (which always sends real JSON booleans).
-        _enabled_raw = data['enabled']
-        enabled = _enabled_raw is True or (isinstance(_enabled_raw, str) and _enabled_raw.lower() in ('true', '1', 'yes'))
-        _force_raw = data.get('force', False)
-        force = _force_raw is True or (isinstance(_force_raw, str) and _force_raw.lower() in ('true', '1', 'yes'))
+        # Parse defensively: bool("false") is True and a plain int never
+        # matches `is True`, so `_parse_bool_ish` handles bool, string and
+        # int 1/0 — the endpoint is a public contract, not just the shipped
+        # UI (which always sends real JSON booleans).
+        enabled = _parse_bool_ish(data['enabled'], default=False)
+        force = _parse_bool_ish(data.get('force', False), default=False)
 
         wifi_manager = WiFiManager()
         success, message, reason = wifi_manager.set_wifi_radio(enabled, force=force)

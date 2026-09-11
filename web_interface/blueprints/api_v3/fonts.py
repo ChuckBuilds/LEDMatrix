@@ -168,14 +168,29 @@ def upload_font():
         if font_file.filename == '':
             return jsonify({'status': 'error', 'message': 'No file selected'}), 400
 
-        # Validate filename
+        # Validate filename. validate_file_upload takes max_size_mb but only
+        # checks the filename/extension with it -- it never looks at the
+        # actual upload size, so the size limit below is enforced separately
+        # before the file is saved (same pattern as the .star upload above).
+        MAX_FONT_SIZE_MB = 10
         is_valid, error_msg = validate_file_upload(
             font_file.filename,
-            max_size_mb=10,
+            max_size_mb=MAX_FONT_SIZE_MB,
             allowed_extensions=['.ttf', '.otf', '.bdf']
         )
         if not is_valid:
             return jsonify({'status': 'error', 'message': error_msg}), 400
+
+        # Check file size (stated limit is MAX_FONT_SIZE_MB)
+        font_file.seek(0, 2)  # Seek to end
+        file_size = font_file.tell()
+        font_file.seek(0)  # Reset to beginning
+        max_font_size_bytes = MAX_FONT_SIZE_MB * 1024 * 1024
+        if file_size > max_font_size_bytes:
+            return jsonify({
+                'status': 'error',
+                'message': f'File too large (max {MAX_FONT_SIZE_MB}MB, got {file_size / 1024 / 1024:.1f}MB)'
+            }), 400
 
         font_family = request.form.get('font_family', '')
 

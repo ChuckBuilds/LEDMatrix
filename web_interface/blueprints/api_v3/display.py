@@ -227,7 +227,7 @@ def start_on_demand_display():
         
         # Stop the display service first to ensure clean state when we will restart it
         if service_was_running and start_service:
-            import _pkg.time as time_module
+            import time as time_module
             logger.debug("Stopping display service before starting on-demand mode")
             _stop_display_service()
             # Wait a brief moment for the service to fully stop

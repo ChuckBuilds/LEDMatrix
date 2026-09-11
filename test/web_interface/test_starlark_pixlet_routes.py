@@ -395,6 +395,132 @@ class TestTheManifestStaysRelocatable:
         assert self._install(tmp_path)['star_file'] == 'demo.star'
 
 
+class TestManifestLockPreventsLostUpdates:
+    """The standalone manifest fallback (no plugin instance loaded) reads,
+    mutates and writes manifest.json with no coordination across requests.
+    Each write is atomic on its own (temp file + rename), but two concurrent
+    read-modify-write cycles can still race: both read the same starting
+    manifest, and the second write silently discards whatever the first one
+    added. _starlark_manifest_lock closes that window -- mirrors
+    StarlarkAppsPlugin._update_manifest_safe, which already does this when
+    the plugin instance is loaded.
+    """
+
+    @pytest.fixture
+    def starlark_dir(self, tmp_path, monkeypatch):
+        from web_interface.blueprints import api_v3 as module
+        apps_dir = tmp_path / "starlark-apps"
+        apps_dir.mkdir()
+        monkeypatch.setattr(module, '_STARLARK_APPS_DIR', apps_dir)
+        monkeypatch.setattr(module, '_STARLARK_MANIFEST_FILE', apps_dir / 'manifest.json')
+        module._write_starlark_manifest({'apps': {}})
+        return apps_dir
+
+    def test_two_concurrent_updates_are_both_kept(self, starlark_dir):
+        import threading
+        import time as _time
+
+        from web_interface.blueprints import api_v3 as module
+
+        def add_app(app_id):
+            with module._starlark_manifest_lock():
+                manifest = module._read_starlark_manifest()
+                # Widen the window between read and write. Without the lock
+                # both threads read here before either writes, and whichever
+                # writes second overwrites the other's addition; with the
+                # lock, the second thread cannot even start its read until
+                # the first has written and released.
+                _time.sleep(0.05)
+                manifest.setdefault('apps', {})[app_id] = {'enabled': True}
+                module._write_starlark_manifest(manifest)
+
+        threads = [threading.Thread(target=add_app, args=(app_id,))
+                   for app_id in ('a', 'b')]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=5)
+
+        manifest = module._read_starlark_manifest()
+        assert set(manifest['apps']) == {'a', 'b'}, (
+            "a concurrent update was lost: %r" % (manifest,))
+
+    def test_the_lock_is_reentrant_safe_across_sequential_calls(self, starlark_dir):
+        """Not reentrant within one thread -- just that using it twice in a
+        row (the ordinary case: one request, then the next) works cleanly
+        and does not leak the lock file descriptor or leave it locked."""
+        from web_interface.blueprints import api_v3 as module
+
+        for app_id in ('first', 'second'):
+            with module._starlark_manifest_lock():
+                manifest = module._read_starlark_manifest()
+                manifest.setdefault('apps', {})[app_id] = {'enabled': True}
+                module._write_starlark_manifest(manifest)
+
+        manifest = module._read_starlark_manifest()
+        assert set(manifest['apps']) == {'first', 'second'}
+
+
+class TestConfigAndManifestStayInSync:
+    """Standalone-mode PUT /starlark/apps/<id>/config (no plugin instance
+    loaded) writes config.json and then the manifest. If the manifest write
+    fails after config.json was already written, the two disagree about
+    what was saved unless config.json is rolled back.
+    """
+
+    @pytest.fixture
+    def app_dir(self, tmp_path, monkeypatch):
+        from web_interface.blueprints import api_v3 as module
+        apps_dir = tmp_path / "starlark-apps"
+        apps_dir.mkdir()
+        monkeypatch.setattr(module, '_STARLARK_APPS_DIR', apps_dir)
+        monkeypatch.setattr(module, '_STARLARK_MANIFEST_FILE', apps_dir / 'manifest.json')
+        one_app_dir = apps_dir / 'demo'
+        one_app_dir.mkdir()
+        module._write_starlark_manifest({'apps': {'demo': {'name': 'Demo', 'enabled': True}}})
+        return one_app_dir
+
+    def test_manifest_write_failure_rolls_back_an_existing_config_json(self, client, app_dir):
+        config_file = app_dir / 'config.json'
+        config_file.write_text(json.dumps({'existing': 'value'}))
+
+        with patch('web_interface.blueprints.api_v3._get_starlark_plugin', return_value=None), \
+             patch('web_interface.blueprints.api_v3._write_starlark_manifest', return_value=False):
+            resp = client.put('/api/v3/starlark/apps/demo/config',
+                              json={'new_field': 'x'})
+
+        assert resp.status_code == 500
+        assert json.loads(config_file.read_text()) == {'existing': 'value'}, (
+            "config.json kept the new value even though the manifest write "
+            "that was supposed to follow it failed")
+
+    def test_manifest_write_failure_removes_a_freshly_created_config_json(self, client, app_dir):
+        config_file = app_dir / 'config.json'
+        assert not config_file.exists()
+
+        with patch('web_interface.blueprints.api_v3._get_starlark_plugin', return_value=None), \
+             patch('web_interface.blueprints.api_v3._write_starlark_manifest', return_value=False):
+            resp = client.put('/api/v3/starlark/apps/demo/config',
+                              json={'new_field': 'x'})
+
+        assert resp.status_code == 500
+        assert not config_file.exists(), (
+            "config.json was left behind even though the manifest write "
+            "that was supposed to follow it failed")
+
+    def test_success_updates_both_config_and_manifest(self, client, app_dir):
+        from web_interface.blueprints import api_v3 as module
+
+        with patch('web_interface.blueprints.api_v3._get_starlark_plugin', return_value=None):
+            resp = client.put('/api/v3/starlark/apps/demo/config',
+                              json={'new_field': 'x'})
+
+        assert resp.status_code == 200, resp.get_json()
+        assert json.loads((app_dir / 'config.json').read_text())['new_field'] == 'x'
+        manifest = json.loads(module._STARLARK_MANIFEST_FILE.read_text())
+        assert manifest['apps']['demo']['config']['new_field'] == 'x'
+
+
 # ---------------------------------------------------------------------------
 # The store loaded, then stopped loading, and nothing anywhere said why.
 #

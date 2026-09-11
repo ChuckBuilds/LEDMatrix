@@ -16,6 +16,8 @@ The route modules are imported at the *bottom*: they import names from here, so
 everything they need has to exist first.
 """
 from flask import Blueprint, request, jsonify, Response
+import contextlib
+import fcntl
 import json
 import os
 import re
@@ -294,12 +296,31 @@ def _redact_credentials(value):
     that round-trips this response cannot erase a secret it never saw.
     """
     if isinstance(value, dict):
-        return {k: ("" if _looks_like_a_credential(k) and not isinstance(v, (dict, list))
+        return {k: (_blank_credential_value(v) if _looks_like_a_credential(k)
                     else _redact_credentials(v))
                 for k, v in value.items()}
     if isinstance(value, list):
         return [_redact_credentials(item) for item in value]
     return value
+def _blank_credential_value(value):
+    """Blank a value that sits under a credential-shaped key.
+
+    A dict is still walked -- `secrets: {api_key: ..., note: ...}` is a
+    section name, not a value to blank in one go, so sub-fields that are not
+    themselves credential-named survive (see
+    test_a_credential_shaped_container_is_still_walked). A scalar list item
+    has no field name to test, though: `_redact_credentials` previously
+    recursed into a list the same way it recurses into a dict, and a scalar
+    is returned unchanged by the base case, so a credential-named key whose
+    value was a bare list of secrets (e.g. `tokens: ["a", "b"]`) passed
+    through with nothing redacted. Blank every scalar reached under this key,
+    at any depth, instead.
+    """
+    if isinstance(value, dict):
+        return _redact_credentials(value)
+    if isinstance(value, list):
+        return [_blank_credential_value(item) for item in value]
+    return ""
 def _validate_time_format(time_str):
     """Validate time format is HH:MM"""
     try:
@@ -1233,12 +1254,11 @@ def _run_calendar_registration(plugin_dir: Path, stdin_payload: str):
             return payload, None
 
     raw = (result.stderr or result.stdout or '').strip()
-    # The unredacted text goes to the log, where it is worth having in full.
-    # What comes back over HTTP is redacted: this is a script that handles
-    # OAuth client secrets, and its stderr can quote them.
+    # Redacted in the log too: this is a script that handles OAuth client
+    # secrets, and its stderr can quote them verbatim (CWE-532).
     if raw:
         logger.error('calendar_registration.py failed (exit %s): %s',
-                     result.returncode, raw)
+                     result.returncode, redact_text(raw))
     return None, 'Authentication script produced no result%s' % (
         ': %s' % redact_text(raw) if raw else '')
 def _resolve_backup_export_dir() -> Path:
@@ -1321,6 +1341,31 @@ def _find_pixlet_binary(explicit_path: Optional[str] = None) -> Optional[str]:
                     return str(bundled)
                 logger.warning("Pixlet bundled binary still not executable after chmod (%s); falling back to PATH", bundled)
     return shutil.which("pixlet")
+@contextlib.contextmanager
+def _starlark_manifest_lock():
+    """Hold an exclusive lock across a standalone starlark-manifest read-modify-write.
+
+    StarlarkAppsPlugin._update_manifest_safe (plugin-repos/starlark-apps/manager.py)
+    already does this -- fcntl.flock held for the whole read-modify-write cycle --
+    when the plugin instance is loaded. These routes fall back to reading and
+    writing manifest.json directly when it is not, and did so with no lock: each
+    _write_starlark_manifest() call is atomic on its own (temp file + rename), but
+    two concurrent requests can each read the manifest, mutate their own copy, and
+    write it back, and the second write silently discards the first's change.
+
+    Callers should do their read, mutation and _write_starlark_manifest() call
+    entirely inside the `with` block, mirroring the plugin's lock scope.
+    """
+    _STARLARK_APPS_DIR.mkdir(parents=True, exist_ok=True)
+    lock_fd = os.open(str(_STARLARK_MANIFEST_FILE), os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+    finally:
+        os.close(lock_fd)
 def _read_starlark_manifest() -> Dict[str, Any]:
     """Read the starlark-apps manifest.json directly from disk."""
     try:
@@ -1663,22 +1708,23 @@ def _install_star_file(app_id: str, star_file_path: str, metadata: Dict[str, Any
     with open(config_path, 'w') as f:
         json.dump(default_config, f, indent=2)
 
-    manifest = _read_starlark_manifest()
-    manifest.setdefault('apps', {})[app_id] = {
-        'name': metadata.get('name', app_id),
-        'enabled': True,
-        'render_interval': metadata.get('render_interval', 300),
-        'display_duration': metadata.get('display_duration', 15),
-        'config': metadata.get('config', {}),
-        # The filename, not the full path. Readers join this to the app's own
-        # directory and fall back to a bare '<app_id>.star', so an absolute
-        # value gave the key two meanings -- and Path.__truediv__ discards the
-        # left side when the right is absolute, which pinned the manifest to
-        # whatever PROJECT_ROOT installed it. Moving or redeploying the install
-        # then left the app unable to find its own file.
-        'star_file': dest.name,
-    }
-    return _write_starlark_manifest(manifest)
+    with _starlark_manifest_lock():
+        manifest = _read_starlark_manifest()
+        manifest.setdefault('apps', {})[app_id] = {
+            'name': metadata.get('name', app_id),
+            'enabled': True,
+            'render_interval': metadata.get('render_interval', 300),
+            'display_duration': metadata.get('display_duration', 15),
+            'config': metadata.get('config', {}),
+            # The filename, not the full path. Readers join this to the app's own
+            # directory and fall back to a bare '<app_id>.star', so an absolute
+            # value gave the key two meanings -- and Path.__truediv__ discards the
+            # left side when the right is absolute, which pinned the manifest to
+            # whatever PROJECT_ROOT installed it. Moving or redeploying the install
+            # then left the app unable to find its own file.
+            'star_file': dest.name,
+        }
+        return _write_starlark_manifest(manifest)
 def _starlark_virtual_plugins() -> list:
     """Installed Starlark apps, shaped like plugin entries.
 
@@ -1755,14 +1801,15 @@ def _toggle_starlark_app(app_id: str, enabled: bool):
         # Only now is the in-memory copy allowed to disagree with disk.
         plugin.apps[safe_id].manifest['enabled'] = enabled
     else:
-        manifest = _read_starlark_manifest()
-        app_data = manifest.get('apps', {}).get(safe_id)
-        if not app_data:
-            return jsonify({'status': 'error',
-                            'message': f'Starlark app not found: {safe_id}'}), 404
-        app_data['enabled'] = enabled
-        if not _write_starlark_manifest(manifest):
-            return jsonify({'status': 'error', 'message': 'Failed to save manifest'}), 500
+        with _starlark_manifest_lock():
+            manifest = _read_starlark_manifest()
+            app_data = manifest.get('apps', {}).get(safe_id)
+            if not app_data:
+                return jsonify({'status': 'error',
+                                'message': f'Starlark app not found: {safe_id}'}), 404
+            app_data['enabled'] = enabled
+            if not _write_starlark_manifest(manifest):
+                return jsonify({'status': 'error', 'message': 'Failed to save manifest'}), 500
 
     return jsonify({'status': 'success',
                     'message': f"Starlark app {'enabled' if enabled else 'disabled'}",

@@ -140,6 +140,41 @@ class TestRequestValidation:
         assert restore.call_args[0][2].restore_config is True
 
 
+class TestOptionsAreBooleanAware:
+    """Regression: bool("false") is True in Python.
+
+    Every restore flag used bare bool() coercion, so a caller that sends its
+    options as JSON strings rather than real booleans -- a form field, a
+    hand-built request -- had `{"restore_secrets": "false"}` restore secrets
+    anyway, the opposite of what was asked. Fixed with the same
+    string-aware `_coerce_to_bool` already used for checkbox-style config
+    fields elsewhere in this package (config.py, plugins.py).
+    """
+
+    @pytest.mark.parametrize("raw,expected", [
+        ("false", False), ("False", False), ("FALSE", False),
+        ("0", False),
+        ("true", True), ("True", True), ("1", True),
+    ])
+    def test_string_valued_flags_are_parsed_not_just_truthy(
+            self, client, restore, raw, expected):
+        post(client, options=json.dumps({"restore_secrets": raw}))
+        assert restore.call_args[0][2].restore_secrets is expected
+
+    def test_a_string_false_does_not_restore_secrets(self, client, restore):
+        # The exact shape of the bug: a truthy non-empty string coerced by
+        # bare bool() to True regardless of its contents.
+        post(client, options=json.dumps({"restore_secrets": "false"}))
+        assert restore.call_args[0][2].restore_secrets is False
+
+    def test_real_json_booleans_still_work(self, client, restore):
+        post(client, options=json.dumps({"restore_secrets": False,
+                                          "restore_config": True}))
+        options = restore.call_args[0][2]
+        assert options.restore_secrets is False
+        assert options.restore_config is True
+
+
 class TestSuccess:
     def test_success_returns_the_result(self, client, restore):
         restore.return_value = FakeResult(success=True, restored=["config", "secrets"])

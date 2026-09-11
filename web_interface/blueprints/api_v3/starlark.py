@@ -5,7 +5,7 @@ endpoint names are unchanged by living here.
 """
 from web_interface.blueprints.api_v3 import (
     PROJECT_ROOT, Path, _find_pixlet_binary, _install_star_file, _standalone_render_starlark_app,
-    _starlark_github_token, _validate_and_sanitize_app_id,
+    _starlark_github_token, _starlark_manifest_lock, _validate_and_sanitize_app_id,
     _validate_starlark_app_path, _validate_timing_value, api_v3, describe_exception, json, jsonify,
     logger, os, request, shutil, subprocess, tempfile,
 )
@@ -294,9 +294,10 @@ def uninstall_starlark_app(app_id):
             import shutil
             if app_dir.exists():
                 shutil.rmtree(app_dir)
-            manifest = _pkg._read_starlark_manifest()
-            manifest.get('apps', {}).pop(app_id, None)
-            success = _pkg._write_starlark_manifest(manifest)
+            with _starlark_manifest_lock():
+                manifest = _pkg._read_starlark_manifest()
+                manifest.get('apps', {}).pop(app_id, None)
+                success = _pkg._write_starlark_manifest(manifest)
 
         if success:
             return jsonify({'status': 'success', 'message': f'App uninstalled: {app_id}'})
@@ -430,52 +431,70 @@ def update_starlark_app_config(app_id):
             else:
                 return jsonify({'status': 'error', 'message': 'Failed to save configuration'}), 500
 
-        # Standalone: update both config.json and manifest
-        manifest = _pkg._read_starlark_manifest()
-        app_data = manifest.get('apps', {}).get(app_id)
-        if not app_data:
-            return jsonify({'status': 'error', 'message': f'App not found: {app_id}'}), 404
+        # Standalone: update both config.json and manifest. Both live under
+        # the manifest lock (serialized against every other standalone
+        # manifest read-modify-write -- see _starlark_manifest_lock), and if
+        # the manifest write fails after config.json was already written,
+        # config.json is rolled back so the two do not end up out of sync.
+        with _starlark_manifest_lock():
+            manifest = _pkg._read_starlark_manifest()
+            app_data = manifest.get('apps', {}).get(app_id)
+            if not app_data:
+                return jsonify({'status': 'error', 'message': f'App not found: {app_id}'}), 404
 
-        # Extract timing keys (they go in manifest, not config.json)
-        render_interval = data.pop('render_interval', None)
-        display_duration = data.pop('display_duration', None)
+            # Extract timing keys (they go in manifest, not config.json)
+            render_interval = data.pop('render_interval', None)
+            display_duration = data.pop('display_duration', None)
 
-        # Update manifest with timing values
-        if render_interval is not None:
-            app_data['render_interval'] = render_interval
-        if display_duration is not None:
-            app_data['display_duration'] = display_duration
+            # Update manifest with timing values
+            if render_interval is not None:
+                app_data['render_interval'] = render_interval
+            if display_duration is not None:
+                app_data['display_duration'] = display_duration
 
-        # Load current config from config.json. app_dir is the path
-        # _validate_starlark_app_path checked, not a fresh join.
-        config_file = app_dir / "config.json"
-        current_config = {}
-        if config_file.exists():
+            # Load current config from config.json. app_dir is the path
+            # _validate_starlark_app_path checked, not a fresh join.
+            config_file = app_dir / "config.json"
+            existed_before = config_file.exists()
+            previous_config_bytes = None
+            current_config = {}
+            if existed_before:
+                try:
+                    previous_config_bytes = config_file.read_bytes()
+                    current_config = json.loads(previous_config_bytes)
+                except Exception as e:
+                    logger.warning(f"Failed to load config for {app_id}: {e}")
+
+            # Update config with new values (excluding timing keys)
+            current_config.update(data)
+
+            # Write updated config to config.json
             try:
-                with open(config_file, 'r') as f:
-                    current_config = json.load(f)
+                with open(config_file, 'w') as f:
+                    json.dump(current_config, f, indent=2)
             except Exception as e:
-                logger.warning(f"Failed to load config for {app_id}: {e}")
+                logger.error(f"Failed to save config.json for {app_id}: {e}")
+                logger.exception("Failed to save Starlark configuration for %r", app_id)
+                return jsonify({'status': 'error', 'message': 'Failed to save configuration',
+                                'details': describe_exception(e)}), 500
 
-        # Update config with new values (excluding timing keys)
-        current_config.update(data)
+            # Also update manifest for backward compatibility
+            app_data.setdefault('config', {}).update(data)
 
-        # Write updated config to config.json
-        try:
-            with open(config_file, 'w') as f:
-                json.dump(current_config, f, indent=2)
-        except Exception as e:
-            logger.error(f"Failed to save config.json for {app_id}: {e}")
-            logger.exception("Failed to save Starlark configuration for %r", app_id)
-            return jsonify({'status': 'error', 'message': 'Failed to save configuration',
-                            'details': describe_exception(e)}), 500
+            if _pkg._write_starlark_manifest(manifest):
+                return jsonify({'status': 'success', 'message': 'Configuration updated', 'config': current_config})
 
-        # Also update manifest for backward compatibility
-        app_data.setdefault('config', {}).update(data)
-
-        if _pkg._write_starlark_manifest(manifest):
-            return jsonify({'status': 'success', 'message': 'Configuration updated', 'config': current_config})
-        else:
+            # The manifest write failed after config.json was already
+            # written -- roll config.json back rather than leave the two
+            # disagreeing about what was saved.
+            try:
+                if existed_before and previous_config_bytes is not None:
+                    config_file.write_bytes(previous_config_bytes)
+                elif not existed_before:
+                    config_file.unlink(missing_ok=True)
+            except OSError:
+                logger.exception(
+                    "Failed to roll back config.json for %r after manifest write failure", app_id)
             return jsonify({'status': 'error', 'message': 'Failed to save manifest'}), 500
 
     except Exception as e:
@@ -503,19 +522,20 @@ def toggle_starlark_app(app_id):
             return jsonify({'status': 'success', 'message': f"App {'enabled' if enabled else 'disabled'}", 'enabled': enabled})
 
         # Standalone: update manifest directly
-        manifest = _pkg._read_starlark_manifest()
-        app_data = manifest.get('apps', {}).get(app_id)
-        if not app_data:
-            return jsonify({'status': 'error', 'message': f'App not found: {app_id}'}), 404
+        with _starlark_manifest_lock():
+            manifest = _pkg._read_starlark_manifest()
+            app_data = manifest.get('apps', {}).get(app_id)
+            if not app_data:
+                return jsonify({'status': 'error', 'message': f'App not found: {app_id}'}), 404
 
-        enabled = data.get('enabled')
-        if enabled is None:
-            enabled = not app_data.get('enabled', True)
-        app_data['enabled'] = enabled
-        if _pkg._write_starlark_manifest(manifest):
-            return jsonify({'status': 'success', 'message': f"App {'enabled' if enabled else 'disabled'}", 'enabled': enabled})
-        else:
-            return jsonify({'status': 'error', 'message': 'Failed to save'}), 500
+            enabled = data.get('enabled')
+            if enabled is None:
+                enabled = not app_data.get('enabled', True)
+            app_data['enabled'] = enabled
+            if _pkg._write_starlark_manifest(manifest):
+                return jsonify({'status': 'success', 'message': f"App {'enabled' if enabled else 'disabled'}", 'enabled': enabled})
+            else:
+                return jsonify({'status': 'error', 'message': 'Failed to save'}), 500
 
     except Exception as e:
         logger.exception("[Starlark] toggle_starlark_app failed")

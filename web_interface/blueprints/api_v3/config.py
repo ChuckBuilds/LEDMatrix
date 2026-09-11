@@ -84,7 +84,7 @@ def save_schedule_config():
             start_time = data.get('start_time', '07:00')
             end_time = data.get('end_time', '23:00')
 
-            # Validate _pkg.time formats
+            # Validate time formats
             is_valid, error_msg = _validate_time_format(start_time)
             if not is_valid:
                 return error_response(
@@ -148,12 +148,12 @@ def save_schedule_config():
                     else:
                         end_time = '23:00'
 
-                    # Validate _pkg.time formats
+                    # Validate time formats
                     is_valid, error_msg = _validate_time_format(start_time)
                     if not is_valid:
                         return error_response(
                             ErrorCode.VALIDATION_ERROR,
-                            f"Invalid start _pkg.time for {day}: {error_msg}",
+                            f"Invalid start time for {day}: {error_msg}",
                             status_code=400
                         )
 
@@ -161,7 +161,7 @@ def save_schedule_config():
                     if not is_valid:
                         return error_response(
                             ErrorCode.VALIDATION_ERROR,
-                            f"Invalid end _pkg.time for {day}: {error_msg}",
+                            f"Invalid end time for {day}: {error_msg}",
                             status_code=400
                         )
 
@@ -313,7 +313,7 @@ def save_dim_schedule_config():
             start_time = data.get('start_time', '20:00')
             end_time = data.get('end_time', '07:00')
 
-            # Validate _pkg.time formats
+            # Validate time formats
             is_valid, error_msg = _validate_time_format(start_time)
             if not is_valid:
                 return error_response(
@@ -365,12 +365,12 @@ def save_dim_schedule_config():
                     start_time = data.get(start_key) or '20:00'
                     end_time = data.get(end_key) or '07:00'
 
-                    # Validate _pkg.time formats
+                    # Validate time formats
                     is_valid, error_msg = _validate_time_format(start_time)
                     if not is_valid:
                         return error_response(
                             ErrorCode.VALIDATION_ERROR,
-                            f"Invalid start _pkg.time for {day}: {error_msg}",
+                            f"Invalid start time for {day}: {error_msg}",
                             status_code=400
                         )
 
@@ -378,7 +378,7 @@ def save_dim_schedule_config():
                     if not is_valid:
                         return error_response(
                             ErrorCode.VALIDATION_ERROR,
-                            f"Invalid end _pkg.time for {day}: {error_msg}",
+                            f"Invalid end time for {day}: {error_msg}",
                             status_code=400
                         )
 

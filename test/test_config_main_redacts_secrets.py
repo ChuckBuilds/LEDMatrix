@@ -103,6 +103,43 @@ def test_non_dict_input_passes_through():
     assert _redact_credentials(None) is None
 
 
+def test_a_list_of_bare_credentials_is_redacted():
+    """A credential-named key whose value is a list of scalars, not a list
+    of named-field dicts, used to pass through untouched: the dict branch
+    recursed into `v` on its own value only, so a bare string list item had
+    no field name to test and fell through the base case unredacted.
+    """
+    config = {"tokens": ["abc123", "def456"], "timezone": "America/New_York"}
+    out = _redact_credentials(config)
+    assert out["tokens"] == ["", ""]
+    assert out["timezone"] == "America/New_York"
+
+
+def test_a_list_nested_inside_a_credential_named_container_is_also_blanked():
+    """The list fix applies at any depth under a credential-named key, not
+    only when the list is the key's direct value.
+    """
+    config = {"auth": {"backup_tokens": ["a", "b"], "note": "keep"}}
+    out = _redact_credentials(config)
+    assert out["auth"]["backup_tokens"] == ["", ""]
+    assert out["auth"]["note"] == "keep"
+
+
+def test_credential_shaped_container_with_named_fields_still_only_blanks_those():
+    """Unchanged behaviour for the case the container test above already
+    covers: a dict whose sub-keys are semantically named fields is walked
+    normally, not blanket-blanked, so an ordinary field next to a
+    credential-named one survives.
+    """
+    config = {"secrets": {"api_key": "k", "note": "keep", "list": ["a", "b"]}}
+    out = _redact_credentials(config)
+    assert out["secrets"]["api_key"] == ""
+    assert out["secrets"]["note"] == "keep"
+    # "list" isn't itself credential-named, so it is walked, not blanked --
+    # but it holds no credential-named field either, so it survives whole.
+    assert out["secrets"]["list"] == ["a", "b"]
+
+
 def test_the_endpoint_itself_redacts():
     """Through the view function, not the helper.
 

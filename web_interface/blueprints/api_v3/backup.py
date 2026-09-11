@@ -4,7 +4,7 @@ Routes decorate the shared `api_v3` Blueprint from ._common, so their
 endpoint names are unchanged by living here.
 """
 from web_interface.blueprints.api_v3 import (
-    PROJECT_ROOT, Path, _safe_backup_path, api_v3,
+    PROJECT_ROOT, Path, _coerce_to_bool, _safe_backup_path, api_v3,
     datetime, json, jsonify, logger, os, plugin_store_manager, request,
     tempfile,
 )
@@ -112,13 +112,17 @@ def backup_restore():
                 'status': 'error',
                 'message': 'Invalid options: expected a JSON object',
             }), 400
+        # _coerce_to_bool (not bare bool()) because a request can send these
+        # as JSON strings: bool("false") is True in Python, so a caller who
+        # explicitly asked to skip secrets would have had them restored
+        # anyway.
         options = RestoreOptions(
-            restore_config=bool(opts_dict.get('restore_config', True)),
-            restore_secrets=bool(opts_dict.get('restore_secrets', True)),
-            restore_wifi=bool(opts_dict.get('restore_wifi', True)),
-            restore_fonts=bool(opts_dict.get('restore_fonts', True)),
-            restore_plugin_uploads=bool(opts_dict.get('restore_plugin_uploads', True)),
-            reinstall_plugins=bool(opts_dict.get('reinstall_plugins', True)),
+            restore_config=_coerce_to_bool(opts_dict.get('restore_config', True)),
+            restore_secrets=_coerce_to_bool(opts_dict.get('restore_secrets', True)),
+            restore_wifi=_coerce_to_bool(opts_dict.get('restore_wifi', True)),
+            restore_fonts=_coerce_to_bool(opts_dict.get('restore_fonts', True)),
+            restore_plugin_uploads=_coerce_to_bool(opts_dict.get('restore_plugin_uploads', True)),
+            reinstall_plugins=_coerce_to_bool(opts_dict.get('reinstall_plugins', True)),
         )
         with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as tmp:
             tmp_path = tmp.name
