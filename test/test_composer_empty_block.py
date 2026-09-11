@@ -78,3 +78,24 @@ def test_template_closes_the_branch_chain_with_a_fallback():
     text = TEMPLATE.read_text()
     assert "{% else %}" in text
     assert "pass  # element type" in text
+
+
+@pytest.mark.parametrize("wrapper", [
+    {"minWidth": 64},
+    {"blink": True},
+    {"minWidth": 64, "blink": True},
+])
+def test_dynamic_text_with_non_config_binding_does_not_break_generation(wrapper):
+    """dynamic_text only renders a body for binding.source == 'config'.
+
+    _preprocess_elements accepts any string as binding.source (it just
+    defaults a missing one to 'config'), so a 'live' or 'sensor' source --
+    anything a client sends that isn't literally 'config' -- hit the same
+    empty-if-block bug as an undrawable element type, just one level deeper:
+    the branch is taken, but its own inner `if` produced nothing.
+    """
+    element = {"type": "dynamic_text", "x": 0, "y": 0, "color": "#ffffff",
+               "binding": {"source": "live", "key": "temperature"}, **wrapper}
+    files = generate(element)          # must not raise ComposerInputError
+    assert "manager.py" in files
+    assert 'binding_source "live" draws nothing' in files["manager.py"]
