@@ -4,8 +4,6 @@ from markupsafe import escape
 from html.parser import HTMLParser
 import json
 import logging
-import os
-import os.path
 import re
 from pathlib import Path
 
@@ -272,7 +270,15 @@ def serve_plugin_web_ui(plugin_id, filename):
     """Serve a plugin's web_ui/ HTML fragment as a standalone page.
 
     Wraps the fragment with a minimal HTML page that injects window.PLUGIN_ID
-    and loads Tailwind CSS so the fragment runs correctly in a sandboxed iframe.
+    and loads Tailwind CSS so the fragment runs correctly inside the iframe
+    that plugin_config.html embeds it in.
+
+    That iframe carries no ``sandbox`` attribute, so the fragment runs with
+    the interface's own origin. That is deliberate rather than an oversight:
+    the fragment is a file from an installed plugin, and an installed plugin
+    already runs Python on the device. The trust boundary is plugin install,
+    not this route. It is worth knowing when reading the code, which is why
+    it says so here instead of claiming a sandbox that is not there.
     """
     # Validate URL-derived values against strict allowlists before any path or
     # script operations.
