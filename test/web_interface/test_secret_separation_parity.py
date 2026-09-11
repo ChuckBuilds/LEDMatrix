@@ -15,8 +15,18 @@ from pathlib import Path
 
 from src.web_interface.secret_helpers import find_secret_fields, separate_secrets
 
-API_V3_PATH = (Path(__file__).resolve().parents[2]
-               / "web_interface" / "blueprints" / "api_v3.py")
+API_V3_PKG = (Path(__file__).resolve().parents[2]
+              / "web_interface" / "blueprints" / "api_v3")
+
+
+def _api_v3_source() -> str:
+    """Every module of the api_v3 package as one string.
+
+    It used to be a single file; the inline copies this guards against could
+    now reappear in any module of the package.
+    """
+    return "\n".join(p.read_text(encoding="utf-8")
+                     for p in sorted(API_V3_PKG.glob("*.py")))
 
 # The migration is complete: any inline reimplementation is a regression.
 EXPECTED_INLINE_COPIES = 0
@@ -24,7 +34,7 @@ EXPECTED_INLINE_COPIES = 0
 
 class TestNoInlineCopies:
     def _count(self, name: str) -> int:
-        source = API_V3_PATH.read_text(encoding="utf-8")
+        source = _api_v3_source()
         return len(re.findall(rf"^\s*def {name}\(", source, flags=re.MULTILINE))
 
     def test_no_inline_find_secret_fields(self):
@@ -46,7 +56,7 @@ class TestNoInlineCopies:
     def test_canonical_import_present(self):
         # Tripwire: the endpoints still need the helpers, so removing the
         # import means either dead secret handling or a new local copy.
-        source = API_V3_PATH.read_text(encoding="utf-8")
+        source = _api_v3_source()
         assert re.search(
             r"from src\.web_interface\.secret_helpers import .*find_secret_fields",
             source,

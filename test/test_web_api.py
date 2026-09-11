@@ -390,7 +390,7 @@ class TestConfigAPI:
 class TestSystemAPI:
     """Test system API endpoints."""
     
-    @patch('web_interface.blueprints.api_v3.subprocess')
+    @patch('web_interface.blueprints.api_v3.system.subprocess')
     def test_get_system_status(self, mock_subprocess, client):
         """Test getting system status."""
         # The endpoint returns 503 without psutil, which is an optional
@@ -407,7 +407,7 @@ class TestSystemAPI:
         data = json.loads(response.data)
         assert 'service' in data or 'status' in data or 'active' in data
     
-    @patch('web_interface.blueprints.api_v3.subprocess')
+    @patch('web_interface.blueprints.api_v3.system.subprocess')
     def test_get_system_version(self, mock_subprocess, client):
         """Test getting system version."""
         mock_result = MagicMock()
@@ -421,7 +421,7 @@ class TestSystemAPI:
         data = json.loads(response.data)
         assert 'version' in data.get('data', {}) or 'version' in data
     
-    @patch('web_interface.blueprints.api_v3.subprocess')
+    @patch('web_interface.blueprints.api_v3.system.subprocess')
     def test_execute_system_action(self, mock_subprocess, client):
         """Test executing system action."""
         mock_result = MagicMock()
@@ -502,7 +502,7 @@ class TestDisplayAPI:
         if response.status_code in [200, 201]:
             assert api_v3.cache_manager.set.called
     
-    @patch('web_interface.blueprints.api_v3._ensure_cache_manager')
+    @patch('web_interface.blueprints.api_v3.display._ensure_cache_manager')
     def test_stop_on_demand_display(self, mock_ensure_cache, client):
         """Test stopping on-demand display."""
         

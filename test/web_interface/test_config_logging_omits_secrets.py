@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-SOURCE = (Path(__file__).resolve().parents[2]
-          / "web_interface" / "blueprints" / "api_v3.py")
+API_V3_PKG = (Path(__file__).resolve().parents[2]
+              / "web_interface" / "blueprints" / "api_v3")
 
 #: Objects that still hold submitted secret values at the point these log
 #: calls run. Interpolating one whole into a log message leaks credentials.
@@ -19,7 +19,7 @@ UNREDACTED = ("plugin_config", "secrets_config", "current_secrets")
 
 
 def _logging_lines():
-    for number, line in enumerate(SOURCE.read_text(encoding="utf-8").splitlines(), 1):
+    for number, line in enumerate("\n".join(p.read_text(encoding="utf-8") for p in sorted(API_V3_PKG.glob("*.py"))).splitlines(), 1):
         stripped = line.strip()
         if stripped.startswith("#"):
             continue

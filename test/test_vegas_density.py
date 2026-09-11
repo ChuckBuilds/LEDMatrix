@@ -470,7 +470,10 @@ class TestApiBoundsMatchValidate:
         """Extract the numeric_fields map from api_v3 without importing Flask."""
         import ast
         import pathlib
-        src = pathlib.Path('web_interface/blueprints/api_v3.py').read_text()
+        # api_v3 is a package; the routes are spread across its modules.
+        src = '\n'.join(
+            p.read_text() for p in
+            sorted(pathlib.Path('web_interface/blueprints/api_v3').glob('*.py')))
         tree = ast.parse(src)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Assign):

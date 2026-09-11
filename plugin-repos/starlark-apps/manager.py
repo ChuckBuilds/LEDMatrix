@@ -220,6 +220,8 @@ class StarlarkAppsPlugin(BasePlugin):
         # App storage
         self.apps_dir = self._get_apps_directory()
         self.manifest_file = self.apps_dir / "manifest.json"
+        # A dedicated, never-replaced file to flock -- see _update_manifest_safe.
+        self.manifest_lock_file = self.apps_dir / "manifest.json.lock"
         self.apps: Dict[str, StarlarkApp] = {}
 
         # Display state
@@ -564,7 +566,8 @@ class StarlarkAppsPlugin(BasePlugin):
     def _save_manifest(self, manifest: Dict[str, Any]) -> bool:
         """
         Save apps manifest to file with file locking to prevent race conditions.
-        Acquires exclusive lock on manifest file before writing to prevent concurrent modifications.
+        Acquires exclusive lock on the manifest lock sidecar before writing to
+        prevent concurrent modifications.
         """
         temp_file = None
         lock_fd = None
@@ -572,9 +575,14 @@ class StarlarkAppsPlugin(BasePlugin):
             # Create parent directory if needed
             self.manifest_file.parent.mkdir(parents=True, exist_ok=True)
 
-            # Open manifest file for locking (create if doesn't exist, don't truncate)
-            # Use os.open with O_CREAT | O_RDWR to create if missing, but don't truncate
-            lock_fd = os.open(str(self.manifest_file), os.O_CREAT | os.O_RDWR, 0o644)
+            # Lock the sidecar file, not manifest_file itself: manifest_file is
+            # replaced by an atomic rename below, which swaps in a fresh inode
+            # a second locker's fresh os.open() would pick up unguarded. The
+            # sidecar is never written to or renamed over, so it always
+            # resolves to the same inode for every locker (see
+            # _update_manifest_safe and web_interface's _starlark_manifest_lock,
+            # which must lock this same file for the guarantee to hold).
+            lock_fd = os.open(str(self.manifest_lock_file), os.O_CREAT | os.O_RDWR, 0o644)
 
             # Acquire exclusive lock on manifest file BEFORE creating temp file
             # This serializes all writers and prevents concurrent races
@@ -630,8 +638,9 @@ class StarlarkAppsPlugin(BasePlugin):
             # Create parent directory if needed
             self.manifest_file.parent.mkdir(parents=True, exist_ok=True)
 
-            # Open manifest file for locking (create if doesn't exist, don't truncate)
-            lock_fd = os.open(str(self.manifest_file), os.O_CREAT | os.O_RDWR, 0o644)
+            # Lock the sidecar file, not manifest_file itself -- see the
+            # comment in _save_manifest for why.
+            lock_fd = os.open(str(self.manifest_lock_file), os.O_CREAT | os.O_RDWR, 0o644)
 
             # Acquire exclusive lock for entire read-modify-write cycle
             fcntl.flock(lock_fd, fcntl.LOCK_EX)

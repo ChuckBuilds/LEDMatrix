@@ -6,6 +6,7 @@ frame for the whole display_duration instead of rotating on -- the same class
 of defect as a display() that returns None.
 """
 
+import json
 import sys
 import types
 from pathlib import Path
@@ -195,6 +196,50 @@ class TestInstalledAppsTakeTurns:
         p = _plugin_with_apps(manager_module, "a")
         p.apps["a"]._enabled = False
         assert p.display(force_clear=True) is False
+
+
+class TestManifestLockSidecarIsStable:
+    """_save_manifest and _update_manifest_safe must lock a sidecar file that
+    a manifest write never replaces. manifest.json itself is swapped for a
+    fresh inode by every atomic write (temp file + rename); a lock taken on
+    manifest.json directly would not exclude a second locker whose fresh
+    os.open() lands on that new inode right after a write, so two writers
+    could still race each other despite each believing it held the lock.
+    web_interface._starlark_manifest_lock (web_interface/blueprints/api_v3)
+    must lock this same sidecar name for that guarantee to hold across both
+    the plugin-loaded and standalone paths.
+    """
+
+    def _plugin_with_manifest_dir(self, manager_module, tmp_path):
+        p = _plugin(manager_module)
+        p.manifest_file = tmp_path / "manifest.json"
+        p.manifest_lock_file = tmp_path / "manifest.json.lock"
+        return p
+
+    def test_the_lock_sidecar_is_not_the_manifest_file(self, manager_module, tmp_path):
+        p = self._plugin_with_manifest_dir(manager_module, tmp_path)
+        assert p.manifest_lock_file != p.manifest_file
+        assert p.manifest_lock_file.name == "manifest.json.lock"
+
+    def test_the_locked_files_inode_survives_repeated_writes(self, manager_module, tmp_path):
+        p = self._plugin_with_manifest_dir(manager_module, tmp_path)
+
+        assert p._save_manifest({"apps": {}})
+        lock_ino_before = p.manifest_lock_file.stat().st_ino
+
+        for app_id in ("one", "two", "three"):
+            def _update(manifest, app_id=app_id):
+                manifest.setdefault("apps", {})[app_id] = {"enabled": True}
+            assert p._update_manifest_safe(_update)
+
+        lock_ino_after = p.manifest_lock_file.stat().st_ino
+        assert lock_ino_after == lock_ino_before, (
+            "the locked file's inode changed across writes -- a locker that "
+            "opened it before this write and one that opens it after would "
+            "no longer contend for the same lock")
+
+        manifest = json.loads(p.manifest_file.read_text())
+        assert set(manifest["apps"]) == {"one", "two", "three"}
 
 
 class TestAnimationsRunAtFrameRate:
