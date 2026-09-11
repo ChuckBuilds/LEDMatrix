@@ -53,3 +53,25 @@ skin_renders/
 # JS test deps (test/js)
 node_modules/
 package-lock.json
+
+# Team logos fetched at runtime.
+#
+# src/logo_downloader.py and LogoHelper write into assets/sports/<league>_logos/
+# whenever a plugin meets a team whose logo is not on disk. Those directories are
+# also tracked -- 209 NCAA logos and 153 soccer ones ship with the repo -- so
+# every rig accumulated untracked files it was never meant to commit and
+# `git status` was permanently dirty. That noise is not harmless: it trains
+# everyone to ignore the one signal that says a checkout is not what you think
+# it is, which is how a stale tree sat unnoticed on a rig until a restart
+# surfaced four dead sports plugins.
+#
+# Ignoring a directory does not untrack what is already in it, so the logos that
+# ship keep shipping. Only new downloads are hidden.
+#
+# Adding a logo on purpose is rare and deliberate -- the last time was #415, four
+# named NCAA logos a plugin needed, and there has been no other in a year. Do it
+# with an explicit override:
+#     git add -f assets/sports/ncaa_logos/DUKE.png
+assets/sports/*_logos/
+assets/stocks/ticker_icons/
+assets/stocks/crypto_icons/
