@@ -17,6 +17,8 @@ editing files under /etc and restarting services is the installer's job, not
 something a display process should do to a machine while it boots.
 """
 import logging
+import shlex
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -219,6 +221,36 @@ def test_installed_user_falls_back_to_root():
     assert StartupValidator._installed_user("[Service]\nExecStart=/x\n") == "root"
     assert StartupValidator._installed_user("[Service]\nUser=pi\n") == "pi"
     assert StartupValidator._installed_user("[Service]\n  User=hdpi  \n") == "hdpi"
+
+
+def test_sed_escape_replacement_preserves_special_characters():
+    """A project path or username containing sed-special characters must render literally.
+
+    The installers build their sed expression by interpolating a shell
+    variable into the replacement side of `sed s|pattern|replacement|`.
+    Unescaped, sed treats `&` as "insert the whole match" and `\\` as an
+    escape character, so a path like `/opt/led&matrix` would corrupt the
+    rendered unit instead of being substituted as-is. lib_systemd_render.sh's
+    sed_escape_replacement exists to prevent exactly that.
+    """
+    project_root = Path("src/startup_validator.py").resolve().parent.parent
+    helper = project_root / "scripts" / "install" / "lib_systemd_render.sh"
+    if not helper.is_file():
+        pytest.skip("install helper not present")
+
+    value = "/opt/led&matrix\\pi|two"
+    escape_cmd = f'source {shlex.quote(str(helper))}; sed_escape_replacement {shlex.quote(value)}'
+    escaped = subprocess.run(
+        ["bash", "-c", escape_cmd], capture_output=True, text=True, check=True
+    ).stdout
+
+    rendered = subprocess.run(
+        ["sed", f"s|__X__|{escaped}|g"],
+        input="path=__X__\n", capture_output=True, text=True, check=True,
+    ).stdout
+
+    assert rendered == f"path={value}\n", (
+        "a sed-special character in the replacement was not preserved literally")
 
 
 def test_no_installer_carries_its_own_copy_of_a_unit():
