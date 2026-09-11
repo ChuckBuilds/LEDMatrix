@@ -204,7 +204,7 @@ def test_the_web_unit_still_reports_a_real_changed_directive(validator, tmp_path
 
     rendered = _render(template.read_text(encoding="utf-8"), project_root, "hdpi")
     # Drop RestartSec -- one of the directives the stale heredoc was missing.
-    stale = "\n".join(l for l in rendered.splitlines() if not l.startswith("RestartSec="))
+    stale = "\n".join(line for line in rendered.splitlines() if not line.startswith("RestartSec="))
     installed = tmp_path / "ledmatrix-web.service"
     installed.write_text(stale + "\n", encoding="utf-8")
 

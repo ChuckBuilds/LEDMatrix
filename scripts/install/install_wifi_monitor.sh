@@ -18,6 +18,9 @@ USER_HOME=$(eval echo ~$ACTUAL_USER)
 # Determine the Project Root Directory (parent of scripts/install/)
 PROJECT_ROOT_DIR=$(cd "$(dirname "$0")/../.." && pwd)
 
+# shellcheck source=scripts/install/lib_systemd_render.sh
+source "$PROJECT_ROOT_DIR/scripts/install/lib_systemd_render.sh"
+
 echo "Installing LED Matrix WiFi Monitor Service for user: $ACTUAL_USER"
 echo "Using home directory: $USER_HOME"
 echo "Project root directory: $PROJECT_ROOT_DIR"
@@ -75,7 +78,8 @@ if [ ! -f "$TEMPLATE" ]; then
     exit 1
 fi
 
-SERVICE_FILE_CONTENT=$(sed "s|__PROJECT_ROOT_DIR__|$PROJECT_ROOT_DIR|g; s|__USER__|root|g" "$TEMPLATE")
+ESCAPED_PROJECT_ROOT_DIR=$(sed_escape_replacement "$PROJECT_ROOT_DIR")
+SERVICE_FILE_CONTENT=$(sed "s|__PROJECT_ROOT_DIR__|$ESCAPED_PROJECT_ROOT_DIR|g; s|__USER__|root|g" "$TEMPLATE")
 
 if [ "$EUID" -eq 0 ]; then
     echo "$SERVICE_FILE_CONTENT" | tee /etc/systemd/system/ledmatrix-wifi-monitor.service > /dev/null

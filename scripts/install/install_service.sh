@@ -16,6 +16,9 @@ USER_HOME=$(eval echo ~$ACTUAL_USER)
 # Determine the Project Root Directory (parent of scripts/install/)
 PROJECT_ROOT_DIR=$(cd "$(dirname "$0")/../.." && pwd)
 
+# shellcheck source=scripts/install/lib_systemd_render.sh
+source "$PROJECT_ROOT_DIR/scripts/install/lib_systemd_render.sh"
+
 echo "Installing LED Matrix Display Service for user: $ACTUAL_USER"
 echo "Using home directory: $USER_HOME"
 echo "Project root directory: $PROJECT_ROOT_DIR"
@@ -23,15 +26,29 @@ echo "Project root directory: $PROJECT_ROOT_DIR"
 # Render the main display unit from its template. The display service runs as
 # root (it needs GPIO), so __USER__ is always root here -- unlike the web unit
 # below, which runs as whoever installed it.
+#
+# A missing template or a failed render is fatal: falling through would leave
+# whatever unit already sits at /etc/systemd/system/ledmatrix.service (from a
+# previous install) untouched, and the enable/start step below would then
+# silently reuse that stale unit instead of the one this run was asked to
+# install.
 if [ -f "$PROJECT_ROOT_DIR/systemd/ledmatrix.service" ]; then
-    sed "s|__PROJECT_ROOT_DIR__|$PROJECT_ROOT_DIR|g; s|__USER__|root|g" \
-        "$PROJECT_ROOT_DIR/systemd/ledmatrix.service" > /tmp/ledmatrix.service.tmp
+    ESCAPED_PROJECT_ROOT_DIR=$(sed_escape_replacement "$PROJECT_ROOT_DIR")
+    MAIN_UNIT_TMP=$(mktemp)
+    trap 'rm -f "$MAIN_UNIT_TMP"' EXIT
+    if ! sed "s|__PROJECT_ROOT_DIR__|$ESCAPED_PROJECT_ROOT_DIR|g; s|__USER__|root|g" \
+        "$PROJECT_ROOT_DIR/systemd/ledmatrix.service" > "$MAIN_UNIT_TMP"; then
+        echo "ERROR: failed to render ledmatrix.service from its template." >&2
+        exit 1
+    fi
     # Copy the service file to the systemd directory
-    sudo cp /tmp/ledmatrix.service.tmp /etc/systemd/system/ledmatrix.service
+    sudo cp "$MAIN_UNIT_TMP" /etc/systemd/system/ledmatrix.service
     # Clean up
-    rm /tmp/ledmatrix.service.tmp
+    rm -f "$MAIN_UNIT_TMP"
+    trap - EXIT
 else
-    echo "WARNING: ledmatrix.service template not found at $PROJECT_ROOT_DIR/systemd/ledmatrix.service. Main display service not configured."
+    echo "ERROR: ledmatrix.service template not found at $PROJECT_ROOT_DIR/systemd/ledmatrix.service." >&2
+    exit 1
 fi
 
 
@@ -57,12 +74,25 @@ echo "Installing LEDMatrix Web Interface service (ledmatrix-web.service)..."
 # src/startup_validator.py compares the installed unit against the template,
 # every boot warned "re-run install_service.sh" -- and doing so reinstalled the
 # same stale copy, so the warning could never clear.
+#
+# As with the main unit above, a missing template or a failed render is
+# fatal -- otherwise the enable/start check below would fall back to
+# whatever unit (possibly stale) already exists at the destination path.
 if [ -f "$PROJECT_ROOT_DIR/systemd/ledmatrix-web.service" ]; then
-    sed "s|__PROJECT_ROOT_DIR__|$PROJECT_ROOT_DIR|g; s|__USER__|$ACTUAL_USER|g" \
-        "$PROJECT_ROOT_DIR/systemd/ledmatrix-web.service" \
-        | sudo tee /etc/systemd/system/ledmatrix-web.service > /dev/null
+    ESCAPED_ACTUAL_USER=$(sed_escape_replacement "$ACTUAL_USER")
+    WEB_UNIT_TMP=$(mktemp)
+    trap 'rm -f "$WEB_UNIT_TMP"' EXIT
+    if ! sed "s|__PROJECT_ROOT_DIR__|$ESCAPED_PROJECT_ROOT_DIR|g; s|__USER__|$ESCAPED_ACTUAL_USER|g" \
+        "$PROJECT_ROOT_DIR/systemd/ledmatrix-web.service" > "$WEB_UNIT_TMP"; then
+        echo "ERROR: failed to render ledmatrix-web.service from its template." >&2
+        exit 1
+    fi
+    sudo cp "$WEB_UNIT_TMP" /etc/systemd/system/ledmatrix-web.service
+    rm -f "$WEB_UNIT_TMP"
+    trap - EXIT
 else
-    echo "WARNING: ledmatrix-web.service template not found at $PROJECT_ROOT_DIR/systemd/ledmatrix-web.service. Web interface service not configured."
+    echo "ERROR: ledmatrix-web.service template not found at $PROJECT_ROOT_DIR/systemd/ledmatrix-web.service." >&2
+    exit 1
 fi
 
 echo "Reloading systemd daemon for web service..."

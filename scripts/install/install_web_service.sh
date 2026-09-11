@@ -17,6 +17,9 @@ fi
 # Determine the Project Root Directory (parent of scripts/install/)
 PROJECT_ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 
+# shellcheck source=scripts/install/lib_systemd_render.sh
+source "$PROJECT_ROOT_DIR/scripts/install/lib_systemd_render.sh"
+
 echo "Installing for user: $ACTUAL_USER"
 echo "Project root directory: $PROJECT_ROOT_DIR"
 
@@ -38,7 +41,9 @@ if [ ! -f "$TEMPLATE" ]; then
 fi
 
 echo "Writing service file to /etc/systemd/system/ledmatrix-web.service"
-sed "s|__PROJECT_ROOT_DIR__|$PROJECT_ROOT_DIR|g; s|__USER__|$ACTUAL_USER|g" \
+ESCAPED_PROJECT_ROOT_DIR=$(sed_escape_replacement "$PROJECT_ROOT_DIR")
+ESCAPED_ACTUAL_USER=$(sed_escape_replacement "$ACTUAL_USER")
+sed "s|__PROJECT_ROOT_DIR__|$ESCAPED_PROJECT_ROOT_DIR|g; s|__USER__|$ESCAPED_ACTUAL_USER|g" \
     "$TEMPLATE" > /etc/systemd/system/ledmatrix-web.service
 
 # Ensure cache directory exists with proper permissions
