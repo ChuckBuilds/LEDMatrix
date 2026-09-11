@@ -8,6 +8,7 @@ API Version: 1.0.0
 """
 
 import json
+import math
 import queue
 import sys
 import time
@@ -793,6 +794,11 @@ class PluginManager:
             return None
         if requested is None:
             return None
+        if isinstance(requested, bool):
+            self.logger.debug(
+                "get_update_interval() returned a bool for %s, which is not a number",
+                plugin_id)
+            return None
         try:
             requested = float(requested)
         except (TypeError, ValueError):
@@ -800,7 +806,7 @@ class PluginManager:
                 "get_update_interval() returned %r for %s, which is not a number",
                 requested, plugin_id)
             return None
-        if requested != requested or requested == float('inf'):  # NaN / inf
+        if not math.isfinite(requested):  # NaN / +inf / -inf
             return None
         return max(requested, self.MIN_DYNAMIC_UPDATE_INTERVAL)
 

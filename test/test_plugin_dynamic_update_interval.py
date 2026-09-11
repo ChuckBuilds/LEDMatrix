@@ -98,8 +98,14 @@ class TestABrokenHookCannotStopUpdates:
     def test_a_non_numeric_hook_falls_back(self, manager, junk):
         assert manager._get_plugin_update_interval("sports", _Plugin(wants=junk)) == 60.0
 
-    @pytest.mark.parametrize("junk", [float("nan"), float("inf")])
+    @pytest.mark.parametrize("junk", [float("nan"), float("inf"), float("-inf")])
     def test_nan_and_infinity_fall_back(self, manager, junk):
+        assert manager._get_plugin_update_interval("sports", _Plugin(wants=junk)) == 60.0
+
+    @pytest.mark.parametrize("junk", [True, False])
+    def test_a_bool_hook_falls_back(self, manager, junk):
+        """bool is a subclass of int, so it must be rejected before float()
+        turns it into 0.0/1.0 and the floor silently swallows the mistake."""
         assert manager._get_plugin_update_interval("sports", _Plugin(wants=junk)) == 60.0
 
 
