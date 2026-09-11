@@ -19,6 +19,13 @@ from src.exceptions import ConfigError
 from src.logging_config import get_logger
 from src.common.permission_utils import ensure_shared_group_ownership
 
+# Version stamp in a backup's filename: config.json.backup.<version>.
+BACKUP_VERSION_FORMAT = "%Y%m%d_%H%M%S_%f"
+
+# Backups written before the format gained microseconds. Still read, never
+# written, so existing restore points on a rig stay usable after an upgrade.
+LEGACY_BACKUP_VERSION_FORMAT = "%Y%m%d_%H%M%S"
+
 
 class SaveResultStatus(Enum):
     """Status of a save operation."""
@@ -246,23 +253,34 @@ class AtomicConfigManager:
         if not self.backup_dir.exists():
             return backups
         
-        # Look for backup files (format: config.json.backup.YYYYMMDD_HHMMSS)
+        # Look for backup files (format: config.json.backup.<version>)
         config_name = self.config_path.name
         backup_pattern = f"{config_name}.backup.*"
-        
+
         for backup_file in self.backup_dir.glob(backup_pattern):
             try:
-                # Extract timestamp from filename
-                # Format: config.json.backup.20240101_120000
-                parts = backup_file.stem.split('.')
-                if len(parts) >= 3 and parts[-2] == 'backup':
-                    timestamp_str = parts[-1]
-                    timestamp = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")
-                else:
-                    # Fallback: use file modification time
+                # The version reported here is what rollback_config() matches
+                # against, so it has to be the exact string in the filename.
+                #
+                # It did not used to be. This read .stem, which drops only the
+                # last dot-component, so for config.json.backup.20240101_120000
+                # parts was ['config', 'json', 'backup'] and parts[-2] was
+                # 'json' -- never 'backup'. The filename branch could not be
+                # reached, every backup fell through to the mtime fallback, and
+                # the version was a second-granularity restamp of the mtime
+                # rather than the name on disk. Two backups a second apart could
+                # therefore report the same version, and rollback would pick
+                # whichever the glob happened to yield first.
+                # Strip the exact prefix the glob just matched, so a config
+                # whose own name contains '.backup.' can't shift the split.
+                timestamp_str = backup_file.name[len(f"{config_name}.backup."):]
+                timestamp = self._parse_backup_version(timestamp_str)
+                if timestamp is None:
+                    # Not a version this code wrote (hand-copied, renamed).
+                    # Order it by mtime, but keep the on-disk version string so
+                    # it can still be named in a rollback.
                     timestamp = datetime.fromtimestamp(backup_file.stat().st_mtime)
-                    timestamp_str = timestamp.strftime("%Y%m%d_%H%M%S")
-                
+
                 # Validate backup file
                 is_valid = self._validate_backup_file(backup_file)
                 
@@ -283,6 +301,28 @@ class AtomicConfigManager:
         
         return backups
     
+    @staticmethod
+    def _parse_backup_version(version: str) -> Optional[datetime]:
+        """
+        Parse the ``<version>`` of a ``config.json.backup.<version>`` filename
+        into the time the backup was taken, or None if it is not a version this
+        class wrote.
+
+        Accepts the current microsecond format and the legacy second-granularity
+        one, with or without the ``-N`` suffix _create_backup() appends to break
+        a collision.
+        """
+        if not version:
+            return None
+        # The suffix breaks filename ties; it carries no time of its own.
+        base = version.rsplit('-', 1)[0]
+        for fmt in (BACKUP_VERSION_FORMAT, LEGACY_BACKUP_VERSION_FORMAT):
+            try:
+                return datetime.strptime(base, fmt)
+            except ValueError:
+                continue
+        return None
+
     def validate_config_file(self, config_path: Optional[str] = None) -> ValidationResult:
         """
         Validate a configuration file.
@@ -303,12 +343,33 @@ class AtomicConfigManager:
             return None
         
         try:
-            # Generate backup filename with timestamp
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            # Generate backup filename with timestamp.
+            #
+            # This id is the backup's identity: save_config_atomic() returns the
+            # path, rollback_config(backup_version=...) looks the version up, and
+            # the paired secrets backup is found by reusing the same string. At
+            # second granularity two saves inside the same second produced the
+            # same filename, so the second copy2() below silently overwrote the
+            # first backup -- the path a caller was still holding then pointed at
+            # different content, and rolling back to it restored the wrong
+            # config. Microseconds make that collision vanishingly unlikely.
+            timestamp = datetime.now().strftime(BACKUP_VERSION_FORMAT)
             config_name = self.config_path.name
-            backup_filename = f"{config_name}.backup.{timestamp}"
-            backup_path = self.backup_dir / backup_filename
-            
+            backup_path = self.backup_dir / f"{config_name}.backup.{timestamp}"
+
+            # Vanishingly unlikely is not never, and losing a restore point is
+            # not an acceptable failure mode: never overwrite an existing
+            # backup. Each pass bumps the suffix, so this always terminates.
+            collision = 0
+            while backup_path.exists():
+                collision += 1
+                timestamp = (
+                    f"{datetime.now().strftime(BACKUP_VERSION_FORMAT)}-{collision}"
+                )
+                backup_path = self.backup_dir / f"{config_name}.backup.{timestamp}"
+
+            backup_filename = backup_path.name
+
             # Copy config file to backup
             shutil.copy2(self.config_path, backup_path)
             
