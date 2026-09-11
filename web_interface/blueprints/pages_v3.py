@@ -13,6 +13,7 @@ from pathlib import Path
 _SAFE_PLUGIN_ID_RE = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
 _SAFE_WEB_UI_FILE_RE = re.compile(r'^[a-zA-Z0-9_-]{1,64}\.html$')
 from src.web_interface.secret_helpers import mask_secret_fields
+from src.common.path_safety import resolve_under, safe_path_component
 
 logger = logging.getLogger(__name__)
 
@@ -280,11 +281,12 @@ def serve_plugin_web_ui(plugin_id, filename):
     if not _SAFE_WEB_UI_FILE_RE.match(filename):
         return 'Invalid filename', 400, {'Content-Type': 'text/plain'}
 
-    # os.path.basename() is the CodeQL-recognised path sanitizer used throughout
-    # this codebase (see plugin_loader.py).  Applying it here breaks the taint
-    # chain even though the allowlist above already prevents path separators.
-    safe_id = os.path.basename(plugin_id)
-    safe_fn = os.path.basename(filename)
+    # The allowlists above already forbid a separator, but the value that gets
+    # joined has to be the checked one, not the argument -- see
+    # src/common/path_safety.py. safe_path_component rejects rather than
+    # truncates, so these cannot disagree.
+    safe_id = safe_path_component(plugin_id)
+    safe_fn = safe_path_component(filename)
     if not safe_id or not safe_fn:
         return 'Invalid path component', 400, {'Content-Type': 'text/plain'}
 
@@ -294,22 +296,19 @@ def serve_plugin_web_ui(plugin_id, filename):
     try:
         _plugins_base = Path(pages_v3.plugin_manager.plugins_dir).resolve()
 
-        # Reconstruct from sanitised basename — CodeQL-approved pattern.
-        _plugin_dir = (_plugins_base / safe_id).resolve()
-        _plugin_dir.relative_to(_plugins_base)  # containment guard
+        _plugin_dir = resolve_under(_plugins_base, safe_id)
+        if _plugin_dir is None:
+            return 'Forbidden', 403, {'Content-Type': 'text/plain'}
 
         # Mirror PluginManager's ledmatrix- prefix fallback.
         if not _plugin_dir.exists():
-            _alt_id  = os.path.basename(f'ledmatrix-{safe_id}')
-            _alt     = (_plugins_base / _alt_id).resolve()
-            try:
-                _alt.relative_to(_plugins_base)
+            _alt = resolve_under(_plugins_base, f'ledmatrix-{safe_id}')
+            if _alt is not None:
                 _plugin_dir = _alt
-            except ValueError:
-                pass
 
-        web_ui_path = (_plugin_dir / 'web_ui' / safe_fn).resolve()
-        web_ui_path.relative_to(_plugin_dir / 'web_ui')  # second guard
+        web_ui_path = resolve_under(_plugin_dir / 'web_ui', safe_fn)
+        if web_ui_path is None:
+            return 'Forbidden', 403, {'Content-Type': 'text/plain'}
 
         if not web_ui_path.exists():
             return 'Not found', 404, {'Content-Type': 'text/plain'}
@@ -640,9 +639,11 @@ def _load_plugin_config_partial(plugin_id):
     Load plugin configuration partial - server-side rendered form.
     This replaces the client-side generateConfigForm() JavaScript.
     """
-    # Sanitize with basename (CodeQL-recognized sanitizer) then regex-validate format
-    plugin_id = os.path.basename(plugin_id or '')
-    if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9._\-:]*$', plugin_id):
+    # Refuse an id that is not a plain directory name, rather than quietly
+    # basename-ing it down to one: "../weather" used to become "weather" and
+    # render a partial the caller never asked for.
+    plugin_id = safe_path_component(plugin_id)
+    if not plugin_id or not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9._\-:]*$', plugin_id):
         return '<div class="text-red-500 p-4">Invalid plugin ID</div>', 400
 
     try:
@@ -655,10 +656,8 @@ def _load_plugin_config_partial(plugin_id):
 
         # Resolve and validate all plugin paths against the plugins base directory
         _plugins_base = Path(pages_v3.plugin_manager.plugins_dir).resolve()
-        _plugin_dir = (_plugins_base / plugin_id).resolve()
-        try:
-            _plugin_dir.relative_to(_plugins_base)
-        except ValueError:
+        _plugin_dir = resolve_under(_plugins_base, plugin_id)
+        if _plugin_dir is None:
             return '<div class="text-red-500 p-4">Invalid plugin ID</div>', 400
 
         # Try to get plugin info first
@@ -682,19 +681,17 @@ def _load_plugin_config_partial(plugin_id):
             config = full_config.get(plugin_id, {})
 
         # Load uploaded images from metadata file if images field exists in schema
-        schema_path_temp = _plugin_dir / "config_schema.json"
-        if schema_path_temp.exists():
+        schema_path_temp = resolve_under(_plugin_dir, "config_schema.json")
+        if schema_path_temp is not None and schema_path_temp.exists():
             try:
                 with open(schema_path_temp, 'r', encoding='utf-8') as f:
                     temp_schema = json.load(f)
                     if (temp_schema.get('properties', {}).get('images', {}).get('x-widget') == 'file-upload' or
                         temp_schema.get('properties', {}).get('images', {}).get('x_widget') == 'file-upload'):
                         _assets_base = (Path(__file__).parent.parent.parent / 'assets' / 'plugins').resolve()
-                        metadata_file = (_assets_base / plugin_id / 'uploads' / '.metadata.json').resolve()
-                        try:
-                            metadata_file.relative_to(_assets_base)
-                        except ValueError:
-                            metadata_file = None
+                        metadata_file = resolve_under(
+                            _assets_base, plugin_id, 'uploads', '.metadata.json'
+                        )
                         if metadata_file and metadata_file.exists():
                             try:
                                 with open(metadata_file, 'r', encoding='utf-8') as mf:
@@ -714,8 +711,8 @@ def _load_plugin_config_partial(plugin_id):
 
         # Get plugin schema
         schema = {}
-        schema_path = _plugin_dir / "config_schema.json"
-        if schema_path.exists():
+        schema_path = resolve_under(_plugin_dir, "config_schema.json")
+        if schema_path is not None and schema_path.exists():
             try:
                 with open(schema_path, 'r', encoding='utf-8') as f:
                     schema = json.load(f)
@@ -724,8 +721,8 @@ def _load_plugin_config_partial(plugin_id):
 
         # Get web UI actions from plugin manifest
         web_ui_actions = []
-        manifest_path = _plugin_dir / "manifest.json"
-        if manifest_path.exists():
+        manifest_path = resolve_under(_plugin_dir, "manifest.json")
+        if manifest_path is not None and manifest_path.exists():
             try:
                 with open(manifest_path, 'r', encoding='utf-8') as f:
                     manifest = json.load(f)
@@ -773,9 +770,10 @@ def _load_plugin_config_partial(plugin_id):
 
 def _load_starlark_config_partial(app_id):
     """Load configuration partial for a Starlark app."""
-    # Sanitize with basename (CodeQL-recognized sanitizer) then regex-validate format
-    app_id = os.path.basename(app_id or '')
-    if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9_\-]*$', app_id):
+    # Refuse an id that is not a plain directory name rather than basename-ing
+    # it down to one -- see _load_plugin_config_partial for why.
+    app_id = safe_path_component(app_id)
+    if not app_id or not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9_\-]*$', app_id):
         return '<div class="text-red-500 p-4">Invalid app ID</div>', 400
 
     try:
@@ -814,11 +812,7 @@ def _load_starlark_config_partial(app_id):
 
         # Load schema from schema.json if it exists — validate path stays within starlark_base
         schema = None
-        schema_file = (starlark_base / app_id / 'schema.json').resolve()
-        try:
-            schema_file.relative_to(starlark_base)
-        except ValueError:
-            schema_file = None
+        schema_file = resolve_under(starlark_base, app_id, 'schema.json')
         if schema_file and schema_file.exists():
             try:
                 with open(schema_file, 'r') as f:
@@ -828,11 +822,7 @@ def _load_starlark_config_partial(app_id):
 
         # Load config from config.json if it exists — validate path stays within starlark_base
         config = {}
-        config_file = (starlark_base / app_id / 'config.json').resolve()
-        try:
-            config_file.relative_to(starlark_base)
-        except ValueError:
-            config_file = None
+        config_file = resolve_under(starlark_base, app_id, 'config.json')
         if config_file and config_file.exists():
             try:
                 with open(config_file, 'r') as f:
