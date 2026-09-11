@@ -302,24 +302,36 @@ def _redact_credentials(value):
     if isinstance(value, list):
         return [_redact_credentials(item) for item in value]
     return value
+def _blank_all_scalars(value):
+    """Blank every scalar reached from `value`, at any depth.
+
+    Unlike `_blank_credential_value`, this never delegates back to
+    `_redact_credentials`'s name-based walk: an object reached through a
+    credential-owned list (e.g. `tokens: [{"value": "secret"}]`) has no
+    field name of its own to test, so every scalar inside it is blanked
+    regardless of what its keys are called.
+    """
+    if isinstance(value, dict):
+        return {k: _blank_all_scalars(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_blank_all_scalars(item) for item in value]
+    return ""
 def _blank_credential_value(value):
     """Blank a value that sits under a credential-shaped key.
 
     A dict is still walked -- `secrets: {api_key: ..., note: ...}` is a
     section name, not a value to blank in one go, so sub-fields that are not
     themselves credential-named survive (see
-    test_a_credential_shaped_container_is_still_walked). A scalar list item
-    has no field name to test, though: `_redact_credentials` previously
-    recursed into a list the same way it recurses into a dict, and a scalar
-    is returned unchanged by the base case, so a credential-named key whose
-    value was a bare list of secrets (e.g. `tokens: ["a", "b"]`) passed
-    through with nothing redacted. Blank every scalar reached under this key,
-    at any depth, instead.
+    test_a_credential_shaped_container_is_still_walked). A list has no field
+    names to test for its items, though, so every scalar reached through it
+    is blanked outright: a bare list of secrets (`tokens: ["a", "b"]`) and a
+    list of credential-shaped objects (`tokens: [{"value": "secret"}]`) are
+    both blanked at any depth via `_blank_all_scalars`.
     """
     if isinstance(value, dict):
         return _redact_credentials(value)
     if isinstance(value, list):
-        return [_blank_credential_value(item) for item in value]
+        return [_blank_all_scalars(item) for item in value]
     return ""
 def _validate_time_format(time_str):
     """Validate time format is HH:MM"""
@@ -1303,6 +1315,8 @@ def _safe_backup_path(filename: str) -> Path:
     return path
 _STARLARK_APPS_DIR = PROJECT_ROOT / 'starlark-apps'
 _STARLARK_MANIFEST_FILE = _STARLARK_APPS_DIR / 'manifest.json'
+# A dedicated, never-replaced file to flock -- see _starlark_manifest_lock.
+_STARLARK_MANIFEST_LOCK_FILE = _STARLARK_APPS_DIR / 'manifest.json.lock'
 def _get_starlark_plugin() -> Optional[Any]:
     """Get the starlark-apps plugin instance, or None."""
     if not api_v3.plugin_manager:
@@ -1353,11 +1367,21 @@ def _starlark_manifest_lock():
     two concurrent requests can each read the manifest, mutate their own copy, and
     write it back, and the second write silently discards the first's change.
 
+    Locks _STARLARK_MANIFEST_LOCK_FILE, a sidecar that is never written to or
+    renamed over -- not manifest.json itself. manifest.json is replaced by an
+    atomic rename on every write (here and in the plugin), which swaps in a
+    fresh inode; a lock held on the old inode does not exclude a second locker
+    that opens the path afresh right after the rename and gets the new inode,
+    so two writers could still race each other despite both "holding a lock".
+    A stable sidecar path always resolves to the same inode, so every locker
+    -- standalone or plugin-owned -- contends for the same lock. The plugin
+    must lock this same sidecar file for that guarantee to hold across both.
+
     Callers should do their read, mutation and _write_starlark_manifest() call
     entirely inside the `with` block, mirroring the plugin's lock scope.
     """
     _STARLARK_APPS_DIR.mkdir(parents=True, exist_ok=True)
-    lock_fd = os.open(str(_STARLARK_MANIFEST_FILE), os.O_CREAT | os.O_RDWR, 0o644)
+    lock_fd = os.open(str(_STARLARK_MANIFEST_LOCK_FILE), os.O_CREAT | os.O_RDWR, 0o644)
     try:
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
         try:

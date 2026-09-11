@@ -125,6 +125,17 @@ def test_a_list_nested_inside_a_credential_named_container_is_also_blanked():
     assert out["auth"]["note"] == "keep"
 
 
+def test_objects_inside_a_credential_named_list_are_blanked_regardless_of_field_names():
+    """A list item has no field name of its own to test against
+    `_CREDENTIAL_NAME_PARTS`, so an object reached through a credential-owned
+    list must be blanked outright rather than walked by field name -- unlike
+    the dict-directly-under-a-credential-key case in the test above.
+    """
+    config = {"tokens": [{"value": "secret", "kind": "bearer"}]}
+    out = _redact_credentials(config)
+    assert out["tokens"] == [{"value": "", "kind": ""}]
+
+
 def test_credential_shaped_container_with_named_fields_still_only_blanks_those():
     """Unchanged behaviour for the case the container test above already
     covers: a dict whose sub-keys are semantically named fields is walked

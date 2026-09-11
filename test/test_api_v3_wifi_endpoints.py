@@ -195,7 +195,7 @@ class TestRadio:
 
     @pytest.mark.parametrize("raw,expected", [
         (True, True), ("true", True), ("1", True), ("yes", True),
-        (False, False), ("false", False), ("off", False), (0, False),
+        (False, False), ("false", False), ("no", False), (0, False),
     ])
     def test_enabled_coercion_is_string_aware(
             self, api_v3_client, wifi_manager, raw, expected):
@@ -228,6 +228,22 @@ class TestRadio:
         wifi_manager.set_wifi_radio.side_effect = RuntimeError("boom")
         assert api_v3_client.post(self.URL, json={"enabled": True}).status_code == 500
 
+    def test_unrecognized_enabled_value_is_rejected_not_treated_as_false(
+            self, api_v3_client, wifi_manager):
+        # An invalid `enabled` used to silently fall back to False, which
+        # can disconnect Wi-Fi (or, with force=true, drop the caller's own
+        # connection to this interface) even though nothing asked for that.
+        response = api_v3_client.post(self.URL, json={"enabled": "typo"})
+        assert response.status_code == 400
+        wifi_manager.set_wifi_radio.assert_not_called()
+
+    def test_unrecognized_force_value_is_rejected_not_treated_as_false(
+            self, api_v3_client, wifi_manager):
+        response = api_v3_client.post(
+            self.URL, json={"enabled": False, "force": "typo"})
+        assert response.status_code == 400
+        wifi_manager.set_wifi_radio.assert_not_called()
+
 
 class TestAutoEnableApMode:
     URL = "/api/v3/wifi/ap/auto-enable"
@@ -258,6 +274,13 @@ class TestAutoEnableApMode:
         wifi_manager.config = {}
         api_v3_client.post(self.URL, json={"auto_enable_ap_mode": "false"})
         assert wifi_manager.config["auto_enable_ap_mode"] is False
+
+    def test_unrecognized_value_is_rejected_not_treated_as_false(
+            self, api_v3_client, wifi_manager):
+        wifi_manager.config = {}
+        response = api_v3_client.post(self.URL, json={"auto_enable_ap_mode": "typo"})
+        assert response.status_code == 400
+        assert "auto_enable_ap_mode" not in wifi_manager.config
 
 
 class TestRadioEnabledAndForceAcceptIntegers:

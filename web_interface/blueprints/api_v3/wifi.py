@@ -8,7 +8,7 @@ from web_interface.blueprints.api_v3 import (
 )
 
 
-def _parse_bool_ish(value, default=False):
+def _parse_bool_ish(value):
     """Coerce a JSON value that is supposed to be a boolean.
 
     A JSON boolean arrives as a real Python bool, but these routes are a
@@ -18,7 +18,13 @@ def _parse_bool_ish(value, default=False):
     (`1 is True` is False, since `True` is a distinct singleton from the int
     `1`) -- so a caller sending `{"enabled": 1}` was silently treated as
     False. Recognizes a real bool, "true"/"false"/"1"/"0"/"yes"/"no"
-    case-insensitively, and int 1/0; anything else falls back to `default`.
+    case-insensitively, and int 1/0.
+
+    Returns None for anything else, rather than guessing. A supplied-but-
+    unrecognized value (e.g. a typo) used to silently become False here,
+    which for `enabled` on the radio route could disconnect Wi-Fi the caller
+    never asked to turn off -- callers must treat None as a validation
+    error, not a real False.
     """
     if isinstance(value, bool):
         return value
@@ -28,14 +34,14 @@ def _parse_bool_ish(value, default=False):
             return True
         if lowered in ('false', '0', 'no'):
             return False
-        return default
+        return None
     if isinstance(value, int):
         if value == 1:
             return True
         if value == 0:
             return False
-        return default
-    return default
+        return None
+    return None
 
 
 # WiFi Management Endpoints
@@ -303,7 +309,12 @@ def set_auto_enable_ap_mode():
                 'message': 'auto_enable_ap_mode is required'
             }), 400
 
-        auto_enable = _parse_bool_ish(data['auto_enable_ap_mode'], default=False)
+        auto_enable = _parse_bool_ish(data['auto_enable_ap_mode'])
+        if auto_enable is None:
+            return jsonify({
+                'status': 'error',
+                'message': 'auto_enable_ap_mode must be a boolean'
+            }), 400
 
         wifi_manager = WiFiManager()
         wifi_manager.config["auto_enable_ap_mode"] = auto_enable
@@ -363,9 +374,21 @@ def set_wifi_radio():
         # Parse defensively: bool("false") is True and a plain int never
         # matches `is True`, so `_parse_bool_ish` handles bool, string and
         # int 1/0 — the endpoint is a public contract, not just the shipped
-        # UI (which always sends real JSON booleans).
-        enabled = _parse_bool_ish(data['enabled'], default=False)
-        force = _parse_bool_ish(data.get('force', False), default=False)
+        # UI (which always sends real JSON booleans). An unrecognized value
+        # must be rejected, not silently disable the radio: this is the
+        # route that can drop the caller's own connection to this interface.
+        enabled = _parse_bool_ish(data['enabled'])
+        if enabled is None:
+            return jsonify({
+                'status': 'error',
+                'message': 'enabled must be a boolean'
+            }), 400
+        force = _parse_bool_ish(data.get('force', False))
+        if force is None:
+            return jsonify({
+                'status': 'error',
+                'message': 'force must be a boolean'
+            }), 400
 
         wifi_manager = WiFiManager()
         success, message, reason = wifi_manager.set_wifi_radio(enabled, force=force)

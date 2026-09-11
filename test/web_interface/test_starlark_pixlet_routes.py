@@ -413,8 +413,40 @@ class TestManifestLockPreventsLostUpdates:
         apps_dir.mkdir()
         monkeypatch.setattr(module, '_STARLARK_APPS_DIR', apps_dir)
         monkeypatch.setattr(module, '_STARLARK_MANIFEST_FILE', apps_dir / 'manifest.json')
+        monkeypatch.setattr(module, '_STARLARK_MANIFEST_LOCK_FILE', apps_dir / 'manifest.json.lock')
         module._write_starlark_manifest({'apps': {}})
         return apps_dir
+
+    def test_the_locked_file_survives_a_manifest_write(self, starlark_dir):
+        """_write_starlark_manifest replaces manifest.json with a fresh inode
+        on every write (temp file + rename). If the lock were taken on that
+        same file, a second locker's fresh os.open() right after the rename
+        would land on the new inode -- unguarded, because only the old,
+        now-orphaned inode was ever locked -- and two writers could race
+        despite each believing it "held the lock" (see the docstring on
+        _starlark_manifest_lock). Locking a sidecar path that no write ever
+        touches or renames over closes that: the inode identity of what gets
+        locked must not change across writes.
+        """
+        import os
+
+        from web_interface.blueprints import api_v3 as module
+
+        with module._starlark_manifest_lock():
+            manifest = module._read_starlark_manifest()
+        lock_ino_before = os.stat(module._STARLARK_MANIFEST_LOCK_FILE).st_ino
+
+        for app_id in ('one', 'two', 'three'):
+            with module._starlark_manifest_lock():
+                manifest = module._read_starlark_manifest()
+                manifest.setdefault('apps', {})[app_id] = {'enabled': True}
+                assert module._write_starlark_manifest(manifest)
+
+        lock_ino_after = os.stat(module._STARLARK_MANIFEST_LOCK_FILE).st_ino
+        assert lock_ino_after == lock_ino_before, (
+            "the locked file's inode changed across writes -- a locker that "
+            "opened it before this write and one that opens it after would "
+            "no longer contend for the same lock")
 
     def test_two_concurrent_updates_are_both_kept(self, starlark_dir):
         import threading
