@@ -16,6 +16,60 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 
+def pytest_configure(config):
+    """Point the emulator at a per-process config that binds no socket.
+
+    Six test modules set EMULATOR=true and build a real DisplayManager. The
+    repo's emulator_config.json selects the "browser" adapter, which binds a
+    fixed TCP port (8888) to serve the dev preview. That port is a machine-wide
+    singleton, so a second pytest process -- a CI shard, another worktree, an
+    agent running the suite alongside -- loses the bind. RGBMatrix construction
+    then raises, DisplayManager falls back to ``self.matrix = None``, and every
+    test that touches the matrix dies with a misleading
+    ``AttributeError: 'NoneType' object has no attribute 'SwapOnVSync'``.
+
+    The "raw" adapter renders in memory and binds nothing, so concurrent runs
+    stop fighting over the port. The tests wrap SwapOnVSync on the matrix object
+    itself, so they are indifferent to which adapter sits underneath. Only the
+    adapter is overridden -- every other key is inherited from the repo config,
+    which stays on "browser" for ``run.py -e``.
+    """
+    try:
+        from RGBMatrixEmulator.internal.emulator_config import RGBMatrixEmulatorConfig
+    except ImportError:
+        return  # No emulator installed; the EMULATOR=true modules can't run anyway.
+
+    import json
+    import tempfile
+
+    settings = {}
+    try:
+        settings = json.loads((project_root / "emulator_config.json").read_text())
+    except (OSError, ValueError):
+        pass  # Fall back to the emulator's own defaults; only the adapter matters.
+    if not isinstance(settings, dict):
+        settings = {}
+    settings["display_adapter"] = "raw"
+    # Falling back would land us back on the browser adapter and its fixed port.
+    settings["allow_adapter_fallback"] = False
+
+    tmp_dir = Path(tempfile.mkdtemp(prefix="ledmatrix-emulator-"))
+    tmp_config = tmp_dir / "emulator_config.json"
+    tmp_config.write_text(json.dumps(settings))
+    # CONFIG_PATH is a bare relative filename resolved against the CWD; an
+    # absolute path makes it independent of where pytest was invoked from.
+    RGBMatrixEmulatorConfig.CONFIG_PATH = str(tmp_config)
+    config._ledmatrix_emulator_tmp = tmp_dir
+
+
+def pytest_unconfigure(config):
+    """Remove the throwaway emulator config written by pytest_configure."""
+    tmp_dir = getattr(config, "_ledmatrix_emulator_tmp", None)
+    if tmp_dir is not None:
+        import shutil
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 @pytest.fixture
 def mock_display_manager():
     """Create a mock DisplayManager for testing."""
