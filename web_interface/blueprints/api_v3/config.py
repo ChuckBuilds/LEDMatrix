@@ -942,7 +942,14 @@ def save_main_config():
                 # separate them. Build it through the shared helper instead.
                 schema_path = resolve_under(plugins_dir, plugin_id, 'config_schema.json')
 
-                if schema_path is not None and schema_path.exists():
+                if schema_path is None:
+                    return error_response(
+                        ErrorCode.VALIDATION_ERROR,
+                        f"Invalid plugin id '{plugin_id}'",
+                        status_code=400
+                    )
+
+                if schema_path.exists():
                     try:
                         with open(schema_path, 'r', encoding='utf-8') as f:
                             schema = json.load(f)

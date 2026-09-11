@@ -1694,6 +1694,10 @@ class WiFiManager:
             return '', None
         if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in password):
             return '', "Password contains control characters"
+        if not password.isascii():
+            # WPA-PSK passphrases are printable ASCII only; NetworkManager
+            # rejects anything else.
+            return '', "Password must be ASCII"
         if password.startswith('-'):
             # Same reason as the SSID: nmcli would read it as an option.
             return '', "Password cannot start with '-'"

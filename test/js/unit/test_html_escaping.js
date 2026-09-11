@@ -244,5 +244,77 @@ console.log('\n6. url-input onInput: previewLink.href is guarded at the sink');
   ok('an unparseable value never reaches previewLink.href', els._preview_link.href === undefined, els._preview_link.href);
 }
 
+// ── plugin-file-manager: cell edits travel via data-*, not inline handlers ──
+// A JSON key/day from an uploaded file used to be spliced, HTML-escaped,
+// into an oninput="...('${escHtml(col)}'...)" attribute. escHtml neutralises
+// a quote for an ordinary attribute, but here the value also has to survive
+// as a *JS string literal* -- the browser HTML-decodes the attribute before
+// running it as script, which turns the escaped quote back into a real one
+// and lets a column named `x');alert(1);//` break out of the string and run
+// arbitrary JS. Cell edits now reach _pfmCellEdit only via data-day/data-col
+// read by one delegated listener, so this pins that no inline handler string
+// is built from the value at all.
+console.log("\n7. plugin-file-manager: cell edits never go through an inline handler string");
+{
+  const src = fs.readFileSync(path.join(ROOT, 'static/v3/js/widgets/plugin-file-manager.js'), 'utf8');
+
+  function extractFn(opener) {
+    const start = src.indexOf(opener);
+    if (start < 0) { console.error(`FAIL: cannot find ${JSON.stringify(opener)}`); process.exit(1); }
+    let i = src.indexOf('{', start), depth = 0;
+    for (let j = i; j < src.length; j++) {
+      if (src[j] === '{') depth++;
+      else if (src[j] === '}') { depth--; if (depth === 0) return src.slice(start, j + 1); }
+    }
+    console.error(`FAIL: unbalanced braces after ${JSON.stringify(opener)}`);
+    process.exit(1);
+  }
+
+  const escHtmlFn = loadFn('static/v3/js/widgets/plugin-file-manager.js', 'function escHtml(s) {', 'escHtml', false);
+  const renderEntryTableSrc = extractFn('function renderEntryTable(fieldId, container, content) {');
+
+  const calls = [];
+  const fakeWindow = { _pfmCellEdit: (fieldId, day, col, value) => calls.push({ fieldId, day, col, value }) };
+
+  class FakeContainer {
+    constructor() { this._html = ''; this._listeners = {}; }
+    set innerHTML(v) { this._html = v; }
+    get innerHTML() { return this._html; }
+    set textContent(v) { this._html = v; }
+    addEventListener(type, fn) { this._listeners[type] = fn; }
+    dispatch(type, target) { this._listeners[type]({ target }); }
+  }
+
+  function fakeCell(day, col, value) {
+    return {
+      closest: (sel) => (sel.includes('data-day') ? { dataset: { day: String(day), col: String(col) }, value } : null),
+    };
+  }
+
+  // eslint-disable-next-line no-eval
+  const renderEntryTable = eval(`(function(getState, escHtml, safeSetHTML, window){
+    ${renderEntryTableSrc}
+    return renderEntryTable;
+  })`)(
+    () => ({ entriesPerPage: 20, _tablePage: 1 }),
+    escHtmlFn,
+    (target, html) => { target.innerHTML = html; },
+    fakeWindow
+  );
+
+  const maliciousCol = "x');alert(1);//";
+  const container = new FakeContainer();
+  renderEntryTable('field1', container, { '1': { [maliciousCol]: 'hello' } });
+
+  ok('no inline oninput handler is emitted for a cell', !/oninput=/.test(container.innerHTML), container.innerHTML);
+  ok('the malicious column name never appears unescaped in the markup',
+     !container.innerHTML.includes(maliciousCol), container.innerHTML);
+
+  container.dispatch('input', fakeCell('1', maliciousCol, 'typed value'));
+  ok('the delegated listener still reaches _pfmCellEdit with the real day/col',
+     calls.length === 1 && calls[0].day === '1' && calls[0].col === maliciousCol && calls[0].value === 'typed value',
+     calls);
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

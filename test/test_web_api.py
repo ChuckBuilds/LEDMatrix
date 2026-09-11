@@ -127,6 +127,31 @@ class TestConfigAPI:
         assert response.status_code == 200
         mock_config_manager.save_config_atomic.assert_called_once()
     
+    def test_save_main_config_fails_closed_when_schema_path_is_unresolvable(
+        self, client, mock_config_manager, mock_plugin_manager
+    ):
+        """A plugin id whose schema path fails safe-resolution must not have
+        its config saved with secret_fields left empty.
+
+        Regression test for the CodeQL/CodeRabbit finding on
+        web_interface/blueprints/api_v3/config.py: previously, when
+        resolve_under() returned None (e.g. a plugin directory reached via a
+        symlink), the code fell through to `secret_fields = set()` and saved
+        the plugin's submitted config -- credentials included -- as
+        ordinary, unencrypted configuration instead of refusing the request.
+        """
+        mock_plugin_manager.plugin_manifests = {'evil': {}}
+
+        with patch('web_interface.blueprints.api_v3.config.resolve_under', return_value=None):
+            response = client.post(
+                '/api/v3/config/main',
+                data=json.dumps({'evil': {'api_key': 'super-secret'}}),
+                content_type='application/json'
+            )
+
+        assert response.status_code == 400
+        mock_config_manager.save_config_atomic.assert_not_called()
+
     def test_save_main_config_validation_error(self, client, mock_config_manager):
         """Test saving config with validation error."""
         invalid_config = {'invalid': 'data'}

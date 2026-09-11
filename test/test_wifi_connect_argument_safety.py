@@ -99,6 +99,14 @@ class TestPasswordValidation:
         _, error = WiFiManager._validate_wifi_password("pass\nword")
         assert error is not None
 
+    @pytest.mark.parametrize("password", ["pässword", "你好12345678"])
+    def test_non_ascii_passphrases_are_refused(self, password):
+        # NetworkManager accepts only printable ASCII WPA-PSK passphrases (or
+        # a 64-char hex key); a non-ASCII value would otherwise reach
+        # _connect_nmcli and be saved/attempted before nmcli itself rejects it.
+        _, error = WiFiManager._validate_wifi_password(password)
+        assert error is not None
+
 
 class TestConnectRefusesBeforeRunningNmcli:
     """connect_to_network must not reach subprocess with a rejected value."""
