@@ -11,6 +11,7 @@ from web_interface.blueprints.api_v3 import (
     remove_empty_secrets, request, separate_secrets, strip_masked_values,
     success_response,
 )
+from src.common.path_safety import resolve_under
 import web_interface.blueprints.api_v3 as _pkg
 # Read through the module rather than bound by value: tests patch these
 # as module attributes, and a value binding would not see the patch.
@@ -934,7 +935,19 @@ def save_main_config():
                         plugins_dir = Path(plugins_dir_name)
                     else:
                         plugins_dir = PROJECT_ROOT / plugins_dir_name
-                schema_path = plugins_dir / plugin_id / 'config_schema.json'
+                # plugin_id is already known to be a loaded plugin (the
+                # membership test above), so this cannot currently traverse --
+                # but the path is built from a request key, and the guard and
+                # the join are far enough apart that a later edit could
+                # separate them. Build it through the shared helper instead.
+                schema_path = resolve_under(plugins_dir, plugin_id, 'config_schema.json')
+
+                if schema_path is None:
+                    return error_response(
+                        ErrorCode.VALIDATION_ERROR,
+                        f"Invalid plugin id '{plugin_id}'",
+                        status_code=400
+                    )
 
                 if schema_path.exists():
                     try:

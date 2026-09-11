@@ -206,10 +206,15 @@
         else console.log(`[PFM][${type}] ${msg}`);
     }
 
+    // Quotes too: the result lands in quoted attribute values (id=, value=,
+    // data-col=), and the textContent/innerHTML round-trip only escapes
+    // &, < and >.
     function escHtml(s) {
         const d = document.createElement('div');
         d.textContent = String(s ?? '');
-        return d.innerHTML;
+        return d.innerHTML
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     function formatSize(bytes) {
@@ -383,7 +388,7 @@
                 <button class="pfm-btn pfm-btn-primary" id="${escHtml(fieldId)}_save_btn">
                     <i class="fas fa-save mr-1"></i>Save
                 </button>
-            </div>`;
+            </div>`);
         overlay.appendChild(modal);
         // Bind events after DOM insertion — filename captured in closure, not in HTML.
         modal.querySelector(`#${CSS.escape(fieldId)}_modal_close`).addEventListener('click', () => window._pfmCloseModal(fieldId));
@@ -411,7 +416,7 @@
                 <textarea id="${escHtml(fieldId)}_json_ta" rows="20"
                     style="width:100%;font-family:monospace;font-size:.75rem;border:1px solid #d1d5db;border-radius:.375rem;padding:.5rem;"
                 >${escHtml(JSON.stringify(content, null, 2))}</textarea>
-                <div id="${escHtml(fieldId)}_json_err" style="color:#dc2626;font-size:.75rem;margin-top:.25rem;"></div>`;
+                <div id="${escHtml(fieldId)}_json_err" style="color:#dc2626;font-size:.75rem;margin-top:.25rem;"></div>`);
         }
     };
 
@@ -431,6 +436,20 @@
         if (!entries.length) { container.textContent = 'No entries.'; return; }
 
         const cols = Object.keys(entries[0][1]);
+
+        // Delegated listener: day/col reach _pfmCellEdit only through data-*
+        // attributes, never through a JS string spliced into an inline
+        // handler -- the browser HTML-decodes attribute values before
+        // running them as script, which undoes escHtml's quote escaping and
+        // reopens the exact injection it exists to close. `container` is a
+        // fresh element per modal open (see _pfmOpenEdit), so this attaches
+        // exactly once per table, even though buildPage() re-renders below.
+        container.addEventListener('input', (e) => {
+            const cell = e.target.closest('input[data-day], textarea[data-day]');
+            if (!cell) return;
+            window._pfmCellEdit(fieldId, cell.dataset.day, cell.dataset.col, cell.value);
+        });
+
         const MS_PER_DAY = 86400 * 1000; // eslint-disable-line no-magic-numbers -- 86400s/day is not magic
         const todayDoy = Math.ceil((new Date() - new Date(new Date().getFullYear(), 0, 0)) / MS_PER_DAY);
         const total = entries.length;
@@ -459,18 +478,16 @@
                         </thead>
                         <tbody>
                             ${pageEntries.map(([day, val]) => `
-                            <tr data-day="${day}" class="${parseInt(day) === todayDoy ? 'today-row' : ''}">
+                            <tr data-day="${escHtml(day)}" class="${parseInt(day) === todayDoy ? 'today-row' : ''}">
                                 <td class="pfm-day-col" style="user-select:none;">${escHtml(day)}</td>
                                 ${cols.map(col => {
                                     const v = val[col] ?? '';
                                     const isLong = String(v).length > 60 || col === 'description' || col === 'definition' || col === 'content';
                                     return isLong
-                                        ? `<td><textarea data-day="${day}" data-col="${escHtml(col)}" rows="2"
-                                            oninput="window._pfmCellEdit('${fieldId}','${day}','${escHtml(col)}',this.value)"
+                                        ? `<td><textarea data-day="${escHtml(day)}" data-col="${escHtml(col)}" rows="2"
                                             >${escHtml(String(v))}</textarea></td>`
-                                        : `<td><input type="text" data-day="${day}" data-col="${escHtml(col)}"
-                                            value="${escHtml(String(v))}"
-                                            oninput="window._pfmCellEdit('${fieldId}','${day}','${escHtml(col)}',this.value)"></td>`;
+                                        : `<td><input type="text" data-day="${escHtml(day)}" data-col="${escHtml(col)}"
+                                            value="${escHtml(String(v))}"></td>`;
                                 }).join('')}
                             </tr>`).join('')}
                         </tbody>
@@ -489,7 +506,7 @@
                                 ${page >= totalPages ? 'disabled' : ''}
                                 onclick="window._pfmTablePage('${fieldId}',${page + 1})">Next ›</button>
                     </div>
-                </div>`;
+                </div>`);
             st._tablePage = page;
             st._tableEntries = entries;
             st._tableCols = cols;
@@ -578,7 +595,7 @@
                 <button class="pfm-btn pfm-btn-danger" id="${escHtml(fieldId)}_del_confirm">
                     <i class="fas fa-trash mr-1"></i>Delete
                 </button>
-            </div>`;
+            </div>`);
         overlay.appendChild(modal);
         modal.querySelector(`#${CSS.escape(fieldId)}_del_close`).addEventListener('click', () => window._pfmCloseModal(fieldId));
         modal.querySelector(`#${CSS.escape(fieldId)}_del_cancel`).addEventListener('click', () => window._pfmCloseModal(fieldId));
@@ -631,7 +648,7 @@
                     <i class="fas fa-plus mr-1"></i>Create
                 </button>
             </div>
-            </div>`;
+            </div>`);
         overlay.appendChild(modal);
         modal.querySelector(`#${CSS.escape(fieldId)}_cre_close`).addEventListener('click', () => window._pfmCloseModal(fieldId));
         modal.querySelector(`#${CSS.escape(fieldId)}_cre_cancel`).addEventListener('click', () => window._pfmCloseModal(fieldId));
@@ -784,7 +801,7 @@
                     <div class="pfm-grid">
                         <div class="pfm-empty"><i class="fas fa-spinner fa-spin"></i>Loading…</div>
                     </div>
-                </div>`;
+                </div>`);
 
             loadFiles(fieldId);
         },

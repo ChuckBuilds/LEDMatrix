@@ -32,6 +32,8 @@ os.environ['EMULATOR'] = 'true'
 
 from flask import Flask, render_template, request, jsonify
 
+from src.common.path_safety import resolve_under, safe_path_component
+
 app = Flask(__name__, template_folder=str(Path(__file__).parent / 'templates'))
 
 logger = logging.getLogger(__name__)
@@ -118,7 +120,8 @@ def find_plugin_dir(plugin_id: str) -> Optional[Path]:
     one of the plugin search dirs, so a crafted id can never name a path
     outside them.
     """
-    if not isinstance(plugin_id, str) or not _SAFE_PLUGIN_ID_RE.match(plugin_id):
+    plugin_id = safe_path_component(plugin_id)
+    if not plugin_id or not _SAFE_PLUGIN_ID_RE.match(plugin_id):
         return None
     from src.plugin_system.plugin_loader import PluginLoader
     loader = PluginLoader()
@@ -140,8 +143,8 @@ def find_plugin_dir(plugin_id: str) -> Optional[Path]:
 
 def load_config_defaults(plugin_dir: 'str | Path') -> Dict[str, Any]:
     """Extract default values from config_schema.json."""
-    schema_path = Path(plugin_dir) / 'config_schema.json'
-    if not schema_path.exists():
+    schema_path = resolve_under(plugin_dir, 'config_schema.json')
+    if schema_path is None or not schema_path.exists():
         return {}
     with open(schema_path, 'r') as f:
         schema = json.load(f)
@@ -175,8 +178,8 @@ def api_plugin_schema(plugin_id):
     if not plugin_dir:
         return jsonify({'error': f'Plugin not found: {plugin_id}'}), 404
 
-    schema_path = plugin_dir / 'config_schema.json'
-    if not schema_path.exists():
+    schema_path = resolve_under(plugin_dir, 'config_schema.json')
+    if schema_path is None or not schema_path.exists():
         return jsonify({'schema': {'type': 'object', 'properties': {}}})
 
     with open(schema_path, 'r') as f:

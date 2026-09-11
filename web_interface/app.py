@@ -17,6 +17,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.config_manager import ConfigManager
 from src.web_interface.error_handler import describe_exception
+from src.common.path_safety import (
+    resolve_under, safe_path_component, safe_relative_parts,
+)
 from werkzeug.exceptions import HTTPException
 from src.exceptions import ConfigError
 from src.plugin_system.plugin_manager import PluginManager
@@ -206,66 +209,66 @@ app.register_blueprint(api_v3, url_prefix='/api/v3')
 # Route to serve plugin asset files (registered on main app, not blueprint, for /assets/... path)
 @app.route('/assets/plugins/<plugin_id>/uploads/<path:filename>', methods=['GET'])
 def serve_plugin_asset(plugin_id, filename):
-    """Serve uploaded asset files from assets/plugins/{plugin_id}/uploads/"""
+    """Serve uploaded asset files from assets/plugins/{plugin_id}/uploads/
+
+    Both URL parts are validated before any path is built. The containment
+    check here used to compare the *asset directory* against the project root
+    rather than against assets/plugins, so a plugin_id of ``..`` moved the
+    served directory a level up and still passed.
+    """
     try:
-        # Build the asset directory path
-        assets_dir = project_root / 'assets' / 'plugins' / plugin_id / 'uploads'
-        assets_dir = assets_dir.resolve()
-        
+        uploads_base = (project_root / 'assets' / 'plugins').resolve()
+
+        safe_plugin_id = safe_path_component(plugin_id)
+        if not safe_plugin_id:
+            return jsonify({'status': 'error', 'message': 'Invalid asset path'}), 403
+
+        safe_parts = safe_relative_parts(filename)
+        if not safe_parts:
+            return jsonify({'status': 'error', 'message': 'Invalid file path'}), 403
+
+        assets_dir = resolve_under(uploads_base, safe_plugin_id, 'uploads')
+        if assets_dir is None:
+            return jsonify({'status': 'error', 'message': 'Invalid asset path'}), 403
+
         # Security check: ensure the assets directory exists and is within project_root
         if not assets_dir.exists() or not assets_dir.is_dir():
             return jsonify({'status': 'error', 'message': 'Asset directory not found'}), 404
-        
-        # Ensure we're serving from within the assets directory (prevent directory traversal)
-        # Use proper path resolution instead of string prefix matching to prevent bypasses
-        assets_dir_resolved = assets_dir.resolve()
-        project_root_resolved = project_root.resolve()
-        
-        # Check that assets_dir is actually within project_root using commonpath
-        try:
-            common_path = os.path.commonpath([str(assets_dir_resolved), str(project_root_resolved)])
-            if common_path != str(project_root_resolved):
-                return jsonify({'status': 'error', 'message': 'Invalid asset path'}), 403
-        except ValueError:
-            # commonpath raises ValueError if paths are on different drives (Windows)
-            return jsonify({'status': 'error', 'message': 'Invalid asset path'}), 403
-        
-        # Resolve the requested file path
-        requested_file = (assets_dir / filename).resolve()
-        
-        # Security check: ensure file is within the assets directory using proper path comparison
-        # Use commonpath to ensure assets_dir is a true parent of requested_file
-        try:
-            common_path = os.path.commonpath([str(requested_file), str(assets_dir_resolved)])
-            if common_path != str(assets_dir_resolved):
-                return jsonify({'status': 'error', 'message': 'Invalid file path'}), 403
-        except ValueError:
-            # commonpath raises ValueError if paths are on different drives (Windows)
+
+        # Resolve the requested file path. resolve_under repeats the
+        # containment check after resolving, which is what catches a symlink
+        # inside the uploads directory pointing out of it.
+        requested_file = resolve_under(assets_dir, *safe_parts)
+        if requested_file is None:
             return jsonify({'status': 'error', 'message': 'Invalid file path'}), 403
-        
+
         # Check if file exists
         if not requested_file.exists() or not requested_file.is_file():
             return jsonify({'status': 'error', 'message': 'File not found'}), 404
-        
+
         # Determine content type based on file extension
+        lowered = requested_file.name.lower()
         content_type = 'application/octet-stream'
-        if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
-            content_type = 'image/jpeg' if filename.lower().endswith(('.jpg', '.jpeg')) else 'image/png'
-        elif filename.lower().endswith('.gif'):
+        if lowered.endswith(('.png', '.jpg', '.jpeg')):
+            content_type = 'image/jpeg' if lowered.endswith(('.jpg', '.jpeg')) else 'image/png'
+        elif lowered.endswith('.gif'):
             content_type = 'image/gif'
-        elif filename.lower().endswith('.bmp'):
+        elif lowered.endswith('.bmp'):
             content_type = 'image/bmp'
-        elif filename.lower().endswith('.webp'):
+        elif lowered.endswith('.webp'):
             content_type = 'image/webp'
-        elif filename.lower().endswith('.svg'):
+        elif lowered.endswith('.svg'):
             content_type = 'image/svg+xml'
-        elif filename.lower().endswith('.json'):
+        elif lowered.endswith('.json'):
             content_type = 'application/json'
-        elif filename.lower().endswith('.txt'):
+        elif lowered.endswith('.txt'):
             content_type = 'text/plain'
-        
-        # Use send_from_directory to serve the file
-        return send_from_directory(str(assets_dir), filename, mimetype=content_type)
+
+        # Use send_from_directory to serve the file. The path handed over is
+        # the validated one, rebuilt from the components that were checked.
+        return send_from_directory(
+            str(assets_dir), '/'.join(safe_parts), mimetype=content_type
+        )
         
     except Exception:
         app.logger.exception('Error serving plugin asset file')

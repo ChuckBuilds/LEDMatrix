@@ -48,6 +48,7 @@ from src.web_interface.validators import (
 )
 from src.error_aggregator import get_error_aggregator
 from src.common.permission_utils import install_requirements_file
+from src.common.path_safety import resolve_under
 _SUDO = shutil.which('sudo')
 _JOURNALCTL = shutil.which('journalctl')
 _GIT = shutil.which('git')
@@ -124,9 +125,17 @@ def _get_plugin_version(plugin_id: str) -> str:
     """Read the installed version from a plugin's manifest.json.
 
     Returns the version string on success, or '' if the manifest
-    cannot be read (missing, corrupt, permission denied, etc.).
+    cannot be read (missing, corrupt, permission denied, etc.) or if
+    ``plugin_id`` is not a plain directory name. Several callers pass an id
+    that arrived in a request body, so the name is validated here rather
+    than relying on each of them to have done it.
     """
-    manifest_path = Path(api_v3.plugin_store_manager.plugins_dir) / plugin_id / "manifest.json"
+    manifest_path = resolve_under(
+        api_v3.plugin_store_manager.plugins_dir, plugin_id, "manifest.json"
+    )
+    if manifest_path is None:
+        logger.warning("[PluginVersion] Rejected unsafe plugin id %r", plugin_id)
+        return ''
     try:
         with open(manifest_path, 'r', encoding='utf-8') as f:
             manifest = json.load(f)

@@ -14,7 +14,8 @@ const path = require('path');
 const fs = require('fs');
 
 const BASE = process.env.BASE || 'http://localhost:5000';
-const UNIT = ['unit/test_list_filter.js', 'unit/test_render_cards.js'];
+const UNIT = ['unit/test_list_filter.js', 'unit/test_render_cards.js',
+              'unit/test_html_escaping.js'];
 const DOM = ['dom/test_installed_dom.js', 'dom/test_store_dom.js', 'dom/test_no_double_fetch.js',
              'dom/test_tools_sections.js'];
 

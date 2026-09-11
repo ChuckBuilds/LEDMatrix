@@ -15,6 +15,8 @@ import zlib
 from typing import Dict, Any, Optional, Protocol
 from datetime import datetime
 
+from src.common.path_safety import safe_path_component
+
 try:  # optional: large speedup on the cache write path, see _dumps below
     import orjson
 except ImportError:  # pragma: no cover - exercised on hosts without the wheel
@@ -160,16 +162,30 @@ class DiskCache:
     def get_cache_path(self, key: str) -> Optional[str]:
         """
         Get the path for a cache file.
-        
+
+        The key becomes a filename, so it has to be one. Keys reach this
+        method from the web API -- POST /api/v3/cache/delete passes the
+        request body's ``key`` straight through CacheManager.clear_cache to
+        os.remove -- and a key of ``../../../../etc/whatever`` named a file
+        well outside the cache directory. Every real key is the stem of a
+        file already sitting flat in cache_dir (that is how list_cache_files
+        derives them), so rejecting anything with a path component turns
+        away only inputs that could never have been written here.
+
         Args:
             key: Cache key
-            
+
         Returns:
-            Path to cache file or None if cache is disabled
+            Path to cache file, or None if cache is disabled or the key is
+            not a usable filename
         """
         if not self.cache_dir:
             return None
-        return os.path.join(self.cache_dir, f"{key}.json")
+        safe_key = safe_path_component(key)
+        if safe_key is None:
+            self.logger.warning("Rejected unsafe cache key %r", key)
+            return None
+        return os.path.join(self.cache_dir, f"{safe_key}.json")
     
     def get(self, key: str, max_age: Optional[int] = 300) -> Optional[Dict[str, Any]]:
         """
