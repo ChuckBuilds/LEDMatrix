@@ -872,7 +872,11 @@ def start_pixlet_editor():
                 # The process is up but nothing records its PID: status and stop
                 # would both report no session while the display stays down until
                 # the timeout expires. Take the editor with us instead.
-                logger.error('Started an editor session but could not record it: %s', err)
+                # exc_info: this path answers 500, and the guard in
+                # test_web_error_detail.py requires the traceback to reach the log
+                # as well as the sanitized detail reaching the caller.
+                logger.error('Started an editor session but could not record it: %s',
+                             err, exc_info=True)
                 _terminate_editor_process(process.pid)
                 return jsonify({'status': 'error',
                                 'message': 'Could not record the editor session; '
