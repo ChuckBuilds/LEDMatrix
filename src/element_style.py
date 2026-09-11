@@ -706,6 +706,65 @@ def _normalize_color(value: Any) -> Optional[Tuple[int, int, int]]:
     return None
 
 
+#: Element names that drifted between plugins, beyond what the ``_text``
+#: suffix rule below covers. Counted across the published schemas: the
+#: layout block spells it ``records`` in seven plugins and ``record`` in
+#: two, ``status_text`` in seven and ``status`` in two.
+_ELEMENT_ALIASES: Dict[str, Tuple[str, ...]] = {
+    'records': ('record',),
+    'record': ('records',),
+    'rank_text': ('ranking', 'rank'),
+    'ranking': ('rank_text', 'rank'),
+    'team_name': ('team',),
+    'team': ('team_name',),
+}
+
+
+def alias_keys(element_key: str) -> Tuple[str, ...]:
+    """The names one element may be stored under, exact match first.
+
+    Two conventions collided as the scoreboards grew. The style block names
+    elements with a ``_text`` suffix (``score_text``, ``status_text``) while
+    the layout block mostly uses the bare noun (``score``, ``date``,
+    ``odds``) -- except ``status_text``, which kept the suffix in seven
+    plugins and lost it in two. Plugins also disagree on ``records`` vs
+    ``record``.
+
+    Rather than make every plugin rename its config keys -- which would
+    orphan whatever offsets its users had already dialled in -- a lookup
+    tries the exact name first and then the spellings that mean the same
+    thing. Exact-first is what keeps this from changing any behaviour for a
+    config that already matches.
+
+    This also covers the compact declaration form, which uses one key for
+    both blocks: a plugin moving to it can still find offsets its users
+    saved under the old bare-noun layout key.
+    """
+    if not isinstance(element_key, str) or not element_key:
+        return ()
+    explicit = _ELEMENT_ALIASES.get(element_key)
+    if explicit:
+        # An explicit entry replaces the suffix rule rather than adding to
+        # it, so 'records' does not also generate 'records_text'.
+        return (element_key,) + tuple(a for a in explicit if a != element_key)
+
+    if element_key.endswith('_text'):
+        stem = element_key[:-len('_text')]
+        return (element_key, stem) if stem else (element_key,)
+    return (element_key, element_key + '_text')
+
+
+def _lookup_element(block: Any, element_key: str) -> Dict[str, Any]:
+    """``block[element]`` under any of its names, or {}."""
+    if not isinstance(block, dict):
+        return {}
+    for key in alias_keys(element_key):
+        value = block.get(key)
+        if isinstance(value, dict):
+            return value
+    return {}
+
+
 def _coerce_bool(value: Any, default: bool) -> bool:
     """A real bool, or ``default``. Accepts the strings a form may post."""
     if isinstance(value, bool):
@@ -814,12 +873,10 @@ class ElementStyleResolver:
         return customization if isinstance(customization, dict) else {}
 
     def _element_config(self, element_key: str) -> Dict[str, Any]:
-        element = self._customization().get(element_key, {})
-        return element if isinstance(element, dict) else {}
+        return _lookup_element(self._customization(), element_key)
 
     def _element_defaults(self, element_key: str) -> Dict[str, Any]:
-        defaults = self._defaults.get(element_key, {})
-        return defaults if isinstance(defaults, dict) else {}
+        return _lookup_element(self._defaults, element_key)
 
     def _mode_block(self, mode: Optional[str]) -> Dict[str, Any]:
         """``customization.modes.<mode>``, or {} when there is no such block."""
@@ -833,8 +890,7 @@ class ElementStyleResolver:
 
     def _mode_element_config(self, element_key: str,
                              mode: Optional[str]) -> Dict[str, Any]:
-        element = self._mode_block(mode).get(element_key, {})
-        return element if isinstance(element, dict) else {}
+        return _lookup_element(self._mode_block(mode), element_key)
 
     def _effective_mode(self, mode: Any) -> Optional[str]:
         """A per-call mode overrides the bound one; anything else uses it."""
@@ -942,24 +998,21 @@ class ElementStyleResolver:
     @staticmethod
     def _layout_element(block: Dict[str, Any],
                         element_key: str) -> Dict[str, Any]:
-        """``block['layout'][element]``, or {} if absent anywhere."""
-        layout = block.get('layout', {})
-        if not isinstance(layout, dict):
-            return {}
-        element = layout.get(element_key, {})
-        return element if isinstance(element, dict) else {}
+        """``block['layout'][element]``, or {} if absent anywhere.
 
-    @staticmethod
-    def _layout_axis(block: Dict[str, Any], element_key: str,
+        The layout block is where the naming drift lives, so the lookup
+        goes through the aliases: a plugin asking for ``score_text``
+        offsets still finds the ``score`` its users configured.
+        """
+        if not isinstance(block, dict):
+            return {}
+        return _lookup_element(block.get('layout'), element_key)
+
+    @classmethod
+    def _layout_axis(cls, block: Dict[str, Any], element_key: str,
                      axis: str) -> Any:
         """``block['layout'][element][axis]``, or None if absent anywhere."""
-        layout = block.get('layout', {})
-        if not isinstance(layout, dict):
-            return None
-        element = layout.get(element_key, {})
-        if not isinstance(element, dict):
-            return None
-        return element.get(axis)
+        return cls._layout_element(block, element_key).get(axis)
 
     @staticmethod
     def _coerce_offset(value: Any, default: int, element_key: str,

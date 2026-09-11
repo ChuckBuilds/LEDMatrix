@@ -24,6 +24,7 @@ import pytest
 from PIL import ImageFont
 
 from src.element_style import (
+    alias_keys,
     ElementStyleResolver,
     _load_font_sized,
     native_bdf_size,
@@ -981,3 +982,94 @@ class TestExtraFieldSchema:
         assert "null" in live["score_text"]["properties"]["visible"]["type"]
         scale = live["layout"]["properties"]["home_logo"]["properties"]["scale"]
         assert scale["default"] is None and "null" in scale["type"]
+
+class TestAliasKeys:
+    """Two naming conventions collided as the scoreboards grew.
+
+    Counted across the published schemas: the style block names elements
+    with a _text suffix (score_text, status_text), while the layout block
+    mostly uses the bare noun (score, date, odds) -- except status_text,
+    which kept the suffix in seven plugins and lost it in two. records vs
+    record splits seven to two the same way.
+
+    Renaming config keys to fix that would orphan whatever offsets users had
+    already dialled in, so lookups try the alternatives instead.
+    """
+
+    @pytest.mark.parametrize("key,expected", [
+        ("score_text", ("score_text", "score")),
+        ("status", ("status", "status_text")),
+        ("status_text", ("status_text", "status")),
+        ("records", ("records", "record")),
+        ("record", ("record", "records")),
+        ("rank_text", ("rank_text", "ranking", "rank")),
+        ("team_name", ("team_name", "team")),
+    ])
+    def test_the_spellings_tried(self, key, expected):
+        assert alias_keys(key) == expected
+
+    def test_the_exact_name_is_always_first(self):
+        for key in ("score_text", "status", "records", "home_logo"):
+            assert alias_keys(key)[0] == key
+
+    def test_an_explicit_entry_replaces_the_suffix_rule(self):
+        """'records' must not also generate the meaningless 'records_text'."""
+        assert "records_text" not in alias_keys("records")
+
+    @pytest.mark.parametrize("key", ["", None, 5, [], {}])
+    def test_nonsense_keys_yield_nothing(self, key):
+        assert alias_keys(key) == ()
+
+
+class TestAliasedLookup:
+    def _r(self, config, mode=None):
+        return ElementStyleResolver(config, {}, mode=mode)
+
+    def test_a_compact_plugin_finds_offsets_saved_under_the_bare_noun(self):
+        """The migration case: a scoreboard moving to the compact form asks
+        for score_text offsets, and its users wrote layout.score."""
+        config = {"customization": {"layout": {"score": {"y_offset": -3}}}}
+        assert self._r(config).offset("score_text") == (0, -3)
+
+    def test_status_and_status_text_find_each_other(self):
+        written_long = {"customization": {"layout": {"status_text": {"x_offset": 2}}}}
+        written_short = {"customization": {"layout": {"status": {"x_offset": 4}}}}
+        assert self._r(written_long).offset("status") == (2, 0)
+        assert self._r(written_short).offset("status_text") == (4, 0)
+
+    def test_record_and_records_find_each_other(self):
+        config = {"customization": {"layout": {"records": {"away_x_offset": 5}}}}
+        assert self._r(config).offset_value("record", "away_x_offset") == 5
+
+    def test_an_exact_match_beats_an_alias(self):
+        """Nothing changes for a config that already uses the right name."""
+        config = {"customization": {"layout": {
+            "score": {"y_offset": 1}, "score_text": {"y_offset": 9}}}}
+        assert self._r(config).offset("score_text") == (0, 9)
+        assert self._r(config).offset("score") == (0, 1)
+
+    def test_style_blocks_alias_too(self, style_schema_path):
+        config = {"customization": {"title": {"font_size": 13}}}
+        st = ElementStyleResolver(
+            config, defaults_from_schema_file(style_schema_path)
+        ).style("title_text", classic_size=8)
+        assert st.font_size == 13
+
+    def test_a_mode_block_aliases_too(self):
+        config = {"customization": {
+            "layout": {"score": {"y_offset": -3}},
+            "modes": {"live": {"layout": {"score": {"y_offset": 7}}}}}}
+        assert self._r(config, "live").offset("score_text") == (0, 7)
+
+    def test_an_unrelated_element_is_unaffected(self):
+        config = {"customization": {"layout": {"home_logo": {"x_offset": 3}}}}
+        r = self._r(config)
+        assert r.offset("home_logo") == (3, 0)
+        assert r.offset("away_logo") == (0, 0)
+
+    def test_scale_is_found_through_an_alias(self, extra_schema_path):
+        config = {"customization": {"layout": {"score": {"scale": 2}}}}
+        st = ElementStyleResolver(
+            config, defaults_from_schema_file(extra_schema_path)
+        ).style("score_text")
+        assert st.scale == 2.0
