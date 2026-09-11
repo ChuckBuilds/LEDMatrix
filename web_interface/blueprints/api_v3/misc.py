@@ -472,9 +472,21 @@ def update_mqtt_bridge_config():
         else:
             config['mqtt_password'] = existing_password
 
-        if config.get('mqtt_password') and not config.get('mqtt_tls'):
-            logger.warning('MQTT bridge: a password is set without TLS; '
-                           'credentials will cross the network in cleartext')
+        # CWE-319: a password with TLS off is sent in the clear. On a trusted
+        # LAN that is a normal, deliberate setup, so this is refused rather
+        # than forbidden -- allow_insecure_mqtt is the explicit acknowledgement.
+        insecure = bool(config.get('mqtt_password')) and not config.get('mqtt_tls')
+        if insecure and not config.get('allow_insecure_mqtt'):
+            return jsonify({
+                'status': 'error',
+                'message': 'MQTT credentials would cross the network in cleartext '
+                           'with TLS disabled. Enable mqtt_tls, or set '
+                           'allow_insecure_mqtt to accept that on a trusted network.'
+            }), 400
+        if insecure:
+            logger.warning('MQTT bridge: a password is set without TLS and '
+                           'allow_insecure_mqtt is on; credentials will cross the '
+                           'network in cleartext')
 
         _MQTT_BRIDGE_DIR.mkdir(parents=True, exist_ok=True)
         # Write via a temp file in the same directory so a crash mid-write

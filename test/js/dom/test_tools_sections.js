@@ -86,6 +86,17 @@ const get = p => new Promise((res, rej) =>
   ok('editor lists the apps on disk',
      appIds.every(id => $('pixlet-editor-body').textContent.includes(id)), appIds);
   ok('no session banner while idle', !$('pixlet-countdown'));
+  // escHtml does not encode single quotes, so an app id interpolated into an
+  // inline onclick="startPixletEditor('...')" could break out of the JS string
+  // and run script. The id must reach the handler through dataset instead.
+  const editBtns = [...window.document.querySelectorAll('[id^="btn-pixlet-edit-"]')];
+  ok('edit buttons exist', editBtns.length > 0, editBtns.length);
+  ok('edit buttons carry no inline onclick',
+     editBtns.every(b => !b.getAttribute('onclick')),
+     editBtns.map(b => b.getAttribute('onclick')));
+  ok('edit buttons pass the app id via dataset',
+     editBtns.every(b => appIds.includes(b.dataset.appId)),
+     editBtns.map(b => b.dataset.appId));
   ok('warns that the display stops',
      window.document.body.textContent.includes('display stops while a session is open'));
 

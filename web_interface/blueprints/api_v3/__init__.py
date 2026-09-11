@@ -1945,6 +1945,9 @@ _MQTT_BRIDGE_DEFAULTS = {
     'mqtt_topic': 'ledmatrix/command',
     'mqtt_tls': False,
     'mqtt_tls_insecure': False,
+    # Opt-in acknowledgement that credentials may cross an untrusted
+    # network in cleartext. Off by default: the save is refused instead.
+    'allow_insecure_mqtt': False,
     'ledmatrix_api_base': 'http://localhost:5000',
     'request_timeout': 15,
     'on_demand_duration': None,
@@ -2015,7 +2018,7 @@ def _coerce_mqtt_bridge_value(key: str, raw: Any) -> Tuple[Any, Optional[str]]:
         if not 1 <= duration <= 86400:
             return None, 'On-demand duration must be between 1 and 86400 seconds'
         return duration, None
-    if key in ('mqtt_tls', 'mqtt_tls_insecure'):
+    if key in ('mqtt_tls', 'mqtt_tls_insecure', 'allow_insecure_mqtt'):
         return bool(raw) if isinstance(raw, bool) else str(raw).lower() in ('1', 'true', 'yes', 'on'), None
     if key == 'log_level':
         level = str(raw or '').upper()

@@ -104,6 +104,29 @@ PIXLET_BIN=$(find_pixlet) || {
     exit 1
 }
 
+# find_pixlet supports Darwin, so this script has to as well. macOS ships no
+# timeout(1); GNU coreutils installs it as gtimeout. Resolve whichever exists
+# and fail here with instructions rather than at the invocation far below,
+# where the failure would land after the display has already been stopped.
+find_timeout() {
+    local candidate
+    for candidate in timeout gtimeout; do
+        if command -v "$candidate" >/dev/null 2>&1; then
+            command -v "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+TIMEOUT_BIN=$(find_timeout) || {
+    echo "Neither 'timeout' nor 'gtimeout' was found on PATH."
+    echo "This script needs one to bound the editing session."
+    echo "On macOS, install GNU coreutils:"
+    echo "  brew install coreutils"
+    exit 1
+}
+
 CONFIG_FILE="$APP_DIR/config.json"
 if [ -f "$CONFIG_FILE" ]; then
     cp "$CONFIG_FILE" "$CONFIG_FILE.backup"
@@ -148,11 +171,14 @@ if [ "$DISPLAY_WAS_RUNNING" = true ]; then
     sudo systemctl stop ledmatrix
 fi
 
-if [ "$BIND_HOST" = "0.0.0.0" ]; then
-    REACH_HOST="$(hostname).local"
-else
-    REACH_HOST="localhost"
-fi
+# Wildcard, loopback and an explicit interface address are three different
+# cases. Collapsing the last two into "localhost" printed a URL pointing at the
+# user's own machine whenever PIXLET_EDITOR_HOST named a LAN address.
+case "$BIND_HOST" in
+    0.0.0.0|::|"")            REACH_HOST="$(hostname).local" ;;
+    127.0.0.1|::1|localhost)  REACH_HOST="localhost" ;;
+    *)                        REACH_HOST="$BIND_HOST" ;;
+esac
 
 echo ""
 echo "Editing:  $APP_ID"
@@ -181,7 +207,7 @@ cd "$APP_DIR"
 # --foreground: stay in this script's process group so one signal reaches the
 # whole session. Backgrounded + `wait` so the EXIT trap can run while the child
 # is still alive; a foreground child would leave bash waiting on it instead.
-timeout --foreground "$EDITOR_TIMEOUT" "$PIXLET_BIN" serve "$(basename "$STAR_FILE")" \
+"$TIMEOUT_BIN" --foreground "$EDITOR_TIMEOUT" "$PIXLET_BIN" serve "$(basename "$STAR_FILE")" \
     --host "$BIND_HOST" \
     --port "$PORT" \
     --no-browser \

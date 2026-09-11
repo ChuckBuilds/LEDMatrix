@@ -70,7 +70,10 @@ class TestABodyItCannotApplyIsRejected:
 
 class TestClearPasswordNeedsARealBoolean:
     def _seed(self, cfg, password="hunter2"):
-        cfg.write_text(json.dumps({"mqtt_password": password}), encoding="utf-8")
+        # TLS on so these cases exercise clear_password alone: a stored password
+        # with TLS off is refused by the CWE-319 guard, which is a separate test.
+        cfg.write_text(json.dumps({"mqtt_password": password, "mqtt_tls": True}),
+                       encoding="utf-8")
 
     def _stored(self, cfg):
         return json.loads(cfg.read_text(encoding="utf-8")).get("mqtt_password")
@@ -95,3 +98,41 @@ class TestClearPasswordNeedsARealBoolean:
         self._seed(cfg)
         assert c.put(URL, json={"clear_password": truthy}).status_code == 200
         assert self._stored(cfg) is None
+
+
+class TestCleartextCredentialsNeedAnExplicitOptIn:
+    """CWE-319. A password with TLS off crosses the network in the clear.
+
+    Refused rather than forbidden: unencrypted MQTT on a trusted LAN is a normal
+    deliberate setup, so allow_insecure_mqtt is the explicit acknowledgement.
+    """
+
+    def test_a_password_without_tls_is_refused(self, client):
+        c, _ = client
+        r = c.put(URL, json={"mqtt_password": "hunter2", "mqtt_tls": False})
+        assert r.status_code == 400
+        assert "allow_insecure_mqtt" in r.get_json()["message"]
+
+    def test_the_opt_in_allows_it(self, client):
+        c, cfg = client
+        r = c.put(URL, json={"mqtt_password": "hunter2", "mqtt_tls": False,
+                             "allow_insecure_mqtt": True})
+        assert r.status_code == 200, r.get_json()
+        assert json.loads(cfg.read_text(encoding="utf-8"))["mqtt_password"] == "hunter2"
+
+    def test_tls_on_needs_no_opt_in(self, client):
+        c, _ = client
+        r = c.put(URL, json={"mqtt_password": "hunter2", "mqtt_tls": True})
+        assert r.status_code == 200, r.get_json()
+
+    def test_no_password_is_unaffected(self, client):
+        c, _ = client
+        assert c.put(URL, json={"mqtt_tls": False}).status_code == 200
+
+    def test_the_opt_in_is_a_real_boolean(self, client):
+        """"false" must not switch the guard off, same as clear_password."""
+        c, _ = client
+        r = c.put(URL, json={"mqtt_password": "hunter2", "mqtt_tls": False,
+                             "allow_insecure_mqtt": "false"})
+        assert r.status_code == 400
+

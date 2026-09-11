@@ -1251,7 +1251,7 @@
                 </div>
                 <button id="btn-pixlet-edit-${escHtml(a.id)}"
                         ${(!a.editable || status.running) ? 'disabled' : ''}
-                        onclick="startPixletEditor('${escHtml(a.id)}')"
+                        data-pixlet-edit data-app-id="${escHtml(a.id)}"
                         class="shrink-0 inline-flex items-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
                     <i class="fas fa-sliders-h mr-2"></i>Edit
                 </button>
@@ -1263,6 +1263,15 @@
 
         body.innerHTML = active + `<div class="mt-2">${rows}</div>
             <div id="result-pixlet" class="hidden"></div>`;
+
+        // Bound here rather than via an inline onclick: escHtml does not encode
+        // single quotes, and the id used to be interpolated into a single-quoted
+        // JS string, so an app directory containing an apostrophe could break
+        // out of it and run script. Through dataset the value is only ever
+        // parsed as an HTML attribute, never as JavaScript.
+        body.querySelectorAll('[data-pixlet-edit]').forEach(btn => {
+            btn.addEventListener('click', () => startPixletEditor(btn.dataset.appId));
+        });
     }
 
     window.loadPixletEditor = function() {
