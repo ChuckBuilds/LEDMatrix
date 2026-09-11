@@ -42,15 +42,29 @@ def client(tmp_path, monkeypatch):
         d.mkdir()
         (d / "manifest.json").write_text(json.dumps({"id": plugin_id}), encoding="utf-8")
 
-    def _setup(verdict, config=None, installed=()):
+    def _setup(verdict, config=None, installed=(), secrets=None, corrupt=()):
         (tmp_path / "ledmatrix_reconciliation.json").write_text(
             json.dumps(verdict), encoding="utf-8")
         for pid in installed:
             _install(pid)
-        api_v3.config_manager = MagicMock()
-        api_v3.config_manager.load_config.return_value = dict(config or {})
-        api_v3.plugin_manager = MagicMock()
-        api_v3.plugin_manager.plugins_dir = str(plugins_dir)
+        for pid in corrupt:
+            d = plugins_dir / pid
+            d.mkdir(exist_ok=True)
+            (d / "manifest.json").write_text("{ this is not json", encoding="utf-8")
+
+        secrets_path = tmp_path / "config_secrets.json"
+        secrets_path.write_text(json.dumps(secrets or {}), encoding="utf-8")
+
+        cm = MagicMock()
+        cm.load_config.return_value = dict(config or {})
+        cm.get_secrets_path.return_value = str(secrets_path)
+        pm = MagicMock()
+        pm.plugins_dir = str(plugins_dir)
+        # setattr via monkeypatch: these live on a module-level blueprint
+        # singleton, so assigning them directly leaks mocks -- pointing at a
+        # deleted tmp_path -- into every later test that imports api_v3.
+        monkeypatch.setattr(api_v3, "config_manager", cm, raising=False)
+        monkeypatch.setattr(api_v3, "plugin_manager", pm, raising=False)
 
         app = Flask(__name__)
         app.config["TESTING"] = True
@@ -110,3 +124,44 @@ class TestTheEndpointStaysRobust:
     def test_a_run_still_in_progress_is_reported_as_such(self, client):
         c = client({"done": False, "unresolved": []})
         assert _get(c)["done"] is False
+
+
+class TestTheFilterUsesTheReconcilersOwnRules:
+    """A looser definition of "in config" or "on disk" clears findings that are
+    still true. Both cases raised by CodeRabbit on #553."""
+
+    def test_a_secrets_key_does_not_clear_an_in_config_finding(self, client):
+        # load_config() merges the secrets file in, so 'data' appears in the
+        # config dict -- but it is not a plugin. A plain set(config) would treat
+        # it as one and clear this finding.
+        c = client({"done": True, "unresolved": [
+            {"plugin_id": "data", "type": IN_CONFIG}]},
+            config={"data": {"mode": "nfl_recent"}},
+            secrets={"data": {"mode": "nfl_recent"}})
+        assert [e["plugin_id"] for e in _get(c)["unresolved"]] == ["data"]
+
+    def test_a_system_key_does_not_clear_an_in_config_finding(self, client):
+        c = client({"done": True, "unresolved": [
+            {"plugin_id": "display", "type": IN_CONFIG}]},
+            config={"display": {"hardware": {}}})
+        assert [e["plugin_id"] for e in _get(c)["unresolved"]] == ["display"]
+
+    def test_a_non_dict_value_does_not_clear_an_in_config_finding(self, client):
+        c = client({"done": True, "unresolved": [
+            {"plugin_id": "timezone", "type": IN_CONFIG}]},
+            config={"timezone": "America/Chicago"})
+        assert [e["plugin_id"] for e in _get(c)["unresolved"]] == ["timezone"]
+
+    def test_an_unparseable_manifest_does_not_count_as_installed(self, client):
+        # Otherwise a corrupt file clears a live "in config but not on disk"
+        # finding on the strength of something nothing can read.
+        c = client({"done": True, "unresolved": [
+            {"plugin_id": "broken-plugin", "type": ON_DISK}]},
+            corrupt=["broken-plugin"])
+        assert [e["plugin_id"] for e in _get(c)["unresolved"]] == ["broken-plugin"]
+
+    def test_a_standalone_backup_dir_does_not_count_as_installed(self, client):
+        c = client({"done": True, "unresolved": [
+            {"plugin_id": "weather.standalone-backup-20260101", "type": ON_DISK}]},
+            installed=["weather.standalone-backup-20260101"])
+        assert len(_get(c)["unresolved"]) == 1

@@ -56,6 +56,71 @@ class ReconciliationResult:
     message: str
 
 
+def secrets_top_level_keys(config_manager) -> Set[str]:
+    """Top-level keys load_config() merges in from the secrets file.
+
+    Deliberately fail-safe: an unreadable, absent, malformed or non-path
+    secrets location narrows this set rather than raising, because a failure
+    here must never break reconciliation.
+    """
+    try:
+        path = config_manager.get_secrets_path()
+        with open(path, 'r') as f:
+            secrets = json.load(f)
+    except (AttributeError, OSError, TypeError, ValueError):
+        return set()
+    return set(secrets) if isinstance(secrets, dict) else set()
+
+
+def ignored_config_keys(config_manager) -> Set[str]:
+    """Config keys that are not plugin ids: system keys plus secrets keys."""
+    return set(StateReconciliation._SYSTEM_CONFIG_KEYS) | secrets_top_level_keys(config_manager)
+
+
+def config_plugin_ids(config: Dict[str, Any], ignored_keys: Set[str]) -> Set[str]:
+    """Plugin ids a loaded config declares.
+
+    Shared with the web interface so a stored verdict is re-checked against the
+    same definition that produced it. ``set(config)`` is NOT equivalent: it also
+    contains system keys, the secrets-file keys load_config() merges in, and
+    non-dict values. Counting any of those as a plugin is exactly what turned a
+    'data' key in the secrets file into a phantom plugin, and using the loose
+    set to re-check findings would clear ones that are still true.
+    """
+    return {k for k, v in (config or {}).items()
+            if isinstance(v, dict) and k not in ignored_keys}
+
+
+def disk_plugin_ids(plugins_dir) -> Set[str]:
+    """Plugin ids actually installed on disk.
+
+    A directory counts only when it is not a standalone backup and its
+    manifest.json parses. A corrupt manifest must not read as installed, or a
+    live "in config but not on disk" finding gets cleared on the strength of an
+    unreadable file.
+    """
+    ids: Set[str] = set()
+    root = Path(plugins_dir)
+    try:
+        if not root.exists():
+            return ids
+        for entry in root.iterdir():
+            if not entry.is_dir() or '.standalone-backup-' in entry.name:
+                continue
+            manifest = entry / "manifest.json"
+            if not manifest.exists():
+                continue
+            try:
+                with open(manifest, 'r') as f:
+                    json.load(f)
+            except (OSError, ValueError):
+                continue
+            ids.add(entry.name)
+    except OSError:
+        return ids
+    return ids
+
+
 def still_unresolved(entries: List[Dict[str, Any]],
                      config_keys: Set[str],
                      installed_ids: Set[str]) -> List[Dict[str, Any]]:
@@ -240,16 +305,7 @@ class StateReconciliation:
         reported as "in config but not on disk". Reading the file keeps this
         correct no matter what it holds.
         """
-        try:
-            path = self.config_manager.get_secrets_path()
-            with open(path, 'r') as f:
-                secrets = json.load(f)
-        except (AttributeError, OSError, TypeError, ValueError):
-            # Deliberately broad: an unreadable, absent, malformed or
-            # non-path secrets location must narrow this set, never break
-            # reconciliation. ValueError covers json.JSONDecodeError.
-            return set()
-        return set(secrets) if isinstance(secrets, dict) else set()
+        return secrets_top_level_keys(self.config_manager)
 
     def _get_config_state(self) -> Dict[str, Dict[str, Any]]:
         """Get plugin state from config file."""
@@ -257,11 +313,8 @@ class StateReconciliation:
         try:
             config = self.config_manager.load_config()
             ignored = self._SYSTEM_CONFIG_KEYS | self._secrets_top_level_keys()
-            for plugin_id, plugin_config in config.items():
-                if not isinstance(plugin_config, dict):
-                    continue
-                if plugin_id in ignored:
-                    continue
+            for plugin_id in config_plugin_ids(config, ignored):
+                plugin_config = config[plugin_id]
                 state[plugin_id] = {
                     'enabled': plugin_config.get('enabled', True),
                     'version': plugin_config.get('version'),
@@ -275,25 +328,21 @@ class StateReconciliation:
         """Get plugin state from disk (installed plugins)."""
         state = {}
         try:
-            if self.plugins_dir.exists():
-                for plugin_dir in self.plugins_dir.iterdir():
-                    if plugin_dir.is_dir():
-                        plugin_id = plugin_dir.name
-                        if '.standalone-backup-' in plugin_id:
-                            continue
-                        manifest_path = plugin_dir / "manifest.json"
-                        if manifest_path.exists():
-                            import json
-                            try:
-                                with open(manifest_path, 'r') as f:
-                                    manifest = json.load(f)
-                                state[plugin_id] = {
-                                    'exists_on_disk': True,
-                                    'version': manifest.get('version'),
-                                    'name': manifest.get('name')
-                                }
-                            except Exception:  # nosec B110 - corrupt/unreadable manifest; skip this plugin, outer except logs
-                                pass
+            # Membership comes from the shared extractor so the web interface
+            # re-checks stored findings against this same definition; the
+            # manifest is then re-read here only for version/name.
+            for plugin_id in disk_plugin_ids(self.plugins_dir):
+                manifest_path = self.plugins_dir / plugin_id / "manifest.json"
+                try:
+                    with open(manifest_path, 'r') as f:
+                        manifest = json.load(f)
+                except (OSError, ValueError):  # nosec B112 - raced or corrupt; skip
+                    continue
+                state[plugin_id] = {
+                    'exists_on_disk': True,
+                    'version': manifest.get('version'),
+                    'name': manifest.get('name')
+                }
         except Exception as e:
             self.logger.warning(f"Error reading disk state: {e}")
         return state

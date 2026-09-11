@@ -715,21 +715,25 @@ def _drop_stale_reconciliation_findings(unresolved):
     indefinitely. Best-effort: any failure here returns the list untouched,
     because showing a stale warning beats failing the endpoint.
 
-    The disk set is enumerated directly rather than through
-    _installed_plugin_ids(): this mirrors StateReconciliation._get_disk_state(),
-    whose verdict we are re-checking, and avoids triggering a discovery scan on
-    an endpoint the overview page polls.
+    Both sets come from the reconciliation module's own extractors rather than
+    being re-derived here. That matters for correctness, not tidiness: a plain
+    set(load_config()) also contains system keys, the secrets-file keys merged
+    in by load_config(), and non-dict values, and any directory holding a
+    manifest.json would count as installed even if that manifest does not
+    parse. Either looseness clears findings that are still true -- and a secrets
+    key read as a plugin is the very bug the filter exists to stop reporting.
     """
     try:
-        from src.plugin_system.state_reconciliation import still_unresolved
+        from src.plugin_system.state_reconciliation import (
+            config_plugin_ids, disk_plugin_ids, ignored_config_keys,
+            still_unresolved,
+        )
 
-        config_keys = set(api_v3.config_manager.load_config() or {})
-        installed = set()
+        cm = api_v3.config_manager
+        config_keys = config_plugin_ids(cm.load_config() or {},
+                                       ignored_config_keys(cm))
         plugins_dir = getattr(api_v3.plugin_manager, 'plugins_dir', None)
-        if plugins_dir:
-            for entry in Path(plugins_dir).iterdir():
-                if entry.is_dir() and (entry / 'manifest.json').exists():
-                    installed.add(entry.name)
+        installed = disk_plugin_ids(plugins_dir) if plugins_dir else set()
         return still_unresolved(unresolved, config_keys, installed)
     except Exception:
         logger.debug("[Reconciliation] Could not re-check stored findings", exc_info=True)
