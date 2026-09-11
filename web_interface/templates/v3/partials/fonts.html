@@ -1,20 +1,11 @@
 <div class="bg-white rounded-lg shadow p-6">
     <div class="border-b border-gray-200 pb-4 mb-6">
         <h2 class="text-lg font-semibold text-gray-900">Font Management</h2>
-        <p class="mt-1 text-sm text-gray-600">Manage custom fonts, overrides, and system font configuration for your LED matrix display.</p>
+        <p class="mt-1 text-sm text-gray-600">Upload, preview and manage the fonts available to every plugin.</p>
     </div>
 
     <!-- Font System Overview -->
-    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-2 2xl:grid-cols-2 gap-6 mb-8">
-        <!-- Detected Fonts from Managers -->
-        <div class="bg-gray-50 rounded-lg p-4">
-            <h3 class="text-md font-medium text-gray-900 mb-3">Detected Manager Fonts</h3>
-            <div id="detected-fonts" class="bg-gray-800 text-gray-100 font-mono text-sm p-3 rounded h-40 overflow-y-auto">
-                <div class="text-gray-400">Loading...</div>
-            </div>
-            <p class="text-sm text-gray-600 mt-2">Fonts currently in use by managers (auto-detected)</p>
-        </div>
-
+    <div class="mb-8">
         <!-- Available Fonts -->
         <div class="bg-gray-50 rounded-lg p-4">
             <h3 class="text-md font-medium text-gray-900 mb-3">Available Font Families</h3>
@@ -74,73 +65,6 @@
                 <div class="w-full bg-gray-200 rounded-full h-2">
                     <div id="upload-progress-bar" class="bg-blue-600 h-2 rounded-full" style="width: 0%"></div>
                 </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Font Overrides -->
-    <div class="bg-gray-50 rounded-lg p-4 mb-8">
-        <h3 class="text-md font-medium text-gray-900 mb-4">Element Font Overrides</h3>
-        <p class="text-sm text-gray-600 mb-4">Override fonts for specific display elements. Changes take effect immediately.</p>
-
-        <!-- Add New Override -->
-        <div class="grid grid-cols-1 md:grid-cols-4 xl:grid-cols-4 2xl:grid-cols-4 gap-4 mb-4 p-4 bg-white rounded border">
-            <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">Element</label>
-                <select id="override-element" class="form-control text-sm">
-                    <option value="">Select an element...</option>
-                    <optgroup label="Sports">
-                        <option value="nfl.live.score">NFL Live Score</option>
-                        <option value="nfl.live.time">NFL Live Time</option>
-                        <option value="nfl.live.team">NFL Live Team</option>
-                        <option value="mlb.live.score">MLB Live Score</option>
-                        <option value="nhl.live.score">NHL Live Score</option>
-                        <option value="nba.live.score">NBA Live Score</option>
-                    </optgroup>
-                    <optgroup label="Clock">
-                        <option value="clock.time">Clock Time</option>
-                        <option value="clock.date">Clock Date</option>
-                    </optgroup>
-                    <optgroup label="Weather">
-                        <option value="weather.current">Weather Current</option>
-                        <option value="weather.forecast">Weather Forecast</option>
-                    </optgroup>
-                </select>
-            </div>
-
-            <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">Font Family</label>
-                <select id="override-family" class="form-control text-sm">
-                    <option value="">Use default</option>
-                    <!-- Dynamically populated from font catalog -->
-                </select>
-            </div>
-
-            <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">Font Size</label>
-                <select id="override-size" class="form-control text-sm">
-                    <option value="">Use default</option>
-                    <option value="xs">Extra Small (6px)</option>
-                    <option value="sm">Small (8px)</option>
-                    <option value="md">Medium (10px)</option>
-                    <option value="lg">Large (12px)</option>
-                    <option value="xl">Extra Large (14px)</option>
-                </select>
-            </div>
-
-            <div class="flex items-end">
-                <button id="add-override-btn" class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2">
-                    <i class="fas fa-plus mr-2"></i>Add Override
-                </button>
-            </div>
-        </div>
-
-        <!-- Current Overrides List -->
-        <div id="overrides-container">
-            <h4 class="text-sm font-medium text-gray-900 mb-3">Current Overrides</h4>
-            <div id="overrides-list" class="space-y-2">
-                <!-- Overrides will be populated here -->
-                <div class="text-gray-500 text-sm italic">No font overrides configured</div>
             </div>
         </div>
     </div>
@@ -206,13 +130,11 @@
     // Initialize global variables on window object
     window.fontCatalog = window.fontCatalog || {};
     window.fontTokens = window.fontTokens || {};
-    window.fontOverrides = window.fontOverrides || {};
     window.selectedFontFiles = window.selectedFontFiles || [];
 
     // Create references that can be reassigned
     var fontCatalog = window.fontCatalog;
     var fontTokens = window.fontTokens;
-    var fontOverrides = window.fontOverrides;
     var selectedFontFiles = window.selectedFontFiles;
 
     // Retry counter for initialization
@@ -222,17 +144,15 @@
 function initializeFontsTab() {
     // Allow re-initialization on each HTMX content swap
     // The window._fontsScriptLoaded guard prevents function redeclaration
-    const detectedEl = document.getElementById('detected-fonts');
     const availableEl = document.getElementById('available-fonts');
 
-    if (!detectedEl || !availableEl) {
+    if (!availableEl) {
         initRetryCount++;
         if (initRetryCount >= MAX_INIT_RETRIES) {
             console.error('Fonts tab elements not found after max retries, giving up');
             return;
         }
         console.log('Fonts tab elements not found, retrying...', {
-            detectedFonts: !!detectedEl,
             availableFonts: !!availableEl,
             attempt: initRetryCount
         });
@@ -259,7 +179,6 @@ function initializeFontsTab() {
     const fontFileInput = document.getElementById('font-file-input');
     const uploadFontsBtn = document.getElementById('upload-fonts-btn');
     const cancelUploadBtn = document.getElementById('cancel-upload-btn');
-    const addOverrideBtn = document.getElementById('add-override-btn');
     const updatePreviewBtn = document.getElementById('update-preview-btn');
     
     if (uploadDropzone && fontFileInput) {
@@ -280,9 +199,6 @@ function initializeFontsTab() {
         cancelUploadBtn.addEventListener('click', cancelFontUpload);
     }
     
-    if (addOverrideBtn) {
-        addOverrideBtn.addEventListener('click', addFontOverride);
-    }
     
     if (updatePreviewBtn) {
         updatePreviewBtn.addEventListener('click', updateFontPreview);
@@ -319,9 +235,8 @@ window.initializeFontsTab = initializeFontsTab;
     // Function to initialize when fonts content is loaded
     function tryInitializeFontsTab() {
         const fontsContent = document.getElementById('fonts-content');
-        const detectedFonts = document.getElementById('detected-fonts');
         
-        if (fontsContent && detectedFonts) {
+        if (fontsContent) {
             console.log('Fonts content detected, initializing...');
             setTimeout(() => {
                 initializeFontsTab();
@@ -355,7 +270,6 @@ async function initializeFontManagement() {
     try {
         await loadFontData();
         populateFontSelects();
-        displayCurrentOverrides();
         updateFontPreview();
         initializeFontUpload();
     } catch (error) {
@@ -365,44 +279,39 @@ async function initializeFontManagement() {
 }
 
 async function loadFontData() {
-    const detectedContainer = document.getElementById('detected-fonts');
     const availableContainer = document.getElementById('available-fonts');
 
     // Ensure containers exist before proceeding
-    if (!detectedContainer || !availableContainer) {
+    if (!availableContainer) {
         console.error('Font containers not found, cannot load font data');
         return;
     }
 
     // Show loading states
-    detectedContainer.innerHTML = '<div class="text-blue-400">Loading font data...</div>';
     availableContainer.innerHTML = '<div class="text-blue-400">Loading font data...</div>';
 
     try {
         // Use absolute URLs to ensure they work when loaded via HTMX
-        const [catalogRes, tokensRes, overridesRes] = await Promise.all([
+        const [catalogRes, tokensRes] = await Promise.all([
             fetch(`/api/v3/fonts/catalog`),
-            fetch(`/api/v3/fonts/tokens`),
-            fetch(`/api/v3/fonts/overrides`)
+            fetch(`/api/v3/fonts/tokens`)
         ]);
 
         // Check if all responses are successful
-        if (!catalogRes.ok || !tokensRes.ok || !overridesRes.ok) {
-            const statusText = `HTTP ${catalogRes.status}/${tokensRes.status}/${overridesRes.status}`;
+        if (!catalogRes.ok || !tokensRes.ok) {
+            const statusText = `HTTP ${catalogRes.status}/${tokensRes.status}`;
             console.error('Font API error:', statusText);
             throw new Error(`Failed to load font data: ${statusText}`);
         }
 
         const catalogData = await catalogRes.json();
         const tokensData = await tokensRes.json();
-        const overridesData = await overridesRes.json();
 
         // Validate response structure
-        if (!catalogData || !catalogData.data || !tokensData || !tokensData.data || !overridesData || !overridesData.data) {
+        if (!catalogData || !catalogData.data || !tokensData || !tokensData.data) {
             console.error('Invalid font API response structure:', {
                 catalog: !!catalogData?.data,
-                tokens: !!tokensData?.data,
-                overrides: !!overridesData?.data
+                tokens: !!tokensData?.data
             });
             throw new Error('Invalid response format from font API');
         }
@@ -410,27 +319,22 @@ async function loadFontData() {
         // Update both window properties and local references
         window.fontCatalog = catalogData.data.catalog || {};
         window.fontTokens = tokensData.data.tokens || {};
-        window.fontOverrides = overridesData.data.overrides || {};
         
         // Update local variable references
         fontCatalog = window.fontCatalog;
         fontTokens = window.fontTokens;
-        fontOverrides = window.fontOverrides;
 
         // Update displays
-        updateDetectedFontsDisplay();
         updateAvailableFontsDisplay();
         
         console.log('Font data loaded successfully', {
             catalogSize: Object.keys(fontCatalog).length,
-            tokensSize: Object.keys(fontTokens).length,
-            overridesSize: Object.keys(fontOverrides).length
+            tokensSize: Object.keys(fontTokens).length
         });
     } catch (error) {
         console.error('Error loading font data:', error);
 
         // Show error states
-        detectedContainer.innerHTML = '<div class="text-red-400">Error loading font data. Please refresh the page.</div>';
         availableContainer.innerHTML = '<div class="text-red-400">Error loading font data. Please refresh the page.</div>';
 
         // Only show notification if showNotification is available
@@ -442,52 +346,6 @@ async function loadFontData() {
             console.error('Error loading font configuration:', error.message);
         }
     }
-}
-
-function updateDetectedFontsDisplay() {
-    const container = document.getElementById('detected-fonts');
-    if (!container) return;
-
-    // In a real implementation, this would collect font usage from all active managers
-    // For now, we'll simulate this by analyzing the font overrides and catalog
-    const detectedFonts = {};
-
-    // Check font overrides for active elements
-    for (const [elementKey, override] of Object.entries(fontOverrides)) {
-        if (override.family) {
-            detectedFonts[elementKey] = {
-                family: override.family,
-                size_px: override.size_px || 8,
-                usage_count: 1, // Would be actual usage count in real implementation
-                source: 'override'
-            };
-        }
-    }
-
-    // Check font catalog for commonly used fonts
-    for (const [fontKey, fontPath] of Object.entries(fontCatalog)) {
-        // Add some commonly used system fonts if not already in overrides
-        if (!detectedFonts[fontKey]) {
-            detectedFonts[fontKey] = {
-                family: fontKey,
-                size_px: 8,
-                usage_count: 1,
-                source: 'system'
-            };
-        }
-    }
-
-    if (Object.keys(detectedFonts).length === 0) {
-        container.innerHTML = '<div class="text-gray-400">No fonts detected yet (managers will register fonts when they render)</div>';
-        return;
-    }
-
-    const lines = [];
-    for (const [elementKey, fontInfo] of Object.entries(detectedFonts)) {
-        const sourceStr = fontInfo.source === 'override' ? ' [OVERRIDE]' : ' [SYSTEM]';
-        lines.push(`${elementKey}: ${fontInfo.family}@${fontInfo.size_px}px (used ${fontInfo.usage_count}x)${sourceStr}`);
-    }
-    container.textContent = lines.join('\n');
 }
 
 function updateAvailableFontsDisplay() {
@@ -594,10 +452,9 @@ async function deleteFont(fontFamily) {
 
 function populateFontSelects() {
     // Populate font family dropdowns from catalog
-    const overrideSelect = document.getElementById('override-family');
     const previewSelect = document.getElementById('preview-family');
 
-    if (!overrideSelect || !previewSelect) return;
+    if (!previewSelect) return;
 
     // Get font entries sorted by display name
     const fontEntries = Object.entries(fontCatalog).map(([key, info]) => {
@@ -608,24 +465,12 @@ function populateFontSelects() {
     }).sort((a, b) => a.displayName.localeCompare(b.displayName));
 
     // Build options using DOM APIs to prevent XSS
-    // Clear and add default option for override select
-    overrideSelect.innerHTML = '';
-    const defaultOption = document.createElement('option');
-    defaultOption.value = '';
-    defaultOption.textContent = 'Use default';
-    overrideSelect.appendChild(defaultOption);
-
     // Clear preview select
     previewSelect.innerHTML = '';
 
     // Add font options to both selects
     fontEntries.forEach(font => {
         const typeLabel = font.fontType ? ` (${font.fontType})` : '';
-
-        const overrideOpt = document.createElement('option');
-        overrideOpt.value = font.filename;
-        overrideOpt.textContent = font.displayName + typeLabel;
-        overrideSelect.appendChild(overrideOpt);
 
         const previewOpt = document.createElement('option');
         previewOpt.value = font.filename;
@@ -639,187 +484,6 @@ function populateFontSelects() {
     }
 
     console.log(`Populated font selects with ${fontEntries.length} fonts`);
-}
-
-async function addFontOverride() {
-    const element = document.getElementById('override-element').value;
-    const family = document.getElementById('override-family').value;
-    const sizeToken = document.getElementById('override-size').value;
-
-    if (!element) {
-        showNotification('Please select an element', 'warning');
-        return;
-    }
-
-    if (!family && !sizeToken) {
-        showNotification('Please specify at least a font family or size', 'warning');
-        return;
-    }
-
-    try {
-        const overrideData = {};
-        if (family) overrideData.family = family;
-        if (sizeToken) {
-            const sizePx = fontTokens[sizeToken];
-            if (sizePx) overrideData.size_px = sizePx;
-        }
-
-        const response = await fetch(`/api/v3/fonts/overrides`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                [element]: overrideData
-            })
-        });
-
-        if (!response.ok) {
-            const text = await response.text();
-            let message;
-            try {
-                const errorData = JSON.parse(text);
-                message = errorData.message || `Server error: ${response.status}`;
-            } catch {
-                message = `Server error: ${response.status}`;
-            }
-            showNotification('Error adding font override: ' + message, 'error');
-            return;
-        }
-
-        const data = await response.json();
-        if (data.status === 'success') {
-            showNotification('Font override added successfully', 'success');
-            await loadFontData();
-            displayCurrentOverrides();
-            // Clear form
-            document.getElementById('override-element').value = '';
-            document.getElementById('override-family').value = '';
-            document.getElementById('override-size').value = '';
-        } else {
-            showNotification('Error adding font override: ' + data.message, 'error');
-        }
-    } catch (error) {
-        console.error('Error adding font override:', error);
-        showNotification('Error adding font override: ' + error, 'error');
-    }
-}
-
-async function deleteFontOverride(elementKey) {
-    if (!confirm(`Are you sure you want to remove the font override for "${elementKey}"?`)) {
-        return;
-    }
-
-    try {
-        const response = await fetch(`/api/v3/fonts/overrides/${elementKey}`, {
-            method: 'DELETE'
-        });
-
-        if (!response.ok) {
-            const text = await response.text();
-            let message;
-            try {
-                const errorData = JSON.parse(text);
-                message = errorData.message || `Server error: ${response.status}`;
-            } catch {
-                message = `Server error: ${response.status}`;
-            }
-            showNotification('Error removing font override: ' + message, 'error');
-            return;
-        }
-
-        const data = await response.json();
-        if (data.status === 'success') {
-            showNotification('Font override removed successfully', 'success');
-            await loadFontData();
-            displayCurrentOverrides();
-        } else {
-            showNotification('Error removing font override: ' + data.message, 'error');
-        }
-    } catch (error) {
-        console.error('Error deleting font override:', error);
-        showNotification('Error removing font override: ' + error, 'error');
-    }
-}
-
-function displayCurrentOverrides() {
-    const container = document.getElementById('overrides-list');
-    if (!container) return;
-
-    if (Object.keys(fontOverrides).length === 0) {
-        container.innerHTML = '<div class="text-gray-500 text-sm italic">No font overrides configured</div>';
-        return;
-    }
-
-    // Build list using DOM APIs to prevent XSS
-    container.innerHTML = '';
-    Object.entries(fontOverrides).forEach(([elementKey, override]) => {
-        const elementName = getElementDisplayName(elementKey);
-        const settings = [];
-
-        if (override.family) {
-            const familyName = getFontDisplayName(override.family);
-            settings.push(`Family: ${familyName}`);
-        }
-
-        if (override.size_px) {
-            settings.push(`Size: ${override.size_px}px`);
-        }
-
-        const row = document.createElement('div');
-        row.className = 'flex items-center justify-between p-3 bg-white rounded border';
-
-        const infoDiv = document.createElement('div');
-
-        const nameDiv = document.createElement('div');
-        nameDiv.className = 'font-medium text-gray-900';
-        nameDiv.textContent = elementName;
-
-        const settingsDiv = document.createElement('div');
-        settingsDiv.className = 'text-sm text-gray-600';
-        settingsDiv.textContent = settings.join(', ');
-
-        infoDiv.appendChild(nameDiv);
-        infoDiv.appendChild(settingsDiv);
-
-        const deleteBtn = document.createElement('button');
-        deleteBtn.className = 'btn bg-red-600 hover:bg-red-700 text-white px-3 py-1 text-sm';
-        const trashIcon = document.createElement('i');
-        trashIcon.className = 'fas fa-trash mr-1';
-        deleteBtn.appendChild(trashIcon);
-        deleteBtn.appendChild(document.createTextNode('Remove'));
-        deleteBtn.dataset.elementKey = elementKey;
-        deleteBtn.addEventListener('click', function() {
-            deleteFontOverride(this.dataset.elementKey);
-        });
-
-        row.appendChild(infoDiv);
-        row.appendChild(deleteBtn);
-        container.appendChild(row);
-    });
-}
-
-function getElementDisplayName(elementKey) {
-    const names = {
-        'nfl.live.score': 'NFL Live Score',
-        'nfl.live.time': 'NFL Live Time',
-        'nfl.live.team': 'NFL Live Team',
-        'mlb.live.score': 'MLB Live Score',
-        'nhl.live.score': 'NHL Live Score',
-        'nba.live.score': 'NBA Live Score',
-        'clock.time': 'Clock Time',
-        'clock.date': 'Clock Date',
-        'weather.current': 'Weather Current',
-        'weather.forecast': 'Weather Forecast'
-    };
-    return names[elementKey] || elementKey;
-}
-
-function getFontDisplayName(fontKey) {
-    const names = {
-        'press_start': 'Press Start 2P',
-        'four_by_six': '4x6 Font',
-        'matrix_light_6': 'Matrix Light 6'
-    };
-    return names[fontKey] || fontKey;
 }
 
 async function updateFontPreview() {

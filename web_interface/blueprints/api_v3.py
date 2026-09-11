@@ -6809,42 +6809,6 @@ def get_font_tokens():
         logger.error('Unhandled exception', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 
-@api_v3.route('/fonts/overrides', methods=['GET'])
-def get_fonts_overrides():
-    """Get font overrides"""
-    try:
-        # This would integrate with the actual font system
-        # For now, return empty overrides
-        overrides = {}
-        return jsonify({'status': 'success', 'data': {'overrides': overrides}})
-    except Exception as e:
-        logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
-
-@api_v3.route('/fonts/overrides', methods=['POST'])
-def save_fonts_overrides():
-    """Save font overrides"""
-    try:
-        data = request.get_json(silent=True)
-        if not data:
-            return jsonify({'status': 'error', 'message': 'No data provided'}), 400
-
-        # This would integrate with the actual font system
-        return jsonify({'status': 'success', 'message': 'Font overrides saved'})
-    except Exception as e:
-        logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
-
-@api_v3.route('/fonts/overrides/<element_key>', methods=['DELETE'])
-def delete_font_override(element_key):
-    """Delete font override"""
-    try:
-        # This would integrate with the actual font system
-        return jsonify({'status': 'success', 'message': f'Font override for {element_key} deleted'})
-    except Exception as e:
-        logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
-
 @api_v3.route('/fonts/upload', methods=['POST'])
 def upload_font():
     """Upload font file"""
