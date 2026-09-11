@@ -185,3 +185,33 @@ def test_align_clears_the_anchor_and_moves_line_endpoints():
         "element resolves to the wrong edge"
     assert "el.x0" in body and "el.y0" in body, \
         "_alignElement no longer moves line endpoints"
+
+
+def test_divider_stroke_is_centered_in_led_pixels():
+    """A 0.5 canvas-pixel offset (correct only at SCALE=1) was applied after
+    scaling instead of before it, so at SCALE>1 the stroke bled into the
+    preceding LED row/column instead of straddling its own."""
+    body = _function_source(CANVAS, "_drawElement")
+    divider_branch = body[body.index("case 'divider'"):]
+    divider_branch = divider_branch[:divider_branch.index("case 'pips'")]
+    assert "ay * s + 0.5" not in divider_branch, \
+        "divider still offsets by 0.5 canvas pixels after scaling"
+    assert "ax * s + 0.5" not in divider_branch, \
+        "divider still offsets by 0.5 canvas pixels after scaling"
+    assert "(ay + 0.5) * s" in divider_branch and "(ax + 0.5) * s" in divider_branch, \
+        "divider stroke is not centered within its LED pixel"
+
+
+def test_gauge_radii_are_clamped_to_zero():
+    """An imported design can carry a small gauge with a wide lineWidth --
+    width=1, height=1, lineWidth=3 sends a negative radius into
+    ctx.ellipse(), which throws IndexSizeError and aborts render() for every
+    element still to be drawn, not just the gauge."""
+    body = _function_source(CANVAS, "_drawElement")
+    gauge_branch = body[body.index("case 'gauge'"):]
+    assert re.search(r"Math\.max\(0,\s*rx\s*-\s*lwPx\s*/\s*2\)", gauge_branch), \
+        "gauge x-radius is not clamped to zero"
+    assert re.search(r"Math\.max\(0,\s*ry\s*-\s*lwPx\s*/\s*2\)", gauge_branch), \
+        "gauge y-radius is not clamped to zero"
+    assert "rx - lwPx / 2" not in re.sub(r"Math\.max\(0,\s*rx\s*-\s*lwPx\s*/\s*2\)", "", gauge_branch), \
+        "an unclamped gauge radius is still passed to ctx.ellipse()"

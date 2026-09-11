@@ -486,11 +486,11 @@ window.ComposerCanvas = (() => {
           ctx.lineWidth = s;
           ctx.beginPath();
           if (isH) {
-            ctx.moveTo(0, ay * s + 0.5);
-            ctx.lineTo(_canvas.width, ay * s + 0.5);
+            ctx.moveTo(0, (ay + 0.5) * s);
+            ctx.lineTo(_canvas.width, (ay + 0.5) * s);
           } else {
-            ctx.moveTo(ax * s + 0.5, 0);
-            ctx.lineTo(ax * s + 0.5, _canvas.height);
+            ctx.moveTo((ax + 0.5) * s, 0);
+            ctx.lineTo((ax + 0.5) * s, _canvas.height);
           }
           ctx.stroke();
           break;
@@ -560,13 +560,17 @@ window.ComposerCanvas = (() => {
             ? Math.max(0, Math.min(100, parseFloat(pvGauge) || 0)) / 100
             : Math.max(0, Math.min(100, el.previewPct ?? 65)) / 100;
           const fillSweep = totalSweep * pct;
+          // A small imported gauge with a wide lineWidth would otherwise send
+          // a negative radius into ctx.ellipse(), which throws IndexSizeError
+          // and aborts the whole render() call.
+          const arx = Math.max(0, rx - lwPx / 2), ary = Math.max(0, ry - lwPx / 2);
           // biome-ignore lint/correctness/useQwikValidLexicalScope: not Qwik -- this is an Alpine.js component, and the rule is about Qwik's $() serialization boundary, which does not exist here.
           const toRad = deg => (deg - 90) * Math.PI / 180; // canvas 0=top, PIL 0=right → offset -90
 
           // Track arc
           if (el.hasTrack !== false) {
             ctx.beginPath();
-            ctx.ellipse(cx, cy, rx - lwPx / 2, ry - lwPx / 2, 0, toRad(startDeg), toRad(startDeg + totalSweep), false);
+            ctx.ellipse(cx, cy, arx, ary, 0, toRad(startDeg), toRad(startDeg + totalSweep), false);
             ctx.strokeStyle = `rgb(${el.trackR ?? 40},${el.trackG ?? 40},${el.trackB ?? 40})`;
             ctx.lineWidth = lwPx;
             ctx.stroke();
@@ -574,7 +578,7 @@ window.ComposerCanvas = (() => {
           // Fill arc
           if (pct > 0) {
             ctx.beginPath();
-            ctx.ellipse(cx, cy, rx - lwPx / 2, ry - lwPx / 2, 0, toRad(startDeg), toRad(startDeg + fillSweep), false);
+            ctx.ellipse(cx, cy, arx, ary, 0, toRad(startDeg), toRad(startDeg + fillSweep), false);
             ctx.strokeStyle = `rgb(${el.r},${el.g},${el.b})`;
             ctx.lineWidth = lwPx;
             ctx.stroke();
