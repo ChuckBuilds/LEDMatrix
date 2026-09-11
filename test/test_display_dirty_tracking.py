@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 
 @pytest.fixture(scope="module")
-def dm():
+def dm(tmp_path_factory):
     """One real DisplayManager on the emulator (it's a process singleton)."""
     from src.display_manager import DisplayManager
     DisplayManager._instance = None
@@ -36,6 +36,14 @@ def dm():
             "runtime": {"gpio_slowdown": 0},
         },
     }, suppress_test_pattern=True)
+    # DisplayManager defaults _snapshot_path to the fixed /tmp/led_matrix_preview.png
+    # that the web UI reads. That path is shared by every pytest process on the
+    # machine, so two concurrent runs -- CI shards, a second worktree, a agent
+    # running the suite alongside -- write over each other's snapshot and the
+    # mtime assertions below stop meaning anything. Point it somewhere unique to
+    # this session; the individual tests that care still override it further.
+    manager._snapshot_path = str(
+        tmp_path_factory.mktemp("dirty_tracking") / "led_matrix_preview.png")
     yield manager
     DisplayManager._instance = None
     DisplayManager._initialized = False

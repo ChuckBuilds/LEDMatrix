@@ -106,7 +106,12 @@ class TestMissingBodyGivesTheDeclaredError:
 
 
 class TestNoBodyReadContradictsItsOwnGuard:
-    SOURCE = Path(__file__).parent.parent / "web_interface/blueprints/api_v3.py"
+    PKG = Path(__file__).parent.parent / "web_interface/blueprints/api_v3"
+
+    @property
+    def _source(self) -> str:
+        """api_v3 is a package; read every module of it."""
+        return "\n".join(p.read_text() for p in sorted(self.PKG.glob("*.py")))
 
     def test_no_or_default_read_is_unguarded(self):
         """`get_json() or <default>` is a contradiction without silent=True.
@@ -115,7 +120,7 @@ class TestNoBodyReadContradictsItsOwnGuard:
         means the call raises before the default can apply.
         """
         offenders = [
-            line.strip() for line in self.SOURCE.read_text().splitlines()
+            line.strip() for line in self._source.splitlines()
             if "request.get_json()" in line and " or " in line
         ]
         assert offenders == [], (
@@ -124,7 +129,7 @@ class TestNoBodyReadContradictsItsOwnGuard:
 
     def test_no_not_data_guard_is_unreachable(self):
         """A `if not data:` guard needs a read that can actually return None."""
-        lines = self.SOURCE.read_text().splitlines()
+        lines = self._source.splitlines()
         offenders = []
         for i, line in enumerate(lines):
             if re.search(r"=\s*request\.get_json\(\)\s*$", line):

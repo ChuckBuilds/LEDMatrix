@@ -127,6 +127,31 @@ class TestConfigAPI:
         assert response.status_code == 200
         mock_config_manager.save_config_atomic.assert_called_once()
     
+    def test_save_main_config_fails_closed_when_schema_path_is_unresolvable(
+        self, client, mock_config_manager, mock_plugin_manager
+    ):
+        """A plugin id whose schema path fails safe-resolution must not have
+        its config saved with secret_fields left empty.
+
+        Regression test for the CodeQL/CodeRabbit finding on
+        web_interface/blueprints/api_v3/config.py: previously, when
+        resolve_under() returned None (e.g. a plugin directory reached via a
+        symlink), the code fell through to `secret_fields = set()` and saved
+        the plugin's submitted config -- credentials included -- as
+        ordinary, unencrypted configuration instead of refusing the request.
+        """
+        mock_plugin_manager.plugin_manifests = {'evil': {}}
+
+        with patch('web_interface.blueprints.api_v3.config.resolve_under', return_value=None):
+            response = client.post(
+                '/api/v3/config/main',
+                data=json.dumps({'evil': {'api_key': 'super-secret'}}),
+                content_type='application/json'
+            )
+
+        assert response.status_code == 400
+        mock_config_manager.save_config_atomic.assert_not_called()
+
     def test_save_main_config_validation_error(self, client, mock_config_manager):
         """Test saving config with validation error."""
         invalid_config = {'invalid': 'data'}
@@ -390,7 +415,7 @@ class TestConfigAPI:
 class TestSystemAPI:
     """Test system API endpoints."""
     
-    @patch('web_interface.blueprints.api_v3.subprocess')
+    @patch('web_interface.blueprints.api_v3.system.subprocess')
     def test_get_system_status(self, mock_subprocess, client):
         """Test getting system status."""
         # The endpoint returns 503 without psutil, which is an optional
@@ -407,7 +432,7 @@ class TestSystemAPI:
         data = json.loads(response.data)
         assert 'service' in data or 'status' in data or 'active' in data
     
-    @patch('web_interface.blueprints.api_v3.subprocess')
+    @patch('web_interface.blueprints.api_v3.system.subprocess')
     def test_get_system_version(self, mock_subprocess, client):
         """Test getting system version."""
         mock_result = MagicMock()
@@ -421,7 +446,7 @@ class TestSystemAPI:
         data = json.loads(response.data)
         assert 'version' in data.get('data', {}) or 'version' in data
     
-    @patch('web_interface.blueprints.api_v3.subprocess')
+    @patch('web_interface.blueprints.api_v3.system.subprocess')
     def test_execute_system_action(self, mock_subprocess, client):
         """Test executing system action."""
         mock_result = MagicMock()
@@ -502,7 +527,7 @@ class TestDisplayAPI:
         if response.status_code in [200, 201]:
             assert api_v3.cache_manager.set.called
     
-    @patch('web_interface.blueprints.api_v3._ensure_cache_manager')
+    @patch('web_interface.blueprints.api_v3.display._ensure_cache_manager')
     def test_stop_on_demand_display(self, mock_ensure_cache, client):
         """Test stopping on-demand display."""
         

@@ -17,6 +17,9 @@ fi
 # Determine the Project Root Directory (parent of scripts/install/)
 PROJECT_ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 
+# shellcheck source=scripts/install/lib_systemd_render.sh
+source "$PROJECT_ROOT_DIR/scripts/install/lib_systemd_render.sh"
+
 echo "Installing for user: $ACTUAL_USER"
 echo "Project root directory: $PROJECT_ROOT_DIR"
 
@@ -26,37 +29,22 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-# Generate the service file dynamically with the correct paths
-echo "Generating service file with dynamic paths..."
-WEB_SERVICE_FILE_CONTENT=$(cat <<EOF
-[Unit]
-Description=LED Matrix Web Interface Service
-After=network-online.target
-Wants=network-online.target
+# Render the unit from systemd/ledmatrix-web.service. That template is the
+# only description of the unit; this script used to carry its own heredoc copy,
+# and install_service.sh a third, which is how the installed unit on real rigs
+# ended up missing RestartSec, SyslogIdentifier and CacheDirectory while
+# src/startup_validator.py warned about drift on every boot.
+TEMPLATE="$PROJECT_ROOT_DIR/systemd/ledmatrix-web.service"
+if [ ! -f "$TEMPLATE" ]; then
+    echo "ERROR: unit template not found at $TEMPLATE"
+    exit 1
+fi
 
-[Service]
-Type=simple
-User=${ACTUAL_USER}
-WorkingDirectory=${PROJECT_ROOT_DIR}
-Environment=USE_THREADING=1
-ExecStart=/usr/bin/python3 ${PROJECT_ROOT_DIR}/scripts/utils/start_web_conditionally.py
-Restart=on-failure
-RestartSec=10
-StandardOutput=syslog
-StandardError=syslog
-SyslogIdentifier=ledmatrix-web
-# Automatically create and manage cache directory
-CacheDirectory=ledmatrix
-CacheDirectoryMode=0775
-
-[Install]
-WantedBy=multi-user.target
-EOF
-)
-
-# Write the service file to systemd directory
 echo "Writing service file to /etc/systemd/system/ledmatrix-web.service"
-echo "$WEB_SERVICE_FILE_CONTENT" > /etc/systemd/system/ledmatrix-web.service
+ESCAPED_PROJECT_ROOT_DIR=$(sed_escape_replacement "$PROJECT_ROOT_DIR")
+ESCAPED_ACTUAL_USER=$(sed_escape_replacement "$ACTUAL_USER")
+sed "s|__PROJECT_ROOT_DIR__|$ESCAPED_PROJECT_ROOT_DIR|g; s|__USER__|$ESCAPED_ACTUAL_USER|g" \
+    "$TEMPLATE" > /etc/systemd/system/ledmatrix-web.service
 
 # Ensure cache directory exists with proper permissions
 # This is a fallback for older systemd versions that don't support CacheDirectory

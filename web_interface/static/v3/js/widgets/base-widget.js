@@ -118,15 +118,27 @@
         /**
          * Escape HTML to prevent XSS
          * Always escapes the input, even for non-strings, by coercing to string first
+         *
+         * The result is safe in text content AND inside quoted attribute values.
+         * The textContent/innerHTML round-trip only escapes `&`, `<` and `>` --
+         * the HTML serializer leaves quotes alone because they are harmless in a
+         * text node. Every widget here interpolates the result into attributes
+         * (`value="${escapeHtml(v)}"`), where an unescaped `"` closes the
+         * attribute and lets the value inject its own, so the quotes have to go
+         * too. Each widget's standalone fallback already did this; the shared
+         * implementation they all prefer did not.
+         *
          * @param {*} text - Text to escape (will be coerced to string)
-         * @returns {string} Escaped text
+         * @returns {string} Escaped text, safe for text and attribute contexts
          */
         escapeHtml(text) {
             // Always coerce to string first, then escape
             const textStr = String(text);
             const div = document.createElement('div');
             div.textContent = textStr;
-            return div.innerHTML;
+            return div.innerHTML
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
         }
         
         /**

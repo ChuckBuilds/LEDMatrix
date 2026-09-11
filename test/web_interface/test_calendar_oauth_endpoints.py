@@ -77,7 +77,10 @@ class TestTheRoutesExistAtAll:
         oauth = Path(project_root) / 'web_interface/static/v3/js/widgets/google-oauth.js'
         assert '/api/v3/plugins/calendar/list-calendars' in picker.read_text(encoding='utf-8')
         assert '/api/v3/plugins/calendar/authenticate' in oauth.read_text(encoding='utf-8')
-        source = (Path(project_root) / 'web_interface/blueprints/api_v3.py').read_text(encoding='utf-8')
+        # api_v3 is a package now, so the route strings are spread across its
+        # modules; read the whole directory rather than one file.
+        pkg = Path(project_root) / 'web_interface/blueprints/api_v3'
+        source = "\n".join(f.read_text(encoding='utf-8') for f in sorted(pkg.glob('*.py')))
         assert "'/plugins/calendar/list-calendars'" in source
         assert "'/plugins/calendar/authenticate'" in source
 
@@ -359,6 +362,22 @@ class TestDiagnosticsAreRedacted:
         assert payload is None
         assert 'hunter2' not in error, error
         assert '<redacted>' in error, error
+
+    def test_script_stderr_is_redacted_in_the_log_too(self, tmp_path, caplog):
+        # Regression: the return value went through redact_text (asserted
+        # above), but the logger.error call right next to it logged `raw`
+        # verbatim -- a script that handles OAuth client secrets and can
+        # quote them in its stderr, landing unredacted in the log (CWE-532).
+        script = tmp_path / 'calendar_registration.py'
+        script.write_text(
+            'import sys\n'
+            'sys.stderr.write("boom client_secret=hunter2 more\\n")\n',
+            encoding='utf-8')
+        with caplog.at_level('ERROR', logger=mod.logger.name):
+            mod._run_calendar_registration(tmp_path, '')
+        logged = '\n'.join(r.getMessage() for r in caplog.records)
+        assert 'hunter2' not in logged, logged
+        assert '<redacted>' in logged, logged
 
     def test_a_failing_script_payload_is_redacted(self, client):
         (client.plugin_dir / 'credentials.json').write_text('{}', encoding='utf-8')

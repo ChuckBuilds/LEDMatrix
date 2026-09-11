@@ -711,11 +711,15 @@ function showError(message) {
     }
 }
 
-// Utility function to escape HTML
+// Utility function to escape HTML. Quotes too: the result is interpolated into
+// quoted attribute values (option value=, title=), and the
+// textContent/innerHTML round-trip only escapes &, < and >.
 function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
-    return div.innerHTML;
+    return div.innerHTML
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
 
 function refreshCurrentPluginStatus() {

@@ -37,51 +37,6 @@ class Baseball(SportsCore):
         self.data_source = ESPNDataSource(logger)
         self.sport = "baseball"
 
-    def _get_baseball_display_text(self, game: Dict) -> str:
-        """Get baseball-specific display text."""
-        try:
-            display_parts = []
-
-            # Inning information
-            if self.show_innings:
-                inning = game.get("inning", "")
-                if inning:
-                    display_parts.append(f"Inning: {inning}")
-
-            # Outs information
-            if self.show_outs:
-                outs = game.get("outs", 0)
-                if outs is not None:
-                    display_parts.append(f"Outs: {outs}")
-
-            # Bases information
-            if self.show_bases:
-                bases = game.get("bases", "")
-                if bases:
-                    display_parts.append(f"Bases: {bases}")
-
-            # Count information
-            if self.show_count:
-                strikes = game.get("strikes", 0)
-                balls = game.get("balls", 0)
-                if strikes is not None and balls is not None:
-                    display_parts.append(f"Count: {balls}-{strikes}")
-
-            # Pitcher/Batter information
-            if self.show_pitcher_batter:
-                pitcher = game.get("pitcher", "")
-                batter = game.get("batter", "")
-                if pitcher:
-                    display_parts.append(f"Pitcher: {pitcher}")
-                if batter:
-                    display_parts.append(f"Batter: {batter}")
-
-            return " | ".join(display_parts) if display_parts else ""
-
-        except Exception as e:
-            self.logger.error(f"Error getting baseball display text: {e}")
-            return ""
-
     def _is_baseball_game_live(self, game: Dict) -> bool:
         """Check if a baseball game is currently live."""
         try:

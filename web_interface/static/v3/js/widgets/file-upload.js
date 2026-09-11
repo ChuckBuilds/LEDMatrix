@@ -804,10 +804,14 @@
         const schedule = image.schedule || { enabled: false, mode: 'always', start_time: '08:00', end_time: '18:00', days: {} };
         
         // Escape HTML helper
+        // Quotes too: the result lands in quoted attribute values below, and the
+        // textContent/innerHTML round-trip only escapes &, < and >.
         const escapeHtml = (text) => {
             const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
+            div.textContent = String(text ?? '');
+            return div.innerHTML
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
         };
         
         // Use sanitizedId for all ID references in the schedule HTML

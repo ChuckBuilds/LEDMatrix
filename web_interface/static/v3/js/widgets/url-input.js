@@ -54,9 +54,16 @@
     // RFC 3986 scheme pattern: starts with letter, then letters/digits/+/./-
     const RFC_SCHEME_PATTERN = /^[A-Za-z][A-Za-z0-9+.-]*$/;
 
+    // Schemes that execute script when navigated to. These can never be
+    // allowed, whatever a schema's allowedProtocols asks for: the validated
+    // value is written straight into an <a href>, so allowing "javascript"
+    // here would turn a config field into script execution.
+    const SCRIPTABLE_SCHEMES = ['javascript', 'data', 'vbscript', 'blob', 'filesystem'];
+
     /**
      * Normalize and validate protocol list against RFC 3986 scheme pattern.
      * Accepts schemes like "http", "https", "git+ssh", "android-app", etc.
+     * Scriptable schemes are dropped -- see SCRIPTABLE_SCHEMES.
      * @param {Array|string} protocols - Protocol list (array or comma-separated string)
      * @returns {Array} Normalized lowercase protocols, defaults to ['http', 'https']
      */
@@ -70,21 +77,40 @@
         const normalized = list
             .map(p => String(p).trim())
             .filter(p => RFC_SCHEME_PATTERN.test(p))
-            .map(p => p.toLowerCase());
+            .map(p => p.toLowerCase())
+            .filter(p => !SCRIPTABLE_SCHEMES.includes(p));
         return normalized.length > 0 ? normalized : ['http', 'https'];
     }
 
+    /**
+     * True when `string` parses as a URL whose scheme is allowed AND is not
+     * one that executes script. The scriptable check is repeated here rather
+     * than trusted to normalizeProtocols so that a caller passing its own
+     * protocol list cannot re-open the hole.
+     */
     function isValidUrl(string, allowedProtocols) {
         try {
             const url = new URL(string);
+            const protocol = url.protocol.replace(':', '').toLowerCase();
+            if (SCRIPTABLE_SCHEMES.includes(protocol)) {
+                return false;
+            }
             if (allowedProtocols && allowedProtocols.length > 0) {
-                const protocol = url.protocol.replace(':', '').toLowerCase();
                 return allowedProtocols.includes(protocol);
             }
             return true;
         } catch (_) {
             return false;
         }
+    }
+
+    /**
+     * A value safe to use as an <a href>: the URL itself when it validates,
+     * and '' otherwise. Keeps the "render an href for whatever is stored"
+     * path from emitting a javascript: URL that was never validated.
+     */
+    function safeHref(value, allowedProtocols) {
+        return isValidUrl(value, allowedProtocols) ? value : '';
     }
 
     window.LEDMatrixWidgets.register('url-input', {
@@ -139,7 +165,7 @@
                 html += `
                     <div id="${fieldId}_preview" class="mt-2 ${currentValue && isValidUrl(currentValue, allowedProtocols) ? '' : 'hidden'}">
                         <a id="${fieldId}_preview_link"
-                           href="${escapeHtml(currentValue)}"
+                           href="${escapeHtml(safeHref(currentValue, allowedProtocols))}"
                            target="_blank"
                            rel="noopener noreferrer"
                            class="text-sm text-blue-600 hover:text-blue-800 flex items-center">
@@ -231,10 +257,23 @@
                 const protocols = normalizeProtocols(widgetEl?.dataset.protocols);
 
                 if (previewEl && previewLink) {
-                    if (value && isValidUrl(value, protocols)) {
+                    // Scheme checked inline, right where the value reaches the DOM sink,
+                    // rather than through safeHref/isValidUrl -- CodeQL's DOM-based-XSS
+                    // sanitizer recognition does not trace a boolean-returning helper two
+                    // calls deep, so it kept flagging this assignment even though the
+                    // scriptable-scheme check (see SCRIPTABLE_SCHEMES) already covered it.
+                    let scheme = '';
+                    try {
+                        scheme = value ? new URL(value).protocol.replace(':', '').toLowerCase() : '';
+                    } catch (_) {
+                        scheme = '';
+                    }
+                    const schemeIsSafe = !!scheme && !SCRIPTABLE_SCHEMES.includes(scheme) && protocols.includes(scheme);
+                    if (schemeIsSafe) {
                         previewLink.href = value;
                         previewEl.classList.remove('hidden');
                     } else {
+                        previewLink.removeAttribute('href');
                         previewEl.classList.add('hidden');
                     }
                 }

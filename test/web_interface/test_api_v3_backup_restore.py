@@ -139,6 +139,58 @@ class TestRequestValidation:
         assert post(client, options="{}").status_code == 200
         assert restore.call_args[0][2].restore_config is True
 
+    def test_unknown_option_key_is_refused(self, client, restore):
+        # Regression: opts_dict.get('restore_secrets', True) silently
+        # ignores a typo'd/renamed key like "restoreSecrets" and keeps the
+        # True default, restoring secrets a caller's request clearly meant
+        # to exclude -- with no indication anything was wrong.
+        response = post(client, options=json.dumps({"restoreSecrets": False}))
+        assert response.status_code == 400
+        assert "Unknown restore option" in response.get_json()["message"]
+        assert "restoreSecrets" in response.get_json()["message"]
+        restore.assert_not_called()
+
+    def test_known_and_unknown_keys_together_are_refused(self, client, restore):
+        response = post(client, options=json.dumps({
+            "restore_secrets": False, "restore_everything": True}))
+        assert response.status_code == 400
+        restore.assert_not_called()
+
+
+class TestOptionsAreBooleanAware:
+    """Regression: bool("false") is True in Python.
+
+    Every restore flag used bare bool() coercion, so a caller that sends its
+    options as JSON strings rather than real booleans -- a form field, a
+    hand-built request -- had `{"restore_secrets": "false"}` restore secrets
+    anyway, the opposite of what was asked. Fixed with the same
+    string-aware `_coerce_to_bool` already used for checkbox-style config
+    fields elsewhere in this package (config.py, plugins.py).
+    """
+
+    @pytest.mark.parametrize("raw,expected", [
+        ("false", False), ("False", False), ("FALSE", False),
+        ("0", False),
+        ("true", True), ("True", True), ("1", True),
+    ])
+    def test_string_valued_flags_are_parsed_not_just_truthy(
+            self, client, restore, raw, expected):
+        post(client, options=json.dumps({"restore_secrets": raw}))
+        assert restore.call_args[0][2].restore_secrets is expected
+
+    def test_a_string_false_does_not_restore_secrets(self, client, restore):
+        # The exact shape of the bug: a truthy non-empty string coerced by
+        # bare bool() to True regardless of its contents.
+        post(client, options=json.dumps({"restore_secrets": "false"}))
+        assert restore.call_args[0][2].restore_secrets is False
+
+    def test_real_json_booleans_still_work(self, client, restore):
+        post(client, options=json.dumps({"restore_secrets": False,
+                                          "restore_config": True}))
+        options = restore.call_args[0][2]
+        assert options.restore_secrets is False
+        assert options.restore_config is True
+
 
 class TestSuccess:
     def test_success_returns_the_result(self, client, restore):
@@ -230,7 +282,7 @@ class TestPluginReinstall:
     def test_missing_store_manager_is_reported_per_plugin(self, client, restore):
         restore.return_value = FakeResult(plugins_to_install=[{"plugin_id": "clock"}])
         api_v3.plugin_store_manager = None
-        with patch("web_interface.blueprints.api_v3.plugin_store_manager", None):
+        with patch("web_interface.blueprints.api_v3.backup.plugin_store_manager", None):
             body = post(client).get_json()
         assert body["data"]["plugins_failed"][0]["error"] == "Store manager unavailable"
 

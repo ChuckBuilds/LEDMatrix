@@ -74,23 +74,41 @@ def install_dependencies():
         print(f"Failed to install dependencies: {e}")
         return False
 
+#: String spellings that turn autostart OFF. Anything else -- including the key
+#: being absent entirely -- leaves it on.
+DISABLED_STRINGS = ("off", "false", "no", "0")
+
+
+def autostart_enabled(config_data):
+    """Whether to bring the web interface up. Defaults to True.
+
+    config.template.json and first_time_install.sh both ship
+    ``web_display_autostart`` as true, so a config that lacks the key is an
+    older or hand-edited one rather than a request to stay down. Defaulting to
+    False meant any such config silently got no web interface -- and because
+    the "not starting" path exits 0, systemd reported the unit as successfully
+    started while nothing was listening. Only an explicit false/off disables it.
+    """
+    value = config_data.get("web_display_autostart", True)
+    if isinstance(value, str):
+        return value.strip().lower() not in DISABLED_STRINGS
+    return bool(value)
+
+
 def main():
     try:
         with open(CONFIG_FILE, 'r') as f:
             config_data = json.load(f)
     except FileNotFoundError:
-        print(f"Config file {CONFIG_FILE} not found. Web interface will not start.")
-        sys.exit(0) # Exit gracefully, don't start
-    except Exception as e:
-        print(f"Error reading config file {CONFIG_FILE}: {e}. Web interface will not start.")
-        sys.exit(1) # Exit with error, service might restart depending on config
+        # The web interface is how a config gets created and repaired, so a
+        # missing one is the case where the user needs it most.
+        print(f"Config file {CONFIG_FILE} not found. Starting the web interface so it can be configured.")
+        config_data = {}
+    except (json.JSONDecodeError, OSError) as e:
+        print(f"Error reading config file {CONFIG_FILE}: {e}. Starting the web interface anyway so the config can be repaired.")
+        config_data = {}
 
-    autostart_enabled = config_data.get("web_display_autostart", False)
-
-    # Handle both boolean True and string "on"/"true" values
-    is_enabled = (autostart_enabled is True) or (isinstance(autostart_enabled, str) and autostart_enabled.lower() in ("on", "true", "yes", "1"))
-
-    if is_enabled:
+    if autostart_enabled(config_data):
         print("Configuration 'web_display_autostart' is enabled. Starting web interface...")
 
         # Only install dependencies if not already done during first-time setup
@@ -116,7 +134,7 @@ def main():
             print(f"Failed to exec web interface: {e}")
             sys.exit(1) # Failed to start
     else:
-        print("Configuration 'web_display_autostart' is false or not set. Web interface will not be started.")
+        print("Configuration 'web_display_autostart' is explicitly disabled. Web interface will not be started.")
         sys.exit(0) # Exit gracefully, service considered successful
 
 if __name__ == '__main__':

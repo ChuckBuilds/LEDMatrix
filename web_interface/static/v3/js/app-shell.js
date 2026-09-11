@@ -602,9 +602,9 @@
                         };
                         // Build the <i class="..."> + label as DOM nodes so a
                         // hostile plugin.icon (e.g. containing a quote) can't
-                        // break out of the attribute. escapeHtml only escapes
-                        // <, >, &, not ", so attribute-context interpolation
-                        // would be unsafe.
+                        // break out of the attribute. escapeHtml now escapes
+                        // quotes too, but setting the property directly cannot
+                        // be got wrong at all, so it stays.
                         const iconEl = document.createElement('i');
                         iconEl.className = plugin.icon || 'fas fa-puzzle-piece';
                         const labelNode = document.createTextNode(plugin.name || plugin.id);
@@ -643,10 +643,15 @@
                     }
                 },
 
+                // Quotes too, so the result is safe inside a quoted attribute
+                // value -- the textContent/innerHTML round-trip alone only
+                // escapes &, < and >.
                 escapeHtml(text) {
                     const div = document.createElement('div');
                     div.textContent = text;
-                    return div.innerHTML;
+                    return div.innerHTML
+                        .replace(/"/g, '&quot;')
+                        .replace(/'/g, '&#39;');
                 },
 
                 async refreshPlugins() {

@@ -8,6 +8,7 @@ Extracted from LEDMatrix core to provide reusable functionality for plugins.
 import logging
 import os
 import tempfile
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 
@@ -19,6 +20,21 @@ from src.common.permission_utils import (
     get_assets_dir_mode,
     get_assets_file_mode
 )
+
+# How long a missing logo stays remembered as missing.
+#
+# This was 600s, and measured on a live rig that turned out to suppress nothing:
+# the display rotation is ~618s, so every recheck landed just as the plugin came
+# round again and the warning rate was unchanged at ~6/hour. A TTL has to be long
+# relative to the loop that does the asking, not merely "a while".
+#
+# An hour is safe because the TTL is not the main way an entry clears. A download
+# through load_logo_with_download() drops it immediately, and clear_cache() drops
+# all of them; the TTL only covers a file that appeared some other way -- someone
+# copying one in by hand. Waiting up to an hour for that, or restarting, is a fair
+# trade for not re-warning about a file nobody is going to add.
+MISSING_LOGO_RECHECK_SECONDS = 3600.0
+
 
 
 # Well above any real team logo; bounds what a remote URL can write to disk.
@@ -56,6 +72,14 @@ class LogoHelper:
         # In-memory logo cache
         self._logo_cache: Dict[str, Image.Image] = {}
         self._cache_order: List[str] = []  # For LRU cache management
+
+        # Misses, so an absent file is stat'd and warned about once rather than
+        # on every call. Without this a permanently missing logo produced a
+        # warning per rotation forever -- measured at 114 lines in 24 hours for
+        # a single missing ticker icon, for a file nobody was going to add.
+        # Time-bounded rather than permanent so a logo that appears later (the
+        # downloader writes them at runtime) is still picked up.
+        self._missing_logos: Dict[str, float] = {}
         
         # Session for HTTP requests
         self.session = requests.Session()
@@ -100,9 +124,19 @@ class LogoHelper:
             self._cache_order.append(cache_key)
             return self._logo_cache[cache_key]
         
+        # A known-missing file: skip the stat and stay quiet until the entry
+        # ages out. Checked after the positive cache so a logo that has since
+        # been loaded always wins.
+        missed_at = self._missing_logos.get(cache_key)
+        if missed_at is not None:
+            if time.time() - missed_at < MISSING_LOGO_RECHECK_SECONDS:
+                return None
+            del self._missing_logos[cache_key]
+
         try:
             logo_path = Path(logo_path)
             if not logo_path.exists():
+                self._missing_logos[cache_key] = time.time()
                 self.logger.warning(f"Logo not found for {team_abbr} at {logo_path}")
                 return None
             
@@ -179,6 +213,11 @@ class LogoHelper:
             self._logo_cache.pop(key, None)
             if key in self._cache_order:
                 self._cache_order.remove(key)
+        # The file exists now, so any record of it being missing is wrong --
+        # and load_logo() consults that record before it stats the disk, so
+        # leaving it would hide a logo we just downloaded.
+        for key in [k for k in self._missing_logos if k.startswith(prefix)]:
+            del self._missing_logos[key]
 
     @staticmethod
     def _refresh_stale_placeholder(logo_path: Path) -> None:
@@ -270,6 +309,7 @@ class LogoHelper:
         """Clear the logo cache."""
         self._logo_cache.clear()
         self._cache_order.clear()
+        self._missing_logos.clear()
         self.logger.debug("Logo cache cleared")
     
     def get_cache_stats(self) -> Dict[str, int]:

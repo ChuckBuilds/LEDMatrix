@@ -4370,12 +4370,15 @@ function renderCustomRegistryPlugins(plugins, registryUrl) {
         return;
     }
 
-    // Escape HTML helper
+    // Escape HTML helper. Quotes too: the result lands in quoted attribute
+    // values, and the textContent/innerHTML round-trip only escapes &, < and >.
     const escapeHtml = (text) => {
         if (!text) return '';
         const div = document.createElement('div');
         div.textContent = text;
-        return div.innerHTML;
+        return div.innerHTML
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     };
 
     // Helper function to escape for JavaScript strings
@@ -4471,11 +4474,15 @@ function isGithubUrl(url) {
     }
 }
 
-// Utility function to escape HTML
+// Utility function to escape HTML. Quotes too: most call sites interpolate the
+// result into a quoted attribute value, and the textContent/innerHTML
+// round-trip only escapes &, < and >.
 function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
-    return div.innerHTML;
+    return div.innerHTML
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
 
 // Utility function to escape text for use in HTML attributes
@@ -5623,11 +5630,15 @@ document.addEventListener('htmx:afterSettle', function() {
     let starlarkDataLoaded = false;
 
     // ── Helpers ─────────────────────────────────────────────────────────────
+    // Quotes too: the result lands in quoted attribute values (data-app-id=,
+    // title=), and the textContent/innerHTML round-trip only escapes &, < and >.
     function escapeHtml(str) {
         if (!str) return '';
         const div = document.createElement('div');
         div.textContent = str;
-        return div.innerHTML;
+        return div.innerHTML
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     function isStarlarkInstalled(appId) {

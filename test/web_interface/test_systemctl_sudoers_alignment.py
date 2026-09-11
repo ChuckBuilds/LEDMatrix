@@ -19,7 +19,12 @@ import re
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-API_V3 = PROJECT_ROOT / "web_interface" / "blueprints" / "api_v3.py"
+# api_v3 is a package; a sudo systemctl call can live in any of its modules.
+API_V3_PKG = PROJECT_ROOT / "web_interface" / "blueprints" / "api_v3"
+
+
+def _api_v3_source() -> str:
+    return "\n".join(p.read_text() for p in sorted(API_V3_PKG.glob("*.py")))
 SUDOERS_SCRIPT = PROJECT_ROOT / "scripts" / "install" / "configure_web_sudo.sh"
 
 
@@ -51,7 +56,7 @@ def _granted_systemctl_rules(script: str) -> set[tuple[str, str]]:
 
 
 def test_every_sudo_systemctl_call_is_granted() -> None:
-    calls = _sudo_systemctl_calls(API_V3.read_text())
+    calls = _sudo_systemctl_calls(_api_v3_source())
     rules = _granted_systemctl_rules(SUDOERS_SCRIPT.read_text())
 
     assert calls, "expected to find sudo systemctl calls in api_v3.py"
@@ -68,7 +73,7 @@ def test_every_sudo_systemctl_call_is_granted() -> None:
 def test_units_are_fully_qualified() -> None:
     """Privileged systemctl calls must name the unit as <name>.service so they
     match the sudoers grants, which use the fully-qualified unit name."""
-    calls = _sudo_systemctl_calls(API_V3.read_text())
+    calls = _sudo_systemctl_calls(_api_v3_source())
     unqualified = {(v, u) for v, u in calls if not u.endswith(".service")}
     assert not unqualified, (
         "sudo systemctl calls must use fully-qualified .service unit names: "

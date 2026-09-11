@@ -50,10 +50,14 @@
             }
             
             // Escape HTML to prevent XSS (for HTML contexts)
+            // Quotes too: the result lands in quoted attribute values below, and
+            // the textContent/innerHTML round-trip only escapes &, < and >.
             const escapeHtml = (text) => {
                 const div = document.createElement('div');
-                div.textContent = text;
-                return div.innerHTML;
+                div.textContent = String(text ?? '');
+                return div.innerHTML
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#39;');
             };
             
             // Use validated/sanitized hex for style attribute and input values
