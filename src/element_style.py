@@ -46,6 +46,7 @@ root derived from this module's own location).
 import copy
 import json
 import logging
+import math
 import os
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -886,7 +887,21 @@ def defaults_from_schema_file(schema_path: Union[str, os.PathLike]) -> Dict[str,
 # ---------------------------------------------------------------------------
 
 def _normalize_color(value: Any) -> Optional[Tuple[int, int, int]]:
-    """An (r, g, b) tuple of ints in 0..255, or None for anything else."""
+    """An (r, g, b) tuple of ints in 0..255, or None for anything else.
+
+    ``"#RRGGBB"`` is accepted as well as ``[r, g, b]``: the scoreboards'
+    own colour readers have always taken both, and this is the function
+    they now share.
+    """
+    if isinstance(value, str):
+        text = value.strip()
+        if len(text) == 7 and text.startswith('#'):
+            try:
+                return (int(text[1:3], 16), int(text[3:5], 16),
+                        int(text[5:7], 16))
+            except ValueError:
+                return None
+        return None
     if isinstance(value, (list, tuple)) and len(value) == 3:
         try:
             rgb = tuple(int(c) for c in value)
@@ -1003,6 +1018,101 @@ def _coerce_scale(value: Any, default: float) -> float:
     if scale <= 0:
         return default
     return min(scale, 10.0)
+
+
+def _coerce_offset(value: Any, default: int, element_key: str,
+                   axis: str) -> int:
+    """A pixel offset as an int; anything nonsensical is ``default``.
+
+    A bool degrades rather than counting as 1/0 -- the more correct reading
+    of a pixel offset, and what the shared resolver has always done
+    relative to the classic inline read. Non-finite floats degrade too:
+    the scroll-card reader guarded against those explicitly and this is now
+    the one implementation.
+    """
+    if isinstance(value, bool):
+        return int(default)
+    if isinstance(value, (int, float)):
+        if isinstance(value, float) and not math.isfinite(value):
+            return int(default)
+        return int(value)
+    if isinstance(value, str):
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            logger.warning("Invalid layout offset for %s.%s: %r, using %s",
+                           element_key, axis, value, default)
+            return int(default)
+        if not math.isfinite(parsed):
+            return int(default)
+        return int(parsed)
+    return int(default)
+
+
+def layout_offset(config: Any, element_key: str, axis: str,
+                  default: int = 0, mode: Optional[str] = None) -> int:
+    """One ``customization.layout.<element>.<axis>`` value, as an int.
+
+    The stateless form of :meth:`ElementStyleResolver.offset_value`, for the
+    scoreboard helpers that are handed a config rather than holding one.
+    Both go through here, so the alias handling and the per-mode lookup
+    cannot drift between them -- there were three separate readers of this
+    block before, and the scroll-card one had already been found ignoring
+    offsets the schema advertised.
+    """
+    try:
+        block = config.get('customization') if isinstance(config, dict) else None
+        block = block if isinstance(block, dict) else {}
+        base = _lookup_element(block.get('layout'), element_key).get(axis)
+        base_value = (int(default) if base is None
+                      else _coerce_offset(base, default, element_key, axis))
+
+        if mode:
+            modes = block.get('modes')
+            mode_block = modes.get(mode) if isinstance(modes, dict) else None
+            if isinstance(mode_block, dict):
+                override = _lookup_element(mode_block.get('layout'),
+                                           element_key).get(axis)
+                if override is not None:
+                    return _coerce_offset(override, base_value,
+                                          element_key, axis)
+        return base_value
+    except Exception as e:
+        logger.warning("Error reading layout offset %s.%s: %s",
+                       element_key, axis, e)
+        try:
+            return int(default)
+        except (TypeError, ValueError):
+            return 0
+
+
+def element_color(config: Any, element_key: str,
+                  default: Tuple[int, int, int] = (255, 255, 255),
+                  mode: Optional[str] = None) -> Tuple[int, int, int]:
+    """``customization.<element>.text_color``, or ``default``.
+
+    The stateless colour lookup the scoreboards share. Unlike
+    :meth:`ElementStyleResolver.style` this does not compare against a
+    schema default -- the callers have no schema to hand -- so any
+    configured colour counts, which is what their own readers did.
+    """
+    try:
+        block = config.get('customization') if isinstance(config, dict) else None
+        block = block if isinstance(block, dict) else {}
+        if mode:
+            modes = block.get('modes')
+            mode_block = modes.get(mode) if isinstance(modes, dict) else None
+            if isinstance(mode_block, dict):
+                override = _normalize_color(
+                    _lookup_element(mode_block, element_key).get('text_color'))
+                if override is not None:
+                    return override
+        value = _normalize_color(
+            _lookup_element(block, element_key).get('text_color'))
+        return value if value is not None else default
+    except Exception as e:
+        logger.warning("Error reading colour for %s: %s", element_key, e)
+        return default
 
 
 class ElementStyleResolver:
@@ -1160,31 +1270,8 @@ class ElementStyleResolver:
         axis — ``None`` there means inherit the base offset, which is what
         lets a mode nudge one element without restating the rest.
         """
-        try:
-            # Base first, so it is the thing a malformed mode value falls
-            # back to. Resolving the mode first and passing the caller's
-            # default would let one bad string in a mode block silently
-            # discard a perfectly good base offset.
-            base = self._layout_axis(self._customization(), element_key, axis)
-            base_value = (int(default) if base is None
-                          else self._coerce_offset(base, default,
-                                                   element_key, axis))
-
-            effective_mode = self._effective_mode(mode)
-            if effective_mode:
-                override = self._layout_axis(
-                    self._mode_block(effective_mode), element_key, axis)
-                if override is not None:
-                    return self._coerce_offset(override, base_value,
-                                               element_key, axis)
-            return base_value
-        except Exception as e:
-            logger.warning("Error reading layout offset %s.%s: %s",
-                           element_key, axis, e)
-            try:
-                return int(default)
-            except (TypeError, ValueError):
-                return 0
+        return layout_offset(self._config, element_key, axis, default,
+                             self._effective_mode(mode))
 
     @staticmethod
     def _layout_element(block: Dict[str, Any],
@@ -1205,27 +1292,6 @@ class ElementStyleResolver:
         """``block['layout'][element][axis]``, or None if absent anywhere."""
         return cls._layout_element(block, element_key).get(axis)
 
-    @staticmethod
-    def _coerce_offset(value: Any, default: int, element_key: str,
-                       axis: str) -> int:
-        """A pixel offset as an int; anything nonsensical is ``default``.
-
-        A bool degrades rather than counting as 1/0 -- it is the more
-        correct reading of a pixel offset, and matches what the shared
-        resolver has always done relative to the classic inline read.
-        """
-        if isinstance(value, bool):
-            return int(default)
-        if isinstance(value, (int, float)):
-            return int(value)
-        if isinstance(value, str):
-            try:
-                return int(float(value))
-            except (TypeError, ValueError):
-                logger.warning("Invalid layout offset for %s.%s: %r, using %s",
-                               element_key, axis, value, default)
-                return int(default)
-        return int(default)
 
     # -- resolution internals -----------------------------------------------
 

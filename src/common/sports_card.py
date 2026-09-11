@@ -99,18 +99,18 @@ def upcoming_center_mode(config: Optional[Dict[str, Any]]) -> str:
 # ---------------------------------------------------------------------------
 
 def element_color(config: Optional[Dict[str, Any]], element: str,
-                  default: Tuple[int, int, int] = (255, 255, 255)):
-    """Per-element text colour from customization.<element>.text_color."""
-    try:
-        cfg = (config or {}).get("customization", {}).get(element, {})
-        value = cfg.get("text_color")
-        if isinstance(value, (list, tuple)) and len(value) == 3:
-            return tuple(max(0, min(255, int(c))) for c in value)
-        if isinstance(value, str) and value.startswith("#") and len(value) == 7:
-            return tuple(int(value[i:i + 2], 16) for i in (1, 3, 5))
-    except (TypeError, ValueError):
-        pass
-    return default
+                  default: Tuple[int, int, int] = (255, 255, 255),
+                  mode: Optional[str] = None):
+    """Per-element text colour from customization.<element>.text_color.
+
+    Delegated rather than reimplemented: there were two copies of this
+    read and three of the offset read, and the shared one also resolves
+    the element under the names plugins actually use (the layout block
+    says `score` where the style block says `score_text`) and honours a
+    per-mode override. Hex strings are still accepted.
+    """
+    from src.element_style import element_color as _shared
+    return _shared(config, element, default, mode)
 
 
 def font_color(config: Optional[Dict[str, Any]], fonts: Optional[Dict[str, Any]],

@@ -422,3 +422,43 @@ class TestUnshareKeepsTheLayoutEngine:
         fonts = {"score": shared, "time": shared}
         self._host()._unshare_element_fonts(fonts)
         assert fonts["time"].getlength("88-88") == shared.getlength("88-88")
+
+
+class TestPromotedLayoutOffset:
+    """_get_layout_offset moved here so every scoreboard reads offsets the
+    way the scroll card does.
+
+    Each plugin still carries its own copy in its bundled sports.py, which
+    wins by MRO. That is the migration property: adopting this is a
+    deletion in the plugin, and until that deletion nothing changes.
+    """
+
+    CONFIG = {"customization": {
+        "layout": {"score": {"y_offset": -3}},
+        "modes": {"recent": {"layout": {"score": {"y_offset": 9}}}},
+    }}
+
+    def _host(self, **attrs):
+        return type("H", (SportsCoreSharedMixin,),
+                    dict({"config": self.CONFIG}, **attrs))()
+
+    def test_it_reads_the_configured_offset(self):
+        assert self._host()._get_layout_offset("score", "y_offset") == -3
+
+    def test_it_resolves_through_an_alias(self):
+        """What a plugin gains by deleting its own copy: the style block
+        says score_text where the layout block says score."""
+        assert self._host()._get_layout_offset("score_text", "y_offset") == -3
+
+    def test_skin_mode_selects_the_per_mode_offset(self):
+        assert self._host(SKIN_MODE="recent")._get_layout_offset(
+            "score", "y_offset") == 9
+
+    def test_a_plugins_own_copy_still_wins(self):
+        """Until a plugin deletes its copy, this changes nothing for it."""
+        host = self._host(
+            _get_layout_offset=lambda self, element, axis, default=0: 99)
+        assert host._get_layout_offset("score", "y_offset") == 99
+
+    def test_an_unset_offset_is_the_default(self):
+        assert self._host()._get_layout_offset("nothing", "y_offset", 5) == 5

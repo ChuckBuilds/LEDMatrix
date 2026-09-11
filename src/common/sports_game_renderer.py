@@ -134,19 +134,9 @@ class SportsGameRendererMixin:
         the element on the scroll/Vegas card too -- previously the schema
         advertised these offsets but this renderer ignored them.
         """
-        try:
-            layout = (self.config or {}).get("customization", {}).get("layout", {})
-            value = (layout.get(element) or {}).get(axis, default)
-            if isinstance(value, bool):
-                return default
-            if isinstance(value, (int, float)):
-                return int(value) if math.isfinite(value) else default
-            if isinstance(value, str):
-                parsed = float(value)
-                return int(parsed) if math.isfinite(parsed) else default
-        except (TypeError, ValueError, OverflowError):
-            pass
-        return default
+        from src.element_style import layout_offset
+        return layout_offset(self.config, element, axis, default,
+                             getattr(self, "SKIN_MODE", None))
 
     # ---- upcoming cards ------------------------------------------------
 
