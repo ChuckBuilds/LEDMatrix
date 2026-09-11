@@ -316,6 +316,23 @@
   ]
  ],
  [
+  "/api/v3/integrations/mqtt-bridge",
+  "api_v3.get_mqtt_bridge",
+  [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ]
+ ],
+ [
+  "/api/v3/integrations/mqtt-bridge/config",
+  "api_v3.update_mqtt_bridge_config",
+  [
+   "OPTIONS",
+   "PUT"
+  ]
+ ],
+ [
   "/api/v3/logs",
   "api_v3.get_logs",
   [
@@ -742,6 +759,40 @@
  [
   "/api/v3/starlark/apps/<app_id>/toggle",
   "api_v3.toggle_starlark_app",
+  [
+   "OPTIONS",
+   "POST"
+  ]
+ ],
+ [
+  "/api/v3/starlark/editor/apps",
+  "api_v3.list_pixlet_editor_apps",
+  [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ]
+ ],
+ [
+  "/api/v3/starlark/editor/start",
+  "api_v3.start_pixlet_editor",
+  [
+   "OPTIONS",
+   "POST"
+  ]
+ ],
+ [
+  "/api/v3/starlark/editor/status",
+  "api_v3.get_pixlet_editor_status",
+  [
+   "GET",
+   "HEAD",
+   "OPTIONS"
+  ]
+ ],
+ [
+  "/api/v3/starlark/editor/stop",
+  "api_v3.stop_pixlet_editor",
   [
    "OPTIONS",
    "POST"

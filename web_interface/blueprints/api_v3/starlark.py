@@ -3,11 +3,21 @@
 Routes decorate the shared `api_v3` Blueprint from ._common, so their
 endpoint names are unchanged by living here.
 """
+import signal
+import threading
+
 from web_interface.blueprints.api_v3 import (
-    PROJECT_ROOT, Path, _find_pixlet_binary, _install_star_file, _standalone_render_starlark_app,
-    _starlark_github_token, _starlark_manifest_lock, _validate_and_sanitize_app_id,
-    _validate_starlark_app_path, _validate_timing_value, api_v3, describe_exception, json, jsonify,
-    logger, os, request, shutil, subprocess, tempfile,
+    PROJECT_ROOT, Path, _PIXLET_EDITOR_DEFAULT_PORT,
+    _PIXLET_EDITOR_DEFAULT_TIMEOUT, _PIXLET_EDITOR_MAX_TIMEOUT,
+    _PIXLET_EDITOR_SCRIPT, _PIXLET_EDITOR_STATE, _clear_pixlet_editor_state,
+    _find_pixlet_binary, _install_star_file, _pixlet_editor_alive,
+    _pixlet_editor_status, _read_pixlet_editor_state,
+    _STARLARK_APPS_DIR, _standalone_render_starlark_app,
+    _starlark_github_token, _starlark_manifest_lock,
+    _validate_and_sanitize_app_id,
+    _validate_starlark_app_path, _validate_timing_value, api_v3, contextlib,
+    describe_exception, json, jsonify, logger, os, request, shutil,
+    subprocess, tempfile,
 )
 import web_interface.blueprints.api_v3 as _pkg
 # Read through the module rather than bound by value: tests patch these
@@ -710,3 +720,239 @@ def get_tronbyte_categories():
     except Exception as e:
         logger.exception("[Starlark] get_tronbyte_categories failed")
         return jsonify({'status': 'error', 'message': 'Failed to fetch categories', 'details': describe_exception(e)}), 500
+
+
+@api_v3.route('/starlark/editor/apps', methods=['GET'])
+def list_pixlet_editor_apps():
+    """Apps on disk that the editor can open.
+
+    Read from the directory rather than the loaded plugin: the editor works on
+    files, and the plugin may not be loaded in this process at all.
+    """
+    try:
+        apps = []
+        if _STARLARK_APPS_DIR.is_dir():
+            for entry in sorted(_STARLARK_APPS_DIR.iterdir()):
+                if not entry.is_dir():
+                    continue
+                star_files = sorted(entry.glob('*.star'))
+                name = entry.name
+                manifest = entry / 'manifest.json'
+                if manifest.is_file():
+                    try:
+                        with open(manifest, encoding='utf-8') as handle:
+                            data = json.load(handle)
+                        if isinstance(data, dict):
+                            name = data.get('name') or name
+                    except (OSError, json.JSONDecodeError):
+                        pass
+                apps.append({
+                    'id': entry.name,
+                    'name': name,
+                    'editable': bool(star_files),
+                    'has_config': (entry / 'config.json').is_file(),
+                })
+        return jsonify({'status': 'success', 'data': {
+            'apps': apps,
+            'apps_dir': str(_STARLARK_APPS_DIR),
+            'pixlet_available': _find_pixlet_binary() is not None,
+        }})
+    except Exception as e:
+        logger.exception('Error listing editor apps')
+        return jsonify({'status': 'error', 'message': 'Could not list apps',
+                        'details': describe_exception(e)}), 500
+
+@api_v3.route('/starlark/editor/status', methods=['GET'])
+def get_pixlet_editor_status():
+    """Whether a session is running, and how long it has left."""
+    try:
+        return jsonify({'status': 'success', 'data': _pixlet_editor_status()})
+    except Exception as e:
+        logger.exception('Error reading editor status')
+        return jsonify({'status': 'error', 'message': 'Could not read editor status',
+                        'details': describe_exception(e)}), 500
+
+#: Flask runs threaded in the supported service, so two start requests can each
+#: observe running=False, each launch an editor, and the second state write
+#: replace the first PID -- orphaning a process that holds the display down with
+#: nothing left recording it. The check-launch-write sequence takes this lock.
+_EDITOR_START_LOCK = threading.Lock()
+
+
+def _terminate_editor_process(pid, wait_s=5):
+    """Signal an editor's process group and wait briefly for it to exit."""
+    try:
+        os.killpg(os.getpgid(pid), signal.SIGTERM)
+    except (ProcessLookupError, PermissionError, OSError):
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.kill(pid, signal.SIGTERM)
+    deadline = _pkg.time.time() + wait_s
+    while _pkg.time.time() < deadline and _pixlet_editor_alive(pid):
+        _pkg.time.sleep(0.25)
+    if _pixlet_editor_alive(pid):
+        with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+            os.killpg(os.getpgid(pid), signal.SIGKILL)
+
+
+@api_v3.route('/starlark/editor/start', methods=['POST'])
+def start_pixlet_editor():
+    """Start an editing session for one app."""
+    try:
+        data = request.get_json(silent=True) or {}
+        app_id = data.get('app_id')
+
+        app_dir, err = _validate_starlark_app_path(app_id or '')
+        if err or not app_dir:
+            return jsonify({'status': 'error', 'message': err or 'Invalid app_id'}), 400
+        if not app_dir.is_dir():
+            return jsonify({'status': 'error', 'message': f'No such app: {app_id}'}), 404
+        if not any(app_dir.glob('*.star')):
+            return jsonify({'status': 'error',
+                            'message': f'{app_id} has no .star file to edit'}), 400
+        if not _PIXLET_EDITOR_SCRIPT.is_file():
+            return jsonify({'status': 'error', 'message': 'Editor script not found'}), 404
+        if _find_pixlet_binary() is None:
+            return jsonify({'status': 'error',
+                            'message': 'Pixlet is not installed - install it first'}), 503
+
+        with _EDITOR_START_LOCK:
+            current = _pixlet_editor_status()
+            if current.get('running'):
+                return jsonify({'status': 'error',
+                                'message': f"An editor session for '{current.get('app_id')}' is "
+                                           f"already running; stop it first"}), 409
+
+            try:
+                timeout_s = int(data.get('timeout') or _PIXLET_EDITOR_DEFAULT_TIMEOUT)
+            except (TypeError, ValueError):
+                return jsonify({'status': 'error', 'message': 'timeout must be a whole number'}), 400
+            if not 60 <= timeout_s <= _PIXLET_EDITOR_MAX_TIMEOUT:
+                return jsonify({'status': 'error',
+                                'message': f'timeout must be between 60 and '
+                                           f'{_PIXLET_EDITOR_MAX_TIMEOUT} seconds'}), 400
+            try:
+                port = int(data.get('port') or _PIXLET_EDITOR_DEFAULT_PORT)
+            except (TypeError, ValueError):
+                return jsonify({'status': 'error', 'message': 'port must be a whole number'}), 400
+            if not 1024 <= port <= 65535:
+                return jsonify({'status': 'error', 'message': 'port must be between 1024 and 65535'}), 400
+
+            env = dict(os.environ)
+            env['PIXLET_EDITOR_PORT'] = str(port)
+            env['PIXLET_EDITOR_TIMEOUT'] = str(timeout_s)
+            # A browser reaching this endpoint is remote by definition, so the
+            # session needs to listen on more than loopback to be usable at all --
+            # but only as a *default*. An operator who has already set
+            # PIXLET_EDITOR_HOST (e.g. to keep it loopback-only even from the web
+            # UI) must not have that overridden here.
+            env.setdefault('PIXLET_EDITOR_HOST', '0.0.0.0')
+
+            log_path = Path(tempfile.gettempdir()) / 'ledmatrix_pixlet_editor.log'
+            log_handle = open(log_path, 'w', encoding='utf-8')  # noqa: SIM115 - owned by the child
+            try:
+                # start_new_session so the script leads its own process group: the
+                # stop route signals the group, which is what lets the EXIT trap run
+                # and hand the display back.
+                process = subprocess.Popen(  # nosec B603 - fixed script path, validated app_id
+                    ['/bin/bash', str(_PIXLET_EDITOR_SCRIPT), app_dir.name],
+                    cwd=str(PROJECT_ROOT), env=env,
+                    stdout=log_handle, stderr=subprocess.STDOUT,
+                    start_new_session=True)
+            finally:
+                log_handle.close()
+
+            now = _pkg.time.time()
+            state = {'pid': process.pid, 'app_id': app_dir.name, 'port': port,
+                     'timeout': timeout_s, 'started_at': now, 'deadline': now + timeout_s,
+                     'host': env['PIXLET_EDITOR_HOST'], 'log': str(log_path)}
+            try:
+                with open(_PIXLET_EDITOR_STATE, 'w', encoding='utf-8') as handle:
+                    json.dump(state, handle)
+            except OSError as err:
+                # The process is up but nothing records its PID: status and stop
+                # would both report no session while the display stays down until
+                # the timeout expires. Take the editor with us instead.
+                # exc_info: this path answers 500, and the guard in
+                # test_web_error_detail.py requires the traceback to reach the log
+                # as well as the sanitized detail reaching the caller.
+                logger.error('Started an editor session but could not record it: %s',
+                             err, exc_info=True)
+                _terminate_editor_process(process.pid)
+                return jsonify({'status': 'error',
+                                'message': 'Could not record the editor session; '
+                                           'the editor was stopped.',
+                                'details': describe_exception(err)}), 500
+
+        logger.info('Pixlet editor started for %s on port %s (pid %s, %ss limit)',
+                    app_dir.name, port, process.pid, timeout_s)
+        return jsonify({'status': 'success',
+                        'message': f"Editing '{app_dir.name}'. The display is stopped until "
+                                   f"the session ends.",
+                        'data': _pixlet_editor_status()})
+    except Exception as e:
+        logger.exception('Error starting the pixlet editor')
+        return jsonify({'status': 'error', 'message': 'Could not start the editor',
+                        'details': describe_exception(e)}), 500
+
+@api_v3.route('/starlark/editor/stop', methods=['POST'])
+def stop_pixlet_editor():
+    """End the running session and give the display back."""
+    try:
+        state = _read_pixlet_editor_state()
+        if not state or not _pixlet_editor_alive(state.get('pid')):
+            _clear_pixlet_editor_state()
+            return jsonify({'status': 'success', 'message': 'No editor session was running.',
+                            'data': {'running': False}})
+
+        pid = int(state['pid'])
+        # SIGTERM the group, not the pid: bash forwards nothing to `timeout` and
+        # its child on its own, and the trap needs to run to restart the display.
+        try:
+            os.killpg(os.getpgid(pid), signal.SIGTERM)
+        except (ProcessLookupError, PermissionError, OSError) as err:
+            logger.debug('Could not signal the editor process group: %s', err)
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.kill(pid, signal.SIGTERM)
+
+        # Give the trap a moment to stop pixlet and restart ledmatrix.
+        deadline = _pkg.time.time() + 10
+        while _pkg.time.time() < deadline and _pixlet_editor_alive(pid):
+            _pkg.time.sleep(0.25)
+
+        escalated = False
+        if _pixlet_editor_alive(pid):
+            logger.warning('Editor session %s ignored SIGTERM; sending SIGKILL.', pid)
+            with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+                os.killpg(os.getpgid(pid), signal.SIGKILL)
+            escalated = True
+
+        _clear_pixlet_editor_state()
+
+        if escalated:
+            # SIGKILL gives the script's EXIT trap no chance to run, so nothing
+            # has handed the display back. Reporting "the display is restarting"
+            # here was simply untrue: restart it, and if that fails say so
+            # rather than leave the panel dark behind a success response.
+            result = _run_systemctl_command(
+                ['sudo', 'systemctl', 'start', 'ledmatrix.service'])
+            if result.get('returncode') != 0:
+                logger.error('Display restart after SIGKILL failed: %s',
+                             (result.get('stderr') or '').strip())
+                return jsonify({
+                    'status': 'error',
+                    'message': 'Editor force-stopped, but the display could not be '
+                               'restarted automatically - start it manually.',
+                    'details': (result.get('stderr') or '').strip(),
+                    'data': {'running': False}}), 500
+            return jsonify({'status': 'success',
+                            'message': 'Editor force-stopped; the display has been '
+                                       'restarted.',
+                            'data': {'running': False}})
+
+        return jsonify({'status': 'success',
+                        'message': 'Editor stopped; the display is restarting.',
+                        'data': {'running': False}})
+    except Exception as e:
+        logger.exception('Error stopping the pixlet editor')
+        return jsonify({'status': 'error', 'message': 'Could not stop the editor',
+                        'details': describe_exception(e)}), 500

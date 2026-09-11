@@ -906,3 +906,66 @@ class TestTheStoreUsesTheTokenTheUserConfigured:
             client.get('/api/v3/starlark/repository/browse')
 
         repo.assert_called_once_with(github_token='ghp_configured')
+
+
+class TestPixletEditorHostDefaultsButDoesNotOverride:
+    """PIXLET_EDITOR_HOST must default to 0.0.0.0, never force it.
+
+    A browser reaching the editor is remote by definition, so a session with
+    nothing configured has to bind more than loopback to be reachable at
+    all -- but an operator who has deliberately pinned PIXLET_EDITOR_HOST to
+    loopback (e.g. in the systemd unit's Environment=, to edit only over an
+    SSH tunnel) must keep that setting. The previous unconditional
+    ``env['PIXLET_EDITOR_HOST'] = '0.0.0.0'`` overrode it every time,
+    always exposing the unauthenticated ``pixlet serve`` dev process on the
+    LAN regardless (CodeQL CWE-1188).
+    """
+
+    @pytest.fixture
+    def app_dir(self, tmp_path):
+        d = tmp_path / "demo_app"
+        d.mkdir()
+        (d / "demo_app.star").write_text("def main():\n    pass\n")
+        return d
+
+    def _start(self, client, app_dir, tmp_path, operator_host):
+        from web_interface.blueprints.api_v3 import starlark as mod
+
+        script = tmp_path / "pixlet_config_editor.sh"
+        script.write_text("#!/bin/bash\n")
+        state_file = tmp_path / "pixlet_editor_state.json"
+        captured = {}
+
+        class FakeProcess:
+            pid = 424242
+
+        def fake_popen(cmd, *args, env=None, **kwargs):
+            if env is not None:
+                captured['env'] = env
+            return FakeProcess()
+
+        with patch.object(mod, '_validate_starlark_app_path',
+                          return_value=(app_dir, None)), \
+             patch.object(mod, '_PIXLET_EDITOR_SCRIPT', script), \
+             patch.object(mod, '_PIXLET_EDITOR_STATE', state_file), \
+             patch.object(mod, '_find_pixlet_binary', return_value='/usr/bin/pixlet'), \
+             patch.object(mod.subprocess, 'Popen', side_effect=fake_popen), \
+             patch.dict(os.environ):
+            if operator_host is None:
+                os.environ.pop('PIXLET_EDITOR_HOST', None)
+            else:
+                os.environ['PIXLET_EDITOR_HOST'] = operator_host
+            resp = client.post('/api/v3/starlark/editor/start',
+                                json={'app_id': app_dir.name})
+
+        assert resp.status_code == 200, resp.get_json()
+        assert 'env' in captured, "subprocess.Popen was never called"
+        return captured['env']
+
+    def test_defaults_to_0_0_0_0_when_operator_set_nothing(self, client, app_dir, tmp_path):
+        env = self._start(client, app_dir, tmp_path, operator_host=None)
+        assert env['PIXLET_EDITOR_HOST'] == '0.0.0.0'
+
+    def test_keeps_an_operator_configured_loopback_host(self, client, app_dir, tmp_path):
+        env = self._start(client, app_dir, tmp_path, operator_host='127.0.0.1')
+        assert env['PIXLET_EDITOR_HOST'] == '127.0.0.1'
