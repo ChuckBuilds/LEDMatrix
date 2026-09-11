@@ -18,6 +18,9 @@ from web_interface.blueprints.api_v3 import (
     separate_secrets, shutil, stat, subprocess, success_response, sys,
     tempfile, uuid, validate_request_json,
 )
+from src.common.path_safety import (
+    resolve_under, safe_path_component, safe_relative_parts,
+)
 import web_interface.blueprints.api_v3 as _pkg
 # Read through the module rather than bound by value: tests patch these
 # as module attributes, and a value binding would not see the patch.
@@ -946,12 +949,29 @@ def update_plugin():
                 status_code=500
             )
 
-        plugin_id = data['plugin_id']
+        # The id names a directory this handler reads a manifest out of and
+        # hands to the store manager to run git in. It comes from the request
+        # body, so it is validated before anything is joined to a path, and
+        # the validated value -- not the raw one -- is what gets used below.
+        plugin_id = safe_path_component(data['plugin_id'])
+        if not plugin_id:
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                'Invalid plugin_id',
+                status_code=400
+            )
 
         # Always do direct updates (they're fast git pull operations)
         # Operation queue is reserved for longer operations like install/uninstall
-        plugin_dir = Path(api_v3.plugin_store_manager.plugins_dir) / plugin_id
-        manifest_path = plugin_dir / "manifest.json"
+        plugins_base = Path(api_v3.plugin_store_manager.plugins_dir)
+        plugin_dir = plugins_base / plugin_id
+        manifest_path = resolve_under(plugin_dir, "manifest.json")
+        if manifest_path is None:
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                'Invalid plugin_id',
+                status_code=400
+            )
 
         current_last_updated = None
         current_commit = None
@@ -983,7 +1003,9 @@ def update_plugin():
                 current_branch = git_info_before.get('branch')
 
         # Check if plugin is a git repo first (for better error messages)
-        plugin_path_dir = Path(api_v3.plugin_store_manager.plugins_dir) / plugin_id
+        # plugin_id is validated above; reuse the same directory rather
+        # than rebuilding it from a value that might not match.
+        plugin_path_dir = plugin_dir
         is_git_repo = False
         if plugin_path_dir.exists():
             git_info = api_v3.plugin_store_manager._get_local_git_info(plugin_path_dir)
@@ -1069,7 +1091,7 @@ def update_plugin():
                 message=message
             )
         else:
-            plugin_path_dir = Path(api_v3.plugin_store_manager.plugins_dir) / plugin_id
+            plugin_path_dir = plugin_dir
             if not plugin_path_dir.exists():
                 client_msg = 'Plugin update failed: plugin not found'
             else:
@@ -3525,6 +3547,14 @@ def delete_of_the_day_json():
         if not file_id:
             return jsonify({'status': 'error', 'message': 'file_id is required'}), 400
 
+        # file_id names a file that is about to be unlinked, and it arrives
+        # straight from the request body. Unvalidated, a file_id of
+        # "../../../../etc/cron" made this endpoint delete any .json file on
+        # the device the service could write to.
+        safe_file_id = safe_path_component(file_id)
+        if not safe_file_id:
+            return jsonify({'status': 'error', 'message': 'Invalid file_id'}), 400
+
         # Get plugin directory
         plugin_id = 'ledmatrix-of-the-day'
         if api_v3.plugin_manager:
@@ -3535,9 +3565,10 @@ def delete_of_the_day_json():
         if not plugin_dir or not Path(plugin_dir).exists():
             return jsonify({'status': 'error', 'message': 'Plugin not found'}), 404
 
-        data_dir = Path(plugin_dir) / 'of_the_day'
-        filename = f"{file_id}.json"
-        file_path = data_dir / filename
+        filename = f"{safe_file_id}.json"
+        file_path = resolve_under(Path(plugin_dir) / 'of_the_day', filename)
+        if file_path is None:
+            return jsonify({'status': 'error', 'message': 'Invalid file_id'}), 400
 
         if not file_path.exists():
             return jsonify({'status': 'error', 'message': f'File {filename} not found'}), 404
@@ -3549,7 +3580,7 @@ def delete_of_the_day_json():
         try:
             sys.path.insert(0, str(plugin_dir))
             from scripts.update_config import remove_category_from_config
-            remove_category_from_config(file_id)
+            remove_category_from_config(safe_file_id)
         except Exception as e:
             logger.warning("Could not update config: %s", e)
 
@@ -3563,23 +3594,44 @@ def delete_of_the_day_json():
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 @api_v3.route('/plugins/<plugin_id>/static/<path:file_path>', methods=['GET'])
 def serve_plugin_static(plugin_id, file_path):
-    """Serve static files from plugin directory"""
+    """Serve static files from plugin directory.
+
+    Both URL parts are validated before anything is opened. This handler used
+    to read whatever the path resolved to as long as ``str(file).startswith``
+    the plugin directory, which let two different things through:
+
+    * ``plugin_id`` of ``..`` -- Flask's default converter forbids a slash but
+      not dots, and ``get_plugin_directory('..')`` happily returned the parent
+      of the plugins directory because it exists. Every file under the project
+      root then "started with" that directory, ``config/config_secrets.json``
+      included.
+    * a sibling directory sharing a prefix: with the plugin directory
+      ``plugin-repos/foo``, ``../foo-evil/x`` resolves to
+      ``plugin-repos/foo-evil/x``, whose string does start with
+      ``plugin-repos/foo``.
+    """
     try:
+        safe_plugin_id = safe_path_component(plugin_id)
+        if not safe_plugin_id:
+            return jsonify({'status': 'error', 'message': 'Invalid plugin ID'}), 400
+
+        safe_parts = safe_relative_parts(file_path)
+        if not safe_parts:
+            return jsonify({'status': 'error', 'message': 'Invalid file path'}), 400
+
         # Get plugin directory
         if api_v3.plugin_manager:
-            plugin_dir = api_v3.plugin_manager.get_plugin_directory(plugin_id)
+            plugin_dir = api_v3.plugin_manager.get_plugin_directory(safe_plugin_id)
         else:
-            plugin_dir = PROJECT_ROOT / 'plugins' / plugin_id
+            plugin_dir = PROJECT_ROOT / 'plugins' / safe_plugin_id
 
         if not plugin_dir or not Path(plugin_dir).exists():
             return jsonify({'status': 'error', 'message': 'Plugin not found'}), 404
 
-        # Resolve file path (prevent directory traversal)
-        plugin_dir = Path(plugin_dir).resolve()
-        requested_file = (plugin_dir / file_path).resolve()
-
-        # Security check: ensure file is within plugin directory
-        if not str(requested_file).startswith(str(plugin_dir)):
+        # Containment is still checked after resolving: name validation cannot
+        # see a symlink inside the plugin directory that points out of it.
+        requested_file = resolve_under(plugin_dir, *safe_parts)
+        if requested_file is None:
             return jsonify({'status': 'error', 'message': 'Invalid file path'}), 403
 
         # Check if file exists
@@ -3588,13 +3640,14 @@ def serve_plugin_static(plugin_id, file_path):
 
         # Determine content type
         content_type = 'text/plain'
-        if file_path.endswith('.html'):
+        name = requested_file.name
+        if name.endswith('.html'):
             content_type = 'text/html'
-        elif file_path.endswith('.js'):
+        elif name.endswith('.js'):
             content_type = 'application/javascript'
-        elif file_path.endswith('.css'):
+        elif name.endswith('.css'):
             content_type = 'text/css'
-        elif file_path.endswith('.json'):
+        elif name.endswith('.json'):
             content_type = 'application/json'
 
         # Read and return file

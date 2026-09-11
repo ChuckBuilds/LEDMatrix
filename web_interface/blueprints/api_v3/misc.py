@@ -13,6 +13,7 @@ from web_interface.blueprints.api_v3 import (
     error_response, get_error_aggregator, json, jsonify, logger, os, request,
     subprocess, success_response, tempfile,
 )
+from src.common.path_safety import safe_path_component
 import web_interface.blueprints.api_v3 as _pkg
 # Read through the module rather than bound by value: tests patch these
 # as module attributes, and a value binding would not see the patch.
@@ -299,6 +300,12 @@ def delete_cache_file():
             return jsonify({'status': 'error', 'message': 'cache key is required'}), 400
 
         cache_key = data['key']
+
+        # The key names the file about to be removed. DiskCache refuses an
+        # unusable key on its own, but silently: say so here instead of
+        # reporting a deletion that never happened.
+        if safe_path_component(cache_key) is None:
+            return jsonify({'status': 'error', 'message': 'Invalid cache key'}), 400
 
         # Delete the cache file
         api_v3.cache_manager.clear_cache(cache_key)

@@ -36,7 +36,7 @@ import os
 import time
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -1248,14 +1248,28 @@ class WiFiManager:
     def connect_to_network(self, ssid: str, password: str) -> Tuple[bool, str]:
         """
         Connect to a WiFi network with failsafe to restore original connection on failure.
-        
+
         Args:
             ssid: Network SSID
             password: Network password (empty for open networks)
-            
+
         Returns:
             Tuple of (success, message)
         """
+        # Both values arrive verbatim from POST /api/v3/wifi/connect and end up
+        # as nmcli argv entries. There is no shell here, so no metacharacter
+        # can start a second command -- but nmcli reads a leading "-" as an
+        # option, so an SSID of "--ask" or "-t" is a request to run nmcli
+        # differently rather than to join a network. See _validate_ssid.
+        ssid, error = self._validate_ssid(ssid)
+        if error:
+            logger.warning("Rejected WiFi connect request: %s", error)
+            return False, error
+        password, error = self._validate_wifi_password(password)
+        if error:
+            logger.warning("Rejected WiFi connect request: %s", error)
+            return False, error
+
         # Save current connection info for failsafe restoration
         original_connection = None
         original_ssid = None
@@ -1634,6 +1648,62 @@ class WiFiManager:
             logger.error(f"Error connecting with nmcli: {e}")
             self._show_led_message("Connection error", duration=5)
             return False, str(e)
+
+    # 802.11 caps an SSID at 32 octets. Control characters cannot appear in a
+    # real one, and a leading "-" would be read by nmcli as an option rather
+    # than a network name.
+    _SSID_MAX_OCTETS = 32
+    # WPA-PSK passphrases are 8-63 printable ASCII characters, or a 64-char hex
+    # key. Anything outside that cannot authenticate, so refusing it early
+    # costs nothing and keeps argv clean.
+    _PSK_MIN_LEN = 8
+    _PSK_MAX_LEN = 63
+
+    @classmethod
+    def _validate_ssid(cls, ssid: Any) -> Tuple[str, Optional[str]]:
+        """Return (ssid, None) for a usable SSID, or ('', reason) to refuse it.
+
+        Returns the value rather than a boolean so callers pass on what was
+        checked instead of re-reading the original.
+        """
+        if not isinstance(ssid, str):
+            return '', "SSID must be text"
+        ssid = ssid.strip()
+        if not ssid:
+            return '', "SSID cannot be empty"
+        if len(ssid.encode('utf-8')) > cls._SSID_MAX_OCTETS:
+            return '', f"SSID is longer than {cls._SSID_MAX_OCTETS} bytes"
+        if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in ssid):
+            return '', "SSID contains control characters"
+        if ssid.startswith('-'):
+            # nmcli would take this for an option, not a network name.
+            return '', "SSID cannot start with '-'"
+        return ssid, None
+
+    @classmethod
+    def _validate_wifi_password(cls, password: Any) -> Tuple[str, Optional[str]]:
+        """Return (password, None) for a usable passphrase, or ('', reason).
+
+        An empty password means an open network and is allowed through.
+        """
+        if password is None:
+            return '', None
+        if not isinstance(password, str):
+            return '', "Password must be text"
+        if password == '':
+            return '', None
+        if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in password):
+            return '', "Password contains control characters"
+        if password.startswith('-'):
+            # Same reason as the SSID: nmcli would read it as an option.
+            return '', "Password cannot start with '-'"
+        is_hex_key = len(password) == 64 and all(c in '0123456789abcdefABCDEF' for c in password)
+        if not is_hex_key and not (cls._PSK_MIN_LEN <= len(password) <= cls._PSK_MAX_LEN):
+            return '', (
+                f"Password must be {cls._PSK_MIN_LEN}-{cls._PSK_MAX_LEN} characters "
+                f"(or a 64-character hex key)"
+            )
+        return password, None
 
     @staticmethod
     def _is_wrong_password_error(error_msg: str) -> bool:
