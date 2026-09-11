@@ -75,3 +75,14 @@ package-lock.json
 assets/sports/*_logos/
 assets/stocks/ticker_icons/
 assets/stocks/crypto_icons/
+
+# Plugin operation state written at runtime.
+#
+# web_interface/app.py writes data/plugin_operations.json, data/plugin_state.json
+# and data/operation_history.json as the web interface runs, into a directory that
+# ships tracked (data/.gitkeep) and was otherwise unignored. So every rig that ever
+# opened the web UI -- and every test run that constructs the app -- left three
+# untracked files behind and a permanently dirty `git status`. Same reasoning as
+# the logo rule above: a checkout that is always dirty is a checkout nobody reads.
+data/*
+!data/.gitkeep
