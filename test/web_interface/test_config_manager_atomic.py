@@ -6,7 +6,8 @@ import unittest
 import tempfile
 import shutil
 import json
-from datetime import datetime
+import threading
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -221,6 +222,99 @@ class TestBackupVersionsAreUnique(unittest.TestCase):
         self.assertEqual(
             [0, 1, 2],
             [json.loads(Path(p).read_text())["duration"] for p in paths],
+        )
+
+    def test_collision_suffixed_backups_list_newest_first(self):
+        # All three share one frozen timestamp and differ only by their -N
+        # suffix. Unless N is folded into the sort key, they parse to the
+        # identical datetime and a stable sort leaves them in whatever order
+        # the filesystem glob happened to yield -- not necessarily creation
+        # order.
+        frozen = datetime(2026, 1, 2, 3, 4, 5, 678901)
+
+        class FrozenDatetime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return frozen
+
+        created = []
+        with patch.object(atomic_module, 'datetime', FrozenDatetime):
+            for i in range(3):
+                self.config_path.write_text(json.dumps({"duration": i}))
+                created.append(self.manager._create_backup())
+
+        listed = [b.path for b in self.manager.list_backups()]
+        self.assertEqual(list(reversed(created)), listed)
+
+    def test_concurrent_backups_at_the_same_instant_never_collide(self):
+        # exists() followed by copy2() is two steps: two threads can both see
+        # a path as free before either creates it, and the second copy2()
+        # then silently destroys the first thread's restore point. Freezing
+        # the clock forces every thread to want the same filename.
+        frozen = datetime(2026, 3, 4, 5, 6, 7, 890123)
+
+        class FrozenDatetime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return frozen
+
+        secrets_path = self.temp_dir / "secrets.json"
+        secrets_path.write_text(json.dumps({"token": "abc"}))
+        manager = AtomicConfigManager(
+            config_path=str(self.config_path),
+            secrets_path=str(secrets_path),
+            backup_dir=str(self.backup_dir),
+            max_backups=50,
+        )
+
+        n_threads = 8
+        barrier = threading.Barrier(n_threads)
+        results = [None] * n_threads
+
+        def worker(i):
+            barrier.wait()
+            results[i] = manager._create_backup()
+
+        with patch.object(atomic_module, 'datetime', FrozenDatetime):
+            threads = [threading.Thread(target=worker, args=(i,)) for i in range(n_threads)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+        self.assertNotIn(None, results)
+        self.assertEqual(n_threads, len(set(results)))
+
+        config_backups = list(self.backup_dir.glob("config.json.backup.*"))
+        secrets_backups = list(self.backup_dir.glob("secrets.json.backup.*"))
+        self.assertEqual(n_threads, len(config_backups))
+        self.assertEqual(n_threads, len(secrets_backups))
+        for backup in config_backups:
+            self.assertEqual({"duration": 15}, json.loads(backup.read_text()))
+
+
+class TestParseBackupVersion(unittest.TestCase):
+    """
+    _parse_backup_version() only recognizes its own ``-N`` collision suffix
+    when N is numeric, and folds N into the returned timestamp so
+    same-instant collisions still sort deterministically.
+    """
+
+    def test_numeric_collision_suffix_is_folded_into_the_timestamp(self):
+        base = "20260102_030405_678901"
+        parsed_base = AtomicConfigManager._parse_backup_version(base)
+        parsed_collided = AtomicConfigManager._parse_backup_version(f"{base}-2")
+        self.assertEqual(parsed_base + timedelta(microseconds=2), parsed_collided)
+
+    def test_a_nonnumeric_suffix_is_not_mistaken_for_a_collision_marker(self):
+        # "-manual" is not a suffix this class ever writes. Stripping it
+        # anyway would either misparse the base or silently pick the wrong
+        # timestamp for a hand-named backup that happens to end in a
+        # dash-word.
+        self.assertIsNone(
+            AtomicConfigManager._parse_backup_version(
+                "20260102_030405_678901-manual"
+            )
         )
 
 

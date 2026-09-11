@@ -7,9 +7,10 @@ and enable recovery from failed saves.
 
 import json
 import os
+import re
 import shutil
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
 from dataclasses import dataclass
@@ -25,6 +26,12 @@ BACKUP_VERSION_FORMAT = "%Y%m%d_%H%M%S_%f"
 # Backups written before the format gained microseconds. Still read, never
 # written, so existing restore points on a rig stay usable after an upgrade.
 LEGACY_BACKUP_VERSION_FORMAT = "%Y%m%d_%H%M%S"
+
+# The numeric collision suffix _create_backup() appends to break a same-tick
+# tie: config.json.backup.<version>-<N>. Only digits count as this suffix, so
+# a hand-copied or renamed backup that happens to end in "-something" isn't
+# mistaken for one and silently mis-parsed.
+_BACKUP_COLLISION_SUFFIX_RE = re.compile(r"^(?P<base>.+)-(?P<collision>\d+)$")
 
 
 class SaveResultStatus(Enum):
@@ -310,17 +317,24 @@ class AtomicConfigManager:
 
         Accepts the current microsecond format and the legacy second-granularity
         one, with or without the ``-N`` suffix _create_backup() appends to break
-        a collision.
+        a collision. When that suffix is present, N is folded into the result
+        as extra microseconds so same-tick collisions still sort in the order
+        they were created rather than tying.
         """
         if not version:
             return None
-        # The suffix breaks filename ties; it carries no time of its own.
-        base = version.rsplit('-', 1)[0]
+        base = version
+        collision = 0
+        match = _BACKUP_COLLISION_SUFFIX_RE.match(version)
+        if match:
+            base = match.group('base')
+            collision = int(match.group('collision'))
         for fmt in (BACKUP_VERSION_FORMAT, LEGACY_BACKUP_VERSION_FORMAT):
             try:
-                return datetime.strptime(base, fmt)
+                parsed = datetime.strptime(base, fmt)
             except ValueError:
                 continue
+            return parsed + timedelta(microseconds=collision) if collision else parsed
         return None
 
     def validate_config_file(self, config_path: Optional[str] = None) -> ValidationResult:
@@ -353,30 +367,45 @@ class AtomicConfigManager:
             # first backup -- the path a caller was still holding then pointed at
             # different content, and rolling back to it restored the wrong
             # config. Microseconds make that collision vanishingly unlikely.
-            timestamp = datetime.now().strftime(BACKUP_VERSION_FORMAT)
             config_name = self.config_path.name
-            backup_path = self.backup_dir / f"{config_name}.backup.{timestamp}"
+            backup_secrets = bool(self.secrets_path and self.secrets_path.exists())
 
-            # Vanishingly unlikely is not never, and losing a restore point is
-            # not an acceptable failure mode: never overwrite an existing
-            # backup. Each pass bumps the suffix, so this always terminates.
+            # exists() then copy2() is two steps: two concurrent callers can
+            # both see the path as free and pick the same one, so the second
+            # copy2() silently destroys the first call's restore point.
+            # Reserve the filename(s) with exclusive creation instead -- that
+            # is atomic, so only one caller can ever win a given timestamp.
+            # Each retry bumps the collision suffix, so this always
+            # terminates and stays compatible with _parse_backup_version().
             collision = 0
-            while backup_path.exists():
-                collision += 1
-                timestamp = (
-                    f"{datetime.now().strftime(BACKUP_VERSION_FORMAT)}-{collision}"
-                )
+            while True:
+                timestamp = datetime.now().strftime(BACKUP_VERSION_FORMAT)
+                if collision:
+                    timestamp = f"{timestamp}-{collision}"
                 backup_path = self.backup_dir / f"{config_name}.backup.{timestamp}"
-
-            backup_filename = backup_path.name
+                secrets_backup_path = (
+                    self.backup_dir / f"{self.secrets_path.name}.backup.{timestamp}"
+                    if backup_secrets else None
+                )
+                try:
+                    backup_path.touch(exist_ok=False)
+                except FileExistsError:
+                    collision += 1
+                    continue
+                if secrets_backup_path is not None:
+                    try:
+                        secrets_backup_path.touch(exist_ok=False)
+                    except FileExistsError:
+                        backup_path.unlink(missing_ok=True)
+                        collision += 1
+                        continue
+                break
 
             # Copy config file to backup
             shutil.copy2(self.config_path, backup_path)
-            
+
             # Also backup secrets file if it exists
-            if self.secrets_path and self.secrets_path.exists():
-                secrets_backup_filename = f"{self.secrets_path.name}.backup.{timestamp}"
-                secrets_backup_path = self.backup_dir / secrets_backup_filename
+            if secrets_backup_path is not None:
                 shutil.copy2(self.secrets_path, secrets_backup_path)
             
             # Rotate old backups
