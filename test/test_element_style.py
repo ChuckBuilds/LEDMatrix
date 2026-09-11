@@ -177,10 +177,25 @@ class TestExpandStyleElements:
         expand_style_elements(STYLE_ELEMENTS_SCHEMA)
         assert json.dumps(STYLE_ELEMENTS_SCHEMA, sort_keys=True) == before
 
-    def test_no_declaration_returns_same_object(self):
-        assert expand_style_elements(MANUAL_SCHEMA) is MANUAL_SCHEMA
+    def test_a_schema_with_nothing_to_expand_is_returned_as_is(self):
+        """No needless deep copy when there is nothing to do."""
         empty = {"properties": {}}
         assert expand_style_elements(empty) is empty
+        no_style = {"properties": {"customization": {"type": "object",
+            "properties": {"favorite_result_colors": {"type": "object",
+                "properties": {"win_color": {"type": "array"}}}}}}}
+        assert expand_style_elements(no_style) is no_style
+
+    def test_a_hand_written_block_is_adopted(self):
+        """Nineteen plugins spell their style elements out longhand rather
+        than declaring them, and predate this system entirely. They pick up
+        the editor and the font picker on a core update rather than on a
+        plugin release."""
+        expanded = expand_style_elements(MANUAL_SCHEMA)
+        assert expanded is not MANUAL_SCHEMA
+        customization = expanded["properties"]["customization"]
+        assert customization["x-widget"] == "style-editor"
+        assert "x-style-elements" not in MANUAL_SCHEMA["properties"]["customization"]
 
     def test_garbage_input_never_raises(self):
         bad = {"properties": {"customization": {"x-style-elements": "nope"}}}
@@ -1073,3 +1088,172 @@ class TestAliasedLookup:
             config, defaults_from_schema_file(extra_schema_path)
         ).style("score_text")
         assert st.scale == 2.0
+
+HANDWRITTEN = {
+    "type": "object",
+    "properties": {
+        "customization": {
+            "type": "object",
+            "title": "Display Customization",
+            "properties": {
+                "score_text": {
+                    "type": "object",
+                    "title": "Game Score",
+                    "properties": {
+                        "font": {
+                            "type": "string",
+                            "enum": ["PressStart2P-Regular.ttf", "4x6-font.ttf",
+                                     "5by7.regular.ttf", "5x7.bdf", "4x6.bdf"],
+                            "default": "PressStart2P-Regular.ttf",
+                        },
+                        "font_size": {"type": "integer", "minimum": 4,
+                                      "maximum": 16, "default": 10},
+                        "text_color": {"type": "array", "minItems": 3,
+                                       "maxItems": 3, "default": [255, 255, 255]},
+                    },
+                },
+                "favorite_result_colors": {
+                    "type": "object",
+                    "properties": {
+                        "enabled": {"type": "boolean", "default": False},
+                        "win_color": {"type": "array", "default": [0, 255, 0]},
+                    },
+                },
+                # baseball's 'count' shape: one field this system knows,
+                # next to geometry that means nothing to it.
+                "count": {
+                    "type": "object",
+                    "properties": {
+                        "text_color": {"type": "array", "default": [0, 255, 0]},
+                        "y_offset": {"type": "integer", "default": 2},
+                    },
+                },
+                "layout": {
+                    "type": "object",
+                    "properties": {
+                        "score": {"type": "object", "properties": {
+                            "x_offset": {"type": "integer", "default": 0},
+                            "y_offset": {"type": "integer", "default": 0}}},
+                        "home_logo": {"type": "object", "properties": {
+                            "x_offset": {"type": "integer", "default": 0}}},
+                    },
+                },
+            },
+        },
+    },
+}
+
+
+class TestHandWrittenAdoption:
+    """Nineteen plugins spell their style elements out longhand -- football's
+    block is 701 lines for seven elements -- and predate this system. Core
+    recognises that shape so they pick up the editor and the real font picker
+    on a core update rather than on a plugin release.
+    """
+
+    def _customization(self, schema=None):
+        return expand_style_elements(
+            schema or HANDWRITTEN)["properties"]["customization"]
+
+    def test_the_block_gets_the_composite_editor(self):
+        assert self._customization()["x-widget"] == "style-editor"
+
+    def test_the_declared_order_is_stated_explicitly(self):
+        """Flask's JSON provider sorts keys, so without this the elements
+        reach the browser alphabetised."""
+        order = self._customization()["x-propertyOrder"]
+        assert order[0] == "score_text"
+
+    def test_a_block_that_is_not_styling_is_left_alone(self):
+        """favorite_result_colors, baseball's bases/outs/player_card and the
+        stocks blocks all carry fields this system knows nothing about."""
+        block = self._customization()["properties"]["favorite_result_colors"]
+        assert "x-style-managed" not in block
+        assert block["properties"]["win_color"]["default"] == [0, 255, 0]
+
+    def test_a_block_that_merely_shares_a_field_is_left_alone(self):
+        """The reason detection requires *every* field to be one this system
+        understands. baseball's 'count' carries a text_color beside a
+        y_offset that means nothing here.
+
+        Asserted on the element list rather than on the block itself: an
+        over-eager rule leaves a fontless block looking untouched, and only
+        shows up as an extra row in the editor and an extra per-mode
+        override group.
+        """
+        schema = copy.deepcopy(HANDWRITTEN)
+        schema["properties"]["customization"]["x-style-modes"] = ["live"]
+        live = expand_style_elements(schema)["properties"]["customization"][
+            "properties"]["modes"]["properties"]["live"]["properties"]
+        assert "score_text" in live
+        assert "count" not in live, (
+            "'count' is not a style element -- it shares one field and "
+            "carries geometry this system does not understand")
+        assert "favorite_result_colors" not in live
+
+    def test_the_hardcoded_font_list_is_replaced_by_the_picker(self):
+        """The reason an uploaded font could never appear in one of these."""
+        font = self._customization()["properties"]["score_text"]["properties"]["font"]
+        assert "enum" not in font
+        assert font["x-widget"] == "font-selector"
+
+    def test_the_picker_inherits_the_declared_size_ceiling(self):
+        """A bitmap font ignores font_size and renders at its own baked-in
+        size, so a field capped at 16 must not offer a 27px face."""
+        font = self._customization()["properties"]["score_text"]["properties"]["font"]
+        assert font["x-options"]["maxFixedSize"] == 16
+
+    def test_the_users_existing_font_choice_stays_valid(self):
+        font = self._customization()["properties"]["score_text"]["properties"]["font"]
+        assert font["default"] == "PressStart2P-Regular.ttf"
+        assert font["type"] == "string"
+
+    def test_the_input_schema_is_not_mutated(self):
+        expand_style_elements(HANDWRITTEN)
+        original = HANDWRITTEN["properties"]["customization"]
+        assert "x-widget" not in original
+        assert "enum" in original["properties"]["score_text"]["properties"]["font"]
+
+    def test_no_style_blocks_means_no_expansion(self):
+        schema = {"properties": {"customization": {"type": "object",
+            "properties": {"favorite_result_colors": {"type": "object",
+                "properties": {"win_color": {"type": "array"}}}}}}}
+        assert expand_style_elements(schema) is schema
+
+
+class TestAdoptedModes:
+    """Per-mode overrides stay opt-in: core cannot invent a plugin's list of
+    display modes. Declaring x-style-modes is the one line that unlocks them
+    for a hand-written block."""
+
+    def _live(self):
+        schema = copy.deepcopy(HANDWRITTEN)
+        schema["properties"]["customization"]["x-style-modes"] = ["live", "recent"]
+        return expand_style_elements(schema)["properties"]["customization"][
+            "properties"]["modes"]["properties"]["live"]["properties"]
+
+    def test_modes_are_not_invented(self):
+        assert "modes" not in self._customization_props()
+
+    def _customization_props(self):
+        return expand_style_elements(HANDWRITTEN)["properties"]["customization"]["properties"]
+
+    def test_declaring_modes_generates_them(self):
+        assert "score_text" in self._live()
+
+    def test_mode_fields_are_nullable(self):
+        size = self._live()["score_text"]["properties"]["font_size"]
+        assert size["default"] is None and "null" in size["type"]
+
+    def test_every_positionable_element_gets_per_mode_offsets(self):
+        """The two namespaces do not line up in a hand-written schema: this
+        one styles 'score_text' but positions 'score', and positions a logo
+        that has no style block at all. Keying the layout off the style
+        elements would have left both without a per-mode offset."""
+        layout = self._live()["layout"]["properties"]
+        assert set(layout) == {"score", "home_logo"}
+
+    def test_the_mode_font_picker_keeps_the_ceiling(self):
+        font = self._live()["score_text"]["properties"]["font"]
+        assert font["x-options"]["maxFixedSize"] == 16
+        assert "null" in font["type"]

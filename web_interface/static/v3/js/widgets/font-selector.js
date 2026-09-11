@@ -174,6 +174,12 @@
             const xOptions = config['x-options'] || config['x_options'] || {};
             const placeholder = xOptions.placeholder || 'Select a font...';
             const filterTypes = xOptions.filterTypes || null; // e.g., ['ttf', 'bdf']
+            // Bitmap (BDF) fonts render at the one size baked into the file
+            // and ignore the size setting entirely, so a field that caps size
+            // at 16 can still be handed a 27px face. maxFixedSize hides the
+            // ones that cannot honour the cap, rather than offering a choice
+            // that silently overflows the panel.
+            const maxFixedSize = Number(xOptions.maxFixedSize) || null;
             const showPreview = xOptions.showPreview === true;
             const disabled = xOptions.disabled === true;
             const required = xOptions.required === true;
@@ -202,6 +208,16 @@
                     filteredFonts = fonts.filter(font => {
                         const fontType = (font.type || '').toLowerCase();
                         return filterTypes.some(t => t.toLowerCase() === fontType);
+                    });
+                }
+                if (maxFixedSize) {
+                    filteredFonts = filteredFonts.filter(font => {
+                        // A scalable face can always meet the cap.
+                        if (font.scalable !== false) { return true; }
+                        // An unknown native size is not evidence it is too
+                        // big; keep it rather than hiding a usable font.
+                        if (!font.native_size) { return true; }
+                        return font.native_size <= maxFixedSize;
                     });
                 }
 

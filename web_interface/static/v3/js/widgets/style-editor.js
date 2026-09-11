@@ -127,6 +127,27 @@
 
     // ---- individual controls -------------------------------------------
 
+    /**
+     * Fonts this field can actually honour.
+     *
+     * A bitmap (BDF) face renders at the one size baked into the file and
+     * ignores the size setting, so an element that caps size at 16 can
+     * still be handed a 27px face and overflow a 32px panel. The cap comes
+     * from the element's own font_size.maximum, so this hides exactly the
+     * faces that cannot meet the limit the plugin already declared --
+     * rather than a list curated by hand, which is what these fields used
+     * to carry and why an uploaded font could never appear in one.
+     */
+    function usableFonts(fonts, maxFixedSize) {
+        if (!maxFixedSize) { return fonts; }
+        return fonts.filter(function (f) {
+            if (f.scalable !== false) { return true; }
+            // An unknown native size is not evidence it is too big.
+            if (!f.nativeSize) { return true; }
+            return f.nativeSize <= maxFixedSize;
+        });
+    }
+
     function fontControl(name, current, fonts, optional, onChange) {
         var select = el('select', {
             name: name,
@@ -334,7 +355,10 @@
         var types = Array.isArray(declared) ? declared : [declared];
 
         if (opts.key === 'font' || prop['x-widget'] === 'font-selector') {
-            return fontControl(opts.name, opts.current, opts.fonts,
+            var xOptions = prop['x-options'] || prop['x_options'] || {};
+            var cap = Number(xOptions.maxFixedSize) || opts.maxFixedSize || null;
+            return fontControl(opts.name, opts.current,
+                               usableFonts(opts.fonts, cap),
                                opts.optional, opts.onFontChange);
         }
         if (types.indexOf('boolean') !== -1) {
@@ -411,6 +435,9 @@
                 current: effective(value, path, prop, optional),
                 optional: optional,
                 fonts: opts.fonts,
+                // The element's declared size ceiling is what a fixed-size
+                // font has to fit under.
+                maxFixedSize: (props.font_size || {}).maximum || null,
                 onFontChange: function () { syncSize(fontSelect); }
             });
             if (col.key === 'font') { fontSelect = node; }

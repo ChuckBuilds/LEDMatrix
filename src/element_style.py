@@ -307,7 +307,9 @@ def expand_style_elements(schema: Dict[str, Any]) -> Dict[str, Any]:
             return schema
         declaration = customization.get('x-style-elements')
         if not isinstance(declaration, dict) or not declaration:
-            return schema
+            # No compact declaration: the plugin may still have hand-written
+            # its style blocks longhand, which nineteen of them do.
+            return _adopt_handwritten_block(schema, customization)
 
         expanded = copy.deepcopy(schema)
         customization = expanded['properties']['customization']
@@ -370,6 +372,7 @@ def _element_block_from_spec(element_key: str,
     properties: Dict[str, Any] = {}
     order = []
 
+    size_spec = spec.get('size') if isinstance(spec.get('size'), dict) else None
     font_spec = spec.get('font')
     if isinstance(font_spec, dict):
         font_prop: Dict[str, Any] = {
@@ -381,6 +384,13 @@ def _element_block_from_spec(element_key: str,
             # text box the user had to type a filename into.
             'x-widget': 'font-selector',
         }
+        # A bitmap font ignores font_size and renders at its own baked-in
+        # size, so the size ceiling has to be enforced when picking the
+        # font, not when setting the size.
+        max_size = (size_spec or {}).get('max') if isinstance(
+            spec.get('size'), dict) else None
+        if isinstance(max_size, (int, float)):
+            font_prop['x-options'] = {'maxFixedSize': max_size}
         if 'default' in font_spec:
             font_prop['default'] = font_spec['default']
         if isinstance(font_spec.get('enum'), list):
@@ -388,7 +398,6 @@ def _element_block_from_spec(element_key: str,
         properties['font'] = font_prop
         order.append('font')
 
-    size_spec = spec.get('size')
     if isinstance(size_spec, dict):
         size_prop: Dict[str, Any] = {
             'type': 'integer',
@@ -585,6 +594,188 @@ def _modes_block(declaration: Dict[str, Any],
         'additionalProperties': False,
         'properties': mode_props,
     }
+
+
+#: The sub-fields that make a customization sub-object a style element.
+#: Checked against every published schema: 68 blocks across 19 plugins match
+#: exactly, and nothing else does -- favorite_result_colors, baseball's
+#: bases/outs/player_card, jellyfin's progress_bar and the stocks blocks all
+#: carry other fields and are correctly left alone.
+_STYLE_BLOCK_FIELDS = frozenset(_STYLE_KEYS)
+
+
+def _looks_like_style_block(block: Any) -> bool:
+    """Whether a hand-written customization sub-object is a style element.
+
+    Deliberately strict: every field must be one this system understands.
+    A looser rule ("has at least one style field") would sweep in blocks
+    like baseball's ``count``, which happens to carry a text_color next to
+    geometry that means nothing here.
+    """
+    if not isinstance(block, dict):
+        return False
+    props = block.get('properties')
+    if not isinstance(props, dict) or not props:
+        return False
+    return set(props) <= _STYLE_BLOCK_FIELDS
+
+
+def _detect_style_blocks(customization: Dict[str, Any]) -> list:
+    """Element keys in a hand-written customization block, in declared order."""
+    props = customization.get('properties')
+    if not isinstance(props, dict):
+        return []
+    return [key for key, block in props.items()
+            if key not in ('layout', 'modes') and _looks_like_style_block(block)]
+
+
+def _upgrade_font_property(block: Dict[str, Any]) -> None:
+    """Point a hand-written font field at the font picker, in place.
+
+    These fields ship a hardcoded ``enum`` -- football lists five of the
+    thirty-five installed fonts -- which is why a font a user uploads can
+    never appear in one. The enum is replaced rather than extended: it is
+    not a curated safe set (it omits some twenty other faces that fit
+    just as well), it is the fonts that happened to exist when it was
+    written.
+
+    The size ceiling the block already declares is carried across as
+    ``maxFixedSize``, because a bitmap font ignores font_size and renders
+    at its own baked-in size -- so widening the list without that would
+    offer faces that overflow the panel no matter what size is set.
+    """
+    props = block.get('properties')
+    if not isinstance(props, dict):
+        return
+    font_prop = props.get('font')
+    if not isinstance(font_prop, dict):
+        return
+
+    font_prop.pop('enum', None)
+    font_prop['x-widget'] = 'font-selector'
+
+    size_prop = props.get('font_size')
+    maximum = size_prop.get('maximum') if isinstance(size_prop, dict) else None
+    if isinstance(maximum, (int, float)):
+        options = font_prop.setdefault('x-options', {})
+        if isinstance(options, dict):
+            options.setdefault('maxFixedSize', maximum)
+
+
+def _nullable_block(block: Dict[str, Any], title: Optional[str] = None,
+                    description: Optional[str] = None) -> Dict[str, Any]:
+    """A copy of an element block with every field optional.
+
+    The per-mode counterpart of a hand-written block: same fields, all
+    nullable and defaulting to null, which is this system's "inherit".
+    """
+    out = copy.deepcopy(block)
+    out['properties'] = {k: _nullable(v)
+                         for k, v in (out.get('properties') or {}).items()}
+    out['x-style-managed'] = True
+    if title:
+        out['title'] = title
+    if description is not None:
+        out['description'] = description
+    return out
+
+
+def _modes_block_from_properties(props: Dict[str, Any], element_keys: list,
+                                 modes: Any) -> Dict[str, Any]:
+    """``customization.modes`` built from already-expanded element blocks.
+
+    The compact declaration has ``_modes_block``; this is the same thing for
+    a plugin that hand-wrote its blocks, so both forms get per-mode overrides
+    from one declaration line.
+    """
+    layout_source = (props.get('layout') or {}).get('properties') or {}
+    mode_props: Dict[str, Any] = {}
+    for mode in modes:
+        if not isinstance(mode, str) or not mode:
+            continue
+        element_props: Dict[str, Any] = {}
+        layout_props: Dict[str, Any] = {}
+        for key in element_keys:
+            block = props.get(key)
+            if isinstance(block, dict):
+                element_props[key] = _nullable_block(
+                    block,
+                    description='Leave blank to use the settings above for '
+                                'this mode.')
+        # Every layout element, not just those with a style block. The two
+        # namespaces do not line up in a hand-written schema -- football
+        # styles 'score_text' but positions 'score', and positions logos,
+        # timeouts and possession that have no style block at all. Keying
+        # this off the style elements would have given six of its eleven
+        # positionable things no per-mode offset.
+        for key, layout_block in layout_source.items():
+            if isinstance(layout_block, dict):
+                layout_props[key] = _nullable_block(layout_block)
+        if layout_props:
+            element_props['layout'] = {
+                'type': 'object',
+                'title': 'Layout Offsets',
+                'x-advanced': True,
+                'additionalProperties': False,
+                'properties': layout_props,
+            }
+        mode_props[mode] = {
+            'type': 'object',
+            'title': mode.replace('_', ' ').title(),
+            'x-style-managed': True,
+            'additionalProperties': False,
+            'properties': element_props,
+        }
+    return {
+        'type': 'object',
+        'title': 'Per-Mode Overrides',
+        'description': 'Override the settings above for one display mode. '
+                       'Anything left blank follows the settings above.',
+        'x-advanced': True,
+        'additionalProperties': False,
+        'properties': mode_props,
+    }
+
+
+def _adopt_handwritten_block(schema: Dict[str, Any],
+                             customization: Dict[str, Any]) -> Dict[str, Any]:
+    """Give a hand-written customization block the same treatment as a
+    declared one, without the plugin rewriting its schema.
+
+    Nineteen plugins spell their style elements out longhand -- football's
+    block is 701 lines for seven elements -- and predate every part of this
+    system. Recognising that shape lets them pick up the row-per-element
+    editor and the real font picker on a core update, with no plugin
+    release. What they do not get for free is per-mode overrides and the
+    visible/align/scale fields, because core cannot invent a plugin's list
+    of display modes: adding ``x-style-modes`` is the one line that unlocks
+    the rest.
+    """
+    element_keys = _detect_style_blocks(customization)
+    if not element_keys:
+        return schema
+
+    expanded = copy.deepcopy(schema)
+    customization = expanded['properties']['customization']
+    customization.setdefault('x-widget', 'style-editor')
+    props = customization['properties']
+
+    for key in element_keys:
+        _upgrade_font_property(props[key])
+
+    modes = customization.get('x-style-modes')
+    if isinstance(modes, list) and modes:
+        props.setdefault('modes',
+                         _modes_block_from_properties(props, element_keys,
+                                                      modes))
+
+    # Stated explicitly because the config form serialises the schema with
+    # Flask's JSON provider, which sorts keys -- without this the elements
+    # reach the browser alphabetised.
+    order = list(element_keys)
+    order += [k for k in props if k not in order]
+    customization.setdefault('x-propertyOrder', order)
+    return expanded
 
 
 def defaults_from_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
