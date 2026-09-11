@@ -12,10 +12,46 @@ from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Dict, Any, Optional, List
 import logging
+import os
+import sys
 from src.logging_config import get_logger
 
 
 _shared_fallback_font_manager: Optional[Any] = None
+
+#: Distinguishes "not looked up yet" from "looked up and not found", so a
+#: plugin with no schema does not re-scan the disk on every frame.
+_UNSET_SCHEMA_PATH = object()
+
+
+class _NullStyleResolver:
+    """Stand-in for ElementStyleResolver when the module is unavailable.
+
+    Only reachable on a core that predates src.element_style, which
+    ``styles`` degrades to rather than raising: every lookup returns the
+    caller's classic values, which is what the plugin drew before styling
+    existed.
+    """
+
+    def __init__(self, config: Any) -> None:
+        self._config = config
+
+    def style(self, element_key: str, classic_font: str = None,
+              classic_size: int = 8, classic_color: Any = None,
+              mode: Optional[str] = None) -> Any:
+        from types import SimpleNamespace
+        return SimpleNamespace(
+            font=None, color=classic_color or (255, 255, 255), offset=(0, 0),
+            font_name=classic_font, font_size=classic_size,
+            user_forced=False, user_forced_color=False,
+            visible=True, align=None, scale=1.0)
+
+    def offset(self, element_key: str, mode: Optional[str] = None) -> tuple:
+        return (0, 0)
+
+    def offset_value(self, element_key: str, axis: str, default: int = 0,
+                     mode: Optional[str] = None) -> int:
+        return default
 
 
 def _fallback_font_manager() -> Any:
@@ -62,6 +98,12 @@ class BasePlugin(ABC):
     """
 
     API_VERSION = "1.0.0"
+
+    #: Which ``customization.modes.<mode>`` overrides :attr:`styles` applies.
+    #: A plugin with one instance per display mode (the scoreboards' live /
+    #: upcoming / recent classes) sets this and every existing style lookup
+    #: becomes mode-aware without changing a call site.
+    STYLE_MODE: Optional[str] = None
 
     def __init__(
         self,
@@ -259,6 +301,128 @@ class BasePlugin(ABC):
         self._layout_context = context
         self._layout_font_generation = generation
         return context
+
+    @property
+    def styles(self) -> Any:
+        """
+        The user's per-element styling: fonts, sizes, colours, offsets,
+        visibility, alignment and scale, resolved against this plugin's own
+        config_schema.json.
+
+        Every consumer of src.element_style used to repeat the same three
+        things -- a guarded import, finding its own schema file, and
+        rebuilding the resolver when on_config_change swapped the config
+        dict. This is those three things, once.
+
+        Ask for a style by element name, passing what the plugin drew before
+        the user could customise anything::
+
+            title = self.styles.style('title_text',
+                                      classic_font='PressStart2P-Regular.ttf',
+                                      classic_size=8,
+                                      classic_color=(255, 255, 255))
+            x, y = title.offset
+            self.display_manager.draw_text(text, x=x, y=y,
+                                           font=title.font, color=title.color)
+
+        The classic_* arguments matter: when the user has chosen nothing,
+        they come back verbatim, so a plugin that adopts this renders
+        identically until someone actually changes a setting.
+
+        A plugin whose display has modes (a scoreboard's live/upcoming/
+        recent, weather's current/hourly/daily) sets ``STYLE_MODE`` on the
+        class, and every lookup here honours the matching
+        ``customization.modes.<mode>`` overrides without any call site
+        passing a mode. Use :meth:`styles_for` for a one-off mode.
+
+        Never raises: with no schema on disk, or with the element-style
+        module unavailable, lookups fall back to the classic values.
+        """
+        resolver = getattr(self, "_style_resolver", None)
+        # The config dict is swapped wholesale by on_config_change, so
+        # identity is the invalidation signal -- the same check the sports
+        # base classes use.
+        if resolver is not None and resolver._config is self.config:
+            return resolver
+        resolver = self._build_style_resolver(getattr(self, "STYLE_MODE", None))
+        self._style_resolver = resolver
+        return resolver
+
+    def styles_for(self, mode: Optional[str]) -> Any:
+        """:attr:`styles`, bound to ``mode`` instead of ``STYLE_MODE``.
+
+        For a plugin that renders more than one mode from one instance. A
+        plugin with an instance per mode should set ``STYLE_MODE`` instead
+        and leave its call sites alone.
+        """
+        cache = getattr(self, "_style_resolvers_by_mode", None)
+        if cache is None or getattr(self, "_style_resolver_config", None) is not self.config:
+            cache = {}
+            self._style_resolvers_by_mode = cache
+            self._style_resolver_config = self.config
+        if mode not in cache:
+            cache[mode] = self._build_style_resolver(mode)
+        return cache[mode]
+
+    def _build_style_resolver(self, mode: Optional[str]) -> Any:
+        """Construct a resolver for this plugin's config and schema."""
+        try:
+            from src.element_style import (ElementStyleResolver,
+                                           defaults_from_schema_file)
+        except ImportError:  # pragma: no cover - core always ships it
+            return _NullStyleResolver(self.config)
+
+        schema_path = self._config_schema_path()
+        defaults = (defaults_from_schema_file(schema_path) if schema_path
+                    else {})
+        return ElementStyleResolver(self.config, defaults, mode=mode)
+
+    def _config_schema_path(self) -> Optional[str]:
+        """This plugin's config_schema.json, or None.
+
+        Looked up from the concrete class's own module rather than from this
+        file: a plugin's subclass lives in its plugin directory, while this
+        module lives in src/plugin_system, where no plugin schema exists.
+        Falls back to the configured plugins directory, including the
+        ledmatrix- prefix form the loader accepts.
+
+        Returning None is safe, not fatal -- the resolver then has no
+        defaults to compare against, so every configured value counts as a
+        deliberate override, which is the conservative reading.
+        """
+        cached = getattr(self, "_config_schema_path_cache", _UNSET_SCHEMA_PATH)
+        if cached is not _UNSET_SCHEMA_PATH:
+            return cached
+
+        path = None
+        try:
+            for candidate in self._schema_path_candidates():
+                if candidate and os.path.isfile(candidate):
+                    path = candidate
+                    break
+        except Exception as exc:  # pragma: no cover - defensive
+            self.logger.debug("Could not locate config_schema.json: %s", exc)
+        self._config_schema_path_cache = path
+        return path
+
+    def _schema_path_candidates(self) -> list:
+        """Where a plugin's schema might be, best guess first."""
+        candidates = []
+
+        module = sys.modules.get(type(self).__module__)
+        module_file = getattr(module, "__file__", None)
+        if module_file:
+            candidates.append(os.path.join(
+                os.path.dirname(os.path.abspath(module_file)),
+                "config_schema.json"))
+
+        plugins_dir = getattr(self.plugin_manager, "plugins_dir", None)
+        if plugins_dir:
+            for plugin_id in (self.plugin_id, f"ledmatrix-{self.plugin_id}"):
+                candidates.append(os.path.join(
+                    str(plugins_dir), os.path.basename(plugin_id),
+                    "config_schema.json"))
+        return candidates
 
     def draw_fit(self, text: str, box: Any,
                  color: tuple = (255, 255, 255),
