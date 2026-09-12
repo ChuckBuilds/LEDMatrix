@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any, List, Optional, Tuple
 
 from PIL import Image, ImageDraw, ImageFont
-from src.common.font_layout import load_truetype
+from src.common.font_layout import crisp_size, load_truetype
 
 from src.logging_config import get_logger
 
@@ -141,9 +141,10 @@ class VisualTestDisplayManager:
             fonts_dir = project_root / 'assets' / 'fonts'
 
             # Press Start 2P — regular and small (both 8px)
-            ttf_path = str(fonts_dir / 'PressStart2P-Regular.ttf')
-            self.regular_font = load_truetype(ttf_path, 8)
-            self.small_font = load_truetype(ttf_path, 8)
+            press_start = 'PressStart2P-Regular.ttf'
+            ttf_path = str(fonts_dir / press_start)
+            self.regular_font = load_truetype(ttf_path, crisp_size(press_start, 8))
+            self.small_font = load_truetype(ttf_path, crisp_size(press_start, 8))
             self.font = self.regular_font  # alias used by some code paths
 
             # 5x7 BDF font via freetype
@@ -160,10 +161,15 @@ class VisualTestDisplayManager:
                 self.calendar_font = self.small_font
                 self.bdf_5x7_font = self.small_font
 
-            # 4x6 extra small TTF
+            # 4x6 extra small TTF, snapped to the face's 7px grid exactly as
+            # DisplayManager._load_fonts does. Sizing this independently is how
+            # the harness would render -- and bless goldens -- in a face the
+            # panel never uses: at the off-grid 6 this asked for, every glyph
+            # loses its fourth column under `draw.fontmode = "1"`.
             try:
-                xs_path = str(fonts_dir / '4x6-font.ttf')
-                self.extra_small_font = load_truetype(xs_path, 6)
+                four_by_six = '4x6-font.ttf'
+                xs_path = str(fonts_dir / four_by_six)
+                self.extra_small_font = load_truetype(xs_path, crisp_size(four_by_six, 6))
             except (FileNotFoundError, OSError) as e:
                 logger.debug("Extra small font not available, using fallback: %s", e)
                 self.extra_small_font = self.small_font
