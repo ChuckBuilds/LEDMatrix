@@ -88,11 +88,11 @@ plugin_system_config = config.get('plugin_system', {})
 plugins_dir_name = plugin_system_config.get('plugins_directory', 'plugin-repos')
 
 # Resolve plugin directory - handle both absolute and relative paths
+project_root = Path(__file__).parent.parent
 if os.path.isabs(plugins_dir_name):
     plugins_dir = Path(plugins_dir_name)
 else:
     # If relative, resolve relative to the project root (LEDMatrix directory)
-    project_root = Path(__file__).parent.parent
     plugins_dir = project_root / plugins_dir_name
 
 plugin_manager = PluginManager(
@@ -162,6 +162,7 @@ _health_monitor_initialized = False
 # Register blueprints
 from web_interface.blueprints.pages_v3 import pages_v3
 from web_interface.blueprints.api_v3 import api_v3
+from web_interface.blueprints.composer import composer_bp
 
 # Initialize managers in blueprints
 pages_v3.config_manager = config_manager
@@ -178,6 +179,11 @@ api_v3.operation_queue = operation_queue
 api_v3.plugin_state_manager = plugin_state_manager
 api_v3.operation_history = operation_history
 api_v3.health_monitor = health_monitor
+
+composer_bp.config_manager = config_manager
+composer_bp.plugin_manager = plugin_manager
+composer_bp.plugins_dir = plugins_dir
+composer_bp.project_root = project_root
 # Initialize cache manager for API endpoints
 from src.cache_manager import CacheManager
 api_v3.cache_manager = CacheManager()
@@ -205,6 +211,7 @@ except Exception as _hm_err:  # pragma: no cover - defensive startup guard
 app.register_blueprint(pages_v3, url_prefix='')
 app.register_blueprint(pages_v3, url_prefix='/v3', name='pages_v3_legacy')
 app.register_blueprint(api_v3, url_prefix='/api/v3')
+app.register_blueprint(composer_bp, url_prefix='/composer')
 
 # Route to serve plugin asset files (registered on main app, not blueprint, for /assets/... path)
 @app.route('/assets/plugins/<plugin_id>/uploads/<path:filename>', methods=['GET'])
