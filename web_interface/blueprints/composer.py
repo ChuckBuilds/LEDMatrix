@@ -95,8 +95,10 @@ def _as_rgb_filter(val) -> str:
     if val is None:
         return 'None'
     # nosemgrep: not a Flask route -- a Jinja filter emitting a Python
-    # tuple literal, with every channel coerced by int().
-    return f'({int(val[0])}, {int(val[1])}, {int(val[2])})'  # nosemgrep
+    # tuple literal, with every channel coerced and clamped by _safe_int().
+    return (f'({_safe_int(val[0], 0, 0, 255)}, '  # nosemgrep
+            f'{_safe_int(val[1], 0, 0, 255)}, '
+            f'{_safe_int(val[2], 0, 0, 255)})')
 
 
 def _as_fill_filter(val) -> str:
@@ -278,7 +280,7 @@ def _preprocess_elements(elements: list) -> list:
 
         x_anchor = el.get('xAnchor') or None
         y_anchor = el.get('yAnchor') or None
-        p['min_width'] = int(el.get('minWidth', 0) or 0)
+        p['min_width'] = _safe_int(el.get('minWidth', 0) or 0, 0, 0, 4096)
 
         if t in ('text', 'clock'):
             font_key = el.get('font', 'press_start')
@@ -290,7 +292,7 @@ def _preprocess_elements(elements: list) -> list:
             p['y_expr'] = _compute_pos_expr(el.get('y', 0), y_anchor, 'height')
             font_size = _FONT_SIZE_MAP.get(font_key, 8)
             char_w = _FONT_CHAR_W.get(font_key, 8)
-            line_spacing = int(el.get('lineSpacing', 2))
+            line_spacing = _safe_int(el.get('lineSpacing', 2), 2, 0, 256)
             y_expr = p['y_expr']
             p['y2_expr'] = f"({y_expr}) + {font_size + line_spacing}"
             if t == 'text':
@@ -377,8 +379,8 @@ def _preprocess_elements(elements: list) -> list:
         elif t == 'progress_bar':
             p['x_expr'] = _compute_pos_expr(el.get('x', 0), x_anchor, 'width')
             p['y_expr'] = _compute_pos_expr(el.get('y', 0), y_anchor, 'height')
-            p['bar_width'] = int(el.get('barWidth', 40))
-            p['bar_height'] = int(el.get('barHeight', 6))
+            p['bar_width'] = _safe_int(el.get('barWidth', 40), 40, 0, 4096)
+            p['bar_height'] = _safe_int(el.get('barHeight', 6), 6, 0, 4096)
             binding = el.get('binding', {})
             p['binding_key'] = binding.get('key', '')
             p['fill_tuple'] = _rgb_tuple(el, ('r', 'g', 'b'), (100, 200, 100))
@@ -403,8 +405,8 @@ def _preprocess_elements(elements: list) -> list:
             p['y_expr'] = y_expr
             p['x2_expr'] = f"({x_expr}) + {w}"
             p['y2_expr'] = f"({y_expr}) + {h}"
-            p['start_angle'] = int(el.get('startAngle', 0))
-            p['end_angle'] = int(el.get('endAngle', 270))
+            p['start_angle'] = _safe_int(el.get('startAngle', 0), 0, -3600, 3600)
+            p['end_angle'] = _safe_int(el.get('endAngle', 270), 270, -3600, 3600)
             p['line_width'] = _safe_int(el.get('lineWidth'), 2, 1, 64)
             p['rgb_tuple'] = _rgb_expr(el, 255, 200, 0)
             p['blink'] = bool(el.get('blink', False))
@@ -445,7 +447,7 @@ def _preprocess_elements(elements: list) -> list:
             p['y_expr'] = y_expr
             p['x2_expr'] = f"({x_expr}) + {w}"
             p['y2_expr'] = f"({y_expr}) + {h}"
-            p['border_radius'] = int(el.get('borderRadius', 3))
+            p['border_radius'] = _safe_int(el.get('borderRadius', 3), 3, 0, 128)
             fill = (
                 [el.get('fillR', 0), el.get('fillG', 80), el.get('fillB', 180)]
                 if el.get('hasFill', True) else None
@@ -473,9 +475,9 @@ def _preprocess_elements(elements: list) -> list:
         elif t == 'pips':
             p['x_expr'] = _compute_pos_expr(el.get('x', 0), x_anchor, 'width')
             p['y_expr'] = _compute_pos_expr(el.get('y', 0), y_anchor, 'height')
-            p['pip_count'] = max(1, int(el.get('count', 5)))
-            p['pip_size'] = max(1, int(el.get('pipSize', 4)))
-            p['pip_spacing'] = max(0, int(el.get('pipSpacing', 2)))
+            p['pip_count'] = _safe_int(el.get('count', 5), 5, 1, 256)
+            p['pip_size'] = _safe_int(el.get('pipSize', 4), 4, 1, 256)
+            p['pip_spacing'] = _safe_int(el.get('pipSpacing', 2), 2, 0, 256)
             p['show_empty'] = bool(el.get('showEmpty', True))
             binding = el.get('binding', {})
             p['binding_key'] = binding.get('key', '')
@@ -488,10 +490,10 @@ def _preprocess_elements(elements: list) -> list:
             y_expr = _compute_pos_expr(el.get('y', 0), y_anchor, 'height')
             p['x_expr'] = x_expr
             p['y_expr'] = y_expr
-            p['bar_width_px'] = int(el.get('width', 40))
-            p['bar_height_px'] = int(el.get('height', 12))
-            p['bar_count'] = max(1, int(el.get('barCount', 8)))
-            p['bar_spacing'] = max(0, int(el.get('barSpacing', 1)))
+            p['bar_width_px'] = _safe_int(el.get('width', 40), 40, 0, 4096)
+            p['bar_height_px'] = _safe_int(el.get('height', 12), 12, 0, 4096)
+            p['bar_count'] = _safe_int(el.get('barCount', 8), 8, 1, 256)
+            p['bar_spacing'] = _safe_int(el.get('barSpacing', 1), 1, 0, 256)
             binding = el.get('binding', {})
             p['binding_key'] = binding.get('key', '')
             p['fill_tuple'] = _rgb_tuple(el, ('r', 'g', 'b'), (80, 200, 120))
@@ -508,8 +510,8 @@ def _preprocess_elements(elements: list) -> list:
             p['y_expr'] = y_expr
             p['x2_expr'] = f"({x_expr}) + {w}"
             p['y2_expr'] = f"({y_expr}) + {h}"
-            p['start_angle'] = int(el.get('startAngle', 135))
-            p['end_angle'] = int(el.get('endAngle', 45))
+            p['start_angle'] = _safe_int(el.get('startAngle', 135), 135, -3600, 3600)
+            p['end_angle'] = _safe_int(el.get('endAngle', 45), 45, -3600, 3600)
             p['line_width'] = _safe_int(el.get('lineWidth'), 3, 1, 64)
             p['rgb_tuple'] = _rgb_expr(el, 80, 220, 80)
             track = (
@@ -532,8 +534,8 @@ def _preprocess_elements(elements: list) -> list:
             p['y_expr'] = _compute_pos_expr(el.get('y', 0), y_anchor, 'height')
             p['text'] = el.get('text', 'Scrolling text')
             p['char_w'] = _FONT_CHAR_W.get(font_key, 8)
-            p['gap'] = int(el.get('gap', 16))
-            p['scroll_speed'] = max(1, int(el.get('scrollSpeed', 1)))
+            p['gap'] = _safe_int(el.get('gap', 16), 16, 0, 4096)
+            p['scroll_speed'] = _safe_int(el.get('scrollSpeed', 1), 1, 1, 256)
             p['direction'] = el.get('direction', 'left')
             # Data key stored in self._data for stateful scrolling across
             # display() calls. It is spliced UNQUOTED into variable names

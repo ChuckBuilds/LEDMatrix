@@ -67,7 +67,7 @@ def _module_level_code(src):
     tree = ast.parse(src)
     out = []
     for node in tree.body:
-        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.ImportFrom)):
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.ImportFrom, ast.Import)):
             continue
         if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
             continue  # the docstring
@@ -143,6 +143,28 @@ def test_colour_channels_are_clamped_to_a_byte():
           "font": "press_start", "r": 99999, "g": -5, "b": 128}
     src = _generated(_payload(elements=[el]))
     assert "(255, 0, 128)" in src, "channels were not clamped to 0-255"
+
+
+#: fillR/fillG/fillB (and outR/G/B, bgR/G/B, trackR/G/B) go through
+#: _as_fill_filter -> _as_rgb_filter, a separate path from _rgb_expr above.
+#: It used raw int() until it was found to raise ValueError on a non-numeric
+#: channel instead of clamping like every other coerced value in this module.
+@pytest.mark.parametrize("evil", EXPR_PAYLOADS)
+@pytest.mark.parametrize("channel", ["fillR", "fillG", "fillB"])
+def test_a_non_numeric_fill_channel_cannot_reach_the_source(evil, channel):
+    el = {"type": "rectangle", "id": "r1", "x": 0, "y": 0, "width": 10, "height": 8,
+          "fillR": 0, "fillG": 0, "fillB": 128}
+    el[channel] = evil
+    src = _generated(_payload(elements=[el]))
+    assert "__import__" not in src and "os.system" not in src
+    assert not _module_level_code(src)
+
+
+def test_fill_channels_are_clamped_to_a_byte():
+    el = {"type": "rectangle", "id": "r1", "x": 0, "y": 0, "width": 10, "height": 8,
+          "fillR": 99999, "fillG": -5, "fillB": 128}
+    src = _generated(_payload(elements=[el]))
+    assert "(255, 0, 128)" in src, "fill channels were not clamped to 0-255"
 
 
 def test_the_generated_module_still_has_no_top_level_statements():

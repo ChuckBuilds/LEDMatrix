@@ -572,7 +572,7 @@ function composerApp() {
       link.download = (this.metadata.id || 'composer-design') + '.composer.json';
       link.href = url;
       link.click();
-      URL.revokeObjectURL(url);
+      setTimeout(() => URL.revokeObjectURL(url), 0);
     },
 
     importDesign() {
@@ -583,6 +583,9 @@ function composerApp() {
         const file = e.target.files[0];
         if (!file) return;
         const reader = new FileReader();
+        reader.onerror = () => {
+          this._setStatus('Failed to read file', 'error');
+        };
         reader.onload = (ev) => {
           try {
             const data = JSON.parse(ev.target.result);
@@ -1326,7 +1329,7 @@ function composerApp() {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url; a.download = `${this.metadata.id}.zip`; a.click();
-        URL.revokeObjectURL(url);
+        setTimeout(() => URL.revokeObjectURL(url), 0);
         this.generateStatus = 'done';
         this._setStatus('Plugin ZIP downloaded', 'success');
         setTimeout(() => { if (this.generateStatus === 'done') this.generateStatus = 'idle'; }, 4000);
