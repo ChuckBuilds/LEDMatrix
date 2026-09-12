@@ -83,19 +83,24 @@ class TestConfigFlowsIntegration(unittest.TestCase):
     
     def test_backup_rotation(self):
         """Test that backup rotation works correctly."""
-        max_backups = 3
-        
-        # Create multiple backups
-        for i in range(5):
+        # setUp built the manager with max_backups=5; ask it rather than
+        # restating the number, which is how this drifted in the first place.
+        max_backups = self.atomic_manager.max_backups
+
+        # Overshoot the limit so rotation actually has something to remove.
+        for i in range(max_backups + 3):
             config = {"test": f"value_{i}"}
             result = self.atomic_manager.save_config_atomic(config, create_backup=True)
             self.assertEqual(result.status, SaveResultStatus.SUCCESS)
-        
-        # List backups
+
+        # Rotation should have trimmed the excess, and kept exactly the limit.
+        #
+        # This used to assert against a hardcoded 3 while setUp configured 5,
+        # and still passed -- because every save in the loop landed in the same
+        # second and collapsed onto a single backup filename, so there was only
+        # ever one backup to count and rotation was never exercised at all.
         backups = self.atomic_manager.list_backups()
-        
-        # Verify only max_backups are kept
-        self.assertLessEqual(len(backups), max_backups)
+        self.assertEqual(max_backups, len(backups))
     
     def test_validation_failure_triggers_rollback(self):
         """Test that validation failure triggers automatic rollback."""
@@ -148,10 +153,21 @@ class TestConfigFlowsIntegration(unittest.TestCase):
             rollback_success = self.atomic_manager.rollback_config(backup_version=None)
         self.assertTrue(rollback_success)
         
-        # Verify rollback
+        # Verify rollback.
+        #
+        # result1's backup was taken *before* the first save, so it holds the
+        # config setUp wrote -- plugin1=30, plugin2=15 -- and neither change.
+        #
+        # This used to assert plugin1 == 45, a state no single backup ever held:
+        # 45 was only ever in result2's backup, and 15 only in result1's. It
+        # passed because both saves landed in the same second, so both backups
+        # were written to one filename and "result1's version" resolved to
+        # result2's content. Once the backup id became unique the rollback
+        # started returning the version actually asked for, and the assertion
+        # -- not the rollback -- was what had to change.
         rolled_back_config = self.config_manager.load_config()
-        self.assertEqual(rolled_back_config["plugin1"]["display_duration"], 45)
-        self.assertEqual(rolled_back_config["plugin2"]["display_duration"], 15)  # Original value
+        self.assertEqual(rolled_back_config["plugin1"]["display_duration"], 30)
+        self.assertEqual(rolled_back_config["plugin2"]["display_duration"], 15)
 
 
 if __name__ == '__main__':
