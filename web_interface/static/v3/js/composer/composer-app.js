@@ -182,6 +182,14 @@ const LED_PALETTE = [
 
 // ── Autosave helpers ─────────────────────────────────────────────────────────
 const LS_KEY = 'ledmatrix_composer_draft';
+
+//: Element types whose ELEMENT_DEFAULTS carry a `binding` object (see
+//: composer-canvas.js). Kept in one place so export validation, the "is this
+//: config var still used" check, and the removal warning cannot drift apart
+//: the way they did when only dynamic_text/progress_bar were checked and
+//: countdown/pips/sparkline/gauge silently went unvalidated.
+const BOUND_TYPES = ['dynamic_text', 'progress_bar', 'countdown', 'pips', 'sparkline', 'gauge'];
+
 let _autosaveTimer = null;
 
 function _debouncedAutosave(payload) {
@@ -867,15 +875,30 @@ function composerApp() {
                    :                    this.MATRIX_W - bb.w;
         // Clear x-anchor so stored x IS the absolute position
         if ('xAnchor' in el) el.xAnchor = null;
-        el.x = Math.round(newX);
-        if (el.type === 'line') el.x0 = Math.round(newX);
+        if (el.type === 'line') {
+          // Translate both endpoints by the same delta so the line moves
+          // without changing shape -- setting only x0 left x1 behind and
+          // stretched/shrank the line instead of moving it.
+          const dx = Math.round(newX) - bb.x;
+          el.x0 = Math.round(el.x0 + dx);
+          el.x1 = Math.round(el.x1 + dx);
+          el.x = el.x0;
+        } else {
+          el.x = Math.round(newX);
+        }
       } else {
         const newY = mode === 'start'  ? 0
                    : mode === 'center' ? Math.round((this.MATRIX_H - bb.h) / 2)
                    :                    this.MATRIX_H - bb.h;
         if ('yAnchor' in el) el.yAnchor = null;
-        el.y = Math.round(newY);
-        if (el.type === 'line') el.y0 = Math.round(newY);
+        if (el.type === 'line') {
+          const dy = Math.round(newY) - bb.y;
+          el.y0 = Math.round(el.y0 + dy);
+          el.y1 = Math.round(el.y1 + dy);
+          el.y = el.y0;
+        } else {
+          el.y = Math.round(newY);
+        }
       }
       this._snapshot();
       this.isDirty = true;
@@ -1162,7 +1185,7 @@ function composerApp() {
 
     removeConfigVar(key) {
       const bound = this.elements.filter(
-        e => e.type === 'dynamic_text' && e.binding?.source === 'config' && e.binding?.key === key
+        e => BOUND_TYPES.includes(e.type) && e.binding?.source === 'config' && e.binding?.key === key
       );
       if (bound.length && !confirm(`"${key}" is used by ${bound.length} element(s). Remove anyway?`)) return;
       this.dataModel.configVars = this.dataModel.configVars.filter(v => v.key !== key);
@@ -1172,7 +1195,7 @@ function composerApp() {
 
     _isBound(key) {
       return this.elements.some(
-        e => e.type === 'dynamic_text' && e.binding?.source === 'config' && e.binding?.key === key
+        e => BOUND_TYPES.includes(e.type) && e.binding?.source === 'config' && e.binding?.key === key
       );
     },
 
@@ -1306,7 +1329,7 @@ function composerApp() {
       if (!this.metadata.author.trim()) { this._setStatus('Author is required', 'error'); return false; }
       if (this.elements.length === 0)   { this._setStatus('Add at least one element', 'error'); return false; }
       const unbound = this.elements.filter(
-        e => (e.type === 'dynamic_text' || e.type === 'progress_bar') && !e.binding?.key
+        e => BOUND_TYPES.includes(e.type) && !e.binding?.key
       );
       if (unbound.length) { this._setStatus(`${unbound.length} element(s) have no variable bound`, 'error'); return false; }
       return true;

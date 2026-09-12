@@ -111,7 +111,7 @@ class {{ class_name }}(BasePlugin):
 {{ pi }}    font=self.display_manager.{{ el.font_attr }},
 {{ pi }})
 {% else %}
-{{ pi }}pass  # dynamic_text binding_source "{{ el.binding_source }}" draws nothing
+{{ pi }}pass  # non-config dynamic_text binding draws nothing
 {% endif %}
 {% elif el.type == 'clock' %}
 {{ pi }}self.display_manager.draw_text(

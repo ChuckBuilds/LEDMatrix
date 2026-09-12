@@ -17,6 +17,7 @@ has no branch for, and the template emits a `pass` fallback so a type added to
 the canvas before its branch exists degrades to a no-op instead of a broken
 plugin.
 """
+import ast
 import re
 import sys
 from pathlib import Path
@@ -98,4 +99,26 @@ def test_dynamic_text_with_non_config_binding_does_not_break_generation(wrapper)
                "binding": {"source": "live", "key": "temperature"}, **wrapper}
     files = generate(element)          # must not raise ComposerInputError
     assert "manager.py" in files
-    assert 'binding_source "live" draws nothing' in files["manager.py"]
+    assert "non-config dynamic_text binding draws nothing" in files["manager.py"]
+
+
+def test_binding_source_cannot_break_out_of_the_comment_it_lands_in():
+    """binding.source used to be interpolated straight into a Python comment
+    (`pass  # dynamic_text binding_source "{{ el.binding_source }}" draws
+    nothing`) with no escaping. A source string carrying a newline closed the
+    comment, and text on the following line(s), indented to match, became a
+    real statement in the generated plugin -- CWE-94, and live once
+    composer_bp was registered (confirmed: this exact payload produces a
+    manager.py containing a clean, ast.parse-valid `import os` against the
+    pre-fix template). The comment is now a fixed literal that never
+    interpolates the value at all.
+    """
+    payload = "foo\n            import os\n            os.system('id')  # "
+    element = {"type": "dynamic_text", "x": 0, "y": 0, "color": "#ffffff",
+               "binding": {"source": payload, "key": "temperature"}}
+    files = generate(element)
+    src = files["manager.py"]
+    assert "import os" not in src
+    assert "os.system" not in src
+    assert "non-config dynamic_text binding draws nothing" in src
+    ast.parse(src)          # belt and braces: generate() already enforces this

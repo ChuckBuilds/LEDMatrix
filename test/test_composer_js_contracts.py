@@ -187,6 +187,20 @@ def test_align_clears_the_anchor_and_moves_line_endpoints():
         "_alignElement no longer moves line endpoints"
 
 
+def test_align_translates_both_line_endpoints_not_just_the_start():
+    """Setting only x0 (or y0) left x1/y1 behind, so aligning a line changed
+    its shape instead of moving it -- e.g. a line from x0=20 to x1=50 aligned
+    right became x0=98, x1=50, stretching rather than translating it. Both
+    endpoints must move by the same delta."""
+    body = _method_source(APP, "_alignElement")
+    x_branch = body[body.index("if (axis === 'x')"):body.index("} else {")]
+    y_branch = body[body.index("} else {"):]
+    assert "el.x1" in x_branch, \
+        "_alignElement moves x0 but not x1 -- a line's shape changes, not its position"
+    assert "el.y1" in y_branch, \
+        "_alignElement moves y0 but not y1 -- a line's shape changes, not its position"
+
+
 def test_divider_stroke_is_centered_in_led_pixels():
     """A 0.5 canvas-pixel offset (correct only at SCALE=1) was applied after
     scaling instead of before it, so at SCALE>1 the stroke bled into the
@@ -215,3 +229,35 @@ def test_gauge_radii_are_clamped_to_zero():
         "gauge y-radius is not clamped to zero"
     assert "rx - lwPx / 2" not in re.sub(r"Math\.max\(0,\s*rx\s*-\s*lwPx\s*/\s*2\)", "", gauge_branch), \
         "an unclamped gauge radius is still passed to ctx.ellipse()"
+
+
+#: ELEMENT_DEFAULTS in composer-canvas.js gives exactly these types a
+#: `binding` object; verified against that file rather than assumed.
+BOUND_TYPES = ["dynamic_text", "progress_bar", "countdown", "pips", "sparkline", "gauge"]
+
+
+def test_bound_types_constant_lists_every_bound_element_type():
+    """ELEMENT_DEFAULTS in composer-canvas.js gives dynamic_text, progress_bar,
+    countdown, pips, sparkline and gauge a `binding` object. If a type is added
+    to (or removed from) that list without updating APP's BOUND_TYPES, the
+    checks below drift out of sync silently -- this pins the two together."""
+    src = APP.read_text()
+    match = re.search(r"const BOUND_TYPES = \[([^\]]*)\];", src)
+    assert match, "BOUND_TYPES constant not found in composer-app.js"
+    declared = {t.strip().strip("'\"") for t in match.group(1).split(",") if t.strip()}
+    assert declared == set(BOUND_TYPES), \
+        f"BOUND_TYPES {declared} does not match the bound element types {set(BOUND_TYPES)}"
+
+
+@pytest.mark.parametrize("method", ["_isBound", "removeConfigVar", "_validateBeforeExport"])
+def test_binding_checks_cover_every_bound_element_type(method):
+    """Only dynamic_text and progress_bar were checked, so a countdown, pips,
+    sparkline or gauge element with an empty binding passed export validation
+    silently, and deleting a config var still used by one of them gave no
+    warning -- the plugin would read a now-missing key at runtime with no
+    indication why."""
+    body = _method_source(APP, method)
+    assert "BOUND_TYPES.includes(e.type)" in body, \
+        f"{method} does not check every bound element type via BOUND_TYPES"
+    assert "e.type === 'dynamic_text'" not in body, \
+        f"{method} still hardcodes only dynamic_text instead of BOUND_TYPES"

@@ -83,11 +83,11 @@ plugin_system_config = config.get('plugin_system', {})
 plugins_dir_name = plugin_system_config.get('plugins_directory', 'plugin-repos')
 
 # Resolve plugin directory - handle both absolute and relative paths
+project_root = Path(__file__).parent.parent
 if os.path.isabs(plugins_dir_name):
     plugins_dir = Path(plugins_dir_name)
 else:
     # If relative, resolve relative to the project root (LEDMatrix directory)
-    project_root = Path(__file__).parent.parent
     plugins_dir = project_root / plugins_dir_name
 
 plugin_manager = PluginManager(
