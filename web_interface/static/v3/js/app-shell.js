@@ -161,7 +161,7 @@
                 external[name].forEach(function(l) { add(l[0], l[1], l[2]); });
                 src.onmessage = function(event) {
                     let data;
-                    try { data = JSON.parse(event.data); } catch (e) { return; }
+                    try { data = JSON.parse(event.data); } catch { return; }
                     cfg.onmessage(data);
                 };
                 cfg.wire(src);
@@ -2051,7 +2051,10 @@
                 if (widget && typeof widget.show === 'function') {
                     return widget.show(message, typeof type === 'string' ? { type: type } : (type || {}));
                 }
-                (window.__pendingNotifications = window.__pendingNotifications || []).push([message, type]);
+                if (!Array.isArray(window.__pendingNotifications)) {
+                    window.__pendingNotifications = [];
+                }
+                window.__pendingNotifications.push([message, type]);
                 debugLog(`[${String((type && type.type) || type).toUpperCase()}]`, message);
             };
         }
