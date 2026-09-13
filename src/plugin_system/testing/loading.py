@@ -25,11 +25,20 @@ def find_plugin_dir(plugin_id: str, search_dirs: Sequence[Union[str, Path]]) -> 
 
 
 def load_manifest(plugin_dir: Union[str, Path]) -> Dict[str, Any]:
-    """Load and return manifest.json from a plugin directory."""
+    """Load and return manifest.json from a plugin directory.
+
+    Read as UTF-8 explicitly, not in the platform default encoding: JSON is
+    UTF-8 by RFC 8259, but `open()` honours the locale, which is cp1252 on
+    Windows. A manifest carrying any non-ASCII byte (an em dash in a
+    description, a degree sign in a mode name) therefore raised
+    UnicodeDecodeError and aborted the whole `check_plugin.py --all` run on the
+    byte rather than failing just that plugin. The three sibling loaders below
+    read JSON from the same plugin trees and had the same bug.
+    """
     manifest_path = Path(plugin_dir) / 'manifest.json'
     if not manifest_path.exists():
         raise FileNotFoundError(f"No manifest.json in {plugin_dir}")
-    with open(manifest_path, 'r') as f:
+    with open(manifest_path, 'r', encoding='utf-8') as f:
         return json.load(f)
 
 
@@ -77,7 +86,7 @@ def load_config_defaults(plugin_dir: Union[str, Path]) -> Dict[str, Any]:
     schema_path = Path(plugin_dir) / 'config_schema.json'
     if not schema_path.exists():
         return {}
-    with open(schema_path, 'r') as f:
+    with open(schema_path, 'r', encoding='utf-8') as f:
         schema = json.load(f)
     return _defaults_from_properties(schema.get('properties', {}))
 
@@ -106,7 +115,7 @@ def load_harness_spec(plugin_dir: Union[str, Path]) -> Dict[str, Any]:
     spec_path = Path(plugin_dir) / 'test' / 'harness.json'
     if not spec_path.exists():
         return {}
-    with open(spec_path, 'r') as f:
+    with open(spec_path, 'r', encoding='utf-8') as f:
         spec = json.load(f)
 
     # Resolve mock_data path and inline its contents for convenience.
@@ -120,7 +129,7 @@ def load_harness_spec(plugin_dir: Union[str, Path]) -> Dict[str, Any]:
                 f"harness.json references mock_data '{mock_rel}' but "
                 f"{mock_path} does not exist"
             )
-        with open(mock_path, 'r') as mf:
+        with open(mock_path, 'r', encoding='utf-8') as mf:
             spec['mock_data_contents'] = json.load(mf)
     return spec
 

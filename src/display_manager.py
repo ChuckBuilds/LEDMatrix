@@ -34,7 +34,7 @@ else:
 from contextlib import contextmanager
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
-from src.common.font_layout import load_truetype
+from src.common.font_layout import crisp_size, load_truetype, resolve_asset_path
 import threading
 import time
 from collections import OrderedDict
@@ -403,7 +403,9 @@ class DisplayManager:
             
             # Initialize font with Press Start 2P
             try:
-                self.font = load_truetype("assets/fonts/PressStart2P-Regular.ttf", 8)
+                self.font = load_truetype(
+                    self._font_asset(self._PRESS_START),
+                    crisp_size(self._PRESS_START, 8))
                 logger.info("Initial Press Start 2P font loaded successfully")
             except Exception as e:
                 logger.error(f"Failed to load initial font: {e}")
@@ -592,9 +594,19 @@ class DisplayManager:
         Pillow had; with the engine pinned it does not, so the rung the
         worst case actually needs is here rather than implied.
         """
+        # The middle rung is on the 7px grid; the bottom one is deliberately
+        # not. 4x6 advances the same whether it is asked for 6 or 7 -- the
+        # dotted quad is 66px at both -- so the middle rung costs no width and
+        # gains the fourth column in every glyph, which is the difference
+        # between reading an address off a wall and guessing at it. The 5 rung
+        # is the exception this screen needs: it drops the advance to 4px and
+        # the quad to 51px, the only rung that fits a 64px panel, and no
+        # on-grid size does that. It is the one place in the core that draws
+        # 4x6 off-grid on purpose.
         candidates = [self.font,
-                      ("assets/fonts/4x6-font.ttf", 6),
-                      ("assets/fonts/4x6-font.ttf", 5)]
+                      (self._font_asset(self._FOUR_BY_SIX),
+                       crisp_size(self._FOUR_BY_SIX, 6)),
+                      (self._font_asset(self._FOUR_BY_SIX), 5)]
         narrowest = None
         for candidate in candidates:
             try:
@@ -966,6 +978,28 @@ class DisplayManager:
         except Exception as e:
             logger.error(f"Error drawing BDF text: {e}", exc_info=True)
 
+    #: The bundled faces, and the size each is *asked* for. Every size here is
+    #: run through `crisp_size`, so a number that drifts off the face's pixel
+    #: grid is snapped rather than rendered anti-aliased -- see the note on
+    #: `extra_small_font` below.
+    _FONT_DIR = "assets/fonts"
+    _PRESS_START = "PressStart2P-Regular.ttf"
+    _FOUR_BY_SIX = "4x6-font.ttf"
+
+    @classmethod
+    def _font_asset(cls, filename: str) -> str:
+        """Install-root-relative path to a bundled face.
+
+        `_load_fonts` named these relative to the process cwd, which holds
+        under the packaged systemd unit (WorkingDirectory is the install root)
+        and nowhere else: the plugin safety harness, `python run.py` from
+        $HOME, or a unit file written without WorkingDirectory all loaded
+        nothing and fell through to `ImageFont.load_default()`. That failure is
+        silent -- the panel just renders in PIL's default face at whatever size
+        the layout was computed for.
+        """
+        return resolve_asset_path(f"{cls._FONT_DIR}/{filename}")
+
     def _load_fonts(self):
         """Load fonts with proper error handling."""
         # Font objects get new id()s after reload, so the text-width cache would
@@ -973,16 +1007,17 @@ class DisplayManager:
         self._text_width_cache.clear()
         try:
             # Load Press Start 2P font
-            self.regular_font = load_truetype("assets/fonts/PressStart2P-Regular.ttf", 8)
+            press_start = self._font_asset(self._PRESS_START)
+            self.regular_font = load_truetype(press_start, crisp_size(self._PRESS_START, 8))
             logger.info("Press Start 2P font loaded successfully")
             
             # Use the same font for small text (currently same size; adjust size here if needed)
-            self.small_font = load_truetype("assets/fonts/PressStart2P-Regular.ttf", 8)
+            self.small_font = load_truetype(press_start, crisp_size(self._PRESS_START, 8))
             logger.info("Press Start 2P small font loaded successfully")
 
             # Load 5x7 BDF font for calendar events
             try:
-                self.calendar_font_path = "assets/fonts/5x7.bdf"
+                self.calendar_font_path = self._font_asset("5x7.bdf")
                 logger.info(f"Attempting to load 5x7 font from: {self.calendar_font_path}")
                 
                 if not os.path.exists(self.calendar_font_path):
@@ -1017,11 +1052,26 @@ class DisplayManager:
             self.bdf_5x7_font = self.calendar_font 
             logger.info(f"Assigned calendar_font (type: {type(self.bdf_5x7_font).__name__}) to bdf_5x7_font.")
 
-            # Load 4x6 font as extra_small_font
+            # Load 4x6 font as extra_small_font.
+            #
+            # Asked for 6 -- the size the face's name suggests -- for years,
+            # and 6 is off its 7px pixel grid. Plugins draw this face with
+            # `draw.fontmode = "1"`, and the mono rasteriser thresholds each
+            # glyph at 50% coverage, so off-grid every glyph came out 3px wide
+            # instead of 4. The lost column deforms the letterforms rather than
+            # merely thinning them: christmas-countdown rendered "UNTIL" as
+            # "VM1JL" and "CHRISTMAS" as "CHAJS1MAS", and zero loses the left
+            # half of its bowl. Those renders were committed as golden images.
+            #
+            # `crisp_size` snaps it to 7. The advance is unchanged -- 5px per
+            # glyph at either size -- so nothing reflows and no layout gets
+            # tighter; a string is at most a pixel or two wider because the
+            # last glyph finally occupies the width it was always given.
             try:
-                font_path = "assets/fonts/4x6-font.ttf"
-                logger.info(f"Attempting to load 4x6 TTF font from: {font_path} at size 6")
-                self.extra_small_font = load_truetype(font_path, 6)
+                font_path = self._font_asset(self._FOUR_BY_SIX)
+                size = crisp_size(self._FOUR_BY_SIX, 6)
+                logger.info(f"Attempting to load 4x6 TTF font from: {font_path} at size {size}")
+                self.extra_small_font = load_truetype(font_path, size)
                 logger.info(f"4x6 TTF extra small font loaded successfully from {font_path}")
             except Exception as font_err:
                 logger.error(f"Failed to load 4x6 TTF font: {font_err}. Falling back.")

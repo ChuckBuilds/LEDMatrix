@@ -35,6 +35,31 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 os.environ['EMULATOR'] = 'true'
 
+
+def _make_output_encoding_safe() -> None:
+    """Stop an unencodable character from killing the run.
+
+    This script's own report is ASCII, but it echoes text it does not control
+    -- plugin ids, mode names and exception messages -- and a Windows console
+    is cp1252, which cannot encode most of what a plugin might put there. The
+    default 'strict' error handler turns that into a UnicodeEncodeError from
+    inside `print`, so a rendering run that had already succeeded exited
+    non-zero with a traceback instead of printing its results.
+
+    'replace' degrades the offending character to '?' and keeps going; the
+    encoding itself is left alone so output still matches the terminal.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors='replace')
+        except (AttributeError, ValueError, OSError):
+            # Not a reconfigurable TextIOWrapper (redirected, wrapped by a
+            # test harness). Nothing to do -- this is best-effort hardening.
+            pass
+
+
+_make_output_encoding_safe()
+
 from src.logging_config import get_logger  # noqa: E402
 from src.plugin_system.testing.loading import (  # noqa: E402
     build_full_config, find_plugin_dir, load_harness_spec, load_manifest,
@@ -178,7 +203,7 @@ def print_report(all_results: Dict[str, List[RenderResult]]) -> bool:
                 status = "PASS"
                 detail = ""
                 if r.golden_checked:
-                    detail = " (golden ✓)"
+                    detail = " (golden ok)"
                 if r.update_error is not None:
                     detail += f" (update warn: {r.update_error})"
                 if r.fill_checked and r.fill_ok is None and r.fill_extent:
@@ -196,7 +221,7 @@ def print_report(all_results: Dict[str, List[RenderResult]]) -> bool:
                     status, detail = "FAIL", f" overflow bbox={r.overflow}"
                 elif r.golden_ok is False:
                     status = "FAIL"
-                    detail = f" golden drift: {r.golden_diff_pixels}px (max Δ={r.golden_max_delta})"
+                    detail = f" golden drift: {r.golden_diff_pixels}px (max delta={r.golden_max_delta})"
                 elif r.fill_ok is False:
                     ex, ey = r.fill_extent or (0.0, 0.0)
                     status = "FAIL"

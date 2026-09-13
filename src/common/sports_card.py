@@ -22,6 +22,10 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 from zoneinfo import ZoneInfo
 
+from src.common.font_layout import (  # noqa: F401 - re-exported, see below
+    FONT_NAME_ALIASES, FONT_PIXEL_GRID, crisp_size,
+)
+
 logger = logging.getLogger(__name__)
 
 __all__ = [
@@ -52,18 +56,12 @@ FAVORITE_RESULT_COLOR_DEFAULTS: Dict[str, Tuple[int, int, int]] = {
     "tie": (255, 200, 0),
 }
 
-#: Family aliases the web UI may write, mapped to the shipped filename.
-FONT_NAME_ALIASES: Dict[str, str] = {
-    "press_start": "PressStart2P-Regular.ttf",
-    "four_by_six": "4x6-font.ttf",
-}
-
-#: Pixel grid each face renders crisply on. Off-grid sizes anti-alias, which
-#: on an LED matrix is a dim lamp rather than a soft edge.
-FONT_PIXEL_GRID: Dict[str, int] = {
-    "PressStart2P-Regular.ttf": 8,
-    "4x6-font.ttf": 7,
-}
+# Re-exported rather than defined: the grid tables and the snapping rule are
+# properties of the font files, which the display core needs too (it loads the
+# same two faces in DisplayManager._load_fonts). They live in
+# src/common/font_layout.py so there is one definition; they stay in this
+# module's namespace and __all__ so the eight scoreboards that delegate to
+# `sports_card.crisp_size` are untouched.
 
 MONTH_ABBR = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
               "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
@@ -355,24 +353,6 @@ def format_game_time(config: Optional[Dict[str, Any]], time_text: str) -> str:
 #: global because each plugin declares its own defaults; keyed rather than
 #: per-class because the helper has no class to hang it on.
 _SCHEMA_FONT_SIZE_CACHE: Dict[str, Dict[str, int]] = {}
-
-
-def crisp_size(font_file, desired, aliases=None, grid_table=None):
-    """Snap *desired* to the nearest size *font_file* renders crisply at.
-
-    A face with no known grid is returned unchanged, so a user-supplied
-    font is never second-guessed.
-
-    ``aliases`` and ``grid_table`` default to the shared tables; a plugin
-    that ships an extra face can pass its own without forking this.
-    """
-    aliases = FONT_NAME_ALIASES if aliases is None else aliases
-    grid_table = FONT_PIXEL_GRID if grid_table is None else grid_table
-    font_file = aliases.get(font_file, font_file)
-    grid = grid_table.get(font_file)
-    if not grid or not desired or desired <= 0:
-        return desired
-    return max(grid, int(round(float(desired) / grid)) * grid)
 
 
 def schema_font_size(schema_path: str, element_key) -> Optional[int]:
