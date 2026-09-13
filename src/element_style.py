@@ -1115,6 +1115,83 @@ def element_color(config: Any, element_key: str,
         return default
 
 
+def _element_field(config: Any, element_key: str, field: str,
+                   mode: Optional[str] = None, in_layout: bool = False):
+    """Raw ``customization[.layout].<element>.<field>``, mode first.
+
+    The shared body behind the stateless visible/align/scale readers. Returns
+    None for "not configured", which every caller turns into its own default --
+    None must not collapse into a value here, because for a mode it is the
+    inherit sentinel.
+    """
+    block = config.get('customization') if isinstance(config, dict) else None
+    block = block if isinstance(block, dict) else {}
+
+    def _read(source):
+        if not isinstance(source, dict):
+            return None
+        holder = source.get('layout') if in_layout else source
+        return _lookup_element(holder, element_key).get(field)
+
+    if mode:
+        modes = block.get('modes')
+        mode_block = modes.get(mode) if isinstance(modes, dict) else None
+        override = _read(mode_block)
+        if override is not None:
+            return override
+    return _read(block)
+
+
+def element_visible(config: Any, element_key: str, default: bool = True,
+                    mode: Optional[str] = None) -> bool:
+    """``customization.<element>.visible``, or *default*.
+
+    The stateless form of the flag :meth:`ElementStyleResolver.style` already
+    resolves, for the scoreboard draw paths that hold a config rather than a
+    resolver.
+    """
+    try:
+        value = _element_field(config, element_key, 'visible', mode)
+        return default if value is None else _coerce_bool(value, default)
+    except Exception as e:
+        logger.warning("Error reading visibility for %s: %s", element_key, e)
+        return default
+
+
+def element_align(config: Any, element_key: str,
+                  default: Optional[str] = None,
+                  mode: Optional[str] = None) -> Optional[str]:
+    """``customization.<element>.align`` ('left'/'center'/'right'), or *default*."""
+    try:
+        value = _element_field(config, element_key, 'align', mode)
+        if value is None:
+            return default
+        # _coerce_align answers None for anything that is not an alignment;
+        # that is "no preference", which means the caller's default.
+        coerced = _coerce_align(value)
+        return default if coerced is None else coerced
+    except Exception as e:
+        logger.warning("Error reading alignment for %s: %s", element_key, e)
+        return default
+
+
+def element_scale(config: Any, element_key: str, default: float = 1.0,
+                  mode: Optional[str] = None) -> float:
+    """``customization.layout.<element>.scale``, or *default*.
+
+    Scale sits in the layout block beside the offsets, because it positions and
+    sizes rather than styles -- a logo has no font or colour but is very much
+    something users want smaller.
+    """
+    try:
+        value = _element_field(config, element_key, 'scale', mode,
+                               in_layout=True)
+        return default if value is None else _coerce_scale(value, default)
+    except Exception as e:
+        logger.warning("Error reading scale for %s: %s", element_key, e)
+        return default
+
+
 class ElementStyleResolver:
     """Resolves per-element user styling against schema defaults.
 

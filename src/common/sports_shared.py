@@ -191,7 +191,8 @@ class SportsCoreSharedMixin:
             img = Image.new("RGB", (self.display_width, self.display_height), (0, 0, 0))
             draw = ImageDraw.Draw(img)
             status = game.get("status_text", "N/A")
-            self._draw_text_with_outline(draw, status, (2, 2), self.fonts["status"])
+            self._draw_text_with_outline(draw, status, (2, 2), self.fonts["status"],
+                                         element="status_text")
             self.display_manager.image.paste(img, (0, 0))
             # Don't call update_display here, let subclasses handle it after drawing
         except Exception as e:
@@ -507,8 +508,10 @@ class SportsCoreSharedMixin:
                         + self._get_layout_offset('score', 'x_offset'))
                 vs_y = (center_y - 3
                         + self._get_layout_offset('score', 'y_offset'))
+                vs_x = self._aligned_x('score_text', vs_width, width, vs_x)
                 self._draw_text_with_outline(
-                    draw, vs_text, (vs_x, vs_y), self.fonts["score"]
+                    draw, vs_text, (vs_x, vs_y), self.fonts["score"],
+                    element="score_text"
                 )
 
         # "vs" and "none" both push the date and time out to the edges, time
@@ -783,6 +786,46 @@ class SportsCoreSharedMixin:
         return _shared(self.config, element, default,
                        getattr(self, "SKIN_MODE", None))
 
+    def _element_visible(self, element: str, default: bool = True) -> bool:
+        """Whether ``customization.<element>.visible`` allows this draw.
+
+        Mode-aware like the colour read, so a user can hide the records on the
+        recent card and keep them on the upcoming one.
+        """
+        from src.element_style import element_visible
+        return element_visible(self.config, element, default,
+                               getattr(self, "SKIN_MODE", None))
+
+    def _element_align(self, element: str, default: Optional[str] = None):
+        """``customization.<element>.align``: 'left', 'center' or 'right'."""
+        from src.element_style import element_align
+        return element_align(self.config, element, default,
+                             getattr(self, "SKIN_MODE", None))
+
+    def _element_scale(self, element: str, default: float = 1.0) -> float:
+        """``customization.layout.<element>.scale`` -- logos, mostly."""
+        from src.element_style import element_scale
+        return element_scale(self.config, element, default,
+                             getattr(self, "SKIN_MODE", None))
+
+    def _aligned_x(self, element: str, text_width: float, container_width: int,
+                   centered_x: float) -> float:
+        """Where a run of text starts, honouring ``align``.
+
+        Unset means "leave it exactly where it was", so this returns the
+        caller's own x rather than re-deriving a centre: these draws have
+        accumulated per-sport nudges and a centre computed here would not be
+        the same pixel.
+        """
+        align = self._element_align(element)
+        if not align:
+            return centered_x
+        if align == 'left':
+            return 0
+        if align == 'right':
+            return max(0, container_width - text_width)
+        return centered_x
+
     def _unshare_element_fonts(self, fonts):
         """Give each colourable element its own face object.
 
@@ -824,25 +867,31 @@ class SportsCoreSharedMixin:
     def _font_color(self, font, default: Tuple[int, int, int] = (255, 255, 255)):
         """Colour for whichever element owns this face.
 
-        Matched on identity, and deliberately gives up when one object is
-        shared: the last-resort font path can hand the same face to several
-        keys, and there is no right answer for which element's colour that is.
-        White is what those draws used before, so ambiguity costs nothing.
+        The fallback for draw sites that were only ever handed a font. Prefer
+        ``element=`` on :meth:`_draw_text_with_outline`, which needs none of
+        this. Shared with the scroll card's copy so the narrowing rule that
+        rescues bitmap-font colours lives in one place; the element vocabulary
+        stays this class's own, because its map says ``team_text`` where
+        sports_card's says ``team_name``.
         """
-        try:
-            fonts = getattr(self, "fonts", None) or {}
-            matches = [element for key, element in self._ELEMENT_FOR_FONT.items()
-                       if fonts.get(key) is font]
-            if len(matches) == 1:
-                return self._element_color(matches[0], default)
-        except (AttributeError, TypeError):
-            pass
-        return default
+        from src.common.sports_card import resolve_font_color
+        return resolve_font_color(
+            getattr(self, "config", None), getattr(self, "fonts", None), font,
+            default, self._ELEMENT_FOR_FONT, getattr(self, "SKIN_MODE", None))
 
     def _draw_text_with_outline(
-        self, draw, text, position, font, fill=None, outline_color=(0, 0, 0)
+        self, draw, text, position, font, fill=None, outline_color=(0, 0, 0),
+        element=None
     ):
-        """Draw text with a black outline for better readability."""
+        """Draw text with a black outline for better readability.
+
+        Pass ``element`` (``"score_text"``, ``"status_text"``, ...) wherever the
+        caller knows what it is drawing: the colour is then read by name, which
+        is exact. Without it the colour has to be inferred from the identity of
+        the font object, which cannot tell two elements apart when they share a
+        face -- the case every bitmap font is in, because a ``freetype.Face``
+        cannot be re-instantiated.
+        """
         # Disable anti-aliasing: pixel/bitmap fonts (e.g. PressStart2P) get
         # anti-aliased into dim partial-lit pixels on a 1:1 LED matrix, muddying
         # glyphs. 1-bit mode keeps strokes crisp.
@@ -852,7 +901,14 @@ class SportsCoreSharedMixin:
         # and they only ever changed the font. An explicit fill still wins:
         # the odds colours and the favourite-result score tint mean something
         # the palette does not.
-        if fill is None:
+        if element is not None:
+            # Named, so both questions can be answered exactly: whether this
+            # element is meant to be on screen at all, and what colour it is.
+            if not self._element_visible(element):
+                return
+            if fill is None:
+                fill = self._element_color(element)
+        elif fill is None:
             fill = self._font_color(font)
         draw.fontmode = "1"
         x, y = position

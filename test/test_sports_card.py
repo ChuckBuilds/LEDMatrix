@@ -65,11 +65,37 @@ class TestColour:
         cfg = {"customization": {"score_text": {"text_color": [4, 5, 6]}}}
         assert C.font_color(cfg, {"score": a, "team": b}, a) == (4, 5, 6)
 
-    def test_a_shared_face_gives_up_rather_than_guessing(self):
-        """One object used for two elements has no single right colour."""
+    def test_a_shared_face_takes_the_one_colour_that_was_configured(self):
+        """A face shared by two elements used to go out white even when only
+        one of them had a colour set -- and a bitmap face is *always* shared,
+        because a freetype.Face cannot be re-instantiated to un-share it. That
+        is how an element in any of the 32 shipped BDF fonts silently lost the
+        colour its picker had offered all along. One configured colour among
+        the sharers is the only thing the user can have meant."""
         shared = object()
         cfg = {"customization": {"score_text": {"text_color": [4, 5, 6]}}}
-        assert C.font_color(cfg, {"score": shared, "team": shared}, shared) == (255, 255, 255)
+        assert C.font_color(cfg, {"score": shared, "team": shared},
+                            shared) == (4, 5, 6)
+
+    def test_a_shared_face_still_gives_up_when_the_colours_disagree(self):
+        """Two different answers is the case with no right answer."""
+        shared = object()
+        cfg = {"customization": {"score_text": {"text_color": [4, 5, 6]},
+                                 "team_name": {"text_color": [7, 8, 9]}}}
+        assert C.font_color(cfg, {"score": shared, "team": shared},
+                            shared) == (255, 255, 255)
+
+    def test_sharers_that_agree_resolve_to_that_colour(self):
+        shared = object()
+        cfg = {"customization": {"score_text": {"text_color": [4, 5, 6]},
+                                 "team_name": {"text_color": [4, 5, 6]}}}
+        assert C.font_color(cfg, {"score": shared, "team": shared},
+                            shared) == (4, 5, 6)
+
+    def test_an_unconfigured_shared_face_keeps_the_default(self):
+        shared = object()
+        assert C.font_color({}, {"score": shared, "team": shared}, shared,
+                            (9, 9, 9)) == (9, 9, 9)
 
 
 class TestFavourites:

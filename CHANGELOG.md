@@ -37,6 +37,20 @@ ships this):
   says `score`, and `records`/`record` and `status_text`/`status` split seven
   to two across the published schemas. A lookup tries the exact name first, so
   this is inert for a config that already matches.
+- `src.element_style.element_visible(config, element, default, mode)`,
+  `element_align(...)` and `element_scale(...)` — the stateless reads for the
+  three knobs the resolver already understood but no draw path consumed, so an
+  element could be marked hidden in the web UI and still render.
+- `SportsCoreSharedMixin._draw_text_with_outline(..., element="score_text")` —
+  naming the element resolves its colour by name and honours its visibility
+  toggle. Without a name the colour is inferred from font-object identity,
+  which cannot separate two elements sharing a face; that is the case every
+  bitmap font is in, because a `freetype.Face` cannot be re-instantiated, and
+  it is how a BDF-rendered element silently lost a configured colour. Shared
+  faces now resolve when exactly one sharer has a colour set.
+- `LogoHelper.load_logo(..., scale=)` — applies a user's image scale, and keys
+  the cache on the scaled box so two elements scaled differently cannot be
+  served each other's image.
 - `src.element_style.native_bdf_size(font)` — the one pixel size a bitmap font
   can render at, or None for a scalable one. The web UI needs this to know
   whether a size control can take effect at all.

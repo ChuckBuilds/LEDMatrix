@@ -113,24 +113,57 @@ def element_color(config: Optional[Dict[str, Any]], element: str,
     return _shared(config, element, default, mode)
 
 
-def font_color(config: Optional[Dict[str, Any]], fonts: Optional[Dict[str, Any]],
-               font, default: Tuple[int, int, int] = (255, 255, 255)):
+def resolve_font_color(config: Optional[Dict[str, Any]],
+                       fonts: Optional[Dict[str, Any]], font,
+                       default: Tuple[int, int, int],
+                       element_for_font: Dict[str, str],
+                       mode: Optional[str] = None):
     """Colour for whichever element owns this face.
 
-    Matched on identity, and deliberately gives up when one object is
-    shared: the last-resort font path can hand the same face to several
-    keys, and there is no right answer for which element's colour that is.
-    White is what those draws used before, so ambiguity costs nothing.
+    Identity matching is a stand-in for the element name, used where the draw
+    site only ever received a font. Prefer ``element=`` on the draw call; this
+    is the fallback for the sites that have not been annotated yet.
+
+    One object can legitimately belong to several elements -- a size resolver
+    can land two of them on the same face, and a BDF face cannot be un-shared
+    at all because ``freetype.Face`` objects cannot be rebuilt from a path.
+    Those draws used to go out white, which is how an element rendered in any
+    of the 32 shipped bitmap fonts could silently lose a colour the user had
+    set. So ambiguity is now narrowed before it is given up on: among the
+    elements sharing a face, a single configured colour is the only thing the
+    user can have meant, and several that agree mean the same thing. Only a
+    genuine disagreement falls back to *default*.
+
+    The element vocabulary is a parameter because the two callers disagree
+    about it -- the mixin's map says ``team_text`` where this module's says
+    ``team_name`` -- and quietly re-pointing either at the other's names would
+    change which colour setting a live install honours.
     """
     try:
         fonts = fonts or {}
-        matches = [element for key, element in ELEMENT_FOR_FONT.items()
+        matches = [element for key, element in element_for_font.items()
                    if fonts.get(key) is font]
         if len(matches) == 1:
-            return element_color(config, matches[0], default)
+            return element_color(config, matches[0], default, mode)
+        if len(matches) > 1:
+            configured = []
+            for element in matches:
+                colour = element_color(config, element, None, mode)
+                if colour is not None and colour not in configured:
+                    configured.append(colour)
+            if len(configured) == 1:
+                return configured[0]
     except (AttributeError, TypeError):
         pass
     return default
+
+
+def font_color(config: Optional[Dict[str, Any]], fonts: Optional[Dict[str, Any]],
+               font, default: Tuple[int, int, int] = (255, 255, 255),
+               mode: Optional[str] = None):
+    """Colour for whichever element owns this face, by this module's map."""
+    return resolve_font_color(config, fonts, font, default, ELEMENT_FOR_FONT,
+                              mode)
 
 
 def coerce_rgb(value, fallback):
