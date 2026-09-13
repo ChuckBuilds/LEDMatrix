@@ -77,7 +77,7 @@ def resolve_asset_path(relative_path: str) -> str:
     file written without ``WorkingDirectory``) silently loses every font and
     degrades to PIL's default face.
     """
-    if os.path.exists(relative_path):
+    if os.path.isabs(relative_path) and os.path.exists(relative_path):
         return relative_path
     candidate = _INSTALL_ROOT / relative_path
     if candidate.exists():

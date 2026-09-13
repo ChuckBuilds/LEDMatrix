@@ -98,6 +98,30 @@ class TestAssetPathsIgnoreTheWorkingDirectory:
         )
         assert out.stdout.strip() == "True", out.stderr
 
+    def test_a_same_named_file_in_the_cwd_does_not_shadow_the_bundled_asset(
+        self, tmp_path,
+    ):
+        # A relative path is a repo-relative asset name, not a cwd-relative
+        # one: an unrelated decoy that happens to sit at the same relative
+        # path in whatever directory the process was started from must not
+        # be preferred over the real bundled font.
+        decoy_dir = tmp_path / "assets" / "fonts"
+        decoy_dir.mkdir(parents=True)
+        decoy = decoy_dir / FOUR_BY_SIX
+        decoy.write_bytes(b"not a real font")
+        code = (
+            "from src.common.font_layout import resolve_asset_path;"
+            "print(resolve_asset_path('assets/fonts/4x6-font.ttf'))"
+        )
+        env = dict(os.environ, PYTHONPATH=str(PROJECT_ROOT))
+        out = subprocess.run(  # nosec B603 - fixed argv, no shell
+            [sys.executable, "-c", code],
+            cwd=tmp_path, env=env, capture_output=True, text=True, timeout=120,
+        )
+        resolved = out.stdout.strip()
+        assert resolved != str(decoy), out.stderr
+        assert resolved == str(PROJECT_ROOT / "assets" / "fonts" / FOUR_BY_SIX)
+
     def test_an_absolute_path_is_returned_untouched(self):
         absolute = str(PROJECT_ROOT / "assets" / "fonts" / FOUR_BY_SIX)
         assert resolve_asset_path(absolute) == absolute
