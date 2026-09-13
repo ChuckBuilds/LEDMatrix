@@ -763,6 +763,12 @@ def _adopt_handwritten_block(schema: Dict[str, Any],
 
     for key in element_keys:
         _upgrade_font_property(props[key])
+        # Marked like a declared element, so consumers can tell the style
+        # blocks from whatever else the plugin keeps under customization.
+        # Football's block also holds favorite_result_colors, which is a
+        # feature with its own fields -- without this the editor treats it
+        # as an element and every row grows an "enabled"/"win color" column.
+        props[key]['x-style-managed'] = True
 
     modes = customization.get('x-style-modes')
     if isinstance(modes, list) and modes:
@@ -904,11 +910,14 @@ def _normalize_color(value: Any) -> Optional[Tuple[int, int, int]]:
         return None
     if isinstance(value, (list, tuple)) and len(value) == 3:
         try:
-            rgb = tuple(int(c) for c in value)
+            # Clamped, not rejected. The readers this replaced clamped
+            # (sports_card.coerce_rgb), and the eight scoreboards' own tests
+            # pin it: a configured [999, -5, 20] is a typo'd bright red, and
+            # answering "unusable, take the default" turned it white instead.
+            rgb = tuple(max(0, min(255, int(c))) for c in value)
         except (TypeError, ValueError):
             return None
-        if all(0 <= c <= 255 for c in rgb):
-            return rgb  # type: ignore[return-value]
+        return rgb  # type: ignore[return-value]
     return None
 
 
