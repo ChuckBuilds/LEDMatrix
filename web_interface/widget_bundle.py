@@ -44,6 +44,7 @@ BUNDLE_ORDER = [
     "textarea.js",
     "select-dropdown.js",
     "font-selector.js",
+    "style-editor.js",
     "toggle-switch.js",
     "radio-group.js",
     "date-picker.js",

@@ -22,6 +22,10 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 from zoneinfo import ZoneInfo
 
+from src.common.font_layout import (  # noqa: F401 - re-exported, see below
+    FONT_NAME_ALIASES, FONT_PIXEL_GRID, crisp_size,
+)
+
 logger = logging.getLogger(__name__)
 
 __all__ = [
@@ -52,18 +56,12 @@ FAVORITE_RESULT_COLOR_DEFAULTS: Dict[str, Tuple[int, int, int]] = {
     "tie": (255, 200, 0),
 }
 
-#: Family aliases the web UI may write, mapped to the shipped filename.
-FONT_NAME_ALIASES: Dict[str, str] = {
-    "press_start": "PressStart2P-Regular.ttf",
-    "four_by_six": "4x6-font.ttf",
-}
-
-#: Pixel grid each face renders crisply on. Off-grid sizes anti-alias, which
-#: on an LED matrix is a dim lamp rather than a soft edge.
-FONT_PIXEL_GRID: Dict[str, int] = {
-    "PressStart2P-Regular.ttf": 8,
-    "4x6-font.ttf": 7,
-}
+# Re-exported rather than defined: the grid tables and the snapping rule are
+# properties of the font files, which the display core needs too (it loads the
+# same two faces in DisplayManager._load_fonts). They live in
+# src/common/font_layout.py so there is one definition; they stay in this
+# module's namespace and __all__ so the eight scoreboards that delegate to
+# `sports_card.crisp_size` are untouched.
 
 MONTH_ABBR = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
               "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
@@ -99,38 +97,71 @@ def upcoming_center_mode(config: Optional[Dict[str, Any]]) -> str:
 # ---------------------------------------------------------------------------
 
 def element_color(config: Optional[Dict[str, Any]], element: str,
-                  default: Tuple[int, int, int] = (255, 255, 255)):
-    """Per-element text colour from customization.<element>.text_color."""
+                  default: Tuple[int, int, int] = (255, 255, 255),
+                  mode: Optional[str] = None):
+    """Per-element text colour from customization.<element>.text_color.
+
+    Delegated rather than reimplemented: there were two copies of this
+    read and three of the offset read, and the shared one also resolves
+    the element under the names plugins actually use (the layout block
+    says `score` where the style block says `score_text`) and honours a
+    per-mode override. Hex strings are still accepted.
+    """
+    from src.element_style import element_color as _shared
+    return _shared(config, element, default, mode)
+
+
+def resolve_font_color(config: Optional[Dict[str, Any]],
+                       fonts: Optional[Dict[str, Any]], font,
+                       default: Tuple[int, int, int],
+                       element_for_font: Dict[str, str],
+                       mode: Optional[str] = None):
+    """Colour for whichever element owns this face.
+
+    Identity matching is a stand-in for the element name, used where the draw
+    site only ever received a font. Prefer ``element=`` on the draw call; this
+    is the fallback for the sites that have not been annotated yet.
+
+    One object can legitimately belong to several elements -- a size resolver
+    can land two of them on the same face, and a BDF face cannot be un-shared
+    at all because ``freetype.Face`` objects cannot be rebuilt from a path.
+    Those draws used to go out white, which is how an element rendered in any
+    of the 32 shipped bitmap fonts could silently lose a colour the user had
+    set. So ambiguity is now narrowed before it is given up on: among the
+    elements sharing a face, a single configured colour is the only thing the
+    user can have meant, and several that agree mean the same thing. Only a
+    genuine disagreement falls back to *default*.
+
+    The element vocabulary is a parameter because the two callers disagree
+    about it -- the mixin's map says ``team_text`` where this module's says
+    ``team_name`` -- and quietly re-pointing either at the other's names would
+    change which colour setting a live install honours.
+    """
     try:
-        cfg = (config or {}).get("customization", {}).get(element, {})
-        value = cfg.get("text_color")
-        if isinstance(value, (list, tuple)) and len(value) == 3:
-            return tuple(max(0, min(255, int(c))) for c in value)
-        if isinstance(value, str) and value.startswith("#") and len(value) == 7:
-            return tuple(int(value[i:i + 2], 16) for i in (1, 3, 5))
-    except (TypeError, ValueError):
+        fonts = fonts or {}
+        matches = [element for key, element in element_for_font.items()
+                   if fonts.get(key) is font]
+        if len(matches) == 1:
+            return element_color(config, matches[0], default, mode)
+        if len(matches) > 1:
+            configured = []
+            for element in matches:
+                colour = element_color(config, element, None, mode)
+                if colour is not None and colour not in configured:
+                    configured.append(colour)
+            if len(configured) == 1:
+                return configured[0]
+    except (AttributeError, TypeError):
         pass
     return default
 
 
 def font_color(config: Optional[Dict[str, Any]], fonts: Optional[Dict[str, Any]],
-               font, default: Tuple[int, int, int] = (255, 255, 255)):
-    """Colour for whichever element owns this face.
-
-    Matched on identity, and deliberately gives up when one object is
-    shared: the last-resort font path can hand the same face to several
-    keys, and there is no right answer for which element's colour that is.
-    White is what those draws used before, so ambiguity costs nothing.
-    """
-    try:
-        fonts = fonts or {}
-        matches = [element for key, element in ELEMENT_FOR_FONT.items()
-                   if fonts.get(key) is font]
-        if len(matches) == 1:
-            return element_color(config, matches[0], default)
-    except (AttributeError, TypeError):
-        pass
-    return default
+               font, default: Tuple[int, int, int] = (255, 255, 255),
+               mode: Optional[str] = None):
+    """Colour for whichever element owns this face, by this module's map."""
+    return resolve_font_color(config, fonts, font, default, ELEMENT_FOR_FONT,
+                              mode)
 
 
 def coerce_rgb(value, fallback):
@@ -357,24 +388,6 @@ def format_game_time(config: Optional[Dict[str, Any]], time_text: str) -> str:
 _SCHEMA_FONT_SIZE_CACHE: Dict[str, Dict[str, int]] = {}
 
 
-def crisp_size(font_file, desired, aliases=None, grid_table=None):
-    """Snap *desired* to the nearest size *font_file* renders crisply at.
-
-    A face with no known grid is returned unchanged, so a user-supplied
-    font is never second-guessed.
-
-    ``aliases`` and ``grid_table`` default to the shared tables; a plugin
-    that ships an extra face can pass its own without forking this.
-    """
-    aliases = FONT_NAME_ALIASES if aliases is None else aliases
-    grid_table = FONT_PIXEL_GRID if grid_table is None else grid_table
-    font_file = aliases.get(font_file, font_file)
-    grid = grid_table.get(font_file)
-    if not grid or not desired or desired <= 0:
-        return desired
-    return max(grid, int(round(float(desired) / grid)) * grid)
-
-
 def schema_font_size(schema_path: str, element_key) -> Optional[int]:
     """The font_size this plugin's config_schema.json declares, or None.
 
@@ -448,7 +461,7 @@ def unshare_element_fonts(logger, fonts):
     path) are left shared, and their draws stay white as before.
     """
     try:
-        from PIL import ImageFont as _IF
+        from src.common.font_layout import load_truetype as _load
     except ImportError:  # pragma: no cover
         return fonts
     seen = {}
@@ -463,7 +476,7 @@ def unshare_element_fonts(logger, fonts):
         if not path or not size:
             continue
         try:
-            fonts[key] = _IF.truetype(path, size)
+            fonts[key] = _load(path, size)
         except (OSError, ValueError, TypeError):
             logger.debug(
                 "Could not un-share the %s face; it keeps the default colour", key)

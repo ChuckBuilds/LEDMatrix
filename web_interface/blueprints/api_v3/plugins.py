@@ -5,12 +5,13 @@ endpoint names are unchanged by living here.
 """
 from web_interface.blueprints.api_v3 import (
     ErrorCode, OperationType, PROJECT_ROOT, Path, Response,
-    _CALENDAR_LIST_MAX_PAGES, _SKIP_FIELD, _coerce_to_bool,
+    _CALENDAR_LIST_MAX_PAGES, _RENDERED_SECTION_FIELD, _SKIP_FIELD, _coerce_to_bool,
     _do_transactional_uninstall, _enhance_schema_with_core_properties,
     _filter_config_by_schema, _get_plugin_version, _get_schema_property,
     _installed_plugin_ids, _is_plugin_update_available,
     _parse_form_value_with_schema, _prune_credential_backups,
-    _run_calendar_registration, _set_missing_booleans_to_false,
+    _run_calendar_registration, _schema_allows_null, _schema_type_is,
+    _set_missing_booleans_to_false,
     _set_nested_value, _starlark_virtual_plugins, _toggle_starlark_app,
     api_v3, datetime, deep_merge, describe_exception, error_response,
     find_secret_fields, hashlib, json, jsonify, logger, logging,
@@ -1729,6 +1730,11 @@ def save_plugin_config():
             # Convert form data to config dict
             # Form fields can use dot notation for nested values (e.g., "transition.type")
             form_data = request.form.to_dict()
+            # Meta fields describe the submission, they are not config paths.
+            # Unknown keys are otherwise written straight into config.json by
+            # the non-indexed pass below.
+            form_data = {k: v for k, v in form_data.items()
+                         if not k.startswith('__')}
 
             # First pass: handle bracket notation array fields (e.g., "field_name[]" from checkbox-group)
             # These fields use getlist() to preserve all values, then replace in form_data
@@ -1781,7 +1787,7 @@ def save_plugin_config():
                         if last_part.isdigit():
                             # Get schema property for the base path to verify it's an array
                             base_prop = _get_schema_property(schema, base_path)
-                            if base_prop and base_prop.get('type') == 'array':
+                            if base_prop and _schema_type_is(base_prop, 'array'):
                                 # This is an array index field
                                 index = int(last_part)
                                 if base_path not in array_fields:
@@ -1796,6 +1802,16 @@ def save_plugin_config():
                 # Sort by index and extract values
                 index_values.sort(key=lambda x: x[0])
                 values = [v for _, v in index_values]
+                # Every channel blank on a nullable field means "unset", not
+                # an empty array: joining them would produce ", , ", which
+                # parses to [] and then fails the minItems the array
+                # declares. This is how a per-mode colour override says
+                # "inherit the base colour".
+                base_prop_for_null = _get_schema_property(schema, base_path)
+                if (_schema_allows_null(base_prop_for_null)
+                        and all(str(v).strip() == '' for v in values)):
+                    _set_nested_value(plugin_config, base_path, None)
+                    continue
                 # Combine values into comma-separated string for parsing
                 combined_value = ', '.join(str(v) for v in values)
                 # Parse as array using schema
@@ -2078,7 +2094,14 @@ def save_plugin_config():
             # Walk the schema and set any boolean fields missing from form data to False.
             if schema and 'properties' in schema:
                 form_keys = set(request.form.keys())
-                _set_missing_booleans_to_false(plugin_config, schema['properties'], form_keys)
+                # The rendered form reports which top-level sections it drew, so
+                # an unchecked box can be told apart from a field the caller
+                # never had in front of it. A caller that sends none gets the
+                # evidence-based fallback in _boolean_is_in_scope.
+                rendered_sections = set(request.form.getlist(_RENDERED_SECTION_FIELD))
+                _set_missing_booleans_to_false(
+                    plugin_config, schema['properties'], form_keys,
+                    sections=rendered_sections or None)
 
         # Get schema manager instance (for JSON requests)
         schema_mgr = api_v3.schema_manager

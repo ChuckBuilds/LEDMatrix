@@ -38,7 +38,7 @@ import time
 from collections import OrderedDict
 from pathlib import Path
 from PIL import ImageFont
-from src.common.font_layout import load_truetype
+from src.common.font_layout import load_truetype, resolve_asset_path
 from typing import Dict, Tuple, Optional, Union, Any, List
 
 logger = logging.getLogger(__name__)
@@ -665,20 +665,14 @@ class FontManager:
     def _resolve_asset_path(relative_path: str) -> str:
         """Resolve a repo-relative asset path independently of the process cwd.
 
-        Prefers the working directory (preserving behavior when the process
-        runs from the install root), then falls back to the install root
-        derived from this module's own location. Without the fallback, any
-        process started outside the install root (e.g. the plugin safety
-        harness on CI) silently loses every font and degrades to PIL's
-        default face.
+        Thin delegate to :func:`src.common.font_layout.resolve_asset_path`,
+        which holds the one definition (``DisplayManager._load_fonts`` needs
+        the same resolution and must not import this class for it). The method
+        stays because plugins probe for it by name to share the core's notion
+        of "install root" -- see the `_resolve_font_path` helpers in the
+        scoreboard plugins.
         """
-        if os.path.exists(relative_path):
-            return relative_path
-        install_root = Path(__file__).resolve().parent.parent
-        candidate = install_root / relative_path
-        if candidate.exists():
-            return str(candidate)
-        return relative_path
+        return resolve_asset_path(relative_path)
 
     def _initialize_fonts(self):
         """Initialize font catalog and validate configuration."""

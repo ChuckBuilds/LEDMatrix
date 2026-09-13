@@ -374,3 +374,91 @@ class TestPluginDirIsToldNotDeduced:
         assert host._schema_font_size("score") == 16, (
             "without the schema this is None, which is what made a configured "
             "size look user-chosen and skipped the grid snap")
+class TestUnshareKeepsTheLayoutEngine:
+    """``_unshare_element_fonts`` rebuilds a face; the rebuild must be pinned.
+
+    This body did move verbatim from the plugins, but it is the one that
+    rebuilds a font, and it rebuilt through bare ``ImageFont.truetype`` --
+    taking PIL's default layout engine rather than the one
+    ``src.common.font_layout`` pins. Raqm and Basic disagree on fractional
+    advances, so a re-instantiated face could measure differently from the
+    shared face it replaced, on any machine where Raqm is installed. That is
+    invisible on a Raqm-less runner, which is why this asserts on the loader
+    rather than on the resulting engine value.
+    """
+
+    def _host(self):
+        import logging
+        return type("H", (SportsCoreSharedMixin,), {
+            "logger": logging.getLogger("test_sports_shared")})()
+
+    def _face(self, size=10):
+        from src.common.font_layout import load_truetype
+        return load_truetype(
+            os.path.join("assets", "fonts", "PressStart2P-Regular.ttf"), size)
+
+    def test_rebuild_goes_through_the_pinned_loader(self, monkeypatch):
+        import src.common.font_layout as fl
+
+        # Built before patching: _face() uses the same loader, so patching
+        # first would let the fixture's own call satisfy the assertion.
+        shared = self._face()
+
+        calls = []
+        real = fl.load_truetype
+
+        def spy(font, size, **kwargs):
+            calls.append((font, size))
+            return real(font, size, **kwargs)
+
+        monkeypatch.setattr(fl, "load_truetype", spy)
+        fonts = {"score": shared, "time": shared}
+        self._host()._unshare_element_fonts(fonts)
+        assert fonts["time"] is not shared, "the duplicate should have been rebuilt"
+        assert calls, "the rebuild must go through the pinned loader"
+
+    def test_rebuilt_face_measures_like_the_one_it_replaced(self):
+        shared = self._face()
+        fonts = {"score": shared, "time": shared}
+        self._host()._unshare_element_fonts(fonts)
+        assert fonts["time"].getlength("88-88") == shared.getlength("88-88")
+
+
+class TestPromotedLayoutOffset:
+    """_get_layout_offset moved here so every scoreboard reads offsets the
+    way the scroll card does.
+
+    Each plugin still carries its own copy in its bundled sports.py, which
+    wins by MRO. That is the migration property: adopting this is a
+    deletion in the plugin, and until that deletion nothing changes.
+    """
+
+    CONFIG = {"customization": {
+        "layout": {"score": {"y_offset": -3}},
+        "modes": {"recent": {"layout": {"score": {"y_offset": 9}}}},
+    }}
+
+    def _host(self, **attrs):
+        return type("H", (SportsCoreSharedMixin,),
+                    dict({"config": self.CONFIG}, **attrs))()
+
+    def test_it_reads_the_configured_offset(self):
+        assert self._host()._get_layout_offset("score", "y_offset") == -3
+
+    def test_it_resolves_through_an_alias(self):
+        """What a plugin gains by deleting its own copy: the style block
+        says score_text where the layout block says score."""
+        assert self._host()._get_layout_offset("score_text", "y_offset") == -3
+
+    def test_skin_mode_selects_the_per_mode_offset(self):
+        assert self._host(SKIN_MODE="recent")._get_layout_offset(
+            "score", "y_offset") == 9
+
+    def test_a_plugins_own_copy_still_wins(self):
+        """Until a plugin deletes its copy, this changes nothing for it."""
+        host = self._host(
+            _get_layout_offset=lambda self, element, axis, default=0: 99)
+        assert host._get_layout_offset("score", "y_offset") == 99
+
+    def test_an_unset_offset_is_the_default(self):
+        assert self._host()._get_layout_offset("nothing", "y_offset", 5) == 5
