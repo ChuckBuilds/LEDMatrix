@@ -280,13 +280,39 @@ In your plugin's `config_schema.json`:
 }
 ```
 
-### Step 3: Widget Loading
+### Step 3: Declare the Widget in `manifest.json`
 
-The widget will be automatically loaded when the plugin configuration form is rendered. The system will:
+The manifest is the allowlist -- a widget is served only if the plugin declares
+it, so shipping a file under `widgets/` does not by itself publish it:
 
-1. Check if widget is registered in the core registry
-2. If not found, attempt to load from plugin directory: `/static/plugin-widgets/[plugin-id]/[widget-name].js`
+```json
+{
+  "widgets": [
+    { "name": "my-custom-widget", "script": "my-custom-widget.js" }
+  ]
+}
+```
+
+`script` is optional and defaults to `[name].js`. It must be a plain filename
+directly inside the plugin's `widgets/` directory.
+
+### Step 4: Widget Loading
+
+The widget is loaded on demand when the config form renders a field that
+references it. The system will:
+
+1. Check if the widget is registered in the core registry
+2. If not, fetch `/static/plugin-widgets/[plugin-id]/[widget-name].js`, which
+   serves the declared script from the plugin's `widgets/` directory
 3. Render the widget using the registered `render` function
+
+The fetch is a dynamic `import()`, so the file must parse as an ES module (a
+plain IIFE does). If anything fails, the field falls back to a plain text input
+holding the current value, so a broken widget never costs the user their
+configured value.
+
+Only `string`-typed fields take this path today; see `docs/widget-guide.md`
+for the full details and limitations.
 
 ## Widget API Reference
 

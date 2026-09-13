@@ -17,6 +17,82 @@ release that ships it.
 accepts both, but the store flags the old spelling as deprecated
 (`store_manager.py`) and only the new one is in `schema/manifest_schema.json`.
 
+## Unreleased
+
+**Per-element display customization, and the last mile of it into the web UI.**
+A user can set the font, size, colour, position, visibility and alignment of
+individual display elements per plugin -- and, where a plugin has display
+modes, separately per mode.
+
+New public API a plugin may import via `src.*` (floor on the release that
+ships this):
+
+- `src.element_style.layout_offset(config, element, axis, default, mode)` and
+  `element_color(config, element, default, mode)` — the stateless reads the
+  scoreboard helpers share. There were three copies of the offset read and two
+  of the colour read; these are the one implementation, and they carry the
+  element-name aliasing and the per-mode lookup.
+- `src.element_style.alias_keys(element)` — the names one element may be stored
+  under. The style block names elements `score_text` while the layout block
+  says `score`, and `records`/`record` and `status_text`/`status` split seven
+  to two across the published schemas. A lookup tries the exact name first, so
+  this is inert for a config that already matches.
+- `src.element_style.native_bdf_size(font)` — the one pixel size a bitmap font
+  can render at, or None for a scalable one. The web UI needs this to know
+  whether a size control can take effect at all.
+- `ElementStyleResolver(config, defaults, mode=...)` plus `visible`, `align`
+  and `scale` on `ElementStyle`. The mode binds to the resolver rather than
+  being passed per call, so a plugin with one instance per mode makes every
+  existing lookup mode-aware by setting one class attribute.
+- `BasePlugin.styles` / `styles_for(mode)` / `STYLE_MODE` — the accessor every
+  plugin inherits, so adopting this is no longer a guarded import plus schema
+  discovery plus resolver invalidation in each plugin.
+- `SportsCoreSharedMixin._get_layout_offset` — promoted from the plugins'
+  bundled copies. Each still carries its own, which wins by MRO, so adopting
+  it is a deletion.
+
+Schema and web UI:
+
+- A `customization` block is now rendered by a composite style editor: one row
+  per element rather than nested accordions, with a tab per declared mode.
+  Plugins that hand-wrote their style blocks get it without a plugin release;
+  `x-style-elements` and `x-style-modes` declare it compactly.
+- Font fields become a real picker rather than a hardcoded `enum`, so a font
+  the user uploads is selectable. Bitmap fonts taller than the element's
+  declared size ceiling are filtered out, because a bitmap font ignores
+  `font_size` and renders at its own size.
+- `/static/plugin-widgets/<plugin>/<widget>.js` serves a plugin's own web-UI
+  widgets. The client half and the docs already existed; nothing served them.
+
+Fixed:
+
+- A bitmap font asked for a size it has no strike for fell back to
+  *PressStart2P* — a different typeface — rather than to its own native size.
+  32 of the 35 shipped fonts are bitmap, so this was reachable for most font
+  choices.
+- The plugin config form read `config_schema.json` directly while the save
+  route read it through `SchemaManager`. Only the latter expands a compact
+  `x-style-elements` declaration, so a plugin using that form had a
+  customization section that rendered as empty space.
+- `unshare_element_fonts` rebuilt faces through bare `ImageFont.truetype`,
+  bypassing the layout engine `src/common/font_layout.py` pins. These were the
+  only two call sites in `src/` doing so.
+- The form parser compared a schema type to a bare string, so a nullable field
+  (`["array", "null"]`) never had its indexed colour inputs recombined, and a
+  blank one became `[]` rather than null.
+
+Removed:
+
+- The Fonts tab's "Element Font Overrides" panel and its three endpoints. They
+  reported success and saved nothing, and the element keys the panel offered
+  (`nfl.live.score`, `clock.time`) are read by no plugin, so wiring them to the
+  real `FontManager` methods would still have changed nothing on the panel.
+  Per-element font choice now lives in each plugin's own config editor.
+- "Detected Manager Fonts", which listed every installed font with a hardcoded
+  usage count.
+- Two dead client-side config-form renderers in `app-shell.js` (~580 lines) and
+  the legacy `plugins/config_manager.js`, superseded by server-side rendering.
+
 ## 3.3.0
 
 **The release the sports scoreboards floor on to delete their bundled copies.**

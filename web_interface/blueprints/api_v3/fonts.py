@@ -83,6 +83,20 @@ def get_fonts_catalog():
                     # Check if this is a system font (cannot be deleted)
                     is_system = catalog_key.lower() in SYSTEM_FONTS
 
+                    # BDF files are fixed-size bitmap strikes: FreeType
+                    # accepts only the pixel size baked into the file. The
+                    # UI needs to know that before offering a size control,
+                    # or it offers a number that cannot take effect.
+                    native_size = None
+                    if font_type == 'bdf':
+                        try:
+                            from src.element_style import _read_bdf_native_size
+                            native_size = _read_bdf_native_size(str(filepath))
+                        except Exception as e:
+                            logger.debug("Could not read native size for BDF font %s: %s",
+                                         filepath, e)
+                            native_size = None
+
                     catalog[catalog_key] = {
                         'filename': filename,
                         'family_name': family_name,
@@ -90,6 +104,8 @@ def get_fonts_catalog():
                         'path': relative_path,
                         'type': font_type,
                         'is_system': is_system,
+                        'scalable': font_type != 'bdf',
+                        'native_size': native_size,
                         'metadata': metadata if metadata else None
                     }
 
@@ -121,39 +137,6 @@ def get_font_tokens():
             'xxl': 16
         }
         return jsonify({'status': 'success', 'data': {'tokens': tokens}})
-    except Exception as e:
-        logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
-@api_v3.route('/fonts/overrides', methods=['GET'])
-def get_fonts_overrides():
-    """Get font overrides"""
-    try:
-        # This would integrate with the actual font system
-        # For now, return empty overrides
-        overrides = {}
-        return jsonify({'status': 'success', 'data': {'overrides': overrides}})
-    except Exception as e:
-        logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
-@api_v3.route('/fonts/overrides', methods=['POST'])
-def save_fonts_overrides():
-    """Save font overrides"""
-    try:
-        data = request.get_json(silent=True)
-        if not data:
-            return jsonify({'status': 'error', 'message': 'No data provided'}), 400
-
-        # This would integrate with the actual font system
-        return jsonify({'status': 'success', 'message': 'Font overrides saved'})
-    except Exception as e:
-        logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
-@api_v3.route('/fonts/overrides/<element_key>', methods=['DELETE'])
-def delete_font_override(element_key):
-    """Delete font override"""
-    try:
-        # This would integrate with the actual font system
-        return jsonify({'status': 'success', 'message': f'Font override for {element_key} deleted'})
     except Exception as e:
         logger.error('Unhandled exception', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500

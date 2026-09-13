@@ -193,3 +193,122 @@ class TestTables:
 
     def test_month_and_weekday_tables_are_complete(self):
         assert len(C.MONTH_ABBR) == 12 and len(C.WEEKDAY_ABBR) == 7
+
+
+class TestUnshareElementFonts:
+    """Re-instantiated faces must match the ones they replace.
+
+    ``unshare_element_fonts`` rebuilds a duplicate face purely so two elements
+    can be told apart by ``id()``. That is only safe while the rebuilt face
+    lays text out identically -- and PIL's two layout engines disagree on
+    fractional advances, which is why ``src.common.font_layout`` exists and
+    pins one. Rebuilding through bare ``ImageFont.truetype`` took the default
+    engine instead, so a re-instantiated face could measure differently from
+    the shared face it replaced.
+    """
+
+    def _face(self, size=10):
+        from src.common.font_layout import load_truetype
+        path = os.path.join("assets", "fonts", "PressStart2P-Regular.ttf")
+        return load_truetype(path, size)
+
+    def test_rebuilt_face_goes_through_the_pinned_loader(self, log, monkeypatch):
+        """Asserted on the loader, not on the resulting engine value.
+
+        PIL only selects Raqm when it is installed; where it is not, a bare
+        ``ImageFont.truetype`` returns BASIC too, so comparing engine values
+        passes on those machines whether or not the pin is honoured -- this
+        test did exactly that before it was rewritten. Spying on the pinned
+        loader fails on every machine when the pin is bypassed, which is the
+        point: the cross-machine mismatch font_layout exists to prevent
+        cannot be reproduced on a Raqm-less runner.
+        """
+        import src.common.font_layout as fl
+
+        # Build the face BEFORE patching: _face() loads through the same
+        # pinned loader, so patching first would let the fixture's own call
+        # satisfy the assertion and the test would pass either way.
+        shared = self._face()
+
+        calls = []
+        real = fl.load_truetype
+
+        def spy(font, size, **kwargs):
+            calls.append((font, size))
+            return real(font, size, **kwargs)
+
+        monkeypatch.setattr(fl, "load_truetype", spy)
+        fonts = {"score": shared, "time": shared}
+        C.unshare_element_fonts(log, fonts)
+        assert fonts["time"] is not shared, "the duplicate should have been rebuilt"
+        assert calls, "the rebuild must go through the pinned loader"
+
+    def test_rebuilt_face_keeps_the_shared_faces_layout_engine(self, log):
+        shared = self._face()
+        fonts = {"score": shared, "time": shared}
+        C.unshare_element_fonts(log, fonts)
+        assert fonts["time"].layout_engine == shared.layout_engine
+
+    def test_rebuilt_face_measures_identically(self, log):
+        shared = self._face()
+        fonts = {"score": shared, "time": shared}
+        C.unshare_element_fonts(log, fonts)
+        text = "88-88"
+        assert (fonts["time"].getlength(text)
+                == shared.getlength(text)), "metrics must not shift"
+
+    def test_distinct_faces_are_left_alone(self, log):
+        a, b = self._face(10), self._face(8)
+        fonts = {"score": a, "time": b}
+        C.unshare_element_fonts(log, fonts)
+        assert fonts["score"] is a and fonts["time"] is b
+
+class TestSharedElementReaders:
+    """The scoreboards' colour and offset reads now go through one
+    implementation.
+
+    There were two copies of the colour read and three of the offset read.
+    They had already drifted: the scroll-card renderer carries a comment
+    noting it used to ignore offsets its own schema advertised. Sharing one
+    reader is what lets a fix (or an alias, or a per-mode override) reach
+    the full-screen scorebug and the scroll card together.
+    """
+
+    CONFIG = {
+        "customization": {
+            "score_text": {"text_color": [255, 200, 0]},
+            "status": {"text_color": "#00ff00"},
+            "layout": {"score": {"y_offset": -3}},
+            "modes": {
+                "live": {"score_text": {"text_color": [255, 0, 0]},
+                         "layout": {"score": {"y_offset": 7}}},
+            },
+        },
+    }
+
+    def test_colour_reads_the_configured_value(self, log):
+        assert C.element_color(self.CONFIG, "score_text") == (255, 200, 0)
+
+    def test_hex_colours_are_still_accepted(self, log):
+        """These readers have always taken '#RRGGBB' as well as [r, g, b],
+        so the shared one had to learn it rather than the callers losing it."""
+        assert C.element_color(self.CONFIG, "status") == (0, 255, 0)
+
+    def test_colour_resolves_through_an_alias(self, log):
+        """The style block says status_text where this config says status."""
+        assert C.element_color(self.CONFIG, "status_text") == (0, 255, 0)
+
+    def test_a_mode_overrides_the_colour(self, log):
+        assert C.element_color(self.CONFIG, "score_text",
+                               mode="live") == (255, 0, 0)
+
+    def test_an_unset_element_gets_the_default(self, log):
+        assert C.element_color(self.CONFIG, "nothing", (1, 2, 3)) == (1, 2, 3)
+
+    @pytest.mark.parametrize("config", [
+        None, {}, "nonsense", {"customization": "nonsense"},
+        {"customization": {"score_text": "nonsense"}},
+        {"customization": {"score_text": {"text_color": "not a colour"}}},
+    ])
+    def test_a_hostile_config_gives_the_default(self, config, log):
+        assert C.element_color(config, "score_text", (9, 9, 9)) == (9, 9, 9)

@@ -10,6 +10,8 @@ from pathlib import Path
 # Strict allowlists for URL-derived values used in path and script operations.
 _SAFE_PLUGIN_ID_RE = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
 _SAFE_WEB_UI_FILE_RE = re.compile(r'^[a-zA-Z0-9_-]{1,64}\.html$')
+_SAFE_WIDGET_NAME_RE = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
+_SAFE_WIDGET_SCRIPT_RE = re.compile(r'^[a-zA-Z0-9_-]{1,64}\.js$')
 from src.web_interface.secret_helpers import mask_secret_fields
 from src.common.path_safety import resolve_under, safe_path_component
 
@@ -19,6 +21,7 @@ logger = logging.getLogger(__name__)
 config_manager = None
 plugin_manager = None
 plugin_store_manager = None
+schema_manager = None
 
 pages_v3 = Blueprint('pages_v3', __name__)
 
@@ -362,6 +365,119 @@ def serve_plugin_web_ui(plugin_id, filename):
     except Exception:
         logger.error('Error serving plugin web_ui %s/%s', plugin_id, filename, exc_info=True)
         return 'Error serving file', 500, {'Content-Type': 'text/plain'}
+
+
+def _plugin_dir_for(safe_id):
+    """Resolve a sanitised plugin id to its directory, or None.
+
+    Mirrors serve_plugin_web_ui: containment-guarded against the configured
+    plugins directory, with PluginManager's ``ledmatrix-`` prefix fallback.
+    """
+    plugins_base = Path(pages_v3.plugin_manager.plugins_dir).resolve()
+    plugin_dir = resolve_under(plugins_base, safe_id)
+    if plugin_dir is None:
+        raise ValueError('plugin id escapes the plugins directory')
+
+    if not plugin_dir.exists():
+        alt = resolve_under(plugins_base, f'ledmatrix-{safe_id}')
+        if alt is not None:
+            plugin_dir = alt
+    return plugin_dir
+
+
+def _declared_widget_script(plugin_dir, widget_name):
+    """The script filename a plugin's manifest declares for ``widget_name``.
+
+    The manifest is the allowlist: only a widget the plugin actually declares
+    can be served, so this route never exposes arbitrary files under the
+    plugin directory even though the directory itself is attacker-influenced
+    (plugins are user-installed). Returns None when the widget is not
+    declared, the manifest is unreadable, or the declared script name is not
+    a plain ``<name>.js`` basename.
+    """
+    manifest_path = plugin_dir / 'manifest.json'
+    try:
+        with open(manifest_path, 'r', encoding='utf-8') as f:
+            manifest = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(manifest, dict):
+        return None
+
+    for entry in manifest.get('widgets') or ():
+        if not isinstance(entry, dict):
+            continue
+        if entry.get('name') != widget_name:
+            continue
+        script = entry.get('script') or f'{widget_name}.js'
+        if not isinstance(script, str) or not _SAFE_WIDGET_SCRIPT_RE.match(script):
+            return None
+        return script
+    return None
+
+
+@pages_v3.route('/static/plugin-widgets/<plugin_id>/<widget_name>.js')
+def serve_plugin_widget(plugin_id, widget_name):
+    """Serve a plugin-declared widget script from its ``widgets/`` directory.
+
+    This is the server half of ``LEDMatrixWidgets.loadPluginWidget`` (see
+    static/v3/js/widgets/plugin-loader.js), which fetches exactly this path.
+    The loader uses a dynamic ``import()``, so the response must carry a
+    JavaScript MIME type or the browser refuses the module.
+
+    The route is deliberately narrower than the plugin directory: a script is
+    served only when the plugin's own manifest declares a widget by that name,
+    so installing a plugin does not publish everything it ships.
+    """
+    if not _SAFE_PLUGIN_ID_RE.match(plugin_id):
+        return 'Invalid plugin ID', 400, {'Content-Type': 'text/plain'}
+    if not _SAFE_WIDGET_NAME_RE.match(widget_name):
+        return 'Invalid widget name', 400, {'Content-Type': 'text/plain'}
+
+    # safe_path_component is this codebase's sanitiser (src/common/
+    # path_safety.py): it rejects rather than mangles, so a name that is not
+    # a plain path component never reaches the filesystem.
+    safe_id = safe_path_component(plugin_id)
+    safe_widget = safe_path_component(widget_name)
+    if not safe_id or not safe_widget:
+        return 'Invalid path component', 400, {'Content-Type': 'text/plain'}
+
+    if not pages_v3.plugin_manager:
+        return 'Plugin manager not available', 503, {'Content-Type': 'text/plain'}
+
+    try:
+        plugin_dir = _plugin_dir_for(safe_id)
+        if not plugin_dir.exists():
+            return 'Not found', 404, {'Content-Type': 'text/plain'}
+
+        script = _declared_widget_script(plugin_dir, safe_widget)
+        if script is None:
+            # Undeclared is a 404 rather than a 403: whether a plugin happens
+            # to ship an undeclared file is not something to confirm.
+            return 'Not found', 404, {'Content-Type': 'text/plain'}
+
+        widgets_dir = (plugin_dir / 'widgets').resolve()
+        # The script name comes from the plugin's manifest, not the request,
+        # so it gets the same containment treatment the URL parts got.
+        script_path = resolve_under(widgets_dir, script)
+        if script_path is None or not script_path.is_file():
+            return 'Not found', 404, {'Content-Type': 'text/plain'}
+
+        body = script_path.read_text(encoding='utf-8')
+        return body, 200, {
+            'Content-Type': 'text/javascript; charset=utf-8',
+            # Plugin updates replace this file in place; revalidate so a
+            # stale widget cannot outlive the plugin version that shipped it.
+            'Cache-Control': 'no-cache',
+        }
+
+    except ValueError:
+        return 'Forbidden', 403, {'Content-Type': 'text/plain'}
+    except Exception:
+        logger.error('Error serving plugin widget %s/%s', plugin_id, widget_name,
+                     exc_info=True)
+        return 'Error serving file', 500, {'Content-Type': 'text/plain'}
+
 
 def _load_overview_partial():
     """Load overview partial with system stats"""
@@ -715,15 +831,42 @@ def _load_plugin_config_partial(plugin_id):
             except Exception as e:  # nosec B110 - metadata pre-load is optional; schema loads fully below
                 logger.debug("Metadata pre-load skipped for plugin %s: %s", plugin_id, e)
 
-        # Get plugin schema
+        # Get plugin schema.
+        #
+        # Through SchemaManager, not a raw json.load, because that is what
+        # the save route uses (api_v3.save_plugin_config) -- and the two
+        # disagreeing is not academic. SchemaManager applies
+        # expand_style_elements, which turns a compact
+        # customization.x-style-elements declaration into the per-element
+        # blocks this form renders. Reading the file directly meant a plugin
+        # using that form (of-the-day ships one) had a customization section
+        # that rendered nothing at all, while saving still validated against
+        # the expanded shape.
+        #
+        # use_cache=False matches the save route: a plugin's schema changes
+        # on disk during development, and a cached copy would keep serving
+        # the old form.
+        #
+        # The raw read stays as a fallback for callers that never set a
+        # schema_manager (several tests, and any embedder of this blueprint).
         schema = {}
-        schema_path = resolve_under(_plugin_dir, "config_schema.json")
-        if schema_path is not None and schema_path.exists():
+        schema_mgr = getattr(pages_v3, 'schema_manager', None)
+        if schema_mgr is not None:
             try:
-                with open(schema_path, 'r', encoding='utf-8') as f:
-                    schema = json.load(f)
+                schema = schema_mgr.load_schema(plugin_id, use_cache=False) or {}
             except Exception as e:
-                logger.warning("Could not load schema for plugin: %s", e)
+                logger.warning("SchemaManager could not load schema for %s: %s",
+                               plugin_id, e)
+        if not schema:
+            # resolve_under keeps the containment guard main added here; the
+            # SchemaManager path above does its own.
+            schema_path = resolve_under(_plugin_dir, "config_schema.json")
+            if schema_path is not None and schema_path.exists():
+                try:
+                    with open(schema_path, 'r', encoding='utf-8') as f:
+                        schema = json.load(f)
+                except Exception as e:
+                    logger.warning("Could not load schema for plugin: %s", e)
 
         # Get web UI actions from plugin manifest
         web_ui_actions = []

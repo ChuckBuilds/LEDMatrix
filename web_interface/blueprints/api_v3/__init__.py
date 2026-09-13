@@ -808,6 +808,31 @@ def _is_field_required(key_path, schema):
         return field_name in required
 # Sentinel object to indicate a field should be skipped (not set in config)
 _SKIP_FIELD = object()
+
+
+def _schema_type_is(prop, wanted):
+    """Whether a schema property is of ``wanted`` type.
+
+    JSON Schema allows a union (``["array", "null"]``), which the per-element
+    style system uses for its per-mode override fields: null there means
+    "inherit the base", so the type genuinely is "an array or nothing". A
+    bare ``prop.get('type') == 'array'`` reads False for those, which meant
+    the indexed colour inputs a form posts as ``...text_color.0/.1/.2`` were
+    never recombined into a list.
+    """
+    if not isinstance(prop, dict):
+        return False
+    declared = prop.get('type')
+    if isinstance(declared, list):
+        return wanted in declared
+    return declared == wanted
+
+
+def _schema_allows_null(prop):
+    """Whether a schema property's declared type includes null."""
+    return _schema_type_is(prop, 'null')
+
+
 def _parse_form_value_with_schema(value, key_path, schema):
     """
     Parse a form value using schema information to determine correct type.
@@ -828,11 +853,17 @@ def _parse_form_value_with_schema(value, key_path, schema):
 
     # Handle None/empty values
     if value is None or (isinstance(value, str) and value.strip() == ''):
+        # A nullable field left blank means null, not an empty container.
+        # This is the inherit sentinel for per-mode style overrides: an
+        # empty list there would read as "the user chose no colour" rather
+        # than "follow the base element".
+        if _schema_allows_null(prop):
+            return None
         # If schema says it's an array, return empty array instead of None
-        if prop and prop.get('type') == 'array':
+        if prop and _schema_type_is(prop, 'array'):
             return []
         # If schema says it's an object, return empty dict instead of None
-        if prop and prop.get('type') == 'object':
+        if prop and _schema_type_is(prop, 'object'):
             return {}
         # If it's an optional string field, preserve empty string instead of None
         if prop and prop.get('type') == 'string':
@@ -869,7 +900,7 @@ def _parse_form_value_with_schema(value, key_path, schema):
                 return False
 
         # Handle arrays based on schema
-        if prop and prop.get('type') == 'array':
+        if prop and _schema_type_is(prop, 'array'):
             # Try parsing as JSON first (handles "[1,2,3]" format)
             if stripped.startswith('['):
                 try:
@@ -892,7 +923,7 @@ def _parse_form_value_with_schema(value, key_path, schema):
             return []
 
         # Handle objects based on schema
-        if prop and prop.get('type') == 'object':
+        if prop and _schema_type_is(prop, 'object'):
             # Try parsing as JSON
             if stripped.startswith('{'):
                 try:
@@ -995,9 +1026,11 @@ def _set_nested_value(config, key_path, value):
             current[seg] = {}
         current = current[seg]
 
-    # Set the final value (don't overwrite with empty dict if value is None and we want to preserve structure)
-    if value is not None or segments[-1] not in current:
-        current[segments[-1]] = value
+    # Set the final value. _SKIP_FIELD (checked above) is the only sentinel
+    # for "leave the existing value alone" -- an explicit None here is a real
+    # value (e.g. the per-mode "inherit the base" override) and must overwrite
+    # whatever was already stored.
+    current[segments[-1]] = value
 def _set_missing_booleans_to_false(config, schema_props, form_keys, prefix='', config_node=None):
     """Walk schema and set missing boolean form fields to False.
 

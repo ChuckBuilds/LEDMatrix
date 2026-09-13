@@ -256,3 +256,48 @@ class TestContract:
         h._draw_upcoming_center(_draw(), {})
         h._draw_upcoming_game_status(_draw(), {})
         h.set_rankings_cache({})
+
+
+class TestLayoutOffsetsAreShared:
+    """The scroll/Vegas card reads offsets through the same function the
+    full-screen scorebug does.
+
+    This renderer already carries a comment about having ignored offsets its
+    own schema advertised -- it was the third copy of this read. Sharing one
+    means the alias handling and per-mode overrides land here too, without
+    this file knowing about either.
+    """
+
+    CONFIG = {"customization": {
+        "layout": {"score": {"y_offset": -3}},
+        "modes": {"live": {"layout": {"score": {"y_offset": 7}}}},
+    }}
+
+    def _host(self, config, mode=None):
+        attrs = {"config": config}
+        if mode:
+            attrs["SKIN_MODE"] = mode
+        return type("Card", (SportsGameRendererMixin,), attrs)()
+
+    def test_it_reads_the_configured_offset(self):
+        assert self._host(self.CONFIG)._layout_offset("score", "y_offset") == -3
+
+    def test_it_resolves_through_an_alias(self):
+        """A caller asking for score_text finds the layout.score the user
+        configured -- the two namespaces disagree by convention."""
+        assert self._host(self.CONFIG)._layout_offset(
+            "score_text", "y_offset") == -3
+
+    def test_skin_mode_selects_the_per_mode_offset(self):
+        assert self._host(self.CONFIG, "live")._layout_offset(
+            "score", "y_offset") == 7
+
+    def test_a_host_without_a_skin_mode_gets_the_base(self):
+        assert self._host(self.CONFIG)._layout_offset("score", "y_offset") == -3
+
+    @pytest.mark.parametrize("written", [
+        float("inf"), float("nan"), True, "bad", None, [], {},
+    ])
+    def test_nonsense_degrades_to_the_default(self, written):
+        config = {"customization": {"layout": {"score": {"y_offset": written}}}}
+        assert self._host(config)._layout_offset("score", "y_offset", 4) == 4

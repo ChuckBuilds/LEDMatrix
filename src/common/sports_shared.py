@@ -757,18 +757,31 @@ class SportsCoreSharedMixin:
             self.logger.debug("Headline font scaling skipped", exc_info=True)
         return fonts
 
+    def _get_layout_offset(self, element: str, axis: str,
+                           default: int = 0) -> int:
+        """X/Y nudge for one element, from ``customization.layout``.
+
+        Promoted here so every scoreboard reads offsets the same way the
+        scroll card does. Each plugin still carries its own copy in its
+        bundled sports.py, which wins by MRO until that copy is deleted --
+        deleting it is what buys the alias handling (a plugin asking for
+        ``score_text`` finds the ``score`` its users configured) and the
+        per-mode overrides, since this resolves through SKIN_MODE.
+        """
+        from src.element_style import layout_offset
+        return layout_offset(self.config, element, axis, default,
+                             getattr(self, "SKIN_MODE", None))
+
     def _element_color(self, element: str, default: Tuple[int, int, int] = (255, 255, 255)):
-        """Per-element text colour from customization.<element>.text_color."""
-        try:
-            cfg = (self.config or {}).get("customization", {}).get(element, {})
-            value = cfg.get("text_color")
-            if isinstance(value, (list, tuple)) and len(value) == 3:
-                return tuple(max(0, min(255, int(c))) for c in value)
-            if isinstance(value, str) and value.startswith("#") and len(value) == 7:
-                return tuple(int(value[i:i + 2], 16) for i in (1, 3, 5))
-        except (TypeError, ValueError):
-            pass
-        return default
+        """Per-element text colour from customization.<element>.text_color.
+
+        Mode-aware through SKIN_MODE, so Live and Recent instances of the
+        same scoreboard resolve their own colours without any call site
+        passing a mode.
+        """
+        from src.element_style import element_color as _shared
+        return _shared(self.config, element, default,
+                       getattr(self, "SKIN_MODE", None))
 
     def _unshare_element_fonts(self, fonts):
         """Give each colourable element its own face object.
@@ -787,7 +800,7 @@ class SportsCoreSharedMixin:
         path) are left shared, and their draws stay white as before.
         """
         try:
-            from PIL import ImageFont as _IF
+            from src.common.font_layout import load_truetype as _load
         except ImportError:  # pragma: no cover
             return fonts
         seen = {}
@@ -802,7 +815,7 @@ class SportsCoreSharedMixin:
             if not path or not size:
                 continue
             try:
-                fonts[key] = _IF.truetype(path, size)
+                fonts[key] = _load(path, size)
             except (OSError, ValueError, TypeError):
                 self.logger.debug(
                     "Could not un-share the %s face; it keeps the default colour", key)

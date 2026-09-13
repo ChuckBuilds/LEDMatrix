@@ -10,7 +10,8 @@ from web_interface.blueprints.api_v3 import (
     _filter_config_by_schema, _get_plugin_version, _get_schema_property,
     _installed_plugin_ids, _is_plugin_update_available,
     _parse_form_value_with_schema, _prune_credential_backups,
-    _run_calendar_registration, _set_missing_booleans_to_false,
+    _run_calendar_registration, _schema_allows_null, _schema_type_is,
+    _set_missing_booleans_to_false,
     _set_nested_value, _starlark_virtual_plugins, _toggle_starlark_app,
     api_v3, datetime, deep_merge, describe_exception, error_response,
     find_secret_fields, hashlib, json, jsonify, logger, logging,
@@ -1781,7 +1782,7 @@ def save_plugin_config():
                         if last_part.isdigit():
                             # Get schema property for the base path to verify it's an array
                             base_prop = _get_schema_property(schema, base_path)
-                            if base_prop and base_prop.get('type') == 'array':
+                            if base_prop and _schema_type_is(base_prop, 'array'):
                                 # This is an array index field
                                 index = int(last_part)
                                 if base_path not in array_fields:
@@ -1796,6 +1797,16 @@ def save_plugin_config():
                 # Sort by index and extract values
                 index_values.sort(key=lambda x: x[0])
                 values = [v for _, v in index_values]
+                # Every channel blank on a nullable field means "unset", not
+                # an empty array: joining them would produce ", , ", which
+                # parses to [] and then fails the minItems the array
+                # declares. This is how a per-mode colour override says
+                # "inherit the base colour".
+                base_prop_for_null = _get_schema_property(schema, base_path)
+                if (_schema_allows_null(base_prop_for_null)
+                        and all(str(v).strip() == '' for v in values)):
+                    _set_nested_value(plugin_config, base_path, None)
+                    continue
                 # Combine values into comma-separated string for parsing
                 combined_value = ', '.join(str(v) for v in values)
                 # Parse as array using schema

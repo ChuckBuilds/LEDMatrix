@@ -257,6 +257,30 @@
       },
       "description": "Web UI action definitions"
     },
+    "widgets": {
+      "type": "array",
+      "description": "Custom web-UI widgets this plugin provides. Each entry is served at /static/plugin-widgets/<plugin-id>/<name>.js from the plugin's widgets/ directory; only declared widgets are served. Reference one from config_schema.json with \"x-widget\": \"<name>\".",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9_-]{1,64}$",
+            "description": "Widget name, as used in x-widget and in the URL."
+          },
+          "script": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9_-]{1,64}\\.js$",
+            "description": "Filename inside widgets/. Defaults to <name>.js."
+          },
+          "description": {
+            "type": "string",
+            "description": "Human-readable summary shown to plugin authors."
+          }
+        }
+      }
+    },
     "ledmatrix_version": {
       "type": "string",
       "description": "Deprecated: Use compatible_versions instead. LEDMatrix version this plugin targets"
