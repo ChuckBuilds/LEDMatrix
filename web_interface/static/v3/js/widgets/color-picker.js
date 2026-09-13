@@ -108,6 +108,7 @@
                 <input type="color"
                        id="${fieldId}_color"
                        title="Choose color"
+                       aria-label="Choose color"
                        value="${currentValue}"
                        ${disabled ? 'disabled' : ''}
                        onchange="window.LEDMatrixWidgets.getHandlers('color-picker').onColorChange('${fieldId}')"
