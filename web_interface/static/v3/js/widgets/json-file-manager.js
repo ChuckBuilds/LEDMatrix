@@ -57,6 +57,8 @@
             this._editFile   = null;
             this._deleteFile = null;
             this._keyHandler = this._onKey.bind(this);
+            // Focus-trap release functions for open modals (utils/dialog.js)
+            this._releases   = {};
 
             this._inject();
             this._bind();
@@ -67,7 +69,28 @@
 
         _destroy() {
             document.removeEventListener('keydown', this._keyHandler);
+            Object.keys(this._releases).forEach(k => this._release(k));
             this.el._jfmInstance = null;
+        }
+
+        // Open a modal's focus trap. Escape is routed here, so _onKey no
+        // longer handles it.
+        _trap(key, modal, titleId, initialFocus, onClose) {
+            if (!modal || !window.LEDDialog) return;
+            const box = modal.querySelector('.jfm-modal-box');
+            this._releases[key] = window.LEDDialog.trap(box, {
+                labelledBy: titleId,
+                initialFocus: initialFocus || null,
+                onEscape: onClose
+            });
+        }
+
+        _release(key) {
+            const release = this._releases[key];
+            if (release) {
+                delete this._releases[key];
+                release();
+            }
         }
 
         // ── DOM Injection ────────────────────────────────────────────────────
@@ -108,21 +131,22 @@
   </div>` : ''}
 
   <!-- ── Edit modal ─────────────────────────────────────── -->
-  <div class="jfm-modal" id="${u}-edit-modal" role="dialog" aria-modal="true" hidden>
+  <div class="jfm-modal" id="${u}-edit-modal" hidden>
     <div class="jfm-modal-box jfm-modal-wide">
       <div class="jfm-modal-head">
         <span id="${u}-edit-title" class="jfm-modal-title">Edit file</span>
         <div class="jfm-modal-tools">
           <button type="button" class="jfm-btn jfm-btn-ghost jfm-btn-sm" data-jfm="fmt">Format</button>
           <button type="button" class="jfm-btn jfm-btn-ghost jfm-btn-sm" data-jfm="validate">Validate</button>
-          <button type="button" class="jfm-close-btn" data-jfm="close-edit" aria-label="Close">&times;</button>
+          <button type="button" class="jfm-close-btn" data-jfm="close-edit" aria-label="Close editor">&times;</button>
         </div>
       </div>
-      <div id="${u}-edit-err" class="jfm-err-bar" hidden></div>
+      <div id="${u}-edit-err" class="jfm-err-bar" role="alert" hidden></div>
       <textarea id="${u}-editor" class="jfm-editor"
                 spellcheck="false" autocomplete="off"
                 autocorrect="off" autocapitalize="off"
-                aria-label="JSON editor"></textarea>
+                aria-label="JSON editor" aria-describedby="${u}-editor-hint"></textarea>
+      <span id="${u}-editor-hint" hidden>Tab inserts two spaces. Shift+Tab moves focus back to the toolbar. Ctrl+S saves.</span>
       <div class="jfm-modal-foot">
         <span id="${u}-charcount" class="jfm-stat"></span>
         <button type="button" class="jfm-btn jfm-btn-ghost" data-jfm="close-edit">Cancel</button>
@@ -133,10 +157,10 @@
 
   <!-- ── Delete modal ───────────────────────────────────── -->
   ${hasDelete ? `
-  <div class="jfm-modal" id="${u}-del-modal" role="dialog" aria-modal="true" hidden>
+  <div class="jfm-modal" id="${u}-del-modal" hidden>
     <div class="jfm-modal-box">
       <div class="jfm-modal-head">
-        <span class="jfm-modal-title">Delete file</span>
+        <span id="${u}-del-title" class="jfm-modal-title">Delete file</span>
         <button type="button" class="jfm-close-btn" data-jfm="close-del" aria-label="Close">&times;</button>
       </div>
       <div class="jfm-modal-body">
@@ -144,7 +168,7 @@
         <p class="jfm-muted">This permanently removes the file and its entry from the plugin configuration.</p>
       </div>
       <div class="jfm-modal-foot">
-        <button type="button" class="jfm-btn jfm-btn-ghost" data-jfm="close-del">Cancel</button>
+        <button type="button" class="jfm-btn jfm-btn-ghost" data-jfm="close-del" id="${u}-del-cancel">Cancel</button>
         <button type="button" class="jfm-btn jfm-btn-danger" data-jfm="confirm-del" id="${u}-del-btn">Delete</button>
       </div>
     </div>
@@ -152,10 +176,10 @@
 
   <!-- ── Create modal ───────────────────────────────────── -->
   ${hasCreate ? `
-  <div class="jfm-modal" id="${u}-create-modal" role="dialog" aria-modal="true" hidden>
+  <div class="jfm-modal" id="${u}-create-modal" hidden>
     <div class="jfm-modal-box">
       <div class="jfm-modal-head">
-        <span class="jfm-modal-title">Create new file</span>
+        <span id="${u}-create-title" class="jfm-modal-title">Create new file</span>
         <button type="button" class="jfm-close-btn" data-jfm="close-create" aria-label="Close">&times;</button>
       </div>
       <div class="jfm-modal-body">
@@ -189,93 +213,106 @@
         }
 
         _css(u) {
+            // Colors come from the app theme tokens (app.css :root / [data-theme="dark"])
+            // with the original light values as fallbacks for pages without app.css.
+            // Shades the tokens don't cover are local variables with a dark override.
             return `<style>
-#${u}{font-family:inherit;color:#111827;}
+#${u}{--jfm-border-strong:#d1d5db;--jfm-border-hover:#9ca3af;--jfm-subtle:#f3f4f6;--jfm-accent-soft:#93c5fd;--jfm-danger-border:#fecaca;--jfm-danger-text:#991b1b;--jfm-text-muted:#6b7280;}
+[data-theme="dark"] #${u}{--jfm-border-strong:#4b5563;--jfm-border-hover:#6b7280;--jfm-subtle:#374151;--jfm-accent-soft:#1e40af;--jfm-danger-border:#991b1b;--jfm-danger-text:#fecaca;--jfm-text-muted:#9ca3af;}
+#${u}{font-family:inherit;color:var(--color-text-primary,#111827);}
 #${u} *{box-sizing:border-box;}
 
 /* Header */
 #${u} .jfm-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:.875rem;gap:.5rem;}
 #${u} .jfm-header-left{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;}
-#${u} .jfm-title{font-size:.9375rem;font-weight:600;color:#111827;}
-#${u} .jfm-dir{font-size:.75rem;color:#6b7280;background:#f3f4f6;padding:.125rem .375rem;border-radius:.25rem;font-family:monospace;}
+#${u} .jfm-title{font-size:.9375rem;font-weight:600;color:var(--color-text-primary,#111827);}
+#${u} .jfm-dir{font-size:.75rem;color:var(--jfm-text-muted);background:var(--jfm-subtle);padding:.125rem .375rem;border-radius:.25rem;font-family:monospace;}
 #${u} .jfm-header-right{display:flex;gap:.375rem;align-items:center;flex-shrink:0;}
 
 /* Buttons */
-#${u} .jfm-btn{display:inline-flex;align-items:center;gap:.25rem;padding:.4375rem .875rem;border-radius:.375rem;border:1px solid #d1d5db;background:#fff;color:#374151;font-size:.875rem;font-weight:500;cursor:pointer;transition:background .12s,border-color .12s,opacity .12s;line-height:1.25;}
-#${u} .jfm-btn:hover:not(:disabled){background:#f9fafb;border-color:#9ca3af;}
-#${u} .jfm-btn:focus-visible{outline:2px solid #3b82f6;outline-offset:1px;}
+#${u} .jfm-btn{display:inline-flex;align-items:center;gap:.25rem;padding:.4375rem .875rem;border-radius:.375rem;border:1px solid var(--jfm-border-strong);background:var(--color-surface,#fff);color:var(--color-text-secondary,#374151);font-size:.875rem;font-weight:500;cursor:pointer;transition:background .12s,border-color .12s,opacity .12s;line-height:1.25;}
+#${u} .jfm-btn:hover:not(:disabled){background:var(--color-background,#f9fafb);border-color:var(--jfm-border-hover);}
+#${u} .jfm-btn:focus-visible,#${u} .jfm-close-btn:focus-visible{outline:2px solid var(--color-primary,#3b82f6);outline-offset:1px;}
 #${u} .jfm-btn:disabled{opacity:.5;cursor:not-allowed;}
 #${u} .jfm-btn-sm{padding:.3125rem .625rem;font-size:.8125rem;}
-#${u} .jfm-btn-primary{background:#3b82f6;border-color:#3b82f6;color:#fff;}
-#${u} .jfm-btn-primary:hover:not(:disabled){background:#2563eb;border-color:#2563eb;}
-#${u} .jfm-btn-danger{background:#ef4444;border-color:#ef4444;color:#fff;}
-#${u} .jfm-btn-danger:hover:not(:disabled){background:#dc2626;border-color:#dc2626;}
-#${u} .jfm-btn-ghost{background:transparent;border-color:transparent;color:#6b7280;}
-#${u} .jfm-btn-ghost:hover:not(:disabled){background:#f3f4f6;color:#374151;}
-#${u} .jfm-close-btn{display:flex;align-items:center;justify-content:center;width:2rem;height:2rem;border:none;background:none;color:#9ca3af;font-size:1.25rem;cursor:pointer;border-radius:.25rem;padding:0;line-height:1;}
-#${u} .jfm-close-btn:hover{background:#f3f4f6;color:#374151;}
+#${u} .jfm-btn-primary{background:var(--color-primary,#3b82f6);border-color:var(--color-primary,#3b82f6);color:#fff;}
+#${u} .jfm-btn-primary:hover:not(:disabled){background:var(--color-primary-hover,#2563eb);border-color:var(--color-primary-hover,#2563eb);}
+#${u} .jfm-btn-danger{background:#dc2626;border-color:#dc2626;color:#fff;}
+#${u} .jfm-btn-danger:hover:not(:disabled){background:#b91c1c;border-color:#b91c1c;}
+#${u} .jfm-btn-ghost{background:transparent;border-color:transparent;color:var(--jfm-text-muted);}
+#${u} .jfm-btn-ghost:hover:not(:disabled){background:var(--jfm-subtle);color:var(--color-text-secondary,#374151);}
+#${u} .jfm-close-btn{display:flex;align-items:center;justify-content:center;width:2rem;height:2rem;border:none;background:none;color:var(--jfm-text-muted);font-size:1.25rem;cursor:pointer;border-radius:.25rem;padding:0;line-height:1;}
+#${u} .jfm-close-btn:hover{background:var(--jfm-subtle);color:var(--color-text-secondary,#374151);}
 
 /* File list */
 #${u} .jfm-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:.625rem;margin-bottom:1rem;min-height:5rem;}
-#${u} .jfm-loading{grid-column:1/-1;display:flex;align-items:center;justify-content:center;gap:.5rem;padding:2rem;color:#6b7280;font-size:.875rem;}
-#${u} .jfm-empty{grid-column:1/-1;text-align:center;padding:2.5rem 1rem;color:#9ca3af;}
+#${u} .jfm-loading{grid-column:1/-1;display:flex;align-items:center;justify-content:center;gap:.5rem;padding:2rem;color:var(--jfm-text-muted);font-size:.875rem;}
+#${u} .jfm-empty{grid-column:1/-1;text-align:center;padding:2.5rem 1rem;color:var(--jfm-text-muted);}
 #${u} .jfm-empty-icon{font-size:2.25rem;margin-bottom:.625rem;}
-#${u} .jfm-empty-title{font-weight:600;color:#374151;margin:0 0 .25rem;}
+#${u} .jfm-empty-title{font-weight:600;color:var(--color-text-secondary,#374151);margin:0 0 .25rem;}
 #${u} .jfm-empty-sub{font-size:.875rem;margin:0;}
 
 /* File cards */
-#${u} .jfm-card{border:1px solid #e5e7eb;border-radius:.5rem;padding:.875rem;background:#fff;display:flex;flex-direction:column;gap:.5rem;transition:border-color .15s,box-shadow .15s;}
-#${u} .jfm-card:hover{border-color:#93c5fd;box-shadow:0 2px 8px rgba(59,130,246,.1);}
+#${u} .jfm-card{border:1px solid var(--color-border,#e5e7eb);border-radius:.5rem;padding:.875rem;background:var(--color-surface,#fff);display:flex;flex-direction:column;gap:.5rem;transition:border-color .15s,box-shadow .15s;}
+#${u} .jfm-card:hover{border-color:var(--jfm-accent-soft);box-shadow:var(--shadow-md,0 2px 8px rgba(59,130,246,.1));}
 #${u} .jfm-card.jfm-off{opacity:.6;}
 #${u} .jfm-card-top{display:flex;justify-content:space-between;align-items:flex-start;gap:.5rem;}
-#${u} .jfm-card-name{font-weight:600;font-size:.9375rem;word-break:break-word;color:#111827;flex:1;}
-#${u} .jfm-card-meta{font-size:.75rem;color:#6b7280;display:flex;flex-direction:column;gap:.125rem;line-height:1.5;}
-#${u} .jfm-card-actions{display:flex;gap:.375rem;padding-top:.5rem;border-top:1px solid #f3f4f6;margin-top:.125rem;}
+#${u} .jfm-card-name{font-weight:600;font-size:.9375rem;word-break:break-word;color:var(--color-text-primary,#111827);flex:1;}
+#${u} .jfm-card-meta{font-size:.75rem;color:var(--jfm-text-muted);display:flex;flex-direction:column;gap:.125rem;line-height:1.5;}
+#${u} .jfm-card-actions{display:flex;gap:.375rem;padding-top:.5rem;border-top:1px solid var(--color-border-light,#f3f4f6);margin-top:.125rem;}
 #${u} .jfm-card-actions .jfm-btn{flex:1;justify-content:center;}
 #${u} .jfm-card-actions .jfm-del{flex:0 0 auto;}
 
 /* Toggle */
-#${u} .jfm-toggle{display:flex;align-items:center;gap:.3125rem;font-size:.75rem;color:#6b7280;white-space:nowrap;flex-shrink:0;}
+#${u} .jfm-toggle{display:flex;align-items:center;gap:.3125rem;font-size:.75rem;color:var(--jfm-text-muted);white-space:nowrap;flex-shrink:0;}
 #${u} .jfm-toggle input[type=checkbox]{width:.9375rem;height:.9375rem;cursor:pointer;accent-color:#22c55e;margin:0;}
 
 /* Upload zone */
 #${u} .jfm-upload-wrap{margin-top:.25rem;}
 #${u} input[type=file]#${u}-fileinput{position:absolute;left:-9999px;width:1px;height:1px;opacity:0;}
-#${u} .jfm-dropzone{border:2px dashed #d1d5db;border-radius:.5rem;padding:1.25rem 1rem;text-align:center;cursor:pointer;transition:border-color .15s,background .15s;background:#f9fafb;user-select:none;}
-#${u} .jfm-dropzone:hover,#${u} .jfm-dropzone:focus-visible,#${u} .jfm-dropzone.jfm-over{border-color:#3b82f6;background:#eff6ff;border-style:solid;outline:none;}
+#${u} .jfm-dropzone{border:2px dashed var(--jfm-border-strong);border-radius:.5rem;padding:1.25rem 1rem;text-align:center;cursor:pointer;transition:border-color .15s,background .15s;background:var(--color-background,#f9fafb);user-select:none;}
+#${u} .jfm-dropzone:hover,#${u} .jfm-dropzone:focus-visible,#${u} .jfm-dropzone.jfm-over{border-color:var(--color-primary,#3b82f6);background:var(--color-info-bg,#eff6ff);border-style:solid;outline:none;}
 #${u} .jfm-drop-icon{font-size:1.75rem;display:block;margin-bottom:.375rem;}
-#${u} .jfm-drop-primary{font-size:.875rem;color:#374151;margin:0 0 .25rem;}
-#${u} .jfm-drop-hint{font-size:.75rem;color:#9ca3af;margin:0;}
+#${u} .jfm-drop-primary{font-size:.875rem;color:var(--color-text-secondary,#374151);margin:0 0 .25rem;}
+#${u} .jfm-drop-hint{font-size:.75rem;color:var(--jfm-text-muted);margin:0;}
 
 /* Modals */
 #${u} .jfm-modal{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:1rem;backdrop-filter:blur(1px);}
 #${u} .jfm-modal[hidden]{display:none;}
-#${u} .jfm-modal-box{background:#fff;border-radius:.5rem;box-shadow:0 20px 40px rgba(0,0,0,.15);display:flex;flex-direction:column;width:100%;max-width:440px;max-height:92vh;}
+#${u} .jfm-modal-box{background:var(--color-surface,#fff);color:var(--color-text-primary,#111827);border-radius:.5rem;box-shadow:0 20px 40px rgba(0,0,0,.15);display:flex;flex-direction:column;width:100%;max-width:440px;max-height:92vh;}
+#${u} .jfm-modal-box:focus{outline:none;}
 #${u} .jfm-modal-wide{max-width:880px;}
-#${u} .jfm-modal-head{display:flex;justify-content:space-between;align-items:center;padding:.875rem 1.125rem;border-bottom:1px solid #e5e7eb;flex-shrink:0;gap:.5rem;}
-#${u} .jfm-modal-title{font-weight:600;font-size:.9375rem;color:#111827;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+#${u} .jfm-modal-head{display:flex;justify-content:space-between;align-items:center;padding:.875rem 1.125rem;border-bottom:1px solid var(--color-border,#e5e7eb);flex-shrink:0;gap:.5rem;}
+#${u} .jfm-modal-title{font-weight:600;font-size:.9375rem;color:var(--color-text-primary,#111827);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 #${u} .jfm-modal-tools{display:flex;gap:.25rem;align-items:center;flex-shrink:0;}
 #${u} .jfm-modal-body{padding:1.125rem;overflow-y:auto;flex:1;}
-#${u} .jfm-modal-foot{display:flex;gap:.5rem;justify-content:flex-end;align-items:center;padding:.75rem 1.125rem;border-top:1px solid #e5e7eb;flex-shrink:0;background:#f9fafb;border-radius:0 0 .5rem .5rem;}
-#${u} .jfm-stat{margin-right:auto;font-size:.75rem;color:#9ca3af;font-variant-numeric:tabular-nums;}
+#${u} .jfm-modal-foot{display:flex;gap:.5rem;justify-content:flex-end;align-items:center;padding:.75rem 1.125rem;border-top:1px solid var(--color-border,#e5e7eb);flex-shrink:0;background:var(--color-background,#f9fafb);border-radius:0 0 .5rem .5rem;}
+#${u} .jfm-stat{margin-right:auto;font-size:.75rem;color:var(--jfm-text-muted);font-variant-numeric:tabular-nums;}
 
 /* JSON editor */
-#${u} .jfm-editor{display:block;width:100%;min-height:400px;height:58vh;max-height:64vh;resize:vertical;font-family:'Courier New',Consolas,ui-monospace,monospace;font-size:.8rem;line-height:1.55;padding:.75rem 1rem;border:none;border-radius:0;outline:none;white-space:pre;overflow:auto;color:#1e293b;background:#fafafa;tab-size:2;}
-#${u} .jfm-err-bar{background:#fef2f2;border-bottom:1px solid #fecaca;color:#991b1b;font-size:.8125rem;padding:.5rem 1.125rem;flex-shrink:0;line-height:1.4;}
+#${u} .jfm-editor{display:block;width:100%;min-height:400px;height:58vh;max-height:64vh;resize:vertical;font-family:'Courier New',Consolas,ui-monospace,monospace;font-size:.8rem;line-height:1.55;padding:.75rem 1rem;border:none;border-radius:0;outline:none;white-space:pre;overflow:auto;color:var(--color-text-primary,#1e293b);background:var(--color-background,#fafafa);tab-size:2;}
+#${u} .jfm-editor:focus-visible{box-shadow:inset 0 0 0 2px var(--color-primary,#3b82f6);}
+#${u} .jfm-err-bar{background:var(--color-error-bg,#fef2f2);border-bottom:1px solid var(--jfm-danger-border);color:var(--jfm-danger-text);font-size:.8125rem;padding:.5rem 1.125rem;flex-shrink:0;line-height:1.4;}
 #${u} .jfm-err-bar[hidden]{display:none;}
 
 /* Create form */
 #${u} .jfm-field{margin-bottom:.875rem;}
 #${u} .jfm-field:last-child{margin-bottom:0;}
-#${u} .jfm-field label{display:block;font-size:.875rem;font-weight:500;color:#374151;margin-bottom:.3125rem;}
-#${u} .jfm-field input{width:100%;padding:.4375rem .75rem;border:1px solid #d1d5db;border-radius:.375rem;font-size:.875rem;color:#111827;background:#fff;}
-#${u} .jfm-field input:focus{outline:none;border-color:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,.12);}
-#${u} .jfm-hint{display:block;font-size:.75rem;color:#9ca3af;margin-top:.25rem;}
-#${u} .jfm-muted{font-size:.875rem;color:#6b7280;margin-top:.375rem;}
+#${u} .jfm-field label{display:block;font-size:.875rem;font-weight:500;color:var(--color-text-secondary,#374151);margin-bottom:.3125rem;}
+#${u} .jfm-field input{width:100%;padding:.4375rem .75rem;border:1px solid var(--jfm-border-strong);border-radius:.375rem;font-size:.875rem;color:var(--color-text-primary,#111827);background:var(--color-surface,#fff);}
+#${u} .jfm-field input:focus{outline:none;border-color:var(--color-primary,#3b82f6);box-shadow:0 0 0 3px rgba(59,130,246,.25);}
+#${u} .jfm-hint{display:block;font-size:.75rem;color:var(--jfm-text-muted);margin-top:.25rem;}
+#${u} .jfm-muted{font-size:.875rem;color:var(--jfm-text-muted);margin-top:.375rem;}
 
 /* Spinner */
-#${u} .jfm-spin{display:inline-block;width:.9rem;height:.9rem;border:2px solid #e5e7eb;border-top-color:#3b82f6;border-radius:50%;animation:jfm-spin-${u} .6s linear infinite;vertical-align:middle;}
+#${u} .jfm-spin{display:inline-block;width:.9rem;height:.9rem;border:2px solid var(--color-border,#e5e7eb);border-top-color:var(--color-primary,#3b82f6);border-radius:50%;animation:jfm-spin-${u} .6s linear infinite;vertical-align:middle;}
 @keyframes jfm-spin-${u}{to{transform:rotate(360deg);}}
+
+@media (prefers-reduced-motion: reduce){
+#${u} .jfm-btn,#${u} .jfm-card,#${u} .jfm-dropzone{transition:none;}
+#${u} .jfm-spin{animation-duration:1.5s;}
+#${u} .jfm-modal{backdrop-filter:none;}
+}
 </style>`;
         }
 
@@ -319,7 +356,9 @@
             if (this._editorEl) {
                 this._editorEl.addEventListener('input', () => this._updateStat());
                 this._editorEl.addEventListener('keydown', e => {
-                    if (e.key === 'Tab') {
+                    // Plain Tab indents; Shift+Tab is left alone so keyboard
+                    // users can always move focus out of the editor.
+                    if (e.key === 'Tab' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
                         e.preventDefault();
                         const s = this._editorEl.selectionStart;
                         const end = this._editorEl.selectionEnd;
@@ -336,15 +375,8 @@
         }
 
         _onKey(e) {
+            // Escape is handled by the dialog focus trap (see _trap).
             const editOpen   = this._editModal   && !this._editModal.hidden;
-            const delOpen    = this._delModal    && !this._delModal.hidden;
-            const createOpen = this._createModal && !this._createModal.hidden;
-
-            if (e.key === 'Escape') {
-                if (editOpen)   { this._closeEdit();   return; }
-                if (delOpen)    { this._closeDel();    return; }
-                if (createOpen) { this._closeCreate(); return; }
-            }
             if ((e.ctrlKey || e.metaKey) && e.key === 's' && editOpen) {
                 e.preventDefault();
                 this._doSave();
@@ -488,6 +520,7 @@
             this._editorEl.value = 'Loading…';
             this._updateStat();
             this._editModal.hidden = false;
+            this._trap('edit', this._editModal, `${this._uid}-edit-title`, this._editorEl, () => this._closeEdit());
 
             try {
                 const data = await this._api('get', { filename });
@@ -498,7 +531,7 @@
                 this._editorEl.setSelectionRange(0, 0);
                 this._editorEl.scrollTop = 0;
             } catch (err) {
-                this._showErr('Failed to load file: ' + err.message);
+                this._showErr(`Couldn't load this file (${err.message}). Close the editor and try again.`);
                 this._editorEl.value = '';
             }
         }
@@ -507,6 +540,7 @@
             if (this._editModal) this._editModal.hidden = true;
             this._editFile = null;
             this._clearErr();
+            this._release('edit');
         }
 
         _formatJson() {
@@ -562,12 +596,18 @@
             this._deleteFile = filename;
             const el = document.getElementById(`${this._uid}-del-name`);
             if (el) el.textContent = filename;
-            if (this._delModal) this._delModal.hidden = false;
+            if (this._delModal) {
+                this._delModal.hidden = false;
+                // Destructive dialog: start on Cancel.
+                this._trap('del', this._delModal, `${this._uid}-del-title`,
+                    document.getElementById(`${this._uid}-del-cancel`), () => this._closeDel());
+            }
         }
 
         _closeDel() {
             if (this._delModal) this._delModal.hidden = true;
             this._deleteFile = null;
+            this._release('del');
         }
 
         async _doDelete() {
@@ -597,11 +637,13 @@
             });
             this._createModal.hidden = false;
             const first = this.createFields[0];
-            if (first) document.getElementById(`${this._uid}-cf-${first.key}`)?.focus();
+            const firstInput = first ? document.getElementById(`${this._uid}-cf-${first.key}`) : null;
+            this._trap('create', this._createModal, `${this._uid}-create-title`, firstInput, () => this._closeCreate());
         }
 
         _closeCreate() {
             if (this._createModal) this._createModal.hidden = true;
+            this._release('create');
         }
 
         async _doCreate() {

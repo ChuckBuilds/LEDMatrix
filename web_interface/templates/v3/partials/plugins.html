@@ -6,7 +6,7 @@
 
     <!-- Plugin Controls -->
     <div class="flex flex-wrap items-center justify-between gap-4 mb-6">
-        <div class="flex items-center space-x-4">
+        <div class="flex flex-wrap items-center gap-2 sm:gap-4">
             <button type="button" id="refresh-plugins-btn" class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md">
                 <i class="fas fa-sync-alt mr-2"></i>Refresh Plugins
             </button>
@@ -34,7 +34,7 @@
             <div id="installed-filter-bar" class="flex flex-wrap items-center gap-3 mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
                 <!-- Search -->
                 <div class="relative flex-1 min-w-[12rem]">
-                    <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none"></i>
+                    <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none" aria-hidden="true"></i>
                     <input type="text"
                            id="installed-search"
                            class="form-control text-sm pl-9 pr-8 py-2"
@@ -44,7 +44,7 @@
                     <button type="button" id="installed-search-clear"
                             class="hidden absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
                             aria-label="Clear search">
-                        <i class="fas fa-times-circle"></i>
+                        <i class="fas fa-times-circle" aria-hidden="true"></i>
                     </button>
                 </div>
 
@@ -149,7 +149,7 @@
             <!-- GitHub Token Configuration (Combined Warning + Settings) -->
             <div id="github-token-container" class="mb-5">
                 <!-- Warning Banner (shown when no token configured) -->
-                <div id="github-auth-warning" class="hidden bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded-r-lg">
+                <div id="github-auth-warning" class="hidden bg-yellow-50 border border-yellow-300 p-4 rounded-lg">
                     <div class="flex">
                         <div class="flex-shrink-0">
                             <i class="fas fa-exclamation-triangle text-yellow-400"></i>
@@ -170,8 +170,8 @@
                             </p>
                         </div>
                         <div class="flex-shrink-0">
-                            <button onclick="dismissGithubWarning()" class="text-yellow-700 hover:text-yellow-900">
-                                <i class="fas fa-times"></i>
+                            <button type="button" onclick="dismissGithubWarning()" class="text-yellow-700 hover:text-yellow-900" aria-label="Dismiss GitHub token warning">
+                                <i class="fas fa-times" aria-hidden="true"></i>
                             </button>
                         </div>
                     </div>
@@ -207,9 +207,10 @@
                             <input type="password" id="github-token-input" 
                                    class="w-full px-3 py-2 pr-20 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
                                    placeholder="ghp_xxxxxxxxxxxxxxxxxxxx">
-                            <button type="button" onclick="toggleGithubTokenVisibility()" 
-                                    class="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-500 hover:text-gray-700">
-                                <i id="github-token-icon" class="fas fa-eye"></i>
+                            <button type="button" onclick="toggleGithubTokenVisibility()"
+                                    class="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-500 hover:text-gray-700"
+                                    aria-label="Show token" aria-controls="github-token-input">
+                                <i id="github-token-icon" class="fas fa-eye" aria-hidden="true"></i>
                             </button>
                         </div>
                         <p class="text-xs text-gray-500 mt-1">
@@ -246,8 +247,8 @@
             </div>
             <!-- Search Row -->
             <div class="flex gap-3 mb-4">
-                <input type="text" id="plugin-search" placeholder="Search plugins by name, description, or tags..." class="form-control text-sm flex-[3] min-w-0 px-4 py-2.5 border border-gray-300 rounded-lg shadow-sm focus:shadow-md transition-shadow">
-                <select id="plugin-category" class="form-control text-sm flex-1 px-3 py-2.5 border border-gray-300 rounded-lg shadow-sm focus:shadow-md transition-shadow">
+                <input type="text" id="plugin-search" placeholder="Search plugins by name, description, or tags..." aria-label="Search the Plugin Store" class="form-control text-sm flex-[3] min-w-0 px-4 py-2.5 border border-gray-300 rounded-lg shadow-sm focus:shadow-md transition-shadow">
+                <select id="plugin-category" aria-label="Filter the Plugin Store by category" class="form-control text-sm flex-1 px-3 py-2.5 border border-gray-300 rounded-lg shadow-sm focus:shadow-md transition-shadow">
                     <option value="">All Categories</option>
                     <option value="sports">Sports</option>
                     <option value="content">Content</option>
@@ -262,7 +263,7 @@
             <!-- Sort & Filter Bar -->
             <div id="store-filter-bar" class="flex flex-wrap items-center gap-3 mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
                 <!-- Sort -->
-                <select id="store-sort" class="text-sm px-3 py-1.5 border border-gray-300 rounded-md bg-white">
+                <select id="store-sort" aria-label="Sort the Plugin Store" class="text-sm px-3 py-1.5 border border-gray-300 rounded-md bg-white">
                     <option value="a-z">A → Z</option>
                     <option value="z-a">Z → A</option>
                     <option value="category">Category</option>
@@ -289,13 +290,13 @@
             <!-- Results Bar (top pagination) -->
             <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
                 <span id="store-results-info" class="text-sm text-gray-600"></span>
-                <div class="flex items-center gap-3">
-                    <select id="store-per-page" class="text-sm px-2 py-1 border border-gray-300 rounded-md bg-white">
+                <div class="flex flex-wrap items-center gap-3">
+                    <select id="store-per-page" aria-label="Plugins per page" class="text-sm px-2 py-1 border border-gray-300 rounded-md bg-white">
                         <option value="12">12 per page</option>
                         <option value="24">24 per page</option>
                         <option value="48">48 per page</option>
                     </select>
-                    <div id="store-pagination-top" class="flex items-center gap-1"></div>
+                    <div id="store-pagination-top" class="flex flex-wrap items-center gap-1"></div>
                 </div>
             </div>
 
@@ -355,8 +356,8 @@
 
                 <!-- Search Row -->
                 <div class="flex gap-3 mb-4">
-                    <input type="text" id="starlark-search" placeholder="Search by name, description, author..." class="form-control text-sm flex-[3] min-w-0 px-4 py-2.5 border border-gray-300 rounded-lg shadow-sm focus:shadow-md transition-shadow">
-                    <select id="starlark-category" class="form-control text-sm flex-1 px-3 py-2.5 border border-gray-300 rounded-lg shadow-sm focus:shadow-md transition-shadow">
+                    <input type="text" id="starlark-search" placeholder="Search by name, description, author..." aria-label="Search Starlark apps" class="form-control text-sm flex-[3] min-w-0 px-4 py-2.5 border border-gray-300 rounded-lg shadow-sm focus:shadow-md transition-shadow">
+                    <select id="starlark-category" aria-label="Filter Starlark apps by category" class="form-control text-sm flex-1 px-3 py-2.5 border border-gray-300 rounded-lg shadow-sm focus:shadow-md transition-shadow">
                         <option value="">All Categories</option>
                     </select>
                 </div>
@@ -364,7 +365,7 @@
                 <!-- Sort & Filter Bar -->
                 <div id="starlark-filter-bar" class="flex flex-wrap items-center gap-3 mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
                     <!-- Sort -->
-                    <select id="starlark-sort" class="text-sm px-3 py-1.5 border border-gray-300 rounded-md bg-white">
+                    <select id="starlark-sort" aria-label="Sort Starlark apps" class="text-sm px-3 py-1.5 border border-gray-300 rounded-md bg-white">
                         <option value="a-z">A → Z</option>
                         <option value="z-a">Z → A</option>
                         <option value="category">Category</option>
@@ -379,7 +380,7 @@
                     </button>
 
                     <!-- Author filter -->
-                    <select id="starlark-filter-author" class="text-sm px-3 py-1.5 border border-gray-300 rounded-md bg-white">
+                    <select id="starlark-filter-author" aria-label="Filter Starlark apps by author" class="text-sm px-3 py-1.5 border border-gray-300 rounded-md bg-white">
                         <option value="">All Authors</option>
                     </select>
 
@@ -395,13 +396,13 @@
                 <!-- Results Bar (top pagination) -->
                 <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
                     <span id="starlark-results-info" class="text-sm text-gray-600"></span>
-                    <div class="flex items-center gap-3">
-                        <select id="starlark-per-page" class="text-sm px-2 py-1 border border-gray-300 rounded-md bg-white">
+                    <div class="flex flex-wrap items-center gap-3">
+                        <select id="starlark-per-page" aria-label="Starlark apps per page" class="text-sm px-2 py-1 border border-gray-300 rounded-md bg-white">
                             <option value="24">24 per page</option>
                             <option value="48">48 per page</option>
                             <option value="96">96 per page</option>
                         </select>
-                        <div id="starlark-pagination-top" class="flex items-center gap-1"></div>
+                        <div id="starlark-pagination-top" class="flex flex-wrap items-center gap-1"></div>
                     </div>
                 </div>
 
@@ -463,7 +464,7 @@
                     <p class="text-xs text-gray-600 mb-3">Install a plugin directly from its GitHub repository URL</p>
                     <div class="space-y-2">
                         <div class="flex gap-2">
-                            <input type="text" id="github-plugin-url" 
+                            <input type="text" id="github-plugin-url" aria-label="Plugin GitHub repository URL"
                                    placeholder="https://github.com/user/ledmatrix-plugin-name" 
                                    class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
                             <button type="button" id="install-plugin-from-url" 
@@ -491,7 +492,7 @@
                     </h4>
                     <p class="text-xs text-gray-600 mb-3">Load a registry-style monorepo (like the official ledmatrix-plugins repo) to browse and install plugins</p>
                     <div class="flex gap-2 mb-2">
-                        <input type="text" id="github-registry-url" 
+                        <input type="text" id="github-registry-url" aria-label="Plugin registry GitHub URL"
                                placeholder="https://github.com/user/ledmatrix-plugins" 
                                class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
                         <button id="load-registry-from-url" class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm rounded-md whitespace-nowrap">

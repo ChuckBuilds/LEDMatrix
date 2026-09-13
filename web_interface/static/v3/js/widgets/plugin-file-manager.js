@@ -56,108 +56,141 @@
     if (!document.getElementById('pfm-styles')) {
         const style = document.createElement('style');
         style.id = 'pfm-styles';
+        // Colors come from the app theme tokens (app.css :root / [data-theme="dark"]),
+        // with the original light values as fallbacks for pages without app.css.
+        // The few shades the tokens don't cover are widget-local variables with
+        // a dark-theme override.
         style.textContent = `
-.pfm-root { font-family: inherit; }
+.pfm-root, .pfm-overlay {
+  --pfm-border-strong:#d1d5db; --pfm-subtle:#f3f4f6; --pfm-subtle-hover:#e5e7eb;
+  --pfm-danger-border:#fecaca; --pfm-danger-text:#991b1b; --pfm-today:#fef9c3;
+  --pfm-text-muted:#6b7280;
+}
+[data-theme="dark"] .pfm-root, [data-theme="dark"] .pfm-overlay {
+  --pfm-border-strong:#4b5563; --pfm-subtle:#374151; --pfm-subtle-hover:#4b5563;
+  --pfm-danger-border:#991b1b; --pfm-danger-text:#fecaca; --pfm-today:#422006;
+  --pfm-text-muted:#9ca3af;
+}
+.pfm-root { font-family: inherit; color:var(--color-text-primary,#111827); }
 .pfm-header { display:flex; align-items:center; justify-content:space-between;
               margin-bottom:.75rem; }
-.pfm-title  { font-size:1rem; font-weight:600; color:#111827; }
-.pfm-dir    { font-size:.75rem; color:#6b7280; margin-top:.125rem; }
-.pfm-upload { border:2px dashed #d1d5db; border-radius:.5rem; padding:1.25rem;
+.pfm-title  { font-size:1rem; font-weight:600; color:var(--color-text-primary,#111827); }
+.pfm-dir    { font-size:.75rem; color:var(--pfm-text-muted); margin-top:.125rem; }
+.pfm-upload { border:2px dashed var(--pfm-border-strong); border-radius:.5rem; padding:1.25rem;
               text-align:center; cursor:pointer; transition:border-color .15s,background .15s; }
-.pfm-upload:hover,.pfm-upload.dragover { border-color:#3b82f6; background:#eff6ff; }
-.pfm-upload p  { font-size:.875rem; color:#4b5563; margin:.25rem 0 0; }
-.pfm-upload small { font-size:.75rem; color:#9ca3af; }
+.pfm-upload:hover,.pfm-upload.dragover { border-color:var(--color-primary,#3b82f6); background:var(--color-info-bg,#eff6ff); }
+.pfm-upload p  { font-size:.875rem; color:var(--color-text-tertiary,#4b5563); margin:.25rem 0 0; }
+.pfm-upload small { font-size:.75rem; color:var(--pfm-text-muted); }
+.pfm-upload-icon { font-size:1.5rem; color:var(--pfm-text-muted); }
 .pfm-grid  { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr));
              gap:.75rem; margin-top:.75rem; }
-.pfm-card  { border:1px solid #e5e7eb; border-radius:.5rem; padding:.875rem;
-             background:#fff; transition:box-shadow .15s; }
-.pfm-card:hover { box-shadow:0 1px 4px rgba(0,0,0,.1); }
+.pfm-card  { border:1px solid var(--color-border,#e5e7eb); border-radius:.5rem; padding:.875rem;
+             background:var(--color-surface,#fff); transition:box-shadow .15s; }
+.pfm-card:hover { box-shadow:var(--shadow-md,0 1px 4px rgba(0,0,0,.1)); }
 .pfm-card.disabled { opacity:.55; }
 .pfm-card-top  { display:flex; align-items:center; justify-content:space-between;
                  margin-bottom:.5rem; }
-.pfm-card-icon { width:2rem; height:2rem; background:#f3f4f6; border-radius:.375rem;
+.pfm-card-icon { width:2rem; height:2rem; background:var(--pfm-subtle); border-radius:.375rem;
                  display:flex; align-items:center; justify-content:center;
-                 color:#6b7280; font-size:1rem; }
-.pfm-card-name { font-weight:600; color:#111827; font-size:.875rem; margin:.375rem 0 .125rem; }
-.pfm-card-meta { font-size:.75rem; color:#6b7280; line-height:1.5; }
+                 color:var(--pfm-text-muted); font-size:1rem; }
+.pfm-card-name { font-weight:600; color:var(--color-text-primary,#111827); font-size:.875rem; margin:.375rem 0 .125rem; }
+.pfm-card-meta { font-size:.75rem; color:var(--pfm-text-muted); line-height:1.5; }
 .pfm-card-actions { display:flex; gap:.375rem; margin-top:.625rem; }
 .pfm-btn       { display:inline-flex; align-items:center; gap:.25rem; padding:.375rem .75rem;
                  border-radius:.375rem; font-size:.8125rem; font-weight:500;
                  border:none; cursor:pointer; transition:background .15s; }
-.pfm-btn-primary   { background:#2563eb; color:#fff; flex:1; justify-content:center; }
-.pfm-btn-primary:hover  { background:#1d4ed8; }
+.pfm-btn:focus-visible { outline:2px solid var(--color-primary,#2563eb); outline-offset:2px; }
+.pfm-btn:disabled { opacity:.5; cursor:not-allowed; }
+.pfm-btn-primary   { background:var(--color-primary,#2563eb); color:#fff; flex:1; justify-content:center; }
+.pfm-btn-primary:hover  { background:var(--color-primary-hover,#1d4ed8); }
+/* Solid fills with white text: fixed shades read well on both themes. */
 .pfm-btn-danger    { background:#dc2626; color:#fff; }
 .pfm-btn-danger:hover   { background:#b91c1c; }
-.pfm-btn-secondary { background:#f3f4f6; color:#374151; border:1px solid #d1d5db; }
-.pfm-btn-secondary:hover { background:#e5e7eb; }
+.pfm-btn-secondary { background:var(--pfm-subtle); color:var(--color-text-secondary,#374151); border:1px solid var(--pfm-border-strong); }
+.pfm-btn-secondary:hover { background:var(--pfm-subtle-hover); }
 .pfm-btn-sm { padding:.25rem .5rem; font-size:.75rem; }
 .pfm-btn-create { background:#059669; color:#fff; }
 .pfm-btn-create:hover { background:#047857; }
 .pfm-toggle-wrap  { display:flex; align-items:center; gap:.375rem; }
-.pfm-toggle-label { font-size:.75rem; color:#6b7280; }
+.pfm-toggle-label { font-size:.75rem; color:var(--pfm-text-muted); }
 .pfm-toggle-cb    { position:relative; display:inline-block; width:2rem; height:1.125rem; }
 .pfm-toggle-cb input { opacity:0; width:0; height:0; }
-.pfm-toggle-slider { position:absolute; inset:0; background:#d1d5db; border-radius:9999px;
+.pfm-toggle-slider { position:absolute; inset:0; background:var(--pfm-border-strong); border-radius:9999px;
                      cursor:pointer; transition:background .2s; }
 .pfm-toggle-slider:before { content:''; position:absolute; height:.75rem; width:.75rem;
                              left:.1875rem; bottom:.1875rem; background:#fff;
                              border-radius:50%; transition:transform .2s; }
 .pfm-toggle-cb input:checked + .pfm-toggle-slider { background:#10b981; }
 .pfm-toggle-cb input:checked + .pfm-toggle-slider:before { transform:translateX(.875rem); }
-.pfm-empty { text-align:center; padding:2rem; color:#9ca3af; }
+.pfm-toggle-cb input:focus-visible + .pfm-toggle-slider { outline:2px solid var(--color-primary,#2563eb); outline-offset:2px; }
+.pfm-empty { text-align:center; padding:2rem; color:var(--pfm-text-muted); }
 .pfm-empty i { font-size:2rem; margin-bottom:.5rem; display:block; }
+.pfm-error-text { color:var(--color-error,#dc2626); }
 
 /* Modal */
 .pfm-overlay { position:fixed; inset:0; background:rgba(0,0,0,.5);
                display:flex; align-items:flex-start; justify-content:center;
                z-index:9999; padding:2rem 1rem; overflow-y:auto; }
-.pfm-modal   { background:#fff; border-radius:.75rem; width:100%; max-width:56rem;
+.pfm-modal   { background:var(--color-surface,#fff); color:var(--color-text-primary,#111827);
+               border-radius:.75rem; width:100%; max-width:56rem;
                box-shadow:0 20px 50px rgba(0,0,0,.3); margin:auto; }
+.pfm-modal:focus { outline:none; }
 .pfm-modal-header { display:flex; align-items:center; justify-content:space-between;
-                    padding:1rem 1.25rem; border-bottom:1px solid #e5e7eb; }
-.pfm-modal-title  { font-size:1rem; font-weight:600; color:#111827; }
+                    padding:1rem 1.25rem; border-bottom:1px solid var(--color-border,#e5e7eb); }
+.pfm-modal-title  { font-size:1rem; font-weight:600; color:var(--color-text-primary,#111827); }
 .pfm-modal-body   { padding:1.25rem; overflow-y:auto; max-height:70vh; }
 .pfm-modal-footer { display:flex; justify-content:flex-end; gap:.5rem;
-                    padding:.875rem 1.25rem; border-top:1px solid #e5e7eb;
-                    background:#f9fafb; border-radius:0 0 .75rem .75rem; }
+                    padding:.875rem 1.25rem; border-top:1px solid var(--color-border,#e5e7eb);
+                    background:var(--color-background,#f9fafb); border-radius:0 0 .75rem .75rem; }
 
 /* Entry table */
 .pfm-table-wrap { overflow-x:auto; }
 .pfm-table { width:100%; border-collapse:collapse; font-size:.8125rem; }
-.pfm-table th { background:#f9fafb; text-align:left; padding:.5rem .625rem;
-                font-weight:600; color:#374151; border-bottom:1px solid #e5e7eb;
+.pfm-table th { background:var(--color-background,#f9fafb); text-align:left; padding:.5rem .625rem;
+                font-weight:600; color:var(--color-text-secondary,#374151); border-bottom:1px solid var(--color-border,#e5e7eb);
                 white-space:nowrap; position:sticky; top:0; }
-.pfm-table td { padding:.375rem .625rem; border-bottom:1px solid #f3f4f6;
+.pfm-table td { padding:.375rem .625rem; border-bottom:1px solid var(--color-border-light,#f3f4f6);
                 vertical-align:top; }
-.pfm-table tr.today-row td { background:#fef9c3; }
+.pfm-table tr.today-row td { background:var(--pfm-today); }
 .pfm-table td input, .pfm-table td textarea {
-  width:100%; border:1px solid #d1d5db; border-radius:.25rem;
+  width:100%; border:1px solid var(--pfm-border-strong); border-radius:.25rem;
   padding:.25rem .375rem; font-size:.8125rem; font-family:inherit;
-  resize:vertical; background:#fff; }
+  resize:vertical; background:var(--color-surface,#fff); color:var(--color-text-primary,#111827); }
 .pfm-table td input:focus, .pfm-table td textarea:focus {
-  outline:none; border-color:#3b82f6; }
+  outline:none; border-color:var(--color-primary,#3b82f6); box-shadow:0 0 0 2px var(--color-primary,#3b82f6); }
 .pfm-day-col { width:3rem; text-align:center; font-weight:600;
-               color:#6b7280; white-space:nowrap; }
+               color:var(--pfm-text-muted); white-space:nowrap; }
+.pfm-table-info { font-size:.75rem; color:var(--pfm-text-muted); margin-bottom:.375rem; }
 .pfm-pagination { display:flex; align-items:center; justify-content:space-between;
-                  margin-top:.75rem; font-size:.8125rem; color:#6b7280; }
+                  margin-top:.75rem; font-size:.8125rem; color:var(--pfm-text-muted); }
 .pfm-page-jump  { display:flex; align-items:center; gap:.375rem; font-size:.8125rem; }
-.pfm-page-jump input { width:3.5rem; padding:.25rem .375rem; border:1px solid #d1d5db;
-                        border-radius:.25rem; text-align:center; }
+.pfm-page-jump input { width:3.5rem; padding:.25rem .375rem; border:1px solid var(--pfm-border-strong);
+                        border-radius:.25rem; text-align:center;
+                        background:var(--color-surface,#fff); color:var(--color-text-primary,#111827); }
+.pfm-json-ta { width:100%; font-family:monospace; font-size:.75rem; border:1px solid var(--pfm-border-strong);
+               border-radius:.375rem; padding:.5rem;
+               background:var(--color-surface,#fff); color:var(--color-text-primary,#111827); }
+.pfm-json-err { color:var(--color-error,#dc2626); font-size:.75rem; margin-top:.25rem; }
 
 /* Form in create modal */
 .pfm-field { margin-bottom:.875rem; }
 .pfm-field label { display:block; font-size:.875rem; font-weight:500;
-                   color:#374151; margin-bottom:.25rem; }
-.pfm-field input { width:100%; padding:.4rem .625rem; border:1px solid #d1d5db;
-                   border-radius:.375rem; font-size:.875rem; }
-.pfm-field input:focus { outline:none; border-color:#3b82f6; }
-.pfm-field-hint { font-size:.75rem; color:#9ca3af; margin-top:.2rem; }
-.pfm-field-error { font-size:.75rem; color:#dc2626; margin-top:.2rem; }
+                   color:var(--color-text-secondary,#374151); margin-bottom:.25rem; }
+.pfm-field input { width:100%; padding:.4rem .625rem; border:1px solid var(--pfm-border-strong);
+                   border-radius:.375rem; font-size:.875rem;
+                   background:var(--color-surface,#fff); color:var(--color-text-primary,#111827); }
+.pfm-field input:focus { outline:none; border-color:var(--color-primary,#3b82f6); box-shadow:0 0 0 2px var(--color-primary,#3b82f6); }
+.pfm-field-hint { font-size:.75rem; color:var(--pfm-text-muted); margin-top:.2rem; }
+.pfm-field-error { font-size:.75rem; color:var(--color-error,#dc2626); margin-top:.2rem; }
 
 /* Delete danger box */
-.pfm-danger-box { background:#fef2f2; border:1px solid #fecaca;
+.pfm-danger-box { background:var(--color-error-bg,#fef2f2); border:1px solid var(--pfm-danger-border);
                   border-radius:.5rem; padding:.875rem; font-size:.875rem;
-                  color:#991b1b; }
+                  color:var(--pfm-danger-text); }
+
+@media (prefers-reduced-motion: reduce) {
+  .pfm-upload, .pfm-card, .pfm-btn, .pfm-toggle-slider, .pfm-toggle-slider:before { transition:none; }
+}
 `;
         document.head.appendChild(style);
     }
@@ -356,7 +389,8 @@
                 delBtn.dataset.pfmAction = 'delete';
                 delBtn.dataset.pfmField  = fieldId;
                 delBtn.dataset.pfmFile   = f.filename;
-                delBtn.innerHTML = '<i class="fas fa-trash"></i>'; // static
+                delBtn.setAttribute('aria-label', 'Delete ' + f.filename);
+                delBtn.innerHTML = '<i class="fas fa-trash" aria-hidden="true"></i>'; // static
                 actions.appendChild(delBtn);
             }
             card.appendChild(actions);
@@ -375,18 +409,18 @@
         modal.className = 'pfm-modal';
         safeSetHTML(modal, `
             <div class="pfm-modal-header">
-                <span class="pfm-modal-title"><i class="fas fa-edit mr-2"></i>${escHtml(filename)}</span>
-                <button class="pfm-btn pfm-btn-secondary pfm-btn-sm" id="${escHtml(fieldId)}_modal_close">
-                    <i class="fas fa-times"></i>
+                <span class="pfm-modal-title" id="${escHtml(fieldId)}_modal_title"><i class="fas fa-edit mr-2" aria-hidden="true"></i>${escHtml(filename)}</span>
+                <button type="button" class="pfm-btn pfm-btn-secondary pfm-btn-sm" id="${escHtml(fieldId)}_modal_close" aria-label="Close">
+                    <i class="fas fa-times" aria-hidden="true"></i>
                 </button>
             </div>
             <div class="pfm-modal-body" id="${escHtml(fieldId)}_edit_body">
-                <div class="pfm-empty"><i class="fas fa-spinner fa-spin"></i>Loading…</div>
+                <div class="pfm-empty"><i class="fas fa-spinner fa-spin" aria-hidden="true"></i>Loading…</div>
             </div>
             <div class="pfm-modal-footer">
-                <button class="pfm-btn pfm-btn-secondary" id="${escHtml(fieldId)}_modal_cancel">Cancel</button>
-                <button class="pfm-btn pfm-btn-primary" id="${escHtml(fieldId)}_save_btn">
-                    <i class="fas fa-save mr-1"></i>Save
+                <button type="button" class="pfm-btn pfm-btn-secondary" id="${escHtml(fieldId)}_modal_cancel">Cancel</button>
+                <button type="button" class="pfm-btn pfm-btn-primary" id="${escHtml(fieldId)}_save_btn">
+                    <i class="fas fa-save mr-1" aria-hidden="true"></i>Save
                 </button>
             </div>`);
         overlay.appendChild(modal);
@@ -394,11 +428,12 @@
         modal.querySelector(`#${CSS.escape(fieldId)}_modal_close`).addEventListener('click', () => window._pfmCloseModal(fieldId));
         modal.querySelector(`#${CSS.escape(fieldId)}_modal_cancel`).addEventListener('click', () => window._pfmCloseModal(fieldId));
         modal.querySelector(`#${CSS.escape(fieldId)}_save_btn`).addEventListener('click', () => window._pfmSave(fieldId, filename));
+        trapModal(fieldId, modal, `${fieldId}_modal_title`);
 
         const data = await callAction(st.pluginId, st.actions.get, { filename }).catch(() => null);
         const body = document.getElementById(`${fieldId}_edit_body`);
         if (!data || data.status !== 'success' || !body) {
-            if (body) safeSetHTML(body, '<div class="pfm-empty" style="color:#dc2626">Failed to load file.</div>');
+            if (body) safeSetHTML(body, `<div class="pfm-empty pfm-error-text">Couldn't load ${escHtml(filename)}. Close this window and try again.</div>`);
             return;
         }
 
@@ -413,10 +448,10 @@
             // Textarea path: _editData stays null; save() reads from the <textarea>
             st._editData = null;
             safeSetHTML(body, `
-                <textarea id="${escHtml(fieldId)}_json_ta" rows="20"
-                    style="width:100%;font-family:monospace;font-size:.75rem;border:1px solid #d1d5db;border-radius:.375rem;padding:.5rem;"
+                <textarea id="${escHtml(fieldId)}_json_ta" rows="20" class="pfm-json-ta"
+                    aria-label="File contents (JSON)" aria-describedby="${escHtml(fieldId)}_json_err"
                 >${escHtml(JSON.stringify(content, null, 2))}</textarea>
-                <div id="${escHtml(fieldId)}_json_err" style="color:#dc2626;font-size:.75rem;margin-top:.25rem;"></div>`);
+                <div id="${escHtml(fieldId)}_json_err" class="pfm-json-err" role="alert"></div>`);
         }
     };
 
@@ -461,7 +496,7 @@
             const totalPages = Math.ceil(total / perPage);
 
             safeSetHTML(container, `
-                <div class="pfm-table-info" style="font-size:.75rem;color:#6b7280;margin-bottom:.375rem;">
+                <div class="pfm-table-info">
                     ${total} entries total
                     <button class="pfm-btn pfm-btn-secondary pfm-btn-sm" style="margin-left:.5rem"
                         onclick="(function(){const targetPage=Math.ceil(${todayDoy}/${perPage});window._pfmTablePage('${fieldId}',targetPage);setTimeout(function(){const row=document.querySelector('tr[data-day=\\'${todayDoy}\\']');if(row)row.scrollIntoView({block:'center'});},60);})()">
@@ -579,9 +614,9 @@
         modal.style.maxWidth = '28rem';
         safeSetHTML(modal, `
             <div class="pfm-modal-header">
-                <span class="pfm-modal-title"><i class="fas fa-trash mr-2"></i>Delete File</span>
-                <button class="pfm-btn pfm-btn-secondary pfm-btn-sm" id="${escHtml(fieldId)}_del_close">
-                    <i class="fas fa-times"></i>
+                <span class="pfm-modal-title" id="${escHtml(fieldId)}_del_title"><i class="fas fa-trash mr-2" aria-hidden="true"></i>Delete File</span>
+                <button type="button" class="pfm-btn pfm-btn-secondary pfm-btn-sm" id="${escHtml(fieldId)}_del_close" aria-label="Close">
+                    <i class="fas fa-times" aria-hidden="true"></i>
                 </button>
             </div>
             <div class="pfm-modal-body">
@@ -591,15 +626,18 @@
                 </div>
             </div>
             <div class="pfm-modal-footer">
-                <button class="pfm-btn pfm-btn-secondary" id="${escHtml(fieldId)}_del_cancel">Cancel</button>
-                <button class="pfm-btn pfm-btn-danger" id="${escHtml(fieldId)}_del_confirm">
-                    <i class="fas fa-trash mr-1"></i>Delete
+                <button type="button" class="pfm-btn pfm-btn-secondary" id="${escHtml(fieldId)}_del_cancel">Cancel</button>
+                <button type="button" class="pfm-btn pfm-btn-danger" id="${escHtml(fieldId)}_del_confirm">
+                    <i class="fas fa-trash mr-1" aria-hidden="true"></i>Delete
                 </button>
             </div>`);
         overlay.appendChild(modal);
+        const cancelBtn = modal.querySelector(`#${CSS.escape(fieldId)}_del_cancel`);
         modal.querySelector(`#${CSS.escape(fieldId)}_del_close`).addEventListener('click', () => window._pfmCloseModal(fieldId));
-        modal.querySelector(`#${CSS.escape(fieldId)}_del_cancel`).addEventListener('click', () => window._pfmCloseModal(fieldId));
+        cancelBtn.addEventListener('click', () => window._pfmCloseModal(fieldId));
         modal.querySelector(`#${CSS.escape(fieldId)}_del_confirm`).addEventListener('click', () => window._pfmConfirmDelete(fieldId, filename));
+        // Destructive dialog: start on Cancel.
+        trapModal(fieldId, modal, `${fieldId}_del_title`, cancelBtn);
     };
 
     window._pfmConfirmDelete = async function (fieldId, filename) {
@@ -611,7 +649,7 @@
             window._pfmCloseModal(fieldId);
             await loadFiles(fieldId);
         } else {
-            notify('Delete failed: ' + (result.message || ''), 'error');
+            notify("Couldn't delete the file: " + (result.message || 'unknown error') + '. Try again.', 'error');
         }
     };
 
@@ -626,13 +664,13 @@
         modal.style.maxWidth = '32rem';
         safeSetHTML(modal, `
             <div class="pfm-modal-header">
-                <span class="pfm-modal-title"><i class="fas fa-plus-circle mr-2"></i>Create New File</span>
-                <button class="pfm-btn pfm-btn-secondary pfm-btn-sm" id="${escHtml(fieldId)}_cre_close">
-                    <i class="fas fa-times"></i>
+                <span class="pfm-modal-title" id="${escHtml(fieldId)}_cre_title"><i class="fas fa-plus-circle mr-2" aria-hidden="true"></i>Create New File</span>
+                <button type="button" class="pfm-btn pfm-btn-secondary pfm-btn-sm" id="${escHtml(fieldId)}_cre_close" aria-label="Close">
+                    <i class="fas fa-times" aria-hidden="true"></i>
                 </button>
             </div>
             <div class="pfm-modal-body">
-                <div id="${escHtml(fieldId)}_create_err" class="pfm-field-error" style="margin-bottom:.5rem;"></div>
+                <div id="${escHtml(fieldId)}_create_err" class="pfm-field-error" role="alert" style="margin-bottom:.5rem;"></div>
                 ${fields.map(f => `
                 <div class="pfm-field">
                     <label for="${escHtml(fieldId)}_cf_${escHtml(f.key)}">${escHtml(f.label || f.key)}</label>
@@ -643,16 +681,16 @@
                 </div>`).join('')}
             </div>
             <div class="pfm-modal-footer">
-                <button class="pfm-btn pfm-btn-secondary" id="${escHtml(fieldId)}_cre_cancel">Cancel</button>
-                <button class="pfm-btn pfm-btn-create" id="${escHtml(fieldId)}_create_btn">
-                    <i class="fas fa-plus mr-1"></i>Create
+                <button type="button" class="pfm-btn pfm-btn-secondary" id="${escHtml(fieldId)}_cre_cancel">Cancel</button>
+                <button type="button" class="pfm-btn pfm-btn-create" id="${escHtml(fieldId)}_create_btn">
+                    <i class="fas fa-plus mr-1" aria-hidden="true"></i>Create
                 </button>
-            </div>
             </div>`);
         overlay.appendChild(modal);
         modal.querySelector(`#${CSS.escape(fieldId)}_cre_close`).addEventListener('click', () => window._pfmCloseModal(fieldId));
         modal.querySelector(`#${CSS.escape(fieldId)}_cre_cancel`).addEventListener('click', () => window._pfmCloseModal(fieldId));
         modal.querySelector(`#${CSS.escape(fieldId)}_create_btn`).addEventListener('click', () => window._pfmConfirmCreate(fieldId));
+        trapModal(fieldId, modal, `${fieldId}_cre_title`, modal.querySelector('.pfm-field input'));
     };
 
     window._pfmConfirmCreate = async function (fieldId) {
@@ -739,11 +777,28 @@
         return overlay;
     }
 
+    // Dialog semantics + focus trap for an open modal (utils/dialog.js).
+    // Every close path goes through _pfmCloseModal, which releases it.
+    function trapModal(fieldId, modal, titleId, initialFocus) {
+        if (!window.LEDDialog) return;
+        const st = getState(fieldId);
+        st._releaseDialog = window.LEDDialog.trap(modal, {
+            labelledBy: titleId,
+            initialFocus: initialFocus || null,
+            onEscape: () => window._pfmCloseModal(fieldId)
+        });
+    }
+
     window._pfmCloseModal = function (fieldId) {
         const st = getState(fieldId);
         if (st.currentModal) { st.currentModal.remove(); st.currentModal = null; }
         st._editData = null;
         st._editFilename = null;
+        if (st._releaseDialog) {
+            const release = st._releaseDialog;
+            st._releaseDialog = null;
+            release();
+        }
     };
 
     // ─── Widget registration ──────────────────────────────────────────────────
@@ -793,7 +848,7 @@
                         <input type="file" id="${fieldId}_file_input" accept=".json"
                                style="display:none"
                                onchange="if(this.files[0])window._pfmUpload('${fieldId}',this.files[0]);this.value=''">
-                        <i class="fas fa-cloud-upload-alt" style="font-size:1.5rem;color:#9ca3af;"></i>
+                        <i class="fas fa-cloud-upload-alt pfm-upload-icon" aria-hidden="true"></i>
                         <p>Drag and drop or click to upload</p>
                         <small>${escHtml(st.uploadHint)}</small>
                     </div>` : ''}

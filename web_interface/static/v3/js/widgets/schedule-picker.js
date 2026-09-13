@@ -294,6 +294,7 @@
                         <td class="px-3 py-2 whitespace-nowrap">
                             <input type="checkbox"
                                    id="${fieldId}_${day}_enabled"
+                                   aria-label="${escapeHtml(DAY_LABELS[day])} enabled"
                                    ${dayConfig.enabled ? 'checked' : ''}
                                    onchange="window.LEDMatrixWidgets.getHandlers('schedule-picker').onDayEnabledChange('${fieldId}', '${day}', this.checked)"
                                    class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
@@ -301,6 +302,7 @@
                         <td class="px-3 py-2 whitespace-nowrap">
                             <input type="time"
                                    id="${fieldId}_${day}_start"
+                                   aria-label="${escapeHtml(DAY_LABELS[day])} start time"
                                    value="${escapeHtml(dayConfig.start_time)}"
                                    ${disabled ? 'disabled' : ''}
                                    onchange="window.LEDMatrixWidgets.getHandlers('schedule-picker').onDayTimeChange('${fieldId}', '${day}')"
@@ -309,6 +311,7 @@
                         <td class="px-3 py-2 whitespace-nowrap">
                             <input type="time"
                                    id="${fieldId}_${day}_end"
+                                   aria-label="${escapeHtml(DAY_LABELS[day])} end time"
                                    value="${escapeHtml(dayConfig.end_time)}"
                                    ${disabled ? 'disabled' : ''}
                                    onchange="window.LEDMatrixWidgets.getHandlers('schedule-picker').onDayTimeChange('${fieldId}', '${day}')"

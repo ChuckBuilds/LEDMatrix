@@ -32,7 +32,7 @@
 
         <div class="space-y-4">
             <!-- Switch branch -->
-            <div class="flex items-start justify-between gap-4">
+            <div class="flex flex-wrap sm:flex-nowrap items-start justify-between gap-4">
                 <div class="min-w-0">
                     <p class="text-sm font-medium text-gray-900">Branch</p>
                     <p class="text-xs text-gray-500 mt-0.5">Choose which branch this pi follows. Switching attaches tracking, so Pull Latest works afterwards.</p>
@@ -50,7 +50,7 @@
             <div id="result-checkout-branch" class="hidden"></div>
 
             <!-- Pull latest -->
-            <div class="flex items-start justify-between gap-4">
+            <div class="flex flex-wrap sm:flex-nowrap items-start justify-between gap-4">
                 <div>
                     <p class="text-sm font-medium text-gray-900">Pull latest (rebase)</p>
                     <p class="text-xs text-gray-500 mt-0.5">Stashes any local changes, then runs <code class="bg-gray-100 px-1 rounded">git pull --rebase</code>. The stash is preserved but not re-applied.</p>
@@ -63,7 +63,7 @@
             <div id="result-git-pull" class="hidden"></div>
 
             <!-- Force reset -->
-            <div class="flex items-start justify-between gap-4 pt-4 border-t border-gray-100">
+            <div class="flex flex-wrap sm:flex-nowrap items-start justify-between gap-4 pt-4 border-t border-gray-100">
                 <div>
                     <p class="text-sm font-medium text-gray-900">Force reset to <code class="bg-gray-100 px-1 rounded">origin/main</code></p>
                     <p class="text-xs text-gray-500 mt-0.5">Runs <code class="bg-gray-100 px-1 rounded">git fetch origin</code> then <code class="bg-gray-100 px-1 rounded">git reset --hard origin/main</code>. Discards all local changes.</p>
@@ -99,7 +99,7 @@
 
         <div class="space-y-4">
             <!-- Base requirements -->
-            <div class="flex items-start justify-between gap-4">
+            <div class="flex flex-wrap sm:flex-nowrap items-start justify-between gap-4">
                 <div>
                     <p class="text-sm font-medium text-gray-900">Reinstall base requirements</p>
                     <p class="text-xs text-gray-500 mt-0.5">Installs from <code class="bg-gray-100 px-1 rounded">requirements.txt</code> in the project root.</p>
@@ -112,7 +112,7 @@
             <div id="result-base-reqs" class="hidden"></div>
 
             <!-- Plugin requirements -->
-            <div class="flex items-start justify-between gap-4 pt-4 border-t border-gray-100">
+            <div class="flex flex-wrap sm:flex-nowrap items-start justify-between gap-4 pt-4 border-t border-gray-100">
                 <div>
                     <p class="text-sm font-medium text-gray-900">Reinstall plugin requirements</p>
                     <p class="text-xs text-gray-500 mt-0.5">Runs <code class="bg-gray-100 px-1 rounded">pip install</code> for every installed plugin that has a <code class="bg-gray-100 px-1 rounded">requirements.txt</code>.</p>
@@ -134,7 +134,7 @@
         </div>
 
         <div class="space-y-4">
-            <div class="flex items-start justify-between gap-4">
+            <div class="flex flex-wrap sm:flex-nowrap items-start justify-between gap-4">
                 <div>
                     <p class="text-sm font-medium text-gray-900">Clear Python cache</p>
                     <p class="text-xs text-gray-500 mt-0.5">Deletes all <code class="bg-gray-100 px-1 rounded">__pycache__</code> directories in the project. Useful after switching branches or debugging import issues.</p>
@@ -166,14 +166,15 @@
             <p class="mt-1 text-sm text-gray-600">Turn the WiFi radio on or off. Full WiFi setup (scan, connect, hotspot) lives on the <span class="font-medium">WiFi</span> tab.</p>
         </div>
 
-        <div class="flex items-start justify-between gap-4">
+        <div class="flex flex-wrap sm:flex-nowrap items-start justify-between gap-4">
             <div>
-                <p class="text-sm font-medium text-gray-900">WiFi radio</p>
+                <p id="wifi-radio-label" class="text-sm font-medium text-gray-900">WiFi radio</p>
                 <p id="wifi-radio-note" class="text-xs text-gray-500 mt-0.5">Checking current state…</p>
             </div>
             <div class="shrink-0 flex flex-col items-end gap-2">
                 <!-- Toggle switch -->
                 <button id="wifi-radio-toggle" type="button" role="switch" aria-checked="false"
+                        aria-labelledby="wifi-radio-label" aria-describedby="wifi-radio-note"
                         onclick="onWifiRadioToggleClick()" disabled
                         class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent bg-gray-200 transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 opacity-60">
                     <span id="wifi-radio-knob" aria-hidden="true"
@@ -207,7 +208,7 @@
         </div>
 
         <div class="space-y-4">
-            <div class="flex items-start justify-between gap-4">
+            <div class="flex flex-wrap sm:flex-nowrap items-start justify-between gap-4">
                 <div>
                     <p class="text-sm font-medium text-gray-900">Restart display service</p>
                     <p class="text-xs text-gray-500 mt-0.5">Restarts <code class="bg-gray-100 px-1 rounded">ledmatrix.service</code>.</p>
@@ -219,7 +220,7 @@
             </div>
             <div id="result-restart-display" class="hidden"></div>
 
-            <div class="flex items-start justify-between gap-4 pt-4 border-t border-gray-100">
+            <div class="flex flex-wrap sm:flex-nowrap items-start justify-between gap-4 pt-4 border-t border-gray-100">
                 <div>
                     <p class="text-sm font-medium text-gray-900">Restart web interface</p>
                     <p class="text-xs text-gray-500 mt-0.5">Restarts <code class="bg-gray-100 px-1 rounded">ledmatrix-web.service</code>. The page will go offline briefly.</p>
@@ -282,7 +283,7 @@
 
         <div class="space-y-4">
             <!-- Reboot -->
-            <div class="flex items-start justify-between gap-4">
+            <div class="flex flex-wrap sm:flex-nowrap items-start justify-between gap-4">
                 <div>
                     <p class="text-sm font-medium text-gray-900">Reboot</p>
                     <p class="text-xs text-gray-500 mt-0.5">Runs <code class="bg-gray-100 px-1 rounded">sudo reboot</code>. The Pi will restart and come back online in a minute or two.</p>
@@ -308,7 +309,7 @@
             <div id="result-reboot" class="hidden"></div>
 
             <!-- Shutdown -->
-            <div class="flex items-start justify-between gap-4 pt-4 border-t border-gray-100">
+            <div class="flex flex-wrap sm:flex-nowrap items-start justify-between gap-4 pt-4 border-t border-gray-100">
                 <div>
                     <p class="text-sm font-medium text-gray-900">Shut down</p>
                     <p class="text-xs text-gray-500 mt-0.5">Runs <code class="bg-gray-100 px-1 rounded">sudo poweroff</code>. The Pi will power off and must be unplugged/replugged (or power-cycled) to turn back on.</p>
@@ -979,26 +980,31 @@
     loadGitInfo();
     loadBranches();
 
-    // Plugin health: initial load + periodic refresh. Guard against duplicate
-    // timers if this partial is re-swapped in by HTMX; the handler re-resolves
-    // DOM nodes by id each tick.
-    refreshPluginHealth(false);
-    if (!window._pluginHealthTimer) {
-        window._pluginHealthTimer = setInterval(function () { refreshPluginHealth(true); }, 15000);
+    // Plugin health (15s) and system diagnostics (10s): the partial stays in
+    // the DOM (hidden via x-show) when another tab is active, so both polls
+    // run only while the Tools tab is active and the page is visible — each
+    // restarts with an immediate refresh. LEDVisibility keys the registration,
+    // so a partial re-swapped in by HTMX replaces (not stacks) the timers.
+    function stopToolsPolling() {
+        if (window._pluginHealthTimer) { clearInterval(window._pluginHealthTimer); window._pluginHealthTimer = null; }
+        if (window._diagPollInterval) { clearInterval(window._diagPollInterval); window._diagPollInterval = null; }
     }
-
-    // System diagnostics: load now, then refresh every 10s. Clear any prior
-    // interval so re-swapping the partial doesn't stack. The recurring poll is
-    // gated on visibility — the partial stays in the DOM (hidden via x-show)
-    // when another tab is active, so without this it would keep hitting
-    // /api/v3/system/status every 10s and churn the Pi while off-screen.
-    if (window._diagPollInterval) clearInterval(window._diagPollInterval);
-    window.loadSystemDiagnostics();
-    window._diagPollInterval = setInterval(function () {
-        const panel = document.getElementById('diag-panel');
-        if (!panel || document.hidden || panel.offsetParent === null) return;
+    function startToolsPolling() {
+        stopToolsPolling();
+        refreshPluginHealth(false);
+        window._pluginHealthTimer = setInterval(function () { refreshPluginHealth(true); }, 15000);
         window.loadSystemDiagnostics();
-    }, 10000);
+        window._diagPollInterval = setInterval(function () {
+            const panel = document.getElementById('diag-panel');
+            if (!panel || document.hidden || panel.offsetParent === null) return;
+            window.loadSystemDiagnostics();
+        }, 10000);
+    }
+    if (window.LEDVisibility) {
+        window.LEDVisibility.onActive('tools', startToolsPolling, stopToolsPolling);
+    } else {
+        startToolsPolling();
+    }
 
     // WiFi radio current state.
     window.loadWifiRadio();
@@ -1223,7 +1229,7 @@
 
         const active = status.running ? `
             <div class="rounded-md border border-amber-300 bg-amber-50 p-3">
-                <div class="flex items-start justify-between gap-4">
+                <div class="flex flex-wrap sm:flex-nowrap items-start justify-between gap-4">
                     <div>
                         <p class="text-sm font-medium text-amber-900">
                             <i class="fas fa-circle-notch fa-spin mr-1"></i>

@@ -1039,10 +1039,25 @@ window.showDisplaySaveResult = function(xhr) {
         content.appendChild(textSpan);
     }
 
-    // Initial UI state and polling — guard against duplicate intervals on re-run
+    // Initial UI state, then the 5s sync-status poll — only while the Display
+    // tab is active and the page is visible. LEDVisibility keys the
+    // registration, so a re-run of this partial replaces the previous timer.
+    function stopSyncTimer() {
+        if (window.syncStatusInterval) {
+            clearInterval(window.syncStatusInterval);
+            window.syncStatusInterval = null;
+        }
+    }
+    function startSyncTimer() {
+        stopSyncTimer();
+        pollSyncStatus();
+        window.syncStatusInterval = setInterval(pollSyncStatus, 5000);
+    }
     function startSyncPolling() {
         updateSyncUI();
-        if (!window.syncStatusInterval) {
+        if (window.LEDVisibility) {
+            window.LEDVisibility.onActive('display', startSyncTimer, stopSyncTimer, 'display-sync-status');
+        } else if (!window.syncStatusInterval) {
             window.syncStatusInterval = setInterval(pollSyncStatus, 5000);
         }
     }

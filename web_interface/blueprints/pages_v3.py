@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, flash, jsonify
+from flask import Blueprint, Response, render_template, flash, jsonify, url_for
 from jinja2 import TemplateNotFound
 from markupsafe import escape
 from html.parser import HTMLParser
@@ -12,6 +12,7 @@ _SAFE_PLUGIN_ID_RE = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
 _SAFE_WEB_UI_FILE_RE = re.compile(r'^[a-zA-Z0-9_-]{1,64}\.html$')
 from src.web_interface.secret_helpers import mask_secret_fields
 from src.common.path_safety import resolve_under, safe_path_component
+from web_interface import widget_bundle
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,30 @@ plugin_manager = None
 plugin_store_manager = None
 
 pages_v3 = Blueprint('pages_v3', __name__)
+
+
+@pages_v3.route('/assets/widgets.js')
+def widgets_bundle():
+    """Every widget script in one request (see web_interface/widget_bundle.py).
+
+    The individual files stay served from /static for plugin-loader.js and
+    debugging; this saves the Pi ~30 round trips on each first page load.
+    Cached as immutable by app.py because the URL carries the version.
+    """
+    body, version = widget_bundle.build_bundle()
+    response = Response(body, mimetype='application/javascript')
+    response.headers['X-Widget-Bundle-Version'] = str(version)
+    return response
+
+
+@pages_v3.app_context_processor
+def inject_widget_bundle_url():
+    """`widgets_bundle_url()` for templates, versioned by file mtime."""
+    return {
+        'widgets_bundle_url': lambda: url_for(
+            'pages_v3.widgets_bundle', v=widget_bundle.bundle_version()
+        )
+    }
 
 
 class _SettingsIndexParser(HTMLParser):

@@ -101,8 +101,9 @@
                 html += `
                     <button type="button"
                             onclick="window.LEDMatrixWidgets.getHandlers('number-input').onDecrement('${fieldId}')"
-                            class="inline-flex items-center px-3 py-2 text-gray-600 bg-gray-100 border border-r-0 border-gray-300 hover:bg-gray-200 ${prefix ? '' : 'rounded-l-md'}">
-                        <i class="fas fa-minus text-xs"></i>
+                            class="inline-flex items-center px-3 py-2 text-gray-600 bg-gray-100 border border-r-0 border-gray-300 hover:bg-gray-200 ${prefix ? '' : 'rounded-l-md'}"
+                            aria-label="Decrease" aria-controls="${fieldId}_input">
+                        <i class="fas fa-minus text-xs" aria-hidden="true"></i>
                     </button>
                 `;
             }
@@ -128,8 +129,9 @@
                 html += `
                     <button type="button"
                             onclick="window.LEDMatrixWidgets.getHandlers('number-input').onIncrement('${fieldId}')"
-                            class="inline-flex items-center px-3 py-2 text-gray-600 bg-gray-100 border border-l-0 border-gray-300 hover:bg-gray-200 ${suffix ? '' : 'rounded-r-md'}">
-                        <i class="fas fa-plus text-xs"></i>
+                            class="inline-flex items-center px-3 py-2 text-gray-600 bg-gray-100 border border-l-0 border-gray-300 hover:bg-gray-200 ${suffix ? '' : 'rounded-r-md'}"
+                            aria-label="Increase" aria-controls="${fieldId}_input">
+                        <i class="fas fa-plus text-xs" aria-hidden="true"></i>
                     </button>
                 `;
             }

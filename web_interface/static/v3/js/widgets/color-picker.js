@@ -122,6 +122,7 @@
                                id="${fieldId}_hex"
                                value="${currentValue.substring(1)}"
                                maxlength="6"
+                               aria-label="Hex color code"
                                ${disabled ? 'disabled' : ''}
                                onchange="window.LEDMatrixWidgets.getHandlers('color-picker').onHexChange('${fieldId}')"
                                oninput="window.LEDMatrixWidgets.getHandlers('color-picker').onHexInput('${fieldId}')"
@@ -161,7 +162,8 @@
                                     onclick="window.LEDMatrixWidgets.getHandlers('color-picker').onPresetClick('${fieldId}', this.dataset.color)"
                                     class="w-6 h-6 rounded border border-gray-300 hover:scale-110 transition-transform ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}"
                                     style="background-color: ${escapeHtml(normalized)};"
-                                    title="${escapeHtml(normalized)}">
+                                    title="${escapeHtml(normalized)}"
+                                    aria-label="Use color ${escapeHtml(normalized)}">
                             </button>
                         `;
                     }

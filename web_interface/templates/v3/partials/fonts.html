@@ -48,7 +48,7 @@
 
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Font Family Name</label>
+                        <label for="upload-font-family" class="block text-sm font-medium text-gray-700 mb-1">Font Family Name</label>
                         <input type="text" id="upload-font-family" class="form-control" placeholder="e.g., my-custom-font">
                         <p class="text-sm text-gray-600 mt-1">Custom name for this font (letters, numbers, underscores, hyphens)</p>
                     </div>
@@ -86,7 +86,7 @@
         <!-- Add New Override -->
         <div class="grid grid-cols-1 md:grid-cols-4 xl:grid-cols-4 2xl:grid-cols-4 gap-4 mb-4 p-4 bg-white rounded border">
             <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">Element</label>
+                <label for="override-element" class="block text-sm font-medium text-gray-700 mb-1">Element</label>
                 <select id="override-element" class="form-control text-sm">
                     <option value="">Select an element...</option>
                     <optgroup label="Sports">
@@ -109,7 +109,7 @@
             </div>
 
             <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">Font Family</label>
+                <label for="override-family" class="block text-sm font-medium text-gray-700 mb-1">Font Family</label>
                 <select id="override-family" class="form-control text-sm">
                     <option value="">Use default</option>
                     <!-- Dynamically populated from font catalog -->
@@ -117,7 +117,7 @@
             </div>
 
             <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">Font Size</label>
+                <label for="override-size" class="block text-sm font-medium text-gray-700 mb-1">Font Size</label>
                 <select id="override-size" class="form-control text-sm">
                     <option value="">Use default</option>
                     <option value="xs">Extra Small (6px)</option>
@@ -151,24 +151,24 @@
         <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-2 2xl:grid-cols-2 gap-6">
             <div>
                 <div id="font-preview-container" class="border border-gray-300 bg-black rounded p-4 min-h-[100px] flex items-center justify-center">
-                    <img id="font-preview-image" src="" alt="Font preview" class="max-w-full" style="display: none;">
+                    <img id="font-preview-image" alt="Font preview" class="max-w-full" style="display: none;">
                     <span id="font-preview-loading" class="text-gray-400">Select a font to preview</span>
                 </div>
             </div>
             <div class="space-y-3">
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Preview Text</label>
+                    <label for="preview-text" class="block text-sm font-medium text-gray-700 mb-1">Preview Text</label>
                     <input type="text" id="preview-text" value="Sample Text 123" class="form-control text-sm">
                 </div>
                 <div class="grid grid-cols-2 gap-3">
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Font Family</label>
+                        <label for="preview-family" class="block text-sm font-medium text-gray-700 mb-1">Font Family</label>
                         <select id="preview-family" class="form-control text-sm">
                             <!-- Dynamically populated from font catalog -->
                         </select>
                     </div>
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Font Size</label>
+                        <label for="preview-size" class="block text-sm font-medium text-gray-700 mb-1">Font Size</label>
                         <select id="preview-size" class="form-control text-sm">
                             <option value="xs">XS (6px)</option>
                             <option value="sm">SM (8px)</option>
@@ -243,11 +243,18 @@ function initializeFontsTab() {
     // Reset retry counter on successful init
     initRetryCount = 0;
     
-    // showNotification is provided by the notification widget (notification.js)
-    // Fallback only if widget hasn't loaded yet
+    // showNotification is implemented by the notification widget
+    // (widgets/notification.js). If it hasn't loaded, queue the message; the
+    // widget shows queued messages as soon as it registers.
     if (typeof window.showNotification !== 'function') {
         window.showNotification = function(message, type = 'info') {
-            console.log(`[${type.toUpperCase()}]`, message);
+            const registry = window.LEDMatrixWidgets;
+            const widget = registry && typeof registry.get === 'function' ? registry.get('notification') : null;
+            if (widget && typeof widget.show === 'function') {
+                return widget.show(message, typeof type === 'string' ? { type: type } : (type || {}));
+            }
+            (window.__pendingNotifications = window.__pendingNotifications || []).push([message, type]);
+            console.log(`[${String((type && type.type) || type).toUpperCase()}]`, message);
         };
     }
 
@@ -1061,9 +1068,8 @@ function updateUploadProgress(percent) {
 
 <style>
 .drag-over {
-    border-color: #3b82f6 !important;
-    background-color: #eff6ff !important;
-    transform: scale(1.02);
+    border-color: var(--color-primary, #3b82f6) !important;
+    background-color: var(--color-info-bg, #eff6ff) !important;
 }
 
 .font-upload-area {
@@ -1071,45 +1077,51 @@ function updateUploadProgress(percent) {
 }
 
 .upload-dropzone {
-    border: 3px dashed #d1d5db;
-    border-radius: 10px;
-    padding: 40px;
+    border: 2px dashed var(--color-field-border, #d1d5db);
+    border-radius: 0.75rem;
+    padding: 2rem 1.5rem;
     text-align: center;
-    background: #fafafa;
-    transition: all 0.3s ease;
+    background: var(--color-background, #f9fafb);
+    transition: border-color 0.15s ease, background-color 0.15s ease;
     cursor: pointer;
 }
 
+@media (min-width: 640px) {
+    .upload-dropzone {
+        padding: 2.5rem;
+    }
+}
+
 .upload-dropzone:hover {
-    border-color: #3b82f6;
-    background: #f0f8ff;
+    border-color: var(--color-primary, #3b82f6);
+    background: var(--color-info-bg, #eff6ff);
 }
 
 .upload-dropzone i {
     font-size: 3rem;
-    color: #3b82f6;
-    margin-bottom: 15px;
+    color: var(--color-primary, #3b82f6);
+    margin-bottom: 0.75rem;
     display: block;
 }
 
 .upload-dropzone p {
-    margin: 5px 0;
-    font-size: 1.1rem;
-    color: #374151;
+    margin: 0.25rem 0;
+    font-size: 1rem;
+    color: var(--color-text-secondary, #374151);
 }
 
 .upload-hint {
-    font-size: 0.9rem !important;
-    color: #6b7280 !important;
+    font-size: 0.875rem !important;
+    color: var(--color-text-tertiary, #4b5563) !important;
     font-style: italic;
 }
 
 .upload-form {
-    margin-top: 20px;
-    padding: 20px;
-    background: #f9f9f9;
-    border-radius: 8px;
-    border: 1px solid #d1d5db;
+    margin-top: 1.25rem;
+    padding: 1.25rem;
+    background: var(--color-background, #f9fafb);
+    border-radius: 0.5rem;
+    border: 1px solid var(--color-border, #d1d5db);
 }
 
 #font-preview-container {
