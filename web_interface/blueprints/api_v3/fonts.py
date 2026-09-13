@@ -92,7 +92,9 @@ def get_fonts_catalog():
                         try:
                             from src.element_style import _read_bdf_native_size
                             native_size = _read_bdf_native_size(str(filepath))
-                        except Exception:
+                        except Exception as e:
+                            logger.debug("Could not read native size for BDF font %s: %s",
+                                         filepath, e)
                             native_size = None
 
                     catalog[catalog_key] = {
