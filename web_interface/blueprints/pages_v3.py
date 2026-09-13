@@ -481,7 +481,11 @@ def serve_plugin_widget(plugin_id, widget_name):
             # to ship an undeclared file is not something to confirm.
             return 'Not found', 404, {'Content-Type': 'text/plain'}
 
-        widgets_dir = (plugin_dir / 'widgets').resolve()
+        # Contain widgets/ itself first: a symlinked widgets directory would
+        # otherwise become the base the script is checked against.
+        widgets_dir = resolve_under(plugin_dir, 'widgets')
+        if widgets_dir is None:
+            return 'Not found', 404, {'Content-Type': 'text/plain'}
         # The script name comes from the plugin's manifest, not the request,
         # so it gets the same containment treatment the URL parts got.
         script_path = resolve_under(widgets_dir, script)

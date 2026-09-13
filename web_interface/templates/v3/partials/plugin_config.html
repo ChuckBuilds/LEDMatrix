@@ -88,6 +88,15 @@
             </div>
             <script>
             (function() {
+                // ~10s at 50ms: enough for the widget bundle to arrive over a
+                // slow link to a Pi, bounded so a bundle that never registers
+                // style-editor doesn't poll for the life of the page.
+                var retries = 0;
+                var MAX_RETRIES = 200;
+                function giveUp() {
+                    var container = document.getElementById('{{ field_id }}_container');
+                    if (container) { container.remove(); }
+                }
                 function fallbackIsDirty(root) {
                     if (!root) { return false; }
                     var controls = root.querySelectorAll('input, select, textarea');
@@ -106,9 +115,12 @@
                     return false;
                 }
                 function initWidget() {
-                    if (!window.LEDMatrixWidgets) { setTimeout(initWidget, 50); return; }
-                    var widget = window.LEDMatrixWidgets.get('style-editor');
-                    if (!widget) { setTimeout(initWidget, 50); return; }
+                    var widget = window.LEDMatrixWidgets && window.LEDMatrixWidgets.get('style-editor');
+                    if (!widget) {
+                        // The plain fallback fields stay in place either way.
+                        if (++retries < MAX_RETRIES) { setTimeout(initWidget, 50); } else { giveUp(); }
+                        return;
+                    }
                     var container = document.getElementById('{{ field_id }}_container');
                     var fallback = document.getElementById('{{ field_id }}_fallback');
                     if (!container) { return; }
