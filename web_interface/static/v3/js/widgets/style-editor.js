@@ -39,8 +39,6 @@
     var FONT_CACHE = null;
     var FONT_INFLIGHT = null;
 
-    var hasOwn = Object.prototype.hasOwnProperty;
-
     /**
      * Read one own property, by a key that came from data.
      *
