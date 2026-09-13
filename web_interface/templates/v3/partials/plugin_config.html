@@ -88,23 +88,30 @@
             </div>
             <script>
             (function() {
-                function fallbackIsDirty(root) {
-                    if (!root) { return false; }
-                    var controls = root.querySelectorAll('input, select, textarea');
-                    for (var i = 0; i < controls.length; i++) {
-                        var c = controls[i];
-                        if (c.type === 'checkbox' || c.type === 'radio') {
-                            if (c.checked !== c.defaultChecked) { return true; }
-                        } else if (c.tagName === 'SELECT') {
-                            for (var j = 0; j < c.options.length; j++) {
-                                if (c.options[j].selected !== c.options[j].defaultSelected) { return true; }
-                            }
-                        } else if (c.value !== c.defaultValue) {
-                            return true;
-                        }
-                    }
-                    return false;
-                }
+                // Did a *person* type into the fallback before this widget
+                // took over? Comparing values against their defaults cannot
+                // answer that. The fallback holds this block's own font
+                // fields, and the font-selector widget populates them on the
+                // same 50ms timer -- so a plain page load with nobody
+                // touching anything raced into "dirty" (measured: seven
+                // customization.*.font selects, ~60ms in) and silently
+                // removed the style editor, leaving the accordion form it
+                // exists to replace.
+                //
+                // isTrusted is false for programmatic changes and true only
+                // for real input, which is exactly the question. The
+                // listeners go on now, synchronously, because the edit to
+                // protect can happen before initWidget ever runs.
+                var userEdited = false;
+                (function watchForRealEdits() {
+                    var fb = document.getElementById('{{ field_id }}_fallback');
+                    if (!fb) { return; }
+                    ['input', 'change'].forEach(function (evt) {
+                        fb.addEventListener(evt, function (e) {
+                            if (e && e.isTrusted) { userEdited = true; }
+                        }, true);
+                    });
+                })();
                 function initWidget() {
                     if (!window.LEDMatrixWidgets) { setTimeout(initWidget, 50); return; }
                     var widget = window.LEDMatrixWidgets.get('style-editor');
@@ -116,7 +123,7 @@
                     // while this widget's script is still loading; swapping
                     // in the widget now would replace them with the stale
                     // server-rendered value and silently drop that edit.
-                    if (fallbackIsDirty(fallback)) { container.remove(); return; }
+                    if (userEdited) { container.remove(); return; }
                     var value = {{ obj_value|tojson|safe }};
                     var config = { schema: {{ prop|tojson|safe }} };
                     try {
@@ -130,9 +137,27 @@
                         container.remove();
                         return;
                     }
-                    // The widget owns these fields now; drop the generic
-                    // rendering so the form does not post both.
-                    if (fallback) { fallback.remove(); }
+                    // The widget owns the style blocks now, so drop those from
+                    // the generic rendering or the form would post both. Only
+                    // those: a customization block can also hold a feature of
+                    // its own (football keeps favorite_result_colors there),
+                    // and removing the section wholesale took the only UI that
+                    // feature had with it.
+                    if (fallback) {
+                        var owned = (container.dataset.ownedKeys || '')
+                            .split(',').filter(function (k) { return k; });
+                        owned.forEach(function (k) {
+                            var node = fallback.querySelector(
+                                '[data-child-key="' + k + '"]');
+                            if (node) { node.remove(); }
+                        });
+                        // Nothing left but the section heading, or a widget
+                        // that reported nothing: drop the lot, as before.
+                        if (!owned.length
+                                || !fallback.querySelector('[data-child-key]')) {
+                            fallback.remove();
+                        }
+                    }
                 }
                 if (document.readyState === 'loading') {
                     document.addEventListener('DOMContentLoaded', initWidget);
@@ -1036,7 +1061,12 @@
                 {% if nested_key in prop.properties %}
                     {% set nested_prop = prop.properties[nested_key] %}
                     {% set nested_val = nested_value[nested_key] if nested_key in nested_value else none %}
-                    {{ render_field(nested_key, nested_prop, nested_val, full_key, plugin_id) }}
+                    {# Tagged so a widget that takes over part of a block can
+                       drop exactly the children it owns and leave the rest
+                       rendered, rather than removing the whole section. #}
+                    <div data-child-key="{{ nested_key }}">
+                        {{ render_field(nested_key, nested_prop, nested_val, full_key, plugin_id) }}
+                    </div>
                 {% endif %}
             {% endfor %}
         </div>

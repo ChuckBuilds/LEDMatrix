@@ -146,10 +146,20 @@
     function elementKeys(schema) {
         var props = (schema && schema.properties) || {};
         var order = schema['x-propertyOrder'] || Object.keys(props);
-        return order.filter(function (k) {
+        var shaped = order.filter(function (k) {
             return k !== 'layout' && k !== 'modes'
                 && own(props, k) && ownObj(props, k).properties;
         });
+        // Core marks the blocks it recognises as styling. Prefer that: a
+        // customization block can also hold a feature of its own -- football
+        // keeps favorite_result_colors there -- and treating one as an element
+        // gives every row that feature's fields as extra columns.
+        var managed = shaped.filter(function (k) {
+            return ownObj(props, k)['x-style-managed'] === true;
+        });
+        // Nothing marked means the schema never went through expansion, so
+        // fall back to the shape test rather than rendering an empty table.
+        return managed.length ? managed : shaped;
     }
 
     function titleOf(schema, key) {
@@ -554,6 +564,20 @@
             container.innerHTML = '';
             var root = el('div', { class: 'style-editor' });
             container.appendChild(root);
+
+            // Published synchronously, because the host reads it the moment
+            // this returns while the panels below wait on the font catalog.
+            // layout and modes count as ours: their fields appear as columns
+            // in these rows, so leaving them to the generic renderer would
+            // post every offset twice from two different controls.
+            var owned = elementKeys(schema);
+            if (ownObj(schema.properties || {}, 'layout').properties) {
+                owned = owned.concat(['layout']);
+            }
+            if (ownObj(schema.properties || {}, 'modes').properties) {
+                owned = owned.concat(['modes']);
+            }
+            container.dataset.ownedKeys = owned.join(',');
 
             loadFonts().then(function (fonts) {
                 var modeProps = ownObj(schema.properties || {}, 'modes').properties || {};
