@@ -159,7 +159,19 @@
         });
         // Nothing marked means the schema never went through expansion, so
         // fall back to the shape test rather than rendering an empty table.
-        return managed.length ? managed : shaped;
+        var keys = managed.length ? managed : shaped;
+
+        // A hand-written layout block can offset something that never got
+        // a style block of its own -- a logo, a timeout indicator, a
+        // possession arrow with a position but no font, colour or size to
+        // set. render() claims the whole `layout` child as ours regardless
+        // (posting every covered offset twice from two controls is worse),
+        // so a key that only lives under layout still needs a row here, or
+        // it loses its only control the moment that fallback section is
+        // dropped.
+        var layoutKeys = Object.keys(ownObj(props, 'layout').properties || {});
+        var extra = layoutKeys.filter(function (k) { return keys.indexOf(k) === -1; });
+        return keys.concat(extra);
     }
 
     function titleOf(schema, key) {
