@@ -45,6 +45,8 @@ Going deeper:
 
 - [PLUGIN_CONFIG_QUICK_START.md](PLUGIN_CONFIG_QUICK_START.md) — minimal config you need
 - [PLUGIN_CONFIGURATION_GUIDE.md](PLUGIN_CONFIGURATION_GUIDE.md) — schema design
+- [PLUGIN_ELEMENT_STYLING.md](PLUGIN_ELEMENT_STYLING.md) — let users restyle,
+  move, hide and scale individual elements (per display mode, if you have them)
 - [PLUGIN_CONFIGURATION_TABS.md](PLUGIN_CONFIGURATION_TABS.md) — multi-tab UI configs
 - [PLUGIN_CONFIG_ARCHITECTURE.md](PLUGIN_CONFIG_ARCHITECTURE.md) — how the config system works
 - [PLUGIN_CONFIG_CORE_PROPERTIES.md](PLUGIN_CONFIG_CORE_PROPERTIES.md) — properties every plugin honors

@@ -39,6 +39,28 @@
     var FONT_CACHE = null;
     var FONT_INFLIGHT = null;
 
+    var hasOwn = Object.prototype.hasOwnProperty;
+
+    /**
+     * Read one own property, by a key that came from data.
+     *
+     * Every lookup in here is keyed by something out of a schema or a saved
+     * config -- an element name, a mode name, a field name. A key of
+     * `__proto__` or `constructor` would otherwise walk up the prototype
+     * chain and hand back a function instead of a schema, so reads go
+     * through here and misses come back undefined.
+     */
+    function own(obj, key) {
+        if (!obj || typeof obj !== 'object') { return undefined; }
+        return hasOwn.call(obj, key) ? obj[key] : undefined;
+    }
+
+    /** `own`, but always an object -- for `(x || {}).properties` chains. */
+    function ownObj(obj, key) {
+        var found = own(obj, key);
+        return (found && typeof found === 'object') ? found : {};
+    }
+
     /** The font catalog, fetched once per page. */
     function loadFonts() {
         if (FONT_CACHE) { return Promise.resolve(FONT_CACHE); }
@@ -51,7 +73,7 @@
             .then(function (payload) {
                 var catalog = (payload && payload.data && payload.data.catalog) || {};
                 FONT_CACHE = Object.keys(catalog).map(function (key) {
-                    var entry = catalog[key];
+                    var entry = ownObj(catalog, key);
                     return {
                         filename: entry.filename,
                         label: entry.display_name || entry.filename,
@@ -74,10 +96,11 @@
     function el(tag, attrs, children) {
         var node = document.createElement(tag);
         Object.keys(attrs || {}).forEach(function (k) {
-            if (k === 'class') { node.className = attrs[k]; }
-            else if (k === 'text') { node.textContent = attrs[k]; }
-            else if (attrs[k] !== null && attrs[k] !== undefined) {
-                node.setAttribute(k, attrs[k]);
+            var v = own(attrs, k);
+            if (k === 'class') { node.className = v; }
+            else if (k === 'text') { node.textContent = v; }
+            else if (v !== null && v !== undefined) {
+                node.setAttribute(k, v);
             }
         });
         (children || []).forEach(function (c) { node.appendChild(c); });
@@ -87,9 +110,10 @@
     /** Walk a nested value object by path segments. */
     function at(value, path) {
         var cur = value;
-        for (var i = 0; i < path.length; i++) {
+        var i;
+        for (i = 0; i < path.length; i++) {
             if (cur === null || typeof cur !== 'object') { return undefined; }
-            cur = cur[path[i]];
+            cur = own(cur, path[i]);
         }
         return cur;
     }
@@ -121,12 +145,12 @@
         var order = schema['x-propertyOrder'] || Object.keys(props);
         return order.filter(function (k) {
             return k !== 'layout' && k !== 'modes'
-                && props[k] && props[k].properties;
+                && own(props, k) && ownObj(props, k).properties;
         });
     }
 
     function titleOf(schema, key) {
-        var prop = (schema.properties || {})[key] || {};
+        var prop = ownObj(schema.properties || {}, key);
         return prop.title || key.replace(/_/g, ' ');
     }
 
@@ -257,11 +281,16 @@
         // drives them.
         var wrap = el('div', { class: 'flex items-center gap-1' });
         var has = Array.isArray(current) && current.length >= 3;
-        var channels = [0, 1, 2].map(function (i) {
-            var input = el('input', { type: 'hidden', name: name + '.' + i });
-            if (has) { input.value = current[i]; }
-            return input;
-        });
+        var startValues = has ? current.slice(0, 3) : [];
+        var channels = startValues.concat([null, null, null])
+            .slice(0, 3)
+            .map(function (channelValue, i) {
+                var input = el('input', {
+                    type: 'hidden', name: name + '.' + i
+                });
+                if (has) { input.value = channelValue; }
+                return input;
+            });
 
         // A disabled input is not submitted at all, which is how an unset
         // optional colour says nothing rather than posting three empty
@@ -280,8 +309,8 @@
         });
         swatch.addEventListener('input', function () {
             var hex = swatch.value;
-            [1, 3, 5].forEach(function (start, i) {
-                channels[i].value = parseInt(hex.substr(start, 2), 16);
+            channels.forEach(function (channel, i) {
+                channel.value = parseInt(hex.substr(1 + i * 2, 2), 16);
             });
             setSubmitted(true);
             if (clearBtn) { clearBtn.classList.remove('hidden'); }
@@ -334,15 +363,17 @@
      */
     function columnsFor(schema) {
         var props = schema.properties || {};
-        var layoutProps = (props.layout || {}).properties || {};
-        var seen = {};
+        var layoutProps = ownObj(props, 'layout').properties || {};
+        // No prototype to inherit from, so a field literally named
+        // "constructor" is a column like any other.
+        var seen = Object.create(null);
         elementKeys(schema).forEach(function (key) {
-            Object.keys((props[key] || {}).properties || {}).forEach(
+            Object.keys(ownObj(props, key).properties || {}).forEach(
                 function (f) { seen[f] = 'element'; });
-            Object.keys((layoutProps[key] || {}).properties || {}).forEach(
+            Object.keys(ownObj(layoutProps, key).properties || {}).forEach(
                 function (f) { seen[f] = 'layout'; });
         });
-        var known = COLUMN_ORDER.filter(function (f) { return seen[f]; });
+        var known = COLUMN_ORDER.filter(function (f) { return own(seen, f); });
         // Anything the schema declares that this file has never heard of
         // still gets a column, rather than silently vanishing.
         var extra = Object.keys(seen).filter(function (f) {
@@ -351,8 +382,8 @@
         return known.concat(extra).map(function (f) {
             return {
                 key: f,
-                where: seen[f],
-                label: COLUMN_LABELS[f] || f.replace(/_/g, ' ')
+                where: own(seen, f),
+                label: own(COLUMN_LABELS, f) || f.replace(/_/g, ' ')
             };
         });
     }
@@ -362,10 +393,10 @@
         var prop = opts.prop;
         var declared = prop.type;
         var types = Array.isArray(declared) ? declared : [declared];
+        var xOptions = prop['x-options'] || prop['x_options'] || {};
+        var cap = Number(xOptions.maxFixedSize) || opts.maxFixedSize || null;
 
         if (opts.key === 'font' || prop['x-widget'] === 'font-selector') {
-            var xOptions = prop['x-options'] || prop['x_options'] || {};
-            var cap = Number(xOptions.maxFixedSize) || opts.maxFixedSize || null;
             return fontControl(opts.name, opts.current,
                                usableFonts(opts.fonts, cap, opts.current),
                                opts.optional, opts.onFontChange);
@@ -390,9 +421,9 @@
         var value = opts.value;
         var optional = opts.optional;
 
-        var props = ((schema.properties || {})[key] || {}).properties || {};
-        var layoutProps = ((schema.properties || {}).layout || {}).properties || {};
-        var axes = (layoutProps[key] || {}).properties || {};
+        var props = ownObj(schema.properties || {}, key).properties || {};
+        var layoutProps = ownObj(schema.properties || {}, 'layout').properties || {};
+        var axes = ownObj(layoutProps, key).properties || {};
 
         var row = el('div', {
             class: 'style-editor-row grid items-center gap-2 py-1',
@@ -427,7 +458,8 @@
 
         opts.columns.forEach(function (col) {
             var inLayout = col.where === 'layout';
-            var prop = inLayout ? axes[col.key] : props[col.key];
+            var prop = inLayout ? own(axes, col.key) : own(props, col.key);
+            var cell;
             if (!prop) {
                 // This element does not declare that field; keep the grid
                 // aligned with an empty cell.
@@ -452,7 +484,7 @@
             if (col.key === 'font') { fontSelect = node; }
             if (col.key === 'font_size') {
                 sizeInput = node;
-                var cell = el('div', { class: 'flex items-center' });
+                cell = el('div', { class: 'flex items-center' });
                 cell.appendChild(node);
                 cell.appendChild(sizeNote);
                 node = cell;
@@ -520,10 +552,12 @@
             container.appendChild(root);
 
             loadFonts().then(function (fonts) {
-                var modeProps = ((schema.properties || {}).modes || {}).properties || {};
+                var modeProps = ownObj(schema.properties || {}, 'modes').properties || {};
                 var modes = Object.keys(modeProps);
 
-                var panels = {};
+                // A list, not a keyed object: the ids are mode names out of
+                // the schema, and nothing here needs a lookup by key.
+                var panels = [];
                 var tabs = null;
                 if (modes.length) {
                     tabs = el('div', { class: 'style-editor-tabs flex gap-1 mb-2' });
@@ -531,14 +565,14 @@
                 }
 
                 function panel(id, node) {
-                    panels[id] = node;
+                    panels.push({ id: id, node: node });
                     node.classList.add('style-editor-panel');
                     root.appendChild(node);
                 }
 
                 function show(id) {
-                    Object.keys(panels).forEach(function (k) {
-                        panels[k].hidden = (k !== id);
+                    panels.forEach(function (p) {
+                        p.node.hidden = (p.id !== id);
                     });
                     if (!tabs) { return; }
                     Array.prototype.forEach.call(tabs.children, function (b) {
@@ -565,7 +599,7 @@
                 tab('__base__', 'All modes');
 
                 modes.forEach(function (mode) {
-                    var modeSchema = modeProps[mode] || {};
+                    var modeSchema = ownObj(modeProps, mode);
                     var modeValue = at(current, ['modes', mode]) || {};
                     var node = el('div');
                     node.appendChild(el('p', {
