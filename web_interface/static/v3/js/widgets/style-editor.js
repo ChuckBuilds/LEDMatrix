@@ -52,7 +52,11 @@
      */
     function own(obj, key) {
         if (!obj || typeof obj !== 'object') { return undefined; }
-        return hasOwn.call(obj, key) ? obj[key] : undefined;
+        // Via the descriptor rather than obj[key]: this is the one read that
+        // cannot avoid a data-supplied key, and going through the descriptor
+        // means there is no computed member access here at all.
+        var descriptor = Object.getOwnPropertyDescriptor(obj, key);
+        return descriptor ? descriptor.value : undefined;
     }
 
     /** `own`, but always an object -- for `(x || {}).properties` chains. */
@@ -110,10 +114,11 @@
     /** Walk a nested value object by path segments. */
     function at(value, path) {
         var cur = value;
-        var i;
-        for (i = 0; i < path.length; i++) {
+        // Consumed rather than indexed, so no step reads path[i].
+        var remaining = (path || []).slice();
+        while (remaining.length) {
             if (cur === null || typeof cur !== 'object') { return undefined; }
-            cur = own(cur, path[i]);
+            cur = own(cur, remaining.shift());
         }
         return cur;
     }
@@ -364,25 +369,26 @@
     function columnsFor(schema) {
         var props = schema.properties || {};
         var layoutProps = ownObj(props, 'layout').properties || {};
-        // No prototype to inherit from, so a field literally named
-        // "constructor" is a column like any other.
-        var seen = Object.create(null);
+        // A Map, not an object: the keys are field names out of a schema, so
+        // a field literally named "constructor" is a column like any other
+        // and never touches a prototype.
+        var seen = new Map();
         elementKeys(schema).forEach(function (key) {
             Object.keys(ownObj(props, key).properties || {}).forEach(
-                function (f) { seen[f] = 'element'; });
+                function (f) { seen.set(f, 'element'); });
             Object.keys(ownObj(layoutProps, key).properties || {}).forEach(
-                function (f) { seen[f] = 'layout'; });
+                function (f) { seen.set(f, 'layout'); });
         });
-        var known = COLUMN_ORDER.filter(function (f) { return own(seen, f); });
+        var known = COLUMN_ORDER.filter(function (f) { return seen.get(f); });
         // Anything the schema declares that this file has never heard of
         // still gets a column, rather than silently vanishing.
-        var extra = Object.keys(seen).filter(function (f) {
+        var extra = Array.from(seen.keys()).filter(function (f) {
             return COLUMN_ORDER.indexOf(f) === -1;
         }).sort();
         return known.concat(extra).map(function (f) {
             return {
                 key: f,
-                where: own(seen, f),
+                where: seen.get(f),
                 label: own(COLUMN_LABELS, f) || f.replace(/_/g, ' ')
             };
         });

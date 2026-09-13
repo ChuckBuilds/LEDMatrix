@@ -1074,12 +1074,12 @@ def _submitted_parents(form_keys):
     return parents
 
 
-def _set_missing_booleans_to_false(config, schema_props, form_keys, prefix='', config_node=None,
+def _set_missing_booleans_to_false(plugin_config, schema_props, form_keys, prefix='', config_node=None,
                                    sections=None, submitted_parents=None):
     """Walk schema and set missing boolean form fields to False.
 
-    HTML checkboxes don't submit values when unchecked. When saving plugin config,
-    the backend starts from existing config (to support partial form updates), which
+    HTML checkboxes don't submit values when unchecked. When saving plugin plugin_config,
+    the backend starts from existing plugin_config (to support partial form updates), which
     means an unchecked checkbox's old ``True`` value persists. This function detects
     boolean schema properties not present in the form submission and explicitly sets
     them to ``False`` -- but only where that silence is evidence, see
@@ -1092,11 +1092,11 @@ def _set_missing_booleans_to_false(config, schema_props, form_keys, prefix='', c
     (e.g. ``feeds.custom_feeds.0.enabled``).
 
     Args:
-        config: The root plugin config dict (used for pure-dict paths)
+        plugin_config: The root plugin plugin_config dict (used for pure-dict paths)
         schema_props: Schema ``properties`` dict at the current nesting level
         form_keys: Set of form field names that were submitted
         prefix: Dot-notation prefix for the current nesting level
-        config_node: The current config subtree when inside an array item (avoids
+        config_node: The current plugin_config subtree when inside an array item (avoids
                      using _set_nested_value which corrupts lists)
         sections: Top-level sections the form reported rendering, or None when it
                   reported none (then submitted_parents decides)
@@ -1105,8 +1105,8 @@ def _set_missing_booleans_to_false(config, schema_props, form_keys, prefix='', c
     """
     if sections is None and submitted_parents is None:
         submitted_parents = _submitted_parents(form_keys)
-    # Determine which config node to operate on
-    node = config_node if config_node is not None else config
+    # Determine which plugin_config node to operate on
+    node = config_node if config_node is not None else plugin_config
 
     for prop_name, prop_schema in schema_props.items():
         if not isinstance(prop_schema, dict):
@@ -1126,7 +1126,7 @@ def _set_missing_booleans_to_false(config, schema_props, form_keys, prefix='', c
                     node[prop_name] = False
                 else:
                     # Pure dict path — use helper
-                    _set_nested_value(config, full_path, False)
+                    _set_nested_value(plugin_config, full_path, False)
 
         elif prop_type == 'object' and 'properties' in prop_schema:
             # Recurse into nested objects
@@ -1135,13 +1135,13 @@ def _set_missing_booleans_to_false(config, schema_props, form_keys, prefix='', c
                 if prop_name not in node or not isinstance(node[prop_name], dict):
                     node[prop_name] = {}
                 _set_missing_booleans_to_false(
-                    config, prop_schema['properties'], form_keys, full_path,
+                    plugin_config, prop_schema['properties'], form_keys, full_path,
                     config_node=node[prop_name],
                     sections=sections, submitted_parents=submitted_parents
                 )
             else:
                 _set_missing_booleans_to_false(
-                    config, prop_schema['properties'], form_keys, full_path,
+                    plugin_config, prop_schema['properties'], form_keys, full_path,
                     sections=sections, submitted_parents=submitted_parents
                 )
 
@@ -1164,15 +1164,15 @@ def _set_missing_booleans_to_false(config, schema_props, form_keys, prefix='', c
                 if not indices:
                     continue
 
-                # Navigate to the array in the config (create if missing)
+                # Navigate to the array in the plugin_config (create if missing)
                 if config_node is not None:
                     if prop_name not in node or not isinstance(node[prop_name], list):
                         node[prop_name] = []
                     array_list = node[prop_name]
                 else:
-                    # Navigate from root config through dict keys to get the list
+                    # Navigate from root plugin_config through dict keys to get the list
                     parts = full_path.split('.')
-                    current = config
+                    current = plugin_config
                     for part in parts[:-1]:
                         if part not in current or not isinstance(current[part], dict):
                             current[part] = {}
@@ -1191,7 +1191,7 @@ def _set_missing_booleans_to_false(config, schema_props, form_keys, prefix='', c
                         array_list[idx] = {}
                     item_prefix = f"{full_path}.{idx}"
                     _set_missing_booleans_to_false(
-                        config, items_schema['properties'], form_keys, item_prefix,
+                        plugin_config, items_schema['properties'], form_keys, item_prefix,
                         config_node=array_list[idx],
                         sections=sections, submitted_parents=submitted_parents
                     )
