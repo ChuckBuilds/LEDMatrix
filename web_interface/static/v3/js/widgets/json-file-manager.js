@@ -58,7 +58,7 @@
             this._deleteFile = null;
             this._keyHandler = this._onKey.bind(this);
             // Focus-trap release functions for open modals (utils/dialog.js)
-            this._releases   = {};
+            this._releases   = new Map();
 
             this._inject();
             this._bind();
@@ -69,7 +69,7 @@
 
         _destroy() {
             document.removeEventListener('keydown', this._keyHandler);
-            Object.keys(this._releases).forEach(k => this._release(k));
+            for (const key of Array.from(this._releases.keys())) this._release(key);
             this.el._jfmInstance = null;
         }
 
@@ -78,17 +78,17 @@
         _trap(key, modal, titleId, initialFocus, onClose) {
             if (!modal || !window.LEDDialog) return;
             const box = modal.querySelector('.jfm-modal-box');
-            this._releases[key] = window.LEDDialog.trap(box, {
+            this._releases.set(key, window.LEDDialog.trap(box, {
                 labelledBy: titleId,
                 initialFocus: initialFocus || null,
                 onEscape: onClose
-            });
+            }));
         }
 
         _release(key) {
-            const release = this._releases[key];
+            const release = this._releases.get(key);
             if (release) {
-                delete this._releases[key];
+                this._releases.delete(key);
                 release();
             }
         }

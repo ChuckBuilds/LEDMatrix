@@ -247,14 +247,14 @@ const ConfigDiffViewer = {
             let settled = false;
             // Single close path: remove the modal, release the focus trap
             // (returning focus to where the user was) and settle the promise.
-            const finish = (result) => {
+            function finish(result) {
                 if (settled) return;
                 settled = true;
                 modalContainer.remove();
-                if (window.__configDiffResolve === finish) delete window.__configDiffResolve;
+                if (window.__configDiffResolve === finish) window.__configDiffResolve = undefined;
                 if (release) release();
                 resolve(result);
-            };
+            }
 
             // Kept for backwards compatibility with code that calls it directly.
             window.__configDiffResolve = finish;

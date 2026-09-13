@@ -49,6 +49,7 @@
         saturday: 'Saturday',
         sunday: 'Sunday'
     };
+    const DAY_LABEL_MAP = new Map(Object.entries(DAY_LABELS));
 
     // Use BaseWidget utilities if available
     const base = window.BaseWidget ? new window.BaseWidget('SchedulePicker', '1.0.0') : null;
@@ -283,18 +284,19 @@
             // Render each day row
             DAYS.forEach(day => {
                 const dayConfig = schedule.days[day];
+                const dayLabel = escapeHtml(DAY_LABEL_MAP.get(day) || day);
                 const disabled = !dayConfig.enabled;
                 const disabledClass = disabled ? 'bg-gray-100' : '';
 
                 html += `
                     <tr class="hover:bg-gray-50" id="${fieldId}_row_${day}">
                         <td class="px-3 py-2 whitespace-nowrap">
-                            <span class="text-sm font-medium text-gray-900">${escapeHtml(DAY_LABELS[day])}</span>
+                            <span class="text-sm font-medium text-gray-900">${dayLabel}</span>
                         </td>
                         <td class="px-3 py-2 whitespace-nowrap">
                             <input type="checkbox"
                                    id="${fieldId}_${day}_enabled"
-                                   aria-label="${escapeHtml(DAY_LABELS[day])} enabled"
+                                   aria-label="${dayLabel} enabled"
                                    ${dayConfig.enabled ? 'checked' : ''}
                                    onchange="window.LEDMatrixWidgets.getHandlers('schedule-picker').onDayEnabledChange('${fieldId}', '${day}', this.checked)"
                                    class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
@@ -302,7 +304,7 @@
                         <td class="px-3 py-2 whitespace-nowrap">
                             <input type="time"
                                    id="${fieldId}_${day}_start"
-                                   aria-label="${escapeHtml(DAY_LABELS[day])} start time"
+                                   aria-label="${dayLabel} start time"
                                    value="${escapeHtml(dayConfig.start_time)}"
                                    ${disabled ? 'disabled' : ''}
                                    onchange="window.LEDMatrixWidgets.getHandlers('schedule-picker').onDayTimeChange('${fieldId}', '${day}')"
@@ -311,7 +313,7 @@
                         <td class="px-3 py-2 whitespace-nowrap">
                             <input type="time"
                                    id="${fieldId}_${day}_end"
-                                   aria-label="${escapeHtml(DAY_LABELS[day])} end time"
+                                   aria-label="${dayLabel} end time"
                                    value="${escapeHtml(dayConfig.end_time)}"
                                    ${disabled ? 'disabled' : ''}
                                    onchange="window.LEDMatrixWidgets.getHandlers('schedule-picker').onDayTimeChange('${fieldId}', '${day}')"

@@ -77,6 +77,9 @@
             label: 'Info'
         }
     };
+    // Lookups go through a Map so an arbitrary type string can't reach
+    // Object.prototype properties.
+    const STYLE_BY_TYPE = new Map(Object.entries(TYPE_STYLES));
 
     const VISUALLY_HIDDEN = 'position:absolute;width:1px;height:1px;padding:0;margin:-1px;' +
         'overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;';
@@ -251,7 +254,7 @@
         }
         options = options || {};
 
-        const type = TYPE_STYLES[options.type] ? options.type : 'info';
+        const type = STYLE_BY_TYPE.has(options.type) ? options.type : 'info';
         const isError = type === 'error';
         let duration = options.duration !== undefined
             ? Number(options.duration)
@@ -265,7 +268,7 @@
         // Errors always get a dismiss button.
         const dismissible = isError || duration <= 0 || options.dismissible !== false;
 
-        const style = TYPE_STYLES[type];
+        const style = STYLE_BY_TYPE.get(type);
         const container = getContainer();
         const notificationId = `notification_${++notificationCounter}`;
         const reduceMotion = prefersReducedMotion();

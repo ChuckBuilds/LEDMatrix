@@ -13,7 +13,10 @@ if (typeof window.showNotification !== 'function') {
         if (widget && typeof widget.show === 'function') {
             return widget.show(message, typeof type === 'string' ? { type: type } : (type || {}));
         }
-        (window.__pendingNotifications = window.__pendingNotifications || []).push([message, type]);
+        if (!Array.isArray(window.__pendingNotifications)) {
+            window.__pendingNotifications = [];
+        }
+        window.__pendingNotifications.push([message, type]);
         document.dispatchEvent(new CustomEvent('show-notification', {
             detail: { message, type }
         }));

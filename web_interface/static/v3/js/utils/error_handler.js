@@ -313,12 +313,12 @@ function escapeHtml(text) {
  */
 function copyErrorDetails(error) {
     const errorText = JSON.stringify(error, null, 2);
-    const copyFailed = (err) => {
+    function copyFailed(err) {
         console.error('Failed to copy error details:', err);
         if (typeof showNotification === 'function') {
             showNotification("Couldn't copy to the clipboard. Open Technical details and copy the text by hand.", 'warning');
         }
-    };
+    }
 
     if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(errorText).then(() => {
