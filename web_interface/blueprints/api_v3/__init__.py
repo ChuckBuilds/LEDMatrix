@@ -1031,14 +1031,59 @@ def _set_nested_value(config, key_path, value):
     # value (e.g. the per-mode "inherit the base" override) and must overwrite
     # whatever was already stored.
     current[segments[-1]] = value
-def _set_missing_booleans_to_false(config, schema_props, form_keys, prefix='', config_node=None):
+
+
+#: Hidden field the rendered plugin form repeats once per top-level section it
+#: drew. Named with a leading underscore pair so the save path can drop it (and
+#: anything else meta) before treating form keys as config paths.
+_RENDERED_SECTION_FIELD = '__rendered_section'
+
+
+def _boolean_is_in_scope(full_path, prefix, sections, submitted_parents):
+    """Whether a missing checkbox at ``full_path`` may be forced to False.
+
+    "Missing" only means "unchecked" for a form that actually rendered the
+    control. A caller that posts a handful of fields -- a script, the MQTT
+    bridge, a curl against the documented endpoint -- never rendered anything,
+    and reading its silence as "every other checkbox is off" turns a one-field
+    save into a mass disable. That is not hypothetical: a partial post of four
+    ``customization.*`` keys switched off ``nfl.enabled``, ``ncaa_fb.enabled``
+    and every display-mode toggle on a live device.
+
+    Two ways to be in scope:
+
+    * ``sections`` -- the rendered form lists the top-level sections it drew
+      (``__rendered_section``). Anything it drew is fair game, including a
+      section whose only fields are checkboxes that are all unchecked, which
+      is the case no heuristic can recover.
+    * ``submitted_parents`` -- no marker, so fall back to evidence: the
+      containing object must have had at least one field posted.
+    """
+    if sections is not None:
+        return full_path.split('.', 1)[0] in sections
+    if submitted_parents is None:
+        return True
+    return prefix in submitted_parents
+
+
+def _submitted_parents(form_keys):
+    """The object paths a form actually posted a field from ('' = top level)."""
+    parents = set()
+    for key in form_keys:
+        parents.add(key.rsplit('.', 1)[0] if '.' in key else '')
+    return parents
+
+
+def _set_missing_booleans_to_false(config, schema_props, form_keys, prefix='', config_node=None,
+                                   sections=None, submitted_parents=None):
     """Walk schema and set missing boolean form fields to False.
 
     HTML checkboxes don't submit values when unchecked. When saving plugin config,
     the backend starts from existing config (to support partial form updates), which
     means an unchecked checkbox's old ``True`` value persists. This function detects
     boolean schema properties not present in the form submission and explicitly sets
-    them to ``False``.
+    them to ``False`` -- but only where that silence is evidence, see
+    :func:`_boolean_is_in_scope`.
 
     The top-level ``enabled`` field is excluded because it has its own preservation
     logic in the save endpoint.
@@ -1053,7 +1098,13 @@ def _set_missing_booleans_to_false(config, schema_props, form_keys, prefix='', c
         prefix: Dot-notation prefix for the current nesting level
         config_node: The current config subtree when inside an array item (avoids
                      using _set_nested_value which corrupts lists)
+        sections: Top-level sections the form reported rendering, or None when it
+                  reported none (then submitted_parents decides)
+        submitted_parents: Object paths with at least one posted field; computed
+                  on the first call when there are no section markers
     """
+    if sections is None and submitted_parents is None:
+        submitted_parents = _submitted_parents(form_keys)
     # Determine which config node to operate on
     node = config_node if config_node is not None else config
 
@@ -1065,8 +1116,11 @@ def _set_missing_booleans_to_false(config, schema_props, form_keys, prefix='', c
         prop_type = prop_schema.get('type')
 
         if prop_type == 'boolean' and full_path != 'enabled':
-            # If this boolean wasn't submitted in the form, it's an unchecked checkbox
-            if full_path not in form_keys:
+            # If this boolean wasn't submitted in the form, it's an unchecked
+            # checkbox -- provided the form drew it at all.
+            if (full_path not in form_keys
+                    and _boolean_is_in_scope(full_path, prefix, sections,
+                                             submitted_parents)):
                 if config_node is not None:
                     # Inside an array item — set directly on the item dict
                     node[prop_name] = False
@@ -1082,11 +1136,13 @@ def _set_missing_booleans_to_false(config, schema_props, form_keys, prefix='', c
                     node[prop_name] = {}
                 _set_missing_booleans_to_false(
                     config, prop_schema['properties'], form_keys, full_path,
-                    config_node=node[prop_name]
+                    config_node=node[prop_name],
+                    sections=sections, submitted_parents=submitted_parents
                 )
             else:
                 _set_missing_booleans_to_false(
-                    config, prop_schema['properties'], form_keys, full_path
+                    config, prop_schema['properties'], form_keys, full_path,
+                    sections=sections, submitted_parents=submitted_parents
                 )
 
         elif prop_type == 'array':
@@ -1136,7 +1192,8 @@ def _set_missing_booleans_to_false(config, schema_props, form_keys, prefix='', c
                     item_prefix = f"{full_path}.{idx}"
                     _set_missing_booleans_to_false(
                         config, items_schema['properties'], form_keys, item_prefix,
-                        config_node=array_list[idx]
+                        config_node=array_list[idx],
+                        sections=sections, submitted_parents=submitted_parents
                     )
 def _enhance_schema_with_core_properties(schema):
     """

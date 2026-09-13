@@ -5,7 +5,7 @@ endpoint names are unchanged by living here.
 """
 from web_interface.blueprints.api_v3 import (
     ErrorCode, OperationType, PROJECT_ROOT, Path, Response,
-    _CALENDAR_LIST_MAX_PAGES, _SKIP_FIELD, _coerce_to_bool,
+    _CALENDAR_LIST_MAX_PAGES, _RENDERED_SECTION_FIELD, _SKIP_FIELD, _coerce_to_bool,
     _do_transactional_uninstall, _enhance_schema_with_core_properties,
     _filter_config_by_schema, _get_plugin_version, _get_schema_property,
     _installed_plugin_ids, _is_plugin_update_available,
@@ -1730,6 +1730,11 @@ def save_plugin_config():
             # Convert form data to config dict
             # Form fields can use dot notation for nested values (e.g., "transition.type")
             form_data = request.form.to_dict()
+            # Meta fields describe the submission, they are not config paths.
+            # Unknown keys are otherwise written straight into config.json by
+            # the non-indexed pass below.
+            form_data = {k: v for k, v in form_data.items()
+                         if not k.startswith('__')}
 
             # First pass: handle bracket notation array fields (e.g., "field_name[]" from checkbox-group)
             # These fields use getlist() to preserve all values, then replace in form_data
@@ -2089,7 +2094,14 @@ def save_plugin_config():
             # Walk the schema and set any boolean fields missing from form data to False.
             if schema and 'properties' in schema:
                 form_keys = set(request.form.keys())
-                _set_missing_booleans_to_false(plugin_config, schema['properties'], form_keys)
+                # The rendered form reports which top-level sections it drew, so
+                # an unchecked box can be told apart from a field the caller
+                # never had in front of it. A caller that sends none gets the
+                # evidence-based fallback in _boolean_is_in_scope.
+                rendered_sections = set(request.form.getlist(_RENDERED_SECTION_FIELD))
+                _set_missing_booleans_to_false(
+                    plugin_config, schema['properties'], form_keys,
+                    sections=rendered_sections or None)
 
         # Get schema manager instance (for JSON requests)
         schema_mgr = api_v3.schema_manager

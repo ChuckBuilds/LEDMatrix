@@ -1191,6 +1191,14 @@
                                 {% endif %}
                             {% endif %}
                         {% endfor %}
+                        {# Tell the save path which sections this form actually
+                           drew. An unchecked checkbox posts nothing, so without
+                           this the server cannot tell "the user cleared it"
+                           from "the caller never had that field" -- and a
+                           partial post would read as every box being off. #}
+                        {% for key in tiers.basic + tiers.advanced %}
+                            <input type="hidden" name="__rendered_section" value="{{ key }}">
+                        {% endfor %}
                         {% for key in tiers.basic %}
                             {% set prop = schema.properties[key] %}
                             {% set value = config[key] if key in config else none %}
