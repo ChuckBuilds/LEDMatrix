@@ -25,6 +25,7 @@ from web_interface.blueprints.api_v3 import (  # noqa: E402
     _parse_form_value,
     _get_schema_property,
     _set_nested_value,
+    _SKIP_FIELD,
 )
 
 
@@ -221,12 +222,21 @@ class TestSetNestedValue:
         _set_nested_value(config, "fifa.world.enabled", True)
         assert config == {"fifa.world": {"enabled": True}}
 
-    def test_none_does_not_overwrite_existing(self):
+    def test_none_overwrites_existing(self):
+        # Regression: None is a real value here (the per-mode "inherit the
+        # base" override for a nullable field, or a blank indexed color
+        # channel) and must replace whatever was already stored. Only the
+        # _SKIP_FIELD sentinel means "leave it alone" -- see the next test.
         config = {"a": 1}
         _set_nested_value(config, "a", None)
-        assert config == {"a": 1}
+        assert config == {"a": None}
 
     def test_none_sets_missing_key(self):
         config = {}
         _set_nested_value(config, "a", None)
         assert config == {"a": None}
+
+    def test_skip_field_does_not_overwrite_existing(self):
+        config = {"a": 1}
+        _set_nested_value(config, "a", _SKIP_FIELD)
+        assert config == {"a": 1}

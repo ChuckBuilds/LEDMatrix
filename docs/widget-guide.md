@@ -285,7 +285,9 @@ Guidelines:
 
 ### Step 1: Create Widget File
 
-Create a JavaScript file in your plugin directory. The recommended location is `widgets/[widget-name].js`:
+Create a JavaScript file in your plugin's `widgets/` directory, named
+`widgets/[widget-name].js`. The directory is not optional: it is the only
+place the core will serve a widget from.
 
 ```javascript
 // Ensure LEDMatrixWidgets registry is available
@@ -366,7 +368,29 @@ window.LEDMatrixWidgets.register('my-custom-widget', {
 });
 ```
 
-### Step 2: Reference Widget in Schema
+### Step 2: Declare the Widget in `manifest.json`
+
+The manifest is the allowlist. A widget is served only if the plugin declares
+it, so shipping a file under `widgets/` does not by itself publish it:
+
+```json
+{
+  "widgets": [
+    {
+      "name": "my-custom-widget",
+      "script": "my-custom-widget.js",
+      "description": "What this widget is for"
+    }
+  ]
+}
+```
+
+`name` is what you use in `x-widget` and in the URL. `script` is optional and
+defaults to `[name].js`; it must be a plain filename directly inside
+`widgets/` (no paths). Both are validated against
+`schema/manifest_schema.json`.
+
+### Step 3: Reference Widget in Schema
 
 In your plugin's `config_schema.json`:
 
@@ -383,15 +407,30 @@ In your plugin's `config_schema.json`:
 }
 ```
 
-### Step 3: Widget Loading
+### Step 4: Widget Loading
 
-The widget will be automatically loaded when the plugin configuration form is rendered. The system will:
+The widget is loaded on demand when the plugin's configuration form renders a
+field that references it. The system will:
 
-1. Check if widget is registered in the core registry
-2. If not found, attempt to load from plugin directory: `/static/plugin-widgets/[plugin-id]/[widget-name].js`
-3. Render the widget using the registered `render` function
+1. Check whether the widget is already registered in the core registry.
+2. If not, fetch it from `/static/plugin-widgets/[plugin-id]/[widget-name].js`.
+   That route serves the declared `script` from your plugin's `widgets/`
+   directory, as `text/javascript`.
+3. Render it by calling the `render` function your script registered.
 
-**Note:** Currently, widgets are server-side rendered via Jinja2 templates. Custom widgets registered via the registry will have their handlers available, but full client-side rendering is a future enhancement.
+The fetch uses a dynamic `import()`, so the file must parse as an ES module.
+A plain IIFE does — modules are strict mode, so avoid sloppy-mode constructs.
+
+**If the widget fails to load** (not declared, file missing, script throws, or
+it never calls `register`), the field falls back to a plain text input holding
+the current value. This is deliberate: a broken widget costs the user an
+editor, not their configured value.
+
+**Limitation:** the on-demand path applies to `string`-typed fields (the
+default branch of the config-form renderer). Fields typed `object`, `array`,
+`boolean`, `integer` or `number`, and fields whose `enum` is set, are
+dispatched by the server-side template to its own built-in renderers, so a
+plugin-supplied `x-widget` on one of those is ignored today.
 
 ## Widget API Reference
 
@@ -497,10 +536,11 @@ See [`web_interface/static/v3/js/widgets/example-color-picker.js`](../web_interf
 - ✅ Plugin widget loading system implemented
 
 **Current Behavior:**
-- Widgets are server-side rendered via Jinja2 templates (existing behavior preserved)
+- Core widgets are server-side rendered via Jinja2 templates (existing behavior preserved)
 - Widget handlers are registered and available globally
-- Custom widgets can be created and registered
-- Full client-side rendering is a future enhancement
+- Custom widgets can be created, declared in `manifest.json`, and are served
+  and rendered on demand for `string`-typed fields
+- Plugin widgets on non-string fields are not dispatched yet (see Step 4)
 
 **Backwards Compatibility:**
 - All existing plugins using widgets continue to work without changes

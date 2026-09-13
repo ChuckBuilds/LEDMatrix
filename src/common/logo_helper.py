@@ -35,6 +35,29 @@ from src.common.permission_utils import (
 # trade for not re-warning about a file nobody is going to add.
 MISSING_LOGO_RECHECK_SECONDS = 3600.0
 
+#: Bounds on a user-supplied logo scale. Wide enough to be useful, closed
+#: enough that a typo cannot ask for a 4000px image on a 64px panel.
+MIN_LOGO_SCALE = 0.05
+MAX_LOGO_SCALE = 8.0
+
+
+def _usable_scale(scale) -> float:
+    """A scale that can be applied, or 1.0.
+
+    Anything unusable -- None, a string, zero, a negative, NaN, infinity --
+    means "as shipped", because the alternative is a blank panel from a
+    mistyped number.
+    """
+    try:
+        value = float(scale)
+    except (TypeError, ValueError):
+        return 1.0
+    if value != value or value in (float('inf'), float('-inf')):
+        return 1.0
+    if value < MIN_LOGO_SCALE or value > MAX_LOGO_SCALE:
+        return 1.0
+    return value
+
 
 
 # Well above any real team logo; bounds what a remote URL can write to disk.
@@ -88,18 +111,23 @@ class LogoHelper:
             'Accept': 'image/*',
         })
     
-    def load_logo(self, team_abbr: str, logo_path: Union[str, Path], 
-                  max_width: Optional[int] = None, 
-                  max_height: Optional[int] = None) -> Optional[Image.Image]:
+    def load_logo(self, team_abbr: str, logo_path: Union[str, Path],
+                  max_width: Optional[int] = None,
+                  max_height: Optional[int] = None,
+                  scale: float = 1.0) -> Optional[Image.Image]:
         """
         Load and resize a team logo.
-        
+
         Args:
             team_abbr: Team abbreviation for caching
             logo_path: Path to the logo file
             max_width: Maximum width (defaults to display_width * 1.5)
             max_height: Maximum height (defaults to display_height * 1.5)
-            
+            scale: User's size multiplier for this image, from
+                ``customization.layout.<element>.scale``. 1.0 is untouched and
+                takes exactly the path it always did. Callers hold the config,
+                so they resolve the element name; this only applies the number.
+
         Returns:
             PIL Image object or None if loading fails
 
@@ -115,6 +143,12 @@ class LogoHelper:
             max_width = int(self.display_width * 1.5)
         if max_height is None:
             max_height = int(self.display_height * 1.5)
+        scale = _usable_scale(scale)
+        if scale != 1.0:
+            max_width = max(1, int(round(max_width * scale)))
+            max_height = max(1, int(round(max_height * scale)))
+        # The key carries the scaled box, so two elements scaled differently
+        # cannot be served each other's image.
         cache_key = f"{team_abbr}_{logo_path}_{max_width}x{max_height}"
         if cache_key in self._logo_cache:
             self.logger.debug(f"Using cached logo for {team_abbr}")
@@ -146,7 +180,8 @@ class LogoHelper:
                 logo = logo.convert('RGBA')
             
             # Resize if needed
-            logo = self._resize_logo(logo, max_width, max_height)
+            logo = self._resize_logo(logo, max_width, max_height,
+                                     allow_upscale=scale > 1.0)
             
             # Cache the logo
             self._cache_logo(cache_key, logo)
@@ -158,10 +193,11 @@ class LogoHelper:
             self.logger.error(f"Error loading logo for {team_abbr}: {e}")
             return None
     
-    def load_logo_with_download(self, team_abbr: str, logo_path: Union[str, Path], 
+    def load_logo_with_download(self, team_abbr: str, logo_path: Union[str, Path],
                                logo_url: Optional[str] = None,
                                max_width: Optional[int] = None,
-                               max_height: Optional[int] = None) -> Optional[Image.Image]:
+                               max_height: Optional[int] = None,
+                               scale: float = 1.0) -> Optional[Image.Image]:
         """
         Load logo with automatic download if missing.
         
@@ -181,7 +217,8 @@ class LogoHelper:
         # failed download does not count: it wears the real logo's filename, so
         # trusting the file's existence is what left teams as grey boxes.
         if logo_path.exists() and not self._is_stale_placeholder(logo_path):
-            return self.load_logo(team_abbr, logo_path, max_width, max_height)
+            return self.load_logo(team_abbr, logo_path, max_width, max_height,
+                                  scale)
         
         # Download if URL provided and file doesn't exist
         if logo_url:
@@ -193,7 +230,8 @@ class LogoHelper:
                 # from the cache before touching the disk -- so without this the
                 # real logo would not appear until the process restarted.
                 self._invalidate_cached_logo(team_abbr, logo_path)
-                return self.load_logo(team_abbr, logo_path, max_width, max_height)
+                return self.load_logo(team_abbr, logo_path, max_width, max_height,
+                                  scale)
             except Exception as e:
                 self.logger.error(f"Failed to download logo for {team_abbr}: {e}")
                 # The retry failed, so restart the back-off. The stale
@@ -328,18 +366,31 @@ class LogoHelper:
             ),
         }
     
-    def _resize_logo(self, logo: Image.Image, max_width: Optional[int] = None, 
-                    max_height: Optional[int] = None) -> Image.Image:
-        """Resize logo to fit display dimensions."""
+    def _resize_logo(self, logo: Image.Image, max_width: Optional[int] = None,
+                    max_height: Optional[int] = None,
+                    allow_upscale: bool = False) -> Image.Image:
+        """Resize logo to fit display dimensions.
+
+        ``allow_upscale`` is only set when the user asked for a scale above 1:
+        the fit rule is "never larger than the box", and growing an image
+        nobody asked to grow would change every existing render.
+        """
         if max_width is None:
             max_width = int(self.display_width * 1.5)
         if max_height is None:
             max_height = int(self.display_height * 1.5)
-        
+
         # Only resize if necessary
         if logo.width <= max_width and logo.height <= max_height:
-            return logo
-        
+            if not allow_upscale or not logo.width or not logo.height:
+                return logo
+            ratio = min(max_width / logo.width, max_height / logo.height)
+            if ratio <= 1:
+                return logo
+            return logo.resize((max(1, int(logo.width * ratio)),
+                                max(1, int(logo.height * ratio))),
+                               Image.Resampling.LANCZOS)
+
         # Maintain aspect ratio
         logo.thumbnail((max_width, max_height), Image.Resampling.LANCZOS)
         return logo

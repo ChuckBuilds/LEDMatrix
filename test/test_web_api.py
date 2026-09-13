@@ -814,28 +814,21 @@ class TestFontsAPI:
         data = json.loads(response.data)
         assert 'tokens' in data.get('data', {}) or 'data' in data
     
-    def test_get_fonts_overrides(self, client):
-        """Test getting font overrides."""
-        response = client.get('/api/v3/fonts/overrides')
-        
-        assert response.status_code == 200
-        data = json.loads(response.data)
-        assert 'overrides' in data.get('data', {}) or 'data' in data
-    
-    def test_save_fonts_overrides(self, client):
-        """Test saving font overrides."""
-        request_data = {
-            'weather': 'small',
-            'clock': 'regular'
-        }
-        
-        response = client.post(
-            '/api/v3/fonts/overrides',
-            data=json.dumps(request_data),
-            content_type='application/json'
-        )
-        
-        assert response.status_code == 200
+    def test_the_font_override_endpoints_are_gone(self, client):
+        """They reported success without doing anything: GET returned a
+        hardcoded {}, POST and DELETE saved and deleted nothing. The panel
+        they served offered eleven element keys -- nfl.live.score,
+        clock.time -- that no plugin has ever read, so wiring them to the
+        real FontManager methods would still have changed nothing on the
+        panel. Per-element font choice lives in each plugin's own config
+        editor now, against the elements that plugin actually has."""
+        # 405, not 404: the path still matches DELETE /fonts/<font_family>,
+        # which now reads "overrides" as a font name. Nothing is routed to a
+        # handler for GET or POST, which is what matters here.
+        assert client.get('/api/v3/fonts/overrides').status_code == 405
+        assert client.post('/api/v3/fonts/overrides',
+                           data=json.dumps({}),
+                           content_type='application/json').status_code == 405
 
 
 class TestAPIErrorHandling:

@@ -1412,3 +1412,85 @@ button.bg-white {
         max-width: calc(100vw - 2rem);
     }
 }
+
+/* ---- Style editor widget -------------------------------------------- */
+/* One row per display element: label, font, size, colour, X, Y. The grid
+   is declared once here so the header and the rows cannot drift apart. */
+/* The plugin config panel is narrower than nine columns of controls, and a
+   clipped table hides the offsets entirely -- scroll the table rather than
+   crushing the controls or dropping columns. */
+.style-editor {
+    overflow-x: auto;
+}
+.style-editor-table {
+    min-width: max-content;
+}
+/* Scrolled right, the element names would otherwise scroll away and the
+   row you are editing becomes anonymous. */
+.style-editor-label,
+.style-editor-head > :first-child {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background-color: #ffffff;
+}
+.style-editor-head > :first-child {
+    background-color: #f9fafb;
+}
+.style-editor-row {
+    /* Set by the widget: the column count depends on what the plugin
+       declares, so the track list cannot be fixed here. */
+    grid-template-columns: var(--style-editor-columns,
+        minmax(7rem, 1.4fr) minmax(8rem, 2fr) 5rem 4.5rem 5rem 5rem);
+}
+.style-editor-check {
+    width: 1rem;
+    height: 1rem;
+}
+.style-editor-row .form-control {
+    padding: 0.2rem 0.4rem;
+    height: auto;
+}
+.style-editor-row input[type="number"] {
+    width: 100%;
+}
+.style-editor-row input[type="number"]:disabled {
+    background-color: #f3f4f6;
+    color: #9ca3af;
+    cursor: not-allowed;
+}
+.style-editor-colour {
+    width: 2rem;
+    height: 1.6rem;
+    padding: 0;
+    border: 1px solid #d1d5db;
+    border-radius: 0.25rem;
+    background: none;
+    cursor: pointer;
+}
+.style-editor-tab {
+    border: 1px solid #d1d5db;
+    background-color: #f9fafb;
+    color: #374151;
+}
+.style-editor-tab.is-active {
+    background-color: #2563eb;
+    border-color: #2563eb;
+    color: #ffffff;
+}
+.style-editor-panel[hidden] {
+    display: none;
+}
+@media (max-width: 768px) {
+    /* Stack rather than squeeze: six columns on a phone is unreadable. */
+    .style-editor-row {
+        grid-template-columns: 1fr 1fr;
+    }
+    .style-editor-head {
+        display: none;
+    }
+    .style-editor-label {
+        grid-column: 1 / -1;
+        font-weight: 600;
+    }
+}

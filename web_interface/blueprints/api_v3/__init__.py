@@ -808,6 +808,31 @@ def _is_field_required(key_path, schema):
         return field_name in required
 # Sentinel object to indicate a field should be skipped (not set in config)
 _SKIP_FIELD = object()
+
+
+def _schema_type_is(prop, wanted):
+    """Whether a schema property is of ``wanted`` type.
+
+    JSON Schema allows a union (``["array", "null"]``), which the per-element
+    style system uses for its per-mode override fields: null there means
+    "inherit the base", so the type genuinely is "an array or nothing". A
+    bare ``prop.get('type') == 'array'`` reads False for those, which meant
+    the indexed colour inputs a form posts as ``...text_color.0/.1/.2`` were
+    never recombined into a list.
+    """
+    if not isinstance(prop, dict):
+        return False
+    declared = prop.get('type')
+    if isinstance(declared, list):
+        return wanted in declared
+    return declared == wanted
+
+
+def _schema_allows_null(prop):
+    """Whether a schema property's declared type includes null."""
+    return _schema_type_is(prop, 'null')
+
+
 def _parse_form_value_with_schema(value, key_path, schema):
     """
     Parse a form value using schema information to determine correct type.
@@ -828,11 +853,17 @@ def _parse_form_value_with_schema(value, key_path, schema):
 
     # Handle None/empty values
     if value is None or (isinstance(value, str) and value.strip() == ''):
+        # A nullable field left blank means null, not an empty container.
+        # This is the inherit sentinel for per-mode style overrides: an
+        # empty list there would read as "the user chose no colour" rather
+        # than "follow the base element".
+        if _schema_allows_null(prop):
+            return None
         # If schema says it's an array, return empty array instead of None
-        if prop and prop.get('type') == 'array':
+        if prop and _schema_type_is(prop, 'array'):
             return []
         # If schema says it's an object, return empty dict instead of None
-        if prop and prop.get('type') == 'object':
+        if prop and _schema_type_is(prop, 'object'):
             return {}
         # If it's an optional string field, preserve empty string instead of None
         if prop and prop.get('type') == 'string':
@@ -869,7 +900,7 @@ def _parse_form_value_with_schema(value, key_path, schema):
                 return False
 
         # Handle arrays based on schema
-        if prop and prop.get('type') == 'array':
+        if prop and _schema_type_is(prop, 'array'):
             # Try parsing as JSON first (handles "[1,2,3]" format)
             if stripped.startswith('['):
                 try:
@@ -892,7 +923,7 @@ def _parse_form_value_with_schema(value, key_path, schema):
             return []
 
         # Handle objects based on schema
-        if prop and prop.get('type') == 'object':
+        if prop and _schema_type_is(prop, 'object'):
             # Try parsing as JSON
             if stripped.startswith('{'):
                 try:
@@ -995,17 +1026,64 @@ def _set_nested_value(config, key_path, value):
             current[seg] = {}
         current = current[seg]
 
-    # Set the final value (don't overwrite with empty dict if value is None and we want to preserve structure)
-    if value is not None or segments[-1] not in current:
-        current[segments[-1]] = value
-def _set_missing_booleans_to_false(config, schema_props, form_keys, prefix='', config_node=None):
+    # Set the final value. _SKIP_FIELD (checked above) is the only sentinel
+    # for "leave the existing value alone" -- an explicit None here is a real
+    # value (e.g. the per-mode "inherit the base" override) and must overwrite
+    # whatever was already stored.
+    current[segments[-1]] = value
+
+
+#: Hidden field the rendered plugin form repeats once per top-level section it
+#: drew. Named with a leading underscore pair so the save path can drop it (and
+#: anything else meta) before treating form keys as config paths.
+_RENDERED_SECTION_FIELD = '__rendered_section'
+
+
+def _boolean_is_in_scope(full_path, prefix, sections, submitted_parents):
+    """Whether a missing checkbox at ``full_path`` may be forced to False.
+
+    "Missing" only means "unchecked" for a form that actually rendered the
+    control. A caller that posts a handful of fields -- a script, the MQTT
+    bridge, a curl against the documented endpoint -- never rendered anything,
+    and reading its silence as "every other checkbox is off" turns a one-field
+    save into a mass disable. That is not hypothetical: a partial post of four
+    ``customization.*`` keys switched off ``nfl.enabled``, ``ncaa_fb.enabled``
+    and every display-mode toggle on a live device.
+
+    Two ways to be in scope:
+
+    * ``sections`` -- the rendered form lists the top-level sections it drew
+      (``__rendered_section``). Anything it drew is fair game, including a
+      section whose only fields are checkboxes that are all unchecked, which
+      is the case no heuristic can recover.
+    * ``submitted_parents`` -- no marker, so fall back to evidence: the
+      containing object must have had at least one field posted.
+    """
+    if sections is not None:
+        return full_path.split('.', 1)[0] in sections
+    if submitted_parents is None:
+        return True
+    return prefix in submitted_parents
+
+
+def _submitted_parents(form_keys):
+    """The object paths a form actually posted a field from ('' = top level)."""
+    parents = set()
+    for key in form_keys:
+        parents.add(key.rsplit('.', 1)[0] if '.' in key else '')
+    return parents
+
+
+def _set_missing_booleans_to_false(plugin_config, schema_props, form_keys, prefix='', config_node=None,
+                                   sections=None, submitted_parents=None):
     """Walk schema and set missing boolean form fields to False.
 
-    HTML checkboxes don't submit values when unchecked. When saving plugin config,
-    the backend starts from existing config (to support partial form updates), which
+    HTML checkboxes don't submit values when unchecked. When saving plugin plugin_config,
+    the backend starts from existing plugin_config (to support partial form updates), which
     means an unchecked checkbox's old ``True`` value persists. This function detects
     boolean schema properties not present in the form submission and explicitly sets
-    them to ``False``.
+    them to ``False`` -- but only where that silence is evidence, see
+    :func:`_boolean_is_in_scope`.
 
     The top-level ``enabled`` field is excluded because it has its own preservation
     logic in the save endpoint.
@@ -1014,15 +1092,21 @@ def _set_missing_booleans_to_false(config, schema_props, form_keys, prefix='', c
     (e.g. ``feeds.custom_feeds.0.enabled``).
 
     Args:
-        config: The root plugin config dict (used for pure-dict paths)
+        plugin_config: The root plugin plugin_config dict (used for pure-dict paths)
         schema_props: Schema ``properties`` dict at the current nesting level
         form_keys: Set of form field names that were submitted
         prefix: Dot-notation prefix for the current nesting level
-        config_node: The current config subtree when inside an array item (avoids
+        config_node: The current plugin_config subtree when inside an array item (avoids
                      using _set_nested_value which corrupts lists)
+        sections: Top-level sections the form reported rendering, or None when it
+                  reported none (then submitted_parents decides)
+        submitted_parents: Object paths with at least one posted field; computed
+                  on the first call when there are no section markers
     """
-    # Determine which config node to operate on
-    node = config_node if config_node is not None else config
+    if sections is None and submitted_parents is None:
+        submitted_parents = _submitted_parents(form_keys)
+    # Determine which plugin_config node to operate on
+    node = config_node if config_node is not None else plugin_config
 
     for prop_name, prop_schema in schema_props.items():
         if not isinstance(prop_schema, dict):
@@ -1032,14 +1116,17 @@ def _set_missing_booleans_to_false(config, schema_props, form_keys, prefix='', c
         prop_type = prop_schema.get('type')
 
         if prop_type == 'boolean' and full_path != 'enabled':
-            # If this boolean wasn't submitted in the form, it's an unchecked checkbox
-            if full_path not in form_keys:
+            # If this boolean wasn't submitted in the form, it's an unchecked
+            # checkbox -- provided the form drew it at all.
+            if (full_path not in form_keys
+                    and _boolean_is_in_scope(full_path, prefix, sections,
+                                             submitted_parents)):
                 if config_node is not None:
                     # Inside an array item — set directly on the item dict
                     node[prop_name] = False
                 else:
                     # Pure dict path — use helper
-                    _set_nested_value(config, full_path, False)
+                    _set_nested_value(plugin_config, full_path, False)
 
         elif prop_type == 'object' and 'properties' in prop_schema:
             # Recurse into nested objects
@@ -1048,12 +1135,14 @@ def _set_missing_booleans_to_false(config, schema_props, form_keys, prefix='', c
                 if prop_name not in node or not isinstance(node[prop_name], dict):
                     node[prop_name] = {}
                 _set_missing_booleans_to_false(
-                    config, prop_schema['properties'], form_keys, full_path,
-                    config_node=node[prop_name]
+                    plugin_config, prop_schema['properties'], form_keys, full_path,
+                    config_node=node[prop_name],
+                    sections=sections, submitted_parents=submitted_parents
                 )
             else:
                 _set_missing_booleans_to_false(
-                    config, prop_schema['properties'], form_keys, full_path
+                    plugin_config, prop_schema['properties'], form_keys, full_path,
+                    sections=sections, submitted_parents=submitted_parents
                 )
 
         elif prop_type == 'array':
@@ -1075,15 +1164,15 @@ def _set_missing_booleans_to_false(config, schema_props, form_keys, prefix='', c
                 if not indices:
                     continue
 
-                # Navigate to the array in the config (create if missing)
+                # Navigate to the array in the plugin_config (create if missing)
                 if config_node is not None:
                     if prop_name not in node or not isinstance(node[prop_name], list):
                         node[prop_name] = []
                     array_list = node[prop_name]
                 else:
-                    # Navigate from root config through dict keys to get the list
+                    # Navigate from root plugin_config through dict keys to get the list
                     parts = full_path.split('.')
-                    current = config
+                    current = plugin_config
                     for part in parts[:-1]:
                         if part not in current or not isinstance(current[part], dict):
                             current[part] = {}
@@ -1102,8 +1191,9 @@ def _set_missing_booleans_to_false(config, schema_props, form_keys, prefix='', c
                         array_list[idx] = {}
                     item_prefix = f"{full_path}.{idx}"
                     _set_missing_booleans_to_false(
-                        config, items_schema['properties'], form_keys, item_prefix,
-                        config_node=array_list[idx]
+                        plugin_config, items_schema['properties'], form_keys, item_prefix,
+                        config_node=array_list[idx],
+                        sections=sections, submitted_parents=submitted_parents
                     )
 def _enhance_schema_with_core_properties(schema):
     """

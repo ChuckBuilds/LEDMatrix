@@ -97,38 +97,71 @@ def upcoming_center_mode(config: Optional[Dict[str, Any]]) -> str:
 # ---------------------------------------------------------------------------
 
 def element_color(config: Optional[Dict[str, Any]], element: str,
-                  default: Tuple[int, int, int] = (255, 255, 255)):
-    """Per-element text colour from customization.<element>.text_color."""
+                  default: Tuple[int, int, int] = (255, 255, 255),
+                  mode: Optional[str] = None):
+    """Per-element text colour from customization.<element>.text_color.
+
+    Delegated rather than reimplemented: there were two copies of this
+    read and three of the offset read, and the shared one also resolves
+    the element under the names plugins actually use (the layout block
+    says `score` where the style block says `score_text`) and honours a
+    per-mode override. Hex strings are still accepted.
+    """
+    from src.element_style import element_color as _shared
+    return _shared(config, element, default, mode)
+
+
+def resolve_font_color(config: Optional[Dict[str, Any]],
+                       fonts: Optional[Dict[str, Any]], font,
+                       default: Tuple[int, int, int],
+                       element_for_font: Dict[str, str],
+                       mode: Optional[str] = None):
+    """Colour for whichever element owns this face.
+
+    Identity matching is a stand-in for the element name, used where the draw
+    site only ever received a font. Prefer ``element=`` on the draw call; this
+    is the fallback for the sites that have not been annotated yet.
+
+    One object can legitimately belong to several elements -- a size resolver
+    can land two of them on the same face, and a BDF face cannot be un-shared
+    at all because ``freetype.Face`` objects cannot be rebuilt from a path.
+    Those draws used to go out white, which is how an element rendered in any
+    of the 32 shipped bitmap fonts could silently lose a colour the user had
+    set. So ambiguity is now narrowed before it is given up on: among the
+    elements sharing a face, a single configured colour is the only thing the
+    user can have meant, and several that agree mean the same thing. Only a
+    genuine disagreement falls back to *default*.
+
+    The element vocabulary is a parameter because the two callers disagree
+    about it -- the mixin's map says ``team_text`` where this module's says
+    ``team_name`` -- and quietly re-pointing either at the other's names would
+    change which colour setting a live install honours.
+    """
     try:
-        cfg = (config or {}).get("customization", {}).get(element, {})
-        value = cfg.get("text_color")
-        if isinstance(value, (list, tuple)) and len(value) == 3:
-            return tuple(max(0, min(255, int(c))) for c in value)
-        if isinstance(value, str) and value.startswith("#") and len(value) == 7:
-            return tuple(int(value[i:i + 2], 16) for i in (1, 3, 5))
-    except (TypeError, ValueError):
+        fonts = fonts or {}
+        matches = [element for key, element in element_for_font.items()
+                   if fonts.get(key) is font]
+        if len(matches) == 1:
+            return element_color(config, matches[0], default, mode)
+        if len(matches) > 1:
+            configured = []
+            for element in matches:
+                colour = element_color(config, element, None, mode)
+                if colour is not None and colour not in configured:
+                    configured.append(colour)
+            if len(configured) == 1:
+                return configured[0]
+    except (AttributeError, TypeError):
         pass
     return default
 
 
 def font_color(config: Optional[Dict[str, Any]], fonts: Optional[Dict[str, Any]],
-               font, default: Tuple[int, int, int] = (255, 255, 255)):
-    """Colour for whichever element owns this face.
-
-    Matched on identity, and deliberately gives up when one object is
-    shared: the last-resort font path can hand the same face to several
-    keys, and there is no right answer for which element's colour that is.
-    White is what those draws used before, so ambiguity costs nothing.
-    """
-    try:
-        fonts = fonts or {}
-        matches = [element for key, element in ELEMENT_FOR_FONT.items()
-                   if fonts.get(key) is font]
-        if len(matches) == 1:
-            return element_color(config, matches[0], default)
-    except (AttributeError, TypeError):
-        pass
-    return default
+               font, default: Tuple[int, int, int] = (255, 255, 255),
+               mode: Optional[str] = None):
+    """Colour for whichever element owns this face, by this module's map."""
+    return resolve_font_color(config, fonts, font, default, ELEMENT_FOR_FONT,
+                              mode)
 
 
 def coerce_rgb(value, fallback):
@@ -428,7 +461,7 @@ def unshare_element_fonts(logger, fonts):
     path) are left shared, and their draws stay white as before.
     """
     try:
-        from PIL import ImageFont as _IF
+        from src.common.font_layout import load_truetype as _load
     except ImportError:  # pragma: no cover
         return fonts
     seen = {}
@@ -443,7 +476,7 @@ def unshare_element_fonts(logger, fonts):
         if not path or not size:
             continue
         try:
-            fonts[key] = _IF.truetype(path, size)
+            fonts[key] = _load(path, size)
         except (OSError, ValueError, TypeError):
             logger.debug(
                 "Could not un-share the %s face; it keeps the default colour", key)
