@@ -568,7 +568,8 @@ def _apply_gzip(response, compressed):
     response.set_data(compressed)
     response.headers['Content-Encoding'] = 'gzip'
     response.headers['Content-Length'] = str(len(compressed))
-    response.headers.setdefault('Vary', 'Accept-Encoding')
+    if 'accept-encoding' not in (response.headers.get('Vary') or '').lower():
+        response.headers.add('Vary', 'Accept-Encoding')
     etag = response.headers.get('ETag')
     if etag and 'gzip' not in etag:
         response.headers['ETag'] = etag.rstrip('"') + '-gzip"'

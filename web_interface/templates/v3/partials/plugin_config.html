@@ -87,7 +87,8 @@
         {% elif field_type in ['number', 'integer'] %}
             {% if _lw in ['slider', 'number-input'] %}{% set label_target = field_id ~ '_input' %}{% endif %}
         {% elif field_type == 'array' %}
-            {% if _lw == 'color-picker' %}{% set label_target = field_id ~ '_hex' %}{% endif %}
+            {% if _lw == 'color-picker' %}{% set label_target = field_id ~ '_hex' %}
+            {% elif _lw == 'file-upload' %}{% set label_target = field_id ~ '_file_input' %}{% endif %}
         {% elif _lw in ['text-input', 'textarea', 'select-dropdown', 'date-picker', 'time-picker', 'slider', 'email-input', 'url-input', 'password-input', 'font-selector'] %}
             {% set label_target = field_id ~ '_input' %}
         {% elif _lw == 'color-picker' %}
@@ -1137,20 +1138,21 @@
                             {% for key, value in config.items() %}
                                 {% if key not in ['enabled'] %}
                                 <div class="form-group mb-4">
-                                    <label class="block text-sm font-medium text-gray-700 mb-1">
+                                    {% set fallback_id = 'fallback-field-' ~ (key|string|replace(' ', '-')) %}
+                                    <label for="{{ fallback_id }}" class="block text-sm font-medium text-gray-700 mb-1">
                                         {{ key|replace('_', ' ')|title }}
                                     </label>
                                     {% if value is sameas true or value is sameas false %}
                                     <label class="flex items-center cursor-pointer">
-                                        <input type="checkbox" name="{{ key }}" {% if value %}checked{% endif %}
+                                        <input type="checkbox" id="{{ fallback_id }}" name="{{ key }}" {% if value %}checked{% endif %}
                                                class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
                                         <span class="ml-2 text-sm text-gray-600">Enabled</span>
                                     </label>
                                     {% elif value is number %}
-                                    <input type="number" name="{{ key }}" value="{{ value }}" aria-label="{{ key|replace('_', ' ')|title }}"
+                                    <input type="number" id="{{ fallback_id }}" name="{{ key }}" value="{{ value }}"
                                            class="form-input w-full rounded-md border-gray-300 bg-gray-900 text-white placeholder:text-gray-400">
                                     {% else %}
-                                    <input type="text" name="{{ key }}" value="{{ value }}" aria-label="{{ key|replace('_', ' ')|title }}"
+                                    <input type="text" id="{{ fallback_id }}" name="{{ key }}" value="{{ value }}"
                                            class="form-input w-full rounded-md border-gray-300 bg-gray-900 text-white placeholder:text-gray-400">
                                     {% endif %}
                                 </div>

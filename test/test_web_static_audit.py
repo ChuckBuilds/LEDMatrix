@@ -113,10 +113,17 @@ def test_every_used_utility_class_is_defined():
         chunks = [m.group(2) for m in attr.finditer(text)]
         chunks += re.findall(r"""['"]([^'"]*)['"]""", " ".join(
             m.group(1) for m in class_list.finditer(text)))
+        # :class="{ 'hidden': open }" and ternaries hold class names inside
+        # string literals; read those as well as the raw chunk.
+        bound = re.compile(r""":class\s*=\s*"([^"]*)""")
+        for m in bound.finditer(text):
+            chunks.append(m.group(1))
         for chunk in chunks:
-            for token in chunk.split():
-                if _UTILITY.match(token):
-                    used.setdefault(token, path.relative_to(PROJECT_ROOT))
+            candidates = [chunk] + re.findall(r"""['`]([^'`]*)['`]""", chunk)
+            for candidate in candidates:
+                for token in candidate.split():
+                    if _UTILITY.match(token):
+                        used.setdefault(token, path.relative_to(PROJECT_ROOT))
 
     defined = _css_light_classes(APP_CSS.read_text(encoding="utf-8"))
     missing = sorted(f"{cls} ({used[cls]})" for cls in used if cls not in defined)

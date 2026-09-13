@@ -92,7 +92,7 @@ def test_base_html_requests_the_bundle() -> None:
 def test_bundle_concatenates_every_file() -> None:
     """The built bundle contains each file, separated so sources can't merge."""
     body, version = widget_bundle.build_bundle()
-    assert version > 0
+    assert version and version == widget_bundle.bundle_version()
     for name in widget_bundle.BUNDLE_ORDER:
         assert f'/* {name} */' in body, f'{name} missing from the built bundle'
     for name in ALLOWLIST:

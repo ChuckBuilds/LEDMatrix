@@ -104,11 +104,18 @@
         entry.release = function () {
             if (entry.released) return;
             entry.released = true;
+            const wasTop = stack[stack.length - 1] === entry;
             const i = stack.indexOf(entry);
             if (i !== -1) stack.splice(i, 1);
             if (stack.length === 0) document.removeEventListener('keydown', onKeydown, true);
+            // Releasing a dialog underneath another one must not pull focus
+            // out of the dialog the user is actually in.
+            if (!wasTop) return;
             const target = entry.returnTo;
-            if (target && typeof target.focus === 'function' && document.contains(target)) {
+            const active = stack[stack.length - 1];
+            if (active && !(target && active.panel.contains(target))) {
+                active.panel.focus();
+            } else if (target && typeof target.focus === 'function' && document.contains(target)) {
                 target.focus();
             }
         };

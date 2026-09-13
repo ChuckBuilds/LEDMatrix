@@ -13,6 +13,7 @@ what plugin-loader.js and any third-party page expect.
 BUNDLE_ORDER is the authority for which widgets ship; test_widget_scripts.py
 checks it against the directory so a new widget can't be forgotten.
 """
+import hashlib
 from pathlib import Path
 from threading import Lock
 
@@ -74,11 +75,17 @@ def bundle_paths():
 
 
 def bundle_version():
-    """Newest mtime across the bundled files — the cache-busting token."""
-    try:
-        return max(int(p.stat().st_mtime) for p in bundle_paths())
-    except ValueError:
-        return 0
+    """Cache-busting token: a fingerprint of every bundled file.
+
+    Uses each file's name, nanosecond mtime and size, so an edit that lands
+    in the same second as another file's, or leaves mtime behind the newest
+    file, still changes the token (and the URL).
+    """
+    digest = hashlib.sha256()
+    for path in bundle_paths():
+        stat = path.stat()
+        digest.update(f"{path.name}:{stat.st_mtime_ns}:{stat.st_size};".encode())
+    return digest.hexdigest()[:12]
 
 
 def build_bundle():
