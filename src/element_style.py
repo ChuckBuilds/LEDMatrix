@@ -244,7 +244,7 @@ def _load_font_sized(font_name: str, size: int) -> Tuple[Any, int]:
     path = resolve_font_path(font_name)
     if path is None:
         logger.warning("Font file not found: %s, using fallback", font_name)
-        return _load_fallback_font(size), size
+        return _load_fallback_font(size)
 
     cache_key = (path, size)
     cached = _font_cache.get(cache_key)

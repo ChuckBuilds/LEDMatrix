@@ -1026,9 +1026,11 @@ def _set_nested_value(config, key_path, value):
             current[seg] = {}
         current = current[seg]
 
-    # Set the final value (don't overwrite with empty dict if value is None and we want to preserve structure)
-    if value is not None or segments[-1] not in current:
-        current[segments[-1]] = value
+    # Set the final value. _SKIP_FIELD (checked above) is the only sentinel
+    # for "leave the existing value alone" -- an explicit None here is a real
+    # value (e.g. the per-mode "inherit the base" override) and must overwrite
+    # whatever was already stored.
+    current[segments[-1]] = value
 def _set_missing_booleans_to_false(config, schema_props, form_keys, prefix='', config_node=None):
     """Walk schema and set missing boolean form fields to False.
 

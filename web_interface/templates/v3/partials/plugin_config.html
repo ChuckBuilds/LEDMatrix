@@ -88,6 +88,23 @@
             </div>
             <script>
             (function() {
+                function fallbackIsDirty(root) {
+                    if (!root) { return false; }
+                    var controls = root.querySelectorAll('input, select, textarea');
+                    for (var i = 0; i < controls.length; i++) {
+                        var c = controls[i];
+                        if (c.type === 'checkbox' || c.type === 'radio') {
+                            if (c.checked !== c.defaultChecked) { return true; }
+                        } else if (c.tagName === 'SELECT') {
+                            for (var j = 0; j < c.options.length; j++) {
+                                if (c.options[j].selected !== c.options[j].defaultSelected) { return true; }
+                            }
+                        } else if (c.value !== c.defaultValue) {
+                            return true;
+                        }
+                    }
+                    return false;
+                }
                 function initWidget() {
                     if (!window.LEDMatrixWidgets) { setTimeout(initWidget, 50); return; }
                     var widget = window.LEDMatrixWidgets.get('style-editor');
@@ -95,6 +112,11 @@
                     var container = document.getElementById('{{ field_id }}_container');
                     var fallback = document.getElementById('{{ field_id }}_fallback');
                     if (!container) { return; }
+                    // A user may already be editing the plain fallback fields
+                    // while this widget's script is still loading; swapping
+                    // in the widget now would replace them with the stale
+                    // server-rendered value and silently drop that edit.
+                    if (fallbackIsDirty(fallback)) { container.remove(); return; }
                     var value = {{ obj_value|tojson|safe }};
                     var config = { schema: {{ prop|tojson|safe }} };
                     try {
@@ -944,7 +966,10 @@
                             if (!available) { container.remove(); return; }
                             var widget = window.LEDMatrixWidgets.get(WIDGET);
                             if (!widget || typeof widget.render !== 'function') { container.remove(); return; }
-                            var value = {{ str_value|tojson|safe }};
+                            // Read the fallback's live value rather than the
+                            // server-rendered one, so an edit typed while the
+                            // widget script was still loading isn't lost.
+                            var value = fallback ? fallback.value : {{ str_value|tojson|safe }};
                             var config = {
                                 'type': '{{ field_type }}',
                                 'enum': {{ (prop.enum or [])|tojson|safe }},

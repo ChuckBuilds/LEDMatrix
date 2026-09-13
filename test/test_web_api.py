@@ -825,10 +825,10 @@ class TestFontsAPI:
         # 405, not 404: the path still matches DELETE /fonts/<font_family>,
         # which now reads "overrides" as a font name. Nothing is routed to a
         # handler for GET or POST, which is what matters here.
-        assert client.get('/api/v3/fonts/overrides').status_code != 200
+        assert client.get('/api/v3/fonts/overrides').status_code == 405
         assert client.post('/api/v3/fonts/overrides',
                            data=json.dumps({}),
-                           content_type='application/json').status_code != 200
+                           content_type='application/json').status_code == 405
 
 
 class TestAPIErrorHandling:

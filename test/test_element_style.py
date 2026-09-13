@@ -359,6 +359,19 @@ class TestDegradation:
         # The override IS honored as forced, but the face degrades safely.
         assert style.user_forced
         assert style.font is not None
+        assert not isinstance(style.font, tuple)
+
+    def test_missing_font_load_returns_a_font_not_a_nested_tuple(self):
+        # Regression: the missing-font path in _load_font_sized used to wrap
+        # _load_fallback_font's own (font, size) tuple a second time, so
+        # load_font() returned a (font, size) tuple where callers (draw.text,
+        # layout math) expect a font object.
+        font, size = _load_font_sized("definitely-not-a-real-font.ttf", 8)
+        assert not isinstance(font, tuple)
+        assert size == 8
+
+        single = load_font("definitely-not-a-real-font.ttf", 8)
+        assert not isinstance(single, tuple)
 
     def test_empty_defaults_treats_config_as_reference_to_classic(self):
         # No schema defaults at all: a config value equal to the classic

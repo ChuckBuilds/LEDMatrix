@@ -44,7 +44,10 @@
         if (FONT_CACHE) { return Promise.resolve(FONT_CACHE); }
         if (FONT_INFLIGHT) { return FONT_INFLIGHT; }
         FONT_INFLIGHT = fetch('/api/v3/fonts/catalog')
-            .then(function (r) { return r.json(); })
+            .then(function (r) {
+                if (!r.ok) { throw new Error('font catalog fetch failed: ' + r.status); }
+                return r.json();
+            })
             .then(function (payload) {
                 var catalog = (payload && payload.data && payload.data.catalog) || {};
                 FONT_CACHE = Object.keys(catalog).map(function (key) {
@@ -60,8 +63,10 @@
             })
             .catch(function (e) {
                 console.warn('[StyleEditor] could not load the font catalog', e);
-                FONT_CACHE = [];
-                return FONT_CACHE;
+                // Leave FONT_CACHE unset and clear FONT_INFLIGHT so the next
+                // call retries instead of being stuck on an empty result.
+                FONT_INFLIGHT = null;
+                return [];
             });
         return FONT_INFLIGHT;
     }
@@ -138,9 +143,13 @@
      * rather than a list curated by hand, which is what these fields used
      * to carry and why an uploaded font could never appear in one.
      */
-    function usableFonts(fonts, maxFixedSize) {
+    function usableFonts(fonts, maxFixedSize, current) {
         if (!maxFixedSize) { return fonts; }
         return fonts.filter(function (f) {
+            // Keep the font already saved on this element even if it no
+            // longer fits the cap -- dropping it would leave the select
+            // with nothing chosen and silently misrepresent the config.
+            if (current && f.filename === current) { return true; }
             if (f.scalable !== false) { return true; }
             // An unknown native size is not evidence it is too big.
             if (!f.nativeSize) { return true; }
@@ -358,7 +367,7 @@
             var xOptions = prop['x-options'] || prop['x_options'] || {};
             var cap = Number(xOptions.maxFixedSize) || opts.maxFixedSize || null;
             return fontControl(opts.name, opts.current,
-                               usableFonts(opts.fonts, cap),
+                               usableFonts(opts.fonts, cap, opts.current),
                                opts.optional, opts.onFontChange);
         }
         if (types.indexOf('boolean') !== -1) {

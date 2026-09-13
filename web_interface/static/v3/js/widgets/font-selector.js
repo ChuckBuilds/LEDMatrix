@@ -121,7 +121,9 @@
                         family: family,
                         display_name: info.display_name || generateDisplayName(info.filename || family),
                         path: info.path,
-                        type: info.type || 'unknown'
+                        type: info.type || 'unknown',
+                        scalable: info.scalable,
+                        native_size: info.native_size
                     }));
                 } else if (Array.isArray(data)) {
                     // Direct array format
