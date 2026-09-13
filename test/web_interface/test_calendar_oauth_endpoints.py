@@ -99,9 +99,15 @@ class TestTheRoutesExistAtAll:
         assert "'google-oauth'" in allow_list_line[0], allow_list_line[0]
 
     def test_the_widget_script_is_served(self):
+        # Widgets load through one bundle (web_interface/widget_bundle.py), so
+        # the page must request the bundle and the bundle must carry the file.
+        from web_interface import widget_bundle
         base = (Path(project_root) / 'web_interface/templates/v3/base.html'
                 ).read_text(encoding='utf-8')
-        assert 'widgets/google-oauth.js' in base
+        assert 'widgets_bundle_url()' in base
+        assert 'google-oauth.js' in widget_bundle.BUNDLE_ORDER
+        body, _version = widget_bundle.build_bundle()
+        assert '/* google-oauth.js */' in body
 
     def test_the_status_line_is_announced(self):
         # Every message the widget gives arrives after an async call, so a
