@@ -761,14 +761,54 @@ def _adopt_handwritten_block(schema: Dict[str, Any],
     customization.setdefault('x-widget', 'style-editor')
     props = customization['properties']
 
+    layout_block = props.get('layout')
+    layout_fields = (layout_block.get('properties')
+                     if isinstance(layout_block, dict) else None)
+    layout_fields = layout_fields if isinstance(layout_fields, dict) else {}
+
     for key in element_keys:
         _upgrade_font_property(props[key])
+        # Marked like a declared element, so consumers can tell the style
+        # blocks from whatever else the plugin keeps under customization.
+        # Football's block also holds favorite_result_colors, which is a
+        # feature with its own fields -- without this the editor treats it
+        # as an element and every row grows an "enabled"/"win color" column.
+        props[key]['x-style-managed'] = True
+        # Where this element's offsets live, resolved through the same alias
+        # map the renderer reads them with. The two blocks were never named
+        # alike -- football styles score_text but positions score -- and the
+        # editor matched them by exact name, so it drew one offset in eleven
+        # and the rest had no control anywhere. Recording the answer here
+        # keeps the alias rules in one place instead of a JavaScript copy.
+        # Only an object-shaped entry (x_offset/y_offset/...) can hold an
+        # element's offsets. A leaf directly under layout -- a show_logo
+        # toggle -- is its own control, so it is never claimed by a row and
+        # always gets a position row of its own.
+        layout_key = next((name for name in alias_keys(key)
+                           if isinstance(layout_fields.get(name), dict)
+                           and isinstance(layout_fields[name].get('properties'),
+                                          dict)), None)
+        if layout_key is not None:
+            props[key]['x-layout-key'] = layout_key
+
+    if layout_fields:
+        # Positions are listed in the order the plugin declared them. Flask's
+        # JSON provider sorts keys, which would put the logos after the date.
+        layout_block.setdefault('x-propertyOrder', list(layout_fields))
 
     modes = customization.get('x-style-modes')
     if isinstance(modes, list) and modes:
         props.setdefault('modes',
                          _modes_block_from_properties(props, element_keys,
                                                       modes))
+        mode_blocks = props['modes'].get('properties') if isinstance(
+            props.get('modes'), dict) else None
+        for mode_block in (mode_blocks or {}).values():
+            mode_layout = ((mode_block or {}).get('properties') or {}).get('layout')
+            if (isinstance(mode_layout, dict)
+                    and isinstance(mode_layout.get('properties'), dict)):
+                mode_layout.setdefault('x-propertyOrder',
+                                       list(mode_layout['properties']))
 
     # Stated explicitly because the config form serialises the schema with
     # Flask's JSON provider, which sorts keys -- without this the elements
@@ -904,11 +944,14 @@ def _normalize_color(value: Any) -> Optional[Tuple[int, int, int]]:
         return None
     if isinstance(value, (list, tuple)) and len(value) == 3:
         try:
-            rgb = tuple(int(c) for c in value)
+            # Clamped, not rejected. The readers this replaced clamped
+            # (sports_card.coerce_rgb), and the eight scoreboards' own tests
+            # pin it: a configured [999, -5, 20] is a typo'd bright red, and
+            # answering "unusable, take the default" turned it white instead.
+            rgb = tuple(max(0, min(255, int(c))) for c in value)
         except (TypeError, ValueError):
             return None
-        if all(0 <= c <= 255 for c in rgb):
-            return rgb  # type: ignore[return-value]
+        return rgb  # type: ignore[return-value]
     return None
 
 
