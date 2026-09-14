@@ -80,10 +80,29 @@ src/base_classes/sports/
 src/common/
   sports_scroll.py       SportsScrollDisplay / …Manager — scroll orchestration
                          (content building stays in the plugins)
+  sports_helpers.py      clamp/logo/rotation free functions + SportsHelpersMixin
+                         (unreleased) — the helpers byte-identical in the
+                         plugins' sports.py, and the _favorite_key seam
 ```
 
 `from src.base_classes.sports import SportsCore` keeps working — the package
 `__init__` re-exports, so the conversion is invisible to every existing importer.
+
+### Converging on `src/common`
+
+The scoreboards do not build on `src/base_classes`; their own `sports.py` copies
+have moved past it. So shared code now lands in hardware-free `src/common`
+modules taken from the plugin copies, each a **new module** rather than growth
+on an existing one: a plugin that deletes a method copy and relies on an older
+module having gained it fails at runtime with an `AttributeError`, while a
+missing module fails at load, where the version checks can see it.
+`sports_helpers.py` is the first (it holds `_favorite_key`, the override point
+listed below, for later phases); its parity test compares every body against
+the plugin copies when `LEDMATRIX_PLUGINS` points at a checkout, and
+`test/test_common_is_hardware_free.py` keeps `src/common` free of
+`rgbmatrix`, `src.base_classes` and `src.plugin_system`. How a plugin adopts a
+module and drops its copy is documented in the plugins repo's
+`docs/plugin-development/08-shared-sports-code.md`.
 
 ## Override points (the plugin-facing seam)
 
