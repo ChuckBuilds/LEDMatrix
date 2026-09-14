@@ -167,6 +167,61 @@ class TestConnectThroughSetupAp:
         assert response.status_code == 409
         assert len(self.spawned) == 1
 
+    def test_pending_is_honoured_after_the_ap_has_gone_down(self, api_v3_client, wifi_manager):
+        # The background attempt tears the AP down long before it finishes; a
+        # second click must not slip through as a synchronous connect.
+        api_v3_client.post(self.URL, json={"ssid": "HomeNet"})
+        wifi_manager._is_ap_mode_active.return_value = False
+        response = api_v3_client.post(self.URL, json={"ssid": "OtherNet"})
+        assert response.status_code == 409
+        wifi_manager.connect_to_network.assert_not_called()
+
+    def test_a_thread_that_fails_to_start_does_not_leave_pending_behind(
+            self, api_v3_client, wifi_manager, monkeypatch):
+        def refuse(_target):
+            raise RuntimeError("can't start new thread")
+        monkeypatch.setattr(self.routes, "_spawn", refuse)
+        assert api_v3_client.post(self.URL, json={"ssid": "HomeNet"}).status_code == 500
+        assert self.routes._last_connect_snapshot() is None
+
+        monkeypatch.setattr(self.routes, "_spawn", self.spawned.append)
+        assert api_v3_client.post(self.URL, json={"ssid": "HomeNet"}).status_code == 202
+
+
+class TestConnectSerializedWithoutAp:
+    """Without the AP the route connects synchronously, but still one attempt
+    at a time: a second connect_to_network would remove the in-progress flag
+    the daemon relies on when the first finishes."""
+
+    URL = "/api/v3/wifi/connect"
+
+    @pytest.fixture(autouse=True)
+    def no_prior_attempt(self, api_v3_module, monkeypatch):
+        from web_interface.blueprints.api_v3 import wifi as wifi_routes
+        monkeypatch.setattr(wifi_routes, "_last_connect_attempt", None)
+        self.routes = wifi_routes
+
+    def test_a_connect_during_a_synchronous_connect_is_refused(
+            self, api_v3_client, wifi_manager):
+        inner = []
+
+        def connect(ssid, password):
+            if not inner:
+                inner.append(api_v3_client.post(self.URL, json={"ssid": "OtherNet"}))
+            return True, f"Connected to {ssid}"
+
+        wifi_manager.connect_to_network.side_effect = connect
+        response = api_v3_client.post(self.URL, json={"ssid": "HomeNet"})
+        assert response.status_code == 200
+        assert inner[0].status_code == 409
+        wifi_manager.connect_to_network.assert_called_once_with("HomeNet", "")
+        assert self.routes._last_connect_snapshot()["state"] == "success"
+
+    def test_an_exception_does_not_leave_pending_behind(self, api_v3_client, wifi_manager):
+        wifi_manager.connect_to_network.side_effect = RuntimeError("nmcli gone")
+        assert api_v3_client.post(self.URL, json={"ssid": "HomeNet"}).status_code == 500
+        assert self.routes._last_connect_snapshot()["state"] == "failed"
+
 
 class TestDisconnect:
     URL = "/api/v3/wifi/disconnect"

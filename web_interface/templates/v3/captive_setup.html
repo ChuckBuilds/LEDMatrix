@@ -92,7 +92,7 @@ select:focus,input:focus{outline:none;border-color:#3b82f6;box-shadow:0 0 0 3px 
     <p style="font-size:16px;font-weight:600;margin-bottom:8px">Connecting to <span id="handoff-ssid"></span></p>
     <p style="font-size:13px;color:#6b7280;margin-bottom:12px">LEDMatrix-Setup has turned off, so this page can't follow along any more.</p>
     <p style="font-size:13px;color:#374151;margin-bottom:8px"><strong>If it worked:</strong> the LED display shows the new address. Rejoin your home WiFi and open it.</p>
-    <p style="font-size:13px;color:#374151"><strong>If it didn't:</strong> LEDMatrix-Setup comes back within a minute. Rejoin it and reopen this page to see why.</p>
+    <p style="font-size:13px;color:#374151"><strong>If it didn't:</strong> LEDMatrix-Setup comes back within a few minutes. Rejoin it and reopen this page to see why.</p>
   </div>
 </div>
 
@@ -216,7 +216,7 @@ function doConnect() {
 
 function handoffMessage(ssid) {
   return 'Connecting to ' + ssid + '. LEDMatrix-Setup will turn off and your phone will disconnect from it. ' +
-    'If it works, the LED display shows its new address. If not, LEDMatrix-Setup comes back within a minute: ' +
+    'If it works, the LED display shows its new address. If not, LEDMatrix-Setup comes back within a few minutes: ' +
     'rejoin it and reopen this page to see why.';
 }
 

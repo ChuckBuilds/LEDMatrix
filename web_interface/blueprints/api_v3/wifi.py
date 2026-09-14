@@ -47,16 +47,8 @@ def _connect_result_payload(ssid, success, message):
     return payload
 
 
-def _run_background_connect(ssid, password):
+def _record_connect_result(ssid, payload):
     global _last_connect_attempt
-    try:
-        time.sleep(_AP_HANDOFF_DELAY_SECONDS)
-        from src.wifi_manager import WiFiManager
-        success, message = WiFiManager().connect_to_network(ssid, password)
-        payload = _connect_result_payload(ssid, success, message)
-    except Exception as e:
-        logger.error("Background WiFi connect failed", exc_info=True)
-        payload = {'status': 'error', 'message': describe_exception(e)}
     with _connect_lock:
         _last_connect_attempt = {
             'ssid': ssid,
@@ -65,6 +57,18 @@ def _run_background_connect(ssid, password):
             'error_type': payload.get('error_type'),
             'finished_at': time.time(),
         }
+
+
+def _run_background_connect(ssid, password):
+    try:
+        time.sleep(_AP_HANDOFF_DELAY_SECONDS)
+        from src.wifi_manager import WiFiManager
+        success, message = WiFiManager().connect_to_network(ssid, password)
+        payload = _connect_result_payload(ssid, success, message)
+    except Exception as e:
+        logger.error("Background WiFi connect failed", exc_info=True)
+        payload = {'status': 'error', 'message': describe_exception(e)}
+    _record_connect_result(ssid, payload)
 
 
 def _parse_bool_ish(value):
@@ -242,19 +246,33 @@ def connect_wifi():
         password = data.get('password', '') or ''
 
         wifi_manager = WiFiManager()
+        ap_mode_active = wifi_manager._is_ap_mode_active()
 
-        if wifi_manager._is_ap_mode_active():
-            with _connect_lock:
-                if _last_connect_attempt and _last_connect_attempt['state'] == 'pending':
-                    return jsonify({
-                        'status': 'error',
-                        'message': f"Already connecting to {_last_connect_attempt['ssid']}"
-                    }), 409
-                _last_connect_attempt = {
-                    'ssid': ssid, 'state': 'pending', 'message': None,
-                    'error_type': None, 'finished_at': None,
-                }
-            _spawn(lambda: _run_background_connect(ssid, password))
+        # One attempt at a time on either path: concurrent connects fight over
+        # the radio, and the first to finish would clear the in-progress flag
+        # the monitor daemon still needs for the other. The check can't depend
+        # on AP state either -- a background attempt takes the AP down long
+        # before it finishes.
+        with _connect_lock:
+            if _last_connect_attempt and _last_connect_attempt['state'] == 'pending':
+                return jsonify({
+                    'status': 'error',
+                    'message': f"Already connecting to {_last_connect_attempt['ssid']}"
+                }), 409
+            _last_connect_attempt = {
+                'ssid': ssid, 'state': 'pending', 'message': None,
+                'error_type': None, 'finished_at': None,
+            }
+
+        if ap_mode_active:
+            try:
+                _spawn(lambda: _run_background_connect(ssid, password))
+            except Exception:
+                # Nothing will ever finish this attempt; don't leave every
+                # later request refused.
+                with _connect_lock:
+                    _last_connect_attempt = None
+                raise
             return jsonify({
                 'status': 'pending',
                 'message': (
@@ -264,8 +282,13 @@ def connect_wifi():
                 'data': {'ssid': ssid},
             }), 202
 
-        success, message = wifi_manager.connect_to_network(ssid, password)
+        try:
+            success, message = wifi_manager.connect_to_network(ssid, password)
+        except Exception as e:
+            _record_connect_result(ssid, {'status': 'error', 'message': describe_exception(e)})
+            raise
         payload = _connect_result_payload(ssid, success, message)
+        _record_connect_result(ssid, payload)
         return jsonify(payload), (200 if success else 400)
     except Exception as e:
         logger.error("Error connecting to WiFi", exc_info=True)
