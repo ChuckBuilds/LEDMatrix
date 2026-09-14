@@ -1,3 +1,44 @@
+<!-- Automatic update banner: a weekly update that failed, was blocked or was rolled back -->
+<div id="auto-update-banner" class="bg-red-50 border border-red-300 rounded-lg p-4 mb-4 flex items-start" style="display:none !important" role="alert">
+    <div class="flex-shrink-0 mr-3 mt-0.5">
+        <i class="fas fa-exclamation-circle text-red-500"></i>
+    </div>
+    <div class="flex-1">
+        <p class="text-sm font-medium text-red-800">Automatic Update Needs Attention</p>
+        <p class="text-sm text-red-700 mt-1" id="auto-update-banner-text"></p>
+        <p class="text-xs text-red-600 mt-1">Details are under Automatic Updates on the General tab.</p>
+    </div>
+    <button type="button" onclick="window.dismissAutoUpdateBanner()" class="ml-4 flex-shrink-0 text-red-500 hover:text-red-700" aria-label="Dismiss">
+        <i class="fas fa-times"></i>
+    </button>
+</div>
+<script>
+(function () {
+    fetch('/api/v3/system/auto-update')
+        .then(function (r) { return r.json(); })
+        .then(function (resp) {
+            var d = resp.data || {};
+            if (!d.alert) return;
+            document.getElementById('auto-update-banner-text').textContent = d.alert;
+            var banner = document.getElementById('auto-update-banner');
+            banner.dataset.alertId = d.alert_id || '';
+            banner.style.setProperty('display', 'flex', 'important');
+        })
+        .catch(function () {});
+
+    // Dismissal is stored server-side, so the banner stays gone on every
+    // device until a new failure raises a new alert.
+    window.dismissAutoUpdateBanner = function () {
+        var banner = document.getElementById('auto-update-banner');
+        banner.style.setProperty('display', 'none', 'important');
+        fetch('/api/v3/system/auto-update/dismiss', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({alert_id: banner.dataset.alertId})
+        }).catch(function () {});
+    };
+}());
+</script>
 <!-- Reconciliation warning banner: shown when startup reconciliation found stale plugin config entries -->
 <div id="reconciliation-banner" class="bg-yellow-50 border border-yellow-300 rounded-lg p-4 mb-4 flex items-start" style="display:none !important" role="alert">
     <div class="flex-shrink-0 mr-3 mt-0.5">

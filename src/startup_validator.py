@@ -81,6 +81,8 @@ class StartupValidator:
     _UNITS = (
         ("systemd/ledmatrix.service", "/etc/systemd/system/ledmatrix.service"),
         ("systemd/ledmatrix-web.service", "/etc/systemd/system/ledmatrix-web.service"),
+        ("systemd/ledmatrix-update-verify.service", "/etc/systemd/system/ledmatrix-update-verify.service"),
+        ("systemd/ledmatrix-update-verify.path", "/etc/systemd/system/ledmatrix-update-verify.path"),
     )
 
     def _validate_systemd_units(self) -> None:

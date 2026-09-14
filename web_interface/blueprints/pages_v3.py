@@ -525,8 +525,15 @@ def _load_general_partial():
     try:
         if pages_v3.config_manager:
             main_config = pages_v3.config_manager.load_config()
+            try:
+                from web_interface.auto_update import describe_status
+                auto_update_status = describe_status(main_config)
+            except Exception:
+                logger.debug("Could not read auto-update status", exc_info=True)
+                auto_update_status = None
             return render_template('v3/partials/general.html',
-                                 main_config=main_config)
+                                 main_config=main_config,
+                                 auto_update_status=auto_update_status)
     except Exception as e:
         logger.error("Error loading partial", exc_info=True)
         return "Error loading partial", 500

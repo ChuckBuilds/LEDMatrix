@@ -12,6 +12,8 @@ from web_interface.blueprints.api_v3 import (
     get_git_version, jsonify, logger, os, request, resolve_pull_command,
     shutil, subprocess,
 )
+import threading
+
 import web_interface.blueprints.api_v3 as _pkg
 # Read through the module rather than bound by value: tests patch these
 # as module attributes, and a value binding would not see the patch.
@@ -120,6 +122,30 @@ def get_system_version():
     except Exception as e:
         logger.error("get_system_version failed: %s", e, exc_info=True)
         return jsonify({'status': 'error', 'message': 'Unable to retrieve version'}), 500
+@api_v3.route('/system/auto-update', methods=['GET'])
+def get_auto_update_status():
+    """Weekly automatic update status: last result, next check, and any alert."""
+    from web_interface import auto_update
+    try:
+        config = api_v3.config_manager.load_config() if api_v3.config_manager else {}
+        return jsonify({'status': 'success', 'data': auto_update.describe_status(config)})
+    except Exception as e:
+        logger.error("get_auto_update_status failed", exc_info=True)
+        return jsonify({'status': 'error', 'message': 'Could not read automatic update status',
+                        'details': describe_exception(e)}), 500
+
+
+@api_v3.route('/system/auto-update/dismiss', methods=['POST'])
+def dismiss_auto_update_alert():
+    """Hide the current automatic-update banner until a new alert replaces it."""
+    from web_interface import auto_update
+    alert_id = str((request.get_json(silent=True) or {}).get('alert_id') or '').strip()
+    if not alert_id:
+        return jsonify({'status': 'error', 'message': 'alert_id required'}), 400
+    auto_update.dismiss_alert(alert_id)
+    return jsonify({'status': 'success'})
+
+
 @api_v3.route('/system/check-update', methods=['GET'])
 def check_for_update():
     """Check whether a newer LEDMatrix commit is available on origin/main."""
@@ -198,6 +224,219 @@ def _sudo_hint_for(text):
     return None
 
 
+_core_update_lock = threading.Lock()
+
+
+def perform_core_update():
+    """Pull the latest LEDMatrix code and sync its dependencies.
+
+    Shared by the Overview "Update Code" button and the weekly automatic
+    updater (web_interface/auto_update.py), so both take exactly the same
+    path. Returns the JSON-able payload the button has always received:
+    ``status``, ``message`` and ``restart_required``.
+    """
+    # The button and the scheduler can fire together; two pulls racing
+    # over one checkout (and one stash) is how local changes get lost.
+    if not _core_update_lock.acquire(blocking=False):
+        return {'status': 'error', 'restart_required': False,
+                'message': 'An update is already in progress; try again shortly.'}
+    try:
+        return _perform_core_update_locked()
+    finally:
+        _core_update_lock.release()
+
+
+def _perform_core_update_locked():
+    project_dir = str(PROJECT_ROOT)
+
+    # Decide how to pull BEFORE stashing. If this checkout cannot be
+    # updated at all, stashing first would put the user's local changes
+    # away for an update that was never going to run.
+    pull_args, upstream_note, pull_error = resolve_pull_command(project_dir)
+    if pull_error:
+        logger.warning("git pull not attempted: %s", pull_error)
+        return {'status': 'error', 'message': pull_error, 'restart_required': False}
+
+    # Check if there are local changes that need to be stashed
+    # Exclude plugins directory - plugins are separate repos and shouldn't be stashed with base project
+    # Use --untracked-files=no to skip untracked files check (much faster with symlinked plugins)
+    try:
+        status_result = subprocess.run(
+            ['git', 'status', '--porcelain', '--untracked-files=no'],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=project_dir
+        )
+        # Filter out any changes in plugins directory - plugins are separate repositories
+        # Git status format: XY filename (where X is status of index, Y is status of work tree)
+        status_lines = [line for line in status_result.stdout.strip().split('\n')
+                       if line.strip() and 'plugins/' not in line]
+        has_changes = bool('\n'.join(status_lines).strip())
+    except subprocess.TimeoutExpired:
+        # If status check times out, assume there might be changes and proceed
+        # This is safer than failing the update
+        has_changes = True
+        status_result = type('obj', (object,), {'stdout': '', 'stderr': 'Status check timed out'})()
+
+    stash_info = ""
+
+    # Stash local changes if they exist (excluding plugins)
+    # Plugins are separate repositories and shouldn't be stashed with base project updates
+    if has_changes:
+        try:
+            # Use pathspec to exclude plugins directory from stash
+            stash_result = subprocess.run(
+                ['git', 'stash', 'push', '-m', 'LEDMatrix auto-stash before update', '--', ':!plugins'],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                cwd=project_dir
+            )
+            if stash_result.returncode == 0:
+                logger.debug("git stash: stashed local changes before pull")
+                stash_info = " Local changes were stashed."
+            else:
+                logger.warning("git stash failed before pull (returncode=%d)", stash_result.returncode)
+        except subprocess.TimeoutExpired:
+            logger.warning("git stash timed out, proceeding with pull")
+
+    # Record HEAD before the pull so dependency changes can be detected
+    old_head = None
+    try:
+        _pre = subprocess.run(['git', 'rev-parse', 'HEAD'],
+                              capture_output=True, text=True, timeout=10, cwd=project_dir)
+        if _pre.returncode == 0:
+            old_head = _pre.stdout.strip()
+    except subprocess.TimeoutExpired:
+        logger.warning("git rev-parse timed out before pull")
+
+    # Whether the pull actually brought new code in. "Already up to
+    # date" is a success too, and prompting for a restart then would
+    # train users to ignore the prompt.
+    code_changed = False
+    # Requirement files whose install failed. The automatic updater refuses
+    # to restart onto code whose dependencies did not install.
+    dependency_failures = []
+
+    # Perform the git pull. Branches without an upstream were given
+    # an explicit "origin <branch>" above so the update still works.
+    result = subprocess.run(
+        pull_args,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        cwd=project_dir
+    )
+
+    # Give the branch tracking information so the next pull is a plain
+    # `git pull` — otherwise every update repeats the fallback.
+    if result.returncode == 0 and upstream_note:
+        branch = _git_current_branch(project_dir)
+        if branch:
+            try:
+                subprocess.run(
+                    ['git', 'branch', f'--set-upstream-to=origin/{branch}', branch],
+                    capture_output=True, text=True, timeout=10, cwd=project_dir)
+            except (subprocess.TimeoutExpired, OSError) as exc:
+                logger.debug("could not set upstream for %s: %s", branch, exc)
+
+    # Return custom response for git_pull
+    if result.returncode == 0:
+        pull_message = "Code updated successfully."
+        if has_changes:
+            pull_message = f"Code updated successfully. Local changes were automatically stashed.{stash_info}"
+        if result.stdout and "Already up to date" not in result.stdout:
+            pull_message = f"Code updated successfully.{stash_info}"
+        if upstream_note:
+            pull_message = f"{pull_message} {upstream_note}"
+
+        # Keep Python dependencies in sync automatically: if the pull
+        # changed a requirements file, install it now — users updating
+        # from the web UI (most of them) never SSH in to pip install.
+        # Installs go through the same root-visible path as the
+        # Tools-tab buttons (_pip_install_requirements).
+        dep_notes = []
+        try:
+            _post = subprocess.run(['git', 'rev-parse', 'HEAD'],
+                                   capture_output=True, text=True, timeout=10, cwd=project_dir)
+            new_head = _post.stdout.strip() if _post.returncode == 0 else None
+            if old_head and new_head and old_head != new_head:
+                code_changed = True
+                diff = subprocess.run(
+                    ['git', 'diff', '--name-only', f'{old_head}..{new_head}'],
+                    capture_output=True, text=True, timeout=15, cwd=project_dir)
+                changed = set(diff.stdout.split()) if diff.returncode == 0 else set()
+                for rel in ('requirements.txt', 'web_interface/requirements.txt'):
+                    req_path = PROJECT_ROOT / rel
+                    if rel not in changed or not req_path.exists():
+                        continue
+                    # Each file's install is isolated: a timeout or
+                    # OSError (e.g. the sudo wrapper/interpreter
+                    # missing) on one file must not abort the other.
+                    try:
+                        r = _pip_install_requirements(req_path, timeout=180)
+                        if r.returncode == 0:
+                            dep_notes.append(f"Dependencies from {rel} updated.")
+                        else:
+                            dependency_failures.append(rel)
+                            dep_notes.append(
+                                f"Dependency install from {rel} failed — "
+                                "run Install Base Requirements from the Tools tab.")
+                            logger.warning("post-update pip install failed for %s: %s",
+                                           rel, _truncate_output(r.stdout, r.stderr))
+                    except subprocess.TimeoutExpired:
+                        dependency_failures.append(rel)
+                        dep_notes.append(
+                            f"Dependency install from {rel} timed out — "
+                            "run Install Base Requirements from the Tools tab.")
+                        logger.warning("post-update pip install timed out for %s", rel)
+                    except OSError as install_err:
+                        dependency_failures.append(rel)
+                        dep_notes.append(
+                            f"Dependency install from {rel} failed — "
+                            "run Install Base Requirements from the Tools tab.")
+                        logger.warning("post-update pip install errored for %s: %s",
+                                       rel, install_err)
+        except subprocess.TimeoutExpired:
+            logger.warning("post-update dependency sync timed out")
+        if dep_notes:
+            pull_message += " " + " ".join(dep_notes)
+        # A `git pull` restores built-in plugins (committed under
+        # plugin-repos/) even if the user uninstalled them. Re-remove
+        # any the user previously uninstalled so the update doesn't
+        # resurrect them.
+        if api_v3.plugin_store_manager:
+            try:
+                purged = api_v3.plugin_store_manager.purge_uninstalled_plugins()
+                if purged:
+                    logger.info(
+                        "Re-removed %d uninstalled plugin(s) restored by update: %s",
+                        len(purged), ", ".join(purged),
+                    )
+            except (OSError, RuntimeError) as purge_err:
+                logger.warning("Post-update plugin purge failed: %s", purge_err)
+    else:
+        logger.warning("git pull failed (returncode=%d): %s", result.returncode, result.stderr)
+        # Show git's own first line: "check logs" leaves the user with
+        # nothing to act on, and these failures are usually actionable
+        # (conflicting local commits, no upstream, network).
+        detail = next((ln.strip() for ln in (result.stderr or '').splitlines()
+                       if ln.strip()), '')
+        pull_message = f"Update failed: {detail}" if detail else "Update failed; check logs for details"
+
+    # Nothing here restarts anything: the pull replaces files on
+    # disk while the display and web services keep running the code
+    # they loaded at boot. Without this the user is told the update
+    # succeeded and sees no change until they happen to reboot.
+    return {
+        'status': 'success' if result.returncode == 0 else 'error',
+        'message': pull_message,
+        'restart_required': bool(result.returncode == 0 and code_changed),
+        'dependency_failures': dependency_failures,
+    }
+
+
 @api_v3.route('/system/action', methods=['POST'])
 def execute_system_action():
     """Execute system actions (start/stop/reboot/etc)"""
@@ -265,188 +504,7 @@ def execute_system_action():
             result = subprocess.run(['sudo', 'poweroff'],
                                  capture_output=True, text=True, timeout=10)
         elif action == 'git_pull':
-            # Use PROJECT_ROOT instead of hardcoded path
-            project_dir = str(PROJECT_ROOT)
-
-            # Decide how to pull BEFORE stashing. If this checkout cannot be
-            # updated at all, stashing first would put the user's local changes
-            # away for an update that was never going to run.
-            pull_args, upstream_note, pull_error = resolve_pull_command(project_dir)
-            if pull_error:
-                logger.warning("git pull not attempted: %s", pull_error)
-                return jsonify({'status': 'error', 'message': pull_error})
-
-            # Check if there are local changes that need to be stashed
-            # Exclude plugins directory - plugins are separate repos and shouldn't be stashed with base project
-            # Use --untracked-files=no to skip untracked files check (much faster with symlinked plugins)
-            try:
-                status_result = subprocess.run(
-                    ['git', 'status', '--porcelain', '--untracked-files=no'],
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                    cwd=project_dir
-                )
-                # Filter out any changes in plugins directory - plugins are separate repositories
-                # Git status format: XY filename (where X is status of index, Y is status of work tree)
-                status_lines = [line for line in status_result.stdout.strip().split('\n')
-                               if line.strip() and 'plugins/' not in line]
-                has_changes = bool('\n'.join(status_lines).strip())
-            except subprocess.TimeoutExpired:
-                # If status check times out, assume there might be changes and proceed
-                # This is safer than failing the update
-                has_changes = True
-                status_result = type('obj', (object,), {'stdout': '', 'stderr': 'Status check timed out'})()
-
-            stash_info = ""
-
-            # Stash local changes if they exist (excluding plugins)
-            # Plugins are separate repositories and shouldn't be stashed with base project updates
-            if has_changes:
-                try:
-                    # Use pathspec to exclude plugins directory from stash
-                    stash_result = subprocess.run(
-                        ['git', 'stash', 'push', '-m', 'LEDMatrix auto-stash before update', '--', ':!plugins'],
-                        capture_output=True,
-                        text=True,
-                        timeout=30,
-                        cwd=project_dir
-                    )
-                    if stash_result.returncode == 0:
-                        logger.debug("git stash: stashed local changes before pull")
-                        stash_info = " Local changes were stashed."
-                    else:
-                        logger.warning("git stash failed before pull (returncode=%d)", stash_result.returncode)
-                except subprocess.TimeoutExpired:
-                    logger.warning("git stash timed out, proceeding with pull")
-
-            # Record HEAD before the pull so dependency changes can be detected
-            old_head = None
-            try:
-                _pre = subprocess.run(['git', 'rev-parse', 'HEAD'],
-                                      capture_output=True, text=True, timeout=10, cwd=project_dir)
-                if _pre.returncode == 0:
-                    old_head = _pre.stdout.strip()
-            except subprocess.TimeoutExpired:
-                logger.warning("git rev-parse timed out before pull")
-
-            # Whether the pull actually brought new code in. "Already up to
-            # date" is a success too, and prompting for a restart then would
-            # train users to ignore the prompt.
-            code_changed = False
-
-            # Perform the git pull. Branches without an upstream were given
-            # an explicit "origin <branch>" above so the update still works.
-            result = subprocess.run(
-                pull_args,
-                capture_output=True,
-                text=True,
-                timeout=60,
-                cwd=project_dir
-            )
-
-            # Give the branch tracking information so the next pull is a plain
-            # `git pull` — otherwise every update repeats the fallback.
-            if result.returncode == 0 and upstream_note:
-                branch = _git_current_branch(project_dir)
-                if branch:
-                    try:
-                        subprocess.run(
-                            ['git', 'branch', f'--set-upstream-to=origin/{branch}', branch],
-                            capture_output=True, text=True, timeout=10, cwd=project_dir)
-                    except (subprocess.TimeoutExpired, OSError) as exc:
-                        logger.debug("could not set upstream for %s: %s", branch, exc)
-
-            # Return custom response for git_pull
-            if result.returncode == 0:
-                pull_message = "Code updated successfully."
-                if has_changes:
-                    pull_message = f"Code updated successfully. Local changes were automatically stashed.{stash_info}"
-                if result.stdout and "Already up to date" not in result.stdout:
-                    pull_message = f"Code updated successfully.{stash_info}"
-                if upstream_note:
-                    pull_message = f"{pull_message} {upstream_note}"
-
-                # Keep Python dependencies in sync automatically: if the pull
-                # changed a requirements file, install it now — users updating
-                # from the web UI (most of them) never SSH in to pip install.
-                # Installs go through the same root-visible path as the
-                # Tools-tab buttons (_pip_install_requirements).
-                dep_notes = []
-                try:
-                    _post = subprocess.run(['git', 'rev-parse', 'HEAD'],
-                                           capture_output=True, text=True, timeout=10, cwd=project_dir)
-                    new_head = _post.stdout.strip() if _post.returncode == 0 else None
-                    if old_head and new_head and old_head != new_head:
-                        code_changed = True
-                        diff = subprocess.run(
-                            ['git', 'diff', '--name-only', f'{old_head}..{new_head}'],
-                            capture_output=True, text=True, timeout=15, cwd=project_dir)
-                        changed = set(diff.stdout.split()) if diff.returncode == 0 else set()
-                        for rel in ('requirements.txt', 'web_interface/requirements.txt'):
-                            req_path = PROJECT_ROOT / rel
-                            if rel not in changed or not req_path.exists():
-                                continue
-                            # Each file's install is isolated: a timeout or
-                            # OSError (e.g. the sudo wrapper/interpreter
-                            # missing) on one file must not abort the other.
-                            try:
-                                r = _pip_install_requirements(req_path, timeout=180)
-                                if r.returncode == 0:
-                                    dep_notes.append(f"Dependencies from {rel} updated.")
-                                else:
-                                    dep_notes.append(
-                                        f"Dependency install from {rel} failed — "
-                                        "run Install Base Requirements from the Tools tab.")
-                                    logger.warning("post-update pip install failed for %s: %s",
-                                                   rel, _truncate_output(r.stdout, r.stderr))
-                            except subprocess.TimeoutExpired:
-                                dep_notes.append(
-                                    f"Dependency install from {rel} timed out — "
-                                    "run Install Base Requirements from the Tools tab.")
-                                logger.warning("post-update pip install timed out for %s", rel)
-                            except OSError as install_err:
-                                dep_notes.append(
-                                    f"Dependency install from {rel} failed — "
-                                    "run Install Base Requirements from the Tools tab.")
-                                logger.warning("post-update pip install errored for %s: %s",
-                                               rel, install_err)
-                except subprocess.TimeoutExpired:
-                    logger.warning("post-update dependency sync timed out")
-                if dep_notes:
-                    pull_message += " " + " ".join(dep_notes)
-                # A `git pull` restores built-in plugins (committed under
-                # plugin-repos/) even if the user uninstalled them. Re-remove
-                # any the user previously uninstalled so the update doesn't
-                # resurrect them.
-                if api_v3.plugin_store_manager:
-                    try:
-                        purged = api_v3.plugin_store_manager.purge_uninstalled_plugins()
-                        if purged:
-                            logger.info(
-                                "Re-removed %d uninstalled plugin(s) restored by update: %s",
-                                len(purged), ", ".join(purged),
-                            )
-                    except (OSError, RuntimeError) as purge_err:
-                        logger.warning("Post-update plugin purge failed: %s", purge_err)
-            else:
-                logger.warning("git pull failed (returncode=%d): %s", result.returncode, result.stderr)
-                # Show git's own first line: "check logs" leaves the user with
-                # nothing to act on, and these failures are usually actionable
-                # (conflicting local commits, no upstream, network).
-                detail = next((ln.strip() for ln in (result.stderr or '').splitlines()
-                               if ln.strip()), '')
-                pull_message = f"Update failed: {detail}" if detail else "Update failed; check logs for details"
-
-            # Nothing here restarts anything: the pull replaces files on
-            # disk while the display and web services keep running the code
-            # they loaded at boot. Without this the user is told the update
-            # succeeded and sees no change until they happen to reboot.
-            return jsonify({
-                'status': 'success' if result.returncode == 0 else 'error',
-                'message': pull_message,
-                'restart_required': bool(result.returncode == 0 and code_changed),
-            })
+            return jsonify(perform_core_update())
         elif action == 'checkout_branch':
             # Switch branches from the Tools tab. Needed because a checkout
             # that predates tracking (or a restored backup) can leave the pi

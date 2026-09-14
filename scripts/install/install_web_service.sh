@@ -46,6 +46,22 @@ ESCAPED_ACTUAL_USER=$(sed_escape_replacement "$ACTUAL_USER")
 sed "s|__PROJECT_ROOT_DIR__|$ESCAPED_PROJECT_ROOT_DIR|g; s|__USER__|$ESCAPED_ACTUAL_USER|g" \
     "$TEMPLATE" > /etc/systemd/system/ledmatrix-web.service
 
+# Health check and rollback for the web UI's automatic updates. Its own unit so
+# it survives the web service restart it performs; never enabled -- the web
+# interface starts it after an update. Without it, automatic code updates
+# stay paused rather than running with nothing to undo them.
+for VERIFY_UNIT in ledmatrix-update-verify.service ledmatrix-update-verify.path; do
+    VERIFY_TEMPLATE="$PROJECT_ROOT_DIR/systemd/$VERIFY_UNIT"
+    if [ -f "$VERIFY_TEMPLATE" ]; then
+        echo "Writing unit file to /etc/systemd/system/$VERIFY_UNIT"
+        sed "s|__PROJECT_ROOT_DIR__|$ESCAPED_PROJECT_ROOT_DIR|g; s|__USER__|$ESCAPED_ACTUAL_USER|g" \
+            "$VERIFY_TEMPLATE" > "/etc/systemd/system/$VERIFY_UNIT"
+        chmod 644 "/etc/systemd/system/$VERIFY_UNIT"
+    else
+        echo "WARNING: $VERIFY_TEMPLATE not found; automatic code updates will stay paused"
+    fi
+done
+
 # Ensure cache directory exists with proper permissions
 # This is a fallback for older systemd versions that don't support CacheDirectory
 # Systemd 239+ will automatically create it via CacheDirectory directive
@@ -79,6 +95,13 @@ systemctl daemon-reload
 # Enable the service to start on boot
 echo "Enabling ledmatrix-web.service..."
 systemctl enable ledmatrix-web.service
+
+# The path unit is what starts the health check after an automatic update.
+if [ -f /etc/systemd/system/ledmatrix-update-verify.path ]; then
+    echo "Enabling ledmatrix-update-verify.path..."
+    systemctl enable --now ledmatrix-update-verify.path || \
+        echo "WARNING: could not enable ledmatrix-update-verify.path; automatic code updates will stay paused"
+fi
 
 # Start the service
 echo "Starting ledmatrix-web.service..."

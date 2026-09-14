@@ -154,6 +154,8 @@ SKIP_PERF=${LEDMATRIX_SKIP_PERF:-0}
 SKIP_REBOOT_PROMPT=${LEDMATRIX_SKIP_REBOOT_PROMPT:-0}
 SKIP_SWAP=${LEDMATRIX_SKIP_SWAP:-0}
 BUILD_JOBS_OVERRIDE=${LEDMATRIX_BUILD_JOBS:-}
+# Weekly automatic updates: 1 on, 0 off, empty = ask (interactive) or leave as is.
+AUTO_UPDATE=${LEDMATRIX_AUTO_UPDATE:-}
 
 usage() {
     cat <<USAGE
@@ -168,12 +170,15 @@ Options:
       --skip-swap           Never add temporary swap for the C++ build
       --build-jobs N        Compile the C++ library with N parallel jobs
                             (default: scaled to available RAM)
+      --enable-auto-update  Turn on weekly automatic updates (with health
+                            check and automatic rollback)
+      --no-auto-update      Leave weekly automatic updates off
   -h, --help                Show this help message and exit
 
 Environment variables (same effect as flags):
   LEDMATRIX_ASSUME_YES=1, RPI_RGB_FORCE_REBUILD=1, LEDMATRIX_SKIP_SOUND=1,
   LEDMATRIX_SKIP_PERF=1, LEDMATRIX_SKIP_REBOOT_PROMPT=1,
-  LEDMATRIX_SKIP_SWAP=1, LEDMATRIX_BUILD_JOBS=N
+  LEDMATRIX_SKIP_SWAP=1, LEDMATRIX_BUILD_JOBS=N, LEDMATRIX_AUTO_UPDATE=1|0
 
 Low-memory devices:
   On a Pi with under 2GB of RAM the C++ build is limited to fewer parallel
@@ -191,6 +196,8 @@ while [ $# -gt 0 ]; do
         --skip-perf) SKIP_PERF=1 ;;
         --no-reboot-prompt) SKIP_REBOOT_PROMPT=1 ;;
         --skip-swap) SKIP_SWAP=1 ;;
+        --enable-auto-update) AUTO_UPDATE=1 ;;
+        --no-auto-update) AUTO_UPDATE=0 ;;
         --build-jobs)
             shift
             if [ $# -eq 0 ]; then echo "--build-jobs requires a number"; usage; exit 1; fi
@@ -797,6 +804,35 @@ else
     echo "✓ Main config file already exists"
 fi
 
+# Weekly automatic updates (General tab -> Automatic Updates). Off unless asked
+# for: --enable-auto-update / LEDMATRIX_AUTO_UPDATE=1, or "y" at the prompt when
+# installing interactively. Only an explicit choice changes the setting, so
+# re-running the installer with -y never switches it silently.
+if [ -z "$AUTO_UPDATE" ] && [ "$ASSUME_YES" != "1" ] && [ -t 0 ]; then
+    read -p "Automatically check for and install LEDMatrix updates once a week, with automatic rollback if an update breaks something? (y/N): " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then AUTO_UPDATE=1; else AUTO_UPDATE=0; fi
+fi
+if [ "$AUTO_UPDATE" = "1" ] || [ "$AUTO_UPDATE" = "0" ]; then
+    if python3 - "$PROJECT_ROOT_DIR/config/config.json" "$AUTO_UPDATE" <<'PY'
+import json, sys
+path, enabled = sys.argv[1], sys.argv[2] == "1"
+with open(path, encoding="utf-8") as f:
+    config = json.load(f)
+if not isinstance(config.get("auto_update"), dict):
+    config["auto_update"] = {}
+config["auto_update"]["enabled"] = enabled
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(config, f, indent=4)
+    f.write("\n")
+PY
+    then
+        if [ "$AUTO_UPDATE" = "1" ]; then echo "✓ Weekly automatic updates enabled"; else echo "✓ Weekly automatic updates off"; fi
+    else
+        echo "⚠ Could not set auto_update in config/config.json; turn it on from the General tab instead"
+    fi
+fi
+
 # Create config_secrets.json from template if missing
 if [ ! -f "$PROJECT_ROOT_DIR/config/config_secrets.json" ]; then
     if [ -f "$PROJECT_ROOT_DIR/config/config_secrets.template.json" ]; then
@@ -1272,7 +1308,7 @@ if [ -f "$PROJECT_ROOT_DIR/scripts/install/install_web_service.sh" ]; then
         fi
     fi
     
-    if [ ! -f "/etc/systemd/system/ledmatrix-web.service" ] || [ "$NEEDS_UPDATE" = true ]; then
+    if [ ! -f "/etc/systemd/system/ledmatrix-web.service" ] || [ ! -f "/etc/systemd/system/ledmatrix-update-verify.path" ] || [ "$NEEDS_UPDATE" = true ]; then
         bash "$PROJECT_ROOT_DIR/scripts/install/install_web_service.sh"
         # Ensure systemd sees any new/changed unit files
         systemctl daemon-reload || true
@@ -1288,7 +1324,7 @@ echo ""
 CURRENT_STEP="Harden systemd unit file permissions"
 echo "Step 8.1: Setting systemd unit file permissions..."
 echo "-----------------------------------------------"
-for unit in "/etc/systemd/system/ledmatrix.service" "/etc/systemd/system/ledmatrix-web.service" "/etc/systemd/system/ledmatrix-wifi-monitor.service"; do
+for unit in "/etc/systemd/system/ledmatrix.service" "/etc/systemd/system/ledmatrix-web.service" "/etc/systemd/system/ledmatrix-wifi-monitor.service" "/etc/systemd/system/ledmatrix-update-verify.service" "/etc/systemd/system/ledmatrix-update-verify.path"; do
     if [ -f "$unit" ]; then
         chown root:root "$unit" || true
         chmod 644 "$unit" || true

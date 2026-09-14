@@ -1,0 +1,30 @@
+# This is a template. Do not install it directly -- run
+# scripts/install/install_web_service.sh (or install_service.sh); the display
+# service also installs it when automatic updates are turned on
+# (src/auto_update_setup.py). Substitutes:
+#   __PROJECT_ROOT_DIR__  -> the directory the project is installed in
+#   __USER__              -> the user the web interface runs as
+#
+# Health check and rollback for the web interface's weekly automatic update
+# (web_interface/auto_update.py). A separate unit because the check restarts
+# ledmatrix-web.service, which would kill it if it ran there.
+#
+# Never enabled itself: ledmatrix-update-verify.path starts it when the web
+# interface creates data/auto_update_verify.request. It runs as the web
+# interface's own user, and ExecStart points at the copy the updater makes
+# before pulling, so the update being checked cannot replace its checker.
+
+[Unit]
+Description=LED Matrix automatic update health check and rollback
+
+[Service]
+Type=oneshot
+User=__USER__
+WorkingDirectory=__PROJECT_ROOT_DIR__
+# Consume the request first, so the path unit cannot start this again.
+ExecStartPre=/bin/rm -f __PROJECT_ROOT_DIR__/data/auto_update_verify.request
+ExecStart=/usr/bin/python3 __PROJECT_ROOT_DIR__/data/auto_update_verifier.py __PROJECT_ROOT_DIR__
+TimeoutStartSec=30min
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=ledmatrix-update-verify

@@ -95,12 +95,30 @@ else
     exit 1
 fi
 
+# Health check / rollback units for automatic updates; see install_web_service.sh.
+for VERIFY_UNIT in ledmatrix-update-verify.service ledmatrix-update-verify.path; do
+    if [ -f "$PROJECT_ROOT_DIR/systemd/$VERIFY_UNIT" ]; then
+        VERIFY_UNIT_TMP=$(mktemp)
+        if sed "s|__PROJECT_ROOT_DIR__|$ESCAPED_PROJECT_ROOT_DIR|g; s|__USER__|$ESCAPED_ACTUAL_USER|g" "$PROJECT_ROOT_DIR/systemd/$VERIFY_UNIT" > "$VERIFY_UNIT_TMP"; then
+            sudo cp "$VERIFY_UNIT_TMP" "/etc/systemd/system/$VERIFY_UNIT"
+        else
+            echo "WARNING: failed to render $VERIFY_UNIT; automatic code updates will stay paused." >&2
+        fi
+        rm -f "$VERIFY_UNIT_TMP"
+    fi
+done
+
 echo "Reloading systemd daemon for web service..."
 sudo systemctl daemon-reload
 
 if [ -f "/etc/systemd/system/ledmatrix-web.service" ]; then
     echo "Enabling ledmatrix-web.service to start on boot..."
     sudo systemctl enable ledmatrix-web.service
+
+    if [ -f /etc/systemd/system/ledmatrix-update-verify.path ]; then
+        echo "Enabling ledmatrix-update-verify.path (automatic update health check)..."
+        sudo systemctl enable --now ledmatrix-update-verify.path || echo "WARNING: could not enable ledmatrix-update-verify.path; automatic code updates will stay paused" >&2
+    fi
 
     echo "Starting ledmatrix-web.service..."
     sudo systemctl start ledmatrix-web.service
