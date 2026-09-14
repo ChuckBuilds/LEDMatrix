@@ -133,6 +133,16 @@ class UpdateHelperSetup:
         if not workdir or Path(workdir).resolve() != self.project_root.resolve():
             raise SetupError(f'The web interface service runs from {workdir or "an unknown folder"}, '
                              f'not {self.project_root}.')
+        # Spaces are fine -- the templates quote every command-line path --
+        # but systemd expands % specifiers, and a quote, backslash or line
+        # break would be reinterpreted in a unit file. (On Windows, where the
+        # tests also run, a backslash is the path separator, not a name.)
+        root_text = str(self.project_root)
+        unsafe = set('%"') | ({'\\'} if os.sep == '/' else set())
+        if any(ch in unsafe or ord(ch) < 32 for ch in root_text):
+            raise SetupError(f'LEDMatrix is installed in {root_text!r}, a folder name systemd cannot use '
+                             'in a unit file. Move it to a path without %, quotes, backslashes or '
+                             'control characters.')
 
         rendered = {}
         for name in UNITS:

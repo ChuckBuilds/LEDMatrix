@@ -815,16 +815,31 @@ if [ -z "$AUTO_UPDATE" ] && [ "$ASSUME_YES" != "1" ] && [ -t 0 ]; then
 fi
 if [ "$AUTO_UPDATE" = "1" ] || [ "$AUTO_UPDATE" = "0" ]; then
     if python3 - "$PROJECT_ROOT_DIR/config/config.json" "$AUTO_UPDATE" <<'PY'
-import json, sys
+import json, os, sys, tempfile
 path, enabled = sys.argv[1], sys.argv[2] == "1"
 with open(path, encoding="utf-8") as f:
     config = json.load(f)
 if not isinstance(config.get("auto_update"), dict):
     config["auto_update"] = {}
 config["auto_update"]["enabled"] = enabled
-with open(path, "w", encoding="utf-8") as f:
-    json.dump(config, f, indent=4)
-    f.write("\n")
+# Written beside the original and swapped in whole: the display service's
+# config watcher may be running and must never read a half-written file.
+original = os.stat(path)
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(path)), prefix=".config.")
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=4)
+        f.write("\n")
+        f.flush()
+        os.fsync(f.fileno())
+    os.chmod(tmp, original.st_mode & 0o777)
+    if hasattr(os, "chown"):
+        os.chown(tmp, original.st_uid, original.st_gid)
+    os.replace(tmp, path)
+except BaseException:
+    if os.path.exists(tmp):
+        os.unlink(tmp)
+    raise
 PY
     then
         if [ "$AUTO_UPDATE" = "1" ]; then echo "✓ Weekly automatic updates enabled"; else echo "✓ Weekly automatic updates off"; fi

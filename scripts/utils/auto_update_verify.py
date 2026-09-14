@@ -128,21 +128,27 @@ class Verifier:
         return result.returncode == 0
 
     def restart_services(self, display):
+        """Restart what should be running. False if any restart command failed."""
+        ok = True
         # A display the user had stopped stays stopped.
         if display:
-            self.restart('ledmatrix')
-        self.restart('ledmatrix-web')
+            ok = self.restart('ledmatrix') and ok
+        return self.restart('ledmatrix-web') and ok
 
     def wait_healthy(self, display):
         """None once the services are up and stay up, else what went wrong."""
         deadline = self.clock() + HEALTH_TIMEOUT_SECONDS + STABLE_SECONDS
         healthy_since = baseline = None
         web = disp = False
+        count_known = True
         while self.clock() < deadline:
             web = self.web_responds()
             disp = self.service_active('ledmatrix') if display else True
             restarts = self.restart_count('ledmatrix') if display else None
-            if web and disp and (healthy_since is None or restarts == baseline):
+            # Without a restart count a crash loop looks healthy between
+            # attempts, so an unreadable count never counts as stable.
+            count_known = not display or restarts is not None
+            if web and disp and count_known and (healthy_since is None or restarts == baseline):
                 if healthy_since is None:
                     healthy_since, baseline = self.clock(), restarts
                 elif self.clock() - healthy_since >= STABLE_SECONDS:
@@ -155,6 +161,8 @@ class Verifier:
             problems.append('the web interface did not respond')
         if not disp:
             problems.append('the display service did not stay running')
+        if web and disp and not count_known:
+            problems.append("the display service's restart count could not be read")
         return '; '.join(problems) or 'the display service kept restarting'
 
     # -- rollback ---------------------------------------------------------
@@ -216,8 +224,11 @@ class Verifier:
         if dependency_failures:
             # Never restart onto code whose packages did not install.
             reason = 'installing its dependencies failed (' + ', '.join(dependency_failures) + ')'
+        elif not self.restart_services(display):
+            # The old process may still be answering; checking it would pass
+            # an update that never started.
+            reason = 'restarting the services failed'
         else:
-            self.restart_services(display)
             reason = self.wait_healthy(display)
             if reason is None:
                 self._finish(pending, 'success')
@@ -229,8 +240,8 @@ class Verifier:
         if not ok:
             self._finish(pending, 'rollback_failed', reason, detail)
             return 1
-        self.restart_services(display)
-        still = self.wait_healthy(display)
+        still = (self.wait_healthy(display) if self.restart_services(display)
+                 else 'restarting the services failed')
         if still:
             self._finish(pending, 'rollback_failed', reason,
                          f'still unhealthy after rolling back: {still}'

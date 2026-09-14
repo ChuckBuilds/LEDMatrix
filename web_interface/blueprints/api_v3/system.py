@@ -129,10 +129,11 @@ def get_auto_update_status():
     try:
         config = api_v3.config_manager.load_config() if api_v3.config_manager else {}
         return jsonify({'status': 'success', 'data': auto_update.describe_status(config)})
-    except Exception as e:
+    except Exception:
+        # Details stay in the log: exception text can carry file paths.
         logger.error("get_auto_update_status failed", exc_info=True)
-        return jsonify({'status': 'error', 'message': 'Could not read automatic update status',
-                        'details': describe_exception(e)}), 500
+        return jsonify({'status': 'error',
+                        'message': 'Could not read automatic update status; see logs for details'}), 500
 
 
 @api_v3.route('/system/auto-update/dismiss', methods=['POST'])

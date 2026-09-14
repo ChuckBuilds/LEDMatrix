@@ -43,8 +43,8 @@ class FakeSystemctl:
         return subprocess.CompletedProcess(args, 0, stdout='', stderr='')
 
 
-def project(tmp_path, user='hdpi', workdir=None):
-    root = tmp_path / 'LEDMatrix'
+def project(tmp_path, user='hdpi', workdir=None, name='LEDMatrix'):
+    root = tmp_path / name
     (root / 'systemd').mkdir(parents=True)
     for name in aus.UNITS:
         shutil.copy(ROOT / 'systemd' / name, root / 'systemd' / name)
@@ -83,7 +83,7 @@ def test_installs_both_units_for_the_web_user(tmp_path):
     assert out['status'] == 'installed' and result(root)['status'] == 'installed'
     service = (etc / aus.SERVICE_UNIT).read_text()
     assert 'User=hdpi' in service
-    assert f'ExecStart=/usr/bin/python3 {root}/data/auto_update_verifier.py {root}' in service
+    assert f'ExecStart=/usr/bin/python3 "{root}/data/auto_update_verifier.py" "{root}"' in service
     assert f'PathExists={root}/data/auto_update_verify.request' in (etc / aus.PATH_UNIT).read_text()
     assert '__' not in service
     assert ['daemon-reload'] in systemctl.calls
@@ -167,6 +167,38 @@ def test_not_a_systemd_host_is_left_alone(tmp_path):
     systemctl = FakeSystemctl()
     assert setup(root, tmp_path / 'no-etc', systemctl).ensure(ON) is None
     assert systemctl.calls == []
+
+
+def test_a_folder_with_spaces_is_quoted_in_the_commands(tmp_path):
+    root, etc = project(tmp_path, name='LED Matrix')
+    assert setup(root, etc, FakeSystemctl()).ensure(ON)['status'] == 'installed'
+    service = (etc / aus.SERVICE_UNIT).read_text()
+    assert f'ExecStartPre=/bin/rm -f "{root}/data/auto_update_verify.request"' in service
+    assert f'ExecStart=/usr/bin/python3 "{root}/data/auto_update_verifier.py" "{root}"' in service
+
+
+def test_a_folder_name_systemd_would_reinterpret_is_refused(tmp_path):
+    root, etc = project(tmp_path, name='LED%Matrix')
+    systemctl = FakeSystemctl()
+    out = setup(root, etc, systemctl).ensure(ON)
+    assert out['status'] == 'failed' and 'systemd cannot use' in out['message']
+    assert not (etc / aus.SERVICE_UNIT).exists() and systemctl.calls == []
+
+
+def test_installer_sets_the_toggle_without_a_half_written_config(tmp_path):
+    """first_time_install.sh may run while the display service watches
+    config.json; the file must be replaced whole, never truncated in place."""
+    import re
+    text = (ROOT / 'first_time_install.sh').read_text(encoding='utf-8').replace('\r\n', '\n')
+    script = next(s for s in re.findall(r"<<'PY'\n(.*?)\nPY\n", text, re.S) if 'auto_update' in s)
+    assert 'os.replace(' in script
+    config = tmp_path / 'config.json'
+    config.write_text(json.dumps({'timezone': 'UTC', 'auto_update': {'enabled': False}}))
+    run = subprocess.run([sys.executable, '-', str(config), '1'], input=script, text=True,
+                         capture_output=True)
+    assert run.returncode == 0, run.stderr
+    assert json.loads(config.read_text()) == {'timezone': 'UTC', 'auto_update': {'enabled': True}}
+    assert [p.name for p in tmp_path.iterdir()] == ['config.json'], "a temp file was left behind"
 
 
 def test_the_result_is_kept_when_it_cannot_be_given_to_the_web_user(tmp_path, monkeypatch):

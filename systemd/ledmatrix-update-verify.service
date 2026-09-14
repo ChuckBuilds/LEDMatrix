@@ -13,6 +13,7 @@
 # interface creates data/auto_update_verify.request. It runs as the web
 # interface's own user, and ExecStart points at the copy the updater makes
 # before pulling, so the update being checked cannot replace its checker.
+# Command-line paths are quoted so an install folder with spaces still works.
 
 [Unit]
 Description=LED Matrix automatic update health check and rollback
@@ -22,8 +23,8 @@ Type=oneshot
 User=__USER__
 WorkingDirectory=__PROJECT_ROOT_DIR__
 # Consume the request first, so the path unit cannot start this again.
-ExecStartPre=/bin/rm -f __PROJECT_ROOT_DIR__/data/auto_update_verify.request
-ExecStart=/usr/bin/python3 __PROJECT_ROOT_DIR__/data/auto_update_verifier.py __PROJECT_ROOT_DIR__
+ExecStartPre=/bin/rm -f "__PROJECT_ROOT_DIR__/data/auto_update_verify.request"
+ExecStart=/usr/bin/python3 "__PROJECT_ROOT_DIR__/data/auto_update_verifier.py" "__PROJECT_ROOT_DIR__"
 TimeoutStartSec=30min
 StandardOutput=syslog
 StandardError=syslog

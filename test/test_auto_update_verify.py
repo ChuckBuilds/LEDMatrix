@@ -62,8 +62,10 @@ class FakeHost:
     ("display_down", "web_down", "crash_loop") or on any commit ("always").
     """
 
-    def __init__(self, repo, bad_head, failure=None, pip_ok=True):
+    def __init__(self, repo, bad_head, failure=None, pip_ok=True, restart_failures=0, count_readable=True):
         self.repo, self.bad_head, self.failure, self.pip_ok = repo, bad_head, failure, pip_ok
+        self.restart_failures = restart_failures  # how many restart commands fail, first to last
+        self.count_readable = count_readable
         self.running_head = None  # not restarted yet: still the old, healthy code
         self.restarts = []        # (unit, commit it was restarted onto)
         self.pip_installs = []
@@ -81,6 +83,8 @@ class FakeHost:
         if args[:2] == ['systemctl', 'is-active']:
             return done(args, 'failed\n' if self.broken('display_down') else 'active\n')
         if args[:2] == ['systemctl', 'show']:
+            if not self.count_readable:
+                return done(args, rc=1)
             if self.broken('crash_loop'):
                 self.nrestarts += 1
             return done(args, f'{self.nrestarts}\n')
@@ -88,6 +92,9 @@ class FakeHost:
             self.pip_installs.append(args[-1])
             return done(args, rc=0 if self.pip_ok else 1)
         if args[:4] == ['sudo', '-n', 'systemctl', 'restart']:
+            if self.restart_failures:
+                self.restart_failures -= 1
+                return done(args, rc=1)  # the old process keeps running
             self.running_head = git(self.repo, 'rev-parse', 'HEAD')
             self.restarts.append((args[4], self.running_head))
             return done(args)
@@ -104,13 +111,14 @@ class FakeHost:
                            web_responds=self.web_responds, log=lambda msg: None)
 
 
-def check(tmp_path, failure=None, new_requirements=False, pip_ok=True, **pending):
+def check(tmp_path, failure=None, new_requirements=False, pip_ok=True, restart_failures=0,
+          count_readable=True, **pending):
     repo, old, new = updated_repo(tmp_path, new_requirements)
     fields = {'status': 'pending', 'old_head': old, 'new_head': new,
               'display_was_active': True, 'dependency_failures': []}
     fields.update(pending)
     av.write_pending(av.pending_path(repo), fields)
-    host = FakeHost(repo, new, failure, pip_ok)
+    host = FakeHost(repo, new, failure, pip_ok, restart_failures, count_readable)
     code = host.verifier().verify()
     result = av.read_pending(av.pending_path(repo))
     return code, result, host, git(repo, 'rev-parse', 'HEAD'), old, new
@@ -169,6 +177,28 @@ def test_still_broken_after_rolling_back_is_rollback_failed(tmp_path):
     assert 'still unhealthy after rolling back' in result['detail']
 
 
+def test_a_failed_restart_is_not_mistaken_for_a_healthy_update(tmp_path):
+    """When the restart command itself fails the old process keeps answering,
+    so checking it would pass an update that never started."""
+    code, result, host, head, old, new = check(tmp_path, restart_failures=1)
+    assert result['status'] == 'rolled_back'
+    assert result['reason'] == 'restarting the services failed'
+    assert head == old
+
+
+def test_restarts_that_keep_failing_after_rollback_are_rollback_failed(tmp_path):
+    code, result, host, head, old, new = check(tmp_path, restart_failures=100)
+    assert code == 1 and result['status'] == 'rollback_failed'
+    assert 'restarting the services failed' in result['detail']
+
+
+def test_an_unreadable_restart_count_is_never_called_stable(tmp_path):
+    """With no restart count a crash loop looks healthy between attempts."""
+    code, result, host, head, old, new = check(tmp_path, count_readable=False)
+    assert result['status'] != 'success'
+    assert 'restart count could not be read' in result['reason']
+
+
 def test_nothing_pending_does_nothing(tmp_path):
     repo, _, _ = updated_repo(tmp_path)
     host = FakeHost(repo, None)
@@ -201,8 +231,8 @@ def test_units_installers_and_updater_agree():
     request = f'__PROJECT_ROOT_DIR__/{au.REQUEST_REL.as_posix()}'
     assert f'PathExists={request}' in path
     assert f'Unit={aus.SERVICE_UNIT}' in path
-    assert f'ExecStartPre=/bin/rm -f {request}' in service, "the request must be consumed or the path unit re-fires"
-    assert f'__PROJECT_ROOT_DIR__/{au.VERIFIER_COPY_REL.as_posix()} __PROJECT_ROOT_DIR__' in service
+    assert f'ExecStartPre=/bin/rm -f "{request}"' in service, "the request must be consumed or the path unit re-fires"
+    assert f'"__PROJECT_ROOT_DIR__/{au.VERIFIER_COPY_REL.as_posix()}" "__PROJECT_ROOT_DIR__"' in service
     assert au.PENDING_REL.name == av.PENDING_NAME
     assert au.PATH_UNIT == aus.PATH_UNIT and au.SETUP_RESULT_REL == aus.RESULT_REL
 
