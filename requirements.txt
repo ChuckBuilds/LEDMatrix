@@ -43,10 +43,14 @@ packaging>=23.0,<27.0
 # full feature set, or skip them for a minimal install.
 # ───────────────────────────────────────────────────────────────────────
 #
-# scipy             — sub-pixel interpolation in
-#                     src/common/scroll_helper.py for smoother
-#                     scrolling. Falls back to a simpler shift algorithm.
-#   pip install 'scipy>=1.10.0,<2.0.0'
+# scipy             — nothing, as of #570. It was listed for the sub-pixel
+#                     interpolation path in src/common/scroll_helper.py, but
+#                     get_visible_portion never consulted HAS_SCIPY, so that
+#                     path was dead before it was deleted. The blend that
+#                     replaced it is numpy-only. Do not install it expecting
+#                     smoother scrolling: sub-pixel blending is off by default
+#                     because it reads worse on a coarse panel, not because it
+#                     is missing a library. See docs/SCROLL_PERFORMANCE.md.
 #
 # psutil            — per-plugin resource monitoring in
 #                     src/plugin_system/resource_monitor.py. The monitor
