@@ -403,12 +403,18 @@
             if (layoutEntry && typeof layoutEntry === 'object' && layoutEntry.properties) {
                 Object.keys(layoutEntry.properties).forEach(
                     function (f) { seen.set(f, 'layout'); });
-            } else if (layoutEntry && !seen.has(key)) {
+            } else if (layoutEntry) {
                 // layout-only and a leaf: nothing else will share this
                 // column, but leaving it out drops the field's only control
                 // the moment the wholesale `layout` claim removes its
-                // fallback (#569 review).
-                seen.set(key, 'layout-leaf');
+                // fallback (#569 review). Keyed under a namespaced id, not
+                // the bare field name -- an unrelated element's own style
+                // sub-field or another layout axis can share this exact
+                // name, and reusing that shared slot would give this row a
+                // column typed 'element'/'layout' that it doesn't declare,
+                // dropping the control right back out (#569 follow-up).
+                var leafId = 'layout-leaf:' + key;
+                if (!seen.has(leafId)) { seen.set(leafId, 'layout-leaf'); }
             }
         });
         var known = COLUMN_ORDER.filter(function (f) { return seen.get(f); });
@@ -418,10 +424,12 @@
             return COLUMN_ORDER.indexOf(f) === -1;
         }).sort();
         return known.concat(extra).map(function (f) {
+            var isLeafId = f.indexOf('layout-leaf:') === 0;
+            var fieldKey = isLeafId ? f.slice('layout-leaf:'.length) : f;
             return {
-                key: f,
+                key: fieldKey,
                 where: seen.get(f),
-                label: own(COLUMN_LABELS, f) || f.replace(/_/g, ' ')
+                label: own(COLUMN_LABELS, fieldKey) || fieldKey.replace(/_/g, ' ')
             };
         });
     }
