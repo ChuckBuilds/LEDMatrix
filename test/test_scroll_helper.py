@@ -387,9 +387,81 @@ class TestFrameStatsPercentiles:
 
     def test_log_frame_rate_emits_the_line_and_clears_the_window(self, helper):
         helper._window = [0.010] * 20
+        helper.last_frame_time = time.time()  # arm the clock; see below
         helper.last_fps_log_time = 0.0  # force the 5s boundary
         with patch.object(helper.logger, "info") as info:
             helper.log_frame_rate()
         assert info.called
         assert "Scroll frame stats" in info.call_args[0][0]
         assert helper._window == []
+
+
+class TestIdleGapIsNotAFrame:
+    """The first frame of a scroll has no predecessor, so timing one measures
+    the idle gap since the last scroll rather than a frame.
+
+    Left in, that gap lands in the max field of otherwise healthy windows and
+    counts as one stall per scroll start -- about 0.2% at 500 frames to a
+    window, which is the same order as the real stall rates it sits next to.
+    The stall rate is the number used to judge whether a scroll change worked,
+    so it has to be clean.
+    """
+
+    def test_clock_starts_unarmed(self, helper):
+        assert helper.last_frame_time is None
+
+    def test_first_frame_seeds_the_clock_without_sampling(self, helper):
+        helper.log_frame_rate()
+        assert helper.last_frame_time is not None
+        assert helper._window == []
+        assert helper.frame_times == []
+
+    def test_second_frame_is_sampled(self, helper):
+        helper.log_frame_rate()
+        helper.log_frame_rate()
+        assert len(helper._window) == 1
+
+    def test_reset_scroll_disarms_the_clock(self, helper):
+        helper.log_frame_rate()
+        assert helper.last_frame_time is not None
+        helper.reset_scroll()
+        assert helper.last_frame_time is None
+
+    def test_gap_longer_than_the_log_interval_is_dropped(self, helper):
+        """Covers callers that scroll without ever calling reset_scroll()."""
+        helper.last_frame_time = time.time() - 137.0  # a real observed gap
+        helper.log_frame_rate()
+        assert helper._window == []
+        assert helper.frame_times == []
+
+    def test_a_gap_does_not_reach_the_stats_line(self, helper):
+        helper.last_frame_time = time.time() - 137.0
+        helper.last_fps_log_time = 0.0  # the 5s boundary is also due
+        with patch.object(helper.logger, "info") as info:
+            helper.log_frame_rate()
+        assert not info.called, "the idle gap was reported as a frame"
+
+    def test_window_of_only_gaps_logs_nothing(self, helper):
+        """A window whose every sample was dropped has nothing to report --
+        and reporting the gap itself is the bug this guards."""
+        helper.last_fps_log_time = 0.0
+        with patch.object(helper.logger, "info") as info:
+            helper.log_frame_rate()   # seeds
+            helper.last_frame_time = time.time() - 137.0
+            helper.log_frame_rate()   # dropped
+        assert not info.called
+
+    def test_seeding_restarts_the_window_timer(self, helper):
+        """A new scroll should not open by reporting a one-frame window."""
+        helper.last_fps_log_time = 0.0  # boundary long overdue
+        helper.log_frame_rate()         # seeds
+        with patch.object(helper.logger, "info") as info:
+            helper.log_frame_rate()     # first real frame
+        assert not info.called
+        assert len(helper._window) == 1
+
+    def test_a_normal_frame_still_counts(self, helper):
+        helper.last_frame_time = time.time() - 0.010
+        helper.log_frame_rate()
+        assert len(helper._window) == 1
+        assert helper._window[0] == pytest.approx(0.010, abs=0.005)
