@@ -167,3 +167,16 @@ def test_not_a_systemd_host_is_left_alone(tmp_path):
     systemctl = FakeSystemctl()
     assert setup(root, tmp_path / 'no-etc', systemctl).ensure(ON) is None
     assert systemctl.calls == []
+
+
+def test_the_result_is_kept_when_it_cannot_be_given_to_the_web_user(tmp_path, monkeypatch):
+    """Caught by CI, which runs as a non-root Linux user: chown needs root, and
+    a failed chown used to discard the result, so the General tab never
+    learned whether setup worked."""
+    def refuse(*args):
+        raise PermissionError('Operation not permitted')
+    monkeypatch.setattr(aus.os, 'chown', refuse, raising=False)
+    root, etc = project(tmp_path)
+    out = setup(root, etc, FakeSystemctl()).ensure(ON)
+    assert out['status'] == 'installed'
+    assert result(root) == out

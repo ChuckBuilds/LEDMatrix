@@ -195,7 +195,12 @@ class UpdateHelperSetup:
                 json.dump(result, f, indent=2)
             os.chmod(tmp, 0o644)
             if self._web_ids and hasattr(os, 'chown'):
-                os.chown(tmp, *self._web_ids)
+                # Only root can give the file away; the result is readable
+                # (0644) either way, so a failed chown must not lose it.
+                try:
+                    os.chown(tmp, *self._web_ids)
+                except OSError:
+                    pass
             os.replace(tmp, self.result_file)
         except OSError as e:
             logger.warning("Could not record automatic update setup result: %s", e)

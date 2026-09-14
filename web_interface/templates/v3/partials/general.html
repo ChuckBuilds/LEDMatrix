@@ -70,7 +70,7 @@
             <p class="mt-1 ml-6 text-xs text-blue-700">An update was just installed and its health check is running.</p>
             {% endif %}
             {% if auto_update_status and (auto_update_status.last_run or auto_update_status.next_due) %}
-            <div class="mt-1 ml-6 text-xs text-gray-500 space-y-0.5">
+            <div class="mt-1 ml-6 text-xs text-gray-500 space-y-1">
                 {% if auto_update_status.last_run %}
                 <p>Last automatic update: {{ auto_update_status.last_run }}
                    <span class="{{ 'text-red-600' if auto_update_status.status == 'error' else '' }}">— {{ auto_update_status.summary }}</span></p>
