@@ -907,8 +907,13 @@ def _normalize_color(value: Any) -> Optional[Tuple[int, int, int]]:
             rgb = tuple(int(c) for c in value)
         except (TypeError, ValueError):
             return None
-        if all(0 <= c <= 255 for c in rgb):
-            return rgb  # type: ignore[return-value]
+        # Clamped, not rejected: returning None here means "not configured",
+        # so a component like 300 silently handed the element its *default*
+        # colour instead of the one the user asked for. Every other colour
+        # reader in core clamps (sports_card.coerce_rgb,
+        # SportsShared._coerce_rgb), and the eight scoreboards' own colour
+        # tests assert clamping.
+        return tuple(min(255, max(0, c)) for c in rgb)  # type: ignore[return-value]
     return None
 
 
