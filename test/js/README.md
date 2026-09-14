@@ -37,6 +37,7 @@ nothing is listening, so it stays useful in a bare checkout.
 | `unit/test_list_filter.js` | no | `ListFilter` search/filter/sort/count/sticky, and the installed-plugins config **extracted verbatim** from `plugins_manager.js` so the test can't drift from it |
 | `unit/test_render_cards.js` | no | `renderInstalledCards` markup, both empty states, and HTML-escaping of hostile plugin metadata |
 | `unit/test_style_editor_element_keys.js` | no | `elementKeys()` from `widgets/style-editor.js`: a hand-written `customization.layout` entry with no style block of its own still gets a row, since the widget claims the whole `layout` block from the generic fallback renderer |
+| `unit/test_style_editor_layout_leaf_columns.js` | no | `columnsFor()` from `widgets/style-editor.js`: a layout-only key whose own value is a leaf (no x/y sub-object, e.g. a `show_logo` toggle) gets a self-keyed column instead of a blank, uneditable row |
 | `dom/test_installed_dom.js` | yes | The toolbar in a real DOM: pill/search/sort interaction, the HTMX partial re-swap, and a `getComputedStyle` check that `.filter-pill[data-active]` really matches the emitted markup |
 | `dom/test_store_dom.js` | yes | Store pagination, per-page, category, tri-state Installed button, and persistence across a re-boot, against the live registry |
 | `dom/test_no_double_fetch.js` | yes | Loads the **whole** `plugins_manager.js` and counts requests: typing in the store search must filter the cached list, not refetch `/api/v3/plugins/store/list` |

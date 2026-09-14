@@ -382,9 +382,12 @@
     /**
      * The columns a table needs, derived from the schema rather than fixed.
      *
-     * Two sources: the sub-fields elements declare (font, font_size,
-     * text_color, visible, align) and the sub-fields their layout blocks
-     * declare (x_offset, y_offset, scale).
+     * Three sources: the sub-fields elements declare (font, font_size,
+     * text_color, visible, align), the sub-fields their layout blocks
+     * declare (x_offset, y_offset, scale), and a layout-only key whose own
+     * value *is* the field to set -- a plain "show_logo" toggle has no x/y
+     * object underneath it, so it gets a column keyed to itself rather than
+     * to a shared sub-field name.
      */
     function columnsFor(schema) {
         var props = schema.properties || {};
@@ -396,8 +399,17 @@
         elementKeys(schema).forEach(function (key) {
             Object.keys(ownObj(props, key).properties || {}).forEach(
                 function (f) { seen.set(f, 'element'); });
-            Object.keys(ownObj(layoutProps, key).properties || {}).forEach(
-                function (f) { seen.set(f, 'layout'); });
+            var layoutEntry = own(layoutProps, key);
+            if (layoutEntry && typeof layoutEntry === 'object' && layoutEntry.properties) {
+                Object.keys(layoutEntry.properties).forEach(
+                    function (f) { seen.set(f, 'layout'); });
+            } else if (layoutEntry && !seen.has(key)) {
+                // layout-only and a leaf: nothing else will share this
+                // column, but leaving it out drops the field's only control
+                // the moment the wholesale `layout` claim removes its
+                // fallback (#569 review).
+                seen.set(key, 'layout-leaf');
+            }
         });
         var known = COLUMN_ORDER.filter(function (f) { return seen.get(f); });
         // Anything the schema declares that this file has never heard of
@@ -483,8 +495,13 @@
         }
 
         opts.columns.forEach(function (col) {
+            var isLeaf = col.where === 'layout-leaf';
             var inLayout = col.where === 'layout';
-            var prop = inLayout ? own(axes, col.key) : own(props, col.key);
+            // A leaf column only applies to the one row named after it --
+            // every other row leaves it blank, same as an element that
+            // doesn't declare a shared sub-field.
+            var prop = isLeaf ? (col.key === key ? own(layoutProps, key) : null)
+                             : inLayout ? own(axes, col.key) : own(props, col.key);
             var cell;
             if (!prop) {
                 // This element does not declare that field; keep the grid
@@ -492,13 +509,14 @@
                 row.appendChild(el('span'));
                 return;
             }
-            var path = inLayout ? ['layout', key, col.key] : [key, col.key];
-            var base = inLayout ? opts.layoutPrefix + '.' + key
+            var path = isLeaf ? ['layout', key]
+                     : inLayout ? ['layout', key, col.key] : [key, col.key];
+            var base = (isLeaf || inLayout) ? opts.layoutPrefix + '.' + key
                                 : opts.prefix + '.' + key;
             var node = control({
                 key: col.key,
                 prop: prop,
-                name: base + '.' + col.key,
+                name: isLeaf ? base : base + '.' + col.key,
                 current: effective(value, path, prop, optional),
                 optional: optional,
                 fonts: opts.fonts,
