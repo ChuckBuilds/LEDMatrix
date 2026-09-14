@@ -25,6 +25,7 @@ from PIL import ImageFont
 
 from src.element_style import (
     alias_keys,
+    element_color,
     ElementStyleResolver,
     _load_font_sized,
     native_bdf_size,
@@ -1282,3 +1283,49 @@ class TestAdoptedModes:
         font = self._live()["score_text"]["properties"]["font"]
         assert font["x-options"]["maxFixedSize"] == 16
         assert "null" in font["type"]
+
+
+class TestElementColorClamps:
+    """An out-of-range component is clamped, not thrown away.
+
+    #569 fixed this in _normalize_color and #572 covered the resolver path,
+    whose own test notes that "the resolver path normalizes colour separately
+    from element_color". This covers the other one: the stateless element_color()
+    that src.common.sports_card delegates to, which is the path all nine
+    scoreboard plugins take for every per-element colour they draw.
+
+    It regressed once already. element_color() moved here with the per-element
+    customization framework, the coercion rejected out-of-range components where
+    the reader it replaced clamped them, and rejection reads as "not configured"
+    -- so a single component over 255 painted the element white while the user's
+    chosen colour sat in their config. Every scoreboard's
+    test_element_text_colors.py failed on it.
+    """
+
+    CFG = {"customization": {
+        "rank_text": {"text_color": [999, -5, 20]},
+        "score_text": {"text_color": "#FF0000"},
+        "period_text": {"text_color": [0, 255, 255]},
+        "team_name": {"text_color": "nonsense"},
+    }}
+
+    def test_out_of_range_components_are_clamped(self):
+        assert element_color(self.CFG, "rank_text") == (255, 0, 20)
+
+    def test_in_range_values_are_unchanged(self):
+        assert element_color(self.CFG, "period_text") == (0, 255, 255)
+
+    def test_hex_still_parses(self):
+        assert element_color(self.CFG, "score_text") == (255, 0, 0)
+
+    def test_an_unparseable_value_still_falls_back(self):
+        assert element_color(self.CFG, "team_name") == (255, 255, 255)
+
+    def test_a_missing_element_still_falls_back(self):
+        assert element_color(self.CFG, "detail_text") == (255, 255, 255)
+
+    def test_it_agrees_with_coerce_rgb(self):
+        from src.common.sports_card import coerce_rgb
+        for value in ([999, -5, 20], [300, 300, 300], [-1, -1, -1], [0, 128, 255]):
+            cfg = {"customization": {"rank_text": {"text_color": value}}}
+            assert element_color(cfg, "rank_text") == coerce_rgb(value, (0, 0, 0)), value
