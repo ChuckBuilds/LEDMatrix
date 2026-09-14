@@ -40,6 +40,57 @@ def _wire(wm, connected, ethernet, ap_active):
     wm._save_cached_scan = MagicMock()
     wm._FORCE_AP_FLAG_PATH = MagicMock()
     wm._FORCE_AP_FLAG_PATH.exists.return_value = False
+    wm._connect_in_progress = MagicMock(return_value=False)
+
+
+class TestConnectInProgressHoldsOffTheDaemon:
+    """Connecting from the setup AP takes the AP down before joining. The
+    daemon had already counted the whole AP session as "disconnected", so its
+    next tick re-enabled the AP in the middle of the connect."""
+
+    def test_no_ap_enable_while_a_connect_is_running(self, wm):
+        _wire(wm, connected=False, ethernet=False, ap_active=False)
+        wm._connect_in_progress.return_value = True
+        wm._disconnected_checks = 10  # accumulated while the AP was up
+        changed, *_ = wm.check_and_manage_ap_mode_with_state()
+        assert changed is False
+        wm.enable_ap_mode.assert_not_called()
+        assert wm._disconnected_checks == 0
+
+    def test_grace_period_restarts_after_the_connect(self, wm):
+        _wire(wm, connected=False, ethernet=False, ap_active=False)
+        wm._connect_in_progress.return_value = True
+        wm._disconnected_checks = 10
+        wm.check_and_manage_ap_mode_with_state()
+        wm._connect_in_progress.return_value = False
+        wm.check_and_manage_ap_mode_with_state()
+        wm.enable_ap_mode.assert_not_called()
+
+    def test_flag_is_held_for_the_connect_and_removed_after(self, wm, tmp_path):
+        flag = tmp_path / "connecting"
+        wm._CONNECT_IN_PROGRESS_FLAG_PATH = flag
+        seen = []
+        wm._connect_validated = lambda ssid, pw: seen.append(flag.exists()) or (True, "ok")
+        assert wm.connect_to_network("HomeNet", "hunter22") == (True, "ok")
+        assert seen == [True]
+        assert not flag.exists()
+
+    def test_flag_is_removed_when_the_connect_raises(self, wm, tmp_path):
+        flag = tmp_path / "connecting"
+        wm._CONNECT_IN_PROGRESS_FLAG_PATH = flag
+        wm._connect_validated = MagicMock(side_effect=RuntimeError("nmcli gone"))
+        with pytest.raises(RuntimeError):
+            wm.connect_to_network("HomeNet", "hunter22")
+        assert not flag.exists()
+
+    def test_a_stale_flag_from_a_dead_process_is_ignored(self, wm, tmp_path):
+        flag = tmp_path / "connecting"
+        flag.touch()
+        wm._CONNECT_IN_PROGRESS_FLAG_PATH = flag
+        assert WiFiManager._connect_in_progress(wm) is True
+        old = flag.stat().st_mtime - WiFiManager._CONNECT_FLAG_MAX_AGE_SECONDS - 1
+        os.utime(flag, (old, old))
+        assert WiFiManager._connect_in_progress(wm) is False
 
 
 class TestWithState:

@@ -53,18 +53,16 @@ class TestColour:
         cfg = {"customization": {"score_text": {"text_color": value}}}
         assert C.element_color(cfg, "score_text", (9, 9, 9)) == (9, 9, 9)
 
+    def test_out_of_range_components_are_clamped_not_rejected(self):
+        """The readers this replaced clamped, and the eight scoreboards' own
+        tests pin it. Rejecting instead turned a typo'd [999, -5, 20] -- a
+        bright red -- into the default white, which is a colour the user never
+        asked for rather than the one they nearly asked for."""
+        cfg = {"customization": {"score_text": {"text_color": [999, -5, 20]}}}
+        assert C.element_color(cfg, "score_text", (9, 9, 9)) == (255, 0, 20)
+
     def test_coerce_rgb_clamps_rather_than_rejecting(self):
         assert C.coerce_rgb([300, -5, 20], (0, 0, 0)) == (255, 0, 20)
-
-    def test_element_color_clamps_out_of_range_components(self):
-        """Left untested, this is where element_color drifted from coerce_rgb.
-
-        The normaliser behind element_color rejected an out-of-range triple,
-        and a rejection reads as "not configured", so the element silently got
-        the default colour. All eight scoreboards assert the clamping shape.
-        """
-        cfg = {"customization": {"rank_text": {"text_color": [999, -5, 20]}}}
-        assert C.element_color(cfg, "rank_text", (1, 2, 3)) == (255, 0, 20)
 
     def test_coerce_rgb_refuses_a_three_character_string(self):
         """"123" would otherwise iterate into three digits and yield a colour."""

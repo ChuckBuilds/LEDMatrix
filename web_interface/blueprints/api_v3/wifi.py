@@ -3,9 +3,72 @@
 Routes decorate the shared `api_v3` Blueprint from ._common, so their
 endpoint names are unchanged by living here.
 """
+import threading
+import time
+
 from web_interface.blueprints.api_v3 import (
     api_v3, describe_exception, jsonify, logger, request,
 )
+
+# Joining a network while the setup AP is up has to take the AP down first,
+# and the caller is almost always a phone connected *through* that AP. Run
+# synchronously, the request outlives the link it arrived on: the browser
+# never gets an answer and the Connect button appears to do nothing. So in AP
+# mode the connect runs in the background and the result is kept here, where
+# /wifi/status can report it once the user is back on either network.
+_connect_lock = threading.Lock()
+_last_connect_attempt = None
+# Lets the 202 reach the phone before hostapd stops.
+_AP_HANDOFF_DELAY_SECONDS = 2.0
+
+
+def _last_connect_snapshot():
+    with _connect_lock:
+        return dict(_last_connect_attempt) if _last_connect_attempt else None
+
+
+def _spawn(target):
+    threading.Thread(target=target, name='wifi-connect', daemon=True).start()
+
+
+def _connect_result_payload(ssid, success, message):
+    """Shape a connect_to_network result for the client.
+
+    The manager flags a rejected passphrase by prefixing the message with
+    "wrong_password:"; the setup pages key off `error_type` rather than
+    parsing nmcli's wording.
+    """
+    if success:
+        return {'status': 'success', 'message': message}
+    payload = {'status': 'error', 'message': message or 'Failed to connect to network'}
+    if message and message.startswith('wrong_password:'):
+        payload['error_type'] = 'wrong_password'
+        payload['message'] = f'Incorrect password for {ssid}'
+    return payload
+
+
+def _record_connect_result(ssid, payload):
+    global _last_connect_attempt
+    with _connect_lock:
+        _last_connect_attempt = {
+            'ssid': ssid,
+            'state': 'success' if payload['status'] == 'success' else 'failed',
+            'message': payload['message'],
+            'error_type': payload.get('error_type'),
+            'finished_at': time.time(),
+        }
+
+
+def _run_background_connect(ssid, password):
+    try:
+        time.sleep(_AP_HANDOFF_DELAY_SECONDS)
+        from src.wifi_manager import WiFiManager
+        success, message = WiFiManager().connect_to_network(ssid, password)
+        payload = _connect_result_payload(ssid, success, message)
+    except Exception as e:
+        logger.error("Background WiFi connect failed", exc_info=True)
+        payload = {'status': 'error', 'message': describe_exception(e)}
+    _record_connect_result(ssid, payload)
 
 
 def _parse_bool_ish(value):
@@ -65,7 +128,8 @@ def get_wifi_status():
                 'ip_address': status.ip_address,
                 'signal': status.signal,
                 'ap_mode_active': status.ap_mode_active,
-                'auto_enable_ap_mode': auto_enable_ap
+                'auto_enable_ap_mode': auto_enable_ap,
+                'last_connect_attempt': _last_connect_snapshot(),
             }
         })
     except Exception as e:
@@ -149,7 +213,12 @@ def scan_wifi_networks():
         }), 500
 @api_v3.route('/wifi/connect', methods=['POST'])
 def connect_wifi():
-    """Connect to a WiFi network"""
+    """Connect to a WiFi network.
+
+    With the setup AP active this answers 202 at once and connects in the
+    background (see _last_connect_attempt); otherwise it waits for the result.
+    """
+    global _last_connect_attempt
     try:
         from src.wifi_manager import WiFiManager
 
@@ -177,18 +246,50 @@ def connect_wifi():
         password = data.get('password', '') or ''
 
         wifi_manager = WiFiManager()
-        success, message = wifi_manager.connect_to_network(ssid, password)
+        ap_mode_active = wifi_manager._is_ap_mode_active()
 
-        if success:
+        # One attempt at a time on either path: concurrent connects fight over
+        # the radio, and the first to finish would clear the in-progress flag
+        # the monitor daemon still needs for the other. The check can't depend
+        # on AP state either -- a background attempt takes the AP down long
+        # before it finishes.
+        with _connect_lock:
+            if _last_connect_attempt and _last_connect_attempt['state'] == 'pending':
+                return jsonify({
+                    'status': 'error',
+                    'message': f"Already connecting to {_last_connect_attempt['ssid']}"
+                }), 409
+            _last_connect_attempt = {
+                'ssid': ssid, 'state': 'pending', 'message': None,
+                'error_type': None, 'finished_at': None,
+            }
+
+        if ap_mode_active:
+            try:
+                _spawn(lambda: _run_background_connect(ssid, password))
+            except Exception:
+                # Nothing will ever finish this attempt; don't leave every
+                # later request refused.
+                with _connect_lock:
+                    _last_connect_attempt = None
+                raise
             return jsonify({
-                'status': 'success',
-                'message': message
-            })
-        else:
-            return jsonify({
-                'status': 'error',
-                'message': message or 'Failed to connect to network'
-            }), 400
+                'status': 'pending',
+                'message': (
+                    f'Connecting to {ssid}. The LEDMatrix-Setup network will turn off, '
+                    'so this page will lose its connection.'
+                ),
+                'data': {'ssid': ssid},
+            }), 202
+
+        try:
+            success, message = wifi_manager.connect_to_network(ssid, password)
+        except Exception as e:
+            _record_connect_result(ssid, {'status': 'error', 'message': describe_exception(e)})
+            raise
+        payload = _connect_result_payload(ssid, success, message)
+        _record_connect_result(ssid, payload)
+        return jsonify(payload), (200 if success else 400)
     except Exception as e:
         logger.error("Error connecting to WiFi", exc_info=True)
         return jsonify({

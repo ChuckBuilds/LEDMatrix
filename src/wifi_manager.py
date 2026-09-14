@@ -714,8 +714,23 @@ class WiFiManager:
     _IP_FORWARD_SAVE_PATH = Path("/tmp/ledmatrix_ip_forward_saved")  # nosec B108 - process-specific named file; device is single-user RPi
     # Written when AP mode is manually force-enabled; prevents daemon auto-disable
     _FORCE_AP_FLAG_PATH = Path("/tmp/ledmatrix_force_ap_active")  # nosec B108 - process-specific named file; device is single-user RPi
+    # Written by the web process while connect_to_network runs. Joining a network
+    # from the setup AP takes the AP down first, and the monitor daemon (a separate
+    # process) would otherwise see "disconnected" on its next tick and bring the
+    # AP straight back up mid-connect.
+    _CONNECT_IN_PROGRESS_FLAG_PATH = Path("/tmp/ledmatrix_wifi_connect_in_progress")  # nosec B108 - process-specific named file; device is single-user RPi
+    # Longest a connect can legitimately take (AP teardown, nmcli's 30s timeout,
+    # verification, restore). An older flag was left by a process that died.
+    _CONNECT_FLAG_MAX_AGE_SECONDS = 180
     # Ensures the startup stale-flag cleanup runs once per process, not per instantiation
     _startup_cleanup_done: bool = False
+
+    def _connect_in_progress(self) -> bool:
+        try:
+            age = time.time() - self._CONNECT_IN_PROGRESS_FLAG_PATH.stat().st_mtime
+        except OSError:
+            return False
+        return age < self._CONNECT_FLAG_MAX_AGE_SECONDS
 
     def _validate_ap_config(self) -> Tuple[str, int]:
         """Return a sanitized (ssid, channel) pair from config, falling back to defaults."""
@@ -1270,6 +1285,21 @@ class WiFiManager:
             logger.warning("Rejected WiFi connect request: %s", error)
             return False, error
 
+        try:
+            self._CONNECT_IN_PROGRESS_FLAG_PATH.touch()
+        except OSError as e:
+            logger.warning(f"Could not create connect-in-progress flag: {e}")
+        try:
+            return self._connect_validated(ssid, password)
+        finally:
+            try:
+                self._CONNECT_IN_PROGRESS_FLAG_PATH.unlink(missing_ok=True)
+            except OSError as e:
+                # Never mask the connect result; the age limit retires the flag.
+                logger.warning(f"Could not remove connect-in-progress flag: {e}")
+
+    def _connect_validated(self, ssid: str, password: str) -> Tuple[bool, str]:
+        """connect_to_network after validation, with the in-progress flag held."""
         # Save current connection info for failsafe restoration
         original_connection = None
         original_ssid = None
@@ -2690,7 +2720,15 @@ address=/detectportal.firefox.com/192.168.4.1
                 if self._disconnected_checks > 0:
                     logger.debug("Network connected, resetting disconnected check counter")
                 self._disconnected_checks = 0
-            
+
+            if self._connect_in_progress():
+                # A connect has just taken the AP down on purpose. Leave the
+                # radio alone, and restart the grace period so a failed attempt
+                # (which re-enables the AP itself) isn't followed by a flap.
+                logger.debug("WiFi connect in progress; skipping AP management this check")
+                self._disconnected_checks = 0
+                return False
+
             # Only enable AP if we've had enough consecutive disconnected checks
             should_have_ap = (auto_enable and 
                             is_disconnected and 
