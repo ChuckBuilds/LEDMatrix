@@ -306,6 +306,18 @@ class TestUserOverrides:
         assert not style.user_forced
         assert style.color == (255, 0, 0)
 
+    def test_color_override_clamps_out_of_range_components(self, style_schema_path):
+        """The resolver path normalizes colour separately from element_color
+        (see src/element_style.py's _resolve) -- a rejection there reads as
+        "not configured" and the element would silently get the default
+        colour back instead of the clamped one the user asked for."""
+        config = {"customization": {"title_text": {"text_color": [999, -5, 20]}}}
+        style = _resolver(config, style_schema_path).style(
+            "title_text", classic_font="PressStart2P-Regular.ttf",
+            classic_size=8, classic_color=(255, 255, 255))
+        assert style.user_forced_color
+        assert style.color == (255, 0, 20)
+
     def test_offsets(self, style_schema_path):
         config = {"customization": {"layout": {
             "title_text": {"x_offset": 4, "y_offset": -2}}}}
