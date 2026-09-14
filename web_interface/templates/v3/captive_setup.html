@@ -3,39 +3,48 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="light dark">
 <title>LEDMatrix WiFi Setup</title>
 <style>
+:root{--bg:#f3f4f6;--surface:#fff;--text:#1f2937;--label:#374151;--muted:#4b5563;--faint:#6b7280;--line:#e5e7eb;--field:#d1d5db;--accent:#2563eb;--accent-hover:#1d4ed8;--scan:#e5e7eb;--scan-hover:#d1d5db;--ok-bg:#d1fae5;--ok:#065f46;--err-bg:#fee2e2;--err:#991b1b;--info-bg:#dbeafe;--info:#1e40af}
+@media (prefers-color-scheme:dark){:root{--bg:#111827;--surface:#1f2937;--text:#f9fafb;--label:#d1d5db;--muted:#d1d5db;--faint:#9ca3af;--line:#374151;--field:#4b5563;--accent:#3b82f6;--accent-hover:#60a5fa;--scan:#374151;--scan-hover:#4b5563;--ok-bg:#064e3b;--ok:#6ee7b7;--err-bg:#7f1d1d;--err:#fecaca;--info-bg:#1e3a5f;--info:#bfdbfe}}
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f3f4f6;color:#1f2937;padding:16px;max-width:480px;margin:0 auto}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);padding:16px;max-width:480px;margin:0 auto;line-height:1.45}
 h1{font-size:20px;margin-bottom:4px}
-.subtitle{color:#6b7280;font-size:13px;margin-bottom:20px}
-.card{background:#fff;border-radius:12px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,.1);margin-bottom:16px}
-label{display:block;font-size:13px;font-weight:600;color:#374151;margin-bottom:6px}
-select,input[type=text],input[type=password]{width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:8px;font-size:15px;background:#fff;-webkit-appearance:none;appearance:none}
-select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%236b7280' stroke-width='1.5' fill='none'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center}
-select:focus,input:focus{outline:none;border-color:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,.15)}
-.btn{display:block;width:100%;padding:12px;border:none;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;text-align:center;transition:background .15s}
-.btn-primary{background:#2563eb;color:#fff}.btn-primary:hover{background:#1d4ed8}
-.btn-scan{background:#e5e7eb;color:#374151}.btn-scan:hover{background:#d1d5db}
-.btn:disabled{background:#d1d5db;color:#9ca3af;cursor:not-allowed}
+.subtitle{color:var(--muted);font-size:14px;margin-bottom:20px}
+.card{background:var(--surface);border-radius:12px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,.1);margin-bottom:16px}
+label{display:block;font-size:14px;font-weight:600;color:var(--label);margin-bottom:6px}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+/* 16px inputs: iOS Safari zooms any focused field smaller than that */
+select,input[type=text],input[type=password]{width:100%;min-width:0;min-height:44px;padding:10px 12px;border:1px solid var(--field);border-radius:8px;font-size:16px;background-color:var(--surface);color:var(--text);-webkit-appearance:none;appearance:none}
+select{padding-right:32px;text-overflow:ellipsis;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%236b7280' stroke-width='1.5' fill='none'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center}
+select:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:1px;border-color:var(--accent)}
+.btn{display:block;width:100%;min-height:44px;padding:12px;border:none;border-radius:8px;font-size:16px;font-weight:600;cursor:pointer;text-align:center;transition:background-color .15s}
+.btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.btn-primary{background:var(--accent);color:#fff}.btn-primary:hover{background:var(--accent-hover)}
+.btn-scan{background:var(--scan);color:var(--label);width:auto;padding:10px 16px;white-space:nowrap}.btn-scan:hover{background:var(--scan-hover)}
+.btn:disabled{background:var(--scan);color:var(--muted);cursor:not-allowed;opacity:.75}
 .row{display:flex;gap:8px;margin-bottom:16px}
-.row>*:first-child{flex:1}
-.msg{padding:12px;border-radius:8px;font-size:13px;margin-bottom:12px;display:none}
-.msg-ok{background:#d1fae5;color:#065f46;display:block}
-.msg-err{background:#fee2e2;color:#991b1b;display:block}
-.msg-info{background:#dbeafe;color:#1e40af;display:block}
-.step{font-size:12px;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
-.sep{margin:16px 0;border:none;border-top:1px solid #e5e7eb}
-.spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;margin-right:6px}
+.row>*:first-child{flex:1;min-width:0}
+.msg{padding:12px;border-radius:8px;font-size:14px;margin-bottom:12px;display:none;overflow-wrap:anywhere}
+.msg-ok{background:var(--ok-bg);color:var(--ok);display:block}
+.msg-err{background:var(--err-bg);color:var(--err);display:block}
+.msg-info{background:var(--info-bg);color:var(--info);display:block}
+.step{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px}
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin .6s linear infinite;vertical-align:-2px;margin-right:6px}
 @keyframes spin{to{transform:rotate(360deg)}}
-.footer{text-align:center;margin-top:20px;font-size:12px;color:#9ca3af}
-.footer a{color:#3b82f6;text-decoration:none}
+@media (prefers-reduced-motion:reduce){.spinner{animation-duration:1.8s}.btn{transition:none}}
+.footer{text-align:center;margin-top:20px;font-size:14px}
+.footer a{color:var(--accent);text-underline-offset:.15em;display:inline-block;padding:10px}
 .success-box{text-align:center;padding:24px}
-.success-box .icon{font-size:48px;margin-bottom:12px}
-.success-box .ip{font-size:18px;font-weight:700;color:#2563eb;word-break:break-all}
+.success-box .icon{width:48px;height:48px;margin:0 auto 12px;color:#059669}
+.success-box .title{font-size:16px;font-weight:600;margin-bottom:8px}
+.success-box .hint{font-size:14px;color:var(--muted);margin-bottom:12px}
+.success-box .note{font-size:13px;color:var(--faint);margin-top:12px}
+.success-box .ip{font-size:18px;font-weight:700;color:var(--accent);word-break:break-all}
 .hidden{display:none}
-.or-divider{text-align:center;color:#9ca3af;font-size:12px;margin:12px 0;position:relative}
-.or-divider::before,.or-divider::after{content:'';position:absolute;top:50%;width:40%;height:1px;background:#e5e7eb}
+.or-divider{text-align:center;color:var(--faint);font-size:13px;margin:12px 0;position:relative}
+.or-divider::before,.or-divider::after{content:'';position:absolute;top:50%;width:30%;height:1px;background:var(--line)}
 .or-divider::before{left:0}
 .or-divider::after{right:0}
 </style>
@@ -45,54 +54,58 @@ select:focus,input:focus{outline:none;border-color:#3b82f6;box-shadow:0 0 0 3px 
 <h1>LEDMatrix WiFi Setup</h1>
 <p class="subtitle">Connect your device to a WiFi network</p>
 
-<div id="msg" class="msg"></div>
+<div id="msg" class="msg" role="status" aria-live="polite" aria-atomic="true"></div>
 
 <div id="setup-form">
   <div class="card">
-    <div class="step">Step 1 &mdash; Choose Network</div>
+    <div class="step" aria-hidden="true">Step 1 &mdash; Choose Network</div>
     <label for="net-select">Available Networks</label>
     <div class="row">
       <select id="net-select" onchange="onSelectNetwork()">
         <option value="">-- Scan to find networks --</option>
       </select>
-      <button class="btn btn-scan" id="btn-scan" onclick="doScan()" style="width:auto;padding:10px 16px">
+      <button type="button" class="btn btn-scan" id="btn-scan" onclick="doScan()">
         Scan
       </button>
     </div>
-    <div class="or-divider">or enter manually</div>
-    <input type="text" id="manual-ssid" placeholder="Network name (SSID)" oninput="onManualInput()">
+    <div class="or-divider" aria-hidden="true">or enter manually</div>
+    <label for="manual-ssid" class="sr-only">Network name (SSID), if it isn't listed</label>
+    <input type="text" id="manual-ssid" placeholder="Network name (SSID)" maxlength="32"
+           autocomplete="off" autocapitalize="off" spellcheck="false" oninput="onManualInput()">
   </div>
 
   <div class="card">
-    <div class="step">Step 2 &mdash; Password</div>
+    <div class="step" aria-hidden="true">Step 2 &mdash; Password</div>
     <label for="password">WiFi Password</label>
-    <input type="password" id="password" placeholder="Leave empty for open networks">
+    <input type="password" id="password" placeholder="Leave empty for open networks" maxlength="63"
+           autocomplete="current-password" aria-describedby="password-hint">
+    <p id="password-hint" class="sr-only">Leave empty for open networks.</p>
   </div>
 
   <div class="card">
-    <button class="btn btn-primary" id="btn-connect" onclick="doConnect()" disabled>
+    <button type="button" class="btn btn-primary" id="btn-connect" onclick="doConnect()" disabled>
       Connect
     </button>
   </div>
 </div>
 
-<div id="success-view" class="card hidden">
+<div id="success-view" class="card hidden" tabindex="-1" aria-labelledby="success-title">
   <div class="success-box">
-    <div class="icon">&#10003;</div>
-    <p style="font-size:16px;font-weight:600;margin-bottom:8px">Connected!</p>
-    <p style="font-size:13px;color:#6b7280;margin-bottom:12px">Your device is now on the network. Access the full interface at:</p>
+    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M7.5 12.5l3 3 6-6"/></svg>
+    <p class="title" id="success-title">Connected!</p>
+    <p class="hint">Your device is now on the network. Access the full interface at:</p>
     <p class="ip" id="new-ip"></p>
-    <p style="font-size:12px;color:#9ca3af;margin-top:12px">You may need to reconnect your phone to the same WiFi network.</p>
+    <p class="note">You may need to reconnect your phone to the same WiFi network.</p>
   </div>
 </div>
 
-<div id="handoff-view" class="card hidden">
+<div id="handoff-view" class="card hidden" tabindex="-1" aria-labelledby="handoff-title">
   <div class="success-box">
-    <div class="icon">&#8635;</div>
-    <p style="font-size:16px;font-weight:600;margin-bottom:8px">Connecting to <span id="handoff-ssid"></span></p>
-    <p style="font-size:13px;color:#6b7280;margin-bottom:12px">LEDMatrix-Setup has turned off, so this page can't follow along any more.</p>
-    <p style="font-size:13px;color:#374151;margin-bottom:8px"><strong>If it worked:</strong> the LED display shows the new address. Rejoin your home WiFi and open it.</p>
-    <p style="font-size:13px;color:#374151"><strong>If it didn't:</strong> LEDMatrix-Setup comes back within a few minutes. Rejoin it and reopen this page to see why.</p>
+    <svg class="icon" style="color:var(--accent)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+    <p class="title" id="handoff-title">Connecting to <span id="handoff-ssid"></span></p>
+    <p class="hint">LEDMatrix-Setup has turned off, so this page can’t follow along any more.</p>
+    <p class="hint"><strong>If it worked:</strong> the LED display shows the new address. Rejoin your home WiFi and open it.</p>
+    <p class="hint"><strong>If it didn’t:</strong> LEDMatrix-Setup comes back within a few minutes. Rejoin it and reopen this page to see why.</p>
   </div>
 </div>
 
@@ -104,17 +117,53 @@ select:focus,input:focus{outline:none;border-color:#3b82f6;box-shadow:0 0 0 3px 
 var selectedSSID = '';
 var scanning = false;
 var connecting = false;
+var msgTimer = null;
 
 function $(id) { return document.getElementById(id); }
 
-function showMsg(text, type) {
-  var el = $('msg');
-  el.textContent = text;
-  el.className = 'msg msg-' + (type || 'info');
-  if (type === 'ok') setTimeout(function() { el.style.display = 'none'; }, 8000);
+// fetch() with a deadline: on a flaky AP link a request can otherwise hang
+// forever and leave the buttons stuck in their busy state.
+function fetchWithTimeout(url, options, ms) {
+  options = options || {};
+  if (typeof AbortController === 'undefined') return fetch(url, options);
+  var controller = new AbortController();
+  var timer = setTimeout(function() { controller.abort(); }, ms);
+  options.signal = controller.signal;
+  return fetch(url, options).finally(function() { clearTimeout(timer); });
 }
 
-function clearMsg() { $('msg').className = 'msg'; }
+function readJson(r) {
+  return r.json().catch(function() {
+    throw new Error(r.ok ? 'bad-response' : 'http-' + r.status);
+  });
+}
+
+function setBusy(btn, label) {
+  btn.textContent = '';
+  var spin = document.createElement('span');
+  spin.className = 'spinner';
+  spin.setAttribute('aria-hidden', 'true');
+  btn.appendChild(spin);
+  btn.appendChild(document.createTextNode(label));
+}
+
+function showMsg(text, type) {
+  var el = $('msg');
+  if (msgTimer) { clearTimeout(msgTimer); msgTimer = null; }
+  el.style.display = '';
+  // Errors interrupt; progress and success wait their turn.
+  el.setAttribute('role', type === 'err' ? 'alert' : 'status');
+  el.setAttribute('aria-live', type === 'err' ? 'assertive' : 'polite');
+  el.textContent = text;
+  el.className = 'msg msg-' + (type || 'info');
+  if (type === 'ok') msgTimer = setTimeout(function() { el.style.display = 'none'; }, 8000);
+}
+
+function clearMsg() {
+  if (msgTimer) { clearTimeout(msgTimer); msgTimer = null; }
+  $('msg').className = 'msg';
+  $('msg').textContent = '';
+}
 
 function updateConnectBtn() {
   var ssid = $('net-select').value || $('manual-ssid').value.trim();
@@ -138,43 +187,58 @@ function doScan() {
   scanning = true;
   var btn = $('btn-scan');
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span>Scanning';
+  btn.setAttribute('aria-busy', 'true');
+  setBusy(btn, 'Scanning');
   clearMsg();
 
-  fetch('/api/v3/wifi/scan')
-    .then(function(r) { return r.json(); })
+  fetchWithTimeout('/api/v3/wifi/scan', {}, 30000)
+    .then(readJson)
     .then(function(data) {
       var sel = $('net-select');
+      var previous = sel.value;
       sel.innerHTML = '<option value="">-- Select a network --</option>';
       if (data.status === 'success' && Array.isArray(data.data)) {
-        var nets = data.data;
+        var seen = {};
+        var nets = data.data.filter(function(n) {
+          if (!n || !n.ssid || seen[n.ssid]) return false;
+          seen[n.ssid] = true;
+          return true;
+        });
         for (var i = 0; i < nets.length; i++) {
           var n = nets[i];
           var opt = document.createElement('option');
           opt.value = n.ssid;
-          opt.textContent = n.ssid + ' (' + n.signal + '% - ' + n.security + ')';
+          var details = [];
+          if (n.signal !== undefined && n.signal !== null) details.push(n.signal + '%');
+          if (n.security) details.push(n.security);
+          opt.textContent = n.ssid + (details.length ? ' (' + details.join(' - ') + ')' : '');
           sel.appendChild(opt);
         }
+        if (previous && seen[previous]) sel.value = previous;
         if (nets.length > 0) {
-          var msg = 'Found ' + nets.length + ' network' + (nets.length > 1 ? 's' : '');
+          var msg = 'Found ' + nets.length + (nets.length === 1 ? ' network' : ' networks');
           if (data.cached) {
-            msg += ' \u2014 Showing cached networks. Connect to see the latest.';
+            msg += ' — showing cached networks. Connect to see the latest.';
           }
           showMsg(msg, data.cached ? 'info' : 'ok');
         } else {
-          showMsg('No networks found. ' + (data.cached ? 'Enter your network name manually.' : 'Try scanning again.'), 'info');
+          showMsg('No networks found. ' + (data.cached ? 'Enter your network name manually.' : 'Try scanning again, or enter your network name manually.'), 'info');
         }
       } else {
-        showMsg(data.message || 'Scan failed', 'err');
+        showMsg(data.message || 'Scan failed. Try again, or enter your network name manually.', 'err');
       }
     })
     .catch(function(e) {
-      showMsg('Scan failed: ' + e.message, 'err');
+      var why = e && e.name === 'AbortError'
+        ? 'The scan took too long.'
+        : 'Couldn’t reach the device to scan.';
+      showMsg(why + ' Stay close to the device and try again, or enter your network name manually.', 'err');
     })
     .finally(function() {
       scanning = false;
       btn.disabled = false;
-      btn.innerHTML = 'Scan';
+      btn.removeAttribute('aria-busy');
+      btn.textContent = 'Scan';
       updateConnectBtn();
     });
 }
@@ -185,16 +249,25 @@ function doConnect() {
   connecting = true;
   var btn = $('btn-connect');
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span>Connecting...';
+  btn.setAttribute('aria-busy', 'true');
+  setBusy(btn, 'Connecting…');
   clearMsg();
-  showMsg('Connecting to ' + ssid + '... This may take 15-30 seconds.', 'info');
+  showMsg('Connecting to ' + ssid + '… This may take 15–30 seconds.', 'info');
 
-  fetch('/api/v3/wifi/connect', {
+  function resetConnect() {
+    connecting = false;
+    btn.disabled = false;
+    btn.removeAttribute('aria-busy');
+    btn.textContent = 'Connect';
+    updateConnectBtn();
+  }
+
+  fetchWithTimeout('/api/v3/wifi/connect', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ssid: ssid, password: $('password').value || '' })
-  })
-  .then(function(r) { return r.json(); })
+  }, 60000)
+  .then(readJson)
   .then(function(data) {
     if (data.status === 'pending') {
       // Connecting in the background; this network is about to go away.
@@ -205,10 +278,15 @@ function doConnect() {
       // Poll for the new IP
       setTimeout(function() { checkNewIP(ssid); }, 3000);
     } else {
-      showConnectError(data);
+      showConnectError(data, ssid);
     }
   })
   .catch(function(e) {
+    if (e && /^http-|^bad-response$/.test(e.message)) {
+      showMsg('The device couldn’t start the connection. Try again in a moment.', 'err');
+      resetConnect();
+      return;
+    }
     // Connection may drop if AP mode was disabled — that's expected
     showHandoff(ssid);
   });
@@ -221,25 +299,36 @@ function handoffMessage(ssid) {
 }
 
 function resetConnectBtn() {
+  var btn = $('btn-connect');
   connecting = false;
-  $('btn-connect').innerHTML = 'Connect';
+  btn.removeAttribute('aria-busy');
+  btn.textContent = 'Connect';
   updateConnectBtn();
 }
 
-function showConnectError(attempt) {
-  var msg = attempt.error_type === 'wrong_password'
-    ? 'Incorrect password for ' + (attempt.ssid || 'that network') + ' — please try again'
-    : (attempt.message || 'Connection failed');
+// `attempt` is a /wifi/connect error body or a failed last_connect_attempt.
+function showConnectError(attempt, ssid) {
+  var name = attempt.ssid || ssid;
+  var wrongPassword = attempt.error_type === 'wrong_password';
+  var msg = wrongPassword
+    ? 'Incorrect password for ' + name + ' — please try again.'
+    : (attempt.message || 'Couldn’t connect to ' + name + '. Check the network name and password, then try again.');
+  // A background failure brings the AP back: put the form back too.
+  $('handoff-view').classList.add('hidden');
+  $('setup-form').classList.remove('hidden');
   showMsg(msg, 'err');
   resetConnectBtn();
+  if (wrongPassword) $('password').focus();
 }
 
 function showHandoff(ssid) {
   $('setup-form').classList.add('hidden');
   $('success-view').classList.add('hidden');
-  $('handoff-view').classList.remove('hidden');
+  var view = $('handoff-view');
+  view.classList.remove('hidden');
   $('handoff-ssid').textContent = ssid;
-  $('msg').className = 'msg';
+  clearMsg();
+  view.focus();
 }
 
 var MAX_IP_RETRIES = 20;
@@ -250,8 +339,8 @@ function checkNewIP(ssid, retriesLeft) {
     showSuccessFallback(ssid);
     return;
   }
-  fetch('/api/v3/wifi/status')
-    .then(function(r) { return r.json(); })
+  fetchWithTimeout('/api/v3/wifi/status', {}, 8000)
+    .then(readJson)
     .then(function(data) {
       var d = (data.status === 'success' && data.data) || {};
       var attempt = d.last_connect_attempt;
@@ -271,8 +360,8 @@ function checkNewIP(ssid, retriesLeft) {
 
 // A failed attempt brings LEDMatrix-Setup back; tell the user who rejoined why.
 function showPreviousFailure() {
-  fetch('/api/v3/wifi/status')
-    .then(function(r) { return r.json(); })
+  fetchWithTimeout('/api/v3/wifi/status', {}, 8000)
+    .then(readJson)
     .then(function(data) {
       var attempt = data.data && data.data.last_connect_attempt;
       if (attempt && attempt.state === 'failed' && !data.data.connected) {
@@ -285,18 +374,21 @@ function showPreviousFailure() {
     .catch(function() {});
 }
 
-function showSuccess(ip) {
+function revealSuccess(text) {
   $('setup-form').classList.add('hidden');
-  $('success-view').classList.remove('hidden');
-  $('new-ip').textContent = 'http://' + ip + ':5000';
-  $('msg').className = 'msg';
+  var view = $('success-view');
+  view.classList.remove('hidden');
+  $('new-ip').textContent = text;
+  clearMsg();
+  view.focus();
+}
+
+function showSuccess(ip) {
+  revealSuccess('http://' + ip + ':5000');
 }
 
 function showSuccessFallback(ssid) {
-  $('setup-form').classList.add('hidden');
-  $('success-view').classList.remove('hidden');
-  $('new-ip').textContent = 'Check your router for the device IP';
-  $('msg').className = 'msg';
+  revealSuccess('Check your router for the device IP');
 }
 
 // Auto-scan on load

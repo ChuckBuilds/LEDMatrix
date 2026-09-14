@@ -8,12 +8,12 @@
     <div class="flex flex-wrap items-center justify-between gap-4 mb-6">
         <div class="flex items-center space-x-4">
             <!-- Filter by Plugin -->
-            <select id="history-plugin-filter" class="form-control text-sm">
+            <select id="history-plugin-filter" class="form-control text-sm" aria-label="Filter by plugin">
                 <option value="">All Plugins</option>
             </select>
 
             <!-- Filter by Operation Type -->
-            <select id="history-type-filter" class="form-control text-sm">
+            <select id="history-type-filter" class="form-control text-sm" aria-label="Filter by operation type">
                 <option value="">All Operations</option>
                 <option value="install">Install</option>
                 <option value="update">Update</option>
@@ -24,7 +24,7 @@
             </select>
 
             <!-- Filter by Status -->
-            <select id="history-status-filter" class="form-control text-sm">
+            <select id="history-status-filter" class="form-control text-sm" aria-label="Filter by status">
                 <option value="">All Statuses</option>
                 <option value="success">Success</option>
                 <option value="failed">Failed</option>
@@ -32,8 +32,8 @@
 
             <!-- Search -->
             <div class="relative">
-                <input type="text" id="history-search" placeholder="Search operations..." class="form-control text-sm pl-8 pr-4 py-1 w-48">
-                <i class="fas fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 text-xs"></i>
+                <input type="text" id="history-search" placeholder="Search operations..." aria-label="Search operations" class="form-control text-sm pl-8 pr-4 py-1 w-48">
+                <i class="fas fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 text-xs" aria-hidden="true"></i>
             </div>
         </div>
 

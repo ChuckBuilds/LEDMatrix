@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, flash, jsonify
+from flask import Blueprint, Response, render_template, flash, jsonify, url_for
 from jinja2 import TemplateNotFound
 from markupsafe import escape
 from html.parser import HTMLParser
@@ -14,6 +14,7 @@ _SAFE_WIDGET_NAME_RE = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
 _SAFE_WIDGET_SCRIPT_RE = re.compile(r'^[a-zA-Z0-9_-]{1,64}\.js$')
 from src.web_interface.secret_helpers import mask_secret_fields
 from src.common.path_safety import resolve_under, safe_path_component
+from web_interface import widget_bundle
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,30 @@ plugin_store_manager = None
 schema_manager = None
 
 pages_v3 = Blueprint('pages_v3', __name__)
+
+
+@pages_v3.route('/assets/widgets.js')
+def widgets_bundle():
+    """Every widget script in one request (see web_interface/widget_bundle.py).
+
+    The individual files stay served from /static for plugin-loader.js and
+    debugging; this saves the Pi ~30 round trips on each first page load.
+    Cached as immutable by app.py because the URL carries the version.
+    """
+    body, version = widget_bundle.build_bundle()
+    response = Response(body, mimetype='application/javascript')
+    response.headers['X-Widget-Bundle-Version'] = str(version)
+    return response
+
+
+@pages_v3.app_context_processor
+def inject_widget_bundle_url():
+    """`widgets_bundle_url()` for templates, versioned by file mtime."""
+    return {
+        'widgets_bundle_url': lambda: url_for(
+            'pages_v3.widgets_bundle', v=widget_bundle.bundle_version()
+        )
+    }
 
 
 class _SettingsIndexParser(HTMLParser):
@@ -456,7 +481,11 @@ def serve_plugin_widget(plugin_id, widget_name):
             # to ship an undeclared file is not something to confirm.
             return 'Not found', 404, {'Content-Type': 'text/plain'}
 
-        widgets_dir = (plugin_dir / 'widgets').resolve()
+        # Contain widgets/ itself first: a symlinked widgets directory would
+        # otherwise become the base the script is checked against.
+        widgets_dir = resolve_under(plugin_dir, 'widgets')
+        if widgets_dir is None:
+            return 'Not found', 404, {'Content-Type': 'text/plain'}
         # The script name comes from the plugin's manifest, not the request,
         # so it gets the same containment treatment the URL parts got.
         script_path = resolve_under(widgets_dir, script)

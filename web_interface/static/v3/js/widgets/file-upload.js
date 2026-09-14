@@ -840,7 +840,7 @@
                 <!-- Schedule Mode -->
                 <div id="schedule_options_${sanitizedId}" class="space-y-4" style="display: ${schedule.enabled ? 'block' : 'none'};">
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-2">Schedule Type</label>
+                        <label for="schedule_mode_${sanitizedId}" class="block text-sm font-medium text-gray-700 mb-2">Schedule Type</label>
                         <select id="schedule_mode_${sanitizedId}"
                                 data-field-id="${escapeHtml(fieldId)}"
                                 data-image-id="${sanitizedId}"
@@ -855,8 +855,8 @@
                     <!-- Time Range Mode -->
                     <div id="time_range_${sanitizedId}" class="grid grid-cols-2 gap-4" style="display: ${schedule.mode === 'time_range' ? 'grid' : 'none'};">
                         <div>
-                            <label class="block text-xs font-medium text-gray-700 mb-1">Start Time</label>
-                            <input type="time" 
+                            <label for="schedule_start_${sanitizedId}" class="block text-xs font-medium text-gray-700 mb-1">Start Time</label>
+                            <input type="time"
                                    id="schedule_start_${sanitizedId}"
                                    data-field-id="${escapeHtml(fieldId)}"
                                    data-image-id="${sanitizedId}"
@@ -865,8 +865,8 @@
                                    class="block w-full px-2 py-1 text-sm border border-gray-300 rounded-md">
                         </div>
                         <div>
-                            <label class="block text-xs font-medium text-gray-700 mb-1">End Time</label>
-                            <input type="time" 
+                            <label for="schedule_end_${sanitizedId}" class="block text-xs font-medium text-gray-700 mb-1">End Time</label>
+                            <input type="time"
                                    id="schedule_end_${sanitizedId}"
                                    data-field-id="${escapeHtml(fieldId)}"
                                    data-image-id="${sanitizedId}"
@@ -900,6 +900,7 @@
                                     <div class="grid grid-cols-2 gap-2 ml-5" id="day_times_${day}_${sanitizedId}" style="display: ${dayConfig.enabled ? 'grid' : 'none'};">
                                         <input type="time"
                                                id="day_${day}_start_${sanitizedId}"
+                                               aria-label="${day} start time"
                                                data-field-id="${escapeHtml(fieldId)}"
                                                data-image-id="${sanitizedId}"
                                                data-image-idx="${imageIdx}"
@@ -909,6 +910,7 @@
                                                ${!dayConfig.enabled ? 'disabled' : ''}>
                                         <input type="time"
                                                id="day_${day}_end_${sanitizedId}"
+                                               aria-label="${day} end time"
                                                data-field-id="${escapeHtml(fieldId)}"
                                                data-image-id="${sanitizedId}"
                                                data-image-idx="${imageIdx}"

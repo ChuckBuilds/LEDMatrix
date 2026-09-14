@@ -165,6 +165,27 @@ class TestPathTraversal:
         assert "hunter2" not in r.get_data(as_text=True)
 
 
+    def test_a_symlinked_widgets_directory_cannot_escape(self, tmp_path, make_client):
+        """widgets/ itself is contained before the script is resolved under it,
+        so a symlink out of the plugin can't become the containment base."""
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "loot.js").write_text("const KEY='hunter2';", encoding="utf-8")
+        d = tmp_path / "soccer-scoreboard"
+        d.mkdir()
+        manifest = {"id": "soccer-scoreboard", "name": "soccer-scoreboard",
+                    "version": "1.0.0",
+                    "widgets": [{"name": "loot", "script": "loot.js"}]}
+        (d / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        try:
+            (d / "widgets").symlink_to(outside, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            pytest.skip("symlinks unavailable on this platform")
+        r = make_client().get(URL.format("soccer-scoreboard", "loot"))
+        assert r.status_code == 404
+        assert "hunter2" not in r.get_data(as_text=True)
+
+
 class TestDegradation:
     def test_an_unknown_plugin_is_404(self, tmp_path, make_client):
         assert make_client().get(URL.format("nope", "w")).status_code == 404

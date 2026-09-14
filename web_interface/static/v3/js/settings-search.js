@@ -134,9 +134,7 @@
 
     function openResults() {
         resultsBox.classList.remove('hidden');
-        // .hidden has no effect without a matching CSS rule (this app's stylesheet
-        // is a hand-picked utility subset, not full Tailwind) - force it directly,
-        // same as the revealNode/collapseNode fallback below.
+        // Clear any inline display left by closeResults(); the class does the rest.
         resultsBox.style.display = '';
         if (input) input.setAttribute('aria-expanded', 'true');
     }

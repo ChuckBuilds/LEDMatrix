@@ -2,20 +2,28 @@
 // LED Matrix v3 JavaScript
 // Additional helpers for HTMX and Alpine.js integration
 
-// Global notification system
-window.showNotification = function(message, type = 'info') {
-    // Use Alpine.js notification if available
-    if (window.Alpine) {
-        // This would trigger the Alpine.js notification system
-        const event = new CustomEvent('show-notification', {
+// Global notification system — implemented by widgets/notification.js.
+// This fallback only exists if nothing defined showNotification earlier; it
+// hands off to the widget when registered, otherwise queues the message for
+// the widget to show once it loads.
+if (typeof window.showNotification !== 'function') {
+    window.showNotification = function(message, type = 'info') {
+        const registry = window.LEDMatrixWidgets;
+        const widget = registry && typeof registry.get === 'function' ? registry.get('notification') : null;
+        if (widget && typeof widget.show === 'function') {
+            return widget.show(message, typeof type === 'string' ? { type: type } : (type || {}));
+        }
+        if (!Array.isArray(window.__pendingNotifications)) {
+            window.__pendingNotifications = [];
+        }
+        window.__pendingNotifications.push([message, type]);
+        document.dispatchEvent(new CustomEvent('show-notification', {
             detail: { message, type }
-        });
-        document.dispatchEvent(event);
-    } else {
-        // Fallback notification — user-facing last resort, so never gated
-        console.info(`${type}: ${message}`);
-    }
-};
+        }));
+        // User-facing last resort, so never gated
+        console.info(`${(type && type.type) || type}: ${message}`);
+    };
+}
 
 // HTMX response handlers
 document.body.addEventListener('htmx:beforeRequest', function(event) {
@@ -180,30 +188,8 @@ document.addEventListener('DOMContentLoaded', function() {
     } catch { /* no-op */ }
 });
 
-// SSE reconnection helper — closes and reopens both SSE streams,
-// reattaching the open/error handlers defined in base.html.
-window.reconnectSSE = function() {
-    if (window.statsSource) {
-        window.statsSource.close();
-        window.statsSource = new EventSource('/api/v3/stream/stats');
-        window.statsSource.onmessage = function(event) {
-            const data = JSON.parse(event.data);
-            if (typeof updateSystemStats === 'function') updateSystemStats(data);
-        };
-        if (window._statsOpenHandler) window.statsSource.addEventListener('open', window._statsOpenHandler);
-        if (window._statsErrorHandler) window.statsSource.addEventListener('error', window._statsErrorHandler);
-    }
-
-    if (window.displaySource) {
-        window.displaySource.close();
-        window.displaySource = new EventSource('/api/v3/stream/display');
-        window.displaySource.onmessage = function(event) {
-            const data = JSON.parse(event.data);
-            if (typeof updateDisplayPreview === 'function') updateDisplayPreview(data);
-        };
-        if (window._displayErrorHandler) window.displaySource.addEventListener('error', window._displayErrorHandler);
-    }
-};
+// SSE streams (and window.reconnectSSE) are owned by window.LEDStreams in
+// js/app-shell.js — do not open EventSources for stats/display here.
 
 // Utility functions
 window.hexToRgb = function(hex) {
@@ -462,6 +448,8 @@ window.updateFloatingPreviewVisibility = function(tab) {
             img.src = 'data:image/png;base64,' + window._lastPreviewFrame;
         }
     }
+    // The display SSE stream is only open while a preview is on screen
+    if (window.LEDStreams) window.LEDStreams.refresh();
 };
 
 document.addEventListener('DOMContentLoaded', function() {

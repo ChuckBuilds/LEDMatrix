@@ -142,8 +142,9 @@
                             id="${fieldId}_toggle"
                             onclick="window.LEDMatrixWidgets.getHandlers('password-input').onToggle('${fieldId}')"
                             class="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400 hover:text-gray-600"
-                            title="Show/hide password">
-                        <i id="${fieldId}_icon" class="fas fa-eye"></i>
+                            title="Show/hide password"
+                            aria-label="Show password" aria-controls="${fieldId}_input">
+                        <i id="${fieldId}_icon" class="fas fa-eye" aria-hidden="true"></i>
                     </button>
                 `;
             }
@@ -297,16 +298,19 @@
                 const safeId = sanitizeId(fieldId);
                 const input = document.getElementById(`${safeId}_input`);
                 const icon = document.getElementById(`${safeId}_icon`);
+                const toggleBtn = document.getElementById(`${safeId}_toggle`);
 
                 if (input && icon) {
                     if (input.type === 'password') {
                         input.type = 'text';
                         icon.classList.remove('fa-eye');
                         icon.classList.add('fa-eye-slash');
+                        if (toggleBtn) toggleBtn.setAttribute('aria-label', 'Hide password');
                     } else {
                         input.type = 'password';
                         icon.classList.remove('fa-eye-slash');
                         icon.classList.add('fa-eye');
+                        if (toggleBtn) toggleBtn.setAttribute('aria-label', 'Show password');
                     }
                 }
             }

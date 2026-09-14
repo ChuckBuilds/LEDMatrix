@@ -98,7 +98,7 @@
         <div class="flex-1">
             <p class="text-sm font-semibold text-blue-900"><i class="fas fa-rocket mr-1"></i>Getting Started</p>
             <p class="text-xs text-blue-700 mt-0.5 mb-2">A few steps to get your display up and running. Click a step to jump there, or click its checkbox to mark it done yourself. The card hides once everything is checked.</p>
-            <ul class="space-y-1 text-sm" id="getting-started-items">
+            <ul class="list-none pl-0 space-y-1 text-sm" id="getting-started-items">
                 <li><button type="button" class="gs-item text-left w-full" data-done="{{ '1' if _hw_done else '0' }}" data-tab="display">
                     <i class="far fa-square mr-2"></i>Set your panel size (Display tab)</button></li>
                 <li><button type="button" class="gs-item text-left w-full" data-done="0" data-check="timezone" data-tz="{{ _tz }}" data-tab="general">

@@ -121,8 +121,8 @@
                             id="${fieldId}_clear"
                             onclick="window.LEDMatrixWidgets.getHandlers('text-input').onClear('${fieldId}')"
                             class="inline-flex items-center px-2 text-gray-400 hover:text-gray-600 ${currentValue ? '' : 'hidden'}"
-                            title="Clear">
-                        <i class="fas fa-times"></i>
+                            title="Clear" aria-label="Clear">
+                        <i class="fas fa-times" aria-hidden="true"></i>
                     </button>
                 `;
             }

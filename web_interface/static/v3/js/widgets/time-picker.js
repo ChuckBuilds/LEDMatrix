@@ -90,7 +90,7 @@
                            onchange="window.LEDMatrixWidgets.getHandlers('time-picker').onChange('${fieldId}')"
                            class="form-input w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 ${disabled ? 'bg-gray-100 cursor-not-allowed' : 'bg-white'} text-black pr-10">
                     <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
-                        <i class="fas fa-clock text-gray-400"></i>
+                        <i class="fas fa-clock text-gray-400" aria-hidden="true"></i>
                     </div>
                 </div>
             `;
@@ -101,8 +101,8 @@
                             id="${fieldId}_clear"
                             onclick="window.LEDMatrixWidgets.getHandlers('time-picker').onClear('${fieldId}')"
                             class="ml-2 inline-flex items-center px-2 py-2 text-gray-400 hover:text-gray-600 ${currentValue ? '' : 'hidden'}"
-                            title="Clear">
-                        <i class="fas fa-times"></i>
+                            title="Clear" aria-label="Clear time">
+                        <i class="fas fa-times" aria-hidden="true"></i>
                     </button>
                 `;
             }
