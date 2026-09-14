@@ -159,6 +159,9 @@
                 </div>
                 <div class="flex-shrink-0">
                     <button type="button"
+                            role="switch"
+                            aria-label="Auto-Enable AP Mode"
+                            :aria-checked="status.auto_enable_ap_mode ? 'true' : 'false'"
                             @click="toggleAutoEnable(!status.auto_enable_ap_mode)"
                             :class="status.auto_enable_ap_mode 
                                    ? 'bg-blue-600 hover:bg-blue-700' 

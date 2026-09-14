@@ -164,6 +164,18 @@ def test_static_asset_served(client, asset):
     assert len(resp.data) > 0
 
 
+def test_widget_bundle_is_served_and_requested(client):
+    """base.html loads every widget through one versioned bundle request."""
+    page = client.get("/").get_data(as_text=True)
+    assert "/assets/widgets.js?v=" in page
+    resp = client.get("/assets/widgets.js")
+    assert resp.status_code == 200
+    assert resp.mimetype == "application/javascript"
+    body = resp.get_data(as_text=True)
+    assert body.index("/* registry.js */") < body.index("/* notification.js */")
+    assert "/* json-file-manager.js */" in body
+
+
 def test_durations_page_groups_by_plugin(client):
     """One duration input per display mode of each enabled plugin, plus the
     leftover group for saved keys no enabled plugin owns."""

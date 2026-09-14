@@ -1,3 +1,6 @@
+{# Prefix for label/input id pairs; app ids and field ids are sanitised so
+   the ids stay valid and unique if several app configs are on the page. #}
+{% set sl_prefix = ('starlark-' ~ app_id)|replace(':', '-')|replace('.', '-')|replace(' ', '-')|replace('/', '-') %}
 <div class="space-y-6">
     <!-- Header -->
     <div class="flex items-center justify-between pb-4 border-b border-gray-200">
@@ -59,16 +62,18 @@
         <div id="starlark-config-form" class="space-y-4">
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div class="form-group">
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Render Interval (seconds)</label>
+                    <label for="{{ sl_prefix }}-render-interval" class="block text-sm font-medium text-gray-700 mb-1">Render Interval (seconds)</label>
                     <input type="number" min="10" max="86400" step="1"
+                           id="{{ sl_prefix }}-render-interval"
                            class="form-control w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
                            value="{{ render_interval }}"
                            data-starlark-config="render_interval">
                     <p class="text-xs text-gray-400 mt-1">How often the app re-renders (fetches new data)</p>
                 </div>
                 <div class="form-group">
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Display Duration (seconds)</label>
+                    <label for="{{ sl_prefix }}-display-duration" class="block text-sm font-medium text-gray-700 mb-1">Display Duration (seconds)</label>
                     <input type="number" min="1" max="3600" step="1"
+                           id="{{ sl_prefix }}-display-duration"
                            class="form-control w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
                            value="{{ display_duration }}"
                            data-starlark-config="display_duration">
@@ -98,12 +103,14 @@
                 {% set field_desc = field.desc or '' %}
                 {% set field_default = field.default if field.default is defined else '' %}
                 {% set current_val = config.get(field_id, field_default) if config else field_default %}
+                {% set input_id = (sl_prefix ~ '-f-' ~ field_id)|replace(' ', '-')|replace('.', '-')|replace(':', '-')|replace('/', '-') %}
 
                 {# ── text ── #}
                 {% if field_type == 'text' %}
                 <div class="form-group">
-                    <label class="block text-sm font-medium text-gray-700 mb-1">{{ field_name }}</label>
+                    <label for="{{ input_id }}" class="block text-sm font-medium text-gray-700 mb-1">{{ field_name }}</label>
                     <input type="text"
+                           id="{{ input_id }}"
                            class="form-control w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
                            value="{{ current_val }}"
                            placeholder="{{ field_desc }}"
@@ -116,8 +123,8 @@
                 {# ── dropdown ── #}
                 {% elif field_type == 'dropdown' %}
                 <div class="form-group">
-                    <label class="block text-sm font-medium text-gray-700 mb-1">{{ field_name }}</label>
-                    <select class="form-control w-full px-3 py-2 border border-gray-300 rounded-md text-sm bg-white"
+                    <label for="{{ input_id }}" class="block text-sm font-medium text-gray-700 mb-1">{{ field_name }}</label>
+                    <select id="{{ input_id }}" class="form-control w-full px-3 py-2 border border-gray-300 rounded-md text-sm bg-white"
                             data-starlark-config="{{ field_id }}">
                         {% for opt in (field.options or []) %}
                         <option value="{{ opt.value }}" {{ 'selected' if current_val|string == opt.value|string else '' }}>
@@ -149,14 +156,16 @@
                 {# ── color ── #}
                 {% elif field_type == 'color' %}
                 <div class="form-group">
-                    <label class="block text-sm font-medium text-gray-700 mb-1">{{ field_name }}</label>
+                    <label for="{{ input_id }}" class="block text-sm font-medium text-gray-700 mb-1">{{ field_name }}</label>
                     <div class="flex items-center gap-2">
                         <input type="color"
+                               aria-label="{{ field_name }} color picker"
                                class="w-10 h-10 rounded border border-gray-300 cursor-pointer p-0.5"
                                value="{{ current_val or '#FFFFFF' }}"
                                data-starlark-color-picker="{{ field_id }}"
                                oninput="this.closest('.space-y-6').querySelector('[data-starlark-config={{ field_id }}]').value = this.value">
                         <input type="text"
+                               id="{{ input_id }}"
                                class="form-control flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm font-mono"
                                value="{{ current_val or '#FFFFFF' }}"
                                placeholder="#RRGGBB"
@@ -171,8 +180,9 @@
                 {# ── datetime ── #}
                 {% elif field_type == 'datetime' %}
                 <div class="form-group">
-                    <label class="block text-sm font-medium text-gray-700 mb-1">{{ field_name }}</label>
+                    <label for="{{ input_id }}" class="block text-sm font-medium text-gray-700 mb-1">{{ field_name }}</label>
                     <input type="datetime-local"
+                           id="{{ input_id }}"
                            class="form-control w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
                            value="{{ current_val }}"
                            data-starlark-config="{{ field_id }}">
@@ -184,10 +194,11 @@
                 {# ── location (mini-form) ── #}
                 {% elif field_type == 'location' %}
                 <div class="form-group" data-starlark-location-group="{{ field_id }}" data-starlark-location-value="{{ current_val }}">
-                    <label class="block text-sm font-medium text-gray-700 mb-1">{{ field_name }}</label>
-                    <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+                    <label id="{{ input_id }}-label" class="block text-sm font-medium text-gray-700 mb-1">{{ field_name }}</label>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-2" role="group" aria-labelledby="{{ input_id }}-label">
                         <div>
                             <input type="number" step="any" min="-90" max="90"
+                                   aria-label="{{ field_name }} latitude"
                                    class="form-control w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
                                    placeholder="Latitude"
                                    data-starlark-location-field="{{ field_id }}"
@@ -195,6 +206,7 @@
                         </div>
                         <div>
                             <input type="number" step="any" min="-180" max="180"
+                                   aria-label="{{ field_name }} longitude"
                                    class="form-control w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
                                    placeholder="Longitude"
                                    data-starlark-location-field="{{ field_id }}"
@@ -204,6 +216,7 @@
                             <input type="text"
                                    class="form-control w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
                                    placeholder="Timezone (e.g. America/New_York)"
+                                   aria-label="{{ field_name }} timezone"
                                    data-starlark-location-field="{{ field_id }}"
                                    data-starlark-location-key="timezone">
                         </div>
@@ -243,8 +256,9 @@
                 {# ── typeahead / location_based (text fallback with note) ── #}
                 {% elif field_type in ('typeahead', 'location_based') %}
                 <div class="form-group">
-                    <label class="block text-sm font-medium text-gray-700 mb-1">{{ field_name }}</label>
+                    <label for="{{ input_id }}" class="block text-sm font-medium text-gray-700 mb-1">{{ field_name }}</label>
                     <input type="text"
+                           id="{{ input_id }}"
                            class="form-control w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
                            value="{{ current_val }}"
                            placeholder="{{ field_desc }}"
@@ -261,8 +275,9 @@
                 {# ── unknown type (text fallback) ── #}
                 {% else %}
                 <div class="form-group">
-                    <label class="block text-sm font-medium text-gray-700 mb-1">{{ field_name }}</label>
+                    <label for="{{ input_id }}" class="block text-sm font-medium text-gray-700 mb-1">{{ field_name }}</label>
                     <input type="text"
+                           id="{{ input_id }}"
                            class="form-control w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
                            value="{{ current_val }}"
                            placeholder="{{ field_desc }}"
@@ -287,8 +302,9 @@
                 {% for key, value in config.items() %}
                     {% if key not in ('render_interval', 'display_duration') and key not in schema_ids %}
                     <div class="form-group">
-                        <label class="block text-sm font-medium text-gray-700 mb-1">{{ key }} <span class="text-xs text-gray-400">(custom)</span></label>
-                        <input type="text" class="form-control w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                        {% set custom_id = (sl_prefix ~ '-c-' ~ key)|replace(' ', '-')|replace('.', '-')|replace(':', '-')|replace('/', '-') %}
+                        <label for="{{ custom_id }}" class="block text-sm font-medium text-gray-700 mb-1">{{ key }} <span class="text-xs text-gray-400">(custom)</span></label>
+                        <input type="text" id="{{ custom_id }}" class="form-control w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
                                value="{{ value }}"
                                data-starlark-config="{{ key }}">
                     </div>
@@ -303,8 +319,9 @@
             {% for key, value in config.items() %}
                 {% if key not in ('render_interval', 'display_duration') %}
                 <div class="form-group">
-                    <label class="block text-sm font-medium text-gray-700 mb-1">{{ key }}</label>
-                    <input type="text" class="form-control w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                    {% set raw_id = (sl_prefix ~ '-r-' ~ key)|replace(' ', '-')|replace('.', '-')|replace(':', '-')|replace('/', '-') %}
+                    <label for="{{ raw_id }}" class="block text-sm font-medium text-gray-700 mb-1">{{ key }}</label>
+                    <input type="text" id="{{ raw_id }}" class="form-control w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
                            value="{{ value }}"
                            data-starlark-config="{{ key }}">
                 </div>
