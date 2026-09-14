@@ -5,6 +5,9 @@ __pycache__/
 
 # Secrets
 config/config_secrets.json
+# Atomic writes leave these behind when a save or a test is interrupted;
+# the suite drops several per run.
+config/.config_secrets.json.tmp.*
 config/config.json
 config/config.json.backup
 config/wifi_config.json
