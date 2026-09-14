@@ -374,18 +374,74 @@
      * text_color, visible, align) and the sub-fields their layout blocks
      * declare (x_offset, y_offset, scale).
      */
-    function columnsFor(schema) {
+    /**
+     * Where an element's offsets live in the layout block, or null.
+     *
+     * A hand-written schema does not line up: football styles 'score_text'
+     * but positions it under 'score'. Core resolves that through the same
+     * alias map the renderer reads offsets with and records the answer as
+     * x-layout-key, so the rules exist once, in element_style.py. Without
+     * the annotation both blocks share one key, as the compact declaration
+     * does.
+     */
+    function layoutKeyFor(schema, key) {
+        var props = (schema && schema.properties) || {};
+        var layoutProps = ownObj(props, 'layout').properties || {};
+        var declared = ownObj(props, key)['x-layout-key'];
+        if (typeof declared === 'string' && own(layoutProps, declared)) {
+            return declared;
+        }
+        return own(layoutProps, key) ? key : null;
+    }
+
+    /** One row per styled element, paired with its offsets if it has any. */
+    function styleRows(schema) {
+        return elementKeys(schema).map(function (key) {
+            return { key: key, layoutKey: layoutKeyFor(schema, key) };
+        });
+    }
+
+    /**
+     * One row per positioned thing that has no style block of its own.
+     *
+     * Football positions both logos, timeouts, possession, down-and-distance,
+     * the date, the time and the records, none of which has a font or a
+     * colour. The editor takes the whole layout section over, so anything
+     * not drawn here has no control at all.
+     */
+    function positionRows(schema) {
+        var layout = ownObj((schema && schema.properties) || {}, 'layout');
+        var layoutProps = layout.properties || {};
+        var claimed = styleRows(schema).map(function (r) { return r.layoutKey; });
+        var order = layout['x-propertyOrder'] || Object.keys(layoutProps);
+        return order.filter(function (lk) {
+            return ownObj(layoutProps, lk).properties && claimed.indexOf(lk) === -1;
+        }).map(function (lk) {
+            return { key: null, layoutKey: lk };
+        });
+    }
+
+    function layoutTitleOf(schema, layoutKey) {
+        var layoutProps = ownObj((schema && schema.properties) || {}, 'layout').properties || {};
+        return ownObj(layoutProps, layoutKey).title || layoutKey.replace(/_/g, ' ');
+    }
+
+    function columnsFor(schema, rows) {
         var props = schema.properties || {};
         var layoutProps = ownObj(props, 'layout').properties || {};
         // A Map, not an object: the keys are field names out of a schema, so
         // a field literally named "constructor" is a column like any other
         // and never touches a prototype.
         var seen = new Map();
-        elementKeys(schema).forEach(function (key) {
-            Object.keys(ownObj(props, key).properties || {}).forEach(
-                function (f) { seen.set(f, 'element'); });
-            Object.keys(ownObj(layoutProps, key).properties || {}).forEach(
-                function (f) { seen.set(f, 'layout'); });
+        rows.forEach(function (row) {
+            if (row.key) {
+                Object.keys(ownObj(props, row.key).properties || {}).forEach(
+                    function (f) { seen.set(f, 'element'); });
+            }
+            if (row.layoutKey) {
+                Object.keys(ownObj(layoutProps, row.layoutKey).properties || {}).forEach(
+                    function (f) { seen.set(f, 'layout'); });
+            }
         });
         var known = COLUMN_ORDER.filter(function (f) { return seen.get(f); });
         // Anything the schema declares that this file has never heard of
@@ -431,21 +487,22 @@
 
     function elementRow(opts) {
         var schema = opts.schema;
-        var key = opts.key;
+        var key = opts.row.key;              // null for a position-only row
+        var layoutKey = opts.row.layoutKey;  // null for a style-only row
         var value = opts.value;
         var optional = opts.optional;
 
-        var props = ownObj(schema.properties || {}, key).properties || {};
+        var props = key ? (ownObj(schema.properties || {}, key).properties || {}) : {};
         var layoutProps = ownObj(schema.properties || {}, 'layout').properties || {};
-        var axes = ownObj(layoutProps, key).properties || {};
+        var axes = layoutKey ? (ownObj(layoutProps, layoutKey).properties || {}) : {};
 
         var row = el('div', {
             class: 'style-editor-row grid items-center gap-2 py-1',
-            'data-element': key
+            'data-element': key || ('layout.' + layoutKey)
         });
         row.appendChild(el('div', {
             class: 'text-sm text-gray-700 style-editor-label',
-            text: titleOf(schema, key)
+            text: key ? titleOf(schema, key) : layoutTitleOf(schema, layoutKey)
         }));
 
         var sizeInput = null;
@@ -480,8 +537,11 @@
                 row.appendChild(el('span'));
                 return;
             }
-            var path = inLayout ? ['layout', key, col.key] : [key, col.key];
-            var base = inLayout ? opts.layoutPrefix + '.' + key
+            var path = inLayout ? ['layout', layoutKey, col.key] : [key, col.key];
+            // Posted under the key the schema declares, never the style key:
+            // a plugin's own offset reader looks up layout.score, so a value
+            // saved as layout.score_text would be kept and never drawn.
+            var base = inLayout ? opts.layoutPrefix + '.' + layoutKey
                                 : opts.prefix + '.' + key;
             var node = control({
                 key: col.key,
@@ -510,11 +570,11 @@
         return row;
     }
 
-    function header(columns) {
+    function header(columns, firstLabel) {
         var row = el('div', {
             class: 'style-editor-row style-editor-head grid gap-2 pb-1 mb-1 border-b border-gray-300'
         });
-        ['Element'].concat(columns.map(function (c) { return c.label; }))
+        [firstLabel || 'Element'].concat(columns.map(function (c) { return c.label; }))
             .forEach(function (label) {
                 row.appendChild(el('div', {
                     class: 'text-xs font-semibold text-gray-500 uppercase',
@@ -526,7 +586,9 @@
 
     function table(opts) {
         var wrap = el('div', { class: 'style-editor-table' });
-        var columns = columnsFor(opts.schema);
+        // Columns per table, so the positions table does not inherit a Font
+        // column and the style table does not grow a "home x offset" one.
+        var columns = columnsFor(opts.schema, opts.rows);
         // Sized here rather than in CSS: the column count depends on what
         // the plugin declared.
         wrap.style.gridTemplateColumns = '';
@@ -534,11 +596,11 @@
             'minmax(7rem, 1.4fr) ' + columns.map(function (c) {
                 return COLUMN_WIDTHS[c.key] || '5rem';
             }).join(' '));
-        wrap.appendChild(header(columns));
-        elementKeys(opts.schema).forEach(function (key) {
+        wrap.appendChild(header(columns, opts.firstLabel));
+        opts.rows.forEach(function (row) {
             wrap.appendChild(elementRow({
                 schema: opts.schema,
-                key: key,
+                row: row,
                 columns: columns,
                 prefix: opts.prefix,
                 layoutPrefix: opts.prefix + '.layout',
@@ -548,6 +610,29 @@
             }));
         });
         return wrap;
+    }
+
+    /** One panel's tables: the styled elements, then anything only positioned. */
+    function panelBody(opts) {
+        var body = el('div');
+        var shared = {
+            schema: opts.schema, prefix: opts.prefix, value: opts.value,
+            fonts: opts.fonts, optional: opts.optional
+        };
+        var styled = styleRows(opts.schema);
+        if (styled.length) {
+            body.appendChild(table(Object.assign({ rows: styled }, shared)));
+        }
+        var positioned = positionRows(opts.schema);
+        if (positioned.length) {
+            body.appendChild(el('div', {
+                class: 'text-xs font-semibold text-gray-500 uppercase mt-4 mb-1 style-editor-subhead',
+                text: 'Other positions'
+            }));
+            body.appendChild(table(Object.assign(
+                { rows: positioned, firstLabel: 'Item' }, shared)));
+        }
+        return body;
     }
 
     // ---- widget ----------------------------------------------------------
@@ -620,7 +705,7 @@
                     tabs.appendChild(b);
                 }
 
-                panel('__base__', table({
+                panel('__base__', panelBody({
                     schema: schema, prefix: base, value: current,
                     fonts: fonts, optional: false
                 }));
@@ -634,7 +719,7 @@
                         class: 'text-xs text-gray-500 mb-2',
                         text: 'Anything left blank follows the "All modes" tab.'
                     }));
-                    node.appendChild(table({
+                    node.appendChild(panelBody({
                         schema: modeSchema,
                         prefix: base + '.modes.' + mode,
                         value: modeValue,

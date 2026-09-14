@@ -125,3 +125,99 @@ class TestTheSchemaSaysWhichBlocksAreStyling:
         props = expand_style_elements(schema)["properties"]["customization"]["properties"]
         assert props["score_text"]["x-style-managed"] is True
         assert "x-style-managed" not in props["favorite_result_colors"]
+
+
+# Football's real layout keys, in its schema's order. The style block and the
+# layout block were written years apart and never agreed on names.
+FOOTBALL_LAYOUT = ["home_logo", "away_logo", "score", "status_text", "date",
+                   "time", "down_distance", "timeouts", "possession",
+                   "records", "odds"]
+
+
+def _offsets(*axes):
+    return {"type": "object",
+            "properties": {a: {"type": "integer", "default": 0} for a in axes}}
+
+
+def _style_block():
+    return {"type": "object", "properties": {
+        "font": {"type": "string", "default": "PressStart2P-Regular.ttf"},
+        "font_size": {"type": "integer", "default": 10},
+        "text_color": {"type": "array", "default": [255, 255, 255]},
+    }}
+
+
+def _football_shaped():
+    layout = {k: _offsets("x_offset", "y_offset") for k in FOOTBALL_LAYOUT}
+    layout["records"] = _offsets("away_x_offset", "home_x_offset", "y_offset")
+    return {"type": "object", "properties": {"customization": {
+        "type": "object",
+        "x-style-modes": ["live", "recent"],
+        "properties": {
+            **{k: _style_block() for k in (
+                "score_text", "period_text", "team_name", "status_text",
+                "detail_text", "odds_text", "rank_text")},
+            "layout": {"type": "object", "properties": layout},
+        }}}}
+
+
+class TestEveryAdvertisedOffsetGetsAControl:
+    """The style editor took the layout section over but only drew offsets
+    whose layout key matched a style key exactly. In football that was
+    status_text alone: score, odds, both logos, timeouts, possession,
+    down-and-distance, date, time and records -- options the schema
+    advertises and the renderer reads -- had no control anywhere."""
+
+    def _customization(self):
+        from src.element_style import expand_style_elements
+        return expand_style_elements(_football_shaped())[
+            "properties"]["customization"]
+
+    def test_a_style_element_is_told_where_its_offsets_live(self):
+        """Resolved in core through the same alias map the resolver reads
+        offsets with, so the editor cannot drift from the renderer."""
+        props = self._customization()["properties"]
+        assert props["score_text"]["x-layout-key"] == "score"
+        assert props["odds_text"]["x-layout-key"] == "odds"
+        assert props["status_text"]["x-layout-key"] == "status_text"
+
+    def test_an_element_with_no_offsets_claims_nothing(self):
+        props = self._customization()["properties"]
+        for key in ("period_text", "detail_text", "team_name", "rank_text"):
+            assert "x-layout-key" not in props[key], key
+
+    def test_the_mode_copies_carry_it_too(self):
+        live = self._customization()["properties"]["modes"]["properties"][
+            "live"]["properties"]
+        assert live["score_text"]["x-layout-key"] == "score"
+
+    def test_positions_keep_the_order_the_plugin_declared(self):
+        """Flask sorts keys when it serialises the schema, which would
+        otherwise list the logos after the date."""
+        c = self._customization()
+        assert c["properties"]["layout"]["x-propertyOrder"] == FOOTBALL_LAYOUT
+        live_layout = c["properties"]["modes"]["properties"]["live"][
+            "properties"]["layout"]
+        assert live_layout["x-propertyOrder"] == FOOTBALL_LAYOUT
+
+    def test_every_layout_entry_is_claimed_or_listed_as_a_position(self):
+        """Mirrors the widget's split: a layout entry either belongs to a
+        style row or gets a row of its own. Nothing is left over."""
+        props = self._customization()["properties"]
+        layout = props["layout"]["properties"]
+        claimed = {props[k]["x-layout-key"] for k in props
+                   if isinstance(props[k], dict) and "x-layout-key" in props[k]}
+        positions = [k for k in props["layout"]["x-propertyOrder"]
+                     if k not in claimed]
+        assert claimed | set(positions) == set(layout)
+        assert positions == ["home_logo", "away_logo", "date", "time",
+                             "down_distance", "timeouts", "possession",
+                             "records"]
+
+    def test_the_widget_reads_the_annotation_and_lists_positions(self):
+        js = (PROJECT_ROOT / "web_interface" / "static" / "v3" / "js"
+              / "widgets" / "style-editor.js").read_text(encoding="utf-8")
+        assert "x-layout-key" in js, (
+            "the alias rules live in element_style.py; the widget must read "
+            "their result rather than carry a second copy")
+        assert "function positionRows" in js
