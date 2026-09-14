@@ -170,3 +170,32 @@ def test_saving_the_untouched_form_succeeds(post):
     resp, cfg = post(parser.pairs)
     assert resp.status_code == 200, resp.get_json()
     assert cfg["cities"] == CITIES
+
+
+def test_an_item_without_its_optional_object_does_not_gain_an_empty_one(post):
+    """News: a custom feed with no logo. The unchecked-checkbox pass walked
+    into ``logo`` to look for booleans and left ``logo: {}`` behind, which
+    fails the logo's ``required: [id, path]`` -- 400 on every save."""
+    from web_interface.blueprints.api_v3 import _set_missing_booleans_to_false
+
+    props = {"feeds": {"type": "object", "properties": {"custom_feeds": {
+        "type": "array",
+        "items": {"type": "object", "properties": {
+            "name": {"type": "string"},
+            "enabled": {"type": "boolean"},
+            "logo": {"type": "object", "required": ["id", "path"],
+                     "properties": {"id": {"type": "string"},
+                                    "path": {"type": "string"}}},
+            "extra": {"type": "object",
+                      "properties": {"flag": {"type": "boolean"}}},
+        }},
+    }}}}
+    cfg = {"feeds": {"custom_feeds": [{"name": "Verge", "enabled": True}]}}
+    _set_missing_booleans_to_false(
+        cfg, props, {"feeds.custom_feeds.0.name"}, sections={"feeds"})
+
+    item = cfg["feeds"]["custom_feeds"][0]
+    assert "logo" not in item
+    # A nested object that really does hold an unchecked box still gets it.
+    assert item["extra"] == {"flag": False}
+    assert item["enabled"] is False

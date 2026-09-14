@@ -1131,14 +1131,20 @@ def _set_missing_booleans_to_false(plugin_config, schema_props, form_keys, prefi
         elif prop_type == 'object' and 'properties' in prop_schema:
             # Recurse into nested objects
             if config_node is not None:
-                # Inside an array item — ensure nested dict exists in item
-                if prop_name not in node or not isinstance(node[prop_name], dict):
-                    node[prop_name] = {}
+                # Inside an array item. Walk into the existing dict, or a scratch
+                # one that is attached only if a boolean actually landed in it:
+                # an optional object the item never had (a custom feed with no
+                # logo) must stay absent, because an empty stub fails the
+                # object's own `required` list and 400s every save.
+                existing = node.get(prop_name)
+                child = existing if isinstance(existing, dict) else {}
                 _set_missing_booleans_to_false(
                     plugin_config, prop_schema['properties'], form_keys, full_path,
-                    config_node=node[prop_name],
+                    config_node=child,
                     sections=sections, submitted_parents=submitted_parents
                 )
+                if child is not existing and child:
+                    node[prop_name] = child
             else:
                 _set_missing_booleans_to_false(
                     plugin_config, prop_schema['properties'], form_keys, full_path,
