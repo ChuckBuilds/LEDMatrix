@@ -23,8 +23,9 @@ success.
 """
 import json
 import os
-import subprocess
+import subprocess  # nosec B404 - list-form argv only, no shell  # nosemgrep
 import sys
+from collections import namedtuple
 import tempfile
 import time
 import traceback
@@ -45,6 +46,10 @@ PIP_TIMEOUT_SECONDS = 600
 #: sudoers matches the exact command line, so bash is named by path, the same
 #: candidates src/common/permission_utils.install_requirements_file tries.
 BASH_CANDIDATES = ('/usr/bin/bash', '/bin/bash')
+
+#: What a command that could not run at all reports: its callers only read
+#: these three fields, the same ones a completed subprocess has.
+_Failed = namedtuple('_Failed', 'returncode stdout stderr')
 
 
 def pending_path(project_root):
@@ -104,7 +109,7 @@ class Verifier:
             return self.run(args, cwd=str(self.project_root), capture_output=True,
                             text=True, timeout=timeout)
         except (subprocess.SubprocessError, OSError) as e:
-            return subprocess.CompletedProcess(args, 1, stdout='', stderr=str(e))
+            return _Failed(returncode=1, stdout='', stderr=str(e))
 
     # -- services ---------------------------------------------------------
 

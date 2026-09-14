@@ -32,7 +32,7 @@ import json
 import logging
 import os
 import shutil
-import subprocess
+import subprocess  # nosec B404 - list-form argv only, no shell  # nosemgrep
 import tempfile
 import threading
 import time
@@ -574,7 +574,7 @@ class AutoUpdater:
             state['rolled_back_head'] = new
         else:
             outcome = 'rollback_failed'
-            message = (f'The LEDMatrix update to {_short(new)} failed ({reason or "unknown reason"}) and '
+            message = (f'The LEDMatrix update to {_short(new)} failed ({reason or "unknown reason"}) and '  # nosec B608 - user-facing message, not SQL  # nosemgrep
                        f'could not be rolled back: {detail or "unknown error"}. The device may need '
                        f'attention: run "git reset --hard {old}" in the LEDMatrix folder, then restart '
                        'the display and web services.')

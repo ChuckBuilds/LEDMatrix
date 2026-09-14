@@ -23,7 +23,7 @@ import json
 import logging
 import os
 import re
-import subprocess
+import subprocess  # nosec B404 - list-form argv only, no shell  # nosemgrep
 import tempfile
 import time
 from pathlib import Path
