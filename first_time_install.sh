@@ -1416,6 +1416,9 @@ $ACTUAL_USER ALL=(ALL) NOPASSWD: $PYTHON_PATH $PROJECT_ROOT_DIR/display_controll
 $ACTUAL_USER ALL=(ALL) NOPASSWD: $BASH_PATH $PROJECT_ROOT_DIR/start_display.sh
 $ACTUAL_USER ALL=(ALL) NOPASSWD: $BASH_PATH $PROJECT_ROOT_DIR/stop_display.sh
 $ACTUAL_USER ALL=(ALL) NOPASSWD: $BASH_PATH $PROJECT_ROOT_DIR/scripts/fix_perms/safe_plugin_rm.sh *
+# Install a requirements.txt as root via vetted helper, so packages are visible
+# to root-run ledmatrix.service (not just the web interface's own user).
+$ACTUAL_USER ALL=(ALL) NOPASSWD: $BASH_PATH $PROJECT_ROOT_DIR/scripts/fix_perms/safe_pip_install.sh *
 EOF
 if [ -n "$JOURNALCTL_PATH" ]; then
     cat >> /tmp/ledmatrix_web_sudoers << EOF
@@ -1622,6 +1625,19 @@ chmod 755 "$PROJECT_ROOT_DIR/scripts/install/install_service.sh" "$PROJECT_ROOT_
 
 # Re-apply special permissions for config directory (lost during normalization)
 chmod 2775 "$PROJECT_ROOT_DIR/config" || true
+
+# Harden the sudo-granted helper scripts: root-owned, not writable by the web
+# user (matches scripts/install/configure_web_sudo.sh). The sudoers rules in
+# Step 10 run these as root, so a user-owned copy is a root shell for whoever
+# can edit it. This must come after Step 11's project-wide chown to
+# $ACTUAL_USER, which would otherwise hand them straight back.
+for helper in safe_plugin_rm.sh safe_pip_install.sh; do
+    HELPER_PATH="$PROJECT_ROOT_DIR/scripts/fix_perms/$helper"
+    if [ -f "$HELPER_PATH" ]; then
+        chown root:root "$HELPER_PATH" || echo "⚠ Could not set ownership on $HELPER_PATH"
+        chmod 755 "$HELPER_PATH" || echo "⚠ Could not set permissions on $HELPER_PATH"
+    fi
+done
 
 echo "✓ Project file permissions normalized"
 echo ""
