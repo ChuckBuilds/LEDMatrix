@@ -17,9 +17,9 @@
 
     <!-- Controls -->
     <div class="flex flex-wrap items-center justify-between gap-4 mb-6">
-        <div class="flex items-center space-x-4">
+        <div class="flex flex-wrap items-center gap-3 sm:gap-4">
             <!-- Log Mode Toggle -->
-            <div class="flex items-center space-x-2">
+            <div class="flex items-center gap-2">
                 <label class="flex items-center">
                     <input type="checkbox" id="log-realtime-toggle" class="form-control h-4 w-4" checked>
                     <span class="ml-2 text-sm font-medium">Real-time</span>
@@ -31,7 +31,7 @@
             </div>
 
             <!-- Log Level Filter -->
-            <select id="log-level-filter" class="form-control text-sm">
+            <select id="log-level-filter" aria-label="Filter logs by level" class="form-control text-sm w-auto">
                 <option value="">All Levels</option>
                 <option value="ERROR">Errors Only</option>
                 <option value="WARNING">Warnings & Errors</option>
@@ -39,18 +39,18 @@
             </select>
 
             <!-- Plugin Filter -->
-            <select id="log-plugin-filter" class="form-control text-sm">
+            <select id="log-plugin-filter" aria-label="Filter logs by plugin" class="form-control text-sm w-auto">
                 <option value="">All Plugins</option>
             </select>
 
             <!-- Search -->
             <div class="relative">
-                <input type="text" id="log-search" placeholder="Search logs..." class="form-control text-sm pl-8 pr-4 py-1 w-48">
-                <i class="fas fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 text-xs"></i>
+                <input type="text" id="log-search" placeholder="Search logs..." aria-label="Search logs" class="form-control text-sm pl-8 pr-4 py-1 w-48">
+                <i class="fas fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 text-xs pointer-events-none" aria-hidden="true"></i>
             </div>
         </div>
 
-        <div class="flex items-center space-x-2">
+        <div class="flex flex-wrap items-center gap-2">
             <!-- Auto-scroll toggle -->
             <label class="flex items-center">
                 <input type="checkbox" id="log-autoscroll" class="form-control h-4 w-4" checked>
@@ -72,7 +72,7 @@
     <!-- Log Display -->
     <div class="relative">
         <div id="logs-container" class="bg-gray-900 text-gray-100 font-mono text-sm rounded-lg p-3 border border-gray-700 shadow-inner relative" style="height: 500px; min-height: 400px; max-height: 70vh;">
-            <div id="logs-loading" class="absolute inset-0 flex items-center justify-center text-gray-400 bg-gray-900">
+            <div id="logs-loading" class="absolute inset-0 flex items-center justify-center text-gray-300 bg-gray-900">
                 <div class="text-center">
                     <i class="fas fa-spinner fa-spin text-2xl mb-2"></i>
                     <p>Loading logs...</p>
@@ -83,7 +83,7 @@
                     <!-- Logs will be inserted here -->
                 </div>
             </div>
-            <div id="logs-empty" class="hidden absolute inset-0 flex items-center justify-center text-gray-400 bg-gray-900">
+            <div id="logs-empty" class="hidden absolute inset-0 flex items-center justify-center text-gray-300 bg-gray-900">
                 <div class="text-center">
                     <i class="fas fa-file-alt text-4xl mb-2"></i>
                     <p>No logs available</p>
@@ -215,13 +215,32 @@ window._filteredLogs = [];
         });
     }
 
-    refreshCurrentPluginStatus();
-    if (window._currentPluginPollTimer) {
-        clearInterval(window._currentPluginPollTimer);
+    // Current-plugin poll and the realtime log stream run only while the Logs
+    // tab is active and the page is visible (both restart with an immediate
+    // refresh). Re-registering on partial reload replaces the old one.
+    function startLogsActivity() {
+        refreshCurrentPluginStatus();
+        if (window._currentPluginPollTimer) clearInterval(window._currentPluginPollTimer);
+        window._currentPluginPollTimer = setInterval(refreshCurrentPluginStatus, 5000);
+        if (window._isRealtime && !window._logsEventSource) setupRealtimeLogs();
     }
-    window._currentPluginPollTimer = setInterval(refreshCurrentPluginStatus, 5000);
+    function stopLogsActivity() {
+        if (window._currentPluginPollTimer) {
+            clearInterval(window._currentPluginPollTimer);
+            window._currentPluginPollTimer = null;
+        }
+        stopRealtimeLogs();
+    }
+    if (window.LEDVisibility) {
+        window.LEDVisibility.onActive('logs', startLogsActivity, stopLogsActivity);
+    } else {
+        startLogsActivity();
+    }
 
-    // Handle window resize for responsive height
+    // Handle window resize for responsive height. Added once: this script
+    // re-runs on every partial load, and the handler reads window globals.
+    if (window._logsResizeListenerAdded) return;
+    window._logsResizeListenerAdded = true;
     window.addEventListener('resize', function() {
         if (window._logContainer) {
             // Force a reflow to update sizing
@@ -270,10 +289,24 @@ function loadLogs() {
         });
 }
 
-function setupRealtimeLogs() {
+// Closes the log stream and cancels any pending reconnect, so a paused
+// (inactive tab / hidden page) stream stays closed.
+function stopRealtimeLogs() {
+    if (window._logsReconnectTimer) {
+        clearTimeout(window._logsReconnectTimer);
+        window._logsReconnectTimer = null;
+    }
     if (window._logsEventSource) {
         window._logsEventSource.close();
+        window._logsEventSource = null;
     }
+}
+
+function setupRealtimeLogs() {
+    stopRealtimeLogs();
+    // Don't open (or reconnect) while the Logs tab isn't on screen;
+    // LEDVisibility restarts the stream when it is.
+    if (window.LEDVisibility && !window.LEDVisibility.isActive('logs')) return;
 
     window._logsEventSource = new EventSource('/api/v3/stream/logs');
 
@@ -302,8 +335,9 @@ function setupRealtimeLogs() {
             <span>Disconnected from log stream</span>
         `;
 
-        // Attempt to reconnect after 5 seconds
-        setTimeout(setupRealtimeLogs, 5000);
+        // Attempt to reconnect after 5 seconds (cancelled by stopRealtimeLogs)
+        if (window._logsReconnectTimer) clearTimeout(window._logsReconnectTimer);
+        window._logsReconnectTimer = setTimeout(setupRealtimeLogs, 5000);
     };
 }
 

@@ -102,8 +102,8 @@
                      </div>`;
             html += `<button type="button"
                              onclick="window.LEDMatrixWidgets.getHandlers('file-upload-single').onClear('${fieldId}')"
-                             class="flex-shrink-0 text-red-400 hover:text-red-600 p-1" title="Remove image">
-                         <i class="fas fa-times"></i>
+                             class="flex-shrink-0 text-red-400 hover:text-red-600 p-1" title="Remove image" aria-label="Remove image">
+                         <i class="fas fa-times" aria-hidden="true"></i>
                      </button>`;
             html += '</div>';
 

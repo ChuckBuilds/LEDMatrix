@@ -1,24 +1,16 @@
 /* global debugLog */
 // SSE wiring + full Alpine app() implementation and tab logic
 // Extracted from templates/v3/base.html so browsers cache it as a static asset.
-        // Assign to window so reconnectSSE() in app.js can reach them.
-        window.statsSource = new EventSource('/api/v3/stream/stats');
-        window.displaySource = new EventSource('/api/v3/stream/display');
-
-        window.statsSource.onmessage = function(event) {
-            const data = JSON.parse(event.data);
-            updateSystemStats(data);
-        };
-
-        window.displaySource.onmessage = function(event) {
-            const data = JSON.parse(event.data);
-            updateDisplayPreview(data);
-        };
-
-        function _setConnectionStatus(connected, reconnecting) {
+        function _setConnectionStatus(connected, reconnecting, paused) {
             const el = document.getElementById('connection-status');
             if (!el) return;
-            if (connected) {
+            if (paused) {
+                // Intentionally closed while the page is hidden — not an error.
+                el.innerHTML = `
+                    <div class="w-2 h-2 bg-gray-200 border border-gray-300 rounded-full"></div>
+                    <span class="text-gray-600" title="Live updates pause while this page is in the background">Paused</span>
+                `;
+            } else if (connected) {
                 el.innerHTML = `
                     <div class="w-2 h-2 bg-green-500 rounded-full"></div>
                     <span class="text-gray-600">Connected</span>
@@ -38,8 +30,8 @@
 
         var _statsErrorCount = 0;
 
-        // Named on window so reconnectSSE() in app.js can reattach them after
-        // replacing the EventSource instances.
+        // Kept on window for backward compatibility; LEDStreams attaches them
+        // to every EventSource it opens.
         window._statsOpenHandler = function() {
             _statsErrorCount = 0;
             _setConnectionStatus(true, false);
@@ -56,9 +48,173 @@
             console.warn('LEDMatrix: display preview stream error (readyState=' + window.displaySource.readyState + ')');
         };
 
-        window.statsSource.addEventListener('open', window._statsOpenHandler);
-        window.statsSource.addEventListener('error', window._statsErrorHandler);
-        window.displaySource.addEventListener('error', window._displayErrorHandler);
+        // ===== Tab/page visibility — shared by partials =====
+        // LEDVisibility.onActive(tab, start, stop[, key]) runs start() when
+        // `tab` is the active tab AND the page is visible, and stop() when
+        // either stops being true. start() should refresh immediately. The
+        // registration is keyed (default: tab name), so a partial re-injected
+        // by HTMX replaces its previous registration — the old stop() runs
+        // first — instead of stacking intervals. Returns an unregister fn.
+        // Tab changes are also broadcast as `ledmatrix:tab-changed` on document.
+        window.LEDVisibility = (function() {
+            const regs = new Map();
+            let lastTab = null;
+
+            function activeTab() {
+                const el = document.querySelector('[x-data="app()"]');
+                const data = el && el._x_dataStack && el._x_dataStack[0];
+                return (data && data.activeTab) || lastTab;
+            }
+            function isActive(tab) {
+                return !document.hidden && activeTab() === tab;
+            }
+            function evaluate(reg) {
+                const want = isActive(reg.tab);
+                if (want === reg.running) return;
+                reg.running = want;
+                try {
+                    (want ? reg.start : reg.stop)();
+                } catch (e) {
+                    console.error('[LEDVisibility] ' + reg.key + (want ? ' start' : ' stop') + ' failed:', e);
+                }
+            }
+            function onActive(tab, start, stop, key) {
+                key = key || tab;
+                const prev = regs.get(key);
+                if (prev && prev.running) {
+                    prev.running = false;
+                    try { prev.stop(); } catch (e) { console.error('[LEDVisibility] ' + key + ' stop failed:', e); }
+                }
+                const reg = { tab: tab, start: start, stop: stop, key: key, running: false };
+                regs.set(key, reg);
+                evaluate(reg);
+                return function() {
+                    if (regs.get(key) !== reg) return;
+                    regs.delete(key);
+                    if (reg.running) { reg.running = false; stop(); }
+                };
+            }
+            function refresh() {
+                regs.forEach(evaluate);
+                if (window.LEDStreams) window.LEDStreams.refresh();
+            }
+
+            document.addEventListener('visibilitychange', refresh);
+            document.addEventListener('ledmatrix:tab-changed', function(e) {
+                lastTab = (e.detail && e.detail.tab) || lastTab;
+                refresh();
+            });
+
+            return { activeTab: activeTab, isActive: isActive, onActive: onActive, refresh: refresh };
+        })();
+
+        // ===== Live SSE streams — the single owner =====
+        // /stream/stats feeds the header stats and connection badge on every
+        // tab, so it stays open while the page is visible. /stream/display
+        // pushes base64 PNG frames and is only opened while a preview is on
+        // screen: the Overview live preview, or the floating preview when open.
+        // Both close while the page is hidden. The server's broadcaster ends its
+        // generator thread once the last subscriber leaves, so closing here
+        // saves Pi CPU, not only bandwidth.
+        //
+        // window.statsSource / window.displaySource remain public. An
+        // EventSource can't be reopened, so each reopen creates a new one;
+        // listeners other code attached with addEventListener (e.g. the Tools
+        // power panel) are recorded and re-attached to the replacement.
+        window.LEDStreams = (function() {
+            const CONFIG = {
+                stats: {
+                    url: '/api/v3/stream/stats',
+                    prop: 'statsSource',
+                    onmessage: function(data) { updateSystemStats(data); },
+                    wire: function(src) {
+                        src.onopen = window._statsOpenHandler;
+                        src.onerror = window._statsErrorHandler;
+                    }
+                },
+                display: {
+                    url: '/api/v3/stream/display',
+                    prop: 'displaySource',
+                    onmessage: function(data) { updateDisplayPreview(data); },
+                    wire: function(src) { src.onerror = window._displayErrorHandler; }
+                }
+            };
+            const open = { stats: null, display: null };
+            const external = { stats: [], display: [] };
+
+            function openStream(name) {
+                if (open[name]) return;
+                const cfg = CONFIG[name];
+                const src = new EventSource(cfg.url);
+                const add = src.addEventListener.bind(src);
+                const remove = src.removeEventListener.bind(src);
+                src.addEventListener = function(type, listener, options) {
+                    external[name].push([type, listener, options]);
+                    add(type, listener, options);
+                };
+                src.removeEventListener = function(type, listener, options) {
+                    external[name] = external[name].filter(function(l) {
+                        return !(l[0] === type && l[1] === listener);
+                    });
+                    remove(type, listener, options);
+                };
+                external[name].forEach(function(l) { add(l[0], l[1], l[2]); });
+                src.onmessage = function(event) {
+                    let data;
+                    try { data = JSON.parse(event.data); } catch { return; }
+                    cfg.onmessage(data);
+                };
+                cfg.wire(src);
+                open[name] = src;
+                window[cfg.prop] = src;
+            }
+
+            // The closed instance stays on window so late `addEventListener`
+            // calls are still recorded and replayed on the next open.
+            function closeStream(name) {
+                if (!open[name]) return;
+                open[name].close();
+                open[name] = null;
+            }
+
+            function previewOnScreen() {
+                if (window.LEDVisibility.activeTab() === 'overview') return true;
+                const panel = document.getElementById('floating-preview');
+                return !!(panel && panel.style.display === 'block');
+            }
+
+            function refresh() {
+                if (document.hidden) {
+                    // Also covers a page first loaded in a background tab.
+                    closeStream('stats');
+                    closeStream('display');
+                    _setConnectionStatus(false, false, true);
+                    return;
+                }
+                if (!open.stats) {
+                    _statsErrorCount = 0;
+                    openStream('stats');
+                }
+                if (previewOnScreen()) openStream('display');
+                else closeStream('display');
+            }
+
+            function reconnect() {
+                closeStream('stats');
+                closeStream('display');
+                refresh();
+            }
+
+            return { refresh: refresh, reconnect: reconnect, isOpen: function(name) { return !!open[name]; } };
+        })();
+
+        // Public helper (previously duplicated in app.js).
+        window.reconnectSSE = function() { window.LEDStreams.reconnect(); };
+
+        // Header stats start immediately; the display stream opens once the
+        // active tab is known (Alpine init dispatches ledmatrix:tab-changed).
+        window.LEDStreams.refresh();
+        document.addEventListener('DOMContentLoaded', function() { window.LEDStreams.refresh(); });
 
         // Reset any time the currently-active warning clears, so a future
         // (new) occurrence shows the banner again even if this one was dismissed.
@@ -323,6 +479,10 @@
                         if (typeof window.updateFloatingPreviewVisibility === 'function') {
                             window.updateFloatingPreviewVisibility(newTab);
                         }
+                        // Pause/resume per-tab timers and SSE (LEDVisibility)
+                        document.dispatchEvent(new CustomEvent('ledmatrix:tab-changed', {
+                            detail: { tab: newTab, previous: oldTab }
+                        }));
                         // Trigger content load when tab changes
                         this.$nextTick(() => {
                             this.loadTabContent(newTab);
@@ -335,6 +495,9 @@
                         if (typeof window.updateNavAriaCurrent === 'function') {
                             window.updateNavAriaCurrent(this.activeTab);
                         }
+                        document.dispatchEvent(new CustomEvent('ledmatrix:tab-changed', {
+                            detail: { tab: this.activeTab, previous: null }
+                        }));
                     });
 
                     // Listen for plugin updates from pluginManager
@@ -1878,18 +2041,21 @@
             });
         };
         
-        // showNotification is provided by notification.js widget
-        // This fallback is only used if the widget hasn't loaded yet
+        // showNotification is implemented by the notification.js widget.
+        // Until it loads, this fallback queues messages; the widget shows the
+        // queue as soon as it registers (and then replaces this function).
         if (typeof window.showNotification !== 'function') {
             window.showNotification = function(message, type = 'info') {
-                debugLog(`[${type.toUpperCase()}]`, message);
-                const notification = document.createElement('div');
-                notification.className = `fixed top-4 right-4 px-6 py-3 rounded-lg shadow-lg z-50 ${
-                    type === 'success' ? 'bg-green-500' : type === 'error' ? 'bg-red-500' : 'bg-blue-500'
-                } text-white`;
-                notification.textContent = message;
-                document.body.appendChild(notification);
-                setTimeout(() => { notification.style.opacity = '0'; setTimeout(() => notification.remove(), 500); }, 3000);
+                const registry = window.LEDMatrixWidgets;
+                const widget = registry && typeof registry.get === 'function' ? registry.get('notification') : null;
+                if (widget && typeof widget.show === 'function') {
+                    return widget.show(message, typeof type === 'string' ? { type: type } : (type || {}));
+                }
+                if (!Array.isArray(window.__pendingNotifications)) {
+                    window.__pendingNotifications = [];
+                }
+                window.__pendingNotifications.push([message, type]);
+                debugLog(`[${String((type && type.type) || type).toUpperCase()}]`, message);
             };
         }
 

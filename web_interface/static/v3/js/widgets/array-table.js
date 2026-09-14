@@ -415,7 +415,8 @@
         removeBtn.type      = 'button';
         removeBtn.className = 'text-red-600 hover:text-red-800 px-2 py-1';
         removeBtn.onclick   = function() { window.removeArrayTableRow(this); };
-        removeBtn.innerHTML = '<i class="fas fa-trash"></i>';
+        removeBtn.setAttribute('aria-label', 'Remove row');
+        removeBtn.innerHTML = '<i class="fas fa-trash" aria-hidden="true"></i>';
         actionsCell.appendChild(removeBtn);
 
         if (hasAdvanced) {
@@ -424,7 +425,8 @@
             editBtn.className = 'text-blue-500 hover:text-blue-700 px-2 py-1 ml-1';
             editBtn.title     = 'Edit advanced properties (layout, style…)';
             editBtn.onclick   = function() { window.openArrayTableRowEditor(this); };
-            editBtn.innerHTML = '<i class="fas fa-sliders-h"></i>';
+            editBtn.setAttribute('aria-label', 'Edit advanced properties');
+            editBtn.innerHTML = '<i class="fas fa-sliders-h" aria-hidden="true"></i>';
             actionsCell.appendChild(editBtn);
         }
 
@@ -446,9 +448,8 @@
         if (!advancedCell) return;
 
         const schema = JSON.parse(advancedCell.dataset.propSchema || '{}');
-        // Close any existing modal
-        const existing = document.getElementById('array-row-editor-modal');
-        if (existing) existing.remove();
+        // Close any existing modal (also releases its focus trap)
+        window.closeArrayTableRowEditor();
 
         const overlay = document.createElement('div');
         overlay.id        = 'array-row-editor-modal';
@@ -463,9 +464,10 @@
         // Header
         safeSetHTML(dialog, `
             <div class="flex items-center justify-between px-5 py-4 border-b border-gray-200">
-                <h3 class="text-base font-semibold text-gray-900">Advanced Properties</h3>
+                <h3 id="array-row-editor-title" class="text-base font-semibold text-gray-900">Advanced Properties</h3>
                 <button type="button" onclick="window.closeArrayTableRowEditor()"
-                        class="text-gray-400 hover:text-gray-600"><i class="fas fa-times"></i></button>
+                        aria-label="Close advanced properties"
+                        class="text-gray-400 hover:text-gray-600"><i class="fas fa-times" aria-hidden="true"></i></button>
             </div>`);
 
         const body = document.createElement('div');
@@ -558,11 +560,27 @@
         dialog.appendChild(footer);
         overlay.appendChild(dialog);
         document.body.appendChild(overlay);
+
+        if (window.LEDDialog) {
+            rowEditorRelease = window.LEDDialog.trap(dialog, {
+                labelledBy: 'array-row-editor-title',
+                initialFocus: '[data-modal-prop]',
+                onEscape: window.closeArrayTableRowEditor
+            });
+        }
     };
+
+    // Focus-trap release for the open row editor (see utils/dialog.js).
+    let rowEditorRelease = null;
 
     window.closeArrayTableRowEditor = function() {
         const modal = document.getElementById('array-row-editor-modal');
         if (modal) modal.remove();
+        if (rowEditorRelease) {
+            const release = rowEditorRelease;
+            rowEditorRelease = null;
+            release();
+        }
     };
 
     /**

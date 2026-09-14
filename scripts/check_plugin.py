@@ -78,6 +78,9 @@ logger = get_logger("[Check Plugin]")
 DEFAULT_SEARCH_DIRS = [
     str(PROJECT_ROOT / 'plugins'),
     str(PROJECT_ROOT / 'plugin-repos'),
+    # The scoreboards live in the sibling ledmatrix-plugins checkout, not
+    # in this repo. Without this, --all silently skips every one of them.
+    str(PROJECT_ROOT.parent / 'ledmatrix-plugins' / 'plugins'),
 ]
 
 

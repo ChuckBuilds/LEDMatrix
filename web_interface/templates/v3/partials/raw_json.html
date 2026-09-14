@@ -4,7 +4,7 @@
         <div class="border-b border-gray-200 pb-4 mb-6">
             <div class="flex items-center justify-between">
                 <div>
-                    <h2 class="text-lg font-semibold text-gray-900">config.json Editor</h2>
+                    <h2 id="main-config-editor-title" class="text-lg font-semibold text-gray-900">config.json Editor</h2>
                     <p class="mt-1 text-sm text-gray-600">{{ main_config_path }}</p>
                 </div>
                 <div class="flex gap-2">
@@ -28,7 +28,7 @@
         </div>
 
         <div class="relative">
-            <textarea id="main-config-editor" 
+            <textarea id="main-config-editor" aria-labelledby="main-config-editor-title"
                       class="w-full h-96 font-mono text-sm p-4 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
                       spellcheck="false">{{ main_config_json }}</textarea>
             <div id="main-config-validation" class="mt-2 text-sm"></div>
@@ -55,7 +55,7 @@
         <div class="border-b border-gray-200 pb-4 mb-6">
             <div class="flex items-center justify-between">
                 <div>
-                    <h2 class="text-lg font-semibold text-gray-900">config_secrets.json Editor</h2>
+                    <h2 id="secrets-config-editor-title" class="text-lg font-semibold text-gray-900">config_secrets.json Editor</h2>
                     <p class="mt-1 text-sm text-gray-600">{{ secrets_config_path }}</p>
                 </div>
                 <div class="flex gap-2">
@@ -79,7 +79,7 @@
         </div>
 
         <div class="relative">
-            <textarea id="secrets-config-editor" 
+            <textarea id="secrets-config-editor" aria-labelledby="secrets-config-editor-title"
                       class="w-full h-96 font-mono text-sm p-4 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
                       spellcheck="false">{{ secrets_config_json }}</textarea>
             <div id="secrets-config-validation" class="mt-2 text-sm"></div>

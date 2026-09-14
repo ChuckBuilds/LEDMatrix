@@ -1044,20 +1044,11 @@ window.initPluginsPage = function() {
     setupInstalledFilterListeners();
     setupStoreFilterListeners();
 
-    if (closeOnDemandModalBtn) {
-        closeOnDemandModalBtn.replaceWith(closeOnDemandModalBtn.cloneNode(true));
-        document.getElementById('close-on-demand-modal').addEventListener('click', closeOnDemandModal);
-    }
-    if (cancelOnDemandBtn) {
-        cancelOnDemandBtn.replaceWith(cancelOnDemandBtn.cloneNode(true));
-        document.getElementById('cancel-on-demand').addEventListener('click', closeOnDemandModal);
-    }
-    if (onDemandForm) {
-        onDemandForm.replaceWith(onDemandForm.cloneNode(true));
-        document.getElementById('on-demand-form').addEventListener('submit', submitOnDemandRequest);
-    }
-    if (onDemandModal) {
-        onDemandModal.onclick = closeOnDemandModalOnBackdrop;
+    // The on-demand modal lives in base.html and survives tab swaps, so bind it
+    // through the one guarded initializer instead of cloning its controls here
+    // (cloning copied data-initialized and left two code paths owning listeners).
+    if (closeOnDemandModalBtn || cancelOnDemandBtn || onDemandForm || onDemandModal) {
+        initializeOnDemandModal();
     }
 
     // Load on-demand status silently (false = don't show notification)
@@ -1385,7 +1376,7 @@ function getInstalledFilter() {
             el: 'installed-search',
             clearEl: 'installed-search-clear',
             fields: ['name', 'id', 'description', 'author', 'category', 'tags'],
-            debounceMs: 200,
+            debounceMs: 150,
         },
         sort: {
             el: 'installed-sort',
@@ -1551,7 +1542,7 @@ function renderInstalledCards(plugins, total) {
         return JSON.stringify(text || '');
     };
 
-    container.innerHTML = plugins.map(plugin => {
+    setGridHtmlIfChanged(container, plugins.map(plugin => {
         // Convert enabled to boolean for consistent rendering
         const enabledBool = Boolean(plugin.enabled);
 
@@ -1582,15 +1573,19 @@ function renderInstalledCards(plugins, total) {
                 <!-- Toggle Switch in Top Right -->
                 <div class="flex-shrink-0 ml-4">
                     <label class="relative inline-flex items-center cursor-pointer group">
+                        <!-- input.peer must stay immediately before the visible pill:
+                             peer-focus:* only reaches a following sibling. -->
                         <input type="checkbox"
                                class="sr-only peer"
+                               role="switch"
+                               aria-label="Enable ${escapeAttr(plugin.name || plugin.id)}"
                                id="toggle-${escapedPluginId}"
                                ${enabledBool ? 'checked' : ''}
                                data-plugin-id="${escapedPluginId}"
                                data-action="toggle">
-                        <div class="flex items-center gap-2 px-3 py-1.5 rounded-lg border-2 transition-all duration-200 ${enabledBool ? 'bg-green-50 border-green-500' : 'bg-gray-50 border-gray-300'} hover:shadow-md group-hover:scale-105">
+                        <div class="flex items-center gap-2 px-3 py-1.5 rounded-lg border-2 transition-all duration-200 ${enabledBool ? 'bg-green-50 border-green-500' : 'bg-gray-50 border-gray-300'} hover:shadow-md group-hover:scale-105 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300" aria-hidden="true">
                             <!-- Toggle Switch -->
-                            <div class="relative w-14 h-7 ${enabledBool ? 'bg-green-500' : 'bg-gray-300'} peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:bg-green-500 transition-colors duration-200 ease-in-out shadow-inner">
+                            <div class="relative w-14 h-7 ${enabledBool ? 'bg-green-500' : 'bg-gray-300'} rounded-full transition-colors duration-200 ease-in-out shadow-inner">
                                 <div class="absolute top-[3px] left-[3px] bg-white ${enabledBool ? 'translate-x-full' : ''} border-2 ${enabledBool ? 'border-green-500' : 'border-gray-400'} rounded-full h-5 w-5 transition-all duration-200 ease-in-out shadow-sm flex items-center justify-center">
                                     ${enabledBool ? '<i class="fas fa-check text-green-600 text-xs"></i>' : '<i class="fas fa-times text-gray-400 text-xs"></i>'}
                                 </div>
@@ -1638,8 +1633,29 @@ function renderInstalledCards(plugins, total) {
             </div>
         </div>
         `;
-    }).join('');
+    }).join(''));
 }
+
+// Filter/search changes re-run the card renderers. When the markup they
+// produce is identical to what is already in the grid (same visible set, same
+// state), skip the innerHTML rebuild: it saves layout work on small Pis and
+// keeps focus and any typed branch names in place. The cache lives on the
+// element, so an HTMX swap that replaces the grid starts fresh, and it is
+// tied to the first node it produced, so any other write to the grid (empty
+// state, loading skeleton, error message) invalidates it automatically.
+function setGridHtmlIfChanged(container, html) {
+    if (container._lastRenderedHtml === html &&
+        container._lastRenderedFirst &&
+        container._lastRenderedFirst === container.firstElementChild) {
+        return false;
+    }
+    container.innerHTML = html;
+    container._lastRenderedHtml = html;
+    container._lastRenderedFirst = container.firstElementChild;
+    return true;
+}
+// Shared with the Starlark section, which lives in a separate IIFE below.
+window.__pmSetGridHtmlIfChanged = setGridHtmlIfChanged;
 
 // Set up event delegation for plugin action buttons (fallback if onclick doesn't work)
 // Only set up once per container to avoid redundant listeners, which is what
@@ -1875,11 +1891,73 @@ function loadOnDemandStatus(fromRefreshButton = false) {
         });
 }
 
+// The 15s on-demand status poll only runs while someone can see it: the page
+// is visible and the Plugin Manager tab is the active one. On a Pi Zero 2 W a
+// forgotten background tab should cost nothing. When it becomes visible again
+// it refreshes immediately, then resumes the interval.
+const ON_DEMAND_POLL_MS = 15000;
+
+function isPluginManagerTabVisible() {
+    if (document.hidden) return false;
+    try {
+        if (window.Alpine && typeof window.Alpine.$data === 'function') {
+            const data = window.Alpine.$data(document.body);
+            if (data && typeof data.activeTab === 'string') {
+                return data.activeTab === 'plugins';
+            }
+        }
+    } catch (e) {
+        // Alpine not initialised on body yet; fall through to the DOM check.
+    }
+    const content = document.getElementById('plugins-content');
+    return !!(content && content.offsetParent !== null);
+}
+
+function syncOnDemandStatusPolling() {
+    const shouldRun = isPluginManagerTabVisible();
+    if (shouldRun && !onDemandStatusInterval) {
+        loadOnDemandStatus(false);
+        onDemandStatusInterval = setInterval(() => {
+            if (!isPluginManagerTabVisible()) {
+                clearInterval(onDemandStatusInterval);
+                onDemandStatusInterval = null;
+                return;
+            }
+            loadOnDemandStatus(false);
+        }, ON_DEMAND_POLL_MS);
+    } else if (!shouldRun && onDemandStatusInterval) {
+        clearInterval(onDemandStatusInterval);
+        onDemandStatusInterval = null;
+    }
+}
+
 function startOnDemandStatusPolling() {
     if (onDemandStatusInterval) {
         clearInterval(onDemandStatusInterval);
+        onDemandStatusInterval = null;
     }
-    onDemandStatusInterval = setInterval(() => loadOnDemandStatus(false), 15000);
+    // The caller has just loaded status, so start the interval without a
+    // second immediate fetch; later resumes go through syncOnDemandStatusPolling.
+    if (isPluginManagerTabVisible()) {
+        onDemandStatusInterval = setInterval(() => {
+            if (!isPluginManagerTabVisible()) {
+                clearInterval(onDemandStatusInterval);
+                onDemandStatusInterval = null;
+                return;
+            }
+            loadOnDemandStatus(false);
+        }, ON_DEMAND_POLL_MS);
+    }
+
+    if (!window.__onDemandPollingListenersBound) {
+        window.__onDemandPollingListenersBound = true;
+        document.addEventListener('visibilitychange', syncOnDemandStatusPolling);
+        // Tab switches: nav clicks change Alpine's activeTab, and HTMX swaps
+        // tab content in. Defer so Alpine has applied x-show first.
+        document.addEventListener('click', () => setTimeout(syncOnDemandStatusPolling, 0));
+        document.addEventListener('htmx:afterSettle', syncOnDemandStatusPolling);
+        window.addEventListener('popstate', () => setTimeout(syncOnDemandStatusPolling, 0));
+    }
 }
 
 window.loadOnDemandStatus = loadOnDemandStatus;
@@ -2105,6 +2183,17 @@ window.__openOnDemandModalImpl = function(pluginId) {
         modalContent.style.overflowY = 'auto';
     }
 
+    // Dialog semantics, focus trap, Escape, and focus return. Opening again
+    // while already open (e.g. a double click) keeps the existing trap so
+    // focus still returns to the control that first opened it.
+    if (modalContent && window.LEDDialog && !onDemandDialogRelease) {
+        onDemandDialogRelease = window.LEDDialog.trap(modalContent, {
+            labelledBy: 'on-demand-modal-title',
+            initialFocus: modeSelect,
+            onEscape: closeOnDemandModal
+        });
+    }
+
     // Scroll to top of page to ensure modal is visible
     window.scrollTo({ top: 0, behavior: 'smooth' });
 
@@ -2132,12 +2221,21 @@ window.__openOnDemandModalImpl = function(pluginId) {
 // Replace the stub with the real implementation
 window.openOnDemandModal = window.__openOnDemandModalImpl;
 
+// Release handle for the on-demand modal's focus trap (window.LEDDialog).
+// Every close path funnels through closeOnDemandModal, which releases it once.
+let onDemandDialogRelease = null;
+
 function closeOnDemandModal() {
     const modal = document.getElementById('on-demand-modal');
     if (modal) {
         modal.style.display = 'none';
     }
     currentOnDemandPluginId = null;
+    if (onDemandDialogRelease) {
+        const release = onDemandDialogRelease;
+        onDemandDialogRelease = null;
+        release();
+    }
 }
 
 function submitOnDemandRequest(event) {
@@ -2366,7 +2464,7 @@ function renderArrayObjectItem(fieldId, fullKey, itemProperties, itemValue, inde
             if (logoValue.path) {
                 html += `
                     <div class="mt-2 flex items-center space-x-2 uploaded-image-container">
-                        <img src="/${escapeAttribute(logoValue.path.replace(/^\/+/, ''))}" alt="Logo" class="w-16 h-16 object-cover rounded border">
+                        <img src="/${escapeAttribute(logoValue.path.replace(/^\/+/, ''))}" alt="Logo" loading="lazy" decoding="async" class="w-16 h-16 object-cover rounded border">
                         <button type="button"
                                 onclick="removeArrayObjectFile('${escapeAttribute(fieldId)}', ${index}, '${escapeAttribute(propKey)}')"
                                 class="text-red-600 hover:text-red-800">
@@ -2817,7 +2915,7 @@ window.handleArrayObjectFileUpload = async function(event, fieldId, itemIndex, p
             // Get current item index from data-index attribute for remove button
             const currentItemIndex = itemEl.getAttribute('data-index') || itemIndex;
             imageContainer.innerHTML = `
-                <img src="/${escapedPath}" alt="Logo" class="w-16 h-16 object-cover rounded border">
+                <img src="/${escapedPath}" alt="Logo" loading="lazy" decoding="async" class="w-16 h-16 object-cover rounded border">
                 <button type="button"
                         onclick="removeArrayObjectFile('${escapedFieldId}', ${currentItemIndex}, '${escapedPropKey}')"
                         class="text-red-600 hover:text-red-800">
@@ -3666,7 +3764,7 @@ function getStoreFilter() {
         search: {
             el: 'plugin-search',
             fields: ['name', 'description', 'author', 'id', 'category', 'tags'],
-            debounceMs: 300,
+            debounceMs: 150,
         },
         sort: {
             el: 'store-sort',
@@ -3781,7 +3879,7 @@ function renderPluginStore(plugins) {
         return JSON.stringify(text || '');
     };
 
-    container.innerHTML = plugins.map(plugin => {
+    setGridHtmlIfChanged(container, plugins.map(plugin => {
         const installed = isStorePluginInstalled(plugin);
         return `
         <div class="plugin-card">
@@ -3830,7 +3928,7 @@ function renderPluginStore(plugins) {
                 </div>
             </div>
         </div>`;
-    }).join('');
+    }).join(''));
 }
 
 // Expose functions to window for onclick handlers
@@ -4004,8 +4102,8 @@ function renderSavedRepositories(repositories) {
                     </div>
                     <p class="text-xs text-gray-500 truncate" title="${escapeAttribute(repoUrl)}">${escapeHtml(repoUrl)}</p>
                 </div>
-                <button onclick='if(window.removeSavedRepository){window.removeSavedRepository(${escapeJs(repoUrl)})}else{console.error("removeSavedRepository not available")}' class="ml-2 text-red-600 hover:text-red-800 text-xs px-2 py-1" title="Remove repository">
-                    <i class="fas fa-trash"></i>
+                <button onclick='if(window.removeSavedRepository){window.removeSavedRepository(${escapeJs(repoUrl)})}else{console.error("removeSavedRepository not available")}' class="ml-2 text-red-600 hover:text-red-800 text-xs px-2 py-1" title="Remove repository" aria-label="Remove saved repository ${escapeAttribute(repoName)}">
+                    <i class="fas fa-trash" aria-hidden="true"></i>
                 </button>
             </div>
         `;
@@ -4603,14 +4701,17 @@ window.toggleGithubTokenVisibility = function() {
     const icon = document.getElementById('github-token-icon');
 
     if (input && icon) {
+        const btn = icon.closest('button');
         if (input.type === 'password') {
             input.type = 'text';
             icon.classList.remove('fa-eye');
             icon.classList.add('fa-eye-slash');
+            if (btn) btn.setAttribute('aria-label', 'Hide token');
         } else {
             input.type = 'password';
             icon.classList.remove('fa-eye-slash');
             icon.classList.add('fa-eye');
+            if (btn) btn.setAttribute('aria-label', 'Show token');
         }
     }
 }
@@ -4989,6 +5090,7 @@ window.updateImageList = function(fieldId, images) {
                     <div class="flex items-center space-x-3 flex-1">
                         <img src="/${img.path || ''}"
                              alt="${img.filename || ''}"
+                             loading="lazy" decoding="async"
                              class="w-16 h-16 object-cover rounded"
                              onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
                         <div style="display:none;" class="w-16 h-16 bg-gray-200 rounded flex items-center justify-center">
@@ -5006,14 +5108,16 @@ window.updateImageList = function(fieldId, images) {
                         <button type="button"
                                 onclick="window.openImageSchedule('${fieldId}', '${img.id}', ${idx})"
                                 class="text-blue-600 hover:text-blue-800 p-2"
-                                title="Schedule this image">
-                            <i class="fas fa-calendar-alt"></i>
+                                title="Schedule this image"
+                                aria-label="Schedule image ${escapeAttribute(img.original_filename || img.filename || '')}">
+                            <i class="fas fa-calendar-alt" aria-hidden="true"></i>
                         </button>
                         <button type="button"
                                 onclick="window.deleteUploadedImage('${fieldId}', '${img.id}', '${pluginId}')"
                                 class="text-red-600 hover:text-red-800 p-2"
-                                title="Delete image">
-                            <i class="fas fa-trash"></i>
+                                title="Delete image"
+                                aria-label="Delete image ${escapeAttribute(img.original_filename || img.filename || '')}">
+                            <i class="fas fa-trash" aria-hidden="true"></i>
                         </button>
                     </div>
                 </div>
@@ -5137,7 +5241,7 @@ window.openImageSchedule = function(fieldId, imageId, imageIdx) {
             <!-- Schedule Mode -->
             <div id="schedule_options_${imageId}" class="space-y-4" style="display: ${schedule.enabled ? 'block' : 'none'};">
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-2">Schedule Type</label>
+                    <label for="schedule_mode_${imageId}" class="block text-sm font-medium text-gray-700 mb-2">Schedule Type</label>
                     <select id="schedule_mode_${imageId}"
                             onchange="window.updateImageScheduleMode('${fieldId}', '${imageId}', ${imageIdx})"
                             class="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
@@ -5150,7 +5254,7 @@ window.openImageSchedule = function(fieldId, imageId, imageIdx) {
                 <!-- Time Range Mode -->
                 <div id="time_range_${imageId}" class="grid grid-cols-2 gap-4" style="display: ${schedule.mode === 'time_range' ? 'grid' : 'none'};">
                     <div>
-                        <label class="block text-xs font-medium text-gray-700 mb-1">Start Time</label>
+                        <label for="schedule_start_${imageId}" class="block text-xs font-medium text-gray-700 mb-1">Start Time</label>
                         <input type="time"
                                id="schedule_start_${imageId}"
                                value="${schedule.start_time || '08:00'}"
@@ -5158,7 +5262,7 @@ window.openImageSchedule = function(fieldId, imageId, imageIdx) {
                                class="block w-full px-2 py-1 text-sm border border-gray-300 rounded-md">
                     </div>
                     <div>
-                        <label class="block text-xs font-medium text-gray-700 mb-1">End Time</label>
+                        <label for="schedule_end_${imageId}" class="block text-xs font-medium text-gray-700 mb-1">End Time</label>
                         <input type="time"
                                id="schedule_end_${imageId}"
                                value="${schedule.end_time || '18:00'}"
@@ -5188,12 +5292,14 @@ window.openImageSchedule = function(fieldId, imageId, imageIdx) {
                                 <div class="grid grid-cols-2 gap-2 ml-5" id="day_times_${day}_${imageId}" style="display: ${dayConfig.enabled ? 'grid' : 'none'};">
                                     <input type="time"
                                            id="day_${day}_start_${imageId}"
+                                           aria-label="${day} start time"
                                            value="${dayConfig.start_time || '08:00'}"
                                            onchange="updateImageScheduleDay('${fieldId}', '${imageId}', ${imageIdx}, '${day}')"
                                            class="text-xs px-2 py-1 border border-gray-300 rounded"
                                            ${!dayConfig.enabled ? 'disabled' : ''}>
                                     <input type="time"
                                            id="day_${day}_end_${imageId}"
+                                           aria-label="${day} end time"
                                            value="${dayConfig.end_time || '18:00'}"
                                            onchange="updateImageScheduleDay('${fieldId}', '${imageId}', ${imageIdx}, '${day}')"
                                            class="text-xs px-2 py-1 border border-gray-300 rounded"
@@ -5375,12 +5481,12 @@ if (typeof window !== 'undefined') {
                 if (propSchema.type === 'boolean') {
                     const checked = propValue ? 'checked' : '';
                     // No name attribute - rely solely on _data field to prevent key leakage
-                    itemHtml += `<input type="checkbox" data-prop-key="${propKey}" ${checked} class="h-4 w-4 text-blue-600" onchange="window.updateArrayObjectData('${fieldId}')">`;
+                    itemHtml += `<input type="checkbox" data-prop-key="${propKey}" aria-label="${escapeHtml(propLabel)}" ${checked} class="h-4 w-4 text-blue-600" onchange="window.updateArrayObjectData('${fieldId}')">`;
                 } else {
                     // Escape HTML to prevent XSS
                     // No name attribute - rely solely on _data field to prevent key leakage
                     const escapedValue = typeof propValue === 'string' ? propValue.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;') : (propValue || '');
-                    itemHtml += `<input type="text" data-prop-key="${propKey}" value="${escapedValue}" class="block w-full px-3 py-2 border border-gray-300 rounded-md" onchange="window.updateArrayObjectData('${fieldId}')">`;
+                    itemHtml += `<input type="text" data-prop-key="${propKey}" aria-label="${escapeHtml(propLabel)}" value="${escapedValue}" class="block w-full px-3 py-2 border border-gray-300 rounded-md" onchange="window.updateArrayObjectData('${fieldId}')">`;
                 }
                 itemHtml += `</div>`;
             });
@@ -5823,7 +5929,7 @@ document.addEventListener('htmx:afterSettle', function() {
             search: {
                 el: 'starlark-search',
                 fields: ['name', 'summary', 'desc', 'author', 'id', 'category'],
-                debounceMs: 300,
+                debounceMs: 150,
             },
             sort: {
                 el: 'starlark-sort',
@@ -5902,7 +6008,9 @@ document.addEventListener('htmx:afterSettle', function() {
             return;
         }
 
-        grid.innerHTML = apps.map(app => {
+        const setGridHtmlIfChanged = window.__pmSetGridHtmlIfChanged ||
+            ((el, html) => { el.innerHTML = html; return true; });
+        setGridHtmlIfChanged(grid, apps.map(app => {
             const installed = isStarlarkInstalled(app.id);
             return `
             <div class="plugin-card" data-app-id="${escapeHtml(app.id)}">
@@ -5932,7 +6040,7 @@ document.addEventListener('htmx:afterSettle', function() {
                     </button>
                 </div>
             </div>`;
-        }).join('');
+        }).join(''));
 
         // Add delegated event listener only once (prevent duplicate handlers)
         if (!grid.dataset.starlarkHandlerAttached) {

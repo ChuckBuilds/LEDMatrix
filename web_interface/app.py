@@ -4,6 +4,7 @@ import logging
 import os
 import queue
 import re
+import gzip
 import shutil
 import sys
 import subprocess
@@ -69,10 +70,12 @@ except ImportError:
 # Enable gzip/brotli response compression (Flask-Compress skips streaming
 # responses, so the SSE endpoints are unaffected). Optional, like limiter:
 # missing package just means uncompressed responses.
+_HAVE_FLASK_COMPRESS = False
 try:
     from flask_compress import Compress
 
     Compress(app)
+    _HAVE_FLASK_COMPRESS = True
 except ImportError:
     logging.getLogger(__name__).warning(
         "flask-compress not installed - responses will be served uncompressed. "
@@ -500,6 +503,80 @@ def add_static_version(endpoint, values):
             pass
 
 
+# Gzip fallback for when flask-compress isn't installed. Without it the UI
+# ships ~1.2 MB of uncompressed JS to a phone over WiFi. Compressed bytes are
+# cached per URL+version, so the Pi compresses each asset once, not per request.
+# URL-versioned assets: safe to cache as immutable (and to gzip once).
+# /assets/ is the widget bundle from pages_v3 (also reachable under /v3).
+_VERSIONED_ASSET_PREFIXES = ('/static/', '/assets/', '/v3/assets/')
+_GZIP_MIN_BYTES = 1024
+_GZIP_TYPES = (
+    'text/html', 'text/css', 'text/plain', 'text/javascript',
+    'application/javascript', 'application/json', 'image/svg+xml',
+)
+_GZIP_CACHE_MAX_BYTES = 4 * 1024 * 1024
+_gzip_cache = {}
+_gzip_cache_bytes = 0
+_gzip_cache_lock = threading.Lock()
+
+
+@app.after_request
+def compress_text_responses(response):
+    """Gzip text responses when flask-compress is absent (SSE untouched)."""
+    if _HAVE_FLASK_COMPRESS or response.status_code != 200:
+        return response
+    if 'Content-Encoding' in response.headers:
+        return response
+    # send_file responses report is_streamed (they wrap a file) but have a
+    # known size; genuinely streamed bodies (SSE, generators) are left alone.
+    # SSE is also excluded by its text/event-stream mimetype below.
+    if response.is_streamed and not response.direct_passthrough:
+        return response
+    mimetype = (response.mimetype or '').lower()
+    if mimetype not in _GZIP_TYPES:
+        return response
+    if 'gzip' not in (request.headers.get('Accept-Encoding') or '').lower():
+        return response
+
+    cache_key = None
+    if request.path.startswith(_VERSIONED_ASSET_PREFIXES):
+        cache_key = (request.full_path, response.headers.get('Last-Modified'))
+        with _gzip_cache_lock:
+            cached = _gzip_cache.get(cache_key)
+        if cached is not None:
+            return _apply_gzip(response, cached)
+
+    # send_file responses stream from disk; materialize before compressing.
+    if response.direct_passthrough:
+        response.direct_passthrough = False
+    data = response.get_data()
+    if len(data) < _GZIP_MIN_BYTES:
+        return response
+    compressed = gzip.compress(data, compresslevel=6)
+    if len(compressed) >= len(data):
+        return response
+
+    if cache_key is not None:
+        global _gzip_cache_bytes
+        with _gzip_cache_lock:
+            if _gzip_cache_bytes + len(compressed) <= _GZIP_CACHE_MAX_BYTES:
+                _gzip_cache[cache_key] = compressed
+                _gzip_cache_bytes += len(compressed)
+    return _apply_gzip(response, compressed)
+
+
+def _apply_gzip(response, compressed):
+    response.set_data(compressed)
+    response.headers['Content-Encoding'] = 'gzip'
+    response.headers['Content-Length'] = str(len(compressed))
+    if 'accept-encoding' not in (response.headers.get('Vary') or '').lower():
+        response.headers.add('Vary', 'Accept-Encoding')
+    etag = response.headers.get('ETag')
+    if etag and 'gzip' not in etag:
+        response.headers['ETag'] = etag.rstrip('"') + '-gzip"'
+    return response
+
+
 # Add security headers and caching to all responses
 @app.after_request
 def add_security_headers(response):
@@ -511,7 +588,7 @@ def add_security_headers(response):
     response.headers['X-XSS-Protection'] = '1; mode=block'
     
     # Add caching headers for static assets
-    if request.path.startswith('/static/'):
+    if request.path.startswith(_VERSIONED_ASSET_PREFIXES):
         # Cache static assets for 1 year (with versioning via query params)
         response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
         response.headers['Expires'] = (datetime.now() + timedelta(days=365)).strftime('%a, %d %b %Y %H:%M:%S GMT')
