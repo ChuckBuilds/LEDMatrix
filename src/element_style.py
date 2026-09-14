@@ -780,8 +780,14 @@ def _adopt_handwritten_block(schema: Dict[str, Any],
         # editor matched them by exact name, so it drew one offset in eleven
         # and the rest had no control anywhere. Recording the answer here
         # keeps the alias rules in one place instead of a JavaScript copy.
+        # Only an object-shaped entry (x_offset/y_offset/...) can hold an
+        # element's offsets. A leaf directly under layout -- a show_logo
+        # toggle -- is its own control, so it is never claimed by a row and
+        # always gets a position row of its own.
         layout_key = next((name for name in alias_keys(key)
-                           if isinstance(layout_fields.get(name), dict)), None)
+                           if isinstance(layout_fields.get(name), dict)
+                           and isinstance(layout_fields[name].get('properties'),
+                                          dict)), None)
         if layout_key is not None:
             props[key]['x-layout-key'] = layout_key
 

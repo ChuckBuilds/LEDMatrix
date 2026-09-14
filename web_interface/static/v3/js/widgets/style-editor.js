@@ -368,13 +368,6 @@
     };
 
     /**
-     * The columns a table needs, derived from the schema rather than fixed.
-     *
-     * Two sources: the sub-fields elements declare (font, font_size,
-     * text_color, visible, align) and the sub-fields their layout blocks
-     * declare (x_offset, y_offset, scale).
-     */
-    /**
      * Where an element's offsets live in the layout block, or null.
      *
      * A hand-written schema does not line up: football styles 'score_text'
@@ -388,10 +381,13 @@
         var props = (schema && schema.properties) || {};
         var layoutProps = ownObj(props, 'layout').properties || {};
         var declared = ownObj(props, key)['x-layout-key'];
-        if (typeof declared === 'string' && own(layoutProps, declared)) {
+        // Only an object-shaped entry holds offsets. A leaf straight under
+        // layout (a show_logo toggle) is a control of its own, so it is never
+        // claimed here and always gets a position row.
+        if (typeof declared === 'string' && ownObj(layoutProps, declared).properties) {
             return declared;
         }
-        return own(layoutProps, key) ? key : null;
+        return ownObj(layoutProps, key).properties ? key : null;
     }
 
     /** One row per styled element, paired with its offsets if it has any. */
@@ -415,7 +411,11 @@
         var claimed = styleRows(schema).map(function (r) { return r.layoutKey; });
         var order = layout['x-propertyOrder'] || Object.keys(layoutProps);
         return order.filter(function (lk) {
-            return ownObj(layoutProps, lk).properties && claimed.indexOf(lk) === -1;
+            var entry = own(layoutProps, lk);
+            // Object-shaped entries carry offsets; a leaf is itself the
+            // control. Both need a row here, because the editor removes the
+            // fallback's whole layout section.
+            return entry && typeof entry === 'object' && claimed.indexOf(lk) === -1;
         }).map(function (lk) {
             return { key: null, layoutKey: lk };
         });
@@ -426,9 +426,21 @@
         return ownObj(layoutProps, layoutKey).title || layoutKey.replace(/_/g, ' ');
     }
 
+    /**
+     * The columns a table needs, derived from the schema rather than fixed.
+     *
+     * Three sources: the sub-fields a row's style block declares (font,
+     * font_size, text_color, visible, align), the sub-fields of its layout
+     * entry (x_offset, y_offset, scale), and a layout entry whose own value
+     * *is* the field -- a show_logo toggle straight under layout has no x/y
+     * object underneath, so it gets a column keyed to itself.
+     *
+     * `rows` defaults to every row the schema produces, style and position.
+     */
     function columnsFor(schema, rows) {
         var props = schema.properties || {};
         var layoutProps = ownObj(props, 'layout').properties || {};
+        rows = rows || styleRows(schema).concat(positionRows(schema));
         // A Map, not an object: the keys are field names out of a schema, so
         // a field literally named "constructor" is a column like any other
         // and never touches a prototype.
@@ -438,9 +450,16 @@
                 Object.keys(ownObj(props, row.key).properties || {}).forEach(
                     function (f) { seen.set(f, 'element'); });
             }
-            if (row.layoutKey) {
-                Object.keys(ownObj(layoutProps, row.layoutKey).properties || {}).forEach(
+            if (!row.layoutKey) { return; }
+            var entry = own(layoutProps, row.layoutKey);
+            if (entry && typeof entry === 'object' && entry.properties) {
+                Object.keys(entry.properties).forEach(
                     function (f) { seen.set(f, 'layout'); });
+            } else if (entry && typeof entry === 'object') {
+                // A leaf. Namespaced so an unrelated column sharing its name
+                // -- another entry's "scale" axis, say -- can never shadow it
+                // and leave this row's only control blank.
+                seen.set('layout-leaf:' + row.layoutKey, 'layout-leaf');
             }
         });
         var known = COLUMN_ORDER.filter(function (f) { return seen.get(f); });
@@ -450,10 +469,12 @@
             return COLUMN_ORDER.indexOf(f) === -1;
         }).sort();
         return known.concat(extra).map(function (f) {
+            var isLeaf = f.indexOf('layout-leaf:') === 0;
+            var fieldKey = isLeaf ? f.slice('layout-leaf:'.length) : f;
             return {
-                key: f,
+                key: fieldKey,
                 where: seen.get(f),
-                label: own(COLUMN_LABELS, f) || f.replace(/_/g, ' ')
+                label: own(COLUMN_LABELS, fieldKey) || fieldKey.replace(/_/g, ' ')
             };
         });
     }
@@ -528,8 +549,12 @@
         }
 
         opts.columns.forEach(function (col) {
+            var isLeaf = col.where === 'layout-leaf';
             var inLayout = col.where === 'layout';
-            var prop = inLayout ? own(axes, col.key) : own(props, col.key);
+            // A leaf column belongs to the one position row named after it;
+            // every other row leaves that cell blank.
+            var prop = isLeaf ? (col.key === layoutKey ? own(layoutProps, layoutKey) : null)
+                     : inLayout ? own(axes, col.key) : own(props, col.key);
             var cell;
             if (!prop) {
                 // This element does not declare that field; keep the grid
@@ -537,16 +562,19 @@
                 row.appendChild(el('span'));
                 return;
             }
-            var path = inLayout ? ['layout', layoutKey, col.key] : [key, col.key];
+            var path = isLeaf ? ['layout', layoutKey]
+                     : inLayout ? ['layout', layoutKey, col.key] : [key, col.key];
             // Posted under the key the schema declares, never the style key:
             // a plugin's own offset reader looks up layout.score, so a value
-            // saved as layout.score_text would be kept and never drawn.
-            var base = inLayout ? opts.layoutPrefix + '.' + layoutKey
-                                : opts.prefix + '.' + key;
+            // saved as layout.score_text would be kept and never drawn. A
+            // leaf is the field itself, so its name has no sub-field suffix --
+            // the same name the generic renderer would have posted.
+            var base = (isLeaf || inLayout) ? opts.layoutPrefix + '.' + layoutKey
+                                            : opts.prefix + '.' + key;
             var node = control({
                 key: col.key,
                 prop: prop,
-                name: base + '.' + col.key,
+                name: isLeaf ? base : base + '.' + col.key,
                 current: effective(value, path, prop, optional),
                 optional: optional,
                 fonts: opts.fonts,

@@ -88,6 +88,16 @@ class TestItTakesOverOnlyItsOwnBlocks:
         entirely styling looks exactly as it did before."""
         assert "!fallback.querySelector('[data-child-key]')" in source
 
+    def test_the_owned_key_is_escaped_before_it_becomes_a_selector(self, source):
+        """ownedKeys comes back off a dataset attribute, not a literal --
+        splicing it into '[data-child-key="' + k + '"]' unescaped breaks (or
+        is steerable) on a key containing a quote or backslash. The rest of
+        this codebase (plugin-file-manager.js, app-shell.js) always routes a
+        dynamic value through CSS.escape() before it lands in a selector."""
+        assert "CSS.escape(k)" in source, (
+            "an owned key must be CSS.escape()'d before being interpolated "
+            "into the data-child-key attribute selector")
+
 
 class TestTheSchemaSaysWhichBlocksAreStyling:
     def test_adopted_blocks_are_marked_and_others_are_not(self):
@@ -221,3 +231,21 @@ class TestEveryAdvertisedOffsetGetsAControl:
             "the alias rules live in element_style.py; the widget must read "
             "their result rather than carry a second copy")
         assert "function positionRows" in js
+
+    def test_a_leaf_under_layout_is_never_claimed_as_offsets(self):
+        """A show_logo toggle straight under layout has no x/y object, so it
+        cannot hold an element's offsets. Claiming it would give that row no
+        layout columns and remove the leaf from the positions list -- the
+        field would lose its only control."""
+        from src.element_style import expand_style_elements
+
+        schema = _football_shaped()
+        cust = schema["properties"]["customization"]
+        # A style element whose alias ("show_logo") names a leaf.
+        cust["properties"]["show_logo_text"] = _style_block()
+        cust["properties"]["layout"]["properties"]["show_logo"] = {
+            "type": "boolean", "default": True}
+        props = expand_style_elements(schema)["properties"]["customization"][
+            "properties"]
+        assert "x-layout-key" not in props["show_logo_text"]
+        assert "show_logo" in props["layout"]["x-propertyOrder"]
