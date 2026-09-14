@@ -99,6 +99,16 @@ select:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline
   </div>
 </div>
 
+<div id="handoff-view" class="card hidden" tabindex="-1" aria-labelledby="handoff-title">
+  <div class="success-box">
+    <svg class="icon" style="color:var(--accent)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+    <p class="title" id="handoff-title">Connecting to <span id="handoff-ssid"></span></p>
+    <p class="hint">LEDMatrix-Setup has turned off, so this page can’t follow along any more.</p>
+    <p class="hint"><strong>If it worked:</strong> the LED display shows the new address. Rejoin your home WiFi and open it.</p>
+    <p class="hint"><strong>If it didn’t:</strong> LEDMatrix-Setup comes back within a few minutes. Rejoin it and reopen this page to see why.</p>
+  </div>
+</div>
+
 <div class="footer">
   <a href="/">Open Full Interface</a>
 </div>
@@ -259,17 +269,16 @@ function doConnect() {
   }, 60000)
   .then(readJson)
   .then(function(data) {
-    if (data.status === 'success') {
+    if (data.status === 'pending') {
+      // Connecting in the background; this network is about to go away.
+      showMsg(handoffMessage(ssid), 'info');
+      setTimeout(function() { checkNewIP(ssid); }, 3000);
+    } else if (data.status === 'success') {
       clearMsg();
       // Poll for the new IP
       setTimeout(function() { checkNewIP(ssid); }, 3000);
     } else {
-      var msg = data.error_type === 'wrong_password'
-        ? 'Incorrect password — please try again.'
-        : (data.message || 'Couldn’t connect to ' + ssid + '. Check the network name and password, then try again.');
-      showMsg(msg, 'err');
-      resetConnect();
-      if (data.error_type === 'wrong_password') $('password').focus();
+      showConnectError(data, ssid);
     }
   })
   .catch(function(e) {
@@ -279,10 +288,47 @@ function doConnect() {
       return;
     }
     // Connection may drop if AP mode was disabled — that's expected
-    clearMsg();
-    showMsg('Connection attempt sent. If the page stops responding, the device is connecting to ' + ssid + '.', 'info');
-    setTimeout(function() { showSuccessFallback(ssid); }, 5000);
+    showHandoff(ssid);
   });
+}
+
+function handoffMessage(ssid) {
+  return 'Connecting to ' + ssid + '. LEDMatrix-Setup will turn off and your phone will disconnect from it. ' +
+    'If it works, the LED display shows its new address. If not, LEDMatrix-Setup comes back within a few minutes: ' +
+    'rejoin it and reopen this page to see why.';
+}
+
+function resetConnectBtn() {
+  var btn = $('btn-connect');
+  connecting = false;
+  btn.removeAttribute('aria-busy');
+  btn.textContent = 'Connect';
+  updateConnectBtn();
+}
+
+// `attempt` is a /wifi/connect error body or a failed last_connect_attempt.
+function showConnectError(attempt, ssid) {
+  var name = attempt.ssid || ssid;
+  var wrongPassword = attempt.error_type === 'wrong_password';
+  var msg = wrongPassword
+    ? 'Incorrect password for ' + name + ' — please try again.'
+    : (attempt.message || 'Couldn’t connect to ' + name + '. Check the network name and password, then try again.');
+  // A background failure brings the AP back: put the form back too.
+  $('handoff-view').classList.add('hidden');
+  $('setup-form').classList.remove('hidden');
+  showMsg(msg, 'err');
+  resetConnectBtn();
+  if (wrongPassword) $('password').focus();
+}
+
+function showHandoff(ssid) {
+  $('setup-form').classList.add('hidden');
+  $('success-view').classList.add('hidden');
+  var view = $('handoff-view');
+  view.classList.remove('hidden');
+  $('handoff-ssid').textContent = ssid;
+  clearMsg();
+  view.focus();
 }
 
 var MAX_IP_RETRIES = 20;
@@ -296,16 +342,36 @@ function checkNewIP(ssid, retriesLeft) {
   fetchWithTimeout('/api/v3/wifi/status', {}, 8000)
     .then(readJson)
     .then(function(data) {
-      if (data.status === 'success' && data.data && data.data.connected && data.data.ip_address) {
-        showSuccess(data.data.ip_address);
+      var d = (data.status === 'success' && data.data) || {};
+      var attempt = d.last_connect_attempt;
+      if (attempt && attempt.ssid === ssid && attempt.state === 'failed') {
+        showConnectError(attempt);
+      } else if (d.connected && d.ip_address && !d.ap_mode_active) {
+        showSuccess(d.ip_address);
       } else {
         setTimeout(function() { checkNewIP(ssid, retriesLeft - 1); }, 3000);
       }
     })
     .catch(function() {
-      // AP likely down — show fallback
-      showSuccessFallback(ssid);
+      // The setup network went down, which is what connecting does.
+      showHandoff(ssid);
     });
+}
+
+// A failed attempt brings LEDMatrix-Setup back; tell the user who rejoined why.
+function showPreviousFailure() {
+  fetchWithTimeout('/api/v3/wifi/status', {}, 8000)
+    .then(readJson)
+    .then(function(data) {
+      var attempt = data.data && data.data.last_connect_attempt;
+      if (attempt && attempt.state === 'failed' && !data.data.connected) {
+        var reason = attempt.error_type === 'wrong_password'
+          ? 'the password was incorrect'
+          : (attempt.message || 'an unknown error');
+        showMsg('Last attempt to connect to ' + attempt.ssid + ' failed: ' + reason + '.', 'err');
+      }
+    })
+    .catch(function() {});
 }
 
 function revealSuccess(text) {
@@ -326,6 +392,7 @@ function showSuccessFallback(ssid) {
 }
 
 // Auto-scan on load
+showPreviousFailure();
 doScan();
 </script>
 </body>
