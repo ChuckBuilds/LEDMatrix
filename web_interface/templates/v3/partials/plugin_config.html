@@ -147,8 +147,13 @@
                         var owned = (container.dataset.ownedKeys || '')
                             .split(',').filter(function (k) { return k; });
                         owned.forEach(function (k) {
+                            // CSS.escape: k is a schema property key read
+                            // back off dataset.ownedKeys, not a literal --
+                            // building the attribute selector by raw
+                            // concatenation would break (or be steerable)
+                            // on a key containing a quote or backslash.
                             var node = fallback.querySelector(
-                                '[data-child-key="' + k + '"]');
+                                '[data-child-key="' + CSS.escape(k) + '"]');
                             if (node) { node.remove(); }
                         });
                         // Nothing left but the section heading, or a widget

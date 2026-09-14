@@ -88,6 +88,16 @@ class TestItTakesOverOnlyItsOwnBlocks:
         entirely styling looks exactly as it did before."""
         assert "!fallback.querySelector('[data-child-key]')" in source
 
+    def test_the_owned_key_is_escaped_before_it_becomes_a_selector(self, source):
+        """ownedKeys comes back off a dataset attribute, not a literal --
+        splicing it into '[data-child-key="' + k + '"]' unescaped breaks (or
+        is steerable) on a key containing a quote or backslash. The rest of
+        this codebase (plugin-file-manager.js, app-shell.js) always routes a
+        dynamic value through CSS.escape() before it lands in a selector."""
+        assert "CSS.escape(k)" in source, (
+            "an owned key must be CSS.escape()'d before being interpolated "
+            "into the data-child-key attribute selector")
+
 
 class TestTheSchemaSaysWhichBlocksAreStyling:
     def test_adopted_blocks_are_marked_and_others_are_not(self):
