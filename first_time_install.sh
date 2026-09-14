@@ -125,6 +125,72 @@ fi
 # Get the home directory of the actual user
 USER_HOME=$(eval echo ~$ACTUAL_USER)
 
+# --- rpi-rgb-led-matrix checkout helpers -------------------------------------
+# Run git as whoever owns the project directory. Run as root against a
+# user-owned repo, git refuses it ("dubious ownership"), and anything it does
+# create — such as .git/modules/<submodule> — ends up root-owned, locking the
+# user out of their own checkout. A root-owned install keeps running as root.
+_rgb_repo_owner() {
+    stat -c %U "$PROJECT_ROOT_DIR" 2>/dev/null || echo root
+}
+
+_git_as_repo_owner() {
+    local owner
+    owner=$(_rgb_repo_owner)
+    if [ "$(id -u)" = "0" ] && [ "$owner" != "root" ] && command -v sudo >/dev/null 2>&1; then
+        sudo -u "$owner" -H git "$@"
+    else
+        git "$@"
+    fi
+}
+
+# Earlier installer versions ran the submodule git commands as root, leaving
+# root-owned files the repo owner (and so _git_as_repo_owner) cannot write.
+_reclaim_rgb_checkout() {
+    local owner path
+    owner=$(_rgb_repo_owner)
+    if [ "$(id -u)" != "0" ] || [ "$owner" = "root" ]; then
+        return 0
+    fi
+    for path in "$PROJECT_ROOT_DIR/rpi-rgb-led-matrix-master" "$PROJECT_ROOT_DIR/.git/modules/rpi-rgb-led-matrix-master"; do
+        if [ -e "$path" ]; then
+            chown -R "$owner:" "$path" 2>/dev/null || true
+        fi
+    done
+}
+
+# `git pull` on the main repo never moves an existing submodule checkout, so a
+# submodule bump (e.g. the ARMv6 build fix for Pi Zero/1) would never reach a
+# device installed before it. Move the checkout forward to the pinned commit —
+# but never backward or sideways: a user who ran `git submodule update --remote`
+# is newer than the pin and is left alone. Never fatal.
+_sync_rgb_submodule() {
+    local sub="$PROJECT_ROOT_DIR/rpi-rgb-led-matrix-master" pinned current
+    if [ ! -f "$PROJECT_ROOT_DIR/.gitmodules" ] || ! grep -q "rpi-rgb-led-matrix" "$PROJECT_ROOT_DIR/.gitmodules" \
+        || [ ! -e "$sub/.git" ]; then
+        return 0
+    fi
+    if ! pinned=$(_git_as_repo_owner -C "$PROJECT_ROOT_DIR" rev-parse "HEAD:rpi-rgb-led-matrix-master" 2>/dev/null) \
+        || [ -z "$pinned" ]; then
+        return 0
+    fi
+    current=$(_git_as_repo_owner -C "$sub" rev-parse HEAD 2>/dev/null) || current=""
+    if [ "$current" = "$pinned" ]; then
+        return 0
+    fi
+    if [ -n "$current" ] && _git_as_repo_owner -C "$sub" cat-file -e "${pinned}^{commit}" 2>/dev/null \
+        && ! _git_as_repo_owner -C "$sub" merge-base --is-ancestor "$current" "$pinned" 2>/dev/null; then
+        echo "rpi-rgb-led-matrix-master is at ${current:0:7}, not behind the pinned ${pinned:0:7}; leaving it as is"
+        return 0
+    fi
+    echo "Updating rpi-rgb-led-matrix-master to the pinned commit ${pinned:0:7}..."
+    if ! _git_as_repo_owner -C "$PROJECT_ROOT_DIR" submodule update --init --recursive rpi-rgb-led-matrix-master; then
+        echo "⚠ Could not update rpi-rgb-led-matrix-master to the pinned commit; building the existing checkout"
+    fi
+    return 0
+}
+# --- end rpi-rgb-led-matrix checkout helpers ---------------------------------
+
 # Determine the Project Root Directory (where this script is located)
 PROJECT_ROOT_DIR=$(cd "$(dirname "$0")" && pwd)
 
@@ -1038,8 +1104,9 @@ else
     # so git clone doesn't fail with "destination path already exists".
     _clone_rpi_rgb() {
         rm -rf "$PROJECT_ROOT_DIR/rpi-rgb-led-matrix-master"
-        git clone https://github.com/hzeller/rpi-rgb-led-matrix.git rpi-rgb-led-matrix-master
+        _git_as_repo_owner clone https://github.com/hzeller/rpi-rgb-led-matrix.git rpi-rgb-led-matrix-master
     }
+    _reclaim_rgb_checkout
     if [ ! -d "$PROJECT_ROOT_DIR/rpi-rgb-led-matrix-master" ]; then
         echo "rpi-rgb-led-matrix-master not found. Initializing git submodule..."
         cd "$PROJECT_ROOT_DIR"
@@ -1047,7 +1114,7 @@ else
         # Try to initialize submodule if .gitmodules exists
         if [ -f "$PROJECT_ROOT_DIR/.gitmodules" ] && grep -q "rpi-rgb-led-matrix" "$PROJECT_ROOT_DIR/.gitmodules"; then
             echo "Initializing rpi-rgb-led-matrix submodule..."
-            if ! retry git submodule update --init --recursive rpi-rgb-led-matrix-master; then
+            if ! retry _git_as_repo_owner submodule update --init --recursive rpi-rgb-led-matrix-master; then
                 echo "⚠ Submodule init failed, cloning directly from GitHub..."
                 retry _clone_rpi_rgb
             fi
@@ -1066,11 +1133,13 @@ else
             cd "$PROJECT_ROOT_DIR"
             rm -rf rpi-rgb-led-matrix-master
             if [ -f "$PROJECT_ROOT_DIR/.gitmodules" ] && grep -q "rpi-rgb-led-matrix" "$PROJECT_ROOT_DIR/.gitmodules"; then
-                retry git submodule update --init --recursive rpi-rgb-led-matrix-master
+                retry _git_as_repo_owner submodule update --init --recursive rpi-rgb-led-matrix-master
             else
                 retry _clone_rpi_rgb
             fi
         fi
+
+        _sync_rgb_submodule
 
         # Add temporary swap on low-memory devices so the compiler survives.
         CURRENT_STEP="Prepare the low-memory build environment"
