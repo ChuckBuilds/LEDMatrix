@@ -141,7 +141,9 @@ def get_auto_update_status():
 def dismiss_auto_update_alert():
     """Hide the current automatic-update banner until a new alert replaces it."""
     from web_interface import auto_update
-    alert_id = str((request.get_json(silent=True) or {}).get('alert_id') or '').strip()
+    payload = request.get_json(silent=True)
+    # A JSON array or scalar is a bad request, not a 500.
+    alert_id = str(payload.get('alert_id') or '').strip() if isinstance(payload, dict) else ''
     if not alert_id:
         return jsonify({'status': 'error', 'message': 'alert_id required'}), 400
     auto_update.dismiss_alert(alert_id)

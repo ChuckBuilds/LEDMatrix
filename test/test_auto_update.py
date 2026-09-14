@@ -639,9 +639,10 @@ class TestStatusRoutes:
         data = client.get('/api/v3/system/auto-update').get_json()['data']
         assert data == {'alert': 'rolled back', 'alert_id': '7'}
 
-    def test_dismiss_needs_an_id(self, api_client):
+    @pytest.mark.parametrize('body', [{}, [1], 'x', 5])
+    def test_dismiss_needs_an_id_in_a_json_object(self, api_client, body):
         client, _, _ = api_client
-        assert client.post('/api/v3/system/auto-update/dismiss', json={}).status_code == 400
+        assert client.post('/api/v3/system/auto-update/dismiss', json=body).status_code == 400
 
     def test_dismiss(self, api_client, monkeypatch):
         client, _, _ = api_client
