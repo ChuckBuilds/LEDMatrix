@@ -189,7 +189,8 @@ class BasePlugin(ABC):
     def update(self) -> None:
         """
         Fetch/update data for this plugin.
-        Called based on update_interval in manifest.
+        Called every get_update_interval() seconds when that returns a
+        number, otherwise every manifest update_interval seconds.
         """
         pass
     
@@ -203,6 +204,21 @@ class BasePlugin(ABC):
             force_clear: If True, clear display before rendering
         """
         pass
+    
+    def get_update_interval(self) -> Optional[float]:
+        """
+        Seconds until update() should run again, decided at runtime.
+        Return None (the default) to use the static interval.
+
+        PluginManager._get_plugin_update_interval calls this on every
+        scheduling tick. A number overrides the manifest and is clamped up
+        to PluginManager.MIN_DYNAMIC_UPDATE_INTERVAL (5s); None, a raise,
+        or a non-finite/non-numeric value falls back to the manifest's
+        update_interval, then the plugin config's update_interval, then
+        60s. The static value is cached until the plugin reloads; the hook
+        is not cached, so it must be cheap and must not raise.
+        """
+        return None
     
     def get_display_duration(self) -> float:
         """

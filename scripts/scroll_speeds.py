@@ -59,10 +59,13 @@ def build_options(hardware, refresh_override=None):
     from rgbmatrix import RGBMatrixOptions
 
     o = RGBMatrixOptions()
-    o.rows = int(hardware.get("rows", 32))
-    o.cols = int(hardware.get("cols", 64))
-    o.chain_length = int(hardware.get("chain_length", 1))
-    o.parallel = int(hardware.get("parallel", 1))
+    from src.display_geometry import (
+        DEFAULT_CHAIN_LENGTH, DEFAULT_COLS, DEFAULT_PARALLEL, DEFAULT_ROWS,
+    )
+    o.rows = int(hardware.get("rows", DEFAULT_ROWS))
+    o.cols = int(hardware.get("cols", DEFAULT_COLS))
+    o.chain_length = int(hardware.get("chain_length", DEFAULT_CHAIN_LENGTH))
+    o.parallel = int(hardware.get("parallel", DEFAULT_PARALLEL))
     o.brightness = int(hardware.get("brightness", 80))
     o.hardware_mapping = hardware.get("hardware_mapping", "regular")
     o.pwm_bits = int(hardware.get("pwm_bits", 11))

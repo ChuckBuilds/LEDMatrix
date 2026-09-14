@@ -1,5 +1,10 @@
 # skins/
 
+> **Not supported yet.** The current scoreboard plugins don't render skins,
+> so a skin placed here and selected in config has no effect, and the web UI
+> and Plugin Store don't offer them. See
+> [docs/SKIN_SYSTEM.md](../docs/SKIN_SYSTEM.md#status-not-supported-yet).
+
 User-installable **visual skins** for the sports scoreboards. Each
 subdirectory is one skin:
 
@@ -10,10 +15,10 @@ skins/<skin-id>/
   preview.png   # optional
 ```
 
-- Install a skin: `git clone <skin repo> skins/<skin-id>` (or via the Plugin
-  Store for registry entries with `"type": "skin"`).
+- Install a skin: `git clone <skin repo> skins/<skin-id>`. The Plugin Store
+  refuses registry entries with `"type": "skin"` while skins don't render.
 - Select it: set `"skin": "<skin-id>"` in the plugin's section of
-  `config/config.json`, or use the web UI's Visual Skin dropdown.
+  `config/config.json`. The web UI no longer shows a Visual Skin dropdown.
 - Build one: start from `example-classic-baseball/` and read
   [docs/CREATING_SKINS.md](../docs/CREATING_SKINS.md). Validate with
   `python scripts/validate_skin.py --skin <skin-id>`.

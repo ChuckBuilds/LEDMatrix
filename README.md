@@ -463,13 +463,12 @@ For plugin development, check out the [Hello World Plugin](https://github.com/Ch
 
 ### Visual Skins for Scoreboards
 
-Want a different look for a sports scoreboard without forking the plugin?
-**Skins** restyle the live/recent/upcoming screens while the plugin keeps
-handling data, scheduling, caching, and vegas mode. Install one with
-`git clone <skin repo> skins/<skin-id>`, select it in the plugin's config,
-and you're done — see [docs/SKIN_SYSTEM.md](docs/SKIN_SYSTEM.md) (how it
-works) and [docs/CREATING_SKINS.md](docs/CREATING_SKINS.md) (build your own,
-including a ready-made Claude Code prompt).
+**Not supported yet.** Skins are meant to restyle a sports scoreboard's
+live/recent/upcoming screens without forking the plugin, but the current
+scoreboard plugins don't render them: a selected skin has no effect. The web
+UI doesn't offer skin install or selection for that reason. The skin system
+and its docs stay in place for when scoreboards adopt it; see
+[docs/SKIN_SYSTEM.md](docs/SKIN_SYSTEM.md) for why.
 
 2. **Built-in Managers Deprecated**: The built-in managers (hockey, football, stocks, etc.) are now deprecated and have been moved to the plugin system. **You must install replacement plugins from the Plugin Store** in the web interface instead. The plugin system provides the same functionality with better maintainability and extensibility.
 </details>

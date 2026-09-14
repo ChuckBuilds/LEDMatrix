@@ -1,5 +1,14 @@
 # Creating Skins
 
+> **Not supported yet: skins don't render with the current scoreboard
+> plugins.** The only render hook is `SportsCore._render_game()` in
+> `src/base_classes/sports/core.py`, and no current scoreboard (monorepo or
+> third-party) builds on `src.base_classes`, so a skin you build here passes
+> `validate_skin.py` but never appears on the matrix. The web UI and Plugin
+> Store don't offer skins for that reason. Details:
+> [SKIN_SYSTEM.md](SKIN_SYSTEM.md#status-not-supported-yet). The guide below
+> stays accurate for the skin API itself.
+
 A skin restyles a sports scoreboard (live / recent / upcoming) without
 forking the plugin: the plugin keeps fetching data, scheduling, caching, and
 doing vegas mode; your skin only draws. Architecture background:
@@ -19,7 +28,9 @@ panel sizes with **no hardware, no network, no running service**, saves PNGs
 (plus 4x previews) to `skin_renders/`, and fails loudly on errors. Iterate:
 edit → validate → look at the PNGs.
 
-To see it on your matrix, add to your plugin's section in `config/config.json`:
+To select it, add to your plugin's section in `config/config.json` (this is
+stored and validated, but has no visible effect until a scoreboard uses the
+skin hook — see the note at the top):
 
 ```json
 "baseball-scoreboard": {
@@ -28,8 +39,8 @@ To see it on your matrix, add to your plugin's section in `config/config.json`:
 }
 ```
 
-or pick it from the **Visual Skin** dropdown in the web UI (it appears once a
-matching skin is installed). `"skin"` also accepts a per-mode mapping:
+The web UI's **Visual Skin** dropdown is hidden while skins are unsupported.
+`"skin"` also accepts a per-mode mapping:
 `{"live": "my-skin", "recent": "built-in"}`.
 
 ## The manifest (`skin.json`)
@@ -234,8 +245,9 @@ Tips that keep Claude (and you) out of trouble:
       dev machine
 
 Distribute by publishing the directory as a git repo (users
-`git clone <repo> skins/<id>`), or submit it to the plugin registry as an
-entry with `"type": "skin"` (see [SKIN_SYSTEM.md](SKIN_SYSTEM.md) §Distribution).
+`git clone <repo> skins/<id>`). Registry entries with `"type": "skin"` are
+hidden and refused by the Plugin Store while skins are unsupported (see
+[SKIN_SYSTEM.md](SKIN_SYSTEM.md) §Distribution).
 
 **Trust note:** a skin is Python running inside the display service — the
 same trust level as a plugin. Review code before installing skins from

@@ -36,7 +36,10 @@ self.enabled            # Boolean enabled status
 
 #### `update() -> None`
 
-Fetch/update data for this plugin. Called based on `update_interval` specified in the plugin's manifest.
+Fetch/update data for this plugin. Called on the plugin's update interval:
+the value `get_update_interval()` returns when it returns a number, otherwise
+the `update_interval` in the plugin's manifest (see
+[`get_update_interval()`](#get_update_interval---optionalfloat) below).
 
 **Example**:
 ```python
@@ -108,6 +111,46 @@ Called when plugin is enabled.
 #### `on_disable() -> None`
 
 Called when plugin is disabled.
+
+#### `get_update_interval() -> Optional[float]`
+
+How often this plugin wants `update()` called right now, in seconds. The
+manifest's `update_interval` is one static number; override this when the
+right cadence depends on state only the plugin knows, e.g. poll every 15s
+while a game is live and fall back to the manifest value otherwise.
+
+**Returns**: seconds as a number, or `None` (the default) for no opinion.
+
+How `PluginManager` (`_get_plugin_update_interval` in
+`src/plugin_system/plugin_manager.py`) resolves the interval on each
+scheduling tick:
+
+1. It calls `get_update_interval()`. A number wins over everything below.
+   Values under `PluginManager.MIN_DYNAMIC_UPDATE_INTERVAL` (5 seconds) are
+   raised to it.
+2. If the hook returns `None`, raises, or returns something that isn't a
+   finite number (a `bool`, a string, NaN, infinity), it is ignored and the
+   static interval applies: the manifest's `update_interval`, else
+   `update_interval` in the plugin's section of `config.json`, else 60
+   seconds.
+
+The static value is cached per plugin until the plugin is loaded or
+unloaded again, so editing `update_interval` in config takes effect on the
+next reload. The hook's return value is never cached: it is called on every
+tick of the display loop, so keep it to attribute reads (no config lookups,
+no I/O, no locks a fetch might hold) and don't let it raise.
+
+**Example**:
+```python
+def get_update_interval(self):
+    # Fast while something is live, manifest default otherwise.
+    if any(m.live_games for m in self._live_managers):
+        return self.config.get("live_update_interval", 15)
+    return None
+```
+
+Added in core 3.4.0; older cores never call it, so a plugin that relies on
+it should floor `ledmatrix_min_version` at `3.4.0`.
 
 #### `get_display_duration() -> float`
 

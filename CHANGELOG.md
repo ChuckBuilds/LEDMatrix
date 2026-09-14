@@ -19,6 +19,30 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+## 3.4.0
+
+Plugin-facing changes since 3.3.0 (tag `v3.3.1`) not covered further down:
+
+- `BasePlugin.get_update_interval()` (#555) — return seconds to override the
+  manifest's `update_interval` at runtime (e.g. poll fast only while a game is
+  live), or `None` to keep it. Clamped to at least 5 seconds; a raising or
+  non-numeric return is ignored. Called every scheduling tick, so keep it
+  cheap. Older cores never call it. See `docs/PLUGIN_API_REFERENCE.md`.
+- `src.common.scroll_config` (#523) — turns a plugin's scroll config into a
+  configured `ScrollHelper` in one place, replacing per-plugin resolution that
+  disagreed between tickers, and warns when a speed won't advance whole pixels
+  per panel refresh. Floor on 3.4.0 to import it.
+- **Skins are marked unsupported.** No current scoreboard plugin builds on
+  `src.base_classes`, so the skin hook (`SportsCore._render_game`) never runs.
+  The web UI no longer shows the Visual Skin dropdown, the store hides and
+  refuses `"type": "skin"` entries, and `GET /api/v3/skins` reports
+  `"supported": false`. Saved `skin` config values still load and save.
+  `src/skin_system/` is unchanged.
+- **Web preview size** now comes from `src/display_geometry.py`, the same
+  computation `DisplayManager` uses: double-sided setups preview one screen,
+  and a missing `chain_length` defaults to 2 everywhere (the Starlark magnify
+  default and the sync handshake used 1).
+
 **Per-element display customization, and the last mile of it into the web UI.**
 A user can set the font, size, colour, position, visibility and alignment of
 individual display elements per plugin -- and, where a plugin has display
@@ -108,6 +132,8 @@ Removed:
   the legacy `plugins/config_manager.js`, superseded by server-side rendering.
 
 ## 3.3.0
+
+Historical note: tag `v3.3.0` reports `__version__` "3.2.0" and tag `v3.3.1` reports "3.3.0", so a "3.3.0" floor is effectively `v3.3.1`, the first release shipping `src/common/sports_shared.py`.
 
 **The release the sports scoreboards floor on to delete their bundled copies.**
 3.2.0 shipped the unified sports library and made `ledmatrix_min_version`

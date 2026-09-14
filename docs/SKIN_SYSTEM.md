@@ -1,5 +1,35 @@
 # Skin System Architecture
 
+## Status: not supported yet
+
+**Skins don't render with the current scoreboard plugins.** The skin system
+below works in isolation (it loads, validates and renders skins in
+`scripts/validate_skin.py` and `test/test_skin_system.py`), but nothing on a
+running display calls it:
+
+- The only render hook is `SportsCore._render_game()` in
+  `src/base_classes/sports/core.py`.
+- None of the current scoreboard plugins build on `src.base_classes`. The
+  official scoreboards in the `ledmatrix-plugins` monorepo, and the
+  third-party scoreboards in the plugin registry, carry their own sports and
+  rendering code (with the shared `src/common/sports_*` helpers) and never
+  reach `SportsCore._render_game()`.
+
+So a skin can be dropped into `skins/` and named in a plugin's config, but the
+scoreboard keeps drawing its built-in layout. Until a scoreboard adopts the
+hook, core does not offer skins to users:
+
+- The plugin config page shows no **Visual Skin** dropdown.
+- The Plugin Store hides registry entries with `"type": "skin"` and refuses
+  to install one (`POST /api/v3/plugins/install` answers 400 with the reason).
+- `GET /api/v3/skins` still lists what is in `skins/`, with
+  `"supported": false` and a `message`.
+- A config that already contains `"skin"` / `"skin_options"` still loads,
+  validates and saves unchanged; the value is simply unused.
+
+The rest of this document describes the design as built, for whoever wires a
+scoreboard to it.
+
 Skins are user-installable **visual overlays** for the sports scoreboards.
 A skin replaces only the *look* of a scoreboard — the host plugin keeps doing
 data fetching, scheduling, caching, dedup, live-priority takeover, and vegas
@@ -32,8 +62,10 @@ crashing) simply restores the built-in look.
 
 ## The render funnel
 
-Every sports scoreboard (baseball, football, basketball, hockey — anything
-built on the `src/base_classes/sports/` package, `core.py`) renders through exactly one seam:
+A sports scoreboard built on the `src/base_classes/sports/` package
+(`core.py`) renders through exactly one seam. No current scoreboard plugin is
+built on it (see [Status](#status-not-supported-yet)), so for them this seam is
+never reached:
 `SportsCore._render_game(game, force_clear)`.
 
 1. The mode class's `display()` (live, `SportsUpcoming`, `SportsRecent`)
@@ -135,22 +167,26 @@ Inside the plugin's own config section in `config/config.json`:
 `"built-in"` means the stock renderer. Because this rides the plugin's config
 section, it persists across plugin reinstalls like every other setting.
 
-The web UI shows a **Visual Skin** dropdown for plugins that have matching
-skins installed: `SchemaManager.inject_skin_selector` adds an enum to the
-*served* schema only. Validation never sees the enum — so a config that
-references an uninstalled skin stays valid (rendering just falls back), and
-the currently-configured value is always kept selectable. `GET /api/v3/skins`
-lists installed skins (optionally filtered by `?plugin_id=`).
+`SchemaManager.inject_skin_selector` can add a **Visual Skin** enum to the
+*served* schema for plugins with matching skins installed. While skins are
+unsupported the plugin schema endpoint does not call it, so the dropdown is
+not shown. Validation never sees the enum either way: the base schema allows
+any `skin` value, so a config that references an uninstalled skin stays valid.
+`GET /api/v3/skins` lists installed skins (optionally filtered by
+`?plugin_id=`) and reports `"supported": false`.
 
 ## Distribution
 
 - **Manual:** `git clone <skin repo> skins/<skin-id>` — that's the whole
   install. No manifest bumps, no `update_registry.py`; skins are not monorepo
   plugins.
-- **Store:** registry entries with `"type": "skin"` install through the same
-  `plugins.json` pipeline; `PluginStoreManager` routes them to `skins/`,
-  validates `skin.json` (including the API major version) instead of
-  `manifest.json`, and never installs dependencies — skins are render-only
+- **Store (disabled while unsupported):** registry entries with
+  `"type": "skin"` are hidden from the store list and refused on install.
+  `PluginStoreManager._install_skin_from_info` is kept: once
+  `SKINS_RENDER_SUPPORTED` in `src/skin_system/__init__.py` is true, such
+  entries install through the same `plugins.json` pipeline, land in `skins/`,
+  are validated against `skin.json` (including the API major version) instead
+  of `manifest.json`, and never install dependencies — skins are render-only
   (stdlib + PIL + the provided context, no third-party packages in v1).
 
 ## Trust model

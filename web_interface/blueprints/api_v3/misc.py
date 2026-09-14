@@ -154,9 +154,15 @@ def list_skins():
     """List installed visual skins (docs/SKIN_SYSTEM.md).
 
     Optional ?plugin_id=... filters to skins matching that plugin.
+
+    The response carries ``supported: false`` and a ``message``: the current
+    scoreboard plugins don't render skins, so a client must not present
+    these as selectable.
     """
     try:
-        from src.skin_system import skin_runtime
+        from src.skin_system import (
+            SKINS_RENDER_SUPPORTED, SKINS_UNSUPPORTED_MESSAGE, skin_runtime,
+        )
 
         plugin_id = request.args.get('plugin_id')
         if plugin_id:
@@ -181,7 +187,10 @@ def list_skins():
                 'modes': manifest.get('modes', []),
                 'has_preview': bool(preview and (skin_dir / preview).is_file()),
             })
-        return jsonify({'status': 'success', 'data': {'skins': payload}})
+        data = {'skins': payload, 'supported': SKINS_RENDER_SUPPORTED}
+        if not SKINS_RENDER_SUPPORTED:
+            data['message'] = SKINS_UNSUPPORTED_MESSAGE
+        return jsonify({'status': 'success', 'data': data})
     except Exception as e:
         logger.error('Error in list_skins', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
