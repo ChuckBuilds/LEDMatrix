@@ -440,8 +440,13 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body)
             });
-            if (!r.ok) throw new Error('Server error ' + r.status);
             const ct = r.headers.get('content-type') || '';
+            if (!r.ok) {
+                // A failing action script comes back as a 400 whose JSON body
+                // carries the script's own message; surface it, not the status.
+                const data = ct.includes('application/json') ? await r.json().catch(() => null) : null;
+                throw new Error(data?.message || 'Server error ' + r.status);
+            }
             if (!ct.includes('application/json')) {
                 const txt = await r.text();
                 throw new Error('Unexpected response: ' + txt.slice(0, 120));

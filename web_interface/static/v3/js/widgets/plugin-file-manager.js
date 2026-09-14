@@ -729,12 +729,14 @@
     window._pfmToggle = async function (fieldId, categoryName, enabled) {
         const st = getState(fieldId);
         const result = await callAction(st.pluginId, st.actions.toggle, { category_name: categoryName, enabled })
-            .catch(() => ({ status: 'error' }));
+            .catch(() => ({ status: 'error', message: 'Network error' }));
         if (result.status === 'success') {
             notify(enabled ? `${categoryName} enabled` : `${categoryName} disabled`, 'success');
             await loadFiles(fieldId);
         } else {
-            notify('Toggle failed', 'error');
+            // The action endpoint relays the script's own message on failure;
+            // without it every error reads as a bare "Toggle failed".
+            notify(result.message ? `Toggle failed: ${result.message}` : 'Toggle failed', 'error');
             await loadFiles(fieldId); // revert UI
         }
     };
