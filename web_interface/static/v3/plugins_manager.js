@@ -1556,22 +1556,18 @@ function renderInstalledCards(plugins, total) {
 
         return `
         <div class="plugin-card">
-            <div class="flex items-start justify-between mb-4">
-                <div class="flex-1 min-w-0">
-                    <div class="flex items-center flex-wrap gap-2 mb-2">
+            <div class="mb-4">
+                <!-- Header row: only the name and badges share a line with the
+                     toggle, so the metadata and description below get the
+                     card's full width. -->
+                <div class="flex items-start justify-between gap-3 mb-2">
+                    <div class="flex items-center flex-wrap gap-2 min-w-0">
                         <h4 class="font-semibold text-gray-900 text-base">${escapeHtml(plugin.name || plugin.id)}</h4>
                         ${plugin.is_starlark_app ? '<span class="badge badge-warning"><i class="fas fa-star mr-1"></i>Starlark</span>' : ''}
                         ${plugin.verified ? '<span class="badge badge-success"><i class="fas fa-check-circle mr-1"></i>Verified</span>' : ''}
                     </div>
-                    <div class="text-sm text-gray-600 space-y-1.5 mb-3">
-                        <p class="flex items-center"><i class="fas fa-user mr-2 text-gray-400 w-4"></i>${escapeHtml(plugin.author || 'Unknown')}</p>
-                        ${plugin.version ? `<p class="flex items-center flex-wrap gap-1.5"><i class="fas fa-tag mr-2 text-gray-400 w-4"></i>v${escapeHtml(plugin.version)}${plugin.update_available && plugin.latest_version ? `<span class="badge badge-info" title="Installed v${escapeAttr(plugin.version)} → latest v${escapeAttr(plugin.latest_version)}"><i class="fas fa-arrow-circle-up mr-1"></i>v${escapeHtml(plugin.latest_version)} available</span>` : ''}</p>` : ''}
-                        <p class="flex items-center"><i class="fas fa-folder mr-2 text-gray-400 w-4"></i>${escapeHtml(plugin.category || 'General')}</p>
-                    </div>
-                    <p class="text-sm text-gray-700 leading-relaxed">${escapeHtml(plugin.description || 'No description available')}</p>
-                </div>
                 <!-- Toggle Switch in Top Right -->
-                <div class="flex-shrink-0 ml-4">
+                <div class="flex-shrink-0">
                     <label class="relative inline-flex items-center cursor-pointer group">
                         <!-- input.peer must stay immediately before the visible pill:
                              peer-focus:* only reaches a following sibling. -->
@@ -1598,6 +1594,13 @@ function renderInstalledCards(plugins, total) {
                         </div>
                     </label>
                 </div>
+                </div>
+                <div class="text-sm text-gray-600 space-y-1.5 mb-3">
+                    <p class="flex items-center"><i class="fas fa-user mr-2 text-gray-400 w-4"></i>${escapeHtml(plugin.author || 'Unknown')}</p>
+                    ${plugin.version ? `<p class="flex items-center flex-wrap gap-1.5"><i class="fas fa-tag mr-2 text-gray-400 w-4"></i>v${escapeHtml(plugin.version)}${plugin.update_available && plugin.latest_version ? `<span class="badge badge-info" title="Installed v${escapeAttr(plugin.version)} → latest v${escapeAttr(plugin.latest_version)}"><i class="fas fa-arrow-circle-up mr-1"></i>v${escapeHtml(plugin.latest_version)} available</span>` : ''}</p>` : ''}
+                    <p class="flex items-center"><i class="fas fa-folder mr-2 text-gray-400 w-4"></i>${escapeHtml(plugin.category || 'General')}</p>
+                </div>
+                <p class="text-sm text-gray-700 leading-relaxed">${escapeHtml(plugin.description || 'No description available')}</p>
             </div>
 
             <!-- Plugin Tags -->
