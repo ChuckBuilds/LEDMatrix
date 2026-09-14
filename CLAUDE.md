@@ -6,7 +6,7 @@
 - `config/config.json` — User plugin configuration (persists across plugin reinstalls)
 - `plugin-repos/` — **Default** plugin install directory used by the
   Plugin Store, set by `plugin_system.plugins_directory` in
-  `config.json` (default per `config/config.template.json:167`).
+  `config.json` (default per `config/config.template.json`).
   Not gitignored.
 - `plugins/` — Legacy/dev plugin location. Gitignored (`plugins/*`).
   Used by `scripts/dev/dev_plugin_setup.sh` for symlinks. The plugin
@@ -23,7 +23,7 @@
 - Each plugin needs: `manifest.json`, `config_schema.json`, `manager.py`, `requirements.txt`
 - Plugin instantiation args: `plugin_id, config, display_manager, cache_manager, plugin_manager`
 - Config schemas use JSON Schema Draft-7
-- Display dimensions: always read dynamically from `self.display_manager.matrix.width/height`
+- Display dimensions: always read dynamically from `self.display_manager.width/height` — not `display_manager.matrix.width/height`, because `matrix` is `None` when hardware init fails (the properties fall back to the canvas size)
 - Secrets: namespaced by plugin id in `config/config_secrets.json`, declared
   via `"x-secret": true` in the plugin's config schema, and deep-merged into
   the plugin's config dict at load time — plugins read them with plain
@@ -45,9 +45,12 @@
 - Plugin configs stored in `config/config.json`, NOT in plugin directories — safe across reinstalls
 - Third-party plugins can use their own repo URL with empty `plugin_path`
 
-## Skin System (visual overlays for sports scoreboards)
+## Skin System (visual overlays for sports scoreboards) — NOT SUPPORTED YET
+- Skins do not render with the current scoreboard plugins: the only hook is `SportsCore._render_game()` in `src/base_classes/sports/core.py`, and no current scoreboard plugin (monorepo or third-party registry) builds on `src.base_classes`
+- So core doesn't offer them: no Visual Skin dropdown (`get_plugin_schema` skips `inject_skin_selector`), the store hides/refuses `"type": "skin"` entries, `GET /api/v3/skins` reports `"supported": false`. Switch: `SKINS_RENDER_SUPPORTED` in `src/skin_system/__init__.py`
+- Stored `skin` / `skin_options` config values must keep loading and saving (base schema allows them; form saves deep-merge over the stored section)
 - Skins live in `skins/<skin-id>/` (skin.json + skin.py), NOT in plugin dirs — plugin reinstall deletes plugin dirs
-- Core: `src/skin_system/` (ScoreboardSkin, SkinContext, runtime); hook: `SportsCore._render_game()` in `src/base_classes/sports/core.py`
+- Core: `src/skin_system/` (ScoreboardSkin, SkinContext, runtime); keep it and its tests
 - Skins render onto `ctx.canvas` only; fallback to built-in renderer on `False`/exception (3 strikes disables for session)
 - View-model guaranteed keys are frozen (see `test/test_skin_system.py::TestViewModelContract`) — renaming keys in `_extract_game_details_common` or sport extractors breaks published skins
 - Validate skins headlessly: `python scripts/validate_skin.py --skin <id>`; docs: `docs/SKIN_SYSTEM.md`, `docs/CREATING_SKINS.md`

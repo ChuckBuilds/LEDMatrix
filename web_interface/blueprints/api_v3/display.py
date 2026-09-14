@@ -25,23 +25,14 @@ def get_display_current():
 
         snapshot_path = "/tmp/led_matrix_preview.png"
 
-        # Get display dimensions from config
+        # Get display dimensions from config: the logical size DisplayManager
+        # renders at, so double-sided setups preview one screen
+        from src.display_geometry import logical_size
         try:
-            if api_v3.config_manager:
-                main_config = api_v3.config_manager.load_config()
-                hardware_config = main_config.get('display', {}).get('hardware', {})
-                cols = hardware_config.get('cols', 64)
-                chain_length = hardware_config.get('chain_length', 2)
-                rows = hardware_config.get('rows', 32)
-                parallel = hardware_config.get('parallel', 1)
-                width = cols * chain_length
-                height = rows * parallel
-            else:
-                width = 128
-                height = 64
+            config = api_v3.config_manager.load_config() if api_v3.config_manager else {}
+            width, height = logical_size(config)
         except Exception:
-            width = 128
-            height = 64
+            width, height = logical_size({})
 
         # Try to read snapshot file
         image_data = None

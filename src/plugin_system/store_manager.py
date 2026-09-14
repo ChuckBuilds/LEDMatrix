@@ -1338,9 +1338,16 @@ class PluginStoreManager:
             self.logger.error(f"Plugin not found in registry: {plugin_id}")
             return False
 
-        # Visual skins share the registry but install to skins/, not to a
-        # plugin directory (docs/SKIN_SYSTEM.md)
+        # Visual skins share the registry. _install_skin_from_info can put one
+        # in skins/, but no current scoreboard plugin renders skins, so the
+        # store refuses them rather than installing something that does
+        # nothing (docs/SKIN_SYSTEM.md). Manual installs under skins/ and
+        # uninstall_skin are unaffected.
         if (plugin_info.get('type') or 'plugin') == 'skin':
+            from src.skin_system import SKINS_RENDER_SUPPORTED, SKINS_UNSUPPORTED_MESSAGE
+            if not SKINS_RENDER_SUPPORTED:
+                self.logger.error(f"Not installing skin {plugin_id}: {SKINS_UNSUPPORTED_MESSAGE}")
+                return False
             return self._install_skin_from_info(plugin_id, plugin_info, branch)
 
         repo_url = plugin_info.get('repo')

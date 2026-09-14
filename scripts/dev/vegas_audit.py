@@ -72,12 +72,8 @@ def load_main_config(path: Path) -> Dict[str, Any]:
 
 def display_size_from_config(config: Dict[str, Any]) -> tuple:
     """Derive the logical ticker size the way DisplayManager does."""
-    hw = config.get('display', {}).get('hardware', {})
-    cols = int(hw.get('cols', 64))
-    chain = int(hw.get('chain_length', 1))
-    rows = int(hw.get('rows', 32))
-    parallel = int(hw.get('parallel', 1))
-    return cols * chain, rows * parallel
+    from src.display_geometry import logical_size
+    return logical_size(config)
 
 
 def enabled_plugin_ids(config: Dict[str, Any]) -> List[str]:

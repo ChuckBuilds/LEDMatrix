@@ -10,11 +10,11 @@ This guide explains how to set up a development workflow for plugins that are ma
 > scale. Existing plugins keep their classic rendering unless they adopt
 > those APIs; nothing migrates automatically.
 
-> **Just want a different look for an existing sports scoreboard?** You may
-> not need a plugin at all — a **skin** restyles the live/recent/upcoming
-> rendering while the plugin keeps handling data, scheduling, caching, and
-> vegas mode, in ~100 lines of drawing code. See
-> [CREATING_SKINS.md](CREATING_SKINS.md).
+> **Want a different look for an existing sports scoreboard?** Skins are
+> meant for that, but they are **not supported yet**: the current scoreboard
+> plugins don't render them (see [SKIN_SYSTEM.md](SKIN_SYSTEM.md#status-not-supported-yet)).
+> For now, change the look through the plugin's own display settings or its
+> code.
 
 ## Overview
 

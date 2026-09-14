@@ -56,8 +56,8 @@ Going deeper:
 - [ADVANCED_FEATURES.md](ADVANCED_FEATURES.md) — Vegas scroll, on-demand display,
   cache management, background services, permissions
 - [FONT_MANAGER.md](FONT_MANAGER.md) — font system
-- [SKIN_SYSTEM.md](SKIN_SYSTEM.md) — skin architecture for sports scoreboards
-- [CREATING_SKINS.md](CREATING_SKINS.md) — writing and validating a skin
+- [SKIN_SYSTEM.md](SKIN_SYSTEM.md) — skin architecture for sports scoreboards (not supported yet: current scoreboards don't render skins)
+- [CREATING_SKINS.md](CREATING_SKINS.md) — writing and validating a skin (same caveat)
 
 ## Reference
 

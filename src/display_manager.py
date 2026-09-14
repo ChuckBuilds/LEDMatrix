@@ -35,6 +35,10 @@ from contextlib import contextmanager
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 from src.common.font_layout import crisp_size, load_truetype, resolve_asset_path
+from src.display_geometry import (
+    DEFAULT_CHAIN_LENGTH, DEFAULT_COLS, DEFAULT_PARALLEL, DEFAULT_ROWS,
+    physical_size, resolve_double_sided,
+)
 import threading
 import time
 from collections import OrderedDict
@@ -123,62 +127,10 @@ class _LogicalMatrix:
         setattr(object.__getattribute__(self, "_matrix"), name, value)
 
 
-def _resolve_double_sided(physical_width: int, physical_height: int,
-                          ds_config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Validate the ``display.double_sided`` config against the physical size.
-
-    Returns a dict ``{copies, axis, logical_width, logical_height}`` when the
-    feature is enabled and the physical panel divides evenly into ``copies``
-    along the chosen axis, otherwise ``None`` (single-screen behaviour). Bad
-    config is logged and disabled rather than raised — a misconfigured panel
-    should still light up.
-    """
-    if not isinstance(ds_config, dict) or not ds_config.get('enabled', False):
-        return None
-
-    copies = ds_config.get('copies', 2)
-    if not isinstance(copies, int) or copies < 2:
-        logger.warning(
-            "double_sided: 'copies' must be an integer >= 2 (got %r); "
-            "disabling double-sided mode", copies)
-        return None
-
-    axis = ds_config.get('axis', 'horizontal')
-    if axis not in ('horizontal', 'vertical'):
-        logger.warning(
-            "double_sided: 'axis' must be 'horizontal' or 'vertical' "
-            "(got %r); defaulting to 'horizontal'", axis)
-        axis = 'horizontal'
-
-    # Horizontal splits the chain (panels side by side); vertical splits the
-    # parallel outputs (panels stacked). The split axis must divide evenly.
-    if axis == 'horizontal':
-        if physical_width % copies != 0:
-            logger.warning(
-                "double_sided: physical width %d is not divisible by copies "
-                "%d; disabling double-sided mode", physical_width, copies)
-            return None
-        logical_width = physical_width // copies
-        logical_height = physical_height
-    else:
-        if physical_height % copies != 0:
-            logger.warning(
-                "double_sided: physical height %d is not divisible by copies "
-                "%d; disabling double-sided mode", physical_height, copies)
-            return None
-        logical_width = physical_width
-        logical_height = physical_height // copies
-
-    logger.info(
-        "double_sided enabled: %d copies on %s axis — logical screen %dx%d "
-        "tiled across physical %dx%d", copies, axis, logical_width,
-        logical_height, physical_width, physical_height)
-    return {
-        'copies': copies,
-        'axis': axis,
-        'logical_width': logical_width,
-        'logical_height': logical_height,
-    }
+# Moved to src/display_geometry.py so the web preview, Starlark magnify and
+# sync handshake compute the display size exactly as DisplayManager does
+# without importing rgbmatrix. Aliased here for existing callers.
+_resolve_double_sided = resolve_double_sided
 
 
 class DisplayManager:
@@ -327,10 +279,10 @@ class DisplayManager:
             runtime_config = self.config.get('display', {}).get('runtime', {})
             
             # Basic hardware settings
-            options.rows = hardware_config.get('rows', 32)
-            options.cols = hardware_config.get('cols', 64)
-            options.chain_length = hardware_config.get('chain_length', 2)
-            options.parallel = hardware_config.get('parallel', 1)
+            options.rows = hardware_config.get('rows', DEFAULT_ROWS)
+            options.cols = hardware_config.get('cols', DEFAULT_COLS)
+            options.chain_length = hardware_config.get('chain_length', DEFAULT_CHAIN_LENGTH)
+            options.parallel = hardware_config.get('parallel', DEFAULT_PARALLEL)
             options.hardware_mapping = hardware_config.get('hardware_mapping', 'adafruit-hat-pwm')
             
             # Performance and stability settings
@@ -421,13 +373,7 @@ class DisplayManager:
             # Create a fallback image for web preview using configured dimensions when available
             self.matrix = None
             try:
-                hardware_config = self.config.get('display', {}).get('hardware', {}) if self.config else {}
-                rows = int(hardware_config.get('rows', 32))
-                cols = int(hardware_config.get('cols', 64))
-                chain_length = int(hardware_config.get('chain_length', 2))
-                parallel = int(hardware_config.get('parallel', 1))
-                fallback_width = max(1, cols * chain_length)
-                fallback_height = max(1, rows * parallel)
+                fallback_width, fallback_height = physical_size(self.config)
                 # Mirror double-sided in fallback so the preview shows one screen.
                 ds_config = self.config.get('display', {}).get('double_sided', {}) if self.config else {}
                 ds = _resolve_double_sided(fallback_width, fallback_height, ds_config)

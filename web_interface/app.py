@@ -748,18 +748,13 @@ def display_preview_generator():
         except OSError:
             pass  # display side treats a missing marker as "no viewer"
     
-    # Get display dimensions from config
+    # Get display dimensions from config: the logical size DisplayManager
+    # renders at, so double-sided setups preview one screen
+    from src.display_geometry import logical_size
     try:
-        main_config = config_manager.load_config()
-        cols = main_config.get('display', {}).get('hardware', {}).get('cols', 64)
-        chain_length = main_config.get('display', {}).get('hardware', {}).get('chain_length', 2)
-        rows = main_config.get('display', {}).get('hardware', {}).get('rows', 32)
-        parallel = main_config.get('display', {}).get('hardware', {}).get('parallel', 1)
-        width = cols * chain_length
-        height = rows * parallel
-    except (KeyError, TypeError, ValueError, ConfigError):
-        width = 128
-        height = 64
+        width, height = logical_size(config_manager.load_config())
+    except (KeyError, TypeError, ValueError, AttributeError, ConfigError):
+        width, height = logical_size({})
     
     while True:
         try:

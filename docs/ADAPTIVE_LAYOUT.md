@@ -223,8 +223,8 @@ The harness already renders every plugin at a spread of sizes (now
 including 96x48):
 
 ```bash
-python scripts/check_plugin.py <plugin-dir> --sizes 64x32,128x32,96x48,128x64,256x64
-python scripts/render_plugin.py <plugin-dir> --width 96 --height 48
+python scripts/check_plugin.py --plugin <plugin-id> --sizes 64x32,128x32,96x48,128x64,256x64
+python scripts/render_plugin.py --plugin <plugin-id> --width 96 --height 48
 ```
 
 `BoundsCheckingDisplayManager` flags right/bottom overflow and now records

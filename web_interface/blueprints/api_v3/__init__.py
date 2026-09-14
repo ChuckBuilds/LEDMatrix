@@ -1693,11 +1693,14 @@ def _standalone_render_starlark_app(app_id: str) -> Tuple[bool, int, Optional[st
 
     magnify = plugin_config.get('magnify')
     if magnify is None:
-        hw = full_config.get('display', {}).get('hardware', {})
-        cols = hw.get('cols', 64)
-        chain = hw.get('chain_length', 1)
-        rows = hw.get('rows', 32)
-        magnify = max(1, min(8, int(min((cols * chain) / 64, rows / 32))))
+        # The size DisplayManager renders at (shared defaults, double-sided
+        # applied), so the Pixlet render matches the screen it lands on
+        from src.display_geometry import logical_size
+        try:
+            width, height = logical_size(full_config)
+        except (TypeError, ValueError):
+            width, height = 64, 32
+        magnify = max(1, min(8, int(min(width / 64, height / 32))))
     else:
         try:
             magnify = max(1, min(8, int(magnify)))

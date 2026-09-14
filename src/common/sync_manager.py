@@ -32,6 +32,8 @@ from typing import Callable, Optional
 import numpy as np
 from PIL import Image
 
+from src.display_geometry import DEFAULT_CHAIN_LENGTH
+
 # Raw-frame wire format: 8-byte magic + 4-byte header + raw RGB pixels
 # Much faster than PNG: no encode/decode, negligible CPU, same UDP packet size
 _RAW_MAGIC = b'SYNC_RAW'
@@ -194,7 +196,7 @@ class DisplaySyncManager:
         local_cols = hw.get("cols", 64)
         peer_rows = int(msg.get("rows", 0))
         peer_cols = int(msg.get("cols", 0))
-        peer_chain = int(msg.get("chain", 1))
+        peer_chain = int(msg.get("chain", DEFAULT_CHAIN_LENGTH))
 
         compatible = peer_rows == local_rows and peer_cols == local_cols
 
@@ -589,7 +591,7 @@ class DisplaySyncManager:
             "t": "hello",
             "rows": hw.get("rows", 32),
             "cols": hw.get("cols", 64),
-            "chain": hw.get("chain_length", 1),
+            "chain": hw.get("chain_length", DEFAULT_CHAIN_LENGTH),
         }).encode("utf-8")
         heartbeat = json.dumps({"t": "hb"}).encode("utf-8")
         dest = ("<broadcast>", self.port)
@@ -660,7 +662,7 @@ class DisplaySyncManager:
             "port": self.port,
             "local_rows": hw.get("rows", 32),
             "local_cols": hw.get("cols", 64),
-            "local_chain": hw.get("chain_length", 1),
+            "local_chain": hw.get("chain_length", DEFAULT_CHAIN_LENGTH),
         }
 
         if self.role == SyncRole.STANDALONE:
