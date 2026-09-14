@@ -285,7 +285,14 @@
             
             {# Array - check for file upload widget first (to avoid breaking static-image plugin), then checkbox-group, then array of objects #}
             {% elif field_type == 'array' %}
-            {% set x_widget = prop.get('x-widget') or prop.get('x_widget') %}
+            {# An array of objects with no widget named would otherwise reach the
+               comma-separated text input, which joins each item as a Python dict
+               repr and posts it back as a list of strings -- the schema rejects
+               that and every save of the plugin returns 400. The table widget
+               already edits any array of objects, so make it the default. #}
+            {% set _items = prop.get('items') or {} %}
+            {% set x_widget = prop.get('x-widget') or prop.get('x_widget')
+                or ('array-table' if (_items.get('type') == 'object' and _items.get('properties')) else none) %}
             {% if x_widget == 'file-upload' %}
                 {# File upload widget for arrays #}
                 {% set upload_config = prop.get('x-upload-config') or {} %}
