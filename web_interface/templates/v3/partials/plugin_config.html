@@ -613,7 +613,11 @@
                                                 {% if logo_path %}
                                                 <img src="/{{ logo_path }}" alt="Logo" loading="lazy" decoding="async" class="w-8 h-8 object-cover rounded border" id="{{ field_id }}_logo_preview_{{ item_index }}">
                                                 <input type="hidden" name="{{ full_key }}.{{ item_index }}.logo.path" value="{{ logo_path }}">
-                                                <input type="hidden" name="{{ full_key }}.{{ item_index }}.logo.id" value="{{ logo_value.get('id', '') }}">
+                                                {# Only when there is one, as custom-feeds.js does: a blank id
+                                                   is saved as null and fails the id's string type. #}
+                                                {% if logo_value.get('id') %}
+                                                <input type="hidden" name="{{ full_key }}.{{ item_index }}.logo.id" value="{{ logo_value.get('id') }}">
+                                                {% endif %}
                                                 {% else %}
                                                 <span class="text-xs text-gray-400">No logo</span>
                                                 {% endif %}
@@ -1108,8 +1112,21 @@
     {% set section_id = (plugin_id ~ '-section-' ~ full_key)|replace('.', '-')|replace('_', '-') %}
     {% set label = prop.title if prop.title else key|replace('_', ' ')|title %}
     {% set description = prop.description if prop.description else '' %}
-    {% set nested_value = value if value else {} %}
-    
+    {# Only a dict can be looked into. A schema that turns a legacy scalar into
+       an object (news' dynamic_duration: true -> {enabled, ...}) still finds
+       the scalar in config.json until the next save, and `key in true` is a
+       TypeError that takes down the whole config page. A legacy boolean was
+       the on/off switch the object's `enabled` now holds, so carry it over --
+       rendering {} would draw that checkbox unchecked and the next save would
+       quietly turn the feature off. The save then writes the object. #}
+    {% if value is mapping %}
+        {% set nested_value = value %}
+    {% elif value is boolean and 'enabled' in (prop.properties or {}) %}
+        {% set nested_value = {'enabled': value} %}
+    {% else %}
+        {% set nested_value = {} %}
+    {% endif %}
+
     <div class="nested-section border border-gray-300 rounded-lg mb-4">
         <button type="button" 
                 class="w-full bg-gray-100 hover:bg-gray-200 px-4 py-3 flex items-center justify-between text-left transition-colors rounded-t-lg"
