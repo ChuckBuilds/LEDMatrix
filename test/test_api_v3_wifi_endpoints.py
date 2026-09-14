@@ -26,6 +26,9 @@ def wifi_manager():
     """Patch WiFiManager where it is defined; yield the instance mock."""
     with patch("src.wifi_manager.WiFiManager") as cls:
         instance = MagicMock()
+        # A bare MagicMock is truthy, which would send every connect down
+        # the setup-AP background path.
+        instance._is_ap_mode_active.return_value = False
         cls.return_value = instance
         yield instance
 
@@ -95,6 +98,74 @@ class TestConnect:
         # `details` comes from describe_exception, which is deliberately
         # safe to return (redacted, capped) — it names the type.
         assert "RuntimeError" in body["details"]
+
+
+class TestConnectThroughSetupAp:
+    """With the setup AP up, the phone making the request is connected through
+    the very network the connect tears down. A synchronous answer can never
+    arrive, so the route answers 202 first and connects in the background."""
+
+    URL = "/api/v3/wifi/connect"
+
+    @pytest.fixture(autouse=True)
+    def ap_active(self, api_v3_module, wifi_manager, monkeypatch):
+        from web_interface.blueprints.api_v3 import wifi as wifi_routes
+        wifi_manager._is_ap_mode_active.return_value = True
+        monkeypatch.setattr(wifi_routes, "_AP_HANDOFF_DELAY_SECONDS", 0)
+        monkeypatch.setattr(wifi_routes, "_last_connect_attempt", None)
+        self.spawned = []
+        monkeypatch.setattr(wifi_routes, "_spawn", self.spawned.append)
+        self.routes = wifi_routes
+
+    def _run_spawned(self):
+        assert len(self.spawned) == 1
+        self.spawned.pop()()
+
+    def test_answers_202_before_connecting(self, api_v3_client, wifi_manager):
+        response = api_v3_client.post(self.URL, json={"ssid": "HomeNet", "password": "hunter22"})
+        assert response.status_code == 202
+        assert response.get_json()["status"] == "pending"
+        wifi_manager.connect_to_network.assert_not_called()
+        assert self.routes._last_connect_snapshot()["state"] == "pending"
+
+    def test_background_result_is_reported_by_status(self, api_v3_client, wifi_manager):
+        wifi_manager.connect_to_network.return_value = (True, "Connected to HomeNet")
+        api_v3_client.post(self.URL, json={"ssid": "HomeNet", "password": "hunter22"})
+        self._run_spawned()
+        wifi_manager.connect_to_network.assert_called_once_with("HomeNet", "hunter22")
+
+        wifi_manager.config = {}
+        wifi_manager.get_wifi_status.return_value = MagicMock(
+            connected=True, ssid="HomeNet", ip_address="10.0.0.5", signal=70,
+            ap_mode_active=False)
+        attempt = api_v3_client.get("/api/v3/wifi/status").get_json()["data"]["last_connect_attempt"]
+        assert attempt["ssid"] == "HomeNet"
+        assert attempt["state"] == "success"
+        assert "hunter22" not in str(attempt)
+
+    def test_wrong_password_is_flagged(self, api_v3_client, wifi_manager):
+        wifi_manager.connect_to_network.return_value = (
+            False, "wrong_password: Secrets were required, but not provided")
+        api_v3_client.post(self.URL, json={"ssid": "HomeNet", "password": "hunter22"})
+        self._run_spawned()
+        attempt = self.routes._last_connect_snapshot()
+        assert attempt["state"] == "failed"
+        assert attempt["error_type"] == "wrong_password"
+        assert attempt["message"] == "Incorrect password for HomeNet"
+
+    def test_manager_exception_is_recorded_as_a_failure(self, api_v3_client, wifi_manager):
+        wifi_manager.connect_to_network.side_effect = RuntimeError("nmcli vanished")
+        api_v3_client.post(self.URL, json={"ssid": "HomeNet"})
+        self._run_spawned()
+        attempt = self.routes._last_connect_snapshot()
+        assert attempt["state"] == "failed"
+        assert "RuntimeError" in attempt["message"]
+
+    def test_a_second_connect_while_one_is_pending_is_refused(self, api_v3_client, wifi_manager):
+        api_v3_client.post(self.URL, json={"ssid": "HomeNet"})
+        response = api_v3_client.post(self.URL, json={"ssid": "OtherNet"})
+        assert response.status_code == 409
+        assert len(self.spawned) == 1
 
 
 class TestDisconnect:

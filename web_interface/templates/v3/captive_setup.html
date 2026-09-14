@@ -86,6 +86,16 @@ select:focus,input:focus{outline:none;border-color:#3b82f6;box-shadow:0 0 0 3px 
   </div>
 </div>
 
+<div id="handoff-view" class="card hidden">
+  <div class="success-box">
+    <div class="icon">&#8635;</div>
+    <p style="font-size:16px;font-weight:600;margin-bottom:8px">Connecting to <span id="handoff-ssid"></span></p>
+    <p style="font-size:13px;color:#6b7280;margin-bottom:12px">LEDMatrix-Setup has turned off, so this page can't follow along any more.</p>
+    <p style="font-size:13px;color:#374151;margin-bottom:8px"><strong>If it worked:</strong> the LED display shows the new address. Rejoin your home WiFi and open it.</p>
+    <p style="font-size:13px;color:#374151"><strong>If it didn't:</strong> LEDMatrix-Setup comes back within a minute. Rejoin it and reopen this page to see why.</p>
+  </div>
+</div>
+
 <div class="footer">
   <a href="/">Open Full Interface</a>
 </div>
@@ -186,26 +196,50 @@ function doConnect() {
   })
   .then(function(r) { return r.json(); })
   .then(function(data) {
-    if (data.status === 'success') {
+    if (data.status === 'pending') {
+      // Connecting in the background; this network is about to go away.
+      showMsg(handoffMessage(ssid), 'info');
+      setTimeout(function() { checkNewIP(ssid); }, 3000);
+    } else if (data.status === 'success') {
       clearMsg();
       // Poll for the new IP
       setTimeout(function() { checkNewIP(ssid); }, 3000);
     } else {
-      var msg = data.error_type === 'wrong_password'
-        ? 'Incorrect password — please try again'
-        : (data.message || 'Connection failed');
-      showMsg(msg, 'err');
-      connecting = false;
-      btn.disabled = false;
-      btn.innerHTML = 'Connect';
+      showConnectError(data);
     }
   })
   .catch(function(e) {
     // Connection may drop if AP mode was disabled — that's expected
-    clearMsg();
-    showMsg('Connection attempt sent. If the page stops responding, the device is connecting to ' + ssid + '.', 'info');
-    setTimeout(function() { showSuccessFallback(ssid); }, 5000);
+    showHandoff(ssid);
   });
+}
+
+function handoffMessage(ssid) {
+  return 'Connecting to ' + ssid + '. LEDMatrix-Setup will turn off and your phone will disconnect from it. ' +
+    'If it works, the LED display shows its new address. If not, LEDMatrix-Setup comes back within a minute: ' +
+    'rejoin it and reopen this page to see why.';
+}
+
+function resetConnectBtn() {
+  connecting = false;
+  $('btn-connect').innerHTML = 'Connect';
+  updateConnectBtn();
+}
+
+function showConnectError(attempt) {
+  var msg = attempt.error_type === 'wrong_password'
+    ? 'Incorrect password for ' + (attempt.ssid || 'that network') + ' — please try again'
+    : (attempt.message || 'Connection failed');
+  showMsg(msg, 'err');
+  resetConnectBtn();
+}
+
+function showHandoff(ssid) {
+  $('setup-form').classList.add('hidden');
+  $('success-view').classList.add('hidden');
+  $('handoff-view').classList.remove('hidden');
+  $('handoff-ssid').textContent = ssid;
+  $('msg').className = 'msg';
 }
 
 var MAX_IP_RETRIES = 20;
@@ -219,16 +253,36 @@ function checkNewIP(ssid, retriesLeft) {
   fetch('/api/v3/wifi/status')
     .then(function(r) { return r.json(); })
     .then(function(data) {
-      if (data.status === 'success' && data.data && data.data.connected && data.data.ip_address) {
-        showSuccess(data.data.ip_address);
+      var d = (data.status === 'success' && data.data) || {};
+      var attempt = d.last_connect_attempt;
+      if (attempt && attempt.ssid === ssid && attempt.state === 'failed') {
+        showConnectError(attempt);
+      } else if (d.connected && d.ip_address && !d.ap_mode_active) {
+        showSuccess(d.ip_address);
       } else {
         setTimeout(function() { checkNewIP(ssid, retriesLeft - 1); }, 3000);
       }
     })
     .catch(function() {
-      // AP likely down — show fallback
-      showSuccessFallback(ssid);
+      // The setup network went down, which is what connecting does.
+      showHandoff(ssid);
     });
+}
+
+// A failed attempt brings LEDMatrix-Setup back; tell the user who rejoined why.
+function showPreviousFailure() {
+  fetch('/api/v3/wifi/status')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var attempt = data.data && data.data.last_connect_attempt;
+      if (attempt && attempt.state === 'failed' && !data.data.connected) {
+        var reason = attempt.error_type === 'wrong_password'
+          ? 'the password was incorrect'
+          : (attempt.message || 'an unknown error');
+        showMsg('Last attempt to connect to ' + attempt.ssid + ' failed: ' + reason + '.', 'err');
+      }
+    })
+    .catch(function() {});
 }
 
 function showSuccess(ip) {
@@ -246,6 +300,7 @@ function showSuccessFallback(ssid) {
 }
 
 // Auto-scan on load
+showPreviousFailure();
 doScan();
 </script>
 </body>

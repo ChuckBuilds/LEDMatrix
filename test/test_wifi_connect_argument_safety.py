@@ -134,6 +134,7 @@ class TestConnectEndpointSurfacesTheRefusal:
     def wifi_manager(self):
         with patch("src.wifi_manager.WiFiManager") as cls:
             instance = MagicMock()
+            instance._is_ap_mode_active.return_value = False
             cls.return_value = instance
             yield instance
 

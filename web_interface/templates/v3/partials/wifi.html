@@ -194,7 +194,11 @@
     <!-- Messages -->
     <div x-show="message" 
          x-text="message"
-         :class="messageType === 'error' ? 'bg-red-50 border-red-200 text-red-800' : 'bg-green-50 border-green-200 text-green-800'"
+         :class="{
+             error: 'bg-red-50 border-red-200 text-red-800',
+             info: 'bg-blue-50 border-blue-200 text-blue-800',
+             warning: 'bg-yellow-50 border-yellow-200 text-yellow-800'
+         }[messageType] || 'bg-green-50 border-green-200 text-green-800'"
          class="mt-4 p-3 rounded border"
          x-cloak></div>
 </div>
@@ -211,6 +215,7 @@ function wifiSetup() {
             ap_mode_active: false,
             auto_enable_ap_mode: true  // Default: true (safe due to grace period)
         },
+        statusLoaded: false,
         networks: [],
         selectedSSID: '',
         manualSSID: '',
@@ -255,7 +260,15 @@ function wifiSetup() {
                 const response = await fetch('/api/v3/wifi/status');
                 const data = await response.json();
                 if (data.status === 'success') {
+                    const firstLoad = !this.statusLoaded;
                     this.status = data.data;
+                    this.statusLoaded = true;
+                    // A failed attempt brings LEDMatrix-Setup back; tell the
+                    // user who rejoined it why.
+                    const attempt = data.data.last_connect_attempt;
+                    if (firstLoad && attempt && attempt.state === 'failed' && !data.data.connected) {
+                        this.showMessage(this.describeFailedAttempt(attempt), 'error');
+                    }
                 } else {
                     this.showMessage(data.message, 'error');
                 }
@@ -313,6 +326,10 @@ function wifiSetup() {
 
             this.connecting = true;
             this.message = '';
+            const viaSetupNetwork = this.status.ap_mode_active;
+            if (viaSetupNetwork) {
+                this.showMessage(this.handoffMessage(ssid.trim()), 'info');
+            }
             try {
                 const response = await fetch('/api/v3/wifi/connect', {
                     method: 'POST',
@@ -324,7 +341,16 @@ function wifiSetup() {
                         password: this.password || ''
                     })
                 });
-                
+
+                if (response.status === 202) {
+                    // Connecting in the background; the setup network is about
+                    // to go down and take this page's connection with it.
+                    this.password = '';
+                    this.showMessage(this.handoffMessage(ssid.trim()), 'info');
+                    this.pollConnectResult(ssid.trim());
+                    return;
+                }
+
                 // Check if response is ok before parsing JSON
                 if (!response.ok) {
                     // Try to parse error message from response
@@ -359,11 +385,54 @@ function wifiSetup() {
                     this.showMessage(data.message || 'Failed to connect to network', 'error');
                 }
             } catch (error) {
-                console.error('WiFi connect error:', error);
-                this.showMessage('Failed to connect: ' + error.message, 'error');
+                if (viaSetupNetwork) {
+                    // The setup network went down mid-request: that is the
+                    // connection attempt happening, not a failure.
+                    this.showMessage(this.handoffMessage(ssid.trim()), 'info');
+                } else {
+                    console.error('WiFi connect error:', error);
+                    this.showMessage('Failed to connect: ' + error.message, 'error');
+                }
             } finally {
                 this.connecting = false;
             }
+        },
+
+        handoffMessage(ssid) {
+            return `Connecting to ${ssid}. LEDMatrix-Setup will turn off, so this page will stop responding. ` +
+                `If it works, the LED display shows the new address; rejoin your home WiFi and open it. ` +
+                `If it fails, LEDMatrix-Setup comes back within a minute: rejoin it and reopen this page to see why.`;
+        },
+
+        // Follow a background connect until its result lands or the setup
+        // network drops out from under this page.
+        async pollConnectResult(ssid, retriesLeft = 20) {
+            if (retriesLeft <= 0) return;
+            await new Promise(resolve => setTimeout(resolve, 3000));
+            try {
+                const response = await fetch('/api/v3/wifi/status');
+                const data = await response.json();
+                const attempt = data.data && data.data.last_connect_attempt;
+                if (attempt && attempt.ssid === ssid && attempt.state !== 'pending') {
+                    this.status = data.data;
+                    if (attempt.state === 'success') {
+                        this.showMessage(attempt.message || `Connected to ${ssid}`, 'success');
+                    } else {
+                        this.showMessage(this.describeFailedAttempt(attempt), 'error');
+                    }
+                    return;
+                }
+            } catch (error) {
+                return;  // Setup network is down; the handoff message already explains.
+            }
+            this.pollConnectResult(ssid, retriesLeft - 1);
+        },
+
+        describeFailedAttempt(attempt) {
+            const reason = attempt.error_type === 'wrong_password'
+                ? 'the password was incorrect'
+                : (attempt.message || 'unknown error');
+            return `Could not connect to ${attempt.ssid}: ${reason}.`;
         },
 
         async disconnectFromNetwork() {
