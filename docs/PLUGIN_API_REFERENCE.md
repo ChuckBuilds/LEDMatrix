@@ -38,8 +38,9 @@ self.enabled            # Boolean enabled status
 
 Fetch/update data for this plugin. Called on the plugin's update interval:
 the value `get_update_interval()` returns when it returns a number, otherwise
-the `update_interval` in the plugin's manifest (see
-[`get_update_interval()`](#get_update_interval---optionalfloat) below).
+the static interval: the `update_interval` in the plugin's manifest, else
+`update_interval` in the plugin's section of `config.json`, else 60 seconds
+(see [`get_update_interval()`](#get_update_interval---optionalfloat) below).
 
 **Example**:
 ```python

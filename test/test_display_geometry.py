@@ -71,6 +71,13 @@ def test_disabled_double_sided_is_ignored():
     assert logical_size(cfg) == (256, 32)
 
 
+@pytest.mark.parametrize('display', ['oops', ['a'], 1, {'hardware': 'oops'},
+                                     {'hardware': ['a']}])
+def test_non_mapping_display_config_uses_the_defaults(display):
+    assert physical_size({'display': display}) == (128, 32)
+    assert logical_size({'display': display}) == (128, 32)
+
+
 @pytest.fixture
 def display_client(monkeypatch):
     from web_interface.blueprints.api_v3 import api_v3
@@ -101,6 +108,15 @@ def test_display_current_defaults_chain_length_like_display_manager(display_clie
     data = client.get('/api/v3/display/current').get_json()['data']
 
     assert (data['width'], data['height']) == (64 * DEFAULT_CHAIN_LENGTH, 32)
+
+
+def test_display_current_falls_back_to_the_shared_default(display_client):
+    client, config_manager = display_client
+    config_manager.load_config.side_effect = ValueError('unreadable')
+
+    data = client.get('/api/v3/display/current').get_json()['data']
+
+    assert (data['width'], data['height']) == logical_size({}) == (128, 32)
 
 
 def test_preview_callers_do_not_rederive_the_size():

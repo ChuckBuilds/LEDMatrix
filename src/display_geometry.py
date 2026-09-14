@@ -23,9 +23,16 @@ DEFAULT_CHAIN_LENGTH = 2
 DEFAULT_PARALLEL = 1
 
 
+def _display(config: Optional[Mapping[str, Any]]) -> Mapping[str, Any]:
+    # A hand-edited config.json can hold anything here; treat a non-mapping
+    # like a missing block so callers get the defaults, not AttributeError.
+    display = (config or {}).get('display')
+    return display if isinstance(display, Mapping) else {}
+
+
 def _hardware(config: Optional[Mapping[str, Any]]) -> Mapping[str, Any]:
-    display = (config or {}).get('display') or {}
-    return display.get('hardware') or {}
+    hw = _display(config).get('hardware')
+    return hw if isinstance(hw, Mapping) else {}
 
 
 def physical_size(config: Optional[Mapping[str, Any]]) -> Tuple[int, int]:
@@ -53,6 +60,10 @@ def resolve_double_sided(physical_width: int, physical_height: int,
     along the chosen axis, otherwise ``None`` (single-screen behaviour). Bad
     config is logged and disabled rather than raised — a misconfigured panel
     should still light up.
+
+    Only pixels are checked, not whole panels: ``chain_length`` and
+    ``parallel`` don't say which axis a panel lies on once an orientation
+    ``Rotate:`` or U-mapper ``pixel_mapper_config`` rearranges the chain.
 
     ``quiet`` suppresses the log lines, for callers that run on every web
     request and would otherwise repeat them on each poll.
@@ -118,8 +129,8 @@ def logical_size(config: Optional[Mapping[str, Any]],
     ``DisplayManager.width``/``height`` give.
     """
     width, height = physical_size(config)
-    display = (config or {}).get('display') or {}
-    ds = resolve_double_sided(width, height, display.get('double_sided') or {},
+    ds = resolve_double_sided(width, height,
+                              _display(config).get('double_sided') or {},
                               quiet=quiet)
     if ds is not None:
         return ds['logical_width'], ds['logical_height']

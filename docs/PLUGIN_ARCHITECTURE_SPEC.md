@@ -190,7 +190,8 @@ class BasePlugin(ABC):
         """
         Fetch/update data for this plugin.
         Called every get_update_interval() seconds when that returns a
-        number, otherwise every manifest update_interval seconds.
+        number, otherwise at the static interval: the manifest's
+        update_interval, else the plugin config's update_interval, else 60s.
         """
         pass
     

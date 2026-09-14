@@ -27,16 +27,12 @@ def get_display_current():
 
         # Get display dimensions from config: the logical size DisplayManager
         # renders at, so double-sided setups preview one screen
+        from src.display_geometry import logical_size
         try:
-            if api_v3.config_manager:
-                from src.display_geometry import logical_size
-                width, height = logical_size(api_v3.config_manager.load_config())
-            else:
-                width = 128
-                height = 64
+            config = api_v3.config_manager.load_config() if api_v3.config_manager else {}
+            width, height = logical_size(config)
         except Exception:
-            width = 128
-            height = 64
+            width, height = logical_size({})
 
         # Try to read snapshot file
         image_data = None

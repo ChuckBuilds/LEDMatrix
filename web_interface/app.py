@@ -750,12 +750,11 @@ def display_preview_generator():
     
     # Get display dimensions from config: the logical size DisplayManager
     # renders at, so double-sided setups preview one screen
+    from src.display_geometry import logical_size
     try:
-        from src.display_geometry import logical_size
         width, height = logical_size(config_manager.load_config())
     except (KeyError, TypeError, ValueError, AttributeError, ConfigError):
-        width = 128
-        height = 64
+        width, height = logical_size({})
     
     while True:
         try:
