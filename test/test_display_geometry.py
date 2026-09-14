@@ -78,6 +78,17 @@ def test_non_mapping_display_config_uses_the_defaults(display):
     assert logical_size({'display': display}) == (128, 32)
 
 
+@pytest.mark.parametrize('key', ['rows', 'cols', 'chain_length', 'parallel'])
+def test_infinite_hardware_value_raises_value_error(key):
+    # json.loads accepts Infinity; int(inf) raises OverflowError, which the
+    # Starlark magnify default and the preview stream did not catch (HTTP 500).
+    cfg = _config({key: json.loads('Infinity')})
+    with pytest.raises(ValueError):
+        physical_size(cfg)
+    with pytest.raises(ValueError):
+        logical_size(cfg)
+
+
 @pytest.fixture
 def display_client(monkeypatch):
     from web_interface.blueprints.api_v3 import api_v3

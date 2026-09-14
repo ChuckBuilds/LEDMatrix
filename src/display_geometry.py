@@ -41,12 +41,19 @@ def physical_size(config: Optional[Mapping[str, Any]]) -> Tuple[int, int]:
     ``cols * chain_length`` by ``rows * parallel``. Raises ``ValueError`` or
     ``TypeError`` on a non-numeric value, as ``DisplayManager`` does; callers
     decide their own fallback.
+
+    A non-finite value (``Infinity``, which Python's JSON parser accepts in a
+    hand-edited config.json) raises ``ValueError`` too, not ``OverflowError``,
+    so every caller's existing fallback catches it.
     """
     hw = _hardware(config)
-    rows = int(hw.get('rows', DEFAULT_ROWS))
-    cols = int(hw.get('cols', DEFAULT_COLS))
-    chain_length = int(hw.get('chain_length', DEFAULT_CHAIN_LENGTH))
-    parallel = int(hw.get('parallel', DEFAULT_PARALLEL))
+    try:
+        rows = int(hw.get('rows', DEFAULT_ROWS))
+        cols = int(hw.get('cols', DEFAULT_COLS))
+        chain_length = int(hw.get('chain_length', DEFAULT_CHAIN_LENGTH))
+        parallel = int(hw.get('parallel', DEFAULT_PARALLEL))
+    except OverflowError as e:
+        raise ValueError(f"display.hardware size is not finite: {e}") from e
     return max(1, cols * chain_length), max(1, rows * parallel)
 
 
