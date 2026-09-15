@@ -454,16 +454,21 @@ def save_main_config():
 
         # Merge with existing config (similar to original implementation)
         current_config = api_v3.config_manager.load_config()
+        was_auto_update_enabled = bool((current_config.get('auto_update') or {}).get('enabled'))
 
         # Handle general settings
         # Note: Checkboxes don't send data when unchecked, so we need to check if we're updating general settings
         # If any general setting is present, we're updating the general tab
         is_general_update = any(k in data for k in ['timezone', 'city', 'state', 'country', 'web_display_autostart',
-                                                     'auto_discover', 'auto_load_enabled', 'development_mode', 'plugins_directory'])
+                                                     'auto_discover', 'auto_load_enabled', 'development_mode', 'plugins_directory',
+                                                     'auto_update_enabled'])
 
         if is_general_update:
             # For checkbox: if not present in data during general update, it means unchecked
             current_config['web_display_autostart'] = _coerce_to_bool(data.get('web_display_autostart'))
+            if not isinstance(current_config.get('auto_update'), dict):
+                current_config['auto_update'] = {}
+            current_config['auto_update']['enabled'] = _coerce_to_bool(data.get('auto_update_enabled'))
 
         if 'timezone' in data:
             current_config['timezone'] = data['timezone']
@@ -1033,7 +1038,7 @@ def save_main_config():
             if key in ['timezone', 'city', 'state', 'country',
                        'web_display_autostart', 'auto_discover',
                        'auto_load_enabled', 'development_mode',
-                       'plugins_directory', 'target_fps']:
+                       'plugins_directory', 'target_fps', 'auto_update_enabled']:
                 continue
             # Skip fields that are already handled above in their own named sections.
             # Without this, every form field name lands as a top-level config key too.
@@ -1068,7 +1073,17 @@ def save_main_config():
         except ImportError:
             pass
 
-        return success_response(message='Configuration saved successfully')
+        message = 'Configuration saved successfully'
+        # Switching automatic updates on finishes their setup, which needs
+        # the display service to restart (web_interface/auto_update.py).
+        try:
+            from web_interface import auto_update
+            note = auto_update.start_setup_if_needed(was_auto_update_enabled, current_config)
+            if note:
+                message = f'{message}. {note}'
+        except Exception:
+            logger.warning("Automatic update setup could not be started", exc_info=True)
+        return success_response(message=message)
     except Exception as e:
         logger.error("Error saving config", exc_info=True)
         return error_response(

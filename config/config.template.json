@@ -1,5 +1,8 @@
 {
     "web_display_autostart": true,
+    "auto_update": {
+        "enabled": false
+    },
     "schedule": {
         "enabled": false,
         "mode": "per-day",

@@ -1,0 +1,20 @@
+# This is a template. Do not install it directly -- it is installed with
+# ledmatrix-update-verify.service by scripts/install/install_web_service.sh,
+# or by the display service when automatic updates are turned on
+# (src/auto_update_setup.py). Substitutes:
+#   __PROJECT_ROOT_DIR__  -> the directory the project is installed in
+#
+# Starts the automatic update health check when the web interface asks for it
+# by creating data/auto_update_verify.request. A path unit rather than a
+# sudoers rule: the web interface needs no extra privilege to trigger it, and
+# the service it starts runs as the web interface's own user.
+
+[Unit]
+Description=Watch for LED Matrix automatic update health check requests
+
+[Path]
+PathExists=__PROJECT_ROOT_DIR__/data/auto_update_verify.request
+Unit=ledmatrix-update-verify.service
+
+[Install]
+WantedBy=multi-user.target

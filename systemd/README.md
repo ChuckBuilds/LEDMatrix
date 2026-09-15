@@ -14,6 +14,16 @@ This directory contains systemd service unit files for LEDMatrix services.
   - Starts automatically on boot if `web_display_autostart` is enabled
   - Uses `scripts/utils/start_web_conditionally.py`
 
+- **`ledmatrix-update-verify.service`** / **`.path`** - Automatic update health check and rollback
+  - The path unit starts the service when the web interface creates
+    `data/auto_update_verify.request` after a weekly automatic update
+  - Installed by the installers, or by the display service when automatic
+    updates are turned on in the web UI (`src/auto_update_setup.py`)
+  - Restarts the services, checks they stay up, and otherwise resets to the
+    previous commit and its dependencies
+  - Runs `data/auto_update_verifier.py`, a copy of
+    `scripts/utils/auto_update_verify.py` taken before the update
+
 - **`ledmatrix-wifi-monitor.service`** - WiFi monitor daemon service
   - Monitors WiFi/Ethernet connectivity
   - Automatically enables/disables access point mode
@@ -43,7 +53,8 @@ This directory contains systemd service unit files for LEDMatrix services.
 
 These service files are installed by the installation scripts in `scripts/install/`:
 - `install_service.sh` installs `ledmatrix.service`
-- `install_web_service.sh` installs `ledmatrix-web.service`
+- `install_web_service.sh` installs `ledmatrix-web.service` and the
+  `ledmatrix-update-verify` service and path units
 - `install_wifi_monitor.sh` installs `ledmatrix-wifi-monitor.service`
 - `install_dns_fix.sh` installs `ledmatrix-dns-fix.service` (opt-in, not run
   by the normal installer)

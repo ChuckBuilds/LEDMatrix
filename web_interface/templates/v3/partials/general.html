@@ -44,6 +44,44 @@
             </label>
         </div>
 
+        <!-- Weekly Automatic Updates -->
+        <div class="form-group" id="setting-general-auto_update" data-setting-key="auto_update.enabled">
+            <label class="flex items-center">
+                <input type="checkbox"
+                       name="auto_update_enabled"
+                       value="true"
+                       {% if (main_config.auto_update or {}).enabled %}checked{% endif %}
+                       class="form-control h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                <span class="ml-2 text-sm font-medium text-gray-900">Automatically check for and install updates once a week</span>
+                {{ ui.help_tip('Once a week, update LEDMatrix and every installed plugin that has a newer version.\nSkipped (and reported) if you have local changes, low disk space, or the rollback service is missing. After updating, the services are restarted and checked; if they do not stay healthy, the update is rolled back automatically.\nRuns overnight (2-5 AM in your timezone) when possible. Problems show as a banner on Overview. A stopped display is not started. Default: off.', 'Automatic Updates') }}
+            </label>
+            {% if auto_update_status and (main_config.auto_update or {}).enabled and auto_update_status.verifier_installed is sameas false %}
+            <p class="mt-1 ml-6 text-xs text-amber-700">
+                {% if auto_update_status.setup_status == 'failed' %}
+                Setting up the update health check failed: {{ auto_update_status.setup_message }}
+                LEDMatrix code updates are paused until it is fixed; plugin updates still run.
+                {% else %}
+                Setting up the update health check. The display service does this when it starts, so it is
+                ready shortly after saving (or once the display is started). LEDMatrix code updates begin after that.
+                {% endif %}
+            </p>
+            {% endif %}
+            {% if auto_update_status and auto_update_status.verifying %}
+            <p class="mt-1 ml-6 text-xs text-blue-700">An update was just installed and its health check is running.</p>
+            {% endif %}
+            {% if auto_update_status and (auto_update_status.last_run or auto_update_status.next_due) %}
+            <div class="mt-1 ml-6 text-xs text-gray-500 space-y-1">
+                {% if auto_update_status.last_run %}
+                <p>Last automatic update: {{ auto_update_status.last_run }}
+                   <span class="{{ 'text-red-600' if auto_update_status.status == 'error' else '' }}">— {{ auto_update_status.summary }}</span></p>
+                {% endif %}
+                {% if auto_update_status.next_due %}
+                <p>Next check: {{ auto_update_status.next_due }} or the first overnight window after it</p>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+
         <!-- Timezone -->
         <div class="form-group" id="setting-general-timezone" data-setting-key="timezone">
             <label for="timezone" class="block text-sm font-medium text-gray-700">Timezone{{ ui.help_tip('Time zone used for clocks, schedules, and time-based content.\nChoose the zone where the display physically lives so on/off schedules fire at the correct local time.', 'Timezone') }}</label>

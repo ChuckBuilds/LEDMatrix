@@ -96,6 +96,33 @@ Configure basic system settings:
 - **Plugin System Settings** — including the `plugins_directory` (default
   `plugin-repos/`) used by the plugin loader
 - **Autostart** options for the display service
+- **Automatic updates** — once a week, update LEDMatrix and every installed
+  plugin with a newer version. Off by default. Runs 2–5 AM local time when
+  possible, otherwise within a day of being due. The last result and next
+  check are shown under the toggle, and anything other than success raises a
+  banner on **Overview**.
+  - *Checks first:* the code update is skipped, with the reason shown, if
+    tracked files were edited locally, the checkout has local commits, a
+    rebase/merge is in progress, the branch has no upstream, less than 300 MB
+    is free, or the newest version already failed once. A failed fetch is
+    retried the next day.
+  - *Health check and rollback:* after pulling, `ledmatrix-update-verify.service`
+    restarts the services and checks that the web interface responds and the
+    display (if it was running) stays up. If not — or if the new dependencies
+    failed to install — it resets to the previous commit, reinstalls the
+    previous dependencies and restarts again. A running display is restarted;
+    a stopped one stays stopped.
+  - *Plugins* update through the Plugin Store, which refuses versions that need
+    a newer LEDMatrix and restores the old copy when an install fails. When the
+    code changed, plugins wait until it passes its health check. Plugins are
+    not health-checked after updating.
+  - *Setup needs no SSH.* Turning the toggle on restarts the display service,
+    which installs the health check (`ledmatrix-update-verify.path` and
+    `.service`); the General tab shows when it is ready, or why setup failed.
+    Until then only plugins update. New installs set it up during
+    installation and can switch updates on with
+    `first_time_install.sh --enable-auto-update` (or `LEDMATRIX_AUTO_UPDATE=1`,
+    which `one-shot-install.sh` passes through), or at the installer's prompt.
 
 Click **Save** to write changes to `config/config.json`. Most changes
 require a display service restart from **Overview**.

@@ -842,6 +842,23 @@
     ]
   ],
   [
+    "/api/v3/system/auto-update",
+    "api_v3.get_auto_update_status",
+    [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ]
+  ],
+  [
+    "/api/v3/system/auto-update/dismiss",
+    "api_v3.dismiss_auto_update_alert",
+    [
+      "OPTIONS",
+      "POST"
+    ]
+  ],
+  [
     "/api/v3/system/check-update",
     "api_v3.check_for_update",
     [

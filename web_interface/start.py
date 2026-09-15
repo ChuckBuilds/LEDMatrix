@@ -100,8 +100,9 @@ def main():
     werkzeug_logger.error = log_exception_filtered
     
     # Import and run the Flask app
-    from web_interface.app import app
-    
+    from web_interface.app import app, start_auto_update_scheduler
+    start_auto_update_scheduler()
+
     print("Starting LED Matrix Web Interface V3...")
     print("Web server binding to: 0.0.0.0:5000")
     
