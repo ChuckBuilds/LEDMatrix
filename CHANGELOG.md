@@ -41,7 +41,51 @@ Plugin-facing changes since 3.3.0 (tag `v3.3.1`) not covered further down:
 - **Web preview size** now comes from `src/display_geometry.py`, the same
   computation `DisplayManager` uses: double-sided setups preview one screen,
   and a missing `chain_length` defaults to 2 everywhere (the Starlark magnify
-  default and the sync handshake used 1).
+  default and the sync handshake used 1). The module is core-internal: plugins
+  keep reading `display_manager.width`/`height`.
+- `src.common.font_layout` (#539, #565) — `load_truetype()` is
+  `ImageFont.truetype` with the layout engine pinned, so text lays out the same
+  whether or not the host's Pillow was built with libraqm; `crisp_size()` and
+  `FONT_PIXEL_GRID` give the size a bundled face renders on whole pixels at
+  (`sports_card` still re-exports them); `resolve_asset_path()` resolves
+  `assets/fonts/...` against the install root, not the working directory.
+  Floor on 3.4.0 to import it. Relatedly, `DisplayManager` now draws text
+  1-bit (#521), so golden images recorded against 3.3.x may need regenerating.
+
+**Weekly automatic updates (#581), off by default.** Switching on
+*Automatically check for and install updates once a week* on the General tab
+(or `first_time_install.sh --enable-auto-update` / `LEDMATRIX_AUTO_UPDATE=1`)
+updates the core and then every installed plugin once a week, preferably 2–5 AM
+local time. It follows the branch the checkout tracks — `main` on a standard
+install — so a device gets whatever has merged there, not only tagged releases.
+See `docs/WEB_INTERFACE_GUIDE.md`.
+
+- The core step is skipped, with the reason shown, when the checkout has local
+  edits or commits, a rebase or merge is in progress, the branch has no
+  upstream, less than 300 MB is free, or that commit was already rolled back.
+- After pulling, `ledmatrix-update-verify.service` restarts the services and
+  requires the web interface to answer and the display to stay up. If they
+  don't, or the new requirements fail to install, it resets to the previous
+  commit, reinstalls its requirements and restarts again. Anything but success
+  shows under the toggle and as a banner on Overview.
+- Plugins update through the Plugin Store even when the core step is skipped,
+  fails or is rolled back. A plugin version whose `ledmatrix_min_version` is
+  above the device's core is held back, not installed. When the core did
+  update, plugins wait for its health check, and are left alone if that check
+  never reports or the rollback fails.
+- No SSH is needed: switching the toggle on restarts the display service, which
+  installs the health-check units (`src/auto_update_setup.py`, core-internal
+  and not a plugin API).
+
+**Scroll frame stats no longer count the pause between scrolls as a frame
+(#582).** The `Scroll frame stats` log line timed each scroll's first frame
+against the last frame of the previous scroll, so the idle wait between them was
+recorded as one frame: windows reading "0.0 fps over 1 frames", minutes-long
+`max` values in otherwise healthy windows, and a phantom stall per scroll start
+roughly as large as the real stall rate. That first frame now takes no sample.
+Scrolling itself is unchanged; the numbers used to judge it are now
+trustworthy, and `docs/SCROLL_PERFORMANCE.md` describes the line actually
+logged.
 
 **Per-element display customization, and the last mile of it into the web UI.**
 A user can set the font, size, colour, position, visibility and alignment of
@@ -133,7 +177,7 @@ Removed:
 
 ## 3.3.0
 
-Historical note: tag `v3.3.0` reports `__version__` "3.2.0" and tag `v3.3.1` reports "3.3.0", so a "3.3.0" floor is effectively `v3.3.1`, the first release shipping `src/common/sports_shared.py`.
+Historical note: tags `v3.3.0` and `v3.3.1` both report `__version__` "3.3.0" and both ship `src/common/sports_shared.py`, so a "3.3.0" floor always means a core with `sports_shared`.
 
 **The release the sports scoreboards floor on to delete their bundled copies.**
 3.2.0 shipped the unified sports library and made `ledmatrix_min_version`
