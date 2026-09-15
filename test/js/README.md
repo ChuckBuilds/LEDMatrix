@@ -35,6 +35,7 @@ nothing is listening, so it stays useful in a bare checkout.
 | Suite | Needs a server | Covers |
 |---|---|---|
 | `unit/test_list_filter.js` | no | `ListFilter` search/filter/sort/count/sticky, and the installed-plugins config **extracted verbatim** from `plugins_manager.js` so the test can't drift from it |
+| `unit/test_update_all.js` | no | `PluginInstallManager.updateAll` from `plugins/install_manager.js`: Check & Update All sends only plugin ids (never `starlark:` app entries), and re-sends a request that got no HTTP answer (web service restarting) instead of skipping that plugin. Also run by `test/web_interface/test_update_all_plugins.py` so CI covers it |
 | `unit/test_render_cards.js` | no | `renderInstalledCards` markup, both empty states, and HTML-escaping of hostile plugin metadata |
 | `unit/test_style_editor_element_keys.js` | no | `elementKeys()`/`styleRows()`/`positionRows()` from `widgets/style-editor.js`: every `customization.layout` entry gets exactly one row -- paired with its style element through core's `x-layout-key` (so `score` belongs to `score_text`, not a second row), or a position row of its own, leaves included -- since the widget claims the whole `layout` block from the generic fallback renderer |
 | `unit/test_style_editor_layout_leaf_columns.js` | no | `columnsFor()` from `widgets/style-editor.js`: a layout-only key whose own value is a leaf (no x/y sub-object, e.g. a `show_logo` toggle) gets a self-keyed column instead of a blank, uneditable row |

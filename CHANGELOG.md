@@ -47,6 +47,13 @@ Web interface:
   JSON API saves are unaffected. Lets plugins keep deprecated or internal keys
   declared, e.g. countdown's row `id` and weather's `api_key` / `radar_zoom`.
   See `docs/widget-guide.md`.
+- **Check & Update All** no longer sends installed Starlark apps
+  (`starlark:<app_id>` entries in `/plugins/installed`) to the plugin updater,
+  which answered each with a 500 "plugin not found". `POST /plugins/update`
+  now answers a `starlark:` id with a 400 saying it is a Starlark app. A
+  request that gets no HTTP answer (e.g. the web service restarting mid-run) is
+  re-sent with backoff instead of being counted as failed and skipped — that is
+  how a disabled plugin with an update waiting was silently left out.
 
 ## 3.4.0
 
