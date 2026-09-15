@@ -132,17 +132,25 @@ require a display service restart from **Overview**.
 Configure your LED matrix hardware:
 
 **Matrix configuration:**
-- `rows` — LED rows (typically 32 or 64)
-- `cols` — LED columns (typically 64 or 96)
+- `rows` — LED rows per panel (typically 32 or 64; even, at least 8 — the
+  current rgbmatrix library rejects more than 64)
+- `cols` — LED columns per panel (typically 64 or 96; at least 16)
 - `chain_length` — number of horizontally chained panels
-- `parallel` — number of parallel chains
+- `parallel` — number of parallel chains (1–3)
 - `hardware_mapping` — `adafruit-hat-pwm` (with PWM jumper mod),
-  `adafruit-hat` (without), `regular`, or `regular-pi1`
-- `gpio_slowdown` — must match your Pi model (3 for Pi 3, 4 for Pi 4, etc.)
-- `brightness` — 0–100%
+  `adafruit-hat` (without), `regular` (direct wiring, and the Adafruit Triple
+  LED Matrix Bonnet), or `regular-pi1`
+- `gpio_slowdown` — depends on your Pi and panel (roughly 1–3 on a Pi 3,
+  2–4 on a Pi 4); raise it if rows jump or the image is garbage
+- `brightness` — 1–100%
 - `pwm_bits`, `pwm_lsb_nanoseconds`, `pwm_dither_bits` — PWM tuning
 - Dynamic Duration — global cap for plugins that extend their display
   time based on content
+
+The collapsed **Advanced Hardware & Display Options** section holds
+multiplexing, panel type, row address type, scan mode, PWM tuning, the
+refresh-rate cap and hardware pulsing. Every field has a help tip, and the
+README's Display Settings section describes each one with its allowed range.
 
 **Vegas Scroll Mode:** the Display tab also has a full Vegas Scroll
 Mode section — enable toggle, scroll speed, separator width, dynamic

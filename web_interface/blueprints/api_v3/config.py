@@ -12,6 +12,7 @@ from web_interface.blueprints.api_v3 import (
     success_response,
 )
 from src.common.path_safety import resolve_under
+from src.pi5_matrix_support import is_raspberry_pi_5, pi5_unsupported_settings
 import web_interface.blueprints.api_v3 as _pkg
 # Read through the module rather than bound by value: tests patch these
 # as module attributes, and a value binding would not see the patch.
@@ -555,15 +556,6 @@ def save_main_config():
             if 'panel_type' in data and data['panel_type'] not in PANEL_TYPE_ALLOWED:
                 return jsonify({'status': 'error', 'message': f"Invalid panel type '{data['panel_type']}'. Allowed values: Standard (empty), FM6126A, FM6127"}), 400
 
-            # Validate multiplexing
-            if 'multiplexing' in data:
-                try:
-                    mux_val = int(data['multiplexing'])
-                    if mux_val < 0 or mux_val > 22:
-                        return jsonify({'status': 'error', 'message': f"Invalid multiplexing value '{data['multiplexing']}'. Must be an integer from 0 to 22."}), 400
-                except (ValueError, TypeError, OverflowError):
-                    return jsonify({'status': 'error', 'message': f"Invalid multiplexing value '{data['multiplexing']}'. Must be an integer from 0 to 22."}), 400
-
             # Validate pixel_mapper_config (free-form mapper string, e.g. "U-mapper;Rotate:90")
             if 'pixel_mapper_config' in data and not isinstance(data['pixel_mapper_config'], str):
                 return jsonify({'status': 'error', 'message': 'pixel_mapper_config must be a string (e.g. "U-mapper;Rotate:90" or empty)'}), 400
@@ -573,14 +565,59 @@ def save_main_config():
             if 'orientation' in data and data['orientation'] not in ORIENTATION_ALLOWED:
                 return jsonify({'status': 'error', 'message': f"Invalid orientation '{data['orientation']}'. Allowed values: {', '.join(sorted(ORIENTATION_ALLOWED))}"}), 400
 
-            # Validate row_address_type
-            if 'row_address_type' in data:
+            # Panel geometry, PWM and GPIO timing, held to what the rgbmatrix library
+            # accepts (RGBMatrix::Options::Validate in lib/options-initialize.cc,
+            # the gpio_slowdown check in lib/led-matrix.cc). Outside those ranges
+            # the config used to save, then the matrix refused to start and the
+            # display dropped to fallback mode. cols, chain_length and
+            # limit_refresh_rate_hz (0 = no cap) have no upper bound in the
+            # library. rows has none here by choice: the library currently
+            # rejects more than 64 per panel, and that limit is left to it so a
+            # library that lifts it needs no change here.
+            def _hardware_int_error(field, low, high=None, even=False):
+                """A 400 response if data[field] is not an allowed integer, else None."""
+                raw = data[field]
+                kind = "an even integer" if even else "an integer"
+                if high is None:
+                    allowed = f"{kind} of at least {low}"
+                else:
+                    allowed = f"{kind} from {low} to {high}"
+                rejection = (jsonify({'status': 'error', 'message': f"Invalid {field} '{raw}'. Must be {allowed}."}), 400)
+                # int() would quietly turn true into 1 and 48.5 into 48.
+                if isinstance(raw, bool) or (isinstance(raw, float) and not raw.is_integer()):
+                    return rejection
                 try:
-                    rat_val = int(data['row_address_type'])
-                    if rat_val < 0 or rat_val > 4:
-                        return jsonify({'status': 'error', 'message': f"Invalid row_address_type '{data['row_address_type']}'. Must be an integer from 0 to 4."}), 400
+                    value = int(raw)
                 except (ValueError, TypeError, OverflowError):
-                    return jsonify({'status': 'error', 'message': f"Invalid row_address_type '{data['row_address_type']}'. Must be an integer from 0 to 4."}), 400
+                    return rejection
+                if value < low or (high is not None and value > high) or (even and value % 2):
+                    return rejection
+                return None
+
+            for field, low, high, even in (('rows', 8, None, True), ('cols', 16, None, False),
+                                           ('chain_length', 1, None, False), ('parallel', 1, 3, False),
+                                           ('brightness', 1, 100, False), ('scan_mode', 0, 1, False),
+                                           ('pwm_bits', 1, 11, False), ('pwm_dither_bits', 0, 2, False),
+                                           ('pwm_lsb_nanoseconds', 50, 3000, False),
+                                           ('limit_refresh_rate_hz', 0, None, False),
+                                           ('row_address_type', 0, 5, False), ('multiplexing', 0, 22, False),
+                                           ('gpio_slowdown', 0, 10, False)):
+                if field in data:
+                    error = _hardware_int_error(field, low, high, even)
+                    if error:
+                        return error
+
+            # A Pi 5 can't drive every combination (src/pi5_matrix_support.py),
+            # and one it can't crashes the display service instead of falling
+            # back. Checked only when this request sets one of those fields, so
+            # a combination already stored doesn't block unrelated saves.
+            pi5_fields = ('row_address_type', 'parallel', 'hardware_mapping')
+            if any(k in data for k in pi5_fields) and is_raspberry_pi_5():
+                effective = dict(current_config['display']['hardware'])
+                effective.update({k: data[k] for k in pi5_fields if k in data})
+                unsupported = pi5_unsupported_settings(effective)
+                if unsupported:
+                    return jsonify({'status': 'error', 'message': unsupported}), 400
 
             # Handle hardware settings
             for field in ['rows', 'cols', 'chain_length', 'parallel', 'brightness', 'hardware_mapping', 'scan_mode',
