@@ -54,6 +54,24 @@ Web interface:
   uses and tests pin to `config.template.json` and the settings save endpoint.
   A stored warning is also dropped once its entry is no longer a plugin in
   config, so an old verdict clears without a restart.
+- **Check & Update All** no longer sends installed Starlark apps
+  (`starlark:<app_id>` entries in `/plugins/installed`) to the plugin updater,
+  which answered each with a 500 "plugin not found". `POST /plugins/update`
+  now answers a `starlark:` id with a 400 saying it is a Starlark app. A
+  request that gets no HTTP answer (e.g. the web service restarting mid-run) is
+  re-sent with backoff instead of being counted as failed and skipped — that is
+  how a disabled plugin with an update waiting was silently left out.
+
+Plugin system:
+
+- A plugin no longer starts with a schema warning and a degraded flag because
+  config.json still holds a boolean where its schema now has an object with an
+  `enabled` property (news' `global.dynamic_duration: true`). The loader reads
+  the boolean as `{"enabled": <bool>}` before merging schema defaults and
+  validating, the same rule the settings form already applies
+  (`legacy_bool_as_object` in `src/plugin_system/schema_manager.py`). Nothing
+  is written at load; the next save of that plugin's settings stores the object.
+  Other type mismatches still warn.
 
 ## 3.4.0
 

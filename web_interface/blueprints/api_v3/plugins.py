@@ -943,6 +943,19 @@ def update_plugin():
                 )
             data = {'plugin_id': plugin_id}
 
+        # /plugins/installed lists installed Starlark apps as virtual
+        # 'starlark:<app_id>' entries. They are not plugin directories, so the
+        # store manager can only fail to find them -- which used to surface as
+        # a 500 "plugin not found" for an app that is installed and working.
+        raw_id = data.get('plugin_id')
+        if isinstance(raw_id, str) and raw_id.startswith('starlark:'):
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                f'{raw_id} is a Starlark app, not a plugin; Starlark apps are '
+                'not updated through the plugin updater',
+                status_code=400
+            )
+
         if not api_v3.plugin_store_manager:
             return error_response(
                 ErrorCode.SYSTEM_ERROR,

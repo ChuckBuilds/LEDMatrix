@@ -22,7 +22,7 @@ from src.logging_config import get_logger
 from src.plugin_system.plugin_loader import PluginLoader
 from src.plugin_system.plugin_executor import PluginExecutor
 from src.plugin_system.plugin_state import PluginStateManager, PluginState
-from src.plugin_system.schema_manager import SchemaManager
+from src.plugin_system.schema_manager import SchemaManager, normalize_legacy_booleans
 from src.common.permission_utils import (
     ensure_directory_permissions,
     get_plugin_dir_mode
@@ -351,6 +351,7 @@ class PluginManager:
                 config = {}
             
             # Check if plugin has a config schema
+            schema = None
             schema_path = self.schema_manager.get_schema_path(plugin_id)
             if schema_path is None:
                 # Schema file doesn't exist
@@ -366,6 +367,24 @@ class PluginManager:
                     self.logger.warning(
                         f"Plugin '{plugin_id}' has a config_schema.json but it could not be loaded. "
                         f"The schema may be invalid. Please verify the schema file at: {schema_path}"
+                    )
+
+            # A plugin that turned an on/off boolean into an {enabled, ...}
+            # object still finds the boolean in config.json until the user saves
+            # its settings form, which carries it over (plugin_config.html).
+            # Read it the same way here, before the defaults fill in the rest
+            # of the object and before schema validation, so the plugin doesn't
+            # start with a schema warning and a degraded flag. In memory only:
+            # config.json is written by saves, never by loading a plugin.
+            if schema:
+                upgraded: List[str] = []
+                config = normalize_legacy_booleans(config, schema, upgraded)
+                if upgraded:
+                    self.logger.info(
+                        "Plugin %s: reading legacy boolean setting %s as "
+                        "{\"enabled\": ...}; saving the plugin's settings "
+                        "stores the new shape",
+                        plugin_id, ", ".join(upgraded),
                     )
 
             # Merge config with schema defaults to ensure all defaults are applied
