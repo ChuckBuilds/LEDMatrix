@@ -701,7 +701,7 @@ Controls how long each installed plugin stays visible in seconds before switchin
   - Some plugins can automatically adjust their display time based on content
   - This setting limits how long they can extend (prevents one display from dominating)
   - Example: If set to 60, a plugin can extend up to 60 seconds even if it requests longer
-  - Leave unset to use the default cap (typically 90 seconds)
+  - Leave unset to use the default cap (180 seconds; the web UI accepts 30-1800)
 
 ### Example Configuration
 

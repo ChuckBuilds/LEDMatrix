@@ -222,7 +222,7 @@
 
                 <div class="form-group" id="setting-display-rp1_rio" data-setting-key="display.runtime.rp1_rio">
                     <label for="rp1_rio" class="block text-sm font-medium text-gray-700">
-                        RP1 Backend <span class="text-xs text-gray-400 font-normal">(Pi 5 only)</span>{{ ui.help_tip('Pi 5 RP1 coprocessor driver mode.\nPIO (0) is the default and uses less CPU. RIO (1) can push a higher refresh rate but inverts the GPIO Slowdown behavior. Ignored on Pi 3/4.', 'RP1 Backend') }}
+                        RP1 Backend <span class="text-xs text-gray-400 font-normal">(Pi 5 only)</span>{{ ui.help_tip('Pi 5 RP1 coprocessor driver mode.\nPIO (0) is the default and uses less CPU. RIO (1) can push a higher refresh rate but inverts the GPIO Slowdown behavior. Ignored on every other Pi model.', 'RP1 Backend') }}
                     </label>
                     <select id="rp1_rio" name="rp1_rio" class="form-control">
                         <option value="0" {% if main_config.display.get('runtime', {}).get('rp1_rio', 0)|int == 0 %}selected{% endif %}>0 &mdash; PIO (default, low CPU)</option>

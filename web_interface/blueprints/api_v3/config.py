@@ -555,15 +555,6 @@ def save_main_config():
             if 'panel_type' in data and data['panel_type'] not in PANEL_TYPE_ALLOWED:
                 return jsonify({'status': 'error', 'message': f"Invalid panel type '{data['panel_type']}'. Allowed values: Standard (empty), FM6126A, FM6127"}), 400
 
-            # Validate multiplexing
-            if 'multiplexing' in data:
-                try:
-                    mux_val = int(data['multiplexing'])
-                    if mux_val < 0 or mux_val > 22:
-                        return jsonify({'status': 'error', 'message': f"Invalid multiplexing value '{data['multiplexing']}'. Must be an integer from 0 to 22."}), 400
-                except (ValueError, TypeError, OverflowError):
-                    return jsonify({'status': 'error', 'message': f"Invalid multiplexing value '{data['multiplexing']}'. Must be an integer from 0 to 22."}), 400
-
             # Validate pixel_mapper_config (free-form mapper string, e.g. "U-mapper;Rotate:90")
             if 'pixel_mapper_config' in data and not isinstance(data['pixel_mapper_config'], str):
                 return jsonify({'status': 'error', 'message': 'pixel_mapper_config must be a string (e.g. "U-mapper;Rotate:90" or empty)'}), 400
@@ -572,15 +563,6 @@ def save_main_config():
             ORIENTATION_ALLOWED = {'normal', '180'}
             if 'orientation' in data and data['orientation'] not in ORIENTATION_ALLOWED:
                 return jsonify({'status': 'error', 'message': f"Invalid orientation '{data['orientation']}'. Allowed values: {', '.join(sorted(ORIENTATION_ALLOWED))}"}), 400
-
-            # Validate row_address_type
-            if 'row_address_type' in data:
-                try:
-                    rat_val = int(data['row_address_type'])
-                    if rat_val < 0 or rat_val > 5:
-                        return jsonify({'status': 'error', 'message': f"Invalid row_address_type '{data['row_address_type']}'. Must be an integer from 0 to 5."}), 400
-                except (ValueError, TypeError, OverflowError):
-                    return jsonify({'status': 'error', 'message': f"Invalid row_address_type '{data['row_address_type']}'. Must be an integer from 0 to 5."}), 400
 
             # Panel geometry, PWM and GPIO timing, held to what the rgbmatrix library
             # accepts (RGBMatrix::Options::Validate in lib/options-initialize.cc,
@@ -617,6 +599,7 @@ def save_main_config():
                                            ('pwm_bits', 1, 11, False), ('pwm_dither_bits', 0, 2, False),
                                            ('pwm_lsb_nanoseconds', 50, 3000, False),
                                            ('limit_refresh_rate_hz', 0, None, False),
+                                           ('row_address_type', 0, 5, False), ('multiplexing', 0, 22, False),
                                            ('gpio_slowdown', 0, 10, False)):
                 if field in data:
                     error = _hardware_int_error(field, low, high, even)

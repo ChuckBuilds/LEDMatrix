@@ -54,10 +54,11 @@ Web interface:
   parallel is 1–3 and PWM dither bits 0–2, matching the library. A stored GPIO
   slowdown, PWM dither bits or refresh-rate cap of 0 no longer shows (and
   re-saves) as 3, 1 or 120, and the refresh cap accepts 0 (no cap). The config
-  API rejects out-of-range `rows`, `cols`, `chain_length`, `parallel`,
-  `brightness`, `scan_mode`, `pwm_bits`, `pwm_dither_bits`,
-  `pwm_lsb_nanoseconds`, `limit_refresh_rate_hz` and `gpio_slowdown` with a
-  400 instead of saving a config the matrix refuses to start with.
+  API rejects out-of-range or non-integer `rows`, `cols`, `chain_length`,
+  `parallel`, `brightness`, `scan_mode`, `pwm_bits`, `pwm_dither_bits`,
+  `pwm_lsb_nanoseconds`, `limit_refresh_rate_hz`, `row_address_type`,
+  `multiplexing` and `gpio_slowdown` with a 400 (JSON `true` or `5.5` used to
+  save as 1 or 5) instead of saving a config the matrix refuses to start with.
 - Display setting help tips and README / config-reference entries corrected
   and completed: `panel_type` and `rp1_rio` are documented,
   `show_refresh_rate` prints to the console rather than drawing on the panel,
