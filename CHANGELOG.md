@@ -52,6 +52,8 @@ Plugin-facing changes since 3.3.0 (tag `v3.3.1`) not covered further down:
   Floor on 3.4.0 to import it. Relatedly, `DisplayManager` now draws text
   1-bit (#521), so golden images recorded against 3.3.x may need regenerating.
 
+### Install and updates
+
 **Weekly automatic updates (#581), off by default.** Switching on
 *Automatically check for and install updates once a week* on the General tab
 (or `first_time_install.sh --enable-auto-update` / `LEDMATRIX_AUTO_UPDATE=1`)
@@ -77,15 +79,105 @@ See `docs/WEB_INTERFACE_GUIDE.md`.
   installs the health-check units (`src/auto_update_setup.py`, core-internal
   and not a plugin API).
 
-**Scroll frame stats no longer count the pause between scrolls as a frame
-(#582).** The `Scroll frame stats` log line timed each scroll's first frame
-against the last frame of the previous scroll, so the idle wait between them was
-recorded as one frame: windows reading "0.0 fps over 1 frames", minutes-long
-`max` values in otherwise healthy windows, and a phantom stall per scroll start
-roughly as large as the real stall rate. That first frame now takes no sample.
-Scrolling itself is unchanged; the numbers used to judge it are now
-trustworthy, and `docs/SCROLL_PERFORMANCE.md` describes the line actually
-logged.
+Installer and service fixes:
+
+- rgbmatrix builds on ARMv6 boards (Pi Zero, Pi 1); an existing checkout is
+  moved forward to the new pin and no longer left root-owned (#577).
+- `first_time_install.sh` grants the web user `safe_pip_install.sh`, as
+  `configure_web_sudo.sh` already did, so plugin requirements install where
+  the display service can see them (#579).
+- The web interface starts when `web_display_autostart` is missing or
+  `config.json` is unreadable; only an explicit `false` keeps it down (#556).
+- Installers render every systemd unit from its `systemd/` template, so the
+  boot-time unit-drift warning can clear, non-root installs included (#547).
+
+### Scrolling
+
+- **Frame pacing (#523).** The loop waits only for the rest of each panel
+  refresh instead of a flat 8 ms: 44–46 fps → 100 fps, and slow frames 14% →
+  0.02%, on a 2×128×64 chain. Sub-pixel blending is off by default again (it
+  shimmered on pixel fonts; Vegas mode still opts in).
+- **Whole-pixel steps (#545).** At a speed `scroll_config` can render in whole
+  pixels, every frame advances by exactly the same amount, removing about six
+  hitches a second. A loop that can't keep up now scrolls slightly slow rather
+  than jumping.
+- The eight sports scoreboards scroll through `scroll_config` too (#542): the
+  default 50 px/s holds each frame for two refreshes instead of alternating
+  0 px and 1 px steps.
+- **Frame stats ignore the pause between scrolls (#582).** The `Scroll frame
+  stats` log line counted the idle wait before each scroll as one frame,
+  inflating `max` and the stall rate. `docs/SCROLL_PERFORMANCE.md` now
+  describes the line actually logged.
+
+### Plugins
+
+- `FontManager` registers the bundled `tom_thumb` font, so plugins no longer
+  need a private loader (#534).
+- The test harness's `set_scrolling_state()` accepts `frame_hold`, as
+  `DisplayManager`'s does (#534).
+- A `display()` with nothing to draw should return `False`, the only value the
+  controller skips on; starlark-apps now does, rather than holding a black
+  panel (#534).
+- Starlark apps may set `render_width`/`render_height` in their `config.json`
+  to render at their own canvas size instead of Pixlet's 64×32 (#552).
+- `scripts/render_plugin.py --display-mode <mode>` renders one mode of a
+  multi-mode plugin; scoreboards previously rendered blank (#522).
+- Scoreboards resolve their own directory under the real plugin loader
+  (declare `_PLUGIN_DIR`), so 4x6 text snaps to its 7px grid instead of
+  rendering a pixel narrow, and an unreadable schema is logged (#519, #520).
+  `DisplayManager` loads 4x6 on that grid too (#565).
+- The 5x7 BDF face reports a real height, so rows stacked by
+  `get_font_height()` no longer overlap (#539).
+- `LogoHelper` remembers a missing logo instead of warning every rotation
+  (#548), and the decoded sports logo cache is bounded (#559).
+
+### Web interface
+
+- Installed Plugins has search, All / Enabled / Disabled / Updates filters and
+  sort (#540).
+- Hardened and polished per the September 2026 audit (#568): utility classes
+  such as `.hidden` actually exist, focus rings, labels and modal focus
+  trapping, dark theme throughout, no overflow at phone width, and background
+  streams pause when hidden, with first-load JS/CSS down from 1358 KB to 291 KB.
+- WiFi Connect works from the LEDMatrix-Setup hotspot: the page is answered
+  before the hotspot drops, and reopening it shows why an attempt failed (#571).
+- Pixlet install, the Starlark app store and app toggles work again (#535,
+  #537); the store uses the configured GitHub token and reports a rate limit
+  instead of drawing a blank grid (#541).
+- Plugin config: geochron and news saves no longer always fail (#575), the page
+  survives stored values the schema outgrew (#578), the form uses the full page
+  height (#573), and file-manager widgets show the script's error (#574).
+- The live status stream reports real disk usage and available memory (#558);
+  a system action refused for want of passwordless sudo says so and names
+  `configure_web_sudo.sh` (#560).
+
+### Tools and security
+
+- **CodeQL triage (#561):** 129 of 134 alerts fixed. Three were exploitable
+  path-handling flaws in the web interface and are closed; web UI escapers now
+  escape quotes, and URL fields refuse script schemes. Path checks share
+  `src/common/path_safety.py` (core-internal).
+- **Home Assistant MQTT bridge** (`integrations/mqtt_bridge`, #538): mode
+  select, stop, power and brightness over MQTT Discovery.
+- **Tools tab** manages the MQTT bridge and the Pixlet editor (#554); the
+  editor stays on loopback when `PIXLET_EDITOR_HOST` says so.
+
+### Fixes
+
+- Updating a plugin whose directory is named for its manifest id (leaderboard,
+  music, stocks, weather) silently did nothing (#536).
+- Plugin reconciliation no longer reports working plugins as stale or replaces
+  their config with a stub, and the Overview banner advises each case correctly
+  (#557).
+- Two config saves in the same second no longer share one backup, so rollback
+  restores the version asked for (#564).
+- On-demand: a second request is honoured without a restart (#534), a pinned
+  request stays on its mode, and restarting mid-session loads every plugin
+  again (#538).
+- `/health` and `/display/current` report real state, and the preview no longer
+  freezes on a leftover snapshot temp file (#534).
+
+### Per-element display customization
 
 **Per-element display customization, and the last mile of it into the web UI.**
 A user can set the font, size, colour, position, visibility and alignment of
