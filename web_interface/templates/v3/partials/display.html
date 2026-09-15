@@ -41,13 +41,12 @@
 
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-4 2xl:grid-cols-4 gap-4 mb-4">
                 <div class="form-group" id="setting-display-rows" data-setting-key="display.hardware.rows">
-                    <label for="rows" class="block text-sm font-medium text-gray-700">Rows{{ ui.help_tip('Number of LED rows on a single panel.\nCommon: 16, 32, 48 or 64. Default: 32. Must match your panel. The rgbmatrix library accepts even numbers from 8 to 64.', 'Rows') }}</label>
+                    <label for="rows" class="block text-sm font-medium text-gray-700">Rows{{ ui.help_tip('Number of LED rows on a single panel.\nCommon: 16, 32, 48 or 64. Default: 32. Must match your panel and be an even number, at least 8. There is no upper limit here, but the current rgbmatrix library rejects more than 64 rows per panel, and the display will not start.', 'Rows') }}</label>
                     <input type="number"
                            id="rows"
                            name="rows"
                            value="{{ main_config.display.hardware.rows or 32 }}"
                            min="8"
-                           max="64"
                            step="2"
                            class="form-control">
                 </div>
@@ -107,7 +106,7 @@
                 </div>
 
                 <div class="form-group" id="setting-display-hardware_mapping" data-setting-key="display.hardware.hardware_mapping">
-                    <label for="hardware_mapping" class="block text-sm font-medium text-gray-700">Hardware Mapping{{ ui.help_tip('How the LED panel is wired to the Pi.\nUse "Adafruit HAT PWM" for an Adafruit HAT/Bonnet with the PWM solder mod; "Adafruit HAT" without it; "Regular" for direct GPIO wiring.', 'Hardware Mapping') }}</label>
+                    <label for="hardware_mapping" class="block text-sm font-medium text-gray-700">Hardware Mapping{{ ui.help_tip('How the LED panel is wired to the Pi.\nUse "Adafruit HAT PWM" for an Adafruit RGB Matrix HAT/Bonnet with the PWM solder mod; "Adafruit HAT" without it (no hardware pulsing, so expect a little more flicker); "Regular" for direct GPIO wiring and for the Adafruit Triple LED Matrix Bonnet.', 'Hardware Mapping') }}</label>
                     <select id="hardware_mapping" name="hardware_mapping" class="form-control">
                         <option value="adafruit-hat-pwm" {% if main_config.display.hardware.hardware_mapping == "adafruit-hat-pwm" %}selected{% endif %}>Adafruit HAT PWM</option>
                         <option value="adafruit-hat" {% if main_config.display.hardware.hardware_mapping == "adafruit-hat" %}selected{% endif %}>Adafruit HAT</option>
@@ -125,7 +124,7 @@
                 </div>
 
                 <div class="form-group" id="setting-display-led_rgb_sequence" data-setting-key="display.hardware.led_rgb_sequence">
-                    <label for="led_rgb_sequence" class="block text-sm font-medium text-gray-700">LED RGB Sequence{{ ui.help_tip('Order the panel expects color channels in.\nChange this only if reds/greens/blues look swapped. Default: RGB.', 'LED RGB Sequence') }}</label>
+                    <label for="led_rgb_sequence" class="block text-sm font-medium text-gray-700">LED RGB Sequence{{ ui.help_tip('Order the panel expects color channels in.\nChange this only if reds/greens/blues look swapped (red shows as blue: try BGR). Default: RGB. The Waveshare 96x48 V2 needs BGR.', 'LED RGB Sequence') }}</label>
                     <select id="led_rgb_sequence" name="led_rgb_sequence" class="form-control">
                         <option value="RGB" {% if main_config.display.hardware.get('led_rgb_sequence', 'RGB') == "RGB" %}selected{% endif %}>RGB</option>
                         <option value="RBG" {% if main_config.display.hardware.get('led_rgb_sequence', 'RGB') == "RBG" %}selected{% endif %}>RBG</option>
@@ -159,7 +158,7 @@
 
             <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div class="form-group" id="setting-display-multiplexing" data-setting-key="display.hardware.multiplexing">
-                    <label for="multiplexing" class="block text-sm font-medium text-gray-700">Multiplexing{{ ui.help_tip('Pixel-mapping scheme used by outdoor/specialty panels.\nLeave at 0 (Direct) for most indoor panels. Only change if the image is scrambled — try values until it looks right.', 'Multiplexing') }}</label>
+                    <label for="multiplexing" class="block text-sm font-medium text-gray-700">Multiplexing{{ ui.help_tip('How the pixels are wired on outdoor/specialty panels (P10, P8, P4 and P3 outdoor modules and similar), whose LEDs are not laid out in straight rows.\nLeave at 0 (Direct) for most indoor panels. If the image is scrambled in a repeating pattern, try the value named after your panel first, then the others.', 'Multiplexing') }}</label>
                     <select id="multiplexing" name="multiplexing" class="form-control">
                         <option value="0" {% if main_config.display.hardware.get('multiplexing', 0)|int == 0 %}selected{% endif %}>0 - Direct</option>
                         <option value="1" {% if main_config.display.hardware.get('multiplexing', 0)|int == 1 %}selected{% endif %}>1 - Stripe</option>
@@ -211,7 +210,7 @@
 
             <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div class="form-group" id="setting-display-gpio_slowdown" data-setting-key="display.runtime.gpio_slowdown">
-                    <label for="gpio_slowdown" class="block text-sm font-medium text-gray-700">GPIO Slowdown{{ ui.help_tip('Slows the GPIO signal so the panel keeps up.\nGuide: Pi 3 → 1–2, Pi 4 → 2–4, Pi 5 (PIO) → 1–3. Panels on Row Address Type 5 (SM5368 row drivers) can need 6–8 on a Pi 4. Increase if the display shows garbage, jumping rows or flicker; in RIO mode higher values may improve performance.', 'GPIO Slowdown') }}</label>
+                    <label for="gpio_slowdown" class="block text-sm font-medium text-gray-700">GPIO Slowdown{{ ui.help_tip('Slows GPIO writes so the panel electronics keep up (0–10); higher is more reliable but lowers the refresh rate.\nStarting points: Pi Zero / Pi 1 → 0–1, Pi 2 / Pi 3 → 1–3, Pi 4 → 2–4, Pi 5 (PIO) → 1–3. Panels on Row Address Type 5 (SM5368 row drivers) can need 6–8 on a Pi 4. Raise it if the display shows garbage, jumping rows or flicker; in RIO mode higher values may improve performance.', 'GPIO Slowdown') }}</label>
                     <input type="number"
                            id="gpio_slowdown"
                            name="gpio_slowdown"
@@ -232,7 +231,7 @@
                 </div>
 
                 <div class="form-group" id="setting-display-scan_mode" data-setting-key="display.hardware.scan_mode">
-                    <label for="scan_mode" class="block text-sm font-medium text-gray-700">Scan Mode{{ ui.help_tip('Order rows are refreshed in.\n0 = progressive (default), 1 = interlaced. Change only if you see banding or flicker on certain panels.', 'Scan Mode') }}</label>
+                    <label for="scan_mode" class="block text-sm font-medium text-gray-700">Scan Mode{{ ui.help_tip('Order rows are refreshed in.\n0 = progressive (default), 1 = interlaced. Interlaced can look a little smoother when the refresh rate is very low, but usually shows a comb effect on anything moving. Leave at 0 unless you are tuning a slow setup.', 'Scan Mode') }}</label>
                     <input type="number"
                            id="scan_mode"
                            name="scan_mode"
@@ -245,7 +244,7 @@
 
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div class="form-group" id="setting-display-pwm_bits" data-setting-key="display.hardware.pwm_bits">
-                    <label for="pwm_bits" class="block text-sm font-medium text-gray-700">PWM Bits{{ ui.help_tip('Color depth per channel (1–11).\nHigher means smoother color but a lower refresh rate; lower means faster refresh with more banding. Default: 11 (this build defaults to 9).', 'PWM Bits') }}</label>
+                    <label for="pwm_bits" class="block text-sm font-medium text-gray-700">PWM Bits{{ ui.help_tip('Color depth per channel (1–11).\nHigher means smoother color but a lower refresh rate; lower drops the subtlest shades for a faster refresh (1 = 8 colors). Default: 9.', 'PWM Bits') }}</label>
                     <input type="number"
                            id="pwm_bits"
                            name="pwm_bits"
@@ -256,7 +255,7 @@
                 </div>
 
                 <div class="form-group" id="setting-display-pwm_dither_bits" data-setting-key="display.hardware.pwm_dither_bits">
-                    <label for="pwm_dither_bits" class="block text-sm font-medium text-gray-700">PWM Dither Bits{{ ui.help_tip('Time-dithering to gain apparent color depth (0–2).\nDefault: 1. Raising it can smooth gradients at the cost of a slightly lower refresh rate.', 'PWM Dither Bits') }}</label>
+                    <label for="pwm_dither_bits" class="block text-sm font-medium text-gray-700">PWM Dither Bits{{ ui.help_tip('Time-dithers the lowest color bits (0–2): their brightness comes from showing them on only some frames, which raises the refresh rate.\nDefault: 1. 0 gives the steadiest dim colors; 2 is fastest but dark shades can shimmer. The rgbmatrix library accepts only 0–2.', 'PWM Dither Bits') }}</label>
                     <input type="number"
                            id="pwm_dither_bits"
                            name="pwm_dither_bits"
@@ -269,7 +268,7 @@
 
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div class="form-group" id="setting-display-pwm_lsb_nanoseconds" data-setting-key="display.hardware.pwm_lsb_nanoseconds">
-                    <label for="pwm_lsb_nanoseconds" class="block text-sm font-medium text-gray-700">PWM LSB Nanoseconds{{ ui.help_tip('Base time for the least-significant color bit (50–3000 ns).\nDefault: 130. Raising it can reduce flicker on some panels but lowers the maximum refresh rate.', 'PWM LSB Nanoseconds') }}</label>
+                    <label for="pwm_lsb_nanoseconds" class="block text-sm font-medium text-gray-700">PWM LSB Nanoseconds{{ ui.help_tip('On-time of the least-significant color bit (50–3000 ns); each higher bit doubles it.\nDefault: 130. Lower allows a higher refresh rate but can cost color accuracy or add ghosting; raise it if bright text on black leaves faint trails.', 'PWM LSB Nanoseconds') }}</label>
                     <input type="number"
                            id="pwm_lsb_nanoseconds"
                            name="pwm_lsb_nanoseconds"
@@ -280,12 +279,12 @@
                 </div>
 
                 <div class="form-group" id="setting-display-limit_refresh_rate_hz" data-setting-key="display.hardware.limit_refresh_rate_hz">
-                    <label for="limit_refresh_rate_hz" class="block text-sm font-medium text-gray-700">Limit Refresh Rate (Hz){{ ui.help_tip('Caps the panel refresh rate (1–1000 Hz).\nDefault: 120. A steady cap reduces flicker in camera recordings and keeps timing consistent. Set higher or to the max your panel supports for the smoothest motion.', 'Limit Refresh Rate') }}</label>
+                    <label for="limit_refresh_rate_hz" class="block text-sm font-medium text-gray-700">Limit Refresh Rate (Hz){{ ui.help_tip('Caps the panel refresh rate (0–1000 Hz; 0 = no cap).\nDefault: 100. A steady cap reduces flicker from other activity on the Pi and in camera recordings. Scroll speeds are worked out against this value (against 100 Hz when it is 0), so a cap the panel can actually hold keeps scrolling even.', 'Limit Refresh Rate') }}</label>
                     <input type="number"
                            id="limit_refresh_rate_hz"
                            name="limit_refresh_rate_hz"
-                           value="{{ main_config.display.hardware.limit_refresh_rate_hz or 120 }}"
-                           min="1"
+                           value="{{ main_config.display.hardware.get('limit_refresh_rate_hz', 100) }}"
+                           min="0"
                            max="1000"
                            class="form-control">
                 </div>
@@ -304,7 +303,7 @@
                                {% if main_config.display.hardware.disable_hardware_pulsing %}checked{% endif %}
                                class="form-control h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
                         <span class="ml-2 text-sm font-medium text-gray-900">Disable Hardware Pulsing</span>
-                        {{ ui.help_tip('Turn off hardware PWM pulsing.\nEnable this if the Pi audio is in use or you hear buzzing / see instability. Slightly increases CPU usage.', 'Disable Hardware Pulsing') }}
+                        {{ ui.help_tip('Time the brightness pulses in software instead of with the Pi hardware PWM.\nLeave unchecked where possible: software timing is less exact, so a row or the whole panel can briefly flash brighter. Hardware pulsing needs the panel OE line on GPIO 18 (Adafruit HAT PWM, Regular, Triple Bonnet) and the Pi onboard sound driver disabled; check this if you need Pi audio. Without GPIO 18 the library uses software timing anyway.', 'Disable Hardware Pulsing') }}
                     </label>
                 </div>
 
@@ -328,7 +327,7 @@
                                {% if main_config.display.hardware.show_refresh_rate %}checked{% endif %}
                                class="form-control h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
                         <span class="ml-2 text-sm font-medium text-gray-900">Show Refresh Rate</span>
-                        {{ ui.help_tip('Overlay the live panel refresh rate on the display.\nUseful for tuning GPIO Slowdown and PWM settings; turn off for normal use.', 'Show Refresh Rate') }}
+                        {{ ui.help_tip('Print the live panel refresh rate to the console; nothing is drawn on the panel.\nReadable when you stop the service and run the display in a terminal; under the service the output is buffered. Turn off for normal use.', 'Show Refresh Rate') }}
                     </label>
                 </div>
 

@@ -586,17 +586,19 @@ def save_main_config():
             # accepts (RGBMatrix::Options::Validate in lib/options-initialize.cc,
             # the gpio_slowdown check in lib/led-matrix.cc). Outside those ranges
             # the config used to save, then the matrix refused to start and the
-            # display dropped to fallback mode. cols and chain_length have no
-            # upper bound in the library, so none here.
+            # display dropped to fallback mode. cols, chain_length and
+            # limit_refresh_rate_hz (0 = no cap) have no upper bound in the
+            # library. rows has none here by choice: the library currently
+            # rejects more than 64 per panel, and that limit is left to it so a
+            # library that lifts it needs no change here.
             def _hardware_int_error(field, low, high=None, even=False):
                 """A 400 response if data[field] is not an allowed integer, else None."""
                 raw = data[field]
-                if even:
-                    allowed = f"an even integer from {low} to {high}"
-                elif high is None:
-                    allowed = f"an integer of at least {low}"
+                kind = "an even integer" if even else "an integer"
+                if high is None:
+                    allowed = f"{kind} of at least {low}"
                 else:
-                    allowed = f"an integer from {low} to {high}"
+                    allowed = f"{kind} from {low} to {high}"
                 rejection = (jsonify({'status': 'error', 'message': f"Invalid {field} '{raw}'. Must be {allowed}."}), 400)
                 # int() would quietly turn true into 1 and 48.5 into 48.
                 if isinstance(raw, bool) or (isinstance(raw, float) and not raw.is_integer()):
@@ -609,11 +611,12 @@ def save_main_config():
                     return rejection
                 return None
 
-            for field, low, high, even in (('rows', 8, 64, True), ('cols', 16, None, False),
+            for field, low, high, even in (('rows', 8, None, True), ('cols', 16, None, False),
                                            ('chain_length', 1, None, False), ('parallel', 1, 3, False),
                                            ('brightness', 1, 100, False), ('scan_mode', 0, 1, False),
                                            ('pwm_bits', 1, 11, False), ('pwm_dither_bits', 0, 2, False),
                                            ('pwm_lsb_nanoseconds', 50, 3000, False),
+                                           ('limit_refresh_rate_hz', 0, None, False),
                                            ('gpio_slowdown', 0, 10, False)):
                 if field in data:
                     error = _hardware_int_error(field, low, high, even)

@@ -494,7 +494,9 @@ These settings control the physical hardware configuration and how the matrix is
 - **`rows`** (integer, default: 32)
   - Number of LED rows (vertical pixels) in each panel
   - Common values: 16, 32, 48, 64
-  - Must be an even number from 8 to 64 (the rgbmatrix library's limit)
+  - Must be an even number, at least 8. LEDMatrix sets no upper limit, but the
+    current rgbmatrix library rejects more than 64 rows per panel — the display
+    then won't start (see Troubleshooting Display Settings below)
   - Must match your physical panel configuration
 
 - **`cols`** (integer, default: 64)
@@ -531,52 +533,52 @@ These settings control the physical hardware configuration and how the matrix is
   - Specifies which GPIO pin mapping to use for your hardware
   - **`"adafruit-hat-pwm"`**: Use this for Adafruit RGB Matrix Bonnet/HAT WITH the jumper mod (PWM enabled). This is the recommended setting for Adafruit hardware with the PWM jumper soldered.
   - **`"adafruit-hat"`**: Use this for Adafruit RGB Matrix Bonnet/HAT WITHOUT the jumper mod (no PWM). Remove `-pwm` from the value if you did not solder the jumper.
-  - **`"regular"`**: Standard GPIO pin mapping for direct GPIO connections (Generic)
+  - **`"regular"`**: Standard GPIO pin mapping for direct GPIO connections (Generic). Also the right choice for the Adafruit Triple LED Matrix Bonnet
   - **`"regular-pi1"`**: Standard GPIO pin mapping for Raspberry Pi 1 (older hardware or non-standard hat mapping)
   - Choose the option that matches your specific hardware setup, if aren't sure try them all.
+  - Hardware pulsing (see `disable_hardware_pulsing`) needs the panel's OE line on GPIO 18, which `adafruit-hat-pwm` and `regular` provide and `adafruit-hat` does not
 
 #### PWM (Pulse Width Modulation) Settings
 
 These settings affect color fidelity and smoothness of color transitions:
 
-- **`pwm_bits`** (integer, default: 9)
-  - Number of bits used for PWM (affects color depth)
-  - Higher values (9-11) = more color levels, smoother gradients
-  - Lower values (7-8) = fewer color levels, but may improve stability on some hardware
-  - Range: 1-11, recommended: 9-10
+- **`pwm_bits`** (integer, 1-11, default: 9)
+  - Color depth per channel: how many brightness levels each LED gets
+  - Higher values (9-11) = more color levels, smoother gradients, lower refresh rate
+  - Lower values (7-8) = the subtlest shades are dropped for a higher refresh rate; `1` gives 8 colors
+  - Recommended: 9-10
 
-- **`pwm_dither_bits`** (integer, default: 1)
-  - Additional dithering bits for smoother color transitions
-  - Helps reduce color banding in gradients
-  - Higher values (1-2) = smoother gradients but may impact performance
-  - Range: 0-2, recommended: 1
+- **`pwm_dither_bits`** (integer, 0-2, default: 1)
+  - Time-dithers the lowest color bits: their brightness comes from showing them on only some frames
+  - Raises the refresh rate; the cost is that dark shades can shimmer slightly
+  - `0` = steadiest dim colors, `2` = fastest
+  - The rgbmatrix library accepts only 0-2; a higher value stops the display starting
 
-- **`pwm_lsb_nanoseconds`** (integer, default: 130)
-  - Least significant bit timing in nanoseconds
-  - Controls the base timing for PWM signals
-  - Lower values = faster PWM, higher values = slower PWM
+- **`pwm_lsb_nanoseconds`** (integer, 50-3000, default: 130)
+  - On-time of the least significant color bit; each higher bit doubles it
+  - Lower values = higher refresh rate, but can cost color accuracy or add ghosting on some panels
+  - Higher values = less ghosting (faint trails behind bright text on black), lower refresh rate
   - Typical range: 100-300 nanoseconds
-  - May need adjustment if you see flickering or color issues
 
 #### Advanced Hardware Settings
 
-- **`scan_mode`** (integer, default: 0)
-  - Panel scan mode (how rows are addressed)
-  - Common values: 0 (progressive), 1 (interlaced)
-  - Most panels use 0, but some require 1
-  - Check your panel datasheet if colors appear incorrect
+- **`scan_mode`** (integer, 0-1, default: 0)
+  - Order the rows are refreshed in: `0` = progressive, `1` = interlaced
+  - Interlaced can look a little smoother when the refresh rate is very low, but usually shows a comb effect on anything moving
+  - Leave at `0` unless you are tuning a slow setup
 
 - **`limit_refresh_rate_hz`** (integer, default: 100)
-  - Maximum refresh rate in Hz (frames per second)
-  - Caps the refresh rate for better stability
-  - Lower values (60-80) = more stable, less CPU usage
-  - Higher values (100-120) = smoother animations, more CPU usage
-  - Recommended: 80-100 for most setups
+  - Caps the panel refresh rate in Hz; `0` = no cap
+  - A steady cap reduces flicker caused by other activity on the Pi, and in camera recordings
+  - Scroll speeds are worked out against this value (against 100 Hz when it is `0`), so a cap the panel can actually hold keeps scrolling even
+  - If the key is missing from the config, `DisplayManager` uses 90
+  - Recommended: 80-120. `sudo python3 scripts/scroll_speeds.py --measure` reports the rate your panel really achieves
 
 - **`disable_hardware_pulsing`** (boolean, default: false)
-  - Disables hardware pulsing (usually leave as false)
-  - Set to `true` only if you experience timing issues
-  - Most users should leave this as `false`
+  - `false` = the Pi's hardware PWM times each brightness pulse; `true` = software timing
+  - Leave `false` where possible. Software timing is less exact, so a row, or the whole panel, can briefly flash brighter
+  - Hardware pulsing needs the panel's OE line on GPIO 18 (`adafruit-hat-pwm`, `regular`, the Adafruit Triple LED Matrix Bonnet). With `adafruit-hat` the library uses software timing anyway
+  - It also needs the Pi's onboard sound driver (`snd_bcm2835`) disabled, which `first_time_install.sh` does. Set `true` only if you need the Pi's own audio
 
 - **`inverse_colors`** (boolean, default: false)
   - Inverts all colors (red becomes cyan, etc.)
@@ -584,9 +586,9 @@ These settings affect color fidelity and smoothness of color transitions:
   - Set to `true` only if colors appear inverted
 
 - **`show_refresh_rate`** (boolean, default: false)
-  - Displays the current refresh rate on the matrix (for debugging)
-  - Set to `true` to see FPS on the display
-  - Useful for troubleshooting performance issues
+  - Prints the live refresh rate to the console; nothing is drawn on the panel
+  - Readable when you stop the service and run `sudo python3 run.py` in a terminal; under the service the output is buffered
+  - `sudo python3 scripts/scroll_speeds.py --measure` is an easier way to see the real refresh rate
 
 #### Advanced Panel Configuration (Advanced Users Only)
 
@@ -596,6 +598,7 @@ These settings are typically only needed for non-standard panels or custom confi
   - Color channel order for your LED panel
   - Common values: "RGB", "RBG", "GRB", "GBR", "BRG", "BGR"
   - Most panels use "RGB", but some use "GRB" or other orders
+  - If red shows as blue, try "BGR" (the Waveshare 96x48 V2 needs it)
   - Check your panel datasheet if colors appear wrong
 
 - **`pixel_mapper_config`** (string, default: "")
@@ -630,27 +633,41 @@ These settings are typically only needed for non-standard panels or custom confi
   - On a Raspberry Pi 5 the rgbmatrix library currently supports only 0 and 2
   - Check your panel datasheet if display appears corrupted
 
-- **`multiplexing`** (integer, default: 0)
-  - Panel multiplexing type
-  - 0 = no multiplexing (standard panels)
-  - Higher values for panels with different multiplexing schemes
-  - Check your panel datasheet for the correct value
+- **`multiplexing`** (integer, 0-22, default: 0)
+  - How pixels are wired on outdoor/specialty panels (P10, P8, P4 and P3 outdoor modules and similar) whose LEDs aren't laid out in straight rows
+  - `0` = direct (standard indoor panels)
+  - `1` Stripe, `2` Checkered, `3` Spiral, `4` ZStripe, `5` ZnMirrorZStripe,
+    `6` Coreman, `7` Kaler2Scan, `8` ZStripeUneven, `9` P10-128x4-Z,
+    `10` QiangLiQ8, `11` InversedZStripe, `12`–`14` P10Outdoor1R1G1B v1–v3,
+    `15` P10CoremanMapper, `16` P8Outdoor1R1G1B, `17` FlippedStripe,
+    `18` P10-32x16-HalfScan, `19` P10-32x16-QuarterScan, `20` P3Outdoor-64x64,
+    `21` DoubleZMultiplex, `22` P4Outdoor-80x40
+  - If the image is scrambled in a repeating pattern, try the value named after your panel first
+
+- **`panel_type`** (string, default: `""`)
+  - Sends a start-up initialization sequence to driver chips that need one
+  - `""` = Standard (no initialization) — right for most panels, including FM6124 / FM6124D / FM6124DJ
+  - `"FM6126A"` or `"FM6127"` for panels with those chips; try `"FM6126A"` if the panel stays dark or lights only the first pixel on Standard
 
 ### Runtime Configuration (`display.runtime`)
 
 These settings control runtime behavior and GPIO timing:
 
 - **`gpio_slowdown`** (integer, default: 3)
-  - GPIO timing slowdown factor
-  - **Critical setting**: Must match your Raspberry Pi model for stability
-  - **Raspberry Pi 3**: Use 3
-  - **Raspberry Pi 4**: Use 4
-  - **Raspberry Pi 5**: Use 1–2 in PIO mode (`rp1_rio: 0`, the default); start with `1` and increase if you see flickering
-  - **Raspberry Pi Zero/1**: Use 1-2
-  - Range: 0-10. Panels on `row_address_type` 5 (SM5368 row drivers) can need
-    6-8 on a Pi 4
-  - Incorrect values can cause display corruption, flickering, or system instability
+  - GPIO timing slowdown factor (0-10): slows GPIO writes so the panel electronics keep up. Higher is more reliable but lowers the refresh rate
+  - **Critical setting**: depends on your Raspberry Pi model and your panel
+  - **Raspberry Pi Zero/1**: 0-1
+  - **Raspberry Pi 2/3**: 1-3
+  - **Raspberry Pi 4**: 2-4 (the config template ships 3)
+  - **Raspberry Pi 5**: 1–3 in PIO mode (`rp1_rio: 0`, the default); start with `1` and increase if you see flickering
+  - Panels on `row_address_type` 5 (SM5368 row drivers) can need 6-8 on a Pi 4
+  - Too low: garbage, flicker or rows jumping. Too high: a lower refresh rate
   - If you experience issues, try adjusting this value up or down by 1
+
+- **`rp1_rio`** (integer, 0 or 1, default: 0) — Raspberry Pi 5 only
+  - Which driver the Pi 5's RP1 chip uses: `0` = PIO (default, less CPU), `1` = RIO (registered I/O, can reach a higher refresh rate)
+  - In RIO mode the effect of `gpio_slowdown` is inverted: higher values may be faster
+  - Ignored on a Pi 0-4, and applied only if the installed rgbmatrix library supports it
 
 ### Display Durations (`display.display_durations`)
 
@@ -731,6 +748,14 @@ Controls how long each installed plugin stays visible in seconds before switchin
 - Verify `hardware_mapping` matches your HAT/connection type
 - Try adjusting `gpio_slowdown`
 - Ensure your display doesn't need the E-Addressable line
+- If it went blank right after a settings change, check `sudo journalctl -u ledmatrix` for `Failed to initialize RGB Matrix`: the rgbmatrix library refused a value (for example more than 64 `rows`, or `pwm_dither_bits` above 2) and the display fell back to no output. The library's own message nearby names the setting
+- A repeating scramble points at `row_address_type` or `multiplexing`; a panel that stays dark, at `panel_type`
+
+**Rows jump up and down, or the bottom row repeats other rows:**
+- Raise `gpio_slowdown` a step at a time (SM5368 panels on `row_address_type` 5 can need 6-8 on a Pi 4)
+
+**A row or the whole panel briefly flashes brighter:**
+- Set `disable_hardware_pulsing` to `false` (needs the OE line on GPIO 18; see `hardware_mapping`)
 
 **Colors are wrong or inverted:**
 - Check `led_rgb_sequence` (try "GRB" if "RGB" doesn't work)

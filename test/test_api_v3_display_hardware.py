@@ -1,8 +1,9 @@
 """Display hardware settings accept what the rgbmatrix library accepts.
 
 Held to the ranges in the pinned library (RGBMatrix::Options::Validate in
-lib/options-initialize.cc, the gpio_slowdown check in lib/led-matrix.cc). Two
-ways this used to go wrong:
+lib/options-initialize.cc, the gpio_slowdown check in lib/led-matrix.cc), with
+one deliberate exception: rows has no upper bound here, although the library
+currently rejects more than 64 per panel. Two ways this used to go wrong:
 
 - The Display form capped cols at 128, chain_length at 24 and
   pwm_lsb_nanoseconds at 500, and its submit handler (fixInvalidNumberInputs)
@@ -82,7 +83,7 @@ def test_waveshare_96x48_v2_settings_all_save(api_v3_client, saved, as_strings):
 
 
 @pytest.mark.parametrize('field,value', [
-    ('rows', 8), ('rows', 64),
+    ('rows', 8), ('rows', 64), ('rows', 96), ('rows', 128),
     ('cols', 16), ('cols', 192), ('cols', 512),
     ('chain_length', 1), ('chain_length', 32),
     ('parallel', 3),
@@ -93,15 +94,16 @@ def test_waveshare_96x48_v2_settings_all_save(api_v3_client, saved, as_strings):
     ('pwm_lsb_nanoseconds', 50), ('pwm_lsb_nanoseconds', 3000),
     ('scan_mode', 1),
     ('brightness', 1), ('brightness', 100),
+    ('limit_refresh_rate_hz', 0), ('limit_refresh_rate_hz', 1000),
 ])
-def test_values_the_library_accepts_are_saved(api_v3_client, saved, field, value):
+def test_values_in_range_are_saved(api_v3_client, saved, field, value):
     response = _post(api_v3_client, {field: value})
     assert response.status_code == 200, response.get_data(as_text=True)[:200]
     assert _stored(saved['config'], field) == value
 
 
 @pytest.mark.parametrize('field,value', [
-    ('rows', 6), ('rows', 47), ('rows', 66), ('rows', '48.5'),
+    ('rows', 6), ('rows', 47), ('rows', 97), ('rows', '48.5'),
     ('cols', 15), ('cols', 96.5), ('cols', True), ('cols', 'wide'),
     ('chain_length', 0),
     ('parallel', 0), ('parallel', 4),
@@ -112,8 +114,9 @@ def test_values_the_library_accepts_are_saved(api_v3_client, saved, field, value
     ('pwm_lsb_nanoseconds', 49), ('pwm_lsb_nanoseconds', 3001),
     ('scan_mode', 2),
     ('brightness', 0), ('brightness', 101),
+    ('limit_refresh_rate_hz', -1),
 ])
-def test_values_the_library_rejects_are_refused(api_v3_client, saved, field, value):
+def test_values_out_of_range_are_refused(api_v3_client, saved, field, value):
     """Refused with a message naming the field, and nothing written."""
     response = _post(api_v3_client, {field: value})
     assert response.status_code == 400
@@ -171,7 +174,7 @@ def _selected_option(body, select_id):
 
 
 @pytest.mark.parametrize('input_id,expected', [
-    ('rows', {'min': '8', 'max': '64', 'step': '2'}),
+    ('rows', {'min': '8', 'max': None, 'step': '2'}),
     ('cols', {'min': '16', 'max': None}),
     ('chain_length', {'min': '1', 'max': None}),
     ('parallel', {'min': '1', 'max': '3'}),
@@ -179,6 +182,7 @@ def _selected_option(body, select_id):
     ('pwm_bits', {'min': '1', 'max': '11'}),
     ('pwm_dither_bits', {'min': '0', 'max': '2'}),
     ('pwm_lsb_nanoseconds', {'min': '50', 'max': '3000'}),
+    ('limit_refresh_rate_hz', {'min': '0', 'max': '1000'}),
 ])
 def test_form_limits_match_the_library(display_page, input_id, expected):
     """fixInvalidNumberInputs rewrites a value past min/max on submit, so these
@@ -207,6 +211,7 @@ def test_waveshare_96x48_v2_config_renders_back_unchanged(display_page):
 
 @pytest.mark.parametrize('field,section', [
     ('gpio_slowdown', 'runtime'), ('pwm_dither_bits', 'hardware'),
+    ('limit_refresh_rate_hz', 'hardware'),
 ])
 def test_a_stored_zero_renders_as_zero(display_page, field, section):
     """`value or default` showed a stored 0 as the default, and the next save wrote it back."""

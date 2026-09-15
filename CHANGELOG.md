@@ -47,15 +47,22 @@ Web interface:
   JSON API saves are unaffected. Lets plugins keep deprecated or internal keys
   declared, e.g. countdown's row `id` and weather's `api_key` / `radar_zoom`.
   See `docs/widget-guide.md`.
-- Display settings accept every panel size and timing value the rgbmatrix
-  library does. Saving no longer silently cuts columns to 128, chain length to
-  24 or PWM LSB nanoseconds to 500; rows are held to the library's even 8–64,
-  parallel to 1–3 and PWM dither bits to 0–2. A stored GPIO slowdown or PWM
-  dither bits of 0 no longer shows (and re-saves) as 3 or 1. The config API
-  rejects out-of-range `rows`, `cols`, `chain_length`, `parallel`,
+- Display settings no longer silently cut values on save: columns were capped
+  at 128, chain length at 24 and PWM LSB nanoseconds at 500. Rows, columns and
+  chain length now have no upper limit (the current rgbmatrix library still
+  rejects more than 64 rows per panel); rows must be even and at least 8,
+  parallel is 1–3 and PWM dither bits 0–2, matching the library. A stored GPIO
+  slowdown, PWM dither bits or refresh-rate cap of 0 no longer shows (and
+  re-saves) as 3, 1 or 120, and the refresh cap accepts 0 (no cap). The config
+  API rejects out-of-range `rows`, `cols`, `chain_length`, `parallel`,
   `brightness`, `scan_mode`, `pwm_bits`, `pwm_dither_bits`,
-  `pwm_lsb_nanoseconds` and `gpio_slowdown` with a 400 instead of saving a
-  config the matrix refuses to start with.
+  `pwm_lsb_nanoseconds`, `limit_refresh_rate_hz` and `gpio_slowdown` with a
+  400 instead of saving a config the matrix refuses to start with.
+- Display setting help tips and README / config-reference entries corrected
+  and completed: `panel_type` and `rp1_rio` are documented,
+  `show_refresh_rate` prints to the console rather than drawing on the panel,
+  PWM dither bits raise the refresh rate rather than lowering it, and every
+  numeric setting states its range.
 - Row Address Type offers 5, the SM5368 / B707 row shift register. The
   Waveshare 96x48 V2 panel (back silkscreen `24S-A1`) needs it with RGB
   sequence BGR and, on a Pi 4, a GPIO slowdown of 6–8. Panels with FM6124
