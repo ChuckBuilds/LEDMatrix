@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
+from src.core_config_keys import CORE_CONFIG_KEYS
 from src.plugin_system.state_manager import PluginStateManager
 from src.logging_config import get_logger
 
@@ -72,9 +73,16 @@ def secrets_top_level_keys(config_manager) -> Set[str]:
     return set(secrets) if isinstance(secrets, dict) else set()
 
 
-def ignored_config_keys(config_manager) -> Set[str]:
-    """Config keys that are not plugin ids: system keys plus secrets keys."""
-    return set(StateReconciliation._SYSTEM_CONFIG_KEYS) | secrets_top_level_keys(config_manager)
+def ignored_config_keys(config_manager, installed_ids=frozenset()) -> Set[str]:
+    """Config keys that are not plugin ids: core keys plus secrets keys.
+
+    A secrets key that is also an installed plugin's id is not ignored: plugin
+    secrets are namespaced by plugin id, so that key is the plugin's own entry.
+    Ignoring it made every installed plugin with secrets read as "installed but
+    missing from config" on each run.
+    """
+    secrets_only = secrets_top_level_keys(config_manager) - set(installed_ids)
+    return set(StateReconciliation._SYSTEM_CONFIG_KEYS) | secrets_only
 
 
 def config_plugin_ids(config: Dict[str, Any], ignored_keys: Set[str]) -> Set[str]:
@@ -132,6 +140,13 @@ def still_unresolved(entries: List[Dict[str, Any]],
     plugins were all present in config kept being told, for hours, that four of
     them were missing and should be removed from config.json.
 
+    An "in config but not on disk" finding is stale once the plugin is
+    installed, and equally once the id is no longer a plugin entry in config --
+    whether the user removed it or it was never a plugin (a core key such as
+    ``auto_update`` that an older build misread). Without the second check a
+    verdict written by such a build kept telling users to delete a real core
+    setting until the next full reconciliation run.
+
     Entry kinds this cannot re-check are kept, so filtering only ever removes
     findings that are provably stale.
     """
@@ -143,7 +158,7 @@ def still_unresolved(entries: List[Dict[str, Any]],
             if plugin_id not in config_keys:
                 live.append(entry)
         elif kind == InconsistencyType.PLUGIN_MISSING_ON_DISK.value:
-            if plugin_id not in installed_ids:
+            if plugin_id in config_keys and plugin_id not in installed_ids:
                 live.append(entry)
         else:
             live.append(entry)
@@ -280,39 +295,22 @@ class StateReconciliation:
                 message=f"Reconciliation failed: {str(e)}"
             )
     
-    # Top-level config keys that are NOT plugins.
-    # Includes both config.json structural keys and config_secrets.json top-level
-    # keys (load_config() deep-merges secrets in, so secrets keys appear here too).
-    _SYSTEM_CONFIG_KEYS = frozenset({
-        'web_display_autostart', 'timezone', 'location', 'display',
-        'plugin_system', 'vegas_scroll_speed', 'vegas_separator_width',
-        'vegas_target_fps', 'vegas_buffer_ahead', 'vegas_plugin_order',
-        'vegas_excluded_plugins', 'vegas_scroll_enabled', 'logging',
-        'dim_schedule', 'network', 'system', 'schedule',
-        # Multi-display sync config (config.json structural key)
-        'sync',
-        # Secrets file top-level keys (merged in by load_config)
-        'github', 'youtube',
-    })
-
-    def _secrets_top_level_keys(self) -> Set[str]:
-        """Top-level keys that load_config() merges in from the secrets file.
-
-        load_config() merges config_secrets.json into the config it returns, so
-        those keys sit alongside plugin ids. _SYSTEM_CONFIG_KEYS named them
-        individually ('github', 'youtube'), which broke the moment anything else
-        was written there: a 'data' key became a phantom plugin, permanently
-        reported as "in config but not on disk". Reading the file keeps this
-        correct no matter what it holds.
-        """
-        return secrets_top_level_keys(self.config_manager)
+    # Top-level config keys that are NOT plugins. The core keys come from the
+    # shared list in src/core_config_keys.py -- a private copy here missed
+    # #581's 'auto_update' and reported it as a plugin missing from disk.
+    # 'github'/'youtube' are the historical secrets-file keys. The secrets file
+    # itself is read at run time too (ignored_config_keys): load_config() merges
+    # it in, and naming its keys one by one let a 'data' key become a phantom
+    # plugin permanently reported as "in config but not on disk".
+    _SYSTEM_CONFIG_KEYS = CORE_CONFIG_KEYS | frozenset({'github', 'youtube'})
 
     def _get_config_state(self) -> Dict[str, Dict[str, Any]]:
         """Get plugin state from config file."""
         state = {}
         try:
             config = self.config_manager.load_config()
-            ignored = self._SYSTEM_CONFIG_KEYS | self._secrets_top_level_keys()
+            ignored = ignored_config_keys(self.config_manager,
+                                          disk_plugin_ids(self.plugins_dir))
             for plugin_id in config_plugin_ids(config, ignored):
                 plugin_config = config[plugin_id]
                 state[plugin_id] = {
@@ -389,7 +387,20 @@ class StateReconciliation:
     ) -> List[Inconsistency]:
         """Check consistency for a single plugin."""
         inconsistencies = []
-        
+
+        if plugin_id in CORE_CONFIG_KEYS:
+            # A plugin whose id is a core setting's key ('display', 'sync',
+            # ...) can never have a config section of its own: that section
+            # is the core setting. Every check below would misfire -- "not in
+            # config" forever, and an auto-fix that writes {'enabled': False}
+            # where a core setting belongs -- so report it in the log instead.
+            if disk_state.get(plugin_id, {}).get('exists_on_disk'):
+                self.logger.warning(
+                    "Plugin id %r is reserved for a core config setting; "
+                    "the plugin cannot be configured and is skipped by "
+                    "reconciliation. Rename the plugin.", plugin_id)
+            return inconsistencies
+
         config = config_state.get(plugin_id, {})
         disk = disk_state.get(plugin_id, {})
         state_mgr = state_manager_state.get(plugin_id, {})
@@ -468,6 +479,12 @@ class StateReconciliation:
         """Attempt to fix an inconsistency."""
         try:
             if inconsistency.inconsistency_type == InconsistencyType.PLUGIN_MISSING_IN_CONFIG:
+                if inconsistency.plugin_id in CORE_CONFIG_KEYS:
+                    # Never create or replace a core setting with a plugin stub.
+                    self.logger.warning(
+                        "Refusing to add plugin entry %r: that key is a core "
+                        "config setting", inconsistency.plugin_id)
+                    return False
                 config = self.config_manager.load_config()
                 if inconsistency.plugin_id in config:
                     # Detection said "not in config" but it is there -- the

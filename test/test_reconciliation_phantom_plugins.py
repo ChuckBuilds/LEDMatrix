@@ -142,8 +142,14 @@ class TestStaleFindingsAreDropped:
         assert still_unresolved(entries, set(), {"odds-ticker"}) == []
 
     def test_genuinely_missing_on_disk_is_kept(self):
-        entries = [{"plugin_id": "data", "type": self.ON_DISK}]
-        assert still_unresolved(entries, set(), {"odds-ticker"}) == entries
+        entries = [{"plugin_id": "ghost-plugin", "type": self.ON_DISK}]
+        assert still_unresolved(entries, {"ghost-plugin"}, {"odds-ticker"}) == entries
+
+    def test_missing_on_disk_no_longer_in_config_is_dropped(self):
+        # Removed from config.json (or never a plugin entry at all, like a
+        # core key an older build misread): nothing left to reinstall.
+        entries = [{"plugin_id": "ghost-plugin", "type": self.ON_DISK}]
+        assert still_unresolved(entries, set(), {"odds-ticker"}) == []
 
     def test_unrecheckable_kinds_are_kept(self):
         # Filtering must only ever remove what it can prove stale.
@@ -164,7 +170,6 @@ class TestStaleFindingsAreDropped:
         live = still_unresolved(entries, installed, installed)
 
         # All four "installed but not in config" findings were false and clear.
-        # 'data' legitimately is not installed, so this filter keeps it; it stops
-        # being reported because _get_config_state() no longer invents it from the
-        # secrets file, which takes effect on the next reconciliation run.
-        assert [e["plugin_id"] for e in live] == ["data"]
+        # 'data' is not a plugin entry in config (it came from the secrets
+        # file), so its "not on disk" finding is provably stale and clears too.
+        assert live == []
