@@ -83,10 +83,10 @@ You should see:
 
 1. Open the **Display** tab
 2. Set your matrix configuration:
-   - **Rows**: 32 or 64 (match your hardware)
-   - **Columns**: commonly 64 or 96; the web UI accepts any integer
-     in the 1–128 range, but 64 and 96 are the values the bundled
-     panel hardware ships with
+   - **Rows**: match your panel — commonly 32 or 64; any even number
+     from 8 to 64
+   - **Columns**: match your panel — commonly 64 or 96; at least 16,
+     with no upper limit
    - **Chain Length**: Number of panels chained horizontally
    - **Hardware Mapping**: usually `adafruit-hat-pwm` (with the PWM jumper
      mod) or `adafruit-hat` (without). See the root README for the full list.

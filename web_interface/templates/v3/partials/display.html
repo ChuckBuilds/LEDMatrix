@@ -41,46 +41,45 @@
 
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-4 2xl:grid-cols-4 gap-4 mb-4">
                 <div class="form-group" id="setting-display-rows" data-setting-key="display.hardware.rows">
-                    <label for="rows" class="block text-sm font-medium text-gray-700">Rows{{ ui.help_tip('Number of LED rows on a single panel.\nCommon: 16, 32, or 64. Default: 32. Must match your panel.', 'Rows') }}</label>
+                    <label for="rows" class="block text-sm font-medium text-gray-700">Rows{{ ui.help_tip('Number of LED rows on a single panel.\nCommon: 16, 32, 48 or 64. Default: 32. Must match your panel. The rgbmatrix library accepts even numbers from 8 to 64.', 'Rows') }}</label>
                     <input type="number"
                            id="rows"
                            name="rows"
                            value="{{ main_config.display.hardware.rows or 32 }}"
-                           min="1"
-                           max="128"
+                           min="8"
+                           max="64"
+                           step="2"
                            class="form-control">
                 </div>
 
                 <div class="form-group" id="setting-display-cols" data-setting-key="display.hardware.cols">
-                    <label for="cols" class="block text-sm font-medium text-gray-700">Columns{{ ui.help_tip('Number of LED columns on a single panel.\nCommon: 32 or 64. Default: 64. Must match your panel.', 'Columns') }}</label>
+                    <label for="cols" class="block text-sm font-medium text-gray-700">Columns{{ ui.help_tip('Number of LED columns on a single panel.\nCommon: 32, 64, 96 or 128. Default: 64. Must match your panel. At least 16, with no upper limit.', 'Columns') }}</label>
                     <input type="number"
                            id="cols"
                            name="cols"
                            value="{{ main_config.display.hardware.cols or 64 }}"
-                           min="1"
-                           max="128"
+                           min="16"
                            class="form-control">
                 </div>
 
                 <div class="form-group" id="setting-display-chain_length" data-setting-key="display.hardware.chain_length">
-                    <label for="chain_length" class="block text-sm font-medium text-gray-700">Chain Length{{ ui.help_tip('How many panels are wired end-to-end in one chain.\nDefault: 2. Example: two 64×32 panels chained make a 128×32 display.', 'Chain Length') }}</label>
+                    <label for="chain_length" class="block text-sm font-medium text-gray-700">Chain Length{{ ui.help_tip('How many panels are wired end-to-end in one chain.\nDefault: 2. Example: two 64×32 panels chained make a 128×32 display. No upper limit, but longer chains lower the refresh rate.', 'Chain Length') }}</label>
                     <input type="number"
                            id="chain_length"
                            name="chain_length"
                            value="{{ main_config.display.hardware.chain_length or 2 }}"
                            min="1"
-                           max="24"
                            class="form-control">
                 </div>
 
                 <div class="form-group" id="setting-display-parallel" data-setting-key="display.hardware.parallel">
-                    <label for="parallel" class="block text-sm font-medium text-gray-700">Parallel{{ ui.help_tip('Number of separate chains driven in parallel from the HAT.\nDefault: 1. The Raspberry Pi supports up to 3 (some HATs allow more).', 'Parallel') }}</label>
+                    <label for="parallel" class="block text-sm font-medium text-gray-700">Parallel{{ ui.help_tip('Number of separate chains driven in parallel from the HAT.\nDefault: 1. The Raspberry Pi supports up to 3, and the HAT needs that many outputs (e.g. the Adafruit Triple LED Matrix Bonnet).', 'Parallel') }}</label>
                     <input type="number"
                            id="parallel"
                            name="parallel"
                            value="{{ main_config.display.hardware.parallel or 1 }}"
                            min="1"
-                           max="4"
+                           max="3"
                            class="form-control">
                 </div>
             </div>
@@ -189,7 +188,7 @@
                 </div>
 
                 <div class="form-group" id="setting-display-panel_type" data-setting-key="display.hardware.panel_type">
-                    <label for="panel_type" class="block text-sm font-medium text-gray-700">Panel Type{{ ui.help_tip('Special initialization for panels with a specific driver chip (e.g. FM6126A, FM6127).\nLeave on Standard unless your panel stays blank or shows only the first pixel.', 'Panel Type') }}</label>
+                    <label for="panel_type" class="block text-sm font-medium text-gray-700">Panel Type{{ ui.help_tip('Special initialization for panels with a specific driver chip (e.g. FM6126A, FM6127).\nLeave on Standard unless your panel stays blank or shows only the first pixel. FM6124 / FM6124D / FM6124DJ panels need no initialization: use Standard.', 'Panel Type') }}</label>
                     <select id="panel_type" name="panel_type" class="form-control">
                         <option value="" {% if not main_config.display.hardware.get('panel_type', '') %}selected{% endif %}>Standard</option>
                         <option value="FM6126A" {% if main_config.display.hardware.get('panel_type', '') == "FM6126A" %}selected{% endif %}>FM6126A</option>
@@ -198,24 +197,25 @@
                 </div>
 
                 <div class="form-group" id="setting-display-row_address_type" data-setting-key="display.hardware.row_address_type">
-                    <label for="row_address_type" class="block text-sm font-medium text-gray-700">Row Address Type{{ ui.help_tip('Row addressing scheme used by the panel.\nLeave at 0 (Default) unless your panel needs AB/ABC addressing — a wrong value shows a garbled or shifted image.', 'Row Address Type') }}</label>
+                    <label for="row_address_type" class="block text-sm font-medium text-gray-700">Row Address Type{{ ui.help_tip('Row addressing scheme used by the panel.\nLeave at 0 (Default) unless your panel needs AB/ABC addressing — a wrong value shows a garbled or shifted image.\nABC panels (no E line, common on 128x64 FM6124 boards): try 3. Panels with SM5368 row drivers, such as the Waveshare 96x48 V2 (back silkscreen 24S-A1), need 5 with RGB sequence BGR. If rows then jump up and down, or the bottom row shows a copy of other rows, raise GPIO Slowdown (6–8 on a Pi 4). On a Raspberry Pi 5 the rgbmatrix library supports only 0 and 2.', 'Row Address Type') }}</label>
                     <select id="row_address_type" name="row_address_type" class="form-control">
                         <option value="0" {% if main_config.display.hardware.get('row_address_type', 0)|int == 0 %}selected{% endif %}>0 - Default</option>
                         <option value="1" {% if main_config.display.hardware.get('row_address_type', 0)|int == 1 %}selected{% endif %}>1 - AB-addressed panels</option>
                         <option value="2" {% if main_config.display.hardware.get('row_address_type', 0)|int == 2 %}selected{% endif %}>2 - Row direct</option>
                         <option value="3" {% if main_config.display.hardware.get('row_address_type', 0)|int == 3 %}selected{% endif %}>3 - ABC-addressed panels</option>
                         <option value="4" {% if main_config.display.hardware.get('row_address_type', 0)|int == 4 %}selected{% endif %}>4 - ABC Shift + DE direct</option>
+                        <option value="5" {% if main_config.display.hardware.get('row_address_type', 0)|int == 5 %}selected{% endif %}>5 - SM5368 / B707 row shift register</option>
                     </select>
                 </div>
             </div>
 
             <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div class="form-group" id="setting-display-gpio_slowdown" data-setting-key="display.runtime.gpio_slowdown">
-                    <label for="gpio_slowdown" class="block text-sm font-medium text-gray-700">GPIO Slowdown{{ ui.help_tip('Slows the GPIO signal so the panel keeps up.\nGuide: Pi 3 → 1–2, Pi 4 → 2–4, Pi 5 (PIO) → 1–3. Increase if the display shows garbage or flicker; in RIO mode higher values may improve performance.', 'GPIO Slowdown') }}</label>
+                    <label for="gpio_slowdown" class="block text-sm font-medium text-gray-700">GPIO Slowdown{{ ui.help_tip('Slows the GPIO signal so the panel keeps up.\nGuide: Pi 3 → 1–2, Pi 4 → 2–4, Pi 5 (PIO) → 1–3. Panels on Row Address Type 5 (SM5368 row drivers) can need 6–8 on a Pi 4. Increase if the display shows garbage, jumping rows or flicker; in RIO mode higher values may improve performance.', 'GPIO Slowdown') }}</label>
                     <input type="number"
                            id="gpio_slowdown"
                            name="gpio_slowdown"
-                           value="{{ main_config.display.runtime.gpio_slowdown or 3 }}"
+                           value="{{ main_config.display.get('runtime', {}).get('gpio_slowdown', 3) }}"
                            min="0"
                            max="10"
                            class="form-control">
@@ -256,26 +256,26 @@
                 </div>
 
                 <div class="form-group" id="setting-display-pwm_dither_bits" data-setting-key="display.hardware.pwm_dither_bits">
-                    <label for="pwm_dither_bits" class="block text-sm font-medium text-gray-700">PWM Dither Bits{{ ui.help_tip('Time-dithering to gain apparent color depth (0–4).\nDefault: 0. Raising it can smooth gradients at the cost of a slightly lower refresh rate.', 'PWM Dither Bits') }}</label>
+                    <label for="pwm_dither_bits" class="block text-sm font-medium text-gray-700">PWM Dither Bits{{ ui.help_tip('Time-dithering to gain apparent color depth (0–2).\nDefault: 1. Raising it can smooth gradients at the cost of a slightly lower refresh rate.', 'PWM Dither Bits') }}</label>
                     <input type="number"
                            id="pwm_dither_bits"
                            name="pwm_dither_bits"
-                           value="{{ main_config.display.hardware.pwm_dither_bits or 1 }}"
+                           value="{{ main_config.display.hardware.get('pwm_dither_bits', 1) }}"
                            min="0"
-                           max="4"
+                           max="2"
                            class="form-control">
                 </div>
             </div>
 
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div class="form-group" id="setting-display-pwm_lsb_nanoseconds" data-setting-key="display.hardware.pwm_lsb_nanoseconds">
-                    <label for="pwm_lsb_nanoseconds" class="block text-sm font-medium text-gray-700">PWM LSB Nanoseconds{{ ui.help_tip('Base time for the least-significant color bit (50–500 ns).\nDefault: 130. Raising it can reduce flicker on some panels but lowers the maximum refresh rate.', 'PWM LSB Nanoseconds') }}</label>
+                    <label for="pwm_lsb_nanoseconds" class="block text-sm font-medium text-gray-700">PWM LSB Nanoseconds{{ ui.help_tip('Base time for the least-significant color bit (50–3000 ns).\nDefault: 130. Raising it can reduce flicker on some panels but lowers the maximum refresh rate.', 'PWM LSB Nanoseconds') }}</label>
                     <input type="number"
                            id="pwm_lsb_nanoseconds"
                            name="pwm_lsb_nanoseconds"
                            value="{{ main_config.display.hardware.pwm_lsb_nanoseconds or 130 }}"
                            min="50"
-                           max="500"
+                           max="3000"
                            class="form-control">
                 </div>
 

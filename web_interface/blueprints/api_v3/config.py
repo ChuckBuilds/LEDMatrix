@@ -577,10 +577,48 @@ def save_main_config():
             if 'row_address_type' in data:
                 try:
                     rat_val = int(data['row_address_type'])
-                    if rat_val < 0 or rat_val > 4:
-                        return jsonify({'status': 'error', 'message': f"Invalid row_address_type '{data['row_address_type']}'. Must be an integer from 0 to 4."}), 400
+                    if rat_val < 0 or rat_val > 5:
+                        return jsonify({'status': 'error', 'message': f"Invalid row_address_type '{data['row_address_type']}'. Must be an integer from 0 to 5."}), 400
                 except (ValueError, TypeError, OverflowError):
-                    return jsonify({'status': 'error', 'message': f"Invalid row_address_type '{data['row_address_type']}'. Must be an integer from 0 to 4."}), 400
+                    return jsonify({'status': 'error', 'message': f"Invalid row_address_type '{data['row_address_type']}'. Must be an integer from 0 to 5."}), 400
+
+            # Panel geometry, PWM and GPIO timing, held to what the rgbmatrix library
+            # accepts (RGBMatrix::Options::Validate in lib/options-initialize.cc,
+            # the gpio_slowdown check in lib/led-matrix.cc). Outside those ranges
+            # the config used to save, then the matrix refused to start and the
+            # display dropped to fallback mode. cols and chain_length have no
+            # upper bound in the library, so none here.
+            def _hardware_int_error(field, low, high=None, even=False):
+                """A 400 response if data[field] is not an allowed integer, else None."""
+                raw = data[field]
+                if even:
+                    allowed = f"an even integer from {low} to {high}"
+                elif high is None:
+                    allowed = f"an integer of at least {low}"
+                else:
+                    allowed = f"an integer from {low} to {high}"
+                rejection = (jsonify({'status': 'error', 'message': f"Invalid {field} '{raw}'. Must be {allowed}."}), 400)
+                # int() would quietly turn true into 1 and 48.5 into 48.
+                if isinstance(raw, bool) or (isinstance(raw, float) and not raw.is_integer()):
+                    return rejection
+                try:
+                    value = int(raw)
+                except (ValueError, TypeError, OverflowError):
+                    return rejection
+                if value < low or (high is not None and value > high) or (even and value % 2):
+                    return rejection
+                return None
+
+            for field, low, high, even in (('rows', 8, 64, True), ('cols', 16, None, False),
+                                           ('chain_length', 1, None, False), ('parallel', 1, 3, False),
+                                           ('brightness', 1, 100, False), ('scan_mode', 0, 1, False),
+                                           ('pwm_bits', 1, 11, False), ('pwm_dither_bits', 0, 2, False),
+                                           ('pwm_lsb_nanoseconds', 50, 3000, False),
+                                           ('gpio_slowdown', 0, 10, False)):
+                if field in data:
+                    error = _hardware_int_error(field, low, high, even)
+                    if error:
+                        return error
 
             # Handle hardware settings
             for field in ['rows', 'cols', 'chain_length', 'parallel', 'brightness', 'hardware_mapping', 'scan_mode',

@@ -494,15 +494,18 @@ These settings control the physical hardware configuration and how the matrix is
 - **`rows`** (integer, default: 32)
   - Number of LED rows (vertical pixels) in each panel
   - Common values: 16, 32, 48, 64
+  - Must be an even number from 8 to 64 (the rgbmatrix library's limit)
   - Must match your physical panel configuration
 
 - **`cols`** (integer, default: 64)
   - Number of LED columns (horizontal pixels) in each panel
   - Common values: 32, 64, 96, 128
+  - At least 16, with no upper limit
   - Must match your physical panel configuration
 
 - **`chain_length`** (integer, default: 2)
   - Number of LED panels chained together horizontally
+  - At least 1, with no upper limit; longer chains lower the refresh rate
   - If you have 2 panels side-by-side, set to 2
   - If you have 4 panels in a row, set to 4
   - Total display width = `cols × chain_length`
@@ -511,13 +514,14 @@ These settings control the physical hardware configuration and how the matrix is
   - Number of parallel chains (panels stacked vertically)
   - Use 1 for a single row of panels
   - Use 2 if you have panels stacked in two rows
+  - 1–3 on a Raspberry Pi, and the HAT needs that many outputs
   - Total display height = `rows × parallel`
 
 #### Brightness and Visual Settings
 
-- **`brightness`** (integer, 0-100, default: 90)
+- **`brightness`** (integer, 1-100, default: 90)
   - Display brightness level
-  - Lower values (0-50) are dimmer, higher values (50-100) are brighter
+  - Lower values (1-50) are dimmer, higher values (50-100) are brighter
   - Recommended: 70-90 for indoor use, 90-100 for bright environments
   - Very high brightness may cause distortion or require more power
 
@@ -612,7 +616,18 @@ These settings are typically only needed for non-standard panels or custom confi
 - **`row_address_type`** (integer, default: 0)
   - How rows are addressed on the panel
   - Most panels use 0 (direct addressing)
-  - Some panels require 1 (AB addressing) or 2 (ABC addressing)
+  - 1 = AB-addressed, 2 = direct row select, 3 = ABC-addressed,
+    4 = ABC shift + DE direct (SM5266), 5 = SM5368 / B707 row shift register
+  - ABC panels (no E line, e.g. many 128x64 FM6124 panels) use 3
+  - Panels with SM5368 row drivers use 5 with `led_rgb_sequence` `"BGR"` —
+    e.g. the Waveshare 96x48 V2 (back silkscreen `24S-A1`; the V1, `24S-A2.1`,
+    uses the defaults). This is what Waveshare's `96X48_1_24_SM5368` panel
+    type sets in their library fork.
+  - SM5368 row drivers are timing-sensitive: if rows jump up and down or the
+    bottom row shows a copy of other rows, raise `gpio_slowdown`. On a Pi 4
+    with an Adafruit Triple LED Matrix Bonnet, 4 left rows jumping; 6–8 gave a
+    stable image.
+  - On a Raspberry Pi 5 the rgbmatrix library currently supports only 0 and 2
   - Check your panel datasheet if display appears corrupted
 
 - **`multiplexing`** (integer, default: 0)
@@ -632,6 +647,8 @@ These settings control runtime behavior and GPIO timing:
   - **Raspberry Pi 4**: Use 4
   - **Raspberry Pi 5**: Use 1–2 in PIO mode (`rp1_rio: 0`, the default); start with `1` and increase if you see flickering
   - **Raspberry Pi Zero/1**: Use 1-2
+  - Range: 0-10. Panels on `row_address_type` 5 (SM5368 row drivers) can need
+    6-8 on a Pi 4
   - Incorrect values can cause display corruption, flickering, or system instability
   - If you experience issues, try adjusting this value up or down by 1
 
