@@ -139,7 +139,9 @@ const PluginInstallManager = {
         for (let i = 0; i < plugins.length; i++) {
             const plugin = plugins[i];
             if (onProgress) onProgress(i + 1, plugins.length, plugin.id);
-            for (let attempt = 0; ; attempt++) {
+            // Each plugin gets its own pass over the backoff schedule.
+            const pendingDelays = retryDelays.slice();
+            for (;;) {
                 try {
                     const result = await window.PluginAPI.updatePlugin(plugin.id);
                     results.push({ pluginId: plugin.id, success: true, result });
@@ -150,8 +152,8 @@ const PluginInstallManager = {
                     // never finished this plugin, so send it again once it is
                     // back rather than skipping it. An HTTP error response is
                     // the server's answer and is not retried.
-                    if (error && error.error_code === 'NETWORK_ERROR' && attempt < retryDelays.length) {
-                        await sleep(retryDelays[attempt]);
+                    if (error && error.error_code === 'NETWORK_ERROR' && pendingDelays.length > 0) {
+                        await sleep(pendingDelays.shift());
                         continue;
                     }
                     results.push({ pluginId: plugin.id, success: false, error });
