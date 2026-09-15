@@ -1166,7 +1166,11 @@
        TypeError that takes down the whole config page. A legacy boolean was
        the on/off switch the object's `enabled` now holds, so carry it over --
        rendering {} would draw that checkbox unchecked and the next save would
-       quietly turn the feature off. The save then writes the object. #}
+       quietly turn the feature off. The save then writes the object.
+       The plugin loader applies the same rule before validating
+       (legacy_bool_as_object in src/plugin_system/schema_manager.py), and
+       test/test_legacy_boolean_config.py renders this macro against it:
+       change the two together. #}
     {% if value is mapping %}
         {% set nested_value = value %}
     {% elif value is boolean and 'enabled' in (prop.properties or {}) %}
