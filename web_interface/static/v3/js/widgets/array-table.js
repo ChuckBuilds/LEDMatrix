@@ -376,10 +376,11 @@
                 Object.entries(propSchema.properties).forEach(([subName, subSchema]) => {
                     if (isHiddenProp(subSchema)) {
                         // No data-nested-prop, so the row editor never shows it.
-                        if (nestedVal[subName] !== undefined && nestedVal[subName] !== null) {
+                        const stored = Object.entries(nestedVal).find(([name]) => name === subName);
+                        if (stored && stored[1] !== undefined && stored[1] !== null) {
                             cell.appendChild(hiddenValueInput(
                                 `${fullKey}.${index}.${propName}.${subName}`,
-                                `${propName}.${subName}`, nestedVal[subName]));
+                                `${propName}.${subName}`, stored[1]));
                         }
                         return;
                     }
@@ -426,8 +427,16 @@
         row.className = 'array-table-row';
         row.setAttribute('data-index', index);
 
-        // Visible column cells (never a hidden property, even if x-columns names it)
-        displayColumns = displayColumns.filter(colName => !isHiddenProp(fullItemProperties[colName] || itemProperties[colName]));
+        // "x-display": "hidden" item properties: never a column (even if
+        // x-columns names one), never in the advanced cell or row editor.
+        const hiddenKeys = new Set(
+            Object.entries(fullItemProperties)
+                .filter(([, propSchema]) => isHiddenProp(propSchema))
+                .map(([propName]) => propName)
+        );
+
+        // Visible column cells
+        displayColumns = displayColumns.filter(colName => !hiddenKeys.has(colName));
         displayColumns.forEach(colName => {
             const colDef   = itemProperties[colName] || {};
             const colType  = Array.isArray(colDef.type) ? colDef.type.find(t => t !== 'null') || 'string' : (colDef.type || 'string');
@@ -441,7 +450,7 @@
         // Hidden ones ("x-display": "hidden") get no column and no editor field.
         const nonDisplayed = {};
         Object.keys(fullItemProperties).forEach(k => {
-            if (!displayColumns.includes(k) && k !== 'id' && !isHiddenProp(fullItemProperties[k])) {
+            if (!displayColumns.includes(k) && k !== 'id' && !hiddenKeys.has(k)) {
                 nonDisplayed[k] = fullItemProperties[k];
             }
         });
@@ -474,9 +483,9 @@
 
         // Hidden properties: carry stored values only. A new row has none, so
         // nothing is invented (countdown fills in its own id).
-        Object.keys(fullItemProperties).forEach(k => {
-            if (isHiddenProp(fullItemProperties[k]) && item[k] !== undefined && item[k] !== null) {
-                actionsCell.appendChild(hiddenValueInput(`${fullKey}.${index}.${k}`, k, item[k]));
+        Object.entries(item).forEach(([propName, stored]) => {
+            if (hiddenKeys.has(propName) && stored !== undefined && stored !== null) {
+                actionsCell.appendChild(hiddenValueInput(`${fullKey}.${index}.${propName}`, propName, stored));
             }
         });
 
