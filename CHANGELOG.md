@@ -55,6 +55,17 @@ Web interface:
   re-sent with backoff instead of being counted as failed and skipped — that is
   how a disabled plugin with an update waiting was silently left out.
 
+Plugin system:
+
+- A plugin no longer starts with a schema warning and a degraded flag because
+  config.json still holds a boolean where its schema now has an object with an
+  `enabled` property (news' `global.dynamic_duration: true`). The loader reads
+  the boolean as `{"enabled": <bool>}` before merging schema defaults and
+  validating, the same rule the settings form already applies
+  (`legacy_bool_as_object` in `src/plugin_system/schema_manager.py`). Nothing
+  is written at load; the next save of that plugin's settings stores the object.
+  Other type mismatches still warn.
+
 ## 3.4.0
 
 Plugin-facing changes since 3.3.0 (tag `v3.3.1`) not covered further down:
