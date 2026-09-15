@@ -2409,6 +2409,19 @@ function getSchemaProperty(schema, path) {
     return null;
 }
 
+// "x-display": "hidden" (or an object of nothing but hidden children).
+// Mirrors prop_is_hidden in plugin_config.html.
+function isHiddenSchemaProp(schema) {
+    if (!schema || typeof schema !== 'object') return false;
+    if (schema['x-display'] === 'hidden') return true;
+    const children = schema.properties;
+    if (children && typeof children === 'object') {
+        const values = Object.values(children);
+        return values.length > 0 && values.every(isHiddenSchemaProp);
+    }
+    return false;
+}
+
 // Helper function to render a single item in an array of objects
 function renderArrayObjectItem(fieldId, fullKey, itemProperties, itemValue, index, itemsSchema) {
     const item = itemValue || {};
@@ -2422,6 +2435,9 @@ function renderArrayObjectItem(fieldId, fullKey, itemProperties, itemValue, inde
     const propertyOrder = itemsSchema['x-propertyOrder'] || Object.keys(itemProperties);
     propertyOrder.forEach(propKey => {
         if (!itemProperties[propKey]) return;
+        // "x-display": "hidden": no control. The stored value survives through
+        // data-item-data, which updateArrayObjectData overlays edits onto.
+        if (isHiddenSchemaProp(itemProperties[propKey])) return;
 
         const propSchema = itemProperties[propKey];
         const propValue = item[propKey] !== undefined ? item[propKey] : propSchema.default;
@@ -5478,6 +5494,7 @@ if (typeof window !== 'undefined') {
             itemHtml = `<div class="border border-gray-300 rounded-lg p-4 bg-gray-50 array-object-item" data-index="${newIndex}">`;
             Object.keys(itemsSchema.properties || {}).forEach(propKey => {
                 const propSchema = itemsSchema.properties[propKey];
+                if (propSchema && propSchema['x-display'] === 'hidden') return;
                 const propValue = newItem[propKey] !== undefined ? newItem[propKey] : propSchema.default;
                 const propLabel = propSchema.title || propKey.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
                 itemHtml += `<div class="mb-3"><label class="block text-sm font-medium text-gray-700 mb-1">${escapeHtml(propLabel)}</label>`;

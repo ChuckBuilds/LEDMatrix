@@ -8,7 +8,7 @@ from web_interface.blueprints.api_v3 import (
     _CALENDAR_LIST_MAX_PAGES, _RENDERED_SECTION_FIELD, _SKIP_FIELD, _coerce_to_bool,
     _do_transactional_uninstall, _enhance_schema_with_core_properties,
     _filter_config_by_schema, _get_plugin_version, _get_schema_property,
-    _installed_plugin_ids, _is_plugin_update_available,
+    _hidden_array_item_property, _installed_plugin_ids, _is_plugin_update_available,
     _parse_form_value_with_schema, _prune_credential_backups,
     _run_calendar_registration, _schema_allows_null, _schema_type_is,
     _set_missing_booleans_to_false,
@@ -1848,7 +1848,21 @@ def save_plugin_config():
                     # (to avoid overwriting the combined array with a single value)
                     if key not in indexed_base_paths:
                         # Parse value using schema to determine correct type
-                        parsed_value = _parse_form_value_with_schema(value, key, schema)
+                        parsed_value = _SKIP_FIELD
+                        decoded = False
+                        # A hidden property inside an array row is carried
+                        # through the form JSON-encoded (a posted row replaces
+                        # the stored item, so it must be posted at all). Decode
+                        # it exactly: the generic parse would turn an id "1"
+                        # into the integer 1 and fail validation.
+                        if _hidden_array_item_property(schema, key) is not None:
+                            try:
+                                parsed_value = json.loads(value)
+                                decoded = True
+                            except (TypeError, ValueError):
+                                pass
+                        if not decoded:
+                            parsed_value = _parse_form_value_with_schema(value, key, schema)
                         # Debug logging for array fields
                         if schema:
                             prop = _get_schema_property(schema, key)

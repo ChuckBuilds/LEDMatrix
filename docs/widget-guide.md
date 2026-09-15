@@ -281,6 +281,42 @@ Guidelines:
   their own collapsible sections) and is safely ignored by older cores, so
   adding it never breaks compatibility.
 
+## Hiding Fields From the Form (`x-display: "hidden"`)
+
+Add `"x-display": "hidden"` to a property that must stay in the schema but
+should not appear as a control: a deprecated key kept so existing configs keep
+validating, or an internal value such as an auto-generated row id.
+
+```json
+{
+  "properties": {
+    "radar_zoom": {
+      "type": "integer",
+      "default": 6,
+      "title": "Radar Zoom Level (deprecated)",
+      "x-display": "hidden"
+    }
+  }
+}
+```
+
+What the core does with it:
+
+- **Not rendered** at any depth: top-level fields, children of an object
+  section, and properties of array-of-object items (never a table column, even
+  if `x-columns` names it, and never in the row editor). A hidden field flagged
+  `x-advanced` is not listed or counted in Advanced Settings, and an object
+  whose children are all hidden draws no empty section. Hidden fields don't
+  show up in the settings search either, since it indexes the rendered form.
+- **Stored value preserved on save.** Saving the form never changes a hidden
+  value. The unchecked-checkbox rule ignores a hidden boolean. Array rows carry
+  a hidden property's stored value through the form, so the value survives the
+  row being posted back; a new row gets no value (the plugin fills it in).
+- **The API is unaffected.** A JSON save to `POST /api/v3/plugins/config` can
+  still set a hidden field.
+
+Older cores ignore the flag and render the field as a normal control.
+
 ## Creating Custom Widgets
 
 ### Step 1: Create Widget File

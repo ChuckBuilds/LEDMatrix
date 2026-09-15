@@ -6,7 +6,29 @@
 {# ===== MACROS FOR FORM FIELD GENERATION ===== #}
 
 {# Render a single form field based on schema type #}
+{# "x-display": "hidden" keeps a property declared -- so stored configs that
+   still carry it keep validating -- without drawing a control for it
+   (deprecated keys, internal ids). An object whose every child is hidden
+   counts as hidden too, so it doesn't render as an empty section. Outputs
+   "1" when hidden, nothing otherwise; test it with `|trim`.
+   Nothing hidden is posted for a plain or nested field: the save deep-merges
+   the form over the stored section, so the stored value stays. Array rows are
+   the exception (a posted list replaces the stored one), see array-table. #}
+{% macro prop_is_hidden(prop) -%}
+    {%- if prop is mapping -%}
+        {%- if prop.get('x-display') == 'hidden' -%}1
+        {%- elif prop.get('properties') is mapping and prop.get('properties') -%}
+            {%- set _hid = namespace(all=true) -%}
+            {%- for _child in prop.get('properties').values() -%}
+                {%- if not prop_is_hidden(_child)|trim -%}{%- set _hid.all = false -%}{%- endif -%}
+            {%- endfor -%}
+            {%- if _hid.all -%}1{%- endif -%}
+        {%- endif -%}
+    {%- endif -%}
+{%- endmacro %}
+
 {% macro render_field(key, prop, value, prefix='', plugin_id='') %}
+    {% if not prop_is_hidden(prop)|trim %}
     {% set full_key = (prefix ~ '.' ~ key) if prefix else key %}
     {% set field_id = (plugin_id ~ '-' ~ full_key)|replace('.', '-')|replace('_', '-') %}
     {% set label = prop.title if prop.title else key|replace('_', ' ')|title %}
@@ -660,14 +682,20 @@
                     {% set array_value = value if value is not none and value is iterable and value is not string else (prop.default if prop.default is defined and prop.default is iterable and prop.default is not string else []) %}
 
                     {# Use x-columns if specified, otherwise auto-detect first 4 simple properties #}
+                    {# Hidden item properties never become columns (see prop_is_hidden). #}
                     {% set x_columns = prop.get('x-columns') %}
                     {% if x_columns %}
-                        {% set display_columns = x_columns %}
+                        {% set display_columns = [] %}
+                        {% for col_name in x_columns %}
+                            {% if not prop_is_hidden(item_properties.get(col_name))|trim %}
+                                {% set _ = display_columns.append(col_name) %}
+                            {% endif %}
+                        {% endfor %}
                     {% else %}
                         {% set display_columns = [] %}
                         {% for col_name in item_properties.keys() %}
                             {% set col_def = item_properties[col_name] %}
-                            {% if col_def.get('type') not in ['object', 'array'] and display_columns|length < 4 %}
+                            {% if col_def.get('type') not in ['object', 'array'] and display_columns|length < 4 and not prop_is_hidden(col_def)|trim %}
                                 {% set _ = display_columns.append(col_name) %}
                             {% endif %}
                         {% endfor %}
@@ -814,8 +842,16 @@
 
                                     {# Actions cell: delete + optional edit button for advanced props #}
                                     {% set has_advanced = namespace(value=false) %}
-                                    {% for k in item_properties.keys() %}{% if k not in display_columns and k != 'id' %}{% set has_advanced.value = true %}{% endif %}{% endfor %}
+                                    {% for k, v in item_properties.items() %}{% if k not in display_columns and k != 'id' and not prop_is_hidden(v)|trim %}{% set has_advanced.value = true %}{% endif %}{% endfor %}
                                     <td class="px-3 py-3 whitespace-nowrap text-center" style="min-width:90px;vertical-align:middle">
+                                        {# Hidden item properties (e.g. countdown's auto-generated id) get
+                                           no control, but a posted row replaces the stored item wholesale,
+                                           so carry the stored value through. JSON-encoded so the save can
+                                           restore its exact type (an id "1" must stay a string); absent
+                                           values are not invented. #}
+                                        {% for k, v in item_properties.items() %}{% if prop_is_hidden(v)|trim and k in item and item[k] is not none %}
+                                        <input type="hidden" name="{{ full_key }}.{{ item_index }}.{{ k }}" data-hidden-prop="{{ k }}" value='{{ item[k]|tojson }}'>
+                                        {% endif %}{% endfor %}
                                         <button type="button"
                                                 onclick="removeArrayTableRow(this)"
                                                 aria-label="Remove row {{ item_index + 1 }}"
@@ -836,13 +872,23 @@
                                     {# Hidden cell: flat hidden inputs for non-displayed props (layout, style, etc.) #}
                                     {% if has_advanced.value %}
                                     {% set adv_schema = namespace(d={}) %}
-                                    {% for k, v in item_properties.items() %}{% if k not in display_columns and k != 'id' %}{% set _ = adv_schema.d.update({k: v}) %}{% endif %}{% endfor %}
+                                    {% for k, v in item_properties.items() %}{% if k not in display_columns and k != 'id' and not prop_is_hidden(v)|trim %}{% set _ = adv_schema.d.update({k: v}) %}{% endif %}{% endfor %}
                                     <td style="display:none" class="array-table-advanced-data"
                                         data-prop-schema='{{ adv_schema.d|tojson }}'>
                                         {% for prop_name, prop_schema in adv_schema.d.items() %}
                                             {% set prop_type = prop_schema.get('type', 'string') %}
                                             {% if prop_type == 'object' and prop_schema.get('properties') %}
                                                 {% for sub_name, sub_schema in prop_schema.get('properties', {}).items() %}
+                                                    {% set _sub_obj = item.get(prop_name) if item.get(prop_name) is mapping else {} %}
+                                                    {% if prop_is_hidden(sub_schema)|trim %}
+                                                    {# Kept out of the row editor (no data-nested-prop); stored value only. #}
+                                                    {% if sub_name in _sub_obj and _sub_obj[sub_name] is not none %}
+                                                    <input type="hidden"
+                                                           name="{{ full_key }}.{{ item_index }}.{{ prop_name }}.{{ sub_name }}"
+                                                           data-hidden-prop="{{ prop_name }}.{{ sub_name }}"
+                                                           value='{{ _sub_obj[sub_name]|tojson }}'>
+                                                    {% endif %}
+                                                    {% else %}
                                                     {% set sub_val = item.get(prop_name, {}).get(sub_name) %}
                                                     {% set sub_default = sub_schema.get('default') %}
                                                     {% set final_val = sub_val if sub_val is not none else sub_default %}
@@ -852,6 +898,7 @@
                                                            data-prop-type="{{ sub_schema.get('type', 'string') }}"
                                                            data-prop-schema='{{ sub_schema|tojson }}'
                                                            value="{{ final_val if final_val is not none else '' }}">
+                                                    {% endif %}
                                                 {% endfor %}
                                             {% else %}
                                                 {% set prop_val = item.get(prop_name) %}
@@ -1104,6 +1151,7 @@
             {% endif %}
         </div>
     {% endif %}
+    {% endif %}{# not prop_is_hidden #}
 {% endmacro %}
 
 {# Render a nested/collapsible section for object types #}
@@ -1142,7 +1190,7 @@
         <div id="{{ section_id }}" class="nested-content bg-gray-50 px-4 py-4 space-y-3 hidden" style="display: none;">
             {% set property_order = prop['x-propertyOrder'] if 'x-propertyOrder' in prop else prop.properties.keys()|list %}
             {% for nested_key in property_order %}
-                {% if nested_key in prop.properties %}
+                {% if nested_key in prop.properties and not prop_is_hidden(prop.properties[nested_key])|trim %}
                     {% set nested_prop = prop.properties[nested_key] %}
                     {% set nested_val = nested_value[nested_key] if nested_key in nested_value else none %}
                     {# Tagged so a widget that takes over part of a block can
@@ -1295,7 +1343,10 @@
                            them. Schemas without the flag render exactly as before. #}
                         {% set tiers = namespace(basic=[], advanced=[]) %}
                         {% for key in property_order %}
-                            {% if key in schema.properties and key != 'enabled' %}
+                            {# A hidden key is neither drawn nor reported in
+                               __rendered_section, so the save never reads its
+                               absence as an unchecked box. #}
+                            {% if key in schema.properties and key != 'enabled' and not prop_is_hidden(schema.properties[key])|trim %}
                                 {% set prop = schema.properties[key] %}
                                 {% set is_object = prop.type is defined and 'object' in prop.type %}
                                 {% if prop.get('x-advanced') and not is_object %}

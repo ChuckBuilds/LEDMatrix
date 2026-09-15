@@ -39,6 +39,15 @@ this):
   `rgbmatrix` and never import `src.base_classes`, `src.display_manager` or
   `src.plugin_system` at module level.
 
+Web interface:
+
+- The plugin settings form honours `"x-display": "hidden"` in config schemas:
+  the property gets no control at any depth (top level, nested objects, array
+  rows, Advanced Settings), and saving the form never changes its stored value.
+  JSON API saves are unaffected. Lets plugins keep deprecated or internal keys
+  declared, e.g. countdown's row `id` and weather's `api_key` / `radar_zoom`.
+  See `docs/widget-guide.md`.
+
 ## 3.4.0
 
 Plugin-facing changes since 3.3.0 (tag `v3.3.1`) not covered further down:

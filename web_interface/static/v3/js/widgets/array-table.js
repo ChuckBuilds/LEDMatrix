@@ -111,6 +111,37 @@
 
     // ─── Helpers ────────────────────────────────────────────────────────────
 
+    /**
+     * "x-display": "hidden" — the property stays in the schema but gets no
+     * control. An object whose every child is hidden counts as hidden too.
+     * Mirrors prop_is_hidden in plugin_config.html and _is_hidden_prop on the
+     * server.
+     */
+    function isHiddenProp(schema) {
+        if (!schema || typeof schema !== 'object') return false;
+        if (schema['x-display'] === 'hidden') return true;
+        const children = schema.properties;
+        if (children && typeof children === 'object') {
+            const values = Object.values(children);
+            return values.length > 0 && values.every(isHiddenProp);
+        }
+        return false;
+    }
+
+    /**
+     * A hidden input carrying a hidden property's stored value, JSON-encoded so
+     * the save restores its exact type. A posted row replaces the stored item,
+     * so a value that isn't posted is lost.
+     */
+    function hiddenValueInput(name, dataKey, value) {
+        const input = document.createElement('input');
+        input.type  = 'hidden';
+        input.name  = name;
+        input.value = JSON.stringify(value);
+        input.dataset.hiddenProp = dataKey;
+        return input;
+    }
+
     function safeSetHTML(target, html) {
         target.textContent = '';
         // createContextualFragment parses html relative to the document context
@@ -343,6 +374,16 @@
             if (propType === 'object' && propSchema.properties) {
                 const nestedVal = (item && item[propName]) || {};
                 Object.entries(propSchema.properties).forEach(([subName, subSchema]) => {
+                    if (isHiddenProp(subSchema)) {
+                        // No data-nested-prop, so the row editor never shows it.
+                        const stored = Object.entries(nestedVal).find(([name]) => name === subName);
+                        if (stored && stored[1] !== undefined && stored[1] !== null) {
+                            cell.appendChild(hiddenValueInput(
+                                `${fullKey}.${index}.${propName}.${subName}`,
+                                `${propName}.${subName}`, stored[1]));
+                        }
+                        return;
+                    }
                     const subType = Array.isArray(subSchema.type)
                         ? subSchema.type.find(t => t !== 'null') || 'string'
                         : (subSchema.type || 'string');
@@ -386,7 +427,16 @@
         row.className = 'array-table-row';
         row.setAttribute('data-index', index);
 
+        // "x-display": "hidden" item properties: never a column (even if
+        // x-columns names one), never in the advanced cell or row editor.
+        const hiddenKeys = new Set(
+            Object.entries(fullItemProperties)
+                .filter(([, propSchema]) => isHiddenProp(propSchema))
+                .map(([propName]) => propName)
+        );
+
         // Visible column cells
+        displayColumns = displayColumns.filter(colName => !hiddenKeys.has(colName));
         displayColumns.forEach(colName => {
             const colDef   = itemProperties[colName] || {};
             const colType  = Array.isArray(colDef.type) ? colDef.type.find(t => t !== 'null') || 'string' : (colDef.type || 'string');
@@ -396,10 +446,11 @@
             row.appendChild(createCell(fullKey, index, colName, colDef, colValue, pluginId));
         });
 
-        // Determine non-displayed properties (these go into the advanced cell + edit modal)
+        // Determine non-displayed properties (these go into the advanced cell + edit modal).
+        // Hidden ones ("x-display": "hidden") get no column and no editor field.
         const nonDisplayed = {};
         Object.keys(fullItemProperties).forEach(k => {
-            if (!displayColumns.includes(k) && k !== 'id') {
+            if (!displayColumns.includes(k) && k !== 'id' && !hiddenKeys.has(k)) {
                 nonDisplayed[k] = fullItemProperties[k];
             }
         });
@@ -429,6 +480,14 @@
             editBtn.innerHTML = '<i class="fas fa-sliders-h" aria-hidden="true"></i>';
             actionsCell.appendChild(editBtn);
         }
+
+        // Hidden properties: carry stored values only. A new row has none, so
+        // nothing is invented (countdown fills in its own id).
+        Object.entries(item).forEach(([propName, stored]) => {
+            if (hiddenKeys.has(propName) && stored !== undefined && stored !== null) {
+                actionsCell.appendChild(hiddenValueInput(`${fullKey}.${index}.${propName}`, propName, stored));
+            }
+        });
 
         row.appendChild(actionsCell);
 
@@ -494,7 +553,8 @@
                 grid.className = 'grid grid-cols-2 gap-3';
 
                 Object.entries(propSchema.properties).forEach(([subName, subSchema]) => {
-                    const subType    = Array.isArray(subSchema.type) ? subSchema.type.find(t => t !== 'null') || 'string' : (subSchema.type || 'string');
+                    if (isHiddenProp(subSchema)) return;
+                    const subType    =Array.isArray(subSchema.type) ? subSchema.type.find(t => t !== 'null') || 'string' : (subSchema.type || 'string');
                     const subLabel   = subSchema.title || subName.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
                     const subDesc    = subSchema.description || '';
                     const nestedPath = `${propName}.${subName}`;
