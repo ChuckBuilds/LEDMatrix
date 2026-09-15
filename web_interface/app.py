@@ -1047,8 +1047,36 @@ def check_health_monitor():
             _reconciliation_started = True
             _threading.Thread(target=_run_startup_reconciliation, daemon=True).start()
 
+_auto_updater = None
+
+
+def start_auto_update_scheduler():
+    """Start the weekly auto-update thread (web_interface/auto_update.py).
+
+    Called by the launchers, not at import: tests and dev tools import this
+    module, and none of them should ever git pull. Idle unless
+    auto_update.enabled is set, so it is safe to always start.
+    """
+    global _auto_updater
+    if _auto_updater is not None:
+        return _auto_updater
+    from web_interface.auto_update import AutoUpdater
+    from web_interface.blueprints.api_v3.system import perform_core_update
+    _auto_updater = AutoUpdater(
+        config_manager=config_manager,
+        core_update=perform_core_update,
+        store_manager=plugin_store_manager,
+        plugin_manager=plugin_manager,
+        schema_manager=schema_manager,
+        operation_history=operation_history,
+    )
+    _auto_updater.start()
+    return _auto_updater
+
+
 if __name__ == '__main__':
     import os as _os
+    start_auto_update_scheduler()
     # threaded=True is Flask's default since 1.0 but stated explicitly so that
     # long-lived /api/v3/stream/* SSE connections don't starve other requests.
     # Debug mode is off by default; opt in with FLASK_DEBUG=1 in the environment.

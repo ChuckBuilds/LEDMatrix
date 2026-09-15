@@ -30,6 +30,12 @@ except ImportError:
     HAS_SCIPY = False
 
 
+# How often the frame-stats line is emitted, and therefore also the ceiling
+# on a believable frame time: a scroll that renders at all cannot take this
+# long over one frame, so a sample this large is an idle gap between scrolls.
+FPS_LOG_INTERVAL = 5.0
+
+
 def frame_stats(frame_times: list) -> Dict[str, Any]:
     """Summary statistics over one window of frame durations (seconds).
 
@@ -158,9 +164,11 @@ class ScrollHelper:
         self.last_progress_log_time: Optional[float] = None
         self.progress_log_interval = 5.0  # seconds
         
-        # Frame rate tracking
+        # Frame rate tracking. last_frame_time is None until the first frame
+        # of a scroll is rendered -- see log_frame_rate() for why timing from
+        # construction (or from the end of the previous scroll) is wrong.
         self.frame_count = 0
-        self.last_frame_time = time.time()
+        self.last_frame_time: Optional[float] = None
         self.last_fps_log_time = time.time()
         self.frame_times = []
         # Every frame time since the last stats line, so the 5s summary can
@@ -764,6 +772,10 @@ class ScrollHelper:
         # Reset last_update_time to prevent large delta_time on next update
         # This ensures smooth scrolling after reset without jumping ahead
         self.last_update_time = now
+        # Same reasoning for the frame-rate clock: the first frame after a
+        # reset has no predecessor in this scroll, and timing it against the
+        # last frame of the previous one measures the idle gap between them.
+        self.last_frame_time = None
         self.logger.debug("Scroll position reset")
 
     def reset(self) -> None:
@@ -962,11 +974,37 @@ class ScrollHelper:
         Log frame rate statistics for performance monitoring.
         """
         current_time = time.time()
-        
+
+        # The first frame of a scroll has no predecessor, so it has no frame
+        # time. Measuring one anyway records the whole idle gap since the last
+        # scroll as a single frame: on hardware that produced windows reading
+        # "0.0 fps over 1 frames | median 136776.02ms", and -- worse, because
+        # it is not obviously wrong -- put that gap in the max field of
+        # otherwise healthy windows and counted it as one stall per scroll.
+        # At ~500 frames to a window that is ~0.2%, which is the same order as
+        # the real stall rates being measured, so the number could not be
+        # trusted at all. Seed the clock and take no sample.
+        if self.last_frame_time is None:
+            self.last_frame_time = current_time
+            # Restart the window with the scroll. Otherwise the boundary is
+            # already long overdue when the second frame arrives, and the new
+            # scroll opens by reporting a window of exactly one frame.
+            self.last_fps_log_time = current_time
+            return
+
         # Calculate instantaneous frame time
         frame_time = current_time - self.last_frame_time
+
+        # A caller that scrolls without ever calling reset_scroll() never arms
+        # the sentinel above, so catch the same gap by its size. Nothing that
+        # renders a scroll produces a frame longer than the log interval; a
+        # sample that large is an idle period, not a frame.
+        if frame_time >= FPS_LOG_INTERVAL:
+            self.last_frame_time = current_time
+            return
+
         self.frame_times.append(frame_time)
-        
+
         # Keep only last 100 frames for average
         if len(self.frame_times) > 100:
             self.frame_times.pop(0)
@@ -979,17 +1017,21 @@ class ScrollHelper:
         # duplicate and a 21ms double-wait mean exactly 10ms). Chasing scroll
         # judder needs the tail, so keep the window and report percentiles.
         self._window.append(frame_time)
-        
+
         # Log FPS every 5 seconds to avoid spam
-        if current_time - self.last_fps_log_time >= 5.0:
-            self.logger.info(
-                "Scroll frame stats - %s",
-                format_frame_stats(self._window or [frame_time]),
-            )
+        if current_time - self.last_fps_log_time >= FPS_LOG_INTERVAL:
+            # An empty window means every sample in this interval was dropped
+            # as an idle gap. There is nothing to report, and reporting the
+            # gap itself is the bug above.
+            if self._window:
+                self.logger.info(
+                    "Scroll frame stats - %s",
+                    format_frame_stats(self._window),
+                )
             self.last_fps_log_time = current_time
             self.frame_count = 0
             self._window = []
-        
+
         self.last_frame_time = current_time
         self.frame_count += 1
     

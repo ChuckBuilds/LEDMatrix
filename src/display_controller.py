@@ -119,6 +119,15 @@ class DisplayController:
                 # validator.raise_on_errors()  # Uncomment to fail fast on errors
         except Exception as e:
             logger.warning(f"Startup validation could not be completed: {e}")
+
+        # Automatic updates need their health-check units, and this is the
+        # one root process running project code, so it installs them while
+        # automatic updates are on. See src/auto_update_setup.py.
+        try:
+            from src.auto_update_setup import ensure_update_helper
+            ensure_update_helper(self.config)
+        except Exception as e:
+            logger.warning("Automatic update setup could not be completed: %s", e)
         
         config_time = time.time()
         self.display_manager = DisplayManager(self.config)

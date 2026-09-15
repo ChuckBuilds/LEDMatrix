@@ -203,26 +203,61 @@ configured speed, so position stays proportional to real time.
 
 ## Diagnosing a juddery scroller
 
-**`Avg FPS` will lie to you.** It is a 100-frame moving average, and a 2 ms
-duplicate frame plus a 21 ms double-wait average to exactly 10 ms. A ticker
-that is stalling on half its frames still reports a healthy `100.0`.
+**An average will lie to you.** A 2 ms duplicate frame and a 21 ms double-wait
+mean exactly 10 ms, so a ticker stalling on half its frames still averages to a
+healthy 100 fps. The stats line reports the tail for that reason — read the
+percentiles, not the fps.
 
-Look at the **distribution** instead:
+Every scroller emits one line every 5 seconds covering *every* frame in that
+window, tagged with the plugin it came from:
 
 ```bash
-journalctl -u ledmatrix --since "-10min" --no-pager \
-  | grep -oE "Frame time: [0-9.]+ms" | awk '{print $3}' | sed 's/ms//' \
-  | awk '{printf "%.0f\n", $1}' | sort -n | uniq -c
+journalctl -u ledmatrix --since "-10min" --no-pager | grep "Scroll frame stats"
+```
+
+```
+[Plugin: news] Scroll frame stats - 100.0 fps over 501 frames | median 10.00ms
+p95 10.11ms max 12.03ms min 7.98ms | stalls 0 (0.0%) skips 0 (0.0%)
 ```
 
 Reading it, on a 100 Hz panel:
 
 | you see | it means |
 |---|---|
-| everything at 10 ms | healthy |
-| a mode at ~2 ms | **duplicate frames** — the swap was skipped because the image did not change. The scroller is advancing less than one pixel per frame. |
-| a mode at 20/30/50 ms | frames missing refreshes — per-frame work is overrunning, or a background thread is holding the GIL |
-| `Avg FPS` above 100 | duplicates present, unless the scroll cycle has completed and is idling |
+| median 10 ms, p95 within ~0.5 ms of it | healthy — locked to the panel |
+| p95 or max at 20/30/50 ms | frames missing refreshes — per-frame work is overrunning, or a background thread is holding the GIL |
+| non-zero **skips**, or a median *below* 10 ms | **duplicate frames** — the swap was skipped because the image did not change, so the frame never waited on vsync. The scroller is advancing less than one pixel per frame. |
+| non-zero **stalls** | frames past 1.5× the median, which is the measure of judder that survives averaging |
+
+`stalls` and `skips` are both counted against that window's own median, so they
+stay meaningful on a panel running at any refresh rate.
+
+To rank every scroller at once rather than reading lines one at a time:
+
+```bash
+journalctl -u ledmatrix --since "-3h" --no-pager | grep "Scroll frame stats" \
+  | sed -E 's/.*- (\S+) - (\[Plugin: [^]]+\] )?Scroll.*median ([0-9.]+)ms p95 ([0-9.]+)ms.*/\1 \3 \4/' \
+  | awk '$2 < 1000 {n[$1]++; m[$1]+=$2; p[$1]+=$3} END {for (k in n)
+        printf "%-28s %5d windows  median %6.2fms  p95 %6.2fms\n", k, n[k], m[k]/n[k], p[k]/n[k]}' \
+  | sort -k7 -rn
+```
+
+The `$2 < 1000` guard drops windows whose median is a whole second or more.
+Those are not frames. Until the idle-gap fix in `log_frame_rate()`, the first
+frame of every scroll was timed against the end of the *previous* scroll, so
+the gap between them was recorded as one enormous sample — it landed in the
+`max` field of otherwise healthy windows and counted as one stall per scroll,
+roughly 0.2% at 500 frames to a window, which is the same order as the real
+stall rates it sat beside. Current builds emit none, but the guard costs
+nothing and keeps the command honest against older journals.
+
+A scroller whose p95 sits several times its median is the one to fix, and it is
+usually the one doing the most per-frame work rather than the one configured
+worst. Measured over 20 minutes with two scrollers set identically at 100 px/s,
+the leaderboard held 10 ms flat while the odds ticker spent ~20% of its frames
+on duplicates. Same settings, different render cost: odds does more per-frame
+work, and more variably, so it is first to land a frame that advances less than
+a whole pixel. Check the render path before the config.
 
 Then confirm what the plugin actually loaded — config edits do not always reach
 the running code:

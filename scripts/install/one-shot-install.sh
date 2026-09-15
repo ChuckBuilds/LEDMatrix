@@ -408,6 +408,7 @@ main() {
         # which would silently reinstate the duplicate apt update.
         sudo -E env TMPDIR=/tmp LEDMATRIX_ASSUME_YES=1 \
             LEDMATRIX_APT_UPDATED="${LEDMATRIX_APT_UPDATED:-0}" \
+            LEDMATRIX_AUTO_UPDATE="${LEDMATRIX_AUTO_UPDATE:-}" \
             bash ./first_time_install.sh -y </dev/null
     fi
     INSTALL_EXIT_CODE=$?
