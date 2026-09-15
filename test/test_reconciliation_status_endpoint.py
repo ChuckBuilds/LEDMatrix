@@ -94,8 +94,15 @@ class TestStaleFindingsAreDroppedByTheEndpoint:
 
     def test_a_finding_that_still_holds_is_kept(self, client):
         c = client({"done": True, "unresolved": [
-            {"plugin_id": "ghost-plugin", "type": ON_DISK}]})
+            {"plugin_id": "ghost-plugin", "type": ON_DISK}]},
+            config={"ghost-plugin": {"enabled": True}})
         assert [e["plugin_id"] for e in _get(c)["unresolved"]] == ["ghost-plugin"]
+
+    def test_a_plugin_removed_from_config_is_no_longer_reported(self, client):
+        c = client({"done": True, "unresolved": [
+            {"plugin_id": "ghost-plugin", "type": ON_DISK}]},
+            config={"other-plugin": {"enabled": True}})
+        assert _get(c)["unresolved"] == []
 
     def test_the_reported_device_verdict_clears(self, client):
         """The five findings the live device served, against its real state."""
@@ -157,11 +164,13 @@ class TestTheFilterUsesTheReconcilersOwnRules:
         # finding on the strength of something nothing can read.
         c = client({"done": True, "unresolved": [
             {"plugin_id": "broken-plugin", "type": ON_DISK}]},
+            config={"broken-plugin": {"enabled": True}},
             corrupt=["broken-plugin"])
         assert [e["plugin_id"] for e in _get(c)["unresolved"]] == ["broken-plugin"]
 
     def test_a_standalone_backup_dir_does_not_count_as_installed(self, client):
         c = client({"done": True, "unresolved": [
             {"plugin_id": "weather.standalone-backup-20260101", "type": ON_DISK}]},
+            config={"weather.standalone-backup-20260101": {"enabled": True}},
             installed=["weather.standalone-backup-20260101"])
         assert len(_get(c)["unresolved"]) == 1

@@ -735,10 +735,10 @@ def _drop_stale_reconciliation_findings(unresolved):
         )
 
         cm = api_v3.config_manager
-        config_keys = config_plugin_ids(cm.load_config() or {},
-                                       ignored_config_keys(cm))
         plugins_dir = getattr(api_v3.plugin_manager, 'plugins_dir', None)
         installed = disk_plugin_ids(plugins_dir) if plugins_dir else set()
+        config_keys = config_plugin_ids(cm.load_config() or {},
+                                       ignored_config_keys(cm, installed))
         return still_unresolved(unresolved, config_keys, installed)
     except Exception:
         logger.debug("[Reconciliation] Could not re-check stored findings", exc_info=True)
