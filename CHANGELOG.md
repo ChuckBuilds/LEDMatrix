@@ -29,7 +29,8 @@ this):
   `_setting_int`, `_reset_dwell_on_reentry`, `_next_switch_index`,
   `_spread_weighted_order`, `_odds_color`, `_upcoming_date_and_time_text` under
   the plugins' names and signatures, plus the `_favorite_key` override point.
-  No `__init__` and no state; the host contract is in the module docstring.
+  Constructor-free; keeps lazy state on its host (see the module docstring,
+  which also gives the host contract).
   A new module rather than more methods on `sports_shared`: a plugin that
   deletes a copy and leans on an older module having grown the method fails at
   runtime with `AttributeError`, which no load-time check sees, while a missing

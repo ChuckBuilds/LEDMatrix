@@ -45,7 +45,7 @@ def test_sports_modules_import_without_hardware():
         for name in {modules!r}:
             importlib.import_module("src.common." + name)
         loaded = sorted(m for m in sys.modules
-                        if m.startswith(("src.display_manager", "src.base_classes")))
+                        if m.startswith({FORBIDDEN!r}))
         print(json.dumps(loaded))
     """)
     result = subprocess.run(
@@ -73,14 +73,23 @@ def _module_level_imports(tree):
                 stack.extend(handler.body)
 
 
-def _targets(node):
+def _targets(node, package="src.common"):
+    """Absolute dotted names an import can load. Relative imports resolve
+    against ``package``, the scanned module's package."""
     if isinstance(node, ast.Import):
         return [alias.name for alias in node.names]
-    if node.module is None:
+    base = node.module
+    if node.level:
+        parts = package.split(".")
+        if node.level > len(parts):
+            return []   # beyond the top-level package; Python rejects it too
+        anchor = ".".join(parts[:len(parts) - node.level + 1])
+        base = f"{anchor}.{node.module}" if node.module else anchor
+    if base is None:
         return []
-    if node.module == "src":
-        return [f"src.{alias.name}" for alias in node.names]
-    return [node.module]
+    # `from pkg import name` may load the submodule pkg.name.
+    return [base] + [f"{base}.{alias.name}" for alias in node.names
+                     if alias.name != "*"]
 
 
 def _violations():
@@ -88,7 +97,7 @@ def _violations():
     for path in sorted(COMMON.glob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in _module_level_imports(tree):
-            for target in _targets(node):
+            for target in _targets(node, "src.common"):
                 if target == FORBIDDEN or any(
                         target == f or target.startswith(f + ".") for f in FORBIDDEN):
                     found.setdefault(path.name, []).append(f"line {node.lineno}: {target}")
@@ -120,5 +129,35 @@ def test_the_scan_sees_a_direct_import(tmp_path):
         def later():
             from src.display_manager import DisplayManager
     """))
-    targets = sorted(t for n in _module_level_imports(tree) for t in _targets(n))
-    assert targets == ["src.base_classes.sports", "src.display_manager", "src.plugin_system"]
+    targets = {t for n in _module_level_imports(tree) for t in _targets(n)}
+    assert {"src.base_classes.sports", "src.display_manager",
+            "src.plugin_system"} <= targets
+
+
+def test_the_scan_resolves_relative_imports():
+    # A module in src/common reaches src.plugin_system through `..`.
+    tree = ast.parse(textwrap.dedent("""
+        from .. import plugin_system
+        from ..plugin_system import plugin_manager
+        from . import sports_shared
+    """))
+    targets = {t for n in _module_level_imports(tree)
+               for t in _targets(n, "src.common")}
+    assert {"src.plugin_system", "src.plugin_system.plugin_manager",
+            "src.common.sports_shared"} <= targets
+    # The package decides where `..` points.
+    node = ast.parse("from .. import plugin_system").body[0]
+    assert _targets(node, "src.common") == ["src", "src.plugin_system"]
+    assert _targets(node, "a.b") == ["a", "a.plugin_system"]
+
+
+def test_the_scan_flags_relative_imports_in_src_common(monkeypatch, tmp_path):
+    # End to end through _violations(): both relative forms are reported.
+    (tmp_path / "bad.py").write_text(
+        "from .. import plugin_system\nfrom ..plugin_system import x\n",
+        encoding="utf-8")
+    monkeypatch.setitem(globals(), "COMMON", tmp_path)
+    found = {name: sorted(hits) for name, hits in _violations().items()}
+    assert found == {"bad.py": ["line 1: src.plugin_system",
+                                "line 2: src.plugin_system",
+                                "line 2: src.plugin_system.x"]}

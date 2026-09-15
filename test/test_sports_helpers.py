@@ -8,8 +8,9 @@ loses those tests with it.
 The parity class is what keeps "byte-identical" true after this lands. Point
 LEDMATRIX_PLUGINS at a ledmatrix-plugins checkout and every promoted body is
 compared, as a docstring-stripped AST, against every plugin copy that carries
-it. Without the variable it skips rather than fails, since CI has no plugins
-checkout.
+it. Without the variable it skips rather than fails, since core CI has no
+plugins checkout; ledmatrix-plugins CI runs the same comparison against core
+(scripts/check_sports_helpers_parity.py, ledmatrix-plugins#495).
 """
 
 import ast
@@ -505,7 +506,9 @@ def _plugins_root():
     raw = os.environ.get("LEDMATRIX_PLUGINS")
     if not raw:
         pytest.skip("set LEDMATRIX_PLUGINS to a ledmatrix-plugins checkout to "
-                    "compare sports_helpers against the plugin copies")
+                    "compare sports_helpers against the plugin copies; in CI "
+                    "this parity check runs in ledmatrix-plugins "
+                    "scripts/check_sports_helpers_parity.py (#495)")
     root = Path(raw)
     if (root / "plugins").is_dir():
         root = root / "plugins"

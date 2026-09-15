@@ -187,8 +187,8 @@ def spread_weighted_order(weights: List[int]) -> List[int]:
 class SportsHelpersMixin:
     """The ``SportsCore`` methods identical across the scoreboards' sports.py.
 
-    Stateless and constructor-free; see the module docstring for the host
-    contract and base-order guidance.
+    Constructor-free; keeps lazy state on its host (see the module docstring
+    for that state, the host contract and base-order guidance).
     """
 
     #: Longest gap between two display() calls that still counts as one
@@ -386,7 +386,7 @@ class SportsHelpersMixin:
         if getter is None:
             return (0, 255, 0)
         try:
-            return getter("odds_text", (0, 255, 0))
+            return getter("odds_text", (0, 255, 0))  # pylint: disable=not-callable
         except Exception:
             return (0, 255, 0)
 
