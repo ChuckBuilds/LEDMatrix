@@ -1039,6 +1039,51 @@ def _set_nested_value(config, key_path, value):
 _RENDERED_SECTION_FIELD = '__rendered_section'
 
 
+def _is_hidden_prop(prop_schema):
+    """Whether a schema property is declared ``"x-display": "hidden"``.
+
+    Mirrors ``prop_is_hidden`` in ``plugin_config.html``: an object whose every
+    child is hidden counts as hidden too. A hidden property stays declared (so
+    stored configs carrying it keep validating) but the form draws no control
+    for it, which puts it outside everything the save infers from the form.
+    """
+    if not isinstance(prop_schema, dict):
+        return False
+    if prop_schema.get('x-display') == 'hidden':
+        return True
+    children = prop_schema.get('properties')
+    if isinstance(children, dict) and children:
+        return all(_is_hidden_prop(child) for child in children.values())
+    return False
+
+
+def _hidden_array_item_property(schema, key_path):
+    """The hidden schema property a posted array-row key names, else None.
+
+    Only paths through an array index (``countdowns.0.id``) qualify: that is
+    the one place the rendered form posts a hidden value, because a posted row
+    replaces the stored item wholesale. The value is JSON-encoded there so its
+    exact type survives the round trip.
+    """
+    parts = key_path.split('.')
+    digit_at = next((i for i, p in enumerate(parts) if p.isdigit()), None)
+    if digit_at is None or digit_at == 0 or digit_at == len(parts) - 1:
+        return None
+    array_prop = _get_schema_property(schema, '.'.join(parts[:digit_at]))
+    if not _schema_type_is(array_prop, 'array'):
+        return None
+    items = array_prop.get('items')
+    if not isinstance(items, dict) or not isinstance(items.get('properties'), dict):
+        return None
+    rest = '.'.join(parts[digit_at + 1:])
+    item_schema = {'properties': items['properties']}
+    prop = _get_schema_property(item_schema, rest)
+    if prop is None:
+        # Deeper array inside the item (rare): keep walking.
+        return _hidden_array_item_property(item_schema, rest)
+    return prop if _is_hidden_prop(prop) else None
+
+
 def _boolean_is_in_scope(full_path, prefix, sections, submitted_parents):
     """Whether a missing checkbox at ``full_path`` may be forced to False.
 
@@ -1110,6 +1155,12 @@ def _set_missing_booleans_to_false(plugin_config, schema_props, form_keys, prefi
 
     for prop_name, prop_schema in schema_props.items():
         if not isinstance(prop_schema, dict):
+            continue
+
+        # A hidden property (or an object of nothing but hidden ones) was never
+        # drawn, so its absence from the form is not an unchecked box. Leave it
+        # -- and everything under it -- exactly as stored.
+        if _is_hidden_prop(prop_schema):
             continue
 
         full_path = f"{prefix}.{prop_name}" if prefix else prop_name
