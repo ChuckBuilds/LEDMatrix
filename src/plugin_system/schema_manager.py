@@ -14,6 +14,85 @@ import jsonschema
 from jsonschema import Draft7Validator, ValidationError
 
 
+def _renders_as_object(prop: Dict[str, Any]) -> bool:
+    """``field_type == 'object'`` as ``plugin_config.html`` computes it.
+
+    The template takes a type list's *first* entry, so ``["object", "null"]``
+    is an object and ``["boolean", "object"]`` is a checkbox.
+    """
+    field_type = prop.get('type')
+    if isinstance(field_type, list):
+        field_type = field_type[0] if field_type else None
+    return field_type == 'object'
+
+
+def legacy_bool_as_object(value: Any, prop: Any) -> Any:
+    """Read a boolean stored where the schema now has an ``{enabled, ...}`` object.
+
+    Plugins turn an on/off switch into a settings object (news'
+    ``global.dynamic_duration: true`` became ``{enabled, min_duration_seconds,
+    ...}``), but config.json keeps the boolean until the user next saves that
+    plugin's form. The boolean was the switch the object's ``enabled`` now
+    holds, so it becomes ``{"enabled": value}`` and schema defaults fill the rest.
+
+    Returns ``value`` itself when the rule does not apply: anything that is not
+    a real ``bool`` (``1``, ``"true"``, ``None``) or a schema property that is not
+    an object with an ``enabled`` child. Those stay as they are, so validation
+    still reports a genuine mismatch.
+
+    This is the rule ``render_nested_section`` in
+    ``web_interface/templates/v3/partials/plugin_config.html`` applies when it
+    draws the form. ``test/test_legacy_boolean_config.py`` renders that macro
+    against this function, so change both together.
+    """
+    if not isinstance(value, bool) or not isinstance(prop, dict):
+        return value
+    properties = prop.get('properties')
+    if (_renders_as_object(prop) and isinstance(properties, dict)
+            and 'enabled' in properties):
+        return {'enabled': value}
+    return value
+
+
+def normalize_legacy_booleans(config: Any, schema: Any,
+                              changed_paths: Optional[List[str]] = None,
+                              _prefix: str = '') -> Any:
+    """Apply :func:`legacy_bool_as_object` at every depth of a plugin config.
+
+    Walks the config along the schema's ``properties`` the way the settings
+    form does: into nested objects, not into array items (the form hands arrays
+    to widgets and never applies the rule there).
+
+    Never mutates ``config``. Returns the same object when nothing changed, and
+    otherwise copies only the dicts on the path to each upgraded value. When
+    ``changed_paths`` is given, the dotted path of each upgraded value is
+    appended to it.
+    """
+    if not isinstance(config, dict) or not isinstance(schema, dict):
+        return config
+    properties = schema.get('properties')
+    if not isinstance(properties, dict):
+        return config
+
+    result = config
+    for key, value in config.items():
+        prop = properties.get(key)
+        if not isinstance(prop, dict) or not _renders_as_object(prop):
+            continue
+        path = f"{_prefix}.{key}" if _prefix else key
+        new_value = legacy_bool_as_object(value, prop)
+        if new_value is not value:
+            if changed_paths is not None:
+                changed_paths.append(path)
+        elif isinstance(value, dict):
+            new_value = normalize_legacy_booleans(value, prop, changed_paths, path)
+        if new_value is not value:
+            if result is config:
+                result = dict(config)
+            result[key] = new_value
+    return result
+
+
 class SchemaManager:
     """
     Manages plugin configuration schemas with caching and validation.

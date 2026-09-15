@@ -79,32 +79,86 @@ const PluginInstallManager = {
     },
     
     /**
+     * Whether POST /plugins/update can update this installed-list entry.
+     *
+     * /plugins/installed also lists installed Starlark apps as virtual
+     * `starlark:<app_id>` entries (flagged `is_starlark_app`) so they can be
+     * seen and toggled with everything else. They are not plugin directories:
+     * the plugin updater has nothing to update for them, and there is no
+     * Starlark update route (reinstalling from the repository would reset the
+     * app's saved settings), so they are left out of update-all.
+     *
+     * @param {Object} plugin - Entry from /plugins/installed
+     * @returns {boolean}
+     */
+    isUpdatablePlugin(plugin) {
+        if (!plugin || typeof plugin.id !== 'string' || !plugin.id) return false;
+        return !plugin.is_starlark_app && !plugin.id.startsWith('starlark:');
+    },
+
+    /**
+     * The entries update-all sends to POST /plugins/update, in list order.
+     *
+     * @param {Array} plugins - Entries from /plugins/installed
+     * @returns {Array}
+     */
+    updatablePlugins(plugins) {
+        return (Array.isArray(plugins) ? plugins : []).filter(p => this.isUpdatablePlugin(p));
+    },
+
+    /**
+     * Backoff (ms) before re-sending an update whose request never got an
+     * answer. Covers a web-service restart (~3s on a Pi) with room to spare.
+     */
+    NETWORK_RETRY_DELAYS_MS: [1000, 2000, 4000, 8000, 15000],
+
+    /**
      * Update all plugins.
      *
      * @param {Function} onProgress - Optional callback(index, total, pluginId) for progress updates
-     * @returns {Promise<Array>} Update results
+     * @param {Object} options - Optional { sleep(ms), retryDelaysMs } (tests inject these)
+     * @returns {Promise<Array>} Update results, one per plugin sent
      */
-    async updateAll(onProgress) {
+    async updateAll(onProgress, options = {}) {
         // Prefer PluginStateManager if populated, fall back to window.installedPlugins
         // (plugins_manager.js populates window.installedPlugins independently)
         const stateManagerPlugins = window.PluginStateManager && window.PluginStateManager.installedPlugins;
-        const plugins = (stateManagerPlugins && stateManagerPlugins.length > 0)
+        const listed = (stateManagerPlugins && stateManagerPlugins.length > 0)
             ? stateManagerPlugins
             : (window.installedPlugins || []);
+        // Snapshot: the list can be replaced while this loop is awaiting.
+        const plugins = this.updatablePlugins(listed);
 
         if (!plugins.length) {
             return [];
         }
+        const sleep = options.sleep || (ms => new Promise(resolve => setTimeout(resolve, ms)));
+        const retryDelays = options.retryDelaysMs || this.NETWORK_RETRY_DELAYS_MS;
         const results = [];
 
         for (let i = 0; i < plugins.length; i++) {
             const plugin = plugins[i];
             if (onProgress) onProgress(i + 1, plugins.length, plugin.id);
-            try {
-                const result = await window.PluginAPI.updatePlugin(plugin.id);
-                results.push({ pluginId: plugin.id, success: true, result });
-            } catch (error) {
-                results.push({ pluginId: plugin.id, success: false, error });
+            // Each plugin gets its own pass over the backoff schedule.
+            const pendingDelays = retryDelays.slice();
+            for (;;) {
+                try {
+                    const result = await window.PluginAPI.updatePlugin(plugin.id);
+                    results.push({ pluginId: plugin.id, success: true, result });
+                    break;
+                } catch (error) {
+                    // No HTTP answer at all (connection refused/reset, e.g. the
+                    // web service restarting mid-run): the server never saw or
+                    // never finished this plugin, so send it again once it is
+                    // back rather than skipping it. An HTTP error response is
+                    // the server's answer and is not retried.
+                    if (error && error.error_code === 'NETWORK_ERROR' && pendingDelays.length > 0) {
+                        await sleep(pendingDelays.shift());
+                        continue;
+                    }
+                    results.push({ pluginId: plugin.id, success: false, error });
+                    break;
+                }
             }
         }
 

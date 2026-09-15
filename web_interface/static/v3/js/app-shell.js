@@ -2421,7 +2421,10 @@
 
         async function updateAllPlugins() {
             try {
-                const plugins = Array.isArray(window.installedPlugins) ? window.installedPlugins : [];
+                // Starlark apps are listed as virtual 'starlark:<id>' entries;
+                // /plugins/update does not handle them (see install_manager.js).
+                const plugins = (Array.isArray(window.installedPlugins) ? window.installedPlugins : [])
+                    .filter(p => p && typeof p.id === 'string' && !p.is_starlark_app && !p.id.startsWith('starlark:'));
 
                 if (!plugins.length) {
                     showNotification('No installed plugins to update.', 'warning');
