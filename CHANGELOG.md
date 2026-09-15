@@ -19,6 +19,26 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+New module a plugin may import via `src.*` (floor on the release that ships
+this):
+
+- `src/common/sports_helpers.py` — the helpers the scoreboards' `sports.py`
+  carry byte-identical copies of: `clamp_window`, `clamp_seconds`,
+  `logo_needs_refresh`, `spread_weighted_order` (+ `MIN_WINDOW_DAYS`,
+  `MAX_WINDOW_DAYS`), and `SportsHelpersMixin` with `_mode_customization`,
+  `_setting_int`, `_reset_dwell_on_reentry`, `_next_switch_index`,
+  `_spread_weighted_order`, `_odds_color`, `_upcoming_date_and_time_text` under
+  the plugins' names and signatures, plus the `_favorite_key` override point.
+  Constructor-free; keeps lazy state on its host (see the module docstring,
+  which also gives the host contract).
+  A new module rather than more methods on `sports_shared`: a plugin that
+  deletes a copy and leans on an older module having grown the method fails at
+  runtime with `AttributeError`, which no load-time check sees, while a missing
+  module fails at load. Nothing in core uses it yet.
+- `test/test_common_is_hardware_free.py` — `src/common` must import without
+  `rgbmatrix` and never import `src.base_classes`, `src.display_manager` or
+  `src.plugin_system` at module level.
+
 ## 3.4.0
 
 Plugin-facing changes since 3.3.0 (tag `v3.3.1`) not covered further down:
