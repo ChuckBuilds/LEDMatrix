@@ -41,7 +41,143 @@ Plugin-facing changes since 3.3.0 (tag `v3.3.1`) not covered further down:
 - **Web preview size** now comes from `src/display_geometry.py`, the same
   computation `DisplayManager` uses: double-sided setups preview one screen,
   and a missing `chain_length` defaults to 2 everywhere (the Starlark magnify
-  default and the sync handshake used 1).
+  default and the sync handshake used 1). The module is core-internal: plugins
+  keep reading `display_manager.width`/`height`.
+- `src.common.font_layout` (#539, #565) — `load_truetype()` is
+  `ImageFont.truetype` with the layout engine pinned, so text lays out the same
+  whether or not the host's Pillow was built with libraqm; `crisp_size()` and
+  `FONT_PIXEL_GRID` give the size a bundled face renders on whole pixels at
+  (`sports_card` still re-exports them); `resolve_asset_path()` resolves
+  `assets/fonts/...` against the install root, not the working directory.
+  Floor on 3.4.0 to import it. Relatedly, `DisplayManager` now draws text
+  1-bit (#521), so golden images recorded against 3.3.x may need regenerating.
+
+### Install and updates
+
+**Weekly automatic updates (#581), off by default.** Switching on
+*Automatically check for and install updates once a week* on the General tab
+(or `first_time_install.sh --enable-auto-update` / `LEDMATRIX_AUTO_UPDATE=1`)
+updates the core and then every installed plugin once a week, preferably 2–5 AM
+local time. It follows the branch the checkout tracks — `main` on a standard
+install — so a device gets whatever has merged there, not only tagged releases.
+See `docs/WEB_INTERFACE_GUIDE.md`.
+
+- The core step is skipped, with the reason shown, when the checkout has local
+  edits or commits, a rebase or merge is in progress, the branch has no
+  upstream, less than 300 MB is free, or that commit was already rolled back.
+- After pulling, `ledmatrix-update-verify.service` restarts the services and
+  requires the web interface to answer and the display to stay up. If they
+  don't, or the new requirements fail to install, it resets to the previous
+  commit, reinstalls its requirements and restarts again. Anything but success
+  shows under the toggle and as a banner on Overview.
+- Plugins update through the Plugin Store even when the core step is skipped,
+  fails or is rolled back. A plugin version whose `ledmatrix_min_version` is
+  above the device's core is held back, not installed. When the core did
+  update, plugins wait for its health check, and are left alone if that check
+  never reports or the rollback fails.
+- No SSH is needed: switching the toggle on restarts the display service, which
+  installs the health-check units (`src/auto_update_setup.py`, core-internal
+  and not a plugin API).
+
+Installer and service fixes:
+
+- rgbmatrix builds on ARMv6 boards (Pi Zero, Pi 1); an existing checkout is
+  moved forward to the new pin and no longer left root-owned (#577).
+- `first_time_install.sh` grants the web user `safe_pip_install.sh`, as
+  `configure_web_sudo.sh` already did, so plugin requirements install where
+  the display service can see them (#579).
+- The web interface starts when `web_display_autostart` is missing or
+  `config.json` is unreadable; only an explicit `false` keeps it down (#556).
+- Installers render every systemd unit from its `systemd/` template, so the
+  boot-time unit-drift warning can clear, non-root installs included (#547).
+
+### Scrolling
+
+- **Frame pacing (#523).** The loop waits only for the rest of each panel
+  refresh instead of a flat 8 ms: 44–46 fps → 100 fps, and slow frames 14% →
+  0.02%, on a 2×128×64 chain. Sub-pixel blending is off by default again (it
+  shimmered on pixel fonts; Vegas mode still opts in).
+- **Whole-pixel steps (#545).** At a speed `scroll_config` can render in whole
+  pixels, every frame advances by exactly the same amount, removing about six
+  hitches a second. A loop that can't keep up now scrolls slightly slow rather
+  than jumping.
+- The eight sports scoreboards scroll through `scroll_config` too (#542): the
+  default 50 px/s holds each frame for two refreshes instead of alternating
+  0 px and 1 px steps.
+- **Frame stats ignore the pause between scrolls (#582).** The `Scroll frame
+  stats` log line counted the idle wait before each scroll as one frame,
+  inflating `max` and the stall rate. `docs/SCROLL_PERFORMANCE.md` now
+  describes the line actually logged.
+
+### Plugins
+
+- `FontManager` registers the bundled `tom_thumb` font, so plugins no longer
+  need a private loader (#534).
+- The test harness's `set_scrolling_state()` accepts `frame_hold`, as
+  `DisplayManager`'s does (#534).
+- A `display()` with nothing to draw should return `False`, the only value the
+  controller skips on; starlark-apps now does, rather than holding a black
+  panel (#534).
+- Starlark apps may set `render_width`/`render_height` in their `config.json`
+  to render at their own canvas size instead of Pixlet's 64×32 (#552).
+- `scripts/render_plugin.py --display-mode <mode>` renders one mode of a
+  multi-mode plugin; scoreboards previously rendered blank (#522).
+- Scoreboards resolve their own directory under the real plugin loader
+  (declare `_PLUGIN_DIR`), so 4x6 text snaps to its 7px grid instead of
+  rendering a pixel narrow, and an unreadable schema is logged (#519, #520).
+  `DisplayManager` loads 4x6 on that grid too (#565).
+- The 5x7 BDF face reports a real height, so rows stacked by
+  `get_font_height()` no longer overlap (#539).
+- `LogoHelper` remembers a missing logo instead of warning every rotation
+  (#548), and the decoded sports logo cache is bounded (#559).
+
+### Web interface
+
+- Installed Plugins has search, All / Enabled / Disabled / Updates filters and
+  sort (#540).
+- Hardened and polished per the September 2026 audit (#568): utility classes
+  such as `.hidden` actually exist, focus rings, labels and modal focus
+  trapping, dark theme throughout, no overflow at phone width, and background
+  streams pause when hidden, with first-load JS/CSS down from 1358 KB to 291 KB.
+- WiFi Connect works from the LEDMatrix-Setup hotspot: the page is answered
+  before the hotspot drops, and reopening it shows why an attempt failed (#571).
+- Pixlet install, the Starlark app store and app toggles work again (#535,
+  #537); the store uses the configured GitHub token and reports a rate limit
+  instead of drawing a blank grid (#541).
+- Plugin config: geochron and news saves no longer always fail (#575), the page
+  survives stored values the schema outgrew (#578), the form uses the full page
+  height (#573), and file-manager widgets show the script's error (#574).
+- The live status stream reports real disk usage and available memory (#558);
+  a system action refused for want of passwordless sudo says so and names
+  `configure_web_sudo.sh` (#560).
+
+### Tools and security
+
+- **CodeQL triage (#561):** 129 of 134 alerts fixed. Three were exploitable
+  path-handling flaws in the web interface and are closed; web UI escapers now
+  escape quotes, and URL fields refuse script schemes. Path checks share
+  `src/common/path_safety.py` (core-internal).
+- **Home Assistant MQTT bridge** (`integrations/mqtt_bridge`, #538): mode
+  select, stop, power and brightness over MQTT Discovery.
+- **Tools tab** manages the MQTT bridge and the Pixlet editor (#554); the
+  editor stays on loopback when `PIXLET_EDITOR_HOST` says so.
+
+### Fixes
+
+- Updating a plugin whose directory is named for its manifest id (leaderboard,
+  music, stocks, weather) silently did nothing (#536).
+- Plugin reconciliation no longer reports working plugins as stale or replaces
+  their config with a stub, and the Overview banner advises each case correctly
+  (#557).
+- Two config saves in the same second no longer share one backup, so rollback
+  restores the version asked for (#564).
+- On-demand: a second request is honoured without a restart (#534), a pinned
+  request stays on its mode, and restarting mid-session loads every plugin
+  again (#538).
+- `/health` and `/display/current` report real state, and the preview no longer
+  freezes on a leftover snapshot temp file (#534).
+
+### Per-element display customization
 
 **Per-element display customization, and the last mile of it into the web UI.**
 A user can set the font, size, colour, position, visibility and alignment of
@@ -133,7 +269,7 @@ Removed:
 
 ## 3.3.0
 
-Historical note: tag `v3.3.0` reports `__version__` "3.2.0" and tag `v3.3.1` reports "3.3.0", so a "3.3.0" floor is effectively `v3.3.1`, the first release shipping `src/common/sports_shared.py`.
+Historical note: tags `v3.3.0` and `v3.3.1` both report `__version__` "3.3.0" and both ship `src/common/sports_shared.py`, so a "3.3.0" floor always means a core with `sports_shared`.
 
 **The release the sports scoreboards floor on to delete their bundled copies.**
 3.2.0 shipped the unified sports library and made `ledmatrix_min_version`
