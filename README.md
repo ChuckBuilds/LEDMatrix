@@ -631,6 +631,10 @@ These settings are typically only needed for non-standard panels or custom confi
     with an Adafruit Triple LED Matrix Bonnet, 4 left rows jumping; 6–8 gave a
     stable image.
   - On a Raspberry Pi 5 the rgbmatrix library currently supports only 0 and 2
+    (and `parallel` 1-3). Anything else would crash the display service, so on
+    a Pi 5 the web UI offers only 0 and 2, the config API refuses the others,
+    and if one is set in `config.json` anyway the display logs why and runs in
+    fallback mode
   - Check your panel datasheet if display appears corrupted
 
 - **`multiplexing`** (integer, 0-22, default: 0)
@@ -748,7 +752,7 @@ Controls how long each installed plugin stays visible in seconds before switchin
 - Verify `hardware_mapping` matches your HAT/connection type
 - Try adjusting `gpio_slowdown`
 - Ensure your display doesn't need the E-Addressable line
-- If it went blank right after a settings change, check `sudo journalctl -u ledmatrix` for `Failed to initialize RGB Matrix`: the rgbmatrix library refused a value (for example more than 64 `rows`, or `pwm_dither_bits` above 2) and the display fell back to no output. The library's own message nearby names the setting
+- If it went blank right after a settings change, check `sudo journalctl -u ledmatrix` for `Failed to initialize RGB Matrix`: the rgbmatrix library refused a value (for example more than 64 `rows`, or `pwm_dither_bits` above 2) and the display fell back to no output. The library's own message nearby names the setting; on a Raspberry Pi 5, LEDMatrix's message names any unsupported `row_address_type`, `parallel` or `hardware_mapping`
 - A repeating scramble points at `row_address_type` or `multiplexing`; a panel that stays dark, at `panel_type`
 
 **Rows jump up and down, or the bottom row repeats other rows:**

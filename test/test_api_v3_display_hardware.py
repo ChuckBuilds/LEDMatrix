@@ -31,6 +31,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from test._api_v3_test_helpers import api_v3_client, api_v3_module  # noqa: F401,E402
 from test.test_web_settings_ui import REALISTIC_CONFIG  # noqa: E402
+from src import pi5_matrix_support  # noqa: E402
 
 #: What a Waveshare RGB-Matrix-P2.5-96x48 V2 (back silkscreen 24S-A1) needed on
 #: a Pi 4 with an Adafruit Triple LED Matrix Bonnet, checked on the panel.
@@ -42,6 +43,24 @@ WAVESHARE_96X48_V2 = {
 
 #: Fields stored under display.runtime; the rest go under display.hardware.
 RUNTIME_FIELDS = {'gpio_slowdown'}
+
+PI5_MODEL = 'Raspberry Pi 5 Model B Rev 1.0'
+
+
+@pytest.fixture(autouse=True)
+def board(tmp_path, monkeypatch):
+    """Not a Pi 5 unless a test says so, whatever machine runs the suite.
+
+    Returns a setter: board(PI5_MODEL) makes the API and the form see a Pi 5.
+    """
+    path = tmp_path / 'device-tree-model'
+
+    def set_model(model):
+        path.write_bytes(model.encode() + b'\x00')
+
+    set_model('Raspberry Pi 4 Model B Rev 1.5')
+    monkeypatch.setattr(pi5_matrix_support, 'MODEL_PATH', str(path))
+    return set_model
 
 
 def _stored(config, field):
@@ -220,3 +239,70 @@ def test_a_stored_zero_renders_as_zero(display_page, field, section):
     """`value or default` showed a stored 0 as the default, and the next save wrote it back."""
     body = display_page(_config_with(**{section: {field: 0}}))
     assert _attr(_input_tag(body, field), 'value') == '0'
+
+
+# --- Raspberry Pi 5 -------------------------------------------------------
+# The pinned library's Pi 5 path drives only row address types 0 and 2,
+# parallel 1-3 and the standard mappings; anything else crashes the display
+# service (src/pi5_matrix_support.py), so the API and the form refuse it.
+
+@pytest.mark.parametrize('body', [
+    {'row_address_type': 5}, {'row_address_type': '1'},
+    {'hardware_mapping': 'compute-module'},
+])
+def test_pi5_refuses_what_its_library_cannot_drive(api_v3_client, saved, board, body):
+    board(PI5_MODEL)
+    response = _post(api_v3_client, body)
+    assert response.status_code == 400
+    assert 'Raspberry Pi 5' in response.get_json()['message']
+    assert 'config' not in saved
+
+
+def test_pi5_saves_what_it_can_drive(api_v3_client, saved, board):
+    board(PI5_MODEL)
+    response = _post(api_v3_client, dict(WAVESHARE_96X48_V2, row_address_type=2))
+    assert response.status_code == 200, response.get_data(as_text=True)[:200]
+    assert saved['config']['display']['hardware']['row_address_type'] == 2
+
+
+def test_pi5_check_uses_the_stored_value_for_fields_not_sent(api_v3_client, api_v3_module, saved, board):
+    """Changing only the mapping is still checked against the stored row address type."""
+    board(PI5_MODEL)
+    api_v3_module.api_v3.config_manager.load_config.return_value = {
+        'display': {'hardware': {'row_address_type': 5}}}
+    response = _post(api_v3_client, {'hardware_mapping': 'regular'})
+    assert response.status_code == 400
+    assert 'config' not in saved
+
+
+def test_pi5_stored_combination_does_not_block_unrelated_saves(api_v3_client, api_v3_module, saved, board):
+    board(PI5_MODEL)
+    api_v3_module.api_v3.config_manager.load_config.return_value = {
+        'display': {'hardware': {'row_address_type': 5}}}
+    response = _post(api_v3_client, {'brightness': 70})
+    assert response.status_code == 200, response.get_data(as_text=True)[:200]
+
+
+def _option_values(body, select_id):
+    select = re.search(r'<select id="%s".*?</select>' % select_id, body, re.S)
+    assert select, f'no <select id="{select_id}">'
+    return re.findall(r'<option value="([^"]*)"', select.group(0))
+
+
+def test_pi5_form_offers_only_supported_row_address_types(display_page, board):
+    board(PI5_MODEL)
+    body = display_page(_config_with())
+    assert _option_values(body, 'row_address_type') == ['0', '2']
+    assert "can't be used on this Raspberry Pi 5" not in body
+
+
+def test_other_boards_offer_every_row_address_type(display_page):
+    body = display_page(_config_with())
+    assert _option_values(body, 'row_address_type') == ['0', '1', '2', '3', '4', '5']
+
+
+def test_pi5_form_warns_about_a_stored_unsupported_row_address_type(display_page, board):
+    """The unsupported option isn't offered, so the browser posts 0 -- say so."""
+    board(PI5_MODEL)
+    body = display_page(_config_with(hardware={'row_address_type': 5}))
+    assert "Your saved row address type (5) can't be used on this Raspberry Pi 5" in body

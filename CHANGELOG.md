@@ -67,8 +67,16 @@ Web interface:
 - Row Address Type offers 5, the SM5368 / B707 row shift register. The
   Waveshare 96x48 V2 panel (back silkscreen `24S-A1`) needs it with RGB
   sequence BGR and, on a Pi 4, a GPIO slowdown of 6–8. Panels with FM6124
-  column drivers need no Panel Type. On a Pi 5 the library supports only row
-  address types 0 and 2.
+  column drivers need no Panel Type.
+- On a Raspberry Pi 5 the pinned rgbmatrix library can drive only row address
+  types 0 and 2, parallel 1–3 and the standard mappings. For anything else it
+  returns no matrix, which the Python binding doesn't catch, so the display
+  service crashed and restarted every 10 seconds. `DisplayManager` now refuses
+  those settings before creating the matrix (logged, reported by
+  `/api/v3/hardware/status`, fallback mode), the config API rejects them, and
+  the Display form offers only row address types 0 and 2 on a Pi 5. The rule
+  lives in `src/pi5_matrix_support.py` and must be re-checked when the
+  submodule is bumped.
 
 ## 3.4.0
 

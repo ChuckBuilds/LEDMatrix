@@ -12,6 +12,7 @@ from web_interface.blueprints.api_v3 import (
     success_response,
 )
 from src.common.path_safety import resolve_under
+from src.pi5_matrix_support import is_raspberry_pi_5, pi5_unsupported_settings
 import web_interface.blueprints.api_v3 as _pkg
 # Read through the module rather than bound by value: tests patch these
 # as module attributes, and a value binding would not see the patch.
@@ -605,6 +606,18 @@ def save_main_config():
                     error = _hardware_int_error(field, low, high, even)
                     if error:
                         return error
+
+            # A Pi 5 can't drive every combination (src/pi5_matrix_support.py),
+            # and one it can't crashes the display service instead of falling
+            # back. Checked only when this request sets one of those fields, so
+            # a combination already stored doesn't block unrelated saves.
+            pi5_fields = ('row_address_type', 'parallel', 'hardware_mapping')
+            if any(k in data for k in pi5_fields) and is_raspberry_pi_5():
+                effective = dict(current_config['display']['hardware'])
+                effective.update({k: data[k] for k in pi5_fields if k in data})
+                unsupported = pi5_unsupported_settings(effective)
+                if unsupported:
+                    return jsonify({'status': 'error', 'message': unsupported}), 400
 
             # Handle hardware settings
             for field in ['rows', 'cols', 'chain_length', 'parallel', 'brightness', 'hardware_mapping', 'scan_mode',

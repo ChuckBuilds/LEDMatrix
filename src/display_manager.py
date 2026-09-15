@@ -39,6 +39,7 @@ from src.display_geometry import (
     DEFAULT_CHAIN_LENGTH, DEFAULT_COLS, DEFAULT_PARALLEL, DEFAULT_ROWS,
     physical_size, resolve_double_sided,
 )
+from src.pi5_matrix_support import is_raspberry_pi_5, pi5_unsupported_settings
 import threading
 import time
 from collections import OrderedDict
@@ -325,6 +326,15 @@ class DisplayManager:
             
             logger.info(f"Initializing RGB Matrix with settings: rows={options.rows}, cols={options.cols}, chain_length={options.chain_length}, parallel={options.parallel}, hardware_mapping={options.hardware_mapping}")
             
+            # On a Pi 5 the library hands back no matrix for settings its RP1
+            # path can't drive, and the binding doesn't check -- the process
+            # would crash on its next call instead of reaching the fallback
+            # below. Raise first so it is a logged, reported init failure.
+            if os.getenv("EMULATOR", "false") != "true" and is_raspberry_pi_5():
+                unsupported = pi5_unsupported_settings(hardware_config)
+                if unsupported:
+                    raise RuntimeError(unsupported)
+
             # Initialize the matrix
             self.matrix = RGBMatrix(options=options)
             logger.info("RGB Matrix initialized successfully")

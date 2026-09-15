@@ -196,15 +196,23 @@
                 </div>
 
                 <div class="form-group" id="setting-display-row_address_type" data-setting-key="display.hardware.row_address_type">
-                    <label for="row_address_type" class="block text-sm font-medium text-gray-700">Row Address Type{{ ui.help_tip('Row addressing scheme used by the panel.\nLeave at 0 (Default) unless your panel needs AB/ABC addressing — a wrong value shows a garbled or shifted image.\nABC panels (no E line, common on 128x64 FM6124 boards): try 3. Panels with SM5368 row drivers, such as the Waveshare 96x48 V2 (back silkscreen 24S-A1), need 5 with RGB sequence BGR. If rows then jump up and down, or the bottom row shows a copy of other rows, raise GPIO Slowdown (6–8 on a Pi 4). On a Raspberry Pi 5 the rgbmatrix library supports only 0 and 2.', 'Row Address Type') }}</label>
+                    <label for="row_address_type" class="block text-sm font-medium text-gray-700">Row Address Type{{ ui.help_tip('Row addressing scheme used by the panel.\nLeave at 0 (Default) unless your panel needs AB/ABC addressing — a wrong value shows a garbled or shifted image.\nABC panels (no E line, common on 128x64 FM6124 boards): try 3. Panels with SM5368 row drivers, such as the Waveshare 96x48 V2 (back silkscreen 24S-A1), need 5 with RGB sequence BGR. If rows then jump up and down, or the bottom row shows a copy of other rows, raise GPIO Slowdown (6–8 on a Pi 4). On a Raspberry Pi 5 the rgbmatrix library supports only 0 and 2, so only those are offered there.', 'Row Address Type') }}</label>
+                    {% set stored_row_address_type = main_config.display.hardware.get('row_address_type', 0)|int %}
                     <select id="row_address_type" name="row_address_type" class="form-control">
-                        <option value="0" {% if main_config.display.hardware.get('row_address_type', 0)|int == 0 %}selected{% endif %}>0 - Default</option>
-                        <option value="1" {% if main_config.display.hardware.get('row_address_type', 0)|int == 1 %}selected{% endif %}>1 - AB-addressed panels</option>
-                        <option value="2" {% if main_config.display.hardware.get('row_address_type', 0)|int == 2 %}selected{% endif %}>2 - Row direct</option>
-                        <option value="3" {% if main_config.display.hardware.get('row_address_type', 0)|int == 3 %}selected{% endif %}>3 - ABC-addressed panels</option>
-                        <option value="4" {% if main_config.display.hardware.get('row_address_type', 0)|int == 4 %}selected{% endif %}>4 - ABC Shift + DE direct</option>
-                        <option value="5" {% if main_config.display.hardware.get('row_address_type', 0)|int == 5 %}selected{% endif %}>5 - SM5368 / B707 row shift register</option>
+                        <option value="0" {% if stored_row_address_type == 0 %}selected{% endif %}>0 - Default</option>
+                        {% if not is_pi5 %}
+                        <option value="1" {% if stored_row_address_type == 1 %}selected{% endif %}>1 - AB-addressed panels</option>
+                        {% endif %}
+                        <option value="2" {% if stored_row_address_type == 2 %}selected{% endif %}>2 - Row direct</option>
+                        {% if not is_pi5 %}
+                        <option value="3" {% if stored_row_address_type == 3 %}selected{% endif %}>3 - ABC-addressed panels</option>
+                        <option value="4" {% if stored_row_address_type == 4 %}selected{% endif %}>4 - ABC Shift + DE direct</option>
+                        <option value="5" {% if stored_row_address_type == 5 %}selected{% endif %}>5 - SM5368 / B707 row shift register</option>
+                        {% endif %}
                     </select>
+                    {% if is_pi5 and stored_row_address_type not in (0, 2) %}
+                    <p class="text-sm text-red-600 mt-1">Your saved row address type ({{ stored_row_address_type }}) can't be used on this Raspberry Pi 5, so the display won't start with it. Saving this form sets it to 0.</p>
+                    {% endif %}
                 </div>
             </div>
 
