@@ -47,6 +47,36 @@ Web interface:
   JSON API saves are unaffected. Lets plugins keep deprecated or internal keys
   declared, e.g. countdown's row `id` and weather's `api_key` / `radar_zoom`.
   See `docs/widget-guide.md`.
+- Display settings no longer silently cut values on save: columns were capped
+  at 128, chain length at 24 and PWM LSB nanoseconds at 500. Rows, columns and
+  chain length now have no upper limit (the current rgbmatrix library still
+  rejects more than 64 rows per panel); rows must be even and at least 8,
+  parallel is 1–3 and PWM dither bits 0–2, matching the library. A stored GPIO
+  slowdown, PWM dither bits or refresh-rate cap of 0 no longer shows (and
+  re-saves) as 3, 1 or 120, and the refresh cap accepts 0 (no cap). The config
+  API rejects out-of-range or non-integer `rows`, `cols`, `chain_length`,
+  `parallel`, `brightness`, `scan_mode`, `pwm_bits`, `pwm_dither_bits`,
+  `pwm_lsb_nanoseconds`, `limit_refresh_rate_hz`, `row_address_type`,
+  `multiplexing` and `gpio_slowdown` with a 400 (JSON `true` or `5.5` used to
+  save as 1 or 5) instead of saving a config the matrix refuses to start with.
+- Display setting help tips and README / config-reference entries corrected
+  and completed: `panel_type` and `rp1_rio` are documented,
+  `show_refresh_rate` prints to the console rather than drawing on the panel,
+  PWM dither bits raise the refresh rate rather than lowering it, and every
+  numeric setting states its range.
+- Row Address Type offers 5, the SM5368 / B707 row shift register. The
+  Waveshare 96x48 V2 panel (back silkscreen `24S-A1`) needs it with RGB
+  sequence BGR and, on a Pi 4, a GPIO slowdown of 6–8. Panels with FM6124
+  column drivers need no Panel Type.
+- On a Raspberry Pi 5 the pinned rgbmatrix library can drive only row address
+  types 0 and 2, parallel 1–3 and the standard mappings. For anything else it
+  returns no matrix, which the Python binding doesn't catch, so the display
+  service crashed and restarted every 10 seconds. `DisplayManager` now refuses
+  those settings before creating the matrix (logged, reported by
+  `/api/v3/hardware/status`, fallback mode), the config API rejects them, and
+  the Display form offers only row address types 0 and 2 on a Pi 5. The rule
+  lives in `src/pi5_matrix_support.py` and must be re-checked when the
+  submodule is bumped.
 - The Plugin Config Warning no longer lists core settings as plugins that are
   "in config but not installed" (seen as `auto_update` on 3.4.0, where the
   advice would have deleted the weekly-update setting). Core top-level config

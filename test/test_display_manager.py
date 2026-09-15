@@ -279,3 +279,58 @@ class TestDisplayManagerOrientation:
                            suppress_test_pattern=True)
             options = mock_rgb_matrix['options_class'].return_value
             assert options.pixel_mapper_config == 'U-mapper;Rotate:180'
+
+
+class TestDisplayManagerPi5Guard:
+    """On a Pi 5 the library returns no matrix for settings its RP1 path can't
+    drive, and the binding doesn't check, so the process would crash on its next
+    call. DisplayManager has to refuse before creating the matrix and fall back."""
+
+    def _config(self, **hardware_overrides):
+        config = {
+            'display': {
+                'hardware': {
+                    'rows': 48, 'cols': 96, 'chain_length': 1, 'parallel': 1,
+                    'hardware_mapping': 'regular', 'brightness': 90,
+                },
+                'runtime': {'gpio_slowdown': 2},
+            },
+            'timezone': 'UTC',
+            'plugin_system': {'plugins_directory': 'plugins'},
+        }
+        config['display']['hardware'].update(hardware_overrides)
+        return config
+
+    @pytest.fixture
+    def board(self, tmp_path, monkeypatch):
+        from src import pi5_matrix_support
+
+        def set_model(model):
+            path = tmp_path / 'model'
+            path.write_bytes(model.encode() + b'\x00')
+            monkeypatch.setattr(pi5_matrix_support, 'MODEL_PATH', str(path))
+        return set_model
+
+    def test_unsupported_setting_on_pi5_never_creates_the_matrix(self, mock_rgb_matrix, board):
+        board('Raspberry Pi 5 Model B Rev 1.0')
+        DisplayManager._instance = None
+        with patch.dict('os.environ', {'EMULATOR': 'false'}):
+            dm = DisplayManager(self._config(row_address_type=5), suppress_test_pattern=True)
+        mock_rgb_matrix['matrix_class'].assert_not_called()
+        assert dm.matrix is None
+
+    def test_supported_setting_on_pi5_creates_the_matrix(self, mock_rgb_matrix, board):
+        board('Raspberry Pi 5 Model B Rev 1.0')
+        DisplayManager._instance = None
+        with patch.dict('os.environ', {'EMULATOR': 'false'}):
+            dm = DisplayManager(self._config(row_address_type=2), suppress_test_pattern=True)
+        mock_rgb_matrix['matrix_class'].assert_called_once()
+        assert dm.matrix is not None
+
+    def test_other_boards_are_left_to_the_library(self, mock_rgb_matrix, board):
+        board('Raspberry Pi 4 Model B Rev 1.5')
+        DisplayManager._instance = None
+        with patch.dict('os.environ', {'EMULATOR': 'false'}):
+            dm = DisplayManager(self._config(row_address_type=5), suppress_test_pattern=True)
+        mock_rgb_matrix['matrix_class'].assert_called_once()
+        assert dm.matrix is not None

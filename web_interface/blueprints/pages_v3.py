@@ -14,6 +14,7 @@ _SAFE_WIDGET_NAME_RE = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
 _SAFE_WIDGET_SCRIPT_RE = re.compile(r'^[a-zA-Z0-9_-]{1,64}\.js$')
 from src.web_interface.secret_helpers import mask_secret_fields
 from src.common.path_safety import resolve_under, safe_path_component
+from src.pi5_matrix_support import is_raspberry_pi_5
 from web_interface import widget_bundle
 
 logger = logging.getLogger(__name__)
@@ -544,7 +545,8 @@ def _load_display_partial():
         if pages_v3.config_manager:
             main_config = pages_v3.config_manager.load_config()
             return render_template('v3/partials/display.html',
-                                 main_config=main_config)
+                                 main_config=main_config,
+                                 is_pi5=is_raspberry_pi_5())
     except Exception as e:
         logger.error("Error loading partial", exc_info=True)
         return "Error loading partial", 500
