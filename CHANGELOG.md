@@ -47,6 +47,13 @@ Web interface:
   JSON API saves are unaffected. Lets plugins keep deprecated or internal keys
   declared, e.g. countdown's row `id` and weather's `api_key` / `radar_zoom`.
   See `docs/widget-guide.md`.
+- The Plugin Config Warning no longer lists core settings as plugins that are
+  "in config but not installed" (seen as `auto_update` on 3.4.0, where the
+  advice would have deleted the weekly-update setting). Core top-level config
+  keys now live in one list, `src/core_config_keys.py`, which reconciliation
+  uses and tests pin to `config.template.json` and the settings save endpoint.
+  A stored warning is also dropped once its entry is no longer a plugin in
+  config, so an old verdict clears without a restart.
 - **Check & Update All** no longer sends installed Starlark apps
   (`starlark:<app_id>` entries in `/plugins/installed`) to the plugin updater,
   which answered each with a 500 "plugin not found". `POST /plugins/update`
