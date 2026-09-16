@@ -16,8 +16,10 @@ from datetime import date, timedelta
 
 import pytest
 
+import src.common.espn_dates as espn_dates
 from src.common.espn_dates import (
     ESPN_MAX_LIMIT,
+    RANGE_RETRY_SECONDS,
     clamp_espn_limit,
     espn_date_chunks,
     fetch_espn_date_chunks,
@@ -27,6 +29,12 @@ from src.common.espn_dates import (
 )
 
 URL = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
+
+
+@pytest.fixture(autouse=True)
+def forget_rejected_ranges(monkeypatch):
+    """The rejected-range memo is process-wide; no test may inherit it."""
+    monkeypatch.setattr(espn_dates, "_ranges_rejected_until", 0.0)
 
 
 class FakeResponse:
@@ -317,3 +325,48 @@ class TestMonthCap:
         session = FakeSession()
         assert fetch_espn_date_chunks(session, URL, params={"dates": "202609"}) is None
         assert session.calls == []
+
+
+class TestRejectedRangeMemo:
+    """Live boards ask every 30s; a known-rejected range must not be re-sent."""
+
+    def test_after_one_rejection_the_next_range_skips_straight_to_chunks(self):
+        session = FakeSession({"20260914": [{"id": "a"}], "20260915": []})
+        fetch_espn_scoreboard(session, URL, params={"dates": "20260914-20260915"})
+        session.calls.clear()
+
+        data = fetch_espn_scoreboard(session, URL, params={"dates": "20260914-20260915"})
+
+        assert [call["dates"] for call in session.calls] == ["20260914", "20260915"]
+        assert [event["id"] for event in data["events"]] == ["a"]
+
+    def test_the_range_is_tried_again_once_the_memo_expires(self, monkeypatch):
+        clock = [1000.0]
+        monkeypatch.setattr(espn_dates.time, "monotonic", lambda: clock[0])
+        session = FakeSession()
+        fetch_espn_scoreboard(session, URL, params={"dates": "20260914-20260915"})
+        session.calls.clear()
+
+        clock[0] += RANGE_RETRY_SECONDS + 1
+        fetch_espn_scoreboard(session, URL, params={"dates": "20260914-20260915"})
+
+        assert session.calls[0]["dates"] == "20260914-20260915"
+
+    def test_a_400_on_a_single_day_does_not_mark_ranges_rejected(self):
+        class AlwaysBad(FakeSession):
+            def get(self, url, params=None, headers=None, timeout=None):
+                self.calls.append(params or {})
+                return FakeResponse(400)
+
+        with pytest.raises(RuntimeError):
+            fetch_espn_scoreboard(AlwaysBad(), URL, params={"dates": "20260913"})
+        assert not espn_dates._ranges_known_rejected()
+
+    def test_when_every_chunk_fails_the_range_itself_supplies_the_error(self):
+        session = FakeSession(fail_chunks={"20260914", "20260915"})
+        fetch_espn_scoreboard(session, URL, params={"dates": "20260801-20260801"})
+        session.calls.clear()
+
+        with pytest.raises(RuntimeError):
+            fetch_espn_scoreboard(session, URL, params={"dates": "20260914-20260915"})
+        assert session.calls[-1]["dates"] == "20260914-20260915"

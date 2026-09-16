@@ -25,8 +25,15 @@ guessing at which timezone ESPN means by "a game day". A full NFL season
 A month can hold more than 500 events (college baseball's March does), and
 ESPN answers that with exactly ``limit`` events and no hint that more exist. A
 month chunk that comes back full is therefore re-asked day by day.
+
+Once a range has been rejected, later ranges skip straight to chunks for
+``RANGE_RETRY_SECONDS`` instead of spending a doomed request first -- live
+scoreboards ask every 30 seconds. After that the range is tried again, so the
+workaround retires itself if ESPN reverts.
 """
 
+import threading
+import time
 from datetime import date, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -34,8 +41,15 @@ from typing import Any, Dict, List, Optional, Tuple
 # docstring: 500 is the largest value measured to return complete data.
 ESPN_MAX_LIMIT = 500
 
+# How long a rejected range keeps later ranges from being tried as ranges.
+RANGE_RETRY_SECONDS = 6 * 60 * 60
+
+_range_lock = threading.Lock()
+_ranges_rejected_until = 0.0
+
 __all__ = [
     "ESPN_MAX_LIMIT",
+    "RANGE_RETRY_SECONDS",
     "clamp_espn_limit",
     "parse_espn_date_range",
     "espn_date_chunks",
@@ -80,6 +94,17 @@ def parse_espn_date_range(dates: Any) -> Optional[Tuple[date, date]]:
     if end < start:
         return None
     return start, end
+
+
+def _ranges_known_rejected() -> bool:
+    with _range_lock:
+        return time.monotonic() < _ranges_rejected_until
+
+
+def _note_range_rejected() -> None:
+    global _ranges_rejected_until
+    with _range_lock:
+        _ranges_rejected_until = time.monotonic() + RANGE_RETRY_SECONDS
 
 
 def _first_of_next_month(day: date) -> date:
@@ -171,8 +196,8 @@ def fetch_espn_date_chunks(
 
     chunks = espn_date_chunks(*span)
     if logger:
-        logger.warning(
-            "ESPN rejected the date range %s; re-fetching as %d month/day chunks",
+        logger.debug(
+            "Fetching ESPN date range %s as %d month/day chunks",
             params.get("dates"), len(chunks),
         )
 
@@ -211,7 +236,7 @@ def fetch_espn_date_chunks(
 
     merged = merge_scoreboard_payloads(payloads)
     if logger:
-        logger.info(
+        logger.debug(
             "Recovered %d events for %s from %d/%d chunk requests",
             len(merged["events"]), params.get("dates"), len(payloads), attempted,
         )
@@ -228,15 +253,37 @@ def fetch_espn_scoreboard(
 ) -> Dict[str, Any]:
     """GET an ESPN scoreboard, re-asking in month/day chunks if a range 400s.
 
-    The happy path is one request with the caller's own parameters (``limit``
-    clamped), so single-day and season-year callers see no change. Only a 400
-    against a ``YYYYMMDD-YYYYMMDD`` range triggers the fallback; any other
-    error, a 400 on a non-range request, and a range whose every chunk fails
-    all raise the original error as before.
+    Anything that is not a ``YYYYMMDD-YYYYMMDD`` range is one request with the
+    caller's own parameters (``limit`` clamped), so single-day and season-year
+    callers see no change. A range that ESPN rejects is re-fetched in chunks,
+    and later ranges go straight to chunks for ``RANGE_RETRY_SECONDS``. A 400 on
+    a non-range request, any other error, and a range whose every chunk fails
+    all raise as before.
     """
     params = clamp_espn_limit(params)
+    is_range = parse_espn_date_range(params.get("dates")) is not None
+
+    chunks_tried = False
+    if is_range and _ranges_known_rejected():
+        data = fetch_espn_date_chunks(
+            session, url, params=params, headers=headers,
+            timeout=timeout, logger=logger,
+        )
+        if data is not None:
+            return data
+        # Every chunk failed: ask for the range itself so the caller gets a
+        # real error to log, without spending the chunks a second time.
+        chunks_tried = True
+
     response = session.get(url, params=params, headers=headers, timeout=timeout)
-    if response.status_code == 400:
+    if is_range and response.status_code == 400 and not chunks_tried:
+        _note_range_rejected()
+        if logger:
+            logger.warning(
+                "ESPN rejected the date range %s (400); fetching it as month/day "
+                "chunks, and fetching ranges that way for the next %d hours",
+                params.get("dates"), RANGE_RETRY_SECONDS // 3600,
+            )
         data = fetch_espn_date_chunks(
             session, url, params=params, headers=headers,
             timeout=timeout, logger=logger,
