@@ -103,6 +103,18 @@ Plugin system:
   is written at load; the next save of that plugin's settings stores the object.
   Other type mismatches still warn.
 
+Core:
+
+- `ConfigManager.load_config()` no longer raises on a host without the POSIX
+  ownership APIs. The self-heal that chgrp's `config_secrets.json` to the
+  shared group (added in #416) looked up `os.geteuid` unguarded; that name does
+  not exist on Windows, and the resulting `AttributeError` is not an `OSError`,
+  so it escaped the helper's own "best-effort" handling and every caller's.
+  Any Windows checkout with a `config/config_secrets.json` got a `ConfigError`
+  from every config load and could not `import web_interface.app` at all.
+  `ensure_shared_group_ownership()` now returns immediately when `os.geteuid`
+  or `os.chown` is missing. No behaviour change on the Pi.
+
 ## 3.4.0
 
 Plugin-facing changes since 3.3.0 (tag `v3.3.1`) not covered further down:

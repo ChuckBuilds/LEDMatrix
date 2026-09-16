@@ -333,3 +333,27 @@ class TestArraySecretStripAndMerge:
 
         manager._deep_merge(stripped, secrets)
         assert stripped == full  # round trip restores the items
+
+
+class TestLoadWithoutPosixOwnershipApis:
+    """A secrets file must load on platforms that have no uid/gid at all.
+
+    load_config() chgrp's the secrets file to the shared group before reading
+    it, to self-heal a root-written file the non-root web user can't read.
+    That helper is documented as best-effort, but it looked up os.geteuid
+    unguarded -- absent on Windows -- and the resulting AttributeError is not
+    an OSError, so it escaped every except clause on the way out. The symptom
+    was a ConfigError from load_config on any Windows checkout carrying a
+    config/config_secrets.json, which took `import web_interface.app` with it.
+    """
+
+    def test_secrets_still_merge_without_geteuid(self, tmp_path, monkeypatch):
+        monkeypatch.delattr(os, "geteuid", raising=False)
+        monkeypatch.delattr(os, "chown", raising=False)
+        manager = make_manager(
+            tmp_path,
+            config={"weather": {"city": "Austin"}},
+            secrets={"weather": {"api_key": "s3cret"}},
+        )
+
+        assert manager.load_config()["weather"] == {"city": "Austin", "api_key": "s3cret"}

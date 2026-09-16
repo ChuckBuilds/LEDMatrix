@@ -186,7 +186,17 @@ def ensure_shared_group_ownership(path: Path) -> None:
     is group-readable, but without this the group is root's, not the web
     user's. Silently does nothing if not running as root or on any error —
     this is a hardening step, not a required one.
+
+    ``os.geteuid``/``os.chown`` only exist on POSIX. On Windows there is no
+    root and no shared group to move the file to, so the whole step is moot —
+    but looking the names up unguarded raises ``AttributeError``, which is not
+    an ``OSError`` and so escapes every caller's error handling. That took
+    ``ConfigManager.load_config()`` down on any Windows checkout that has a
+    ``config/config_secrets.json``, i.e. every developer machine that has ever
+    run the app, and with it the import of ``web_interface.app``.
     """
+    if not hasattr(os, 'geteuid') or not hasattr(os, 'chown'):
+        return
     if os.geteuid() != 0:
         return
     gid = get_shared_group_gid()
