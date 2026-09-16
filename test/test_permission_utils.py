@@ -1,16 +1,25 @@
 """
-Tests for src.common.permission_utils's URL-credential redaction.
+Tests for src.common.permission_utils.
 
-Covers the fix for a CodeQL clear-text-logging-of-secrets alert:
-install_requirements_file() must never let a private index URL's embedded
-user:pass@ credentials reach logs or its returned CompletedProcess, since
-pip can echo that URL back verbatim in its own stderr/stdout on failure.
+Covers two things:
+
+* URL-credential redaction -- the fix for a CodeQL clear-text-logging-of-secrets
+  alert: install_requirements_file() must never let a private index URL's
+  embedded user:pass@ credentials reach logs or its returned CompletedProcess,
+  since pip can echo that URL back verbatim in its own stderr/stdout on failure.
+* ensure_shared_group_ownership() staying a silent no-op on platforms without
+  the POSIX ownership APIs.
 """
 
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from src.common.permission_utils import _redact_url_credentials, install_requirements_file
+from src.common.permission_utils import (
+    _redact_url_credentials,
+    ensure_shared_group_ownership,
+    install_requirements_file,
+)
 
 
 class TestRedactUrlCredentials:
@@ -81,3 +90,47 @@ class TestInstallRequirementsFileRedaction:
         assert "swordfish" not in result.stderr
         assert "https://***:***@pypi.internal" in result.stdout
         assert "https://***:***@pypi.internal" in result.stderr
+
+
+class TestEnsureSharedGroupOwnership:
+    """The chgrp self-heal must stay a no-op wherever it cannot apply.
+
+    ``ConfigManager.load_config()`` calls this on every load that finds a
+    secrets file, and its callers only ever catch ``OSError``. An
+    ``AttributeError`` from looking up a POSIX-only name on Windows therefore
+    escaped all the way out of ``load_config``, and took the import of
+    ``web_interface.app`` with it on any Windows checkout that had a
+    ``config/config_secrets.json``.
+    """
+
+    def test_no_geteuid_is_a_silent_no_op(self, monkeypatch, tmp_path):
+        secrets = tmp_path / "config_secrets.json"
+        secrets.write_text("{}", encoding='utf-8')
+        monkeypatch.delattr(os, "geteuid", raising=False)
+        monkeypatch.delattr(os, "chown", raising=False)
+
+        ensure_shared_group_ownership(secrets)  # must not raise
+
+    def test_non_root_never_chowns(self, monkeypatch, tmp_path):
+        chown = MagicMock()
+        monkeypatch.setattr(os, "geteuid", lambda: 1000, raising=False)
+        monkeypatch.setattr(os, "chown", chown, raising=False)
+
+        ensure_shared_group_ownership(tmp_path / "config_secrets.json")
+
+        chown.assert_not_called()
+
+    def test_root_chowns_a_file_whose_group_is_wrong(self, monkeypatch, tmp_path):
+        secrets = tmp_path / "config_secrets.json"
+        secrets.write_text("{}", encoding='utf-8')
+        # Any gid the file does not already have, so the chgrp is due.
+        wanted = secrets.stat().st_gid + 1
+        chown = MagicMock()
+        monkeypatch.setattr(os, "geteuid", lambda: 0, raising=False)
+        monkeypatch.setattr(os, "chown", chown, raising=False)
+        monkeypatch.setattr('src.common.permission_utils.get_shared_group_gid',
+                            lambda: wanted)
+
+        ensure_shared_group_ownership(secrets)
+
+        chown.assert_called_once_with(secrets, -1, wanted)
