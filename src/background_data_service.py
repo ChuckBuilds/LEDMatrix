@@ -25,6 +25,7 @@ from enum import Enum
 import queue
 from concurrent.futures import ThreadPoolExecutor
 from src.cache_manager import CacheManager
+from src.common.espn_dates import clamp_espn_limit, fetch_espn_date_chunks
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -98,7 +99,12 @@ class BackgroundDataService:
     This service manages a pool of background threads to fetch data asynchronously,
     with intelligent caching, retry logic, and progress tracking.
     """
-    
+
+    # Plugins feature-detect this. A core without it sends season ranges to
+    # ESPN as-is and gets 400s since 2026-09-15, so plugins fetch those
+    # ranges themselves instead of submitting them here.
+    handles_espn_date_ranges = True
+
     def __init__(self, cache_manager: CacheManager, max_workers: int = 3, request_timeout: int = 30):
         """
         Initialize the background data service.
@@ -247,6 +253,12 @@ class BackgroundDataService:
                 logger.debug(f"Cache hit for {sport} {year} data")
                 return request_id
         
+        # limit above 500 makes an ESPN *scoreboard* return a truncated list
+        # (src/common/espn_dates.py). Other endpoints need more: /teams has 762
+        # college-football teams, so only scoreboards are clamped.
+        if url.split('?', 1)[0].rstrip('/').endswith('/scoreboard'):
+            params = clamp_espn_limit(params)
+
         # Create fetch request
         request = FetchRequest(
             id=request_id,
@@ -254,7 +266,7 @@ class BackgroundDataService:
             year=year,
             cache_key=cache_key,
             url=url,
-            params=params or {},
+            params=dict(params or {}),
             headers={**self.default_headers, **(headers or {})},
             timeout=timeout or self.request_timeout,
             max_retries=max_retries,
@@ -340,10 +352,17 @@ class BackgroundDataService:
             
             # Perform HTTP request with retry logic
             response = self._make_request_with_retry(request)
-            response.raise_for_status()
-            
-            # Parse response
-            data = response.json()
+
+            # ESPN stopped accepting dates=YYYYMMDD-YYYYMMDD on 2026-09-15 and
+            # answers 400 for every sport. Re-ask in months and days rather
+            # than let a whole season fail. See src/common/espn_dates.py.
+            if response.status_code == 400:
+                data = self._fetch_in_date_chunks(request)
+                if data is None:
+                    response.raise_for_status()
+            else:
+                response.raise_for_status()
+                data = response.json()
             
             # Validate data structure
             if not isinstance(data, dict):
@@ -519,6 +538,23 @@ class BackgroundDataService:
         """
         result.data = None
     
+    def _fetch_in_date_chunks(self, request: FetchRequest) -> Optional[Dict[str, Any]]:
+        """Re-fetch a rejected ``YYYYMMDD-YYYYMMDD`` range as month/day chunks.
+
+        None means the request was not a day range, or every chunk failed; the
+        caller then re-raises the original 400 instead of caching an empty
+        season. See src/common/espn_dates.py.
+        """
+        logger.info("Recovering %s %s from a rejected date range", request.sport, request.year)
+        return fetch_espn_date_chunks(
+            self.session,
+            request.url,
+            params=request.params,
+            headers=request.headers,
+            timeout=request.timeout,
+            logger=logger,
+        )
+
     def _make_request_with_retry(self, request: FetchRequest) -> requests.Response:
         """
         Make HTTP request with retry logic and exponential backoff.

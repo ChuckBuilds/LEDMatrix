@@ -84,6 +84,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, ClassVar, Dict, List, Optional, Tuple
 
 import pytz
+from src.common.espn_dates import fetch_espn_scoreboard
 import requests
 from PIL import Image, ImageDraw, ImageFont
 from src.common.font_layout import load_truetype
@@ -947,14 +948,14 @@ class SportsCoreSharedMixin:
             end_date = now + timedelta(days=self.schedule_lookahead_days)
             date_str = f"{start_date.strftime('%Y%m%d')}-{end_date.strftime('%Y%m%d')}"
             url = f"https://site.api.espn.com/apis/site/v2/sports/{self.sport}/{self.league}/scoreboard"
-            response = self.session.get(
+            data = fetch_espn_scoreboard(
+                self.session,
                 url,
                 params={"dates": date_str, "limit": 1000},
                 headers=self.headers,
                 timeout=10,
+                logger=self.logger,
             )
-            response.raise_for_status()
-            data = response.json()
             immediate_events = data.get("events", [])
 
             if immediate_events:

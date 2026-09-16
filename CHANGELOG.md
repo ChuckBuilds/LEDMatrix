@@ -38,6 +38,26 @@ this):
 - `test/test_common_is_hardware_free.py` — `src/common` must import without
   `rgbmatrix` and never import `src.base_classes`, `src.display_manager` or
   `src.plugin_system` at module level.
+- `src/common/espn_dates.py` — `fetch_espn_scoreboard`,
+  `fetch_espn_date_chunks`, `espn_date_chunks`, `clamp_espn_limit`,
+  `ESPN_MAX_LIMIT`: fetch an ESPN scoreboard date range now that ESPN rejects
+  ranges (see Sports data below). Plugins bundle a copy of it.
+
+Sports data:
+
+- Since 2026-09-15 ESPN answers `dates=YYYYMMDD-YYYYMMDD` scoreboard queries
+  with `400 Bad Request` for every sport, so season schedules, the weeks window
+  and today's games all failed ("400 Client Error" from the NFL/NCAAFB managers
+  and `src.background_data_service`). A rejected range is now re-fetched as
+  whole months (`dates=YYYYMM`) plus the leftover days at each end, which cover
+  the window exactly: a football season is 8 requests. A month that returns
+  exactly 500 events is truncated and is re-fetched day by day.
+- Scoreboard requests send `limit=500` at most. Above 500 ESPN silently returns
+  a short list: college football gave 25 of 68 games for one Saturday at the
+  `limit=1000` everything used to send.
+- `BackgroundDataService.handles_espn_date_ranges` is `True`. Plugins check it
+  to decide whether to submit a season range to the service or fetch it
+  themselves on an older core.
 
 Web interface:
 
