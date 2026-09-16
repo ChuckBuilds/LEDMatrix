@@ -8,6 +8,7 @@ Extracted from LEDMatrix core to provide reusable functionality for plugins.
 import logging
 import time
 from datetime import datetime
+from src.common.espn_dates import ESPN_MAX_LIMIT
 from typing import Any, Dict, Optional
 
 import requests
@@ -153,9 +154,11 @@ class APIHelper:
             cache_key = f"espn_{sport}_{league}_{date}"
         
         # Set parameters
+        # limit above 500 makes ESPN truncate instead of erroring: college
+        # football came back with 25 of 68 games. See src/common/espn_dates.py.
         params = {
             'dates': date,
-            'limit': 1000
+            'limit': ESPN_MAX_LIMIT
         }
         
         return self.get(url, params=params, cache_key=cache_key, cache_ttl=cache_ttl)

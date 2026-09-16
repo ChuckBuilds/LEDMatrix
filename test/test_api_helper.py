@@ -17,6 +17,7 @@ import requests
 from freezegun import freeze_time
 
 import src.common.api_helper as api_helper_module
+from src.common.espn_dates import ESPN_MAX_LIMIT
 from src.common.api_helper import APIHelper
 
 
@@ -152,7 +153,7 @@ class TestEspnHelpers:
         assert result == {'ok': 1}
         helper.get.assert_called_once_with(
             'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard',
-            params={'dates': '20260807', 'limit': 1000},
+            params={'dates': '20260807', 'limit': ESPN_MAX_LIMIT},
             cache_key='espn_football_nfl_20260807',
             cache_ttl=300,
         )
@@ -163,7 +164,7 @@ class TestEspnHelpers:
         helper.fetch_espn_scoreboard('basketball', 'nba', date='20250115')
 
         kwargs = helper.get.call_args.kwargs
-        assert kwargs['params'] == {'dates': '20250115', 'limit': 1000}
+        assert kwargs['params'] == {'dates': '20250115', 'limit': ESPN_MAX_LIMIT}
         assert kwargs['cache_key'] == 'espn_basketball_nba_20250115'
 
     def test_fetch_espn_standings_url_and_cache_key(self, helper):

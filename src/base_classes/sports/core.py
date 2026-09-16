@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import pytz
+from src.common.espn_dates import fetch_espn_scoreboard
 import requests
 from PIL import Image, ImageDraw, ImageFont
 from src.common.font_layout import load_truetype
@@ -844,9 +845,11 @@ class SportsCore(ABC):
             formatted_date_yesterday = yesterday.strftime("%Y%m%d")
             # Fetch todays games only
             url = f"https://site.api.espn.com/apis/site/v2/sports/{self.sport}/{self.league}/scoreboard"
-            response = self.session.get(url, params={"dates": f"{formatted_date_yesterday}-{formatted_date}", "limit": 1000}, headers=self.headers, timeout=10)
-            response.raise_for_status()
-            data = response.json()
+            data = fetch_espn_scoreboard(
+                self.session, url,
+                params={"dates": f"{formatted_date_yesterday}-{formatted_date}", "limit": 1000},
+                headers=self.headers, timeout=10, logger=self.logger,
+            )
             events = data.get('events', [])
             
             self.logger.info(f"Fetched {len(events)} todays games for {self.sport} - {self.league}")
@@ -869,9 +872,10 @@ class SportsCore(ABC):
             end_date = now + timedelta(weeks=1)
             date_str = f"{start_date.strftime('%Y%m%d')}-{end_date.strftime('%Y%m%d')}"
             url = f"https://site.api.espn.com/apis/site/v2/sports/{self.sport}/{self.league}/scoreboard"
-            response = self.session.get(url, params={"dates": date_str, "limit": 1000},headers=self.headers, timeout=10)
-            response.raise_for_status()
-            data = response.json()
+            data = fetch_espn_scoreboard(
+                self.session, url, params={"dates": date_str, "limit": 1000},
+                headers=self.headers, timeout=10, logger=self.logger,
+            )
             immediate_events = data.get('events', [])
                 
             if immediate_events:
