@@ -253,6 +253,12 @@ class BackgroundDataService:
                 logger.debug(f"Cache hit for {sport} {year} data")
                 return request_id
         
+        # limit above 500 makes an ESPN *scoreboard* return a truncated list
+        # (src/common/espn_dates.py). Other endpoints need more: /teams has 762
+        # college-football teams, so only scoreboards are clamped.
+        if url.split('?', 1)[0].rstrip('/').endswith('/scoreboard'):
+            params = clamp_espn_limit(params)
+
         # Create fetch request
         request = FetchRequest(
             id=request_id,
@@ -260,7 +266,7 @@ class BackgroundDataService:
             year=year,
             cache_key=cache_key,
             url=url,
-            params=clamp_espn_limit(params),
+            params=dict(params or {}),
             headers={**self.default_headers, **(headers or {})},
             timeout=timeout or self.request_timeout,
             max_retries=max_retries,

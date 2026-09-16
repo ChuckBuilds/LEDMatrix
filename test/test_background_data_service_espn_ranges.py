@@ -123,6 +123,25 @@ def test_the_limit_that_truncates_never_reaches_espn(service):
     assert all(call["limit"] == ESPN_MAX_LIMIT for call in session.calls)
 
 
+def test_a_non_scoreboard_endpoint_keeps_its_limit(service):
+    # /teams needs limit=1000: college football has 762 teams, and limit=500
+    # returns 500 of them. Only scoreboards truncate above 500.
+    session = RangeRejectingSession()
+    with patch.object(service, "session", session):
+        request_id = service.submit_fetch_request(
+            sport="ncaa_fb",
+            year=2026,
+            url="https://site.api.espn.com/apis/site/v2/sports/football/college-football/teams",
+            cache_key="ncaa_fb_teams",
+            params={"limit": 1000},
+            max_retries=0,
+        )
+        deadline = time.time() + 5
+        while not service.is_request_complete(request_id) and time.time() < deadline:
+            time.sleep(0.02)
+    assert session.calls[0]["limit"] == 1000
+
+
 def test_losing_every_chunk_is_a_failure_not_an_empty_season(service, cache):
     session = RangeRejectingSession(fail_chunks={"202609"})
     result = submit_and_wait(service, session, "20260901-20260930")
