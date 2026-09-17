@@ -72,7 +72,7 @@ class Repo:
 
 
 def real_pull(device, **extra):
-    def core_update():
+    def core_update(**kwargs):
         before = git(device, 'rev-parse', 'HEAD')
         r = subprocess.run(['git', 'pull', '-q', '--rebase', '--autostash'],
                            cwd=str(device), capture_output=True, text=True)
@@ -339,6 +339,140 @@ class TestPreflightRefuses:
         assert repo.head() == old and h.sudo == []
 
 
+# -- what counts as a local change ---------------------------------------------
+
+def _device_with_plugin_and_script(tmp_path):
+    """A clone carrying a bundled plugin and an executable script, as LEDMatrix does."""
+    repo = Repo(tmp_path)
+    for rel, text in (('plugin-repos/web-ui-info/manager.py', 'x = 1\n'),
+                      ('web_interface/static/v3/js/plugins/store.js', 'var a;\n'),
+                      ('scripts/run.sh', 'echo hi\n')):
+        (repo.seed / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo.seed / rel).write_text(text)
+    git(repo.seed, 'add', '.')
+    git(repo.seed, 'update-index', '--chmod=+x', 'scripts/run.sh')
+    git(repo.seed, 'commit', '-qm', 'layout')
+    git(repo.seed, 'push', '-q', 'origin', 'main')
+    git(repo.device, 'pull', '-q')
+    return repo
+
+
+def _chmod_like_the_installer(device):
+    """first_time_install.sh sets tracked 100755 files to 644: a mode-only change.
+
+    Windows has no exec bit, so there core.fileMode=true alone shows it."""
+    import os
+    git(device, 'config', 'core.fileMode', 'true')
+    os.chmod(device / 'scripts' / 'run.sh', 0o644)
+    assert 'mode change 100755 => 100644 scripts/run.sh' in git(device, 'diff', '--summary')
+
+
+@needs_git
+class TestLocalChangesAreCountedOnce:
+    """The preflight promises the pull will not stash. That holds only if both
+    count local changes the same way (auto_update.local_changes)."""
+
+    def test_mode_changes_and_plugin_folders_do_not_count(self, tmp_path):
+        repo = _device_with_plugin_and_script(tmp_path)
+        _chmod_like_the_installer(repo.device)
+        (repo.device / 'plugin-repos/web-ui-info/manager.py').write_text('x = 2  # store update\n')
+        assert au.local_changes(repo.device) == []
+
+    def test_a_core_folder_named_plugins_still_counts(self, tmp_path):
+        """The old filter matched 'plugins/' anywhere in the line."""
+        repo = _device_with_plugin_and_script(tmp_path)
+        (repo.device / 'web_interface/static/v3/js/plugins/store.js').write_text('var mine;\n')
+        assert au.local_changes(repo.device) == ['web_interface/static/v3/js/plugins/store.js']
+
+    def test_a_staged_rename_is_reported_by_its_new_name(self, tmp_path):
+        repo = Repo(tmp_path)
+        git(repo.device, 'mv', 'app.py', 'main.py')
+        assert au.local_changes(repo.device) == ['main.py']
+
+    def test_the_preflight_refuses_a_core_edit_under_a_plugins_folder(self, tmp_path):
+        repo = _device_with_plugin_and_script(tmp_path)
+        old = repo.head()
+        repo.publish()
+        (repo.device / 'web_interface/static/v3/js/plugins/store.js').write_text('var mine;\n')
+        result = Harness(tmp_path, repo).updater.run()
+        assert result['core_outcome'] == 'blocked'
+        assert 'store.js' in result['core_message']
+        assert repo.head() == old
+
+    @pytest.fixture
+    def core_update(self, monkeypatch):
+        """The real perform_core_update, pointed at a test clone."""
+        from web_interface.blueprints import api_v3 as pkg
+        from web_interface.blueprints.api_v3 import system
+
+        def point_at(device):
+            monkeypatch.setattr(system, 'PROJECT_ROOT', device)
+            monkeypatch.setattr(pkg.api_v3, 'plugin_store_manager', None, raising=False)
+            monkeypatch.setattr(system, '_pip_install_requirements',
+                                lambda *a, **k: pytest.fail('no requirements changed'))
+            return system.perform_core_update
+        return point_at
+
+    @pytest.mark.parametrize('change', [
+        'bundled_plugin_edit',
+        pytest.param('installer_chmod', marks=pytest.mark.skipif(
+            sys.platform == 'win32',
+            reason='no exec bit: the reset inside --autostash cannot clear a mode change, '
+                   'so git will not reapply it (on Linux it reapplies cleanly)')),
+    ])
+    def test_an_update_that_passed_the_preflight_leaves_no_stash(self, tmp_path, core_update, change):
+        """Found by audit: a bundled-plugin edit or the installer's chmods
+        passed the preflight, then perform_core_update stashed them for good.
+        Now --autostash carries them across the pull and puts them back."""
+        repo = _device_with_plugin_and_script(tmp_path)
+        new = repo.publish()
+        if change == 'installer_chmod':
+            _chmod_like_the_installer(repo.device)
+        else:
+            (repo.device / 'plugin-repos/web-ui-info/manager.py').write_text('x = 2  # store update\n')
+        h = Harness(tmp_path, repo, core_update=core_update(repo.device))
+        assert h.updater.preflight({})[0] == 'ready'
+
+        result = h.updater.run()
+        assert result['core_outcome'] == 'verifying', result['core_message']
+        assert repo.head() == new
+        assert git(repo.device, 'stash', 'list') == ''
+        if change == 'installer_chmod':
+            assert 'mode change 100755 => 100644 scripts/run.sh' in git(repo.device, 'diff', '--summary')
+        else:
+            assert 'store update' in (repo.device / 'plugin-repos/web-ui-info/manager.py').read_text()
+
+    def test_edits_made_after_the_preflight_are_refused_not_stashed(self, tmp_path, core_update):
+        repo = Repo(tmp_path)
+        old = repo.head()
+        repo.publish()
+        perform = core_update(repo.device)
+
+        def edit_then_update(**kwargs):
+            (repo.device / 'app.py').write_text('mine\n')
+            return perform(**kwargs)
+        result = Harness(tmp_path, repo, core_update=edit_then_update).updater.run()
+        assert result['core_outcome'] == 'blocked'
+        assert 'app.py' in result['core_message'] and 'will not stash' in result['core_message']
+        assert repo.head() == old
+        assert git(repo.device, 'stash', 'list') == ''
+        assert (repo.device / 'app.py').read_text() == 'mine\n'
+
+    def test_update_code_still_stashes_core_edits_but_not_plugin_folders(self, tmp_path, core_update):
+        repo = _device_with_plugin_and_script(tmp_path)
+        new = repo.publish()
+        (repo.device / 'scripts/run.sh').write_text('echo mine\n')
+        (repo.device / 'plugin-repos/web-ui-info/manager.py').write_text('x = 2  # store update\n')
+        payload = core_update(repo.device)()
+        assert payload['status'] == 'success', payload['message']
+        assert 'stashed' in payload['message']
+        assert repo.head() == new
+        assert 'LEDMatrix auto-stash before update' in git(repo.device, 'stash', 'list')
+        stashed = git(repo.device, 'stash', 'show', '--name-only', 'stash@{0}')
+        assert stashed.split() == ['scripts/run.sh']
+        assert 'store update' in (repo.device / 'plugin-repos/web-ui-info/manager.py').read_text()
+
+
 # -- the update and its hand-off to the health check ---------------------------
 
 @needs_git
@@ -395,7 +529,7 @@ class TestUpdateIsVerified:
         old = repo.head()
         repo.publish()
         h = Harness(tmp_path, repo,
-                    core_update=lambda: {'status': 'error', 'message': 'Update failed: network'})
+                    core_update=lambda **kw: {'status': 'error', 'message': 'Update failed: network'})
         result = h.updater.run()
         assert result['core_outcome'] == 'error'
         assert repo.head() == old
@@ -407,7 +541,7 @@ class TestUpdateIsVerified:
         repo.publish()
         pull = real_pull(repo.device)
 
-        def half_failed():
+        def half_failed(**kwargs):
             pull()
             return {'status': 'error', 'message': 'Update failed: interrupted'}
         result = Harness(tmp_path, repo, core_update=half_failed).updater.run()

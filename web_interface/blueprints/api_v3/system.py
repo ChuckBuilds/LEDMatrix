@@ -235,13 +235,17 @@ _core_update_lock = threading.Lock()
 CORE_REQUIREMENT_FILES = ('requirements.txt', 'web_interface/requirements.txt')
 
 
-def perform_core_update():
+def perform_core_update(stash_local_changes=True):
     """Pull the latest LEDMatrix code and sync its dependencies.
 
     Shared by the Overview "Update Code" button and the weekly automatic
     updater (web_interface/auto_update.py), so both take exactly the same
     path. Returns the JSON-able payload the button has always received:
     ``status``, ``message`` and ``restart_required``.
+
+    Update Code stashes local edits before pulling. The automatic updater
+    passes ``stash_local_changes=False``: then local edits make this return
+    an error carrying ``local_changes`` (the edited paths) without pulling.
     """
     # The button and the scheduler can fire together; two pulls racing
     # over one checkout (and one stash) is how local changes get lost.
@@ -249,12 +253,12 @@ def perform_core_update():
         return {'status': 'error', 'restart_required': False,
                 'message': 'An update is already in progress; try again shortly.'}
     try:
-        return _perform_core_update_locked()
+        return _perform_core_update_locked(stash_local_changes)
     finally:
         _core_update_lock.release()
 
 
-def _perform_core_update_locked():
+def _perform_core_update_locked(stash_local_changes=True):
     project_dir = str(PROJECT_ROOT)
 
     # Decide how to pull BEFORE stashing. If this checkout cannot be
@@ -265,37 +269,35 @@ def _perform_core_update_locked():
         logger.warning("git pull not attempted: %s", pull_error)
         return {'status': 'error', 'message': pull_error, 'restart_required': False}
 
-    # Check if there are local changes that need to be stashed
-    # Exclude plugins directory - plugins are separate repos and shouldn't be stashed with base project
-    # Use --untracked-files=no to skip untracked files check (much faster with symlinked plugins)
+    # Local changes, counted exactly as the automatic update's preflight
+    # counts them (auto_update.local_changes): mode-only changes and the
+    # plugin folders don't count, and the pull's --autostash carries those
+    # across and reapplies them.
+    from web_interface import auto_update
     try:
-        status_result = subprocess.run(
-            ['git', 'status', '--porcelain', '--untracked-files=no'],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            cwd=project_dir
-        )
-        # Filter out any changes in plugins directory - plugins are separate repositories
-        # Git status format: XY filename (where X is status of index, Y is status of work tree)
-        status_lines = [line for line in status_result.stdout.strip().split('\n')
-                       if line.strip() and 'plugins/' not in line]
-        has_changes = bool('\n'.join(status_lines).strip())
-    except subprocess.TimeoutExpired:
-        # If status check times out, assume there might be changes and proceed
-        # This is safer than failing the update
-        has_changes = True
-        status_result = type('obj', (object,), {'stdout': '', 'stderr': 'Status check timed out'})()
+        changed = auto_update.local_changes(project_dir)
+    except (subprocess.SubprocessError, OSError) as status_err:
+        logger.warning("git status failed before pull: %s", status_err)
+        changed = None
+    # When git cannot say, assume there are changes rather than pull over them.
+    has_changes = changed is None or bool(changed)
+
+    if has_changes and not stash_local_changes:
+        # The automatic updater: it promised not to stash, and nothing would
+        # ever restore a stash taken on its behalf.
+        return {'status': 'error', 'restart_required': False, 'dependency_failures': [],
+                'local_changes': list(changed or []),
+                'message': auto_update.describe_local_changes(changed)}
 
     stash_info = ""
 
-    # Stash local changes if they exist (excluding plugins)
-    # Plugins are separate repositories and shouldn't be stashed with base project updates
+    # Stash local changes if they exist. The plugin folders are left out:
+    # plugins are separate installs, and --autostash carries their edits.
     if has_changes:
         try:
-            # Use pathspec to exclude plugins directory from stash
             stash_result = subprocess.run(
-                ['git', 'stash', 'push', '-m', 'LEDMatrix auto-stash before update', '--', ':!plugins'],
+                ['git', 'stash', 'push', '-m', 'LEDMatrix auto-stash before update', '--',
+                 *(f':!{folder}' for folder in auto_update.SEPARATE_INSTALL_DIRS)],
                 capture_output=True,
                 text=True,
                 timeout=30,

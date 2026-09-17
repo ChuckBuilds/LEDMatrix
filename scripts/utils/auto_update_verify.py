@@ -191,8 +191,11 @@ class Verifier:
         if not old:
             return False, 'the commit to roll back to is unknown'
         requirements = self.changed_requirements(old, new) if new else list(REQUIREMENT_FILES)
-        # Safe to --hard: the updater refuses to run with local edits to
-        # tracked files, so the only thing this discards is the update.
+        # --hard: the updater refuses to run with local edits to tracked core
+        # files (web_interface/auto_update.local_changes), so outside the
+        # plugin folders the only thing this discards is the update. Edits
+        # under plugins/ and plugin-repos/, which that check leaves to the
+        # pull's --autostash, are reset along with it.
         result = self._run(['git', 'reset', '--hard', old], timeout=120)
         if result.returncode != 0:
             return False, (f'"git reset --hard {old}" failed: '
