@@ -103,6 +103,7 @@ All plugins can be installed through the LEDMatrix web interface:
 Or via API:
 ```bash
 curl -X POST http://your-pi-ip:5000/api/v3/plugins/install \
+  -H "Content-Type: application/json" \
   -d '{"plugin_id": "clock-simple"}'
 ```
 
@@ -153,6 +154,7 @@ Before submitting, ensure your plugin:
    ```bash
    # Install via URL on your Pi
    curl -X POST http://your-pi:5000/api/v3/plugins/install-from-url \
+     -H "Content-Type: application/json" \
      -d '{"repo_url": "https://github.com/you/ledmatrix-your-plugin"}'
    ```
 
@@ -312,6 +314,7 @@ git push
 # 2. Review using VERIFICATION.md checklist
 # 3. Test installation:
 curl -X POST http://pi:5000/api/v3/plugins/install-from-url \
+  -H "Content-Type: application/json" \
   -d '{"repo_url": "https://github.com/contributor/plugin"}'
 
 # 4. If approved, merge PR
