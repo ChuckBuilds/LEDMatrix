@@ -138,7 +138,11 @@ def get_on_demand_status():
     """Return the current on-demand display state."""
     try:
         cache = _ensure_cache_manager()
-        state = cache.get('display_on_demand_state', max_age=120)
+        # memory_ttl=0: the display service writes this key, so only the file
+        # is current. This process's memory tier would keep serving the first
+        # copy it read for the full max_age -- "active" for two minutes after
+        # the display had already stopped.
+        state = cache.get('display_on_demand_state', max_age=120, memory_ttl=0)
         if state is None:
             state = {
                 'active': False,
@@ -304,7 +308,8 @@ def get_current_display_status():
     """
     try:
         cache = _ensure_cache_manager()
-        state = cache.get('display_current_state', max_age=120)
+        # memory_ttl=0: written by the display service; see get_on_demand_status.
+        state = cache.get('display_current_state', max_age=120, memory_ttl=0)
         if state is None:
             state = {
                 'mode': None,
