@@ -8,21 +8,26 @@
     {{ ui.settings_filter('Filter display settings…') }}
 
     <!-- Hardware status banner: shown when display service is in fallback/simulation mode -->
-    <div x-data="{ show: false, errorMsg: '' }"
+    <div x-data="{ show: false, errorMsg: '', cause: null }"
          x-init="fetch('/api/v3/hardware/status').then(r => r.json()).then(d => {
              const hw = (d && d.data) || {};
-             if (hw.ok === false) { show = true; errorMsg = hw.error || 'Unknown error'; }
+             if (hw.ok === false) { show = true; errorMsg = hw.error || 'Unknown error'; cause = hw.cause || null; }
          }).catch(() => {})"
          x-show="show"
          style="display:none"
          class="bg-yellow-50 border border-yellow-300 rounded-lg p-4 mb-6">
         <p class="font-semibold text-yellow-800"><i class="fas fa-exclamation-triangle mr-2"></i>LED matrix running in simulation mode</p>
         <p class="text-sm text-yellow-700 mt-1">Hardware initialization failed: <span x-text="errorMsg" class="font-mono text-xs break-all"></span></p>
-        <p class="text-sm text-yellow-700 mt-2">
-            On Raspberry Pi 5: ensure the library was rebuilt from the latest submodule
-            (<code class="bg-yellow-100 px-1 rounded">first_time_install.sh</code>)
-            and try adjusting <strong>GPIO Slowdown</strong> (start at 3, reduce if the display looks dim or choppy).
-            Check the <a href="#" @click.prevent="activeTab = 'logs'" class="underline font-medium">Logs tab</a> for the full error.
+        <p class="text-sm text-yellow-700 mt-2" x-show="cause === 'settings'">
+            The rgbmatrix library can't start with the settings named above, so LEDMatrix didn't try.
+            Change them below, save, then restart the display service from the Overview tab.
+        </p>
+        <p class="text-sm text-yellow-700 mt-2" x-show="cause !== 'settings'">
+            {% if is_pi5 %}If the <a href="#" @click.prevent="activeTab = 'logs'" class="underline font-medium">Logs tab</a> shows an
+            <code class="bg-yellow-100 px-1 rounded">mmap</code> error, the library was built without Raspberry Pi 5 support: rebuild it with
+            <code class="bg-yellow-100 px-1 rounded">sudo RPI_RGB_FORCE_REBUILD=1 ./first_time_install.sh</code>.
+            Otherwise the{% else %}The{% endif %}
+            <a href="#" @click.prevent="activeTab = 'logs'" class="underline font-medium">Logs tab</a> has the full error.
         </p>
     </div>
 
@@ -41,7 +46,7 @@
 
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-4 2xl:grid-cols-4 gap-4 mb-4">
                 <div class="form-group" id="setting-display-rows" data-setting-key="display.hardware.rows">
-                    <label for="rows" class="block text-sm font-medium text-gray-700">Rows{{ ui.help_tip('Number of LED rows on a single panel.\nCommon: 16, 32, 48 or 64. Default: 32. Must match your panel and be an even number, at least 8. There is no upper limit here, but the current rgbmatrix library rejects more than 64 rows per panel, and the display will not start.', 'Rows') }}</label>
+                    <label for="rows" class="block text-sm font-medium text-gray-700">Rows{{ ui.help_tip('Number of LED rows on a single panel.\nCommon: 16, 32, 48 or 64. Default: 32. Must match your panel and be an even number from 8 to 64, the most the rgbmatrix library drives per panel.', 'Rows') }}</label>
                     <input type="number"
                            id="rows"
                            name="rows"
@@ -62,7 +67,7 @@
                 </div>
 
                 <div class="form-group" id="setting-display-chain_length" data-setting-key="display.hardware.chain_length">
-                    <label for="chain_length" class="block text-sm font-medium text-gray-700">Chain Length{{ ui.help_tip('How many panels are wired end-to-end in one chain.\nDefault: 2. Example: two 64×32 panels chained make a 128×32 display. No upper limit, but longer chains lower the refresh rate.', 'Chain Length') }}</label>
+                    <label for="chain_length" class="block text-sm font-medium text-gray-700">Chain Length{{ ui.help_tip('How many panels are wired end-to-end in one chain.\nDefault: 2. Example: two 64×32 panels chained make a 128×32 display. 1 to 255; longer chains lower the refresh rate.', 'Chain Length') }}</label>
                     <input type="number"
                            id="chain_length"
                            name="chain_length"
@@ -72,7 +77,7 @@
                 </div>
 
                 <div class="form-group" id="setting-display-parallel" data-setting-key="display.hardware.parallel">
-                    <label for="parallel" class="block text-sm font-medium text-gray-700">Parallel{{ ui.help_tip('Number of separate chains driven in parallel from the HAT.\nDefault: 1. The Raspberry Pi supports up to 3, and the HAT needs that many outputs (e.g. the Adafruit Triple LED Matrix Bonnet).', 'Parallel') }}</label>
+                    <label for="parallel" class="block text-sm font-medium text-gray-700">Parallel{{ ui.help_tip('Number of separate chains driven in parallel from the HAT.\nDefault: 1. Up to 3, and the hardware mapping needs that many outputs: Regular and Classic have 3 (e.g. the Adafruit Triple LED Matrix Bonnet); Adafruit HAT, Adafruit HAT PWM and the Pi1 mappings have 1.', 'Parallel') }}</label>
                     <input type="number"
                            id="parallel"
                            name="parallel"
@@ -107,19 +112,33 @@
 
                 <div class="form-group" id="setting-display-hardware_mapping" data-setting-key="display.hardware.hardware_mapping">
                     <label for="hardware_mapping" class="block text-sm font-medium text-gray-700">Hardware Mapping{{ ui.help_tip('How the LED panel is wired to the Pi.\nUse "Adafruit HAT PWM" for an Adafruit RGB Matrix HAT/Bonnet with the PWM solder mod; "Adafruit HAT" without it (no hardware pulsing, so expect a little more flicker); "Regular" for direct GPIO wiring and for the Adafruit Triple LED Matrix Bonnet.', 'Hardware Mapping') }}</label>
+                    {#- Saving posts what is selected, so a stored value must render selected
+                        even when it isn't one of the usual choices. The library matches
+                        names case-insensitively and reads an empty name as "regular". -#}
+                    {% set stored_mapping = main_config.display.hardware.get('hardware_mapping', 'adafruit-hat-pwm') %}
+                    {% set mapping_key = (stored_mapping or 'regular')|lower if stored_mapping is string else stored_mapping|string %}
+                    {% set mapping_labels = {'adafruit-hat-pwm': 'Adafruit HAT PWM', 'adafruit-hat': 'Adafruit HAT', 'regular': 'Regular', 'regular-pi1': 'Regular Pi1', 'classic': 'Classic (legacy wiring)', 'classic-pi1': 'Classic Pi1 (legacy wiring)'} %}
+                    {% set mapping_values = ['adafruit-hat-pwm', 'adafruit-hat', 'regular', 'regular-pi1', 'classic'] if is_pi5 else ['adafruit-hat-pwm', 'adafruit-hat', 'regular', 'regular-pi1', 'classic', 'classic-pi1'] %}
                     <select id="hardware_mapping" name="hardware_mapping" class="form-control">
-                        <option value="adafruit-hat-pwm" {% if main_config.display.hardware.hardware_mapping == "adafruit-hat-pwm" %}selected{% endif %}>Adafruit HAT PWM</option>
-                        <option value="adafruit-hat" {% if main_config.display.hardware.hardware_mapping == "adafruit-hat" %}selected{% endif %}>Adafruit HAT</option>
-                        <option value="regular" {% if main_config.display.hardware.hardware_mapping == "regular" %}selected{% endif %}>Regular</option>
-                        <option value="regular-pi1" {% if main_config.display.hardware.hardware_mapping == "regular-pi1" %}selected{% endif %}>Regular Pi1</option>
+                        {% for value in mapping_values %}
+                        <option value="{{ value }}" {% if mapping_key == value %}selected{% endif %}>{{ mapping_labels[value] }}</option>
+                        {% endfor %}
+                        {% if mapping_key not in mapping_values %}
+                        <option value="{{ stored_mapping }}" selected>{{ stored_mapping }} (saved, can't be used)</option>
+                        {% endif %}
                     </select>
+                    {% if mapping_key not in mapping_values %}
+                    <p class="text-sm text-red-600 mt-1">Your saved hardware mapping ("{{ stored_mapping }}") isn't one the installed rgbmatrix library {% if is_pi5 and mapping_key in mapping_labels %}can use on a Raspberry Pi 5{% else %}has{% endif %}, so the display won't start with it. Choose your board's mapping before saving.</p>
+                    {% endif %}
                 </div>
 
                 <div class="form-group" id="setting-display-orientation" data-setting-key="display.hardware.orientation">
-                    <label for="orientation" class="block text-sm font-medium text-gray-700">Panel Orientation{{ ui.help_tip('Rotates the rendered image to match how the panel is physically mounted.\nUse "Upside Down" if you flipped the panel 180° to move the Raspberry Pi / wiring to a more convenient side.', 'Panel Orientation') }}</label>
+                    <label for="orientation" class="block text-sm font-medium text-gray-700">Panel Orientation{{ ui.help_tip('Rotates the rendered image to match how the panel is physically mounted.\nUse "Upside Down" if you flipped the panel 180° to move the Raspberry Pi / wiring to a more convenient side. 90° and 270° are for a panel mounted on its side, and swap the display width and height.', 'Panel Orientation') }}</label>
                     <select id="orientation" name="orientation" class="form-control">
                         <option value="normal" {% if main_config.display.hardware.get('orientation', 'normal') == "normal" %}selected{% endif %}>Normal</option>
+                        <option value="90" {% if main_config.display.hardware.get('orientation', 'normal') == "90" %}selected{% endif %}>Rotated 90°</option>
                         <option value="180" {% if main_config.display.hardware.get('orientation', 'normal') == "180" %}selected{% endif %}>Upside Down (180°)</option>
+                        <option value="270" {% if main_config.display.hardware.get('orientation', 'normal') == "270" %}selected{% endif %}>Rotated 270°</option>
                     </select>
                 </div>
 
@@ -218,7 +237,7 @@
 
             <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div class="form-group" id="setting-display-gpio_slowdown" data-setting-key="display.runtime.gpio_slowdown">
-                    <label for="gpio_slowdown" class="block text-sm font-medium text-gray-700">GPIO Slowdown{{ ui.help_tip('Slows GPIO writes so the panel electronics keep up (0–10); higher is more reliable but lowers the refresh rate.\nStarting points: Pi Zero / Pi 1 → 0–1, Pi 2 / Pi 3 → 1–3, Pi 4 → 2–4, Pi 5 (PIO) → 1–3. Panels on Row Address Type 5 (SM5368 row drivers) can need 6–8 on a Pi 4. Raise it if the display shows garbage, jumping rows or flicker; in RIO mode higher values may improve performance.', 'GPIO Slowdown') }}</label>
+                    <label for="gpio_slowdown" class="block text-sm font-medium text-gray-700">GPIO Slowdown{{ ui.help_tip('Slows GPIO writes so the panel electronics keep up (0–10); higher is more reliable but lowers the refresh rate.\nStarting points: Pi Zero / Pi 1 → 0–1, Pi 2 / Pi 3 → 1–3, Pi 4 → 2–4, Pi 5 (PIO) → 1–3, starting at 1 (0 acts as 1 there). Panels on Row Address Type 5 (SM5368 row drivers) can need 6–8 on a Pi 4. Raise it if the display shows garbage, jumping rows or flicker; in RIO mode higher values may improve performance.', 'GPIO Slowdown') }}</label>
                     <input type="number"
                            id="gpio_slowdown"
                            name="gpio_slowdown"
@@ -374,7 +393,9 @@
 
             <script>
                 // Live "Your display: W x H" readout - width = cols x chain_length,
-                // height = rows x parallel (same math as the chain-length tooltip).
+                // height = rows x parallel (same math as the chain-length tooltip),
+                // swapped for a 90/270 orientation. A custom pixel mapper config can
+                // change it further; src/display_geometry.py models those.
                 (function () {
                     const ids = ['rows', 'cols', 'chain_length', 'parallel'];
                     const out = document.getElementById('display-resolution-value');
@@ -389,12 +410,19 @@
                             out.textContent = '—';
                             return;
                         }
-                        out.textContent = (v.cols * v.chain_length) + ' × ' + (v.rows * v.parallel) + ' pixels';
+                        let w = v.cols * v.chain_length, h = v.rows * v.parallel;
+                        const orientation = document.getElementById('orientation');
+                        if (orientation && (orientation.value === '90' || orientation.value === '270')) {
+                            [w, h] = [h, w];
+                        }
+                        out.textContent = w + ' × ' + h + ' pixels';
                     }
                     for (const id of ids) {
                         const el = document.getElementById(id);
                         if (el) el.addEventListener('input', recompute);
                     }
+                    const orientationSelect = document.getElementById('orientation');
+                    if (orientationSelect) orientationSelect.addEventListener('change', recompute);
                     recompute();
                 })();
             </script>
