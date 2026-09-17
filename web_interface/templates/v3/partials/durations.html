@@ -15,6 +15,8 @@
           class="space-y-6"
           novalidate
           onsubmit="fixInvalidNumberInputs(this); return true;">
+        {# See general.html: identifies a whole-form post to /config/main. #}
+        <input type="hidden" name="__form_section" value="durations">
 
         <!-- Primary rotation order: drag to reorder which plugin shows first,
              second, ... in the normal display rotation. Saved as

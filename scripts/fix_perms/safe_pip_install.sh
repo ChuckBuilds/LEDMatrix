@@ -1,6 +1,7 @@
 #!/bin/bash
 # safe_pip_install.sh — Install a requirements.txt as root after validating
-# that the resolved path is the project's own requirements.txt or a plugin's
+# that the resolved path is one of the project's own requirements files
+# (requirements.txt, web_interface/requirements.txt) or a plugin's
 # requirements.txt under plugin-repos/ or plugins/.
 #
 # This script is intended to be called via sudo from the web interface, so
@@ -25,9 +26,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # Allowed locations (resolved, no trailing slash):
-#   - the project's own requirements.txt
+#   - the project's own requirements files. Update Code, the automatic
+#     update's health check and Install Base Requirements install both, so
+#     one missing here is refused on every device -- and the automatic
+#     updater rolls back any update that changes it.
+#     Only their folders are resolved: resolving the files too would follow
+#     a requirements.txt symlinked out of the project and allow its target.
 #   - any requirements.txt under plugin-repos/ or plugins/
-ALLOWED_EXACT="$(realpath --canonicalize-missing "$PROJECT_ROOT/requirements.txt")"
+ALLOWED_EXACT=(
+    "$(realpath --canonicalize-missing "$PROJECT_ROOT")/requirements.txt"
+    "$(realpath --canonicalize-missing "$PROJECT_ROOT/web_interface")/requirements.txt"
+)
 ALLOWED_BASES=(
     "$(realpath --canonicalize-missing "$PROJECT_ROOT/plugin-repos")"
     "$(realpath --canonicalize-missing "$PROJECT_ROOT/plugins")"
@@ -43,9 +52,13 @@ if [ "$(basename "$RESOLVED_TARGET")" != "requirements.txt" ]; then
 fi
 
 ALLOWED=false
-if [ "$RESOLVED_TARGET" = "$ALLOWED_EXACT" ]; then
-    ALLOWED=true
-else
+for EXACT in "${ALLOWED_EXACT[@]}"; do
+    if [ "$RESOLVED_TARGET" = "$EXACT" ]; then
+        ALLOWED=true
+        break
+    fi
+done
+if [ "$ALLOWED" = false ]; then
     for BASE in "${ALLOWED_BASES[@]}"; do
         if [[ "$RESOLVED_TARGET" == "$BASE/"* ]]; then
             ALLOWED=true
@@ -56,7 +69,7 @@ fi
 
 if [ "$ALLOWED" = false ]; then
     echo "DENIED: $RESOLVED_TARGET is not an allowed requirements.txt location" >&2
-    echo "Allowed: $ALLOWED_EXACT, or any requirements.txt under: ${ALLOWED_BASES[*]}" >&2
+    echo "Allowed: ${ALLOWED_EXACT[*]}, or any requirements.txt under: ${ALLOWED_BASES[*]}" >&2
     exit 2
 fi
 

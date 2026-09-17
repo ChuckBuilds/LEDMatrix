@@ -1,9 +1,10 @@
 """Display hardware settings accept what the rgbmatrix library accepts.
 
-Held to the ranges in the pinned library (RGBMatrix::Options::Validate in
-lib/options-initialize.cc, the gpio_slowdown check in lib/led-matrix.cc), with
-one deliberate exception: rows has no upper bound here, although the library
-currently rejects more than 64 per panel. Two ways this used to go wrong:
+Held to what the pinned library and its Python binding accept
+(src/matrix_support.py: RGBMatrix::Options::Validate in
+lib/options-initialize.cc, the gpio_slowdown check in lib/led-matrix.cc, the
+mapping table in lib/hardware-mapping.c and the binding's uint8_t setters).
+Ways this used to go wrong:
 
 - The Display form capped cols at 128, chain_length at 24 and
   pwm_lsb_nanoseconds at 500, and its submit handler (fixInvalidNumberInputs)
@@ -11,6 +12,10 @@ currently rejects more than 64 per panel. Two ways this used to go wrong:
   a long chain silently saved as the wrong size.
 - The API checked none of these, so a value the library rejects (odd rows,
   parallel 4, pwm_dither_bits 3) saved, and the matrix then refused to start.
+- After that, rows above 64, chain_length above 255, a misspelled hardware
+  mapping and parallel 2-3 on a single-output HAT mapping still saved. The
+  library answers those with no matrix or abort(), not an error, so the
+  display service crash-looped instead of falling back.
 
 Row address type 5 is the SM5368 / B707 row shift register the Waveshare 96x48
 V2 needs (Waveshare's own "96X48_1_24_SM5368" panel type in their library fork
@@ -102,10 +107,9 @@ def test_waveshare_96x48_v2_settings_all_save(api_v3_client, saved, as_strings):
 
 
 @pytest.mark.parametrize('field,value', [
-    ('rows', 8), ('rows', 64), ('rows', 96), ('rows', 128),
+    ('rows', 8), ('rows', 64),
     ('cols', 16), ('cols', 192), ('cols', 512),
-    ('chain_length', 1), ('chain_length', 32),
-    ('parallel', 3),
+    ('chain_length', 1), ('chain_length', 32), ('chain_length', 255),
     ('row_address_type', 0), ('row_address_type', 5), ('row_address_type', 5.0),
     ('multiplexing', 0), ('multiplexing', 22),
     ('gpio_slowdown', 0), ('gpio_slowdown', 10),
@@ -123,9 +127,9 @@ def test_values_in_range_are_saved(api_v3_client, saved, field, value):
 
 
 @pytest.mark.parametrize('field,value', [
-    ('rows', 6), ('rows', 47), ('rows', 97), ('rows', '48.5'),
+    ('rows', 6), ('rows', 47), ('rows', 66), ('rows', 96), ('rows', 128), ('rows', '48.5'),
     ('cols', 15), ('cols', 96.5), ('cols', True), ('cols', 'wide'),
-    ('chain_length', 0),
+    ('chain_length', 0), ('chain_length', 256), ('chain_length', 300),
     ('parallel', 0), ('parallel', 4),
     ('row_address_type', -1), ('row_address_type', 6),
     ('row_address_type', True), ('row_address_type', 5.5),
@@ -144,6 +148,69 @@ def test_values_out_of_range_are_refused(api_v3_client, saved, field, value):
     assert response.status_code == 400
     assert field in response.get_json()['message']
     assert 'config' not in saved
+
+
+@pytest.mark.parametrize('body', [
+    {'hardware_mapping': 'regular', 'parallel': 3},
+    {'hardware_mapping': 'classic', 'parallel': 2},
+    {'hardware_mapping': 'Regular', 'parallel': 3},
+    {'hardware_mapping': 'classic-pi1'},
+    {'hardware_mapping': 'adafruit-hat', 'parallel': 1},
+])
+def test_mappings_the_library_has_are_saved(api_v3_client, saved, body):
+    response = _post(api_v3_client, body)
+    assert response.status_code == 200, response.get_data(as_text=True)[:200]
+    for field, value in body.items():
+        assert saved['config']['display']['hardware'][field] == value
+
+
+@pytest.mark.parametrize('body,named', [
+    # Framebuffer() abort()s: the HAT mappings define one output.
+    ({'hardware_mapping': 'adafruit-hat-pwm', 'parallel': 2}, 'parallel 2'),
+    ({'hardware_mapping': 'adafruit-hat', 'parallel': 3}, 'parallel 3'),
+    ({'hardware_mapping': 'regular-pi1', 'parallel': 2}, 'parallel 2'),
+    # InitHardwareMapping() abort()s on a name it doesn't have; compute-module
+    # isn't compiled into the default build.
+    ({'hardware_mapping': 'adafruit-hat-pwn'}, 'adafruit-hat-pwn'),
+    ({'hardware_mapping': 'compute-module'}, 'compute-module'),
+    ({'hardware_mapping': 5}, 'hardware mapping'),
+])
+def test_combinations_the_library_aborts_on_are_refused(api_v3_client, saved, body, named):
+    response = _post(api_v3_client, body)
+    assert response.status_code == 400
+    assert named in response.get_json()['message']
+    assert 'config' not in saved
+
+
+def test_parallel_is_checked_against_the_stored_mapping(api_v3_client, api_v3_module, saved):
+    api_v3_module.api_v3.config_manager.load_config.return_value = {
+        'display': {'hardware': {'hardware_mapping': 'adafruit-hat'}}}
+    response = _post(api_v3_client, {'parallel': 2})
+    assert response.status_code == 400
+    assert 'adafruit-hat' in response.get_json()['message']
+    assert 'config' not in saved
+
+
+def test_stored_refusal_does_not_block_unrelated_saves(api_v3_client, api_v3_module, saved):
+    api_v3_module.api_v3.config_manager.load_config.return_value = {
+        'display': {'hardware': {'hardware_mapping': 'adafruit-hat', 'parallel': 2}}}
+    response = _post(api_v3_client, {'brightness': 70})
+    assert response.status_code == 200, response.get_data(as_text=True)[:200]
+
+
+def test_a_request_value_is_checked_not_the_stored_one(api_v3_client, api_v3_module, saved):
+    """Fixing a stored bad value in the same save as a mapping change must work."""
+    api_v3_module.api_v3.config_manager.load_config.return_value = {
+        'display': {'hardware': {'rows': 128, 'parallel': 2}}}
+    response = _post(api_v3_client, {'rows': 64, 'hardware_mapping': 'regular'})
+    assert response.status_code == 200, response.get_data(as_text=True)[:200]
+
+
+@pytest.mark.parametrize('orientation', ['normal', '90', '180', '270'])
+def test_every_orientation_display_manager_applies_is_saved(api_v3_client, saved, orientation):
+    response = _post(api_v3_client, {'orientation': orientation})
+    assert response.status_code == 200, response.get_data(as_text=True)[:200]
+    assert saved['config']['display']['hardware']['orientation'] == orientation
 
 
 @pytest.fixture
@@ -231,6 +298,38 @@ def test_waveshare_96x48_v2_config_renders_back_unchanged(display_page):
         assert _attr(_input_tag(body, input_id), 'value') == str(WAVESHARE_96X48_V2[input_id]), input_id
 
 
+@pytest.mark.parametrize('hardware,select_id,expected', [
+    ({'hardware_mapping': 'classic'}, 'hardware_mapping', 'classic'),
+    ({'hardware_mapping': 'classic-pi1'}, 'hardware_mapping', 'classic-pi1'),
+    ({'hardware_mapping': 'adafruit-hat'}, 'hardware_mapping', 'adafruit-hat'),
+    ({'hardware_mapping': 'Regular'}, 'hardware_mapping', 'regular'),
+    ({'hardware_mapping': ''}, 'hardware_mapping', 'regular'),
+    ({'orientation': '90'}, 'orientation', '90'),
+    ({'orientation': '270'}, 'orientation', '270'),
+])
+def test_stored_mapping_and_orientation_render_back_unchanged(display_page, hardware, select_id, expected):
+    """With nothing selected the browser posts the first option, so one unrelated
+    Display save turned classic into adafruit-hat-pwm and 90 degrees into normal."""
+    body = display_page(_config_with(hardware=hardware))
+    assert _selected_option(body, select_id) == [expected]
+    assert "saved hardware mapping" not in body
+
+
+def test_missing_mapping_renders_display_managers_default(display_page):
+    config = _config_with()
+    del config['display']['hardware']['hardware_mapping']
+    assert _selected_option(display_page(config), 'hardware_mapping') == ['adafruit-hat-pwm']
+
+
+@pytest.mark.parametrize('stored', ['compute-module', 'adafruit-hat-pwn'])
+def test_unusable_stored_mapping_renders_selected_with_a_warning(display_page, stored):
+    """Kept selected rather than silently swapped for the first option; the API
+    refuses it on save, and the warning says why."""
+    body = display_page(_config_with(hardware={'hardware_mapping': stored}))
+    assert _selected_option(body, 'hardware_mapping') == [stored]
+    assert f'Your saved hardware mapping ("{stored}")' in body
+
+
 @pytest.mark.parametrize('field,section', [
     ('gpio_slowdown', 'runtime'), ('pwm_dither_bits', 'hardware'),
     ('limit_refresh_rate_hz', 'hardware'),
@@ -248,7 +347,7 @@ def test_a_stored_zero_renders_as_zero(display_page, field, section):
 
 @pytest.mark.parametrize('body', [
     {'row_address_type': 5}, {'row_address_type': '1'},
-    {'hardware_mapping': 'compute-module'},
+    {'hardware_mapping': 'classic-pi1'},
 ])
 def test_pi5_refuses_what_its_library_cannot_drive(api_v3_client, saved, board, body):
     board(PI5_MODEL)
@@ -294,6 +393,15 @@ def test_pi5_form_offers_only_supported_row_address_types(display_page, board):
     body = display_page(_config_with())
     assert _option_values(body, 'row_address_type') == ['0', '2']
     assert "can't be used on this Raspberry Pi 5" not in body
+
+
+def test_pi5_form_offers_only_mappings_it_can_drive(display_page, board):
+    board(PI5_MODEL)
+    body = display_page(_config_with())
+    assert 'classic-pi1' not in _option_values(body, 'hardware_mapping')
+    body = display_page(_config_with(hardware={'hardware_mapping': 'classic-pi1'}))
+    assert _selected_option(body, 'hardware_mapping') == ['classic-pi1']
+    assert 'can use on a Raspberry Pi 5' in body
 
 
 def test_other_boards_offer_every_row_address_type(display_page):

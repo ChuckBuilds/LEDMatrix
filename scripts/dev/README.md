@@ -12,8 +12,18 @@ This directory contains scripts and utilities for development and testing.
 
 ### Plugin Development Setup
 ```bash
+# Official plugin: clones ChuckBuilds/ledmatrix-plugins (once) and links
+# its plugins/<plugin-name> into plugins/
 ./scripts/dev/dev_plugin_setup.sh link-github <plugin-name>
+
+# Plugin with its own repository
+./scripts/dev/dev_plugin_setup.sh link-github <plugin-name> <repo-url>
 ```
+
+Set `plugin_system.plugins_directory` to `plugins` so the loader finds the
+links. To use a fork or another clone location, copy
+`dev_plugins.json.example` to `dev_plugins.json`. Details:
+[docs/PLUGIN_DEVELOPMENT_GUIDE.md](../../docs/PLUGIN_DEVELOPMENT_GUIDE.md).
 
 ### Running Emulator
 ```bash

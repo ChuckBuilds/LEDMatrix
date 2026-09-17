@@ -10,7 +10,8 @@ plugin without breaking a size or screen you didn't think to test.
 There is **no fixed set of supported panel sizes** — an RGB matrix build can be
 any width/height and configuration (square, rectangle, 2×2, 4×4, 8×2, long
 strips, tall stacks). Plugins are expected to read dimensions dynamically
-(`self.display_manager.matrix.width/height`) and lay themselves out
+(`self.display_manager.width/height` — not `matrix.width/height`, since
+`matrix` is `None` when hardware init fails) and lay themselves out
 accordingly, so a hardcoded coordinate or unscaled font shows up as a failure
 here.
 

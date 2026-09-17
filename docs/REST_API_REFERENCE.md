@@ -1,10 +1,10 @@
 # LEDMatrix REST API Reference
 
-Complete reference for all REST API endpoints available in the LEDMatrix web interface.
+Reference for the REST API served by the LEDMatrix web interface.
 
 **Base URL**: `http://your-pi-ip:5000/api/v3`
 
-All endpoints return JSON responses with a standard format:
+Most endpoints answer JSON in this envelope:
 ```json
 {
   "status": "success" | "error",
@@ -13,6 +13,11 @@ All endpoints return JSON responses with a standard format:
 }
 ```
 
+Not every endpoint follows it exactly. Where a response puts fields at the
+top level instead of under `data` (install-from-url, registry-from-url, the
+auth endpoints, upload endpoints, `system/git-info`, `system/check-update`),
+the entry below says so.
+
 ## Table of Contents
 
 - [Configuration](#configuration)
@@ -20,21 +25,29 @@ All endpoints return JSON responses with a standard format:
 - [Plugins](#plugins)
 - [Plugin Store](#plugin-store)
 - [System](#system)
+- [Backup and Restore](#backup-and-restore)
 - [Fonts](#fonts)
 - [Cache](#cache)
 - [WiFi](#wifi)
 - [Streams](#streams)
 - [Logs](#logs)
 - [Error tracking](#error-tracking)
-- [Health](#health)
+- [Health and Status](#health-and-status)
 - [Schedule (dim/power)](#schedule-dimpower)
+- [Integrations](#integrations)
 - [Plugin-specific endpoints](#plugin-specific-endpoints)
 - [Starlark Apps](#starlark-apps)
+- [Skins](#skins)
 
-> The API blueprint is mounted at `/api/v3` (`web_interface/app.py:199`).
-> SSE stream endpoints (`/api/v3/stream/*`) are defined directly on the
-> Flask app at `app.py:799-809`. There are 111 routes total — see
-> `web_interface/blueprints/api_v3.py` for the canonical list.
+> The API blueprint is the `api_v3` package in
+> `web_interface/blueprints/api_v3/` (one module per area: `config.py`,
+> `display.py`, `plugins.py`, `system.py`, `backup.py`, `fonts.py`,
+> `misc.py`, `wifi.py`, `starlark.py`). `web_interface/app.py` registers it
+> at `/api/v3` (`app.register_blueprint(api_v3, url_prefix='/api/v3')`).
+> The three SSE endpoints (`/api/v3/stream/*`) are defined directly on the
+> Flask app in `app.py` (`stream_stats`, `stream_display`, `stream_logs`).
+> `test/fixtures/api_v3_url_map.json` is the canonical list of blueprint
+> routes (116 URL rules); a test fails if the code and that fixture differ.
 
 ---
 
@@ -44,7 +57,9 @@ All endpoints return JSON responses with a standard format:
 
 **GET** `/api/v3/config/main`
 
-Retrieve the complete main configuration file.
+Return `config/config.json`. Fields whose names look like credentials
+(`api_key`, `token`, `password`, `secret`, ...) are blanked to `""` in the
+response; `config/config_secrets.json` values are never included.
 
 **Response**:
 ```json
@@ -67,19 +82,36 @@ Retrieve the complete main configuration file.
 
 **POST** `/api/v3/config/main`
 
-Update the main configuration. Accepts both JSON and form data.
+Update the main configuration. Accepts JSON (`Content-Type: application/json`)
+or form data. The body uses the web UI's flat field names, which the handler
+maps into the nested config:
+
+| Fields | Stored at |
+|--------|-----------|
+| `timezone`, `city`, `state`, `country` | `timezone`, `location.*` |
+| `web_display_autostart`, `auto_update_enabled` | `web_display_autostart`, `auto_update.enabled` |
+| `plugins_directory` (and the unused legacy flags `auto_discover`, `auto_load_enabled`, `development_mode`, stored only when sent) | `plugin_system.*` |
+| `target_fps` (30-200) | `target_fps` |
+| `rows`, `cols`, `chain_length`, `parallel`, `brightness`, `hardware_mapping`, `pwm_bits`, `led_rgb_sequence`, `panel_type`, `pixel_mapper_config`, `disable_hardware_pulsing`, `inverse_colors`, `show_refresh_rate`, ... | `display.hardware.*` |
+| `gpio_slowdown`, `rp1_rio` | `display.runtime.*` |
+| `use_short_date_format` | `display.use_short_date_format` |
+| `max_dynamic_duration_seconds` | `display.dynamic_duration.max_duration_seconds` |
+| `double_sided_*`, `vegas_*`, `sync_*` | `display.double_sided`, `display.vegas_scroll`, `sync` |
+| `<name>_duration`, `default_duration`, `duration__<mode>` | `display.display_durations.*` |
+| `plugin_rotation_order` (list of plugin ids) | `display.plugin_rotation_order` |
+
+Any other top-level key is deep-merged into the config as given.
+
+A JSON body changes only the keys it contains; everything else keeps its
+stored value. (Form posts from the web UI send every field of a tab, and
+there an unchecked checkbox — which the browser omits — is saved as
+`false`.)
 
 **Request Body** (JSON):
 ```json
 {
   "timezone": "America/New_York",
   "city": "New York",
-  "state": "NY",
-  "country": "US",
-  "web_display_autostart": true,
-  "rows": 32,
-  "cols": 64,
-  "chain_length": 2,
   "brightness": 90
 }
 ```
@@ -92,11 +124,15 @@ Update the main configuration. Accepts both JSON and form data.
 }
 ```
 
+Invalid values (e.g. an out-of-range `target_fps`, a hardware option the
+Raspberry Pi 5 driver cannot use) are rejected with `400` and nothing is
+saved.
+
 ### Get Schedule Configuration
 
 **GET** `/api/v3/config/schedule`
 
-Retrieve the current schedule configuration.
+Retrieve the current on/off schedule.
 
 **Response**:
 ```json
@@ -134,7 +170,7 @@ Retrieve the current schedule configuration.
 
 **POST** `/api/v3/config/schedule`
 
-Update the schedule configuration.
+Replace the schedule configuration.
 
 **Request Body** (Global mode):
 ```json
@@ -146,7 +182,7 @@ Update the schedule configuration.
 }
 ```
 
-**Request Body** (Per-day mode):
+**Request Body** (Per-day mode, flat form-field names):
 ```json
 {
   "enabled": true,
@@ -160,6 +196,9 @@ Update the schedule configuration.
 }
 ```
 
+A day whose `<day>_enabled` key is absent counts as enabled, with default
+times `07:00`-`23:00`. At least one day must be enabled.
+
 **Response**:
 ```json
 {
@@ -172,19 +211,17 @@ Update the schedule configuration.
 
 **GET** `/api/v3/config/secrets`
 
-Retrieve the secrets configuration (API keys, tokens, etc.). Secret values are masked for security.
+Retrieve `config/config_secrets.json` with every set value replaced by eight
+bullet characters (`"••••••••"`). Empty values and `YOUR_*` placeholders
+are returned as-is, so a client can tell "set" from "not set".
 
 **Response**:
 ```json
 {
   "status": "success",
   "data": {
-    "weather": {
-      "api_key": "***"
-    },
-    "spotify": {
-      "client_id": "***",
-      "client_secret": "***"
+    "ledmatrix-weather": {
+      "api_key": "••••••••"
     }
   }
 }
@@ -194,11 +231,14 @@ Retrieve the secrets configuration (API keys, tokens, etc.). Secret values are m
 
 **POST** `/api/v3/config/raw/main`
 
-Save raw JSON configuration (advanced use only).
+Replace `config/config.json` with the JSON body (advanced use only).
 
 **POST** `/api/v3/config/raw/secrets`
 
-Save raw secrets configuration (advanced use only).
+Save the secrets file (advanced use only). Masked values (`"••••••••"`)
+and blank strings in the body are dropped, and the rest is merged onto the
+stored secrets, so posting back the GET response unchanged changes nothing.
+A secret cannot be cleared by blanking it here.
 
 ---
 
@@ -208,7 +248,8 @@ Save raw secrets configuration (advanced use only).
 
 **GET** `/api/v3/display/current`
 
-Get the current display state and preview image.
+Get the latest display snapshot as a base64 PNG (`image` is `null` when no
+snapshot is available).
 
 **Response**:
 ```json
@@ -222,6 +263,27 @@ Get the current display state and preview image.
   }
 }
 ```
+
+### Get Current Display Status
+
+**GET** `/api/v3/display/current-status`
+
+The mode and plugin the display service is currently showing, as published
+by the display process (stale after 120 seconds).
+
+**Response**:
+```json
+{
+  "status": "success",
+  "data": {
+    "mode": "nfl_live",
+    "plugin_id": "football-scoreboard",
+    "last_updated": 1234567890.123
+  }
+}
+```
+
+When nothing has been published, every field is `null`.
 
 ### List Display Modes
 
@@ -295,11 +357,16 @@ Get the current on-demand display state.
     },
     "service": {
       "active": true,
-      "returncode": 0
+      "returncode": 0,
+      "stdout": "active",
+      "stderr": ""
     }
   }
 }
 ```
+
+With no on-demand request, `state` is
+`{"active": false, "status": "idle", "last_updated": null}`.
 
 ### Start On-Demand Display
 
@@ -318,12 +385,12 @@ Request a specific plugin to display on-demand.
 }
 ```
 
-**Parameters**:
+**Parameters** (at least one of `plugin_id` and `mode` is required):
 - `plugin_id` (string, optional): Plugin identifier
 - `mode` (string, optional): Display mode name (plugin_id inferred if not provided)
 - `duration` (number, optional): Duration in seconds (0 = until stopped)
 - `pinned` (boolean, optional): Pin display (pause rotation)
-- `start_service` (boolean, optional): Auto-start display service if not running (default: true)
+- `start_service` (boolean, optional): (Re)start the display service so it picks the request up (default: true)
 
 **Response**:
 ```json
@@ -333,10 +400,14 @@ Request a specific plugin to display on-demand.
     "request_id": "uuid-here",
     "plugin_id": "football-scoreboard",
     "mode": "nfl_live",
-    "active": true
+    "duration": 45,
+    "pinned": true,
+    "service": { "active": true, "returncode": 0, "stdout": "", "stderr": "" }
   }
 }
 ```
+
+`service` is `null` when `start_service` is false.
 
 ### Stop On-Demand Display
 
@@ -358,7 +429,10 @@ Stop the current on-demand display.
 ```json
 {
   "status": "success",
-  "message": "On-demand display stopped"
+  "data": {
+    "request_id": "uuid-here",
+    "service": null
+  }
 }
 ```
 
@@ -381,6 +455,9 @@ List all installed plugins with their status and metadata.
       {
         "id": "football-scoreboard",
         "name": "Football Scoreboard",
+        "version": "1.2.3",
+        "latest_version": "1.2.4",
+        "update_available": true,
         "author": "ChuckBuilds",
         "category": "Sports",
         "description": "NFL and NCAA Football scores",
@@ -388,11 +465,15 @@ List all installed plugins with their status and metadata.
         "enabled": true,
         "verified": true,
         "loaded": true,
+        "state": "loaded",
+        "error_info": null,
         "last_updated": "2025-01-15T10:30:00Z",
         "last_commit": "abc1234",
         "last_commit_message": "feat: Add live game updates",
         "branch": "main",
-        "web_ui_actions": []
+        "web_ui_actions": [],
+        "vegas_mode": null,
+        "vegas_content_type": null
       }
     ]
   }
@@ -403,7 +484,8 @@ List all installed plugins with their status and metadata.
 
 **GET** `/api/v3/plugins/config?plugin_id=<plugin_id>`
 
-Get configuration for a specific plugin.
+Get a plugin's configuration, with schema defaults filled in for keys that
+are not stored. `data` is the configuration object itself.
 
 **Query Parameters**:
 - `plugin_id` (required): Plugin identifier
@@ -413,12 +495,9 @@ Get configuration for a specific plugin.
 {
   "status": "success",
   "data": {
-    "plugin_id": "football-scoreboard",
-    "config": {
-      "enabled": true,
-      "display_duration": 30,
-      "favorite_teams": ["TB", "DAL"]
-    }
+    "enabled": true,
+    "display_duration": 30,
+    "favorite_teams": ["TB", "DAL"]
   }
 }
 ```
@@ -427,14 +506,17 @@ Get configuration for a specific plugin.
 
 **POST** `/api/v3/plugins/config`
 
-Update plugin configuration.
+Update a plugin's configuration. With a JSON body, the keys in `config` are
+merged onto the plugin's stored configuration: keys you do not send keep
+their stored values. Fields the schema marks `"x-secret": true` are written
+to `config/config_secrets.json` instead of `config.json`. The web UI posts
+form data instead (`?plugin_id=` in the query string, fields as form fields).
 
 **Request Body**:
 ```json
 {
   "plugin_id": "football-scoreboard",
   "config": {
-    "enabled": true,
     "display_duration": 30,
     "favorite_teams": ["TB", "DAL"]
   }
@@ -445,15 +527,19 @@ Update plugin configuration.
 ```json
 {
   "status": "success",
-  "message": "Plugin configuration saved successfully"
+  "message": "Plugin football-scoreboard configuration saved successfully"
 }
 ```
+
+A config that fails schema validation is rejected with `400` and nothing is
+saved.
 
 ### Get Plugin Schema
 
 **GET** `/api/v3/plugins/schema?plugin_id=<plugin_id>`
 
-Get the JSON schema for a plugin's configuration.
+Get the JSON schema for a plugin's configuration. A plugin without a
+`config_schema.json` gets a minimal default schema.
 
 **Query Parameters**:
 - `plugin_id` (required): Plugin identifier
@@ -463,19 +549,44 @@ Get the JSON schema for a plugin's configuration.
 {
   "status": "success",
   "data": {
-    "type": "object",
-    "properties": {
-      "enabled": {
-        "type": "boolean",
-        "default": true
-      },
-      "display_duration": {
-        "type": "number",
-        "minimum": 1,
-        "maximum": 300
+    "schema": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "display_duration": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 300
+        }
       }
     }
   }
+}
+```
+
+### Reset Plugin Configuration
+
+**POST** `/api/v3/plugins/config/reset`
+
+Reset a plugin's configuration to its schema defaults.
+
+**Request Body**:
+```json
+{
+  "plugin_id": "football-scoreboard",
+  "preserve_secrets": true
+}
+```
+
+**Response**:
+```json
+{
+  "status": "success",
+  "message": "Plugin football-scoreboard configuration reset to defaults",
+  "data": { "config": { ... } }
 }
 ```
 
@@ -483,7 +594,8 @@ Get the JSON schema for a plugin's configuration.
 
 **POST** `/api/v3/plugins/toggle`
 
-Enable or disable a plugin.
+Enable or disable a plugin. A `plugin_id` of the form `starlark:<app_id>`
+toggles a Starlark app.
 
 **Request Body**:
 ```json
@@ -497,7 +609,7 @@ Enable or disable a plugin.
 ```json
 {
   "status": "success",
-  "message": "Plugin football-scoreboard enabled"
+  "message": "Plugin football-scoreboard enabled successfully"
 }
 ```
 
@@ -510,21 +622,24 @@ Install a plugin from the plugin store.
 **Request Body**:
 ```json
 {
-  "plugin_id": "football-scoreboard"
+  "plugin_id": "football-scoreboard",
+  "branch": "main"
 }
 ```
 
-**Response**:
+`branch` is optional.
+
+**Response** (queued; poll `/plugins/operation/<operation_id>`):
 ```json
 {
   "status": "success",
-  "data": {
-    "operation_id": "uuid-here",
-    "plugin_id": "football-scoreboard",
-    "status": "installing"
-  }
+  "data": { "operation_id": "uuid-here" },
+  "message": "Plugin football-scoreboard installation queued"
 }
 ```
+
+When the operation queue is unavailable the install runs synchronously and
+the response has only a `message`.
 
 ### Uninstall Plugin
 
@@ -535,15 +650,17 @@ Remove an installed plugin.
 **Request Body**:
 ```json
 {
-  "plugin_id": "football-scoreboard"
+  "plugin_id": "football-scoreboard",
+  "preserve_config": false
 }
 ```
 
-**Response**:
+**Response** (queued):
 ```json
 {
   "status": "success",
-  "message": "Plugin football-scoreboard uninstalled"
+  "data": { "operation_id": "uuid-here" },
+  "message": "Plugin uninstallation queued"
 }
 ```
 
@@ -551,7 +668,7 @@ Remove an installed plugin.
 
 **POST** `/api/v3/plugins/update`
 
-Update a plugin to the latest version.
+Update a plugin to the latest version. Runs synchronously.
 
 **Request Body**:
 ```json
@@ -564,10 +681,10 @@ Update a plugin to the latest version.
 ```json
 {
   "status": "success",
+  "message": "Plugin football-scoreboard updated ...",
   "data": {
-    "operation_id": "uuid-here",
-    "plugin_id": "football-scoreboard",
-    "status": "updating"
+    "last_updated": "2025-01-15T10:30:00Z",
+    "commit": "abc1234..."
   }
 }
 ```
@@ -576,31 +693,31 @@ Update a plugin to the latest version.
 
 **POST** `/api/v3/plugins/install-from-url`
 
-Install a plugin directly from a GitHub repository URL.
+Install a plugin directly from a GitHub repository URL. Runs synchronously.
 
 **Request Body**:
 ```json
 {
-  "url": "https://github.com/user/ledmatrix-my-plugin",
+  "repo_url": "https://github.com/user/ledmatrix-my-plugin",
   "branch": "main",
   "plugin_path": null
 }
 ```
 
 **Parameters**:
-- `url` (required): GitHub repository URL
-- `branch` (optional): Branch name (default: "main")
-- `plugin_path` (optional): Path within repository for monorepo plugins
+- `repo_url` (required): GitHub repository URL
+- `branch` (optional): Branch name (default: `main`, then `master`)
+- `plugin_path` (optional): Path within the repository, for monorepo plugins
+- `plugin_id` (optional): Plugin id, for monorepo installations
 
-**Response**:
+**Response** (fields at the top level):
 ```json
 {
   "status": "success",
-  "data": {
-    "operation_id": "uuid-here",
-    "plugin_id": "my-plugin",
-    "status": "installing"
-  }
+  "message": "Plugin my-plugin installed successfully",
+  "plugin_id": "my-plugin",
+  "name": "My Plugin",
+  "branch": "main"
 }
 ```
 
@@ -608,28 +725,27 @@ Install a plugin directly from a GitHub repository URL.
 
 **POST** `/api/v3/plugins/registry-from-url`
 
-Load a plugin registry from a GitHub repository URL.
+Load a `plugins.json` registry from a GitHub repository URL.
 
 **Request Body**:
 ```json
 {
-  "url": "https://github.com/user/ledmatrix-plugins"
+  "repo_url": "https://github.com/user/ledmatrix-plugins"
 }
 ```
 
-**Response**:
+**Response** (fields at the top level):
 ```json
 {
   "status": "success",
-  "data": {
-    "plugins": [
-      {
-        "id": "plugin-1",
-        "name": "Plugin One",
-        "description": "..."
-      }
-    ]
-  }
+  "plugins": [
+    {
+      "id": "plugin-1",
+      "name": "Plugin One",
+      "description": "..."
+    }
+  ],
+  "registry_url": "https://github.com/user/ledmatrix-plugins"
 }
 ```
 
@@ -637,7 +753,7 @@ Load a plugin registry from a GitHub repository URL.
 
 **GET** `/api/v3/plugins/health`
 
-Get health metrics for all plugins.
+Get health state for all installed plugins, keyed by plugin id.
 
 **Response**:
 ```json
@@ -645,10 +761,20 @@ Get health metrics for all plugins.
   "status": "success",
   "data": {
     "football-scoreboard": {
-      "status": "healthy",
-      "last_update": 1234567890.123,
-      "error_count": 0,
-      "last_error": null
+      "plugin_id": "football-scoreboard",
+      "circuit_state": "closed",
+      "consecutive_failures": 0,
+      "total_failures": 2,
+      "total_successes": 1500,
+      "success_rate": 99.87,
+      "last_success_time": 1234567890.123,
+      "last_failure_time": 1234560000.0,
+      "last_error": null,
+      "is_healthy": true,
+      "degraded": false,
+      "degraded_reason": null,
+      "circuit_opened_time": null,
+      "half_open_start_time": null
     }
   }
 }
@@ -658,20 +784,8 @@ Get health metrics for all plugins.
 
 **GET** `/api/v3/plugins/health/<plugin_id>`
 
-Get health metrics for a specific plugin.
-
-**Response**:
-```json
-{
-  "status": "success",
-  "data": {
-    "status": "healthy",
-    "last_update": 1234567890.123,
-    "error_count": 0,
-    "last_error": null
-  }
-}
-```
+Health state for one plugin; `data` has the same fields as one entry above.
+Answers `503` when health tracking is unavailable.
 
 ### Reset Plugin Health
 
@@ -691,7 +805,7 @@ Reset health state for a plugin (manual recovery).
 
 **GET** `/api/v3/plugins/metrics`
 
-Get resource usage metrics for all plugins.
+Get resource usage metrics for all installed plugins, keyed by plugin id.
 
 **Response**:
 ```json
@@ -699,21 +813,34 @@ Get resource usage metrics for all plugins.
   "status": "success",
   "data": {
     "football-scoreboard": {
-      "update_count": 150,
-      "display_count": 500,
-      "avg_update_time": 0.5,
-      "avg_display_time": 0.1,
-      "memory_usage": 1024000
+      "plugin_id": "football-scoreboard",
+      "memory_mb": 24.5,
+      "cpu_percent": 3.2,
+      "execution_time": 0.12,
+      "avg_execution_time": 0.1,
+      "min_execution_time": 0.05,
+      "max_execution_time": 0.9,
+      "call_count": 500,
+      "last_update_time": 1234567890.123,
+      "limits": {
+        "max_memory_mb": 50,
+        "max_cpu_percent": 50,
+        "max_execution_time": 5.0,
+        "warning_threshold": 0.8
+      }
     }
   }
 }
 ```
 
+`limits` (and usage percentages derived from it) appear only when limits
+are configured for the plugin.
+
 ### Get Plugin Metrics (Single)
 
 **GET** `/api/v3/plugins/metrics/<plugin_id>`
 
-Get resource usage metrics for a specific plugin.
+Metrics for one plugin; `data` has the same fields as one entry above.
 
 ### Reset Plugin Metrics
 
@@ -725,18 +852,33 @@ Reset metrics for a plugin.
 
 **GET** `/api/v3/plugins/limits/<plugin_id>`
 
-Get rate limits and resource limits for a plugin.
+Get a plugin's resource limits. `data` is `null` when none are configured.
+
+**Response**:
+```json
+{
+  "status": "success",
+  "data": {
+    "max_memory_mb": 50,
+    "max_cpu_percent": 50,
+    "max_execution_time": 5.0,
+    "warning_threshold": 0.8
+  }
+}
+```
 
 **POST** `/api/v3/plugins/limits/<plugin_id>`
 
-Update rate limits and resource limits for a plugin.
+Set a plugin's resource limits. The body replaces all four limits: a key you
+omit is stored as no limit (`warning_threshold` defaults to `0.8`).
 
 **Request Body**:
 ```json
 {
-  "max_update_interval": 60,
-  "max_display_time": 5.0,
-  "max_memory_mb": 50
+  "max_memory_mb": 50,
+  "max_cpu_percent": 50,
+  "max_execution_time": 5.0,
+  "warning_threshold": 0.8
 }
 ```
 
@@ -744,7 +886,8 @@ Update rate limits and resource limits for a plugin.
 
 **GET** `/api/v3/plugins/state`
 
-Get the current state of all plugins.
+Get the state manager's record for every plugin, keyed by plugin id. Pass
+`?plugin_id=<id>` for one plugin (`data` is then that record).
 
 **Response**:
 ```json
@@ -752,9 +895,14 @@ Get the current state of all plugins.
   "status": "success",
   "data": {
     "football-scoreboard": {
-      "state": "loaded",
+      "plugin_id": "football-scoreboard",
+      "status": "loaded",
       "enabled": true,
-      "last_update": 1234567890.123
+      "version": "1.2.3",
+      "installed_at": "2025-01-15T10:30:00",
+      "last_updated": "2025-01-15T10:30:00",
+      "config_version": 1,
+      "metadata": {}
     }
   }
 }
@@ -764,21 +912,57 @@ Get the current state of all plugins.
 
 **POST** `/api/v3/plugins/state/reconcile`
 
-Reconcile plugin state with configuration (fix inconsistencies).
+Reconcile plugin state across config, disk and the state manager.
+
+**Request Body** (optional):
+```json
+{
+  "force": false
+}
+```
 
 **Response**:
 ```json
 {
   "status": "success",
-  "message": "Plugin state reconciled"
+  "message": "...",
+  "data": {
+    "inconsistencies_found": 1,
+    "inconsistencies_fixed": 1,
+    "inconsistencies_manual": 0,
+    "inconsistencies": [
+      {"plugin_id": "...", "type": "...", "description": "...", "fix_action": "..."}
+    ],
+    "fixed": [ ... ],
+    "manual_fix_required": [ ... ]
+  }
 }
 ```
+
+### Get Reconciliation Status
+
+**GET** `/api/v3/plugins/reconciliation-status`
+
+Result of the last startup reconciliation, as written by the display service.
+
+**Response**:
+```json
+{
+  "status": "success",
+  "data": {
+    "done": true,
+    "unresolved": []
+  }
+}
+```
+
+Before a run has finished, `data` is `{"done": false, "unresolved": []}`.
 
 ### Get Plugin Operation
 
 **GET** `/api/v3/plugins/operation/<operation_id>`
 
-Get status of an async plugin operation (install, update, etc.).
+Get status of a queued plugin operation (install, uninstall).
 
 **Response**:
 ```json
@@ -786,67 +970,80 @@ Get status of an async plugin operation (install, update, etc.).
   "status": "success",
   "data": {
     "operation_id": "uuid-here",
-    "type": "install",
+    "operation_type": "install",
     "plugin_id": "football-scoreboard",
+    "parameters": {},
     "status": "completed",
     "progress": 100,
-    "message": "Installation completed successfully"
+    "message": "Installation completed successfully",
+    "error": null,
+    "result": { ... },
+    "created_at": "2025-01-15T10:30:00",
+    "started_at": "2025-01-15T10:30:01",
+    "completed_at": "2025-01-15T10:30:20"
   }
 }
 ```
 
 ### Get Operation History
 
-**GET** `/api/v3/plugins/operation/history?limit=100`
+**GET** `/api/v3/plugins/operation/history?limit=50`
 
-Get history of plugin operations.
+Get the plugin operation audit log. `data` is a list.
 
 **Query Parameters**:
-- `limit` (optional): Maximum number of operations to return (default: 100)
+- `limit` (optional): Maximum number of records (default: 50)
+- `plugin_id` (optional): Only records for this plugin
+- `operation_type` (optional): Only records of this type (`install`, `update`, `enable`, ...)
 
 **Response**:
 ```json
 {
   "status": "success",
-  "data": {
-    "operations": [
-      {
-        "operation_id": "uuid-here",
-        "type": "install",
-        "plugin_id": "football-scoreboard",
-        "status": "completed",
-        "timestamp": 1234567890.123
-      }
-    ]
-  }
+  "data": [
+    {
+      "operation_id": "uuid-here",
+      "operation_type": "install",
+      "plugin_id": "football-scoreboard",
+      "timestamp": "2025-01-15T10:30:00",
+      "status": "success",
+      "user": null,
+      "details": null,
+      "error": null
+    }
+  ]
 }
 ```
+
+### Clear Operation History
+
+**DELETE** `/api/v3/plugins/operation/history`
+
+Clear the operation audit log.
 
 ### Execute Plugin Action
 
 **POST** `/api/v3/plugins/action`
 
-Execute a custom plugin action (defined in plugin's web_ui_actions).
+Execute an action declared in the plugin manifest's `web_ui_actions`. See
+[PLUGIN_WEB_UI_ACTIONS.md](PLUGIN_WEB_UI_ACTIONS.md).
 
 **Request Body**:
 ```json
 {
   "plugin_id": "football-scoreboard",
-  "action": "refresh_games",
-  "parameters": {}
+  "action_id": "refresh_games",
+  "params": {}
 }
 ```
 
-### Reset Plugin Configuration
-
-**POST** `/api/v3/plugins/config/reset`
-
-Reset a plugin's configuration to defaults.
-
-**Request Body**:
+**Response** (fields at the top level; a script that prints JSON can return
+its own object instead):
 ```json
 {
-  "plugin_id": "football-scoreboard"
+  "status": "success",
+  "message": "Action completed successfully",
+  "output": "script stdout"
 }
 ```
 
@@ -854,21 +1051,27 @@ Reset a plugin's configuration to defaults.
 
 **POST** `/api/v3/plugins/assets/upload`
 
-Upload assets (images, files) for a plugin.
+Upload images for a plugin. Stored under
+`assets/plugins/<plugin_id>/uploads/`.
 
 **Request**: Multipart form data
 - `plugin_id` (required): Plugin identifier
-- `file` (required): File to upload
-- `asset_type` (optional): Type of asset (logo, image, etc.)
+- `files` (required, repeatable, up to 10): PNG, JPEG, BMP or GIF images, 5 MB each, 50 MB total per plugin
 
-**Response**:
+**Response** (fields at the top level):
 ```json
 {
   "status": "success",
-  "data": {
-    "filename": "logo.png",
-    "path": "plugins/football-scoreboard/assets/logo.png"
-  }
+  "uploaded_files": [
+    {
+      "id": "uuid-here",
+      "filename": "image_1700000000_abcd1234.png",
+      "path": "assets/plugins/football-scoreboard/uploads/image_1700000000_abcd1234.png",
+      "size": 1024,
+      "uploaded_at": "2025-01-15T10:30:00Z"
+    }
+  ],
+  "total_files": 3
 }
 ```
 
@@ -876,13 +1079,13 @@ Upload assets (images, files) for a plugin.
 
 **POST** `/api/v3/plugins/assets/delete`
 
-Delete a plugin asset.
+Delete an uploaded plugin image by its id (the `id` from upload or list).
 
 **Request Body**:
 ```json
 {
   "plugin_id": "football-scoreboard",
-  "filename": "logo.png"
+  "image_id": "uuid-here"
 }
 ```
 
@@ -890,7 +1093,7 @@ Delete a plugin asset.
 
 **GET** `/api/v3/plugins/assets/list?plugin_id=<plugin_id>`
 
-List all assets for a plugin.
+List uploaded images for a plugin.
 
 **Query Parameters**:
 - `plugin_id` (required): Plugin identifier
@@ -902,9 +1105,12 @@ List all assets for a plugin.
   "data": {
     "assets": [
       {
-        "filename": "logo.png",
-        "path": "plugins/football-scoreboard/assets/logo.png",
-        "size": 1024
+        "id": "uuid-here",
+        "filename": "image_1700000000_abcd1234.png",
+        "path": "assets/plugins/football-scoreboard/uploads/image_1700000000_abcd1234.png",
+        "size": 1024,
+        "uploaded_at": "2025-01-15T10:30:00Z",
+        "original_filename": "logo.png"
       }
     ]
   }
@@ -915,59 +1121,76 @@ List all assets for a plugin.
 
 **POST** `/api/v3/plugins/authenticate/spotify`
 
-Initiate Spotify authentication flow for music plugin.
+Spotify OAuth for the music plugin (`ledmatrix-music`; the plugin is fixed,
+not taken from the body). Two steps: call with an empty body to get the
+authorization URL, then call again with the URL Spotify redirected to.
 
-**Request Body**:
+**Request Body** (step 2):
 ```json
 {
-  "plugin_id": "music"
+  "redirect_url": "http://127.0.0.1:8888/callback?code=..."
 }
 ```
 
-**Response**:
+**Response** (step 1, fields at the top level):
 ```json
 {
   "status": "success",
-  "data": {
-    "auth_url": "https://accounts.spotify.com/authorize?..."
-  }
+  "message": "Authorization URL generated",
+  "auth_url": "https://accounts.spotify.com/authorize?..."
 }
 ```
+
+Step 2 returns `status`, `message` and the script's `output`.
 
 ### Authenticate YouTube Music
 
 **POST** `/api/v3/plugins/authenticate/ytm`
 
-Initiate YouTube Music authentication flow.
-
-**Request Body**:
-```json
-{
-  "plugin_id": "music"
-}
-```
+Run the music plugin's YouTube Music authentication script. No body. Returns
+`status`, `message` and the script's `output`.
 
 ### Upload Calendar Credentials
 
 **POST** `/api/v3/plugins/calendar/upload-credentials`
 
-Upload Google Calendar credentials file.
+Upload the Google OAuth client file for the calendar plugin.
 
 **Request**: Multipart form data
-- `file` (required): credentials.json file
+- `file` (required): `credentials.json` (JSON, max 1 MB)
+
+### Authenticate Calendar
+
+**POST** `/api/v3/plugins/calendar/authenticate`
+
+Google OAuth for the calendar plugin, in two steps. Step 1 (no body) returns
+the consent URL. Step 2 posts the URL Google redirected to (it fails to load
+in the browser, but its address carries the authorization code):
+
+```json
+{
+  "redirect_url": "http://localhost/?code=..."
+}
+```
+
+Requires `credentials.json` to have been uploaded first (`400` otherwise).
 
 ---
 
 ## Plugin Store
 
-### List Store Plugins
+### List / Search Store Plugins
 
-**GET** `/api/v3/plugins/store/list?fetch_commit_info=true`
+**GET** `/api/v3/plugins/store/list`
 
-Get list of available plugins from the plugin store.
+List plugins from the registry and saved repositories. The same endpoint
+searches.
 
 **Query Parameters**:
-- `fetch_commit_info` (optional): Include commit information (default: false)
+- `query` (optional): Text search over name, description, id
+- `category` (optional): Category filter
+- `tags` (optional, repeatable): Tag filter
+- `fetch_commit_info` (optional): `false` to skip fetching commit metadata from GitHub (default: fetched)
 
 **Response**:
 ```json
@@ -978,13 +1201,22 @@ Get list of available plugins from the plugin store.
       {
         "id": "football-scoreboard",
         "name": "Football Scoreboard",
-        "description": "NFL and NCAA Football scores",
         "author": "ChuckBuilds",
         "category": "Sports",
+        "description": "NFL and NCAA Football scores",
+        "tags": ["sports"],
+        "stars": 0,
+        "verified": true,
+        "repo": "https://github.com/ChuckBuilds/ledmatrix-plugins",
+        "last_updated": "2025-01-15",
+        "last_updated_iso": "2025-01-15T10:30:00Z",
+        "last_commit": "abc1234",
+        "last_commit_message": "...",
+        "last_commit_author": "...",
         "version": "1.2.3",
-        "repository_url": "https://github.com/ChuckBuilds/ledmatrix-football-scoreboard",
-        "installed": true,
-        "update_available": false
+        "branch": "main",
+        "default_branch": "main",
+        "plugin_path": "plugins/football-scoreboard"
       }
     ]
   }
@@ -995,31 +1227,37 @@ Get list of available plugins from the plugin store.
 
 **GET** `/api/v3/plugins/store/github-status`
 
-Get GitHub API rate limit status.
+Whether a GitHub token is configured and valid.
 
 **Response**:
 ```json
 {
   "status": "success",
   "data": {
+    "token_status": "valid",
+    "authenticated": true,
     "rate_limit": 5000,
-    "rate_remaining": 4500,
-    "rate_reset": 1234567890
+    "message": "GitHub API authenticated",
+    "error": null
   }
 }
 ```
+
+`token_status` is `none`, `valid` or `invalid`; `rate_limit` is the nominal
+hourly limit (60 unauthenticated), not a live count.
 
 ### Refresh Plugin Store
 
 **POST** `/api/v3/plugins/store/refresh`
 
-Force refresh of the plugin store cache.
+Force refresh of the registry cache.
 
 **Response**:
 ```json
 {
   "status": "success",
-  "message": "Plugin store refreshed"
+  "message": "Plugin store refreshed",
+  "plugin_count": 42
 }
 ```
 
@@ -1027,7 +1265,7 @@ Force refresh of the plugin store cache.
 
 **GET** `/api/v3/plugins/saved-repositories`
 
-Get list of saved custom plugin repositories.
+Get the list of saved custom plugin repositories.
 
 **Response**:
 ```json
@@ -1037,8 +1275,8 @@ Get list of saved custom plugin repositories.
     "repositories": [
       {
         "url": "https://github.com/user/ledmatrix-plugins",
-        "name": "Custom Plugins",
-        "auto_load": true
+        "name": "ledmatrix-plugins",
+        "type": "registry"
       }
     ]
   }
@@ -1049,14 +1287,14 @@ Get list of saved custom plugin repositories.
 
 **POST** `/api/v3/plugins/saved-repositories`
 
-Save a custom plugin repository for easy access.
+Save a custom plugin repository. Returns the updated list in
+`data.repositories`.
 
 **Request Body**:
 ```json
 {
-  "url": "https://github.com/user/ledmatrix-plugins",
-  "name": "Custom Plugins",
-  "auto_load": true
+  "repo_url": "https://github.com/user/ledmatrix-plugins",
+  "name": "Custom Plugins"
 }
 ```
 
@@ -1064,12 +1302,12 @@ Save a custom plugin repository for easy access.
 
 **DELETE** `/api/v3/plugins/saved-repositories`
 
-Remove a saved repository.
+Remove a saved repository. Returns the updated list in `data.repositories`.
 
 **Request Body**:
 ```json
 {
-  "url": "https://github.com/user/ledmatrix-plugins"
+  "repo_url": "https://github.com/user/ledmatrix-plugins"
 }
 ```
 
@@ -1081,7 +1319,7 @@ Remove a saved repository.
 
 **GET** `/api/v3/system/status`
 
-Get system status and metrics.
+Get system status and metrics (cached for 10 seconds).
 
 **Response**:
 ```json
@@ -1089,12 +1327,18 @@ Get system status and metrics.
   "status": "success",
   "data": {
     "timestamp": 1234567890.123,
-    "uptime": "Running",
+    "uptime": "3d 4h",
+    "uptime_seconds": 273600,
     "service_active": true,
     "cpu_percent": 25.5,
     "memory_used_percent": 45.2,
+    "memory_total_mb": 3794.0,
+    "memory_used_mb": 1715.0,
+    "memory_available_mb": 1900.0,
     "cpu_temp": 45.0,
-    "disk_used_percent": 60.0
+    "disk_used_percent": 60.0,
+    "disk_total_gb": 29.0,
+    "disk_used_gb": 17.4
   }
 }
 ```
@@ -1115,17 +1359,68 @@ Get LEDMatrix repository version.
 }
 ```
 
+### Check for Update
+
+**GET** `/api/v3/system/check-update`
+
+Whether `origin/main` has commits the checkout lacks. Cached briefly.
+Fields at the top level (no envelope):
+
+```json
+{
+  "update_available": true,
+  "remote_sha": "abc123...",
+  "commits_behind": 3
+}
+```
+
+When git cannot run the check, the response also carries
+`"check_failed": true` and an `error` explaining why.
+
+### Automatic Update Status
+
+**GET** `/api/v3/system/auto-update`
+
+Weekly automatic-update status for the General tab and the Overview banner:
+`last_run`, `summary`, `status`, `next_due`, `alert`, `alert_id`,
+`verifier_installed`, `setup_status`, `setup_message`, `verifying` (in
+`data`).
+
+**POST** `/api/v3/system/auto-update/dismiss`
+
+Hide the current automatic-update alert until a new one replaces it.
+
+```json
+{
+  "alert_id": "..."
+}
+```
+
+### Git Info
+
+**GET** `/api/v3/system/git-info`
+
+Branch, dirty state, recent commits and remote for the Tools tab. Fields at
+the top level: `branch`, `dirty`, `status`, `recent_commits`, `remote_url`
+(credentials scrubbed), `upstream`, `can_pull`.
+
+### Git Branches
+
+**GET** `/api/v3/system/git-branches`
+
+Fetches `origin` and lists branches to switch to: `current`, `upstream`,
+`local` (list), `remote_only` (list), at the top level.
+
 ### Execute System Action
 
 **POST** `/api/v3/system/action`
 
-Execute system-level actions.
+Execute system-level actions. JSON or form data.
 
 **Request Body**:
 ```json
 {
-  "action": "start_display",
-  "mode": "nfl_live"
+  "action": "restart_display_service"
 }
 ```
 
@@ -1137,18 +1432,86 @@ Execute system-level actions.
 - `enable_autostart`: Enable display service autostart
 - `disable_autostart`: Disable display service autostart
 - `reboot_system`: Reboot the Raspberry Pi
-- `git_pull`: Update code from git repository
+- `shutdown_system`: Power off the Raspberry Pi
+- `git_pull`: Update LEDMatrix from git (the Update button)
+- `checkout_branch`: Switch branch; takes `branch` and optional `stash`
+- `force_git_reset`: `git reset --hard origin/main`
+- `install_base_requirements`: pip install `requirements.txt` and `web_interface/requirements.txt`
+- `install_plugin_requirements`: pip install every plugin's `requirements.txt`
+- `clear_pycache`: Delete `__pycache__` directories
 
-**Response**:
+**Response** (service actions):
 ```json
 {
   "status": "success",
-  "message": "Action start_display completed",
-  "returncode": 0,
-  "stdout": "...",
-  "stderr": ""
+  "message": "Action completed"
 }
 ```
+
+A failed service action returns `"status": "error"` with `returncode` and
+`stderr`. `git_pull` returns `message`, `restart_required` and
+`dependency_failures`; the install actions return `output` or `details`.
+
+---
+
+## Backup and Restore
+
+Backups are ZIP files kept in the backup export directory.
+
+### Preview
+
+**GET** `/api/v3/backup/preview`
+
+Summary of what a new backup would include.
+
+### List
+
+**GET** `/api/v3/backup/list`
+
+Stored backups, newest first. `data` is a list of
+`{"filename", "size", "created_at"}`.
+
+### Export
+
+**POST** `/api/v3/backup/export`
+
+Create a backup. Returns `{"status": "success", "filename": "..."}`.
+
+### Validate
+
+**POST** `/api/v3/backup/validate`
+
+Check an uploaded backup and return its manifest in `data`.
+
+**Request**: Multipart form data
+- `backup_file` (required): the ZIP
+
+### Restore
+
+**POST** `/api/v3/backup/restore`
+
+Restore an uploaded backup.
+
+**Request**: Multipart form data
+- `backup_file` (required): the ZIP
+- `options` (optional): JSON object; keys `restore_config`, `restore_secrets`,
+  `restore_wifi`, `restore_fonts`, `restore_plugin_uploads`,
+  `reinstall_plugins` (each defaults to `true`; unknown keys are rejected)
+
+A partial restore answers `500` with `"status": "error"`, a message listing
+what did and didn't restore, and the result in `data`.
+
+### Download
+
+**GET** `/api/v3/backup/download/<filename>`
+
+Download a stored backup.
+
+### Delete
+
+**DELETE** `/api/v3/backup/<filename>`
+
+Delete a stored backup.
 
 ---
 
@@ -1158,20 +1521,26 @@ Execute system-level actions.
 
 **GET** `/api/v3/fonts/catalog`
 
-Get list of available fonts.
+Fonts in `assets/fonts/`, keyed by file name without extension.
 
 **Response**:
 ```json
 {
   "status": "success",
   "data": {
-    "fonts": [
-      {
-        "family": "Press Start 2P",
-        "files": ["PressStart2P-Regular.ttf"],
-        "sizes": [8, 10, 12]
+    "catalog": {
+      "press_start": {
+        "filename": "press_start.ttf",
+        "family_name": "Press Start 2P",
+        "display_name": "Press Start 2P",
+        "path": "assets/fonts/press_start.ttf",
+        "type": "ttf",
+        "is_system": true,
+        "scalable": true,
+        "native_size": null,
+        "metadata": { ... }
       }
-    ]
+    }
   }
 }
 ```
@@ -1192,71 +1561,31 @@ Get font size token definitions.
       "sm": 8,
       "md": 10,
       "lg": 12,
-      "xl": 16
+      "xl": 14,
+      "xxl": 16
     }
   }
 }
 ```
-
-### Get Font Overrides
-
-**GET** `/api/v3/fonts/overrides`
-
-Get current font overrides.
-
-**Response**:
-```json
-{
-  "status": "success",
-  "data": {
-    "overrides": {
-      "plugin.football-scoreboard.title": {
-        "family": "Arial",
-        "size_px": 12
-      }
-    }
-  }
-}
-```
-
-### Set Font Override
-
-**POST** `/api/v3/fonts/overrides`
-
-Set a font override for a specific element.
-
-**Request Body**:
-```json
-{
-  "element_key": "plugin.football-scoreboard.title",
-  "family": "Arial",
-  "size_px": 12
-}
-```
-
-### Delete Font Override
-
-**DELETE** `/api/v3/fonts/overrides/<element_key>`
-
-Remove a font override.
 
 ### Upload Font
 
 **POST** `/api/v3/fonts/upload`
 
-Upload a custom font file.
+Upload a custom font file. It is saved as `assets/fonts/<font_family><ext>`.
 
 **Request**: Multipart form data
-- `file` (required): Font file (.ttf, .otf, etc.)
+- `font_file` (required): `.ttf`, `.otf` or `.bdf`, max 10 MB
+- `font_family` (required): name for the font (letters, numbers, `_`, `-`)
 
-**Response**:
+**Response** (fields at the top level):
 ```json
 {
   "status": "success",
-  "data": {
-    "family": "Custom Font",
-    "filename": "custom-font.ttf"
-  }
+  "message": "Font custom_font uploaded successfully",
+  "font_family": "custom_font",
+  "filename": "custom_font.ttf",
+  "path": "assets/fonts/custom_font.ttf"
 }
 ```
 
@@ -1264,13 +1593,36 @@ Upload a custom font file.
 
 **DELETE** `/api/v3/fonts/<font_family>`
 
-Delete an uploaded font.
+Delete an uploaded font (`<font_family>` is the file name without
+extension). System fonts answer `403`.
 
 ### Font Preview
 
-**GET** `/api/v3/fonts/preview?family=<font_family>&text=<sample>`
+**GET** `/api/v3/fonts/preview?font=<filename>&text=<sample>&size=12`
 
-Render a small preview image of a font for use in the web UI font picker.
+Render text in a font, for the web UI font picker. BDF fonts are not
+previewed (`400`).
+
+**Query Parameters**:
+- `font` (required): font file name in `assets/fonts/` (e.g. `press_start.ttf`)
+- `text` (optional): up to 100 characters (default `Sample Text 123`)
+- `size` (optional): 4-72 (default 12)
+- `bg`, `fg` (optional): hex colours without `#` (default `000000` / `ffffff`)
+
+**Response**:
+```json
+{
+  "status": "success",
+  "data": {
+    "image": "data:image/png;base64,...",
+    "width": 140,
+    "height": 32
+  }
+}
+```
+
+> Font overrides (`/api/v3/fonts/overrides`) were removed. Per-plugin font
+> choices are made in each plugin's own settings.
 
 ---
 
@@ -1280,20 +1632,16 @@ Render a small preview image of a font for use in the web UI font picker.
 
 **GET** `/api/v3/cache/list`
 
-List all cache entries.
+List cache files.
 
 **Response**:
 ```json
 {
   "status": "success",
   "data": {
-    "entries": [
-      {
-        "key": "weather_current_12345",
-        "age": 300,
-        "size": 1024
-      }
-    ]
+    "cache_files": [ ... ],
+    "cache_dir": "/var/cache/ledmatrix",
+    "total_files": 12
   }
 }
 ```
@@ -1302,19 +1650,13 @@ List all cache entries.
 
 **POST** `/api/v3/cache/delete`
 
-Delete a cache entry or clear all cache.
+Delete one cache entry by key. There is no clear-all option here; use
+`scripts/utils/clear_cache.py --clear-all` on the Pi for that.
 
 **Request Body**:
 ```json
 {
   "key": "weather_current_12345"
-}
-```
-
-**Or clear all**:
-```json
-{
-  "clear_all": true
 }
 ```
 
@@ -1336,7 +1678,10 @@ Get current WiFi connection status.
     "connected": true,
     "ssid": "MyNetwork",
     "ip_address": "192.168.1.100",
-    "signal_strength": -50
+    "signal": 70,
+    "ap_mode_active": false,
+    "auto_enable_ap_mode": true,
+    "last_connect_attempt": null
   }
 }
 ```
@@ -1345,22 +1690,21 @@ Get current WiFi connection status.
 
 **GET** `/api/v3/wifi/scan`
 
-Scan for available WiFi networks.
+Scan for available WiFi networks. `data` is a list. If AP mode is active it is
+turned off for the scan and back on afterwards, and `message` says so.
 
 **Response**:
 ```json
 {
   "status": "success",
-  "data": {
-    "networks": [
-      {
-        "ssid": "MyNetwork",
-        "signal_strength": -50,
-        "encryption": "WPA2",
-        "connected": true
-      }
-    ]
-  }
+  "data": [
+    {
+      "ssid": "MyNetwork",
+      "signal": 70,
+      "security": "WPA2",
+      "frequency": 2437
+    }
+  ]
 }
 ```
 
@@ -1378,13 +1722,10 @@ Connect to a WiFi network.
 }
 ```
 
-**Response**:
-```json
-{
-  "status": "success",
-  "message": "Connecting to MyNetwork..."
-}
-```
+**Response**: `"status": "success"` when connected; `"status": "pending"`
+(with `data.ssid`) when the connection continues in the background — poll
+`/wifi/status` and read `last_connect_attempt`. A wrong password answers
+`400` with `"error_type": "wrong_password"`.
 
 ### Disconnect from WiFi
 
@@ -1396,7 +1737,7 @@ Disconnect from current WiFi network.
 
 **POST** `/api/v3/wifi/ap/enable`
 
-Enable WiFi access point mode.
+Enable WiFi access point mode. Optional body `{"force": true}`.
 
 ### Disable Access Point Mode
 
@@ -1404,19 +1745,16 @@ Enable WiFi access point mode.
 
 Disable WiFi access point mode.
 
-### Get Auto-Enable AP Status
+### Get Auto-Enable AP Setting
 
 **GET** `/api/v3/wifi/ap/auto-enable`
-
-Get access point auto-enable configuration.
 
 **Response**:
 ```json
 {
   "status": "success",
   "data": {
-    "auto_enable": true,
-    "timeout_seconds": 300
+    "auto_enable_ap_mode": true
   }
 }
 ```
@@ -1425,13 +1763,29 @@ Get access point auto-enable configuration.
 
 **POST** `/api/v3/wifi/ap/auto-enable`
 
-Configure access point auto-enable settings.
-
 **Request Body**:
 ```json
 {
-  "auto_enable": true,
-  "timeout_seconds": 300
+  "auto_enable_ap_mode": true
+}
+```
+
+### WiFi Radio
+
+**GET** `/api/v3/wifi/radio`
+
+Radio state: `data.enabled` (`null` if unknown), `data.ethernet_connected`,
+`data.available`.
+
+**POST** `/api/v3/wifi/radio`
+
+Turn the WiFi radio on or off. Turning it off is refused unless Ethernet is
+connected or `force` is true, so you don't cut off your own connection.
+
+```json
+{
+  "enabled": false,
+  "force": false
 }
 ```
 
@@ -1439,39 +1793,34 @@ Configure access point auto-enable settings.
 
 ## Streams
 
+Server-Sent Events, defined in `web_interface/app.py`. Each event is one
+`data: <json>` line; idle connections get `: heartbeat` comments.
+
 ### System Statistics Stream
 
 **GET** `/api/v3/stream/stats`
 
-Server-Sent Events (SSE) stream for real-time system statistics.
-
-**Response**: SSE stream
 ```
-data: {"cpu_percent": 25.5, "memory_used_percent": 45.2, ...}
-
-data: {"cpu_percent": 26.0, "memory_used_percent": 45.3, ...}
+data: {"timestamp": 1234567890.1, "uptime": "Running", "service_active": true, "cpu_percent": 25.5, "memory_used_percent": 45.2, "memory_available_mb": 1900.0, "cpu_temp": 45.0, "disk_used_percent": 60.0, "power": {...}}
 ```
 
 ### Display Preview Stream
 
 **GET** `/api/v3/stream/display`
 
-Server-Sent Events (SSE) stream for real-time display preview images.
-
-**Response**: SSE stream with base64-encoded images
 ```
-data: {"image": "base64_data_here", "timestamp": 1234567890.123}
+data: {"timestamp": 1234567890.123, "width": 128, "height": 32, "image": "base64_data_here"}
 ```
 
 ### Service Logs Stream
 
 **GET** `/api/v3/stream/logs`
 
-Server-Sent Events (SSE) stream for real-time service logs.
+Each event carries the latest journal lines for `ledmatrix` and
+`ledmatrix-web` as one text block:
 
-**Response**: SSE stream
 ```
-data: {"level": "INFO", "message": "Plugin loaded", "timestamp": 1234567890.123}
+data: {"timestamp": 1234567890.123, "logs": "2025-01-15T10:30:00+0000 host python[123]: ..."}
 ```
 
 ---
@@ -1480,26 +1829,17 @@ data: {"level": "INFO", "message": "Plugin loaded", "timestamp": 1234567890.123}
 
 ### Get Logs
 
-**GET** `/api/v3/logs?limit=100&level=INFO`
+**GET** `/api/v3/logs`
 
-Get recent log entries.
-
-**Query Parameters**:
-- `limit` (optional): Maximum number of log entries (default: 100)
-- `level` (optional): Filter by log level (DEBUG, INFO, WARNING, ERROR)
+The last 100 journal lines for `ledmatrix.service` and
+`ledmatrix-web.service`, as one text block. Takes no parameters.
 
 **Response**:
 ```json
 {
   "status": "success",
   "data": {
-    "logs": [
-      {
-        "level": "INFO",
-        "message": "Plugin loaded: football-scoreboard",
-        "timestamp": 1234567890.123
-      }
-    ]
+    "logs": "2025-01-15T10:30:00+0000 host python[123]: Plugin loaded: football-scoreboard\n..."
   }
 }
 ```
@@ -1512,31 +1852,54 @@ Get recent log entries.
 
 **GET** `/api/v3/errors/summary`
 
-Aggregated counts of recent errors across all plugins and core
-components, used by the web UI's error indicator.
+Aggregated counts, detected patterns and recent errors across plugins and
+core components.
 
 ### Get Plugin Errors
 
 **GET** `/api/v3/errors/plugin/<plugin_id>`
 
-Recent errors for a specific plugin.
+Error health and statistics for one plugin.
 
 ### Clear Errors
 
 **POST** `/api/v3/errors/clear`
 
-Clear the in-memory error aggregator.
+Clear error records older than `max_age_hours` (default 24, 1-8760).
+Returns `data.cleared_count`.
+
+```json
+{
+  "max_age_hours": 24
+}
+```
 
 ---
 
-## Health
+## Health and Status
 
 ### Health Check
 
 **GET** `/api/v3/health`
 
-Lightweight liveness check used by the WiFi monitor and external
-monitoring tools.
+Health of the web interface, display service, config file, plugin system and
+display snapshot. `data.status` is `healthy` or `degraded`, with
+`data.services` and `data.checks`.
+
+### Hardware Status
+
+**GET** `/api/v3/hardware/status`
+
+LED matrix initialization result written by the display service at startup.
+Before the service has written it, `data` is
+`{"ok": null, "error": "Display service not yet started"}`.
+
+### Sync Status
+
+**GET** `/api/v3/sync/status`
+
+Live multi-display sync status from the display process; before it has
+written one, `data` is `{"role", "port", "state": "starting"}` from config.
 
 ---
 
@@ -1546,44 +1909,97 @@ monitoring tools.
 
 **GET** `/api/v3/config/dim-schedule`
 
-Read the dim/power schedule that automatically reduces brightness or
-turns the display off at configured times.
+Read the schedule that lowers brightness at configured times.
+
+**Response**:
+```json
+{
+  "status": "success",
+  "data": {
+    "enabled": true,
+    "dim_brightness": 30,
+    "mode": "per-day",
+    "days": {
+      "monday": { "enabled": true, "start_time": "20:00", "end_time": "07:00" },
+      "tuesday": { ... }
+    }
+  }
+}
+```
+
+In `global` mode, `start_time` and `end_time` sit at the top level instead
+of `days`.
 
 ### Update Dim Schedule
 
 **POST** `/api/v3/config/dim-schedule`
 
-Update the dim schedule. Body matches the structure returned by GET.
+Replace the dim schedule. `dim_brightness` is 0-100 (default 30). In
+`per-day` mode the days can be sent either as the `days` object that GET
+returns, or as the web form's flat fields (`monday_enabled`,
+`monday_start`, `monday_end`, ...). A day that is not sent counts as
+enabled with default times `20:00`-`07:00`; at least one day must be
+enabled.
+
+---
+
+## Integrations
+
+### MQTT Bridge
+
+**GET** `/api/v3/integrations/mqtt-bridge`
+
+Home Assistant MQTT bridge service state and settings: `data.service`,
+`data.config_exists`, `data.config_path`, `data.config` (password
+omitted), `data.password_set`, `data.env_override_prefix`.
+
+**PUT** `/api/v3/integrations/mqtt-bridge/config`
+
+Write `integrations/mqtt_bridge/bridge_config.json`. Only the keys you send
+change. The password is write-only: omit `mqtt_password` to keep it, send a
+value to replace it, or send `"clear_password": true`. A password with
+`mqtt_tls` off is refused unless `allow_insecure_mqtt` is true. Returns
+`data.password_set` and `data.restart_required` (the bridge must be
+restarted to pick up changes). See
+[integrations/mqtt_bridge/README.md](../integrations/mqtt_bridge/README.md).
 
 ---
 
 ## Plugin-specific endpoints
 
-A handful of endpoints belong to individual built-in or shipped plugins.
+A handful of endpoints belong to individual plugins.
 
 ### Calendar
 
 **GET** `/api/v3/plugins/calendar/list-calendars`
 
-List the calendars available on the authenticated Google account.
-Used by the calendar plugin's config UI.
+List the calendars on the authenticated Google account. Used by the calendar
+plugin's config UI. Returns `calendars` at the top level. The upload and
+authenticate endpoints are under [Plugins](#upload-calendar-credentials).
 
 ### Of The Day
 
 **POST** `/api/v3/plugins/of-the-day/json/upload`
 
-Upload a JSON data file for the Of-The-Day plugin's category data.
+Upload JSON data files (multipart field `files`) as Of-The-Day categories.
+Returns `uploaded_files` and `total_files` at the top level.
 
 **POST** `/api/v3/plugins/of-the-day/json/delete`
 
-Delete a previously uploaded Of-The-Day data file.
+Delete an uploaded data file.
+
+```json
+{
+  "file_id": "category_name"
+}
+```
 
 ### Plugin Static Assets
 
 **GET** `/api/v3/plugins/<plugin_id>/static/<path:file_path>`
 
-Serve a static asset (image, font, etc.) from a plugin's directory.
-Used internally by the web UI to render plugin previews and icons.
+Serve a static file from a plugin's directory. Used internally by the web UI
+to render plugin previews and icons.
 
 ---
 
@@ -1613,40 +2029,77 @@ Download and install the Pixlet binary on the Pi.
 **GET** `/api/v3/starlark/apps/<app_id>/config` — get app config schema
 **PUT** `/api/v3/starlark/apps/<app_id>/config` — update app config
 **POST** `/api/v3/starlark/apps/<app_id>/render` — render app to a frame
-**POST** `/api/v3/starlark/apps/<app_id>/toggle` — enable/disable app
+**POST** `/api/v3/starlark/apps/<app_id>/toggle` — enable/disable app (`{"enabled": bool}`; omit to flip)
 
 ### Repository (Tronbyt community apps)
 
-**GET** `/api/v3/starlark/repository/categories` — browse categories
-**GET** `/api/v3/starlark/repository/browse?category=<cat>` — browse apps
-**POST** `/api/v3/starlark/repository/install` — install an app from the
-community repository
+**GET** `/api/v3/starlark/repository/categories` — list categories
+**GET** `/api/v3/starlark/repository/browse` — every app with metadata (filtering happens client-side; cached for 2 hours)
+**POST** `/api/v3/starlark/repository/install` — install an app: `{"app_id": "...", "render_interval": 300, "display_duration": 15}`
 
 ### Upload custom app
 
 **POST** `/api/v3/starlark/upload`
 
-Upload a custom Starlark `.star` file as a new app.
+Upload a custom Starlark `.star` file as a new app. Multipart fields: `file`
+(required, max 5 MB), `name`, `app_id`, `render_interval`,
+`display_duration`.
+
+### Editor
+
+A Pixlet editing session for one app. The display is stopped while a session
+runs.
+
+**GET** `/api/v3/starlark/editor/apps` — apps the editor can open (`data.apps`, `data.apps_dir`, `data.pixlet_available`)
+**GET** `/api/v3/starlark/editor/status` — `data.running`, plus `app_id`, `port`, `pid`, `started_at`, `timeout`, `seconds_remaining`, `host_bound` while running
+**POST** `/api/v3/starlark/editor/start` — `{"app_id": "...", "timeout": 1800, "port": 8080}` (`timeout` and `port` optional)
+**POST** `/api/v3/starlark/editor/stop` — end the session and restart the display
+
+---
+
+## Skins
+
+**GET** `/api/v3/skins`
+
+Installed scoreboard skins (optional `?plugin_id=` filter). Skins are not
+supported by the current scoreboard plugins, so the response carries
+`data.supported: false` and a `data.message`; clients must not offer these
+as selectable. See [SKIN_SYSTEM.md](SKIN_SYSTEM.md).
 
 ---
 
 ## Error Responses
 
-All endpoints may return error responses in the following format:
+Errors use one of two shapes. Most endpoints answer:
 
 ```json
 {
   "status": "error",
   "message": "Error description",
-  "error_code": "ERROR_CODE",
   "details": "Additional error details (optional)"
+}
+```
+
+Endpoints built on the structured error helper add a code and category:
+
+```json
+{
+  "status": "error",
+  "error_code": "CONFIG_SAVE_FAILED",
+  "error_category": "configuration",
+  "message": "Error description",
+  "details": "optional",
+  "context": { },
+  "suggested_fixes": [ ]
 }
 ```
 
 **Common HTTP Status Codes**:
 - `200`: Success
 - `400`: Bad Request (invalid parameters)
+- `403`: Forbidden (e.g. deleting a system font)
 - `404`: Not Found (resource doesn't exist)
+- `408`: Timed out (plugin actions, auth scripts)
 - `500`: Internal Server Error
 - `503`: Service Unavailable (feature not available)
 
@@ -1657,4 +2110,3 @@ All endpoints may return error responses in the following format:
 - [Plugin API Reference](PLUGIN_API_REFERENCE.md) - API for plugin developers
 - [Plugin Development Guide](PLUGIN_DEVELOPMENT_GUIDE.md) - Complete plugin development guide
 - [Web Interface README](../web_interface/README.md) - Web interface documentation
-

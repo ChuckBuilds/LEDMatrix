@@ -127,12 +127,14 @@ class RenderPipeline:
         self.scroll_helper.set_sub_pixel_scrolling(self.config.smooth_scroll)
 
         # Config scroll_speed is always pixels per second, but ScrollHelper
-        # interprets it differently based on frame_based_scrolling mode:
-        # - Frame-based: pixels per frame step
-        # - Time-based: pixels per second
+        # takes it in different units depending on frame_based_scrolling:
+        # - Frame-based: pixels per scroll_delay seconds (clamped to 0.1-5)
+        # - Time-based: pixels per second (clamped to 1-500)
+        # Both modes then advance by elapsed time; frame-based mode does not
+        # step. So frame-based with scroll_delay only adds the clamp: the
+        # applied speed is clamp(scroll_speed * scroll_delay, 0.1, 5) /
+        # scroll_delay px/s.
         if self.config.frame_based_scrolling:
-            # Convert pixels/second to pixels/frame
-            # pixels_per_frame = pixels_per_second * seconds_per_frame
             pixels_per_frame = self.config.scroll_speed * self.config.scroll_delay
             self.scroll_helper.set_scroll_speed(pixels_per_frame)
         else:

@@ -142,3 +142,54 @@ def test_preview_callers_do_not_rederive_the_size():
         assert "get('chain_length', 1)" not in source, rel
         assert 'get("chain_length", 1)' not in source, rel
         assert 'cols * chain_length' not in source, rel
+
+
+# --- Pixel mappers ----------------------------------------------------------
+# RGBMatrix.width/height are measured after the library's pixel mappers
+# (lib/pixel-mapper.cc), so the preview has to apply them too. This used to
+# report 128x32 for a Rotate:90 chain the panel drew at 32x128.
+
+@pytest.mark.parametrize('hardware,expected', [
+    ({'pixel_mapper_config': 'Rotate:90'}, (32, 128)),
+    ({'pixel_mapper_config': 'Rotate:270'}, (32, 128)),
+    ({'pixel_mapper_config': 'Rotate:-90'}, (32, 128)),
+    ({'pixel_mapper_config': 'Rotate:180'}, (128, 32)),
+    ({'orientation': '90'}, (32, 128)),
+    ({'orientation': '270'}, (32, 128)),
+    ({'orientation': '180'}, (128, 32)),
+    # Two quarter turns cancel out.
+    ({'pixel_mapper_config': 'Rotate:90', 'orientation': '270'}, (128, 32)),
+    # U-mapper folds a chain of 4 into two rows: (256 / 64) * 32 by 2 * 32.
+    ({'chain_length': 4, 'pixel_mapper_config': 'U-mapper'}, (128, 64)),
+    ({'chain_length': 4, 'pixel_mapper_config': 'u-mapper;Rotate:90'}, (64, 128)),
+    # U-mapper needs an even chain of at least 2, or the library skips it.
+    ({'chain_length': 3, 'pixel_mapper_config': 'U-mapper'}, (192, 32)),
+    ({'cols': 32, 'chain_length': 4, 'pixel_mapper_config': 'V-mapper'}, (32, 128)),
+    ({'chain_length': 1, 'parallel': 2, 'pixel_mapper_config': 'StackToRow:Z'}, (128, 32)),
+    ({'pixel_mapper_config': 'Remap:64,64|0,0n|0,32n'}, (64, 64)),
+    # A Remap panel entirely outside the visible area: the library skips it.
+    ({'pixel_mapper_config': 'Remap:64,64|0,0n|0,99n'}, (128, 32)),
+    ({'pixel_mapper_config': 'Mirror:H'}, (128, 32)),
+    # Unknown or unusable mappers are skipped by the library.
+    ({'pixel_mapper_config': 'Bogus;Rotate:45;Rotate:ninety'}, (128, 32)),
+])
+def test_pixel_mappers_change_the_size_as_the_library_does(hardware, expected):
+    hw = {'rows': 32, 'cols': 64, 'chain_length': 2, 'parallel': 1}
+    hw.update(hardware)
+    assert physical_size(_config(hw)) == expected
+    assert logical_size(_config(hw)) == expected
+
+
+def test_double_sided_splits_the_mapped_size():
+    cfg = _config({'rows': 32, 'cols': 64, 'chain_length': 2, 'parallel': 1, 'orientation': '90'},
+                  {'enabled': True, 'copies': 2, 'axis': 'vertical'})
+    assert logical_size(cfg) == (32, 64)
+
+
+def test_display_manager_composes_the_mapper_config_it_sizes_from():
+    from src.display_geometry import compose_pixel_mapper_config
+    assert compose_pixel_mapper_config({}) == ''
+    assert compose_pixel_mapper_config({'orientation': '90'}) == 'Rotate:90'
+    assert compose_pixel_mapper_config(
+        {'pixel_mapper_config': ' U-mapper ', 'orientation': '180'}) == 'U-mapper;Rotate:180'
+    assert compose_pixel_mapper_config({'orientation': 'sideways'}) == ''

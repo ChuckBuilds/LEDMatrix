@@ -263,6 +263,56 @@ def start_setup_if_needed(was_enabled, config):
     return 'Could not restart the display to finish automatic update setup; restart it from the Overview tab.'
 
 
+#: Top-level folders of separately installed plugins. Edits there are not the
+#: core's local changes: the Plugin Store updates plugins in place, including
+#: the bundled ones committed under plugin-repos/, and the pull's --autostash
+#: carries those edits across and reapplies them.
+SEPARATE_INSTALL_DIRS = ('plugins', 'plugin-repos')
+
+
+def local_changes(project_dir, run=None, timeout=30):
+    """Tracked files edited in the checkout, as both code updates count them.
+
+    The one definition shared by the automatic update's preflight and
+    ``perform_core_update`` (Update Code), so the preflight's promise that
+    nothing will be stashed holds for the pull that follows it.
+
+    * Mode-only changes do not count (``core.fileMode=false``): installers
+      chmod tracked scripts, and --autostash carries modes across the pull.
+    * Paths under ``SEPARATE_INSTALL_DIRS`` do not count. The match is on
+      the leading folder, not a substring, so
+      ``web_interface/static/v3/js/plugins/x.js`` is still a core edit.
+
+    Returns the changed paths, or None when git could not tell. Raises what
+    ``run`` raises (e.g. ``subprocess.TimeoutExpired``).
+    """
+    run = run or subprocess.run
+    result = run(['git', '-c', 'core.fileMode=false', 'status', '--porcelain',
+                  '--untracked-files=no', '-z'],
+                 cwd=str(project_dir), capture_output=True, text=True, timeout=timeout)
+    if result.returncode != 0:
+        return None
+    changed = []
+    entries = iter((result.stdout or '').split('\0'))
+    for entry in entries:
+        if len(entry) < 4:
+            continue
+        paths = [entry[3:]]
+        if entry[0] in 'RC' or entry[1] in 'RC':
+            paths.append(next(entries, ''))  # -z puts a rename's source next
+        if any(p and p.split('/', 1)[0] not in SEPARATE_INSTALL_DIRS for p in paths):
+            changed.append(paths[0])
+    return changed
+
+
+def describe_local_changes(changed):
+    """Why an automatic update refused to touch a checkout with local edits."""
+    example = f' (for example {changed[0]})' if changed else ''
+    return (f'{len(changed or ()) or "Some"} tracked file(s) in the LEDMatrix folder were edited '
+            f'locally{example}. Automatic updates will not stash your changes; '
+            'commit or revert them, or update manually with Update Code.')
+
+
 def _load_verifier(path):
     spec = importlib.util.spec_from_file_location('ledmatrix_auto_update_verifier', str(path))
     module = importlib.util.module_from_spec(spec)
@@ -346,11 +396,16 @@ class AutoUpdater:
             core = {'outcome': 'error', 'message': f'The LEDMatrix update failed unexpectedly: {e}'}
 
         deferred = core['outcome'] == 'verifying'
-        updated, failed = ([], []) if deferred else self._update_plugins()
+        # A core whose rollback failed is in an unknown state: as when the
+        # health check reports rollback_failed, plugins are left alone and
+        # nothing is restarted onto it.
+        stranded = core['outcome'] == 'rollback_failed'
+        updated, failed = ([], []) if deferred or stranded else self._update_plugins()
         self._store_run(state, core, updated, failed)
         logger.info("Automatic update: core %s (%s); plugins updated=%s failed=%s%s",
                     core['outcome'], core['message'], updated, failed,
-                    '; plugins wait for the health check' if deferred else '')
+                    '; plugins wait for the health check' if deferred
+                    else '; plugins left alone' if stranded else '')
 
         # Code restarts belong to the health check; this only covers plugins.
         if updated:
@@ -424,17 +479,11 @@ class AutoUpdater:
             return 'blocked', ('The current branch has no upstream to update from (or HEAD is detached). '
                                'Use Update Code once, or Tools -> Switch branch.'), {}
 
-        # Mode-only changes are ignored: older installers chmod tracked
-        # scripts, and --autostash in the pull carries those across. Plugin
-        # folders are separate installs, as in perform_core_update.
-        status = self._git('-c', 'core.fileMode=false', 'status', '--porcelain', '--untracked-files=no')
-        changed = [line[3:] for line in status.stdout.splitlines()
-                   if line.strip() and 'plugins/' not in line and 'plugin-repos/' not in line]
-        if status.returncode != 0 or changed:
-            example = f' (for example {changed[0]})' if changed else ''
-            return 'blocked', (f'{len(changed) or "Some"} tracked file(s) in the LEDMatrix folder were edited '
-                               f'locally{example}. Automatic updates will not stash your changes; '
-                               'commit or revert them, or update manually with Update Code.'), {}
+        # The same predicate perform_core_update refuses on when called from
+        # here, so what passes this check is never stashed by the pull.
+        changed = local_changes(self.project_root, run=self.run_command)
+        if changed is None or changed:
+            return 'blocked', describe_local_changes(changed), {}
 
         free = self.disk_free(str(self.project_root))
         if free < MIN_FREE_BYTES:
@@ -479,11 +528,15 @@ class AutoUpdater:
             return {'outcome': 'error', 'message': f'Could not prepare the update health check: {e}.'}
 
         try:
-            core = self.core_update()
+            # Refuse rather than stash: edits made since the preflight are the
+            # user's, and nothing would ever restore a stash taken here.
+            core = self.core_update(stash_local_changes=False)
         except Exception as e:
             logger.exception("perform_core_update raised")
             core = {'status': 'error', 'message': f'Update failed: {e}'}
         new_head = self._git('rev-parse', 'HEAD').stdout.strip()
+        if core.get('local_changes') is not None and new_head == old_head:
+            return {'outcome': 'blocked', 'message': describe_local_changes(core['local_changes'])}
         pending = {
             'status': 'pending',
             'old_head': old_head,

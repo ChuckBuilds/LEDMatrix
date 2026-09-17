@@ -158,8 +158,10 @@ This script will check:
 - Python dependencies
 - Configuration files
 - File permissions
-- Web interface availability
+- Web interface availability (`ledmatrix-web` listening on port 5000)
 - Network connectivity
+
+Once it passes, the web interface is at `http://<pi-ip>:5000`.
 
 ## Quick Reference Commands
 

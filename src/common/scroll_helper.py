@@ -22,13 +22,6 @@ from typing import Optional, Dict, Any
 from PIL import Image
 import numpy as np
 
-# Try to import scipy for sub-pixel interpolation, fallback to simpler method if not available
-try:
-    from scipy.ndimage import shift
-    HAS_SCIPY = True
-except ImportError:
-    HAS_SCIPY = False
-
 
 # How often the frame-stats line is emitted, and therefore also the ceiling
 # on a believable frame time: a scroll that renders at all cannot take this
@@ -138,21 +131,22 @@ class ScrollHelper:
         # blend (blur) or repeat frames (judder); blending is the worse of the
         # two here. Vegas mode still opts in via set_sub_pixel_scrolling().
         self.sub_pixel_scrolling = False
-        self._last_integer_position = 0  # Cache for integer position to avoid repeated calculations
-        
+
         # Frame-based scrolling settings
         self.frame_based_scrolling = False
         #: Whole pixels to advance per presented frame, or None to pace
         #: off elapsed time. See set_pixels_per_frame.
-        self.fixed_pixels_per_frame = None  # If True, use scroll_delay to throttle and move scroll_speed pixels
-        self.last_step_time = 0.0  # Track last step time for frame-based throttling
-        
+        self.fixed_pixels_per_frame = None
+        self.last_step_time = 0.0  # Time of the last position update
+
         # Time tracking for scroll updates
         self.last_update_time: Optional[float] = None
-        
-        # High FPS settings
-        self.target_fps = 120  # Target 120 FPS for smooth scrolling
-        self.frame_time_target = 1.0 / self.target_fps
+
+        #: Informational only: the presentation rate scroll_config chose
+        #: (panel refresh / frame hold). Nothing paces off it -- the helper
+        #: steps per call and SwapOnVSync paces the calls. Kept because
+        #: plugins and their tests read it back.
+        self.target_fps = 120
         
         # Dynamic duration settings
         self.dynamic_duration_enabled = True
@@ -288,7 +282,14 @@ class ScrollHelper:
     
     def update_scroll_position(self) -> None:
         """
-        Update scroll position with high FPS control and handle wrap-around.
+        Advance the scroll by one presented frame and handle wrap-around.
+
+        With a fixed per-frame step (set_pixels_per_frame, which
+        scroll_config.configure sets for a crisp speed) every call moves
+        exactly that many pixels and no clock is read; the caller's
+        vsync-blocking swap, held for ``frame_hold`` refreshes, sets the rate.
+        Otherwise the position advances by elapsed time at the configured
+        speed.
         """
         if not self.cached_image:
             return
@@ -461,10 +462,9 @@ class ScrollHelper:
         Linear blend between the frames at ``start_x`` and ``start_x + 1``.
 
         Implemented with numpy rather than scipy.ndimage.shift: scipy is not
-        installed on the target devices (HAS_SCIPY is False there), which is why
-        the pre-existing sub-pixel path was dead code — get_visible_portion never
-        consulted the flag, and the scipy fallback would not have interpolated
-        anyway.
+        installed on the target devices, and the old scipy-based sub-pixel path
+        was dead code -- get_visible_portion never consulted the flag. The scipy
+        import was removed with it; installing scipy has no effect.
 
         Args:
             start_x: Left column of the earlier of the two frames
@@ -830,11 +830,13 @@ class ScrollHelper:
     
     def set_scroll_speed(self, speed: float) -> None:
         """
-        Set the scroll speed.
-        
-        In time-based mode: pixels per second (typically 10-200)
-        In frame-based mode: pixels per frame (typically 0.5-5 for smooth scrolling)
-        
+        Set the scroll speed, and leave fixed-step mode.
+
+        In time-based mode: pixels per second (clamped to 1-500).
+        In frame-based mode: pixels per ``scroll_delay`` seconds (clamped to
+        0.1-5), still applied by elapsed time as scroll_speed / scroll_delay
+        px/s.
+
         Args:
             speed: Scroll speed (interpretation depends on frame_based_scrolling mode)
         """
@@ -896,14 +898,19 @@ class ScrollHelper:
 
     def set_target_fps(self, fps: float) -> None:
         """
-        Set the target frames per second for scrolling.
-        
+        Record the presentation rate, for diagnostics only.
+
+        Nothing paces off this value: with a fixed per-frame step the helper
+        advances once per call, and without one it advances by elapsed time.
+        The rate frames are shown at is the panel refresh divided by the frame
+        hold passed to ``display_manager.set_scrolling_state``. scroll_config
+        sets it to that rate so it can be read back.
+
         Args:
-            fps: Target FPS (typically 30-200, default 120)
+            fps: Frames per second (clamped to 30-200)
         """
         self.target_fps = max(30.0, min(200.0, fps))
-        self.frame_time_target = 1.0 / self.target_fps
-        self.logger.debug(f"Target FPS set to: {self.target_fps} FPS (frame_time_target: {self.frame_time_target:.4f}s)")
+        self.logger.debug("Target FPS recorded: %s FPS (informational)", self.target_fps)
     
     def set_sub_pixel_scrolling(self, enabled: bool) -> None:
         """
@@ -914,7 +921,7 @@ class ScrollHelper:
         When disabled, uses integer pixel positioning (faster but may skip pixels).
         
         Args:
-            enabled: True to enable sub-pixel scrolling (default: True)
+            enabled: True to enable sub-pixel scrolling (default: False)
         """
         self.sub_pixel_scrolling = enabled
         self.logger.debug(f"Sub-pixel scrolling {'enabled' if enabled else 'disabled'}")
@@ -923,10 +930,12 @@ class ScrollHelper:
         """
         Enable or disable frame-based scrolling.
         
-        When enabled, update_scroll_position() respects scroll_delay and moves
-        scroll_speed pixels per step. This provides a "stepped" look similar to
-        traditional tickers and can be visually smoother on LED matrices.
-        
+        This does not step. When enabled, ``scroll_speed`` is read as pixels
+        per ``scroll_delay`` seconds (set_scroll_speed clamps it to 0.1-5), and
+        update_scroll_position() still advances by elapsed time at
+        ``scroll_speed / scroll_delay`` px/s. A fixed per-frame step set by
+        set_pixels_per_frame() takes precedence over both modes.
+
         Args:
             enabled: True to enable frame-based scrolling (default: False)
         """
@@ -985,11 +994,7 @@ class ScrollHelper:
         # the real stall rates being measured, so the number could not be
         # trusted at all. Seed the clock and take no sample.
         if self.last_frame_time is None:
-            self.last_frame_time = current_time
-            # Restart the window with the scroll. Otherwise the boundary is
-            # already long overdue when the second frame arrives, and the new
-            # scroll opens by reporting a window of exactly one frame.
-            self.last_fps_log_time = current_time
+            self._restart_stats_window(current_time)
             return
 
         # Calculate instantaneous frame time
@@ -998,9 +1003,10 @@ class ScrollHelper:
         # A caller that scrolls without ever calling reset_scroll() never arms
         # the sentinel above, so catch the same gap by its size. Nothing that
         # renders a scroll produces a frame longer than the log interval; a
-        # sample that large is an idle period, not a frame.
+        # sample that large is an idle period, not a frame. It starts a new
+        # scroll exactly as the sentinel does, window timer included.
         if frame_time >= FPS_LOG_INTERVAL:
-            self.last_frame_time = current_time
+            self._restart_stats_window(current_time)
             return
 
         self.frame_times.append(frame_time)
@@ -1034,7 +1040,17 @@ class ScrollHelper:
 
         self.last_frame_time = current_time
         self.frame_count += 1
-    
+
+    def _restart_stats_window(self, current_time: float) -> None:
+        """Seed the frame clock at the start of a scroll, taking no sample.
+
+        The window timer restarts with it. Otherwise the 5s boundary is
+        already long overdue when the next frame arrives, and the new scroll
+        opens by reporting a window of exactly one frame.
+        """
+        self.last_frame_time = current_time
+        self.last_fps_log_time = current_time
+
     def clear_cache(self) -> None:
         """
         Clear the cached scrolling image.

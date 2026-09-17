@@ -30,7 +30,7 @@
   `config.get(...)`, never a separate accessor
 
 ## Dev Workflow
-- Link a plugin for development: `./scripts/dev/dev_plugin_setup.sh link-github <name>` (or `link <name> <path>`); symlinks land in `plugins/` — set `plugin_system.plugins_directory` to `plugins` so discovery picks them up
+- Link a plugin for development: `./scripts/dev/dev_plugin_setup.sh link-github <name>` clones the `ledmatrix-plugins` monorepo into `~/.ledmatrix-dev-plugins/` and links its `plugins/<name>` under the manifest id (add a repo URL for a plugin with its own repo; or `link <name> <path>`); symlinks land in `plugins/` — set `plugin_system.plugins_directory` to `plugins` so discovery picks them up. Fork/location overrides: `dev_plugins.json` (from `dev_plugins.json.example`)
 - Browser preview without the display loop: `python3 scripts/dev_server.py` → http://localhost:5001
 - Full display in emulator mode: `python3 run.py -e` (or `EMULATOR=true python3 run.py`)
 - Validate one plugin headlessly: `python3 scripts/check_plugin.py --plugin <id>`
@@ -63,4 +63,4 @@
   `self.display_manager.image.paste(img, (x, y))` then `update_display()`
   (use a mask for transparency: `image.paste(rgba, (x, y), rgba)`)
 - When modifying a plugin in the monorepo, you MUST bump `version` in its `manifest.json` and run `python update_registry.py` — otherwise users won't receive the update
-- `src/pi5_matrix_support.py` hardcodes what the pinned `rpi-rgb-led-matrix-master` can drive on a Raspberry Pi 5 (`Rp1PioConfigSupported()` in `lib/rp1/rp1_pio_backend.cc`). Re-check it whenever the submodule is bumped: a stale rule blocks Pi 5 settings the new library supports, and a missing one lets the display service crash-loop
+- `src/pi5_matrix_support.py` hardcodes what the pinned `rpi-rgb-led-matrix-master` can drive on a Raspberry Pi 5 (`Rp1PioConfigSupported()` in `lib/rp1/rp1_pio_backend.cc`). Re-check it whenever the submodule is bumped: a stale rule blocks Pi 5 settings the new library supports, and a missing one lets the display service crash-loop. `src/matrix_support.py` holds the same kind of rules for every board (rows, chain length, mapping names, parallel per mapping) and needs the same re-check

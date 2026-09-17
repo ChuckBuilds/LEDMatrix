@@ -102,7 +102,9 @@ Configure basic system settings:
   check are shown under the toggle, and anything other than success raises a
   banner on **Overview**.
   - *Checks first:* the code update is skipped, with the reason shown, if
-    tracked files were edited locally, the checkout has local commits, a
+    tracked files were edited locally (permission-only changes and edits under
+    `plugins/` or `plugin-repos/` don't count; the pull carries those across
+    and puts them back), the checkout has local commits, a
     rebase/merge is in progress, the branch has no upstream, less than 300 MB
     is free, or the newest version already failed once. A failed fetch is
     retried the next day.
@@ -206,11 +208,11 @@ Manage fonts for your display:
 - See font previews
 - Check font sizes and styles
 
-**Font Overrides:**
-- Overrides are set per display *element* (e.g. a specific score or
-  clock text element), not per plugin
-- Override default font choices for individual elements
-- Preview font changes
+**Font Preview:**
+- Render sample text in any TTF/OTF font at a chosen size
+
+Fonts used by a plugin are chosen in that plugin's own settings tab; the
+Fonts tab has no per-element override editor.
 
 **Delete Fonts:**
 - Remove unused fonts
@@ -327,9 +329,8 @@ The web interface is built on a REST API that you can access programmatically:
 http://your-pi-ip:5000/api/v3
 ```
 
-The API blueprint mounts at `/api/v3` (see
-`web_interface/app.py:199`). All endpoints below are relative to that
-base.
+The API blueprint (`web_interface/blueprints/api_v3/`) is registered at
+`/api/v3` in `web_interface/app.py`.
 
 **Common Endpoints:**
 - `GET /api/v3/config/main` — Get main configuration

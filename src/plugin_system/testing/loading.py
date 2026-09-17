@@ -42,29 +42,6 @@ def load_manifest(plugin_dir: Union[str, Path]) -> Dict[str, Any]:
         return json.load(f)
 
 
-def _defaults_from_properties(properties: Dict[str, Any]) -> Dict[str, Any]:
-    """Defaults for one `properties` block, recursing into nested objects.
-
-    An object property carries its defaults on its children, not on itself, so
-    reading only the top level dropped everything nested. That is most of the
-    fleet: config organised by league, or under customization/display_options,
-    lost 2,386 defaults across 37 of 44 plugins -- soccer-scoreboard alone lost
-    539 of 565 -- and the harness rendered them with a config no install would
-    ever have.
-    """
-    defaults: Dict[str, Any] = {}
-    for key, prop in (properties or {}).items():
-        if not isinstance(prop, dict):
-            continue
-        if prop.get('type') == 'object' and isinstance(prop.get('properties'), dict):
-            nested = _defaults_from_properties(prop['properties'])
-            if nested:
-                defaults[key] = nested
-        elif 'default' in prop:
-            defaults[key] = prop['default']
-    return defaults
-
-
 def merge_config(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
     """Deep-merge override onto base, without dropping sibling defaults.
 
@@ -81,14 +58,45 @@ def merge_config(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, An
     return merged
 
 
-def load_config_defaults(plugin_dir: Union[str, Path]) -> Dict[str, Any]:
-    """Extract default values from a plugin's config_schema.json (empty if none)."""
+def load_schema(plugin_dir: Union[str, Path]) -> Optional[Dict[str, Any]]:
+    """A plugin's config_schema.json, or None when it has none."""
     schema_path = Path(plugin_dir) / 'config_schema.json'
     if not schema_path.exists():
-        return {}
+        return None
     with open(schema_path, 'r', encoding='utf-8') as f:
-        schema = json.load(f)
-    return _defaults_from_properties(schema.get('properties', {}))
+        return json.load(f)
+
+
+def load_config_defaults(plugin_dir: Union[str, Path]) -> Dict[str, Any]:
+    """Default values from a plugin's config_schema.json (empty if none).
+
+    The device's own extraction (schema_manager.extract_schema_defaults), so a
+    harness run starts from the config an install would have: nested objects
+    contribute their children's defaults (organised-by-league configs lost
+    thousands of them when only the top level was read), and arrays without a
+    default start as [].
+    """
+    from src.plugin_system.schema_manager import extract_schema_defaults
+    schema = load_schema(plugin_dir)
+    return extract_schema_defaults(schema) if schema else {}
+
+
+def build_config(plugin_dir: Union[str, Path],
+                 overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """The config a device would give this plugin, with ``overrides`` applied.
+
+    Starts from a forced ``enabled: True``, deep-merges ``overrides`` onto it
+    (merge_config), then prepares the result exactly as the device does when it
+    loads a plugin: legacy booleans read as objects, and schema plus core
+    defaults filled in (schema_manager.prepare_plugin_config). Used by the
+    harness, check_plugin, render_plugin and the dev preview server.
+    """
+    from src.plugin_system.schema_manager import (
+        plugin_config_defaults, prepare_plugin_config,
+    )
+    schema = load_schema(plugin_dir)
+    requested = merge_config({"enabled": True}, overrides or {})
+    return prepare_plugin_config(requested, schema, plugin_config_defaults(schema))
 
 
 def load_harness_spec(plugin_dir: Union[str, Path]) -> Dict[str, Any]:
@@ -143,16 +151,14 @@ def build_full_config(
 
     Merge order: config_schema.json defaults, then a forced ``enabled: True``,
     then harness.json's config overlay, then the caller's explicit config --
-    most specific wins. `enabled` is re-asserted *after* the schema defaults
-    so a plugin that reasonably ships `enabled: false` (e.g. a seasonal or
-    opt-in plugin) can't silently make every harness run test "disabled, do
-    nothing" by accident -- callers that genuinely want to test the disabled
-    path can still do so via `cli_config={"enabled": False}`.
+    most specific wins, and each layer deep-merges (a nested override such as
+    ``{"nhl": {"enabled": true}}`` keeps the other nhl defaults). `enabled` is
+    asserted over the schema defaults so a plugin that reasonably ships
+    `enabled: false` (e.g. a seasonal or opt-in plugin) can't silently make
+    every harness run test "disabled, do nothing" by accident -- callers that
+    genuinely want to test the disabled path can still do so via
+    `cli_config={"enabled": False}`. See build_config.
     """
     spec = spec or {}
-    config: Dict[str, Any] = {}
-    config.update(load_config_defaults(plugin_dir))
-    config["enabled"] = True
-    config.update(spec.get("config", {}))
-    config.update(cli_config or {})
-    return config
+    overrides = merge_config(spec.get("config", {}) or {}, cli_config or {})
+    return build_config(plugin_dir, overrides)

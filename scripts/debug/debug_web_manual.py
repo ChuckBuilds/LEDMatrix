@@ -54,8 +54,13 @@ def main():
         config = config_manager.load_config()
         print("   ✅ Config loaded")
 
-        autostart = config.get('web_display_autostart', False)
-        print(f"   🔧 web_display_autostart: {autostart}")
+        # Same rule ledmatrix-web.service applies: only an explicit false/off
+        # keeps the web interface down; a missing key means on.
+        sys.path.insert(0, str(project_root / 'scripts' / 'utils'))
+        from start_web_conditionally import autostart_enabled
+        raw = config.get('web_display_autostart', '(not set, defaults to on)')
+        state = 'starts' if autostart_enabled(config) else 'will NOT start'
+        print(f"   🔧 web_display_autostart: {raw} (web interface {state})")
     except Exception as e:
         print(f"   ❌ Config check failed: {e}")
         traceback.print_exc()

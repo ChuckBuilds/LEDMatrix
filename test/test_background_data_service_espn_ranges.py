@@ -13,7 +13,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.background_data_service import BackgroundDataService
-from src.common.espn_dates import ESPN_MAX_LIMIT, parse_espn_date_range
+from src.common import espn_dates
+from src.common.espn_dates import (
+    ESPN_MAX_LIMIT,
+    fetch_espn_scoreboard,
+    parse_espn_date_range,
+)
 
 URL = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
 
@@ -48,6 +53,12 @@ class RangeRejectingSession:
         if dates in self.fail_chunks:
             return FakeResponse(500)
         return FakeResponse(200, {"events": self.events_by_chunk.get(dates, [])})
+
+
+@pytest.fixture(autouse=True)
+def ranges_not_yet_rejected(monkeypatch):
+    # The "ranges are rejected" memo is process-wide; every test starts clean.
+    monkeypatch.setattr(espn_dates, "_ranges_rejected_until", 0.0)
 
 
 @pytest.fixture
@@ -161,3 +172,42 @@ def test_a_400_on_a_single_day_is_still_a_failure(service, cache):
     assert not result.success
     assert len(session.calls) == 1
     cache.set.assert_not_called()
+
+
+def test_a_rejection_seen_by_the_service_is_remembered_for_scoreboards(service):
+    submit_and_wait(service, RangeRejectingSession({"202609": [{"id": "a"}]}),
+                    "20260901-20260930")
+
+    # A live scoreboard asking for a range next must not spend a doomed 400.
+    session = RangeRejectingSession({"202609": [{"id": "a"}]})
+    data = fetch_espn_scoreboard(session, URL, params={"dates": "20260901-20260930"})
+    assert [call["dates"] for call in session.calls] == ["202609"]
+    assert [event["id"] for event in data["events"]] == ["a"]
+
+
+def test_a_rejection_seen_by_a_scoreboard_skips_the_range_in_the_service(service, cache):
+    fetch_espn_scoreboard(RangeRejectingSession(), URL,
+                          params={"dates": "20260901-20260930"})
+
+    session = RangeRejectingSession({"202609": [{"id": "a"}]})
+    result = submit_and_wait(service, session, "20260901-20261001")
+    assert result.success, result.error
+    assert [call["dates"] for call in session.calls] == ["202609", "20261001"]
+
+
+def test_known_rejection_with_every_chunk_failing_asks_the_range_once(service, cache):
+    espn_dates._note_range_rejected()
+    session = RangeRejectingSession(fail_chunks={"202609"})
+    result = submit_and_wait(service, session, "20260901-20260930")
+
+    assert not result.success
+    # Chunks once, then the range for a real error -- not the chunks again.
+    assert [call["dates"] for call in session.calls] == ["202609", "20260901-20260930"]
+    cache.set.assert_not_called()
+
+
+def test_ranges_are_tried_again_once_the_memo_expires(service, monkeypatch):
+    monkeypatch.setattr(espn_dates, "_ranges_rejected_until", time.monotonic() - 1)
+    session = RangeRejectingSession({"202609": [{"id": "a"}]})
+    submit_and_wait(service, session, "20260901-20260930")
+    assert [call["dates"] for call in session.calls] == ["20260901-20260930", "202609"]

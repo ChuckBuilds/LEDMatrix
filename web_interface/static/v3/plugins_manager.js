@@ -1999,22 +1999,21 @@ function runUpdateAllPlugins() {
                 showNotification('No plugins to update.', 'info');
                 return;
             }
-            let updated = 0, upToDate = 0, failed = 0;
-            for (const r of results) {
-                if (!r.success) {
-                    failed++;
-                } else if (r.result && r.result.message && r.result.message.includes('already up to date')) {
-                    upToDate++;
-                } else {
-                    updated++;
-                }
-            }
-            const parts = [];
-            if (updated > 0) parts.push(`${updated} updated`);
-            if (upToDate > 0) parts.push(`${upToDate} already up to date`);
-            if (failed > 0) parts.push(`${failed} failed`);
-            const type = failed > 0 ? (updated > 0 ? 'warning' : 'error') : 'success';
-            showNotification(parts.join(', '), type);
+            // Counted by install_manager.js from each answer's update_status:
+            // a no-op update is "already up to date", not "updated". A cached
+            // install_manager.js from before that helper gets a plain count.
+            const manager = window.PluginInstallManager;
+            const summary = (manager && typeof manager.summarizeUpdateResults === 'function')
+                ? manager.summarizeUpdateResults(results)
+                : (() => {
+                    const failed = results.filter(r => !r.success).length;
+                    const checked = results.length - failed;
+                    return {
+                        text: `${checked} checked` + (failed ? `, ${failed} failed` : ''),
+                        type: failed ? (checked ? 'warning' : 'error') : 'success'
+                    };
+                })();
+            showNotification(summary.text, summary.type);
         })
         .catch(error => {
             console.error('Error updating all plugins:', error);
@@ -3893,13 +3892,15 @@ function renderPluginStore(plugins) {
         return;
     }
 
-    // Helper function to escape for JavaScript strings
+    // JS string literal for an inline handler; see jsStringAttr
     const escapeJs = (text) => {
-        return JSON.stringify(text || '');
+        return jsStringAttr(text || '');
     };
 
     setGridHtmlIfChanged(container, plugins.map(plugin => {
         const installed = isStorePluginInstalled(plugin);
+        // Registry data: only open real web links, never javascript: URLs.
+        const repoLink = plugin.repo && /^https?:\/\//i.test(plugin.repo) ? plugin.repo : '';
         return `
         <div class="plugin-card">
             <div class="flex items-start justify-between mb-4">
@@ -3941,7 +3942,7 @@ function renderPluginStore(plugins) {
                     <button onclick='if(window.installPlugin){const branchInput = document.getElementById("branch-input-${plugin.id.replace(/[^a-zA-Z0-9]/g, '-')}"); window.installPlugin(${escapeJs(plugin.id)}, branchInput?.value?.trim() || null)}else{console.error("installPlugin not available")}' class="btn ${installed ? 'bg-gray-500 hover:bg-gray-600' : 'bg-green-600 hover:bg-green-700'} text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold">
                         <i class="fas ${installed ? 'fa-redo' : 'fa-download'} mr-2"></i>${installed ? 'Reinstall' : 'Install'}
                     </button>
-                    <button onclick='${plugin.repo ? `window.open(${escapeJs(plugin.plugin_path ? plugin.repo + "/tree/" + encodeURIComponent(plugin.default_branch || plugin.branch || "main") + "/" + plugin.plugin_path.split("/").map(encodeURIComponent).join("/") : plugin.repo)}, "_blank")` : `void(0)`}' ${plugin.repo ? '' : 'disabled'} class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold${plugin.repo ? '' : ' opacity-50 cursor-not-allowed'}">
+                    <button onclick='${repoLink ? `window.open(${escapeJs(plugin.plugin_path ? repoLink + "/tree/" + encodeURIComponent(plugin.default_branch || plugin.branch || "main") + "/" + plugin.plugin_path.split("/").map(encodeURIComponent).join("/") : repoLink)}, "_blank")` : `void(0)`}' ${repoLink ? '' : 'disabled'} class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold${repoLink ? '' : ' opacity-50 cursor-not-allowed'}">
                         <i class="fas fa-external-link-alt mr-2"></i>View
                     </button>
                 </div>
@@ -4102,9 +4103,9 @@ function renderSavedRepositories(repositories) {
         return;
     }
 
-    // Helper function to escape for JavaScript strings
+    // JS string literal for an inline handler; see jsStringAttr
     const escapeJs = (text) => {
-        return JSON.stringify(text || '');
+        return jsStringAttr(text || '');
     };
 
     container.innerHTML = repositories.map(repo => {
@@ -4498,9 +4499,9 @@ function renderCustomRegistryPlugins(plugins, registryUrl) {
             .replace(/'/g, '&#39;');
     };
 
-    // Helper function to escape for JavaScript strings
+    // JS string literal for an inline handler; see jsStringAttr
     const escapeJs = (text) => {
-        return JSON.stringify(text || '');
+        return jsStringAttr(text || '');
     };
 
     container.innerHTML = plugins.map(plugin => {
@@ -4615,6 +4616,15 @@ function escapeAttribute(text) {
         .replace(/'/g, '&#39;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;');
+}
+
+// A quoted JS string literal that is safe inside an inline handler attribute
+// (onclick='f(${jsStringAttr(id)})' or onclick="..."). JSON.stringify alone
+// makes a valid JS string but leaves ' and & untouched, so a registry entry
+// id containing ' closed a single-quoted attribute and added its own
+// handlers. The browser decodes the entities before the JS is parsed.
+function jsStringAttr(value) {
+    return escapeAttribute(JSON.stringify(value == null ? '' : String(value)));
 }
 
 // Format date for display
@@ -5104,11 +5114,11 @@ window.updateImageList = function(fieldId, images) {
             const scheduleSummary = hasSchedule ? (window.getScheduleSummary ? window.getScheduleSummary(imgSchedule) : 'Scheduled') : 'Always shown';
 
             return `
-            <div id="img_${img.id || idx}" class="bg-gray-50 p-3 rounded-lg border border-gray-200">
+            <div id="img_${escapeAttribute(img.id || idx)}" class="bg-gray-50 p-3 rounded-lg border border-gray-200">
                 <div class="flex items-center justify-between mb-2">
                     <div class="flex items-center space-x-3 flex-1">
-                        <img src="/${img.path || ''}"
-                             alt="${img.filename || ''}"
+                        <img src="/${escapeAttribute(String(img.path || '').replace(/^\/+/, ''))}"
+                             alt="${escapeAttribute(img.filename || '')}"
                              loading="lazy" decoding="async"
                              class="w-16 h-16 object-cover rounded"
                              onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
@@ -5116,7 +5126,7 @@ window.updateImageList = function(fieldId, images) {
                             <i class="fas fa-image text-gray-400"></i>
                         </div>
                         <div class="flex-1 min-w-0">
-                            <p class="text-sm font-medium text-gray-900 truncate">${img.original_filename || img.filename || 'Image'}</p>
+                            <p class="text-sm font-medium text-gray-900 truncate">${escapeHtml(img.original_filename || img.filename || 'Image')}</p>
                             <p class="text-xs text-gray-500">${window.formatFileSize ? window.formatFileSize(img.size || 0) : (Math.round((img.size || 0) / 1024) + ' KB')} • ${window.formatDate ? window.formatDate(img.uploaded_at) : (img.uploaded_at || '')}</p>
                             <p class="text-xs text-blue-600 mt-1">
                                 <i class="fas fa-clock mr-1"></i>${scheduleSummary}
@@ -5125,14 +5135,14 @@ window.updateImageList = function(fieldId, images) {
                     </div>
                     <div class="flex items-center space-x-2 ml-4">
                         <button type="button"
-                                onclick="window.openImageSchedule('${fieldId}', '${img.id}', ${idx})"
+                                onclick="window.openImageSchedule(${jsStringAttr(fieldId)}, ${jsStringAttr(img.id)}, ${idx})"
                                 class="text-blue-600 hover:text-blue-800 p-2"
                                 title="Schedule this image"
                                 aria-label="Schedule image ${escapeAttribute(img.original_filename || img.filename || '')}">
                             <i class="fas fa-calendar-alt" aria-hidden="true"></i>
                         </button>
                         <button type="button"
-                                onclick="window.deleteUploadedImage('${fieldId}', '${img.id}', '${pluginId}')"
+                                onclick="window.deleteUploadedImage(${jsStringAttr(fieldId)}, ${jsStringAttr(img.id)}, ${jsStringAttr(pluginId)})"
                                 class="text-red-600 hover:text-red-800 p-2"
                                 title="Delete image"
                                 aria-label="Delete image ${escapeAttribute(img.original_filename || img.filename || '')}">
@@ -5141,7 +5151,7 @@ window.updateImageList = function(fieldId, images) {
                     </div>
                 </div>
                 <!-- Schedule widget will be inserted here when opened -->
-                <div id="schedule_${img.id || idx}" class="hidden mt-3 pt-3 border-t border-gray-300"></div>
+                <div id="schedule_${escapeAttribute(img.id || idx)}" class="hidden mt-3 pt-3 border-t border-gray-300"></div>
             </div>
             `;
         }).join('');

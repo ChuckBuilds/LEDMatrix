@@ -20,7 +20,9 @@ web_interface/
 ├── run.sh                    # Shell runner script
 ├── requirements.txt          # Python dependencies
 ├── blueprints/               # Flask blueprints
-│   ├── api_v3.py            # API endpoints
+│   ├── api_v3/              # API endpoints (package: config, display,
+│   │                        #   plugins, system, backup, fonts, misc,
+│   │                        #   wifi, starlark)
 │   └── pages_v3.py          # Page routes
 ├── templates/                # HTML templates
 │   └── v3/
@@ -75,7 +77,8 @@ The web interface reads configuration from:
 
 ## API Documentation
 
-The V3 API is mounted at `/api/v3/` (`app.py:144`). For the complete
+The V3 API is the `api_v3` blueprint, registered at `/api/v3/` in
+`app.py`. For the complete
 list and request/response formats, see
 [`docs/REST_API_REFERENCE.md`](../docs/REST_API_REFERENCE.md). Quick
 reference for the most common endpoints:
@@ -115,9 +118,9 @@ reference for the most common endpoints:
 - `POST /api/v3/plugins/store/refresh` - Refresh registry from GitHub
 
 ### Real-time Streams (SSE)
-SSE stream endpoints are defined directly on the Flask app
-(`app.py:607-619` — includes the CSRF exemption and rate-limit hookup
-alongside the three route definitions), not on the api_v3 blueprint:
+SSE stream endpoints are defined directly on the Flask app in `app.py`
+(`stream_stats`, `stream_display`, `stream_logs`, followed by their CSRF
+exemption and rate-limit hookup), not on the api_v3 blueprint:
 - `GET /api/v3/stream/stats` - System statistics stream
 - `GET /api/v3/stream/display` - Display preview stream
 - `GET /api/v3/stream/logs` - Service logs stream

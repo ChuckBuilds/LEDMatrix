@@ -3,6 +3,41 @@
 # Exit on error
 set -e
 
+usage() {
+    cat <<'USAGE'
+Usage: sudo ./scripts/install/install_service.sh [-h|--help]
+
+Installs (or reinstalls) the LEDMatrix systemd units from the templates in
+systemd/, then enables and starts them:
+  - ledmatrix.service                  main display (runs as root)
+  - ledmatrix-web.service              web interface (runs as the invoking user)
+  - ledmatrix-update-verify.service    automatic-update health check
+  - ledmatrix-update-verify.path
+
+Existing unit files in /etc/systemd/system are overwritten. The script takes
+no other options; run it with no arguments to install.
+
+Options:
+  -h, --help    Show this help and exit without changing anything.
+USAGE
+}
+
+# Parse arguments before touching anything: this script rewrites and restarts
+# services, so an unrecognised option must not fall through to a full install.
+for arg in "$@"; do
+    case "$arg" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "ERROR: unknown option: $arg" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+done
+
 # Get the actual user who invoked sudo
 if [ -n "$SUDO_USER" ]; then
     ACTUAL_USER="$SUDO_USER"

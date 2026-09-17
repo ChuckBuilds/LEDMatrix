@@ -20,6 +20,38 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 cd "$PROJECT_DIR"
 
+# Report web_display_autostart the way scripts/utils/start_web_conditionally.py
+# (what ledmatrix-web.service runs) decides it: only an explicit false/off keeps
+# the web interface down; a missing key or an unreadable config starts it.
+# Prints "on <value>", "off <value>", "default" (key not set) or "unreadable".
+web_autostart_state() {
+    (cd "$1" && python3 - 2>/dev/null <<'PY'
+import json, os, sys
+sys.path.insert(0, os.path.join(os.getcwd(), "scripts", "utils"))
+try:
+    from start_web_conditionally import autostart_enabled
+except Exception:
+    def autostart_enabled(config):
+        value = config.get("web_display_autostart", True)
+        if isinstance(value, str):
+            return value.strip().lower() not in ("off", "false", "no", "0")
+        return bool(value)
+try:
+    with open(os.path.join("config", "config.json"), encoding="utf-8") as f:
+        config = json.load(f)
+except Exception:
+    config = None
+if not isinstance(config, dict):
+    print("unreadable")
+elif "web_display_autostart" not in config:
+    print("default")
+else:
+    raw = json.dumps(config["web_display_autostart"])
+    print(("on " if autostart_enabled(config) else "off ") + raw)
+PY
+    ) || echo "unknown"
+}
+
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${BLUE}1. SERVICE STATUS${NC}"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -41,14 +73,26 @@ if [ -f "$PROJECT_DIR/config/config.json" ]; then
     echo -e "${GREEN}✓ Config file found${NC}"
     
     # Check web_display_autostart setting
-    AUTOSTART=$(grep -o '"web_display_autostart"[[:space:]]*:[[:space:]]*[a-z]*' "$PROJECT_DIR/config/config.json" | grep -o '[a-z]*$')
-    
-    if [ "$AUTOSTART" == "true" ]; then
-        echo -e "${GREEN}✓ web_display_autostart: true${NC}"
-    else
-        echo -e "${YELLOW}⚠ web_display_autostart: ${AUTOSTART:-not set}${NC}"
-        echo -e "${YELLOW}  Web interface will not start unless this is set to true${NC}"
-    fi
+    AUTOSTART=$(web_autostart_state "$PROJECT_DIR")
+
+    case "$AUTOSTART" in
+        on\ *)
+            echo -e "${GREEN}✓ web_display_autostart: ${AUTOSTART#on }${NC}"
+            ;;
+        off\ *)
+            echo -e "${YELLOW}⚠ web_display_autostart: ${AUTOSTART#off }${NC}"
+            echo -e "${YELLOW}  Web interface will not start with this value${NC}"
+            ;;
+        default)
+            echo -e "${GREEN}✓ web_display_autostart: not set (defaults to on)${NC}"
+            ;;
+        unreadable)
+            echo -e "${YELLOW}⚠ config.json could not be parsed (the web interface still starts so it can be repaired)${NC}"
+            ;;
+        *)
+            echo -e "${YELLOW}⚠ web_display_autostart: could not be evaluated (python3 unavailable?)${NC}"
+            ;;
+    esac
 else
     echo -e "${RED}✗ Config file not found at: $PROJECT_DIR/config/config.json${NC}"
 fi
@@ -63,7 +107,7 @@ declare -a REQUIRED_FILES=(
     "web_interface/app.py"
     "web_interface/start.py"
     "web_interface/requirements.txt"
-    "web_interface/blueprints/api_v3.py"
+    "web_interface/blueprints/api_v3/__init__.py"
     "web_interface/blueprints/pages_v3.py"
     "scripts/utils/start_web_conditionally.py"
 )
@@ -134,8 +178,8 @@ if ! sudo systemctl is-active --quiet ledmatrix-web; then
     echo "   sudo systemctl start ledmatrix-web"
 fi
 
-if [ "$AUTOSTART" != "true" ]; then
-    echo -e "${YELLOW}→ Enable web_display_autostart in config/config.json${NC}"
+if [ "${AUTOSTART%% *}" = "off" ]; then
+    echo -e "${YELLOW}→ Set web_display_autostart to true in config/config.json (or remove it; missing means on)${NC}"
 fi
 
 if [ "$ALL_FILES_OK" = false ]; then

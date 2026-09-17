@@ -155,9 +155,14 @@ class VegasModeConfig:
     target_fps: int = 125  # Target frame rate
     buffer_ahead: int = 2  # Number of plugins to buffer ahead
 
-    # Scroll behavior
+    # Scroll behavior. Neither key steps the scroll or sets a frame rate:
+    # motion is always by elapsed time at scroll_speed px/s. With
+    # frame_based_scrolling the speed is first converted to px per
+    # scroll_delay and clamped to 0.1-5 (ScrollHelper.set_scroll_speed), so
+    # the speed actually applied is clamp(scroll_speed * scroll_delay, 0.1, 5)
+    # / scroll_delay -- at the 0.02 default, speeds under 5 px/s run at 5.
     frame_based_scrolling: bool = True
-    scroll_delay: float = 0.02  # 50 FPS effective scroll updates
+    scroll_delay: float = 0.02  # only feeds the clamp above; not a frame period
 
     # Dynamic duration
     dynamic_duration_enabled: bool = True

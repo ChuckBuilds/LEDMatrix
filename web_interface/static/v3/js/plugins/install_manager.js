@@ -168,6 +168,58 @@ const PluginInstallManager = {
         }
 
         return results;
+    },
+
+    /**
+     * Classify one POST /plugins/update answer.
+     *
+     * The route reports what actually happened in `data.update_status`
+     * (`updated`, `up_to_date`, `local_only`). A plugin the updater had
+     * nothing to do for -- e.g. a ZIP-installed monorepo plugin already at the
+     * registry version -- is still a success response, so it must not be
+     * counted as updated. Older servers only say so in the message.
+     *
+     * @param {Object} entry - One element of updateAll()'s results
+     * @returns {string} 'failed' | 'updated' | 'up_to_date' | 'local_only'
+     */
+    updateOutcome(entry) {
+        if (!entry || !entry.success) return 'failed';
+        const result = entry.result || {};
+        const status = result.data && result.data.update_status;
+        if (status === 'up_to_date' || status === 'local_only' || status === 'updated') {
+            return status;
+        }
+        const message = typeof result.message === 'string' ? result.message : '';
+        if (message.includes('already up to date')) return 'up_to_date';
+        if (message.includes('managed locally')) return 'local_only';
+        return 'updated';
+    },
+
+    /**
+     * Summarise updateAll()'s results for the Check & Update All toast.
+     *
+     * @param {Array} results - updateAll()'s results
+     * @returns {{updated: number, upToDate: number, localOnly: number, failed: number, text: string, type: string}}
+     */
+    summarizeUpdateResults(results) {
+        const counts = { updated: 0, up_to_date: 0, local_only: 0, failed: 0 };
+        for (const entry of (Array.isArray(results) ? results : [])) {
+            counts[this.updateOutcome(entry)]++;
+        }
+        const parts = [];
+        if (counts.updated > 0) parts.push(`${counts.updated} updated`);
+        if (counts.up_to_date > 0) parts.push(`${counts.up_to_date} already up to date`);
+        if (counts.local_only > 0) parts.push(`${counts.local_only} managed locally`);
+        if (counts.failed > 0) parts.push(`${counts.failed} failed`);
+        const type = counts.failed > 0 ? (counts.updated > 0 ? 'warning' : 'error') : 'success';
+        return {
+            updated: counts.updated,
+            upToDate: counts.up_to_date,
+            localOnly: counts.local_only,
+            failed: counts.failed,
+            text: parts.join(', '),
+            type
+        };
     }
 };
 

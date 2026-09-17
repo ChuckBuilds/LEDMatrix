@@ -3,8 +3,10 @@
 This guide explains how to set up a development workflow for plugins that are maintained in separate Git repositories while still being able to test them within the LEDMatrix project.
 
 > **Rendering guidance:** plugins should read the display size dynamically
-> (`self.display_manager.matrix.width/height`) rather than hardcoding one
-> panel. For plugins that want to *scale* their layout to any panel, the
+> (`self.display_manager.width/height`) rather than hardcoding one
+> panel. Don't read `display_manager.matrix.width/height`: `matrix` is
+> `None` when hardware init fails, while the `width`/`height` properties
+> fall back to the canvas size. For plugins that want to *scale* their layout to any panel, the
 > opt-in adaptive layout system ([ADAPTIVE_LAYOUT.md](ADAPTIVE_LAYOUT.md))
 > provides the shared helpers — fonts, images, and composite layouts that
 > scale. Existing plugins keep their classic rendering unless they adopt
@@ -43,28 +45,45 @@ The solution uses **symbolic links** to connect plugin repositories to the `plug
 
 ## Quick Start
 
-### 1. Link a Plugin from GitHub
+Official plugins all live in one repository,
+[ledmatrix-plugins](https://github.com/ChuckBuilds/ledmatrix-plugins), with
+one directory per plugin under `plugins/` (there are no per-plugin
+`ledmatrix-<name>` repositories). The helper script links a plugin directory
+from a checkout of that monorepo into LEDMatrix's `plugins/` directory.
 
-The easiest way to link a plugin that's already on GitHub:
+### 1. Link an Official Plugin
 
 ```bash
-./scripts/dev/dev_plugin_setup.sh link-github music
+./scripts/dev/dev_plugin_setup.sh link-github football-scoreboard
 ```
 
 This will:
-- Clone `https://github.com/ChuckBuilds/ledmatrix-music.git` to `~/.ledmatrix-dev-plugins/ledmatrix-music`
-- Create a symbolic link from `plugins/music` to the cloned repository
-- Validate that the plugin has a proper `manifest.json`
+- Clone `https://github.com/ChuckBuilds/ledmatrix-plugins.git` to
+  `~/.ledmatrix-dev-plugins/ledmatrix-plugins` (or `git pull` it if it is
+  already there)
+- Find `plugins/football-scoreboard` in it (also accepted:
+  `plugins/ledmatrix-<name>`, or a plugin whose manifest `id` is the name)
+- Validate that it has a `manifest.json`
+- Create a symbolic link named after the plugin's manifest id, e.g.
+  `plugins/football-scoreboard` → `~/.ledmatrix-dev-plugins/ledmatrix-plugins/plugins/football-scoreboard`
 
-### 2. Link a Local Plugin Repository
+`link-github music` finds the monorepo's `plugins/ledmatrix-music` directory
+and links it into LEDMatrix as `plugins/ledmatrix-music`, because
+`ledmatrix-music` is that plugin's manifest id.
 
-If you already have a plugin repository cloned locally:
+To work from your fork of the monorepo, set `github_user` in
+`dev_plugins.json` (see [Configuration](#configuration)).
+
+### 2. Link a Local Plugin Directory
+
+If you already have the monorepo (or a third-party plugin repository) cloned
+locally:
 
 ```bash
-./scripts/dev/dev_plugin_setup.sh link music ../ledmatrix-music
+./scripts/dev/dev_plugin_setup.sh link hello-world ../ledmatrix-plugins/plugins/hello-world
 ```
 
-This creates a symlink from `plugins/music` to your local repository path.
+This creates a symlink from `plugins/hello-world` to that directory.
 
 ### 3. Check Status
 
@@ -77,12 +96,16 @@ See which plugins are linked and their git status:
 ### 4. Work on Your Plugin
 
 ```bash
-cd plugins/music  # Actually editing the linked repository
-# Make your changes
+cd plugins/football-scoreboard  # Actually editing the monorepo checkout
+# Make your changes, then bump "version" in manifest.json
 git add .
-git commit -m "feat: add new feature"
-git push origin main
+git commit -m "feat(football-scoreboard): add new feature"
+git push   # to your fork, then open a PR against ledmatrix-plugins
 ```
+
+In the monorepo, every plugin change must bump `version` in the plugin's
+`manifest.json` and run `python update_registry.py`, or users won't receive
+the update.
 
 ### 5. Update Plugins
 
@@ -116,7 +139,7 @@ Links a local plugin repository to the plugins directory.
 
 **Example:**
 ```bash
-./scripts/dev/dev_plugin_setup.sh link football-scoreboard ../ledmatrix-football-scoreboard
+./scripts/dev/dev_plugin_setup.sh link football-scoreboard ../ledmatrix-plugins/plugins/football-scoreboard
 ```
 
 **Notes:**
@@ -129,23 +152,25 @@ Links a local plugin repository to the plugins directory.
 Clones a plugin from GitHub and links it.
 
 **Arguments:**
-- `plugin-name`: The name of the plugin (will be the directory name in `plugins/`)
-- `repo-url`: (Optional) Full GitHub repository URL. If omitted, constructs from pattern: `https://github.com/ChuckBuilds/ledmatrix-<plugin-name>.git`
+- `plugin-name`: Without `repo-url`, the plugin to link from the monorepo: a
+  directory under `plugins/` (`<name>` or `ledmatrix-<name>`) or a manifest
+  id. The link is named after the plugin's manifest id. With `repo-url`, the
+  name of the link in `plugins/`.
+- `repo-url`: (Optional) A plugin that has its own repository (e.g. a
+  third-party plugin). The repository root is linked.
 
 **Examples:**
 ```bash
-# Auto-construct URL from plugin name
-./scripts/dev/dev_plugin_setup.sh link-github music
+# Official plugin, from the ledmatrix-plugins monorepo
+./scripts/dev/dev_plugin_setup.sh link-github stocks
 
-# Use explicit URL
-./scripts/dev/dev_plugin_setup.sh link-github stocks https://github.com/ChuckBuilds/ledmatrix-stocks.git
-
-# Link from a different GitHub user
+# Third-party plugin with its own repository
 ./scripts/dev/dev_plugin_setup.sh link-github custom-plugin https://github.com/OtherUser/custom-plugin.git
 ```
 
 **Notes:**
 - Repositories are cloned to `~/.ledmatrix-dev-plugins/` by default (configurable)
+- The monorepo is cloned once and shared by every plugin you link from it
 - If the repository already exists, it will be updated with `git pull` instead of re-cloning
 - The cloned repository is preserved when you unlink the plugin
 
@@ -217,30 +242,28 @@ Updates plugin(s) by running `git pull` in their repositories.
 
 ### Custom Development Directory
 
-By default, GitHub repositories are cloned to `~/.ledmatrix-dev-plugins/`. You can customize this by creating a `dev_plugins.json` file:
+By default, GitHub repositories are cloned to `~/.ledmatrix-dev-plugins/`
+and official plugins come from `ChuckBuilds/ledmatrix-plugins`. To change
+either, copy `dev_plugins.json.example` (in the LEDMatrix root) to
+`dev_plugins.json` and edit it. `dev_plugins.json` is git-ignored.
 
 ```json
 {
-  "dev_plugins_dir": "/path/to/your/dev/plugins",
-  "github_user": "ChuckBuilds",
-  "github_pattern": "ledmatrix-",
-  "plugins": {
-    "music": {
-      "source": "github",
-      "url": "https://github.com/ChuckBuilds/ledmatrix-music.git",
-      "branch": "main"
-    }
-  }
+  "dev_plugins_dir": "~/.ledmatrix-dev-plugins",
+  "github_user": "your-github-user",
+  "plugins_repo": "ledmatrix-plugins",
+  "plugins_branch": "main"
 }
 ```
 
-**Configuration options:**
+**Configuration options** (all optional):
 - `dev_plugins_dir`: Where to clone GitHub repositories (default: `~/.ledmatrix-dev-plugins`)
-- `github_user`: Default GitHub username for auto-constructing URLs
-- `github_pattern`: Pattern for repository names (default: `ledmatrix-`)
-- `plugins`: Plugin definitions (optional, for future auto-discovery features)
+- `github_user`: Owner of the plugin monorepo that `link-github <name>` clones — set it to use your fork (default: `ChuckBuilds`)
+- `plugins_repo`: Name of that monorepo (default: `ledmatrix-plugins`)
+- `plugins_branch`: Branch to clone it at (default: the repository's default branch). Only applies when the clone is first made.
 
-**Note:** Copy `dev_plugins.json.example` to `dev_plugins.json` and customize it. The `dev_plugins.json` file is git-ignored.
+`github_pattern` from older versions of this guide is no longer used (the
+script warns if it is set).
 
 ## Development Workflow
 
@@ -248,43 +271,46 @@ By default, GitHub repositories are cloned to `~/.ledmatrix-dev-plugins/`. You c
 
 1. **Link your plugin for development:**
    ```bash
-   ./scripts/dev/dev_plugin_setup.sh link-github music
+   ./scripts/dev/dev_plugin_setup.sh link-github clock-simple
    ```
 
 2. **Test in LEDMatrix:**
    ```bash
-   # Run LEDMatrix with your plugin
-   python run.py
+   # Run LEDMatrix with your plugin (emulator shown)
+   python3 run.py -e
    ```
 
 3. **Make changes:**
    ```bash
-   cd plugins/music
+   cd plugins/clock-simple
    # Edit files...
    # Test changes...
    ```
 
-4. **Commit to plugin repository:**
+4. **Commit to the plugin repository:**
    ```bash
-   cd plugins/music  # This is actually your repo
+   cd plugins/clock-simple  # This is inside your monorepo checkout
+   # bump "version" in manifest.json, then from the monorepo root:
+   # python update_registry.py
    git add .
-   git commit -m "feat: add new feature"
-   git push origin main
+   git commit -m "feat(clock-simple): add new feature"
+   git push
    ```
 
 5. **Update from remote (if needed):**
    ```bash
-   ./scripts/dev/dev_plugin_setup.sh update music
+   ./scripts/dev/dev_plugin_setup.sh update clock-simple
    ```
 
 6. **When done developing:**
    ```bash
-   ./scripts/dev/dev_plugin_setup.sh unlink music
+   ./scripts/dev/dev_plugin_setup.sh unlink clock-simple
    ```
 
 ### Working with Multiple Plugins
 
-You can have multiple plugins linked simultaneously:
+You can have multiple plugins linked simultaneously. Plugins linked from the
+monorepo share one checkout:
 
 ```bash
 ./scripts/dev/dev_plugin_setup.sh link-github music
@@ -294,7 +320,7 @@ You can have multiple plugins linked simultaneously:
 # Check status of all
 ./scripts/dev/dev_plugin_setup.sh status
 
-# Update all at once
+# Update all at once (the shared monorepo checkout is pulled once)
 ./scripts/dev/dev_plugin_setup.sh update
 ```
 
@@ -409,7 +435,7 @@ If you have conflicts when updating:
 
 1. **Manually resolve in the plugin repository:**
    ```bash
-   cd ~/.ledmatrix-dev-plugins/ledmatrix-music
+   cd ~/.ledmatrix-dev-plugins/ledmatrix-plugins
    git pull
    # Resolve conflicts...
    git add .
@@ -470,18 +496,19 @@ You can mix local and GitHub plugins:
 
 The development workflow is separate from the plugin store installation:
 
-- **Plugin Store:** Installs plugins to `plugins/` as regular directories
-- **Development Setup:** Links plugin repositories as symlinks
+- **Plugin Store:** Installs plugins as regular directories in the configured
+  plugins directory (`plugin-repos/` by default)
+- **Development Setup:** Links plugin directories as symlinks in `plugins/`
 
-If you install a plugin via the store, you can still link it for development:
+The plugin loader scans only one directory, so while developing set
+`plugin_system.plugins_directory` to `plugins` (see the note at the top of
+this guide). If `plugins/` already holds a regular directory of the same
+name, `link`/`link-github` offers to rename it to
+`<name>.backup.<timestamp>` before linking.
 
-```bash
-# Store installs to plugins/music (regular directory)
-# Link for development (will prompt to replace)
-./scripts/dev/dev_plugin_setup.sh link-github music
-```
-
-When you unlink, the directory is removed. If you want to switch back to the store version, re-install it via the plugin store.
+`unlink` removes only the symlink. To switch back to the store version, set
+`plugins_directory` back to `plugin-repos` (or reinstall the plugin from the
+store).
 
 ## API Reference
 
@@ -525,7 +552,7 @@ Want to create and share your own plugin? Here's everything you need to know.
    - [Advanced Plugin Development](ADVANCED_PLUGIN_DEVELOPMENT.md) - Patterns and examples
 
 2. **Start with a template**:
-   - Use the [Hello World plugin](https://github.com/ChuckBuilds/ledmatrix-hello-world) as a starting point
+   - Use the [Hello World plugin](https://github.com/ChuckBuilds/ledmatrix-plugins/tree/main/plugins/hello-world) as a starting point
    - Or fork an existing plugin and modify it
 
 3. **Follow the plugin structure**:
@@ -589,24 +616,16 @@ Your plugin must:
 ### Versioning Best Practices
 
 - **Use semantic versioning**: `MAJOR.MINOR.PATCH` (e.g., `1.2.3`)
-- **GitHub as source of truth**: the plugin store resolves versions in this
-  order: GitHub Releases → GitHub Tags → manifest from branch → git commit hash
-- **Automatic version bumping**: install the self-contained pre-push hook in
-  your plugin repo and patch versions bump themselves on push (a git tag
-  `v{version}` is created and `manifest.json` staged automatically):
-
-  ```bash
-  # From your plugin repository directory
-  cp /path/to/LEDMatrix/scripts/git-hooks/pre-push-plugin-version .git/hooks/pre-push
-  chmod +x .git/hooks/pre-push
-  ```
-
-  Set `SKIP_TAG=1` in the environment to skip auto-tagging for one push.
-- **Manual versioning**: only needed for major/minor bumps, CI pipelines that
-  bypass hooks, or forks without the hook — use
-  `scripts/bump_plugin_version.py`.
-- **Registry stores no versions**: `plugins.json` holds only metadata (name,
-  description, repo URL).
+- **Bump `version` in `manifest.json` by hand** for every change you ship.
+  There is no automatic version-bump hook or bump script.
+- **Official (monorepo) plugins**: after bumping the manifest, run
+  `python update_registry.py` in the `ledmatrix-plugins` checkout. It copies
+  each manifest's version into `plugins.json` as `latest_version`, which is
+  what the store compares installed versions against. Without it, users
+  won't be offered the update.
+- **Plugins in their own repository**: still bump the manifest `version`,
+  so users can see which version they run; tagging releases (`v1.2.3`) to
+  match is a good habit.
 
 ### Submitting to Official Registry
 
@@ -618,12 +637,14 @@ To have your plugin added to the official plugin store:
    - Follows best practices
    - Tested on Raspberry Pi hardware
 
-2. **Create GitHub repository**:
-   - Repository name: `ledmatrix-<plugin-name>`
-   - Public repository
-   - Proper README.md with installation instructions
+2. **Choose where it lives** (see `SUBMISSION.md` in
+   [ledmatrix-plugins](https://github.com/ChuckBuilds/ledmatrix-plugins)):
+   - **In the monorepo (preferred):** fork ledmatrix-plugins, add
+     `plugins/<your-plugin-id>/`, and open a pull request
+   - **In your own public repository** (conventionally
+     `ledmatrix-<plugin-name>`), with a README that covers installation
 
-3. **Contact maintainers**:
+3. **Contact maintainers** (own-repository plugins):
    - Open a GitHub issue in the [ledmatrix-plugins](https://github.com/ChuckBuilds/ledmatrix-plugins) repository
    - Or reach out on Discord: https://discord.gg/uW36dVAtcT
    - Include: Repository URL, plugin description, why it's useful

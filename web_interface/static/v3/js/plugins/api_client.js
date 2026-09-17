@@ -124,6 +124,29 @@ const PluginAPI = {
     baseURL: '/api/v3',
     
     /**
+     * The endpoint, if it is a path under baseURL; throws INVALID_ENDPOINT
+     * otherwise. Every endpoint is one of this client's own API paths, so
+     * anything that could leave that path -- "//host", a backslash, a ".."
+     * segment, whitespace or control characters -- is a bug, not a request.
+     *
+     * @param {string} endpoint - API endpoint, starting with "/"
+     * @returns {string} The same endpoint
+     */
+    checkEndpoint(endpoint) {
+        const path = typeof endpoint === 'string' ? endpoint.split(/[?#]/)[0] : '';
+        if (!path.startsWith('/') || path.startsWith('//') ||
+                /[\\\s]/.test(endpoint) ||
+                Array.from(endpoint).some(ch => ch.charCodeAt(0) < 0x20 || ch.charCodeAt(0) === 0x7f) ||
+                path.split('/').some(segment => segment === '..' || segment === '.')) {
+            throw {
+                error_code: 'INVALID_ENDPOINT',
+                message: `Not an API endpoint: ${String(endpoint)}`
+            };
+        }
+        return endpoint;
+    },
+
+    /**
      * Make an API request with throttling and caching.
      * 
      * @param {string} endpoint - API endpoint
@@ -141,7 +164,7 @@ const PluginAPI = {
         const requestKey = `${method}:${endpoint}:${data ? JSON.stringify(data) : ''}`;
         
         const makeRequest = async () => {
-            const url = `${this.baseURL}${endpoint}`;
+            const url = `${this.baseURL}${this.checkEndpoint(endpoint)}`;
             const options = {
                 method,
                 headers: {
@@ -153,31 +176,56 @@ const PluginAPI = {
                 options.body = JSON.stringify(data);
             }
             
+            // NETWORK_ERROR means only that fetch() itself rejected: no HTTP
+            // answer arrived (connection refused/reset, e.g. the web service
+            // restarting). Callers retry that (install_manager.js updateAll).
+            // Any HTTP response is the server's -- or a proxy's -- answer, so
+            // a 502 HTML page or a JSON error without error_code is API_ERROR
+            // and is not retried.
+            let response;
             try {
-                const response = await fetch(url, options);
-                const responseData = await response.json();
-                
-                if (!response.ok) {
-                    // Handle structured errors
-                    if (responseData.error_code) {
-                        throw responseData;
-                    }
-                    throw new Error(responseData.message || `HTTP ${response.status}`);
-                }
-                
-                return responseData;
+                // url is baseURL plus an endpoint checkEndpoint() accepted: a
+                // path on this origin's API, never a caller-chosen host.
+                response = await fetch(url, options); // nosemgrep
             } catch (error) {
-                // Re-throw structured errors
-                if (error.error_code) {
-                    throw error;
-                }
-                // Wrap network errors
                 throw {
                     error_code: 'NETWORK_ERROR',
-                    message: error.message || 'Network error',
+                    message: (error && error.message) || 'Network error',
                     original_error: error
                 };
             }
+
+            let responseData = null;
+            let parseError = null;
+            try {
+                responseData = await response.json();
+            } catch (error) {
+                parseError = error;
+            }
+
+            if (!response.ok) {
+                // Handle structured errors
+                if (responseData && responseData.error_code) {
+                    throw responseData;
+                }
+                throw {
+                    error_code: 'API_ERROR',
+                    status: response.status,
+                    message: (responseData && responseData.message) || `HTTP ${response.status}`,
+                    original_error: parseError || undefined
+                };
+            }
+
+            if (parseError) {
+                throw {
+                    error_code: 'API_ERROR',
+                    status: response.status,
+                    message: `Unreadable response from the server (HTTP ${response.status})`,
+                    original_error: parseError
+                };
+            }
+
+            return responseData;
         };
         
         // Use throttling for GET requests, immediate execution for POST/PUT/DELETE
@@ -243,7 +291,7 @@ const PluginAPI = {
      * @returns {Promise<Object>} Plugin configuration
      */
     async getPluginConfig(pluginId) {
-        const response = await this.request(`/plugins/config?plugin_id=${pluginId}`);
+        const response = await this.request(`/plugins/config?plugin_id=${encodeURIComponent(pluginId)}`);
         return response.data || {};
     },
     
@@ -268,7 +316,7 @@ const PluginAPI = {
      * @returns {Promise<Object>} Response data
      */
     async resetPluginConfig(pluginId) {
-        return await this.request(`/plugins/config/reset?plugin_id=${pluginId}`, 'POST');
+        return await this.request(`/plugins/config/reset?plugin_id=${encodeURIComponent(pluginId)}`, 'POST');
     },
     
     /**
@@ -278,7 +326,7 @@ const PluginAPI = {
      * @returns {Promise<Object>} Plugin schema
      */
     async getPluginSchema(pluginId) {
-        const response = await this.request(`/plugins/schema?plugin_id=${pluginId}`);
+        const response = await this.request(`/plugins/schema?plugin_id=${encodeURIComponent(pluginId)}`);
         return response.data?.schema || null;
     },
     
@@ -341,7 +389,7 @@ const PluginAPI = {
      */
     async getPluginHealth(pluginId = null) {
         const endpoint = pluginId
-            ? `/plugins/health/${pluginId}`
+            ? `/plugins/health/${encodeURIComponent(pluginId)}`
             : '/plugins/health';
         const response = await this.request(endpoint);
         return response.data || {};
@@ -355,7 +403,7 @@ const PluginAPI = {
      */
     async getPluginMetrics(pluginId = null) {
         const endpoint = pluginId
-            ? `/plugins/metrics/${pluginId}`
+            ? `/plugins/metrics/${encodeURIComponent(pluginId)}`
             : '/plugins/metrics';
         const response = await this.request(endpoint);
         return response.data || {};

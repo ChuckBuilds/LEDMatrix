@@ -31,6 +31,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.config_manager import ConfigManager  # noqa: E402
 from src.plugin_system.plugin_manager import PluginManager  # noqa: E402
+from src.plugin_system.schema_manager import SchemaManager  # noqa: E402
 from test._api_v3_test_helpers import api_v3_client, api_v3_module  # noqa: F401,E402
 
 PLUGIN_ID = 'ledmatrix-stocks'
@@ -142,7 +143,10 @@ def test_toggle_finds_the_plugin(api_v3_client, api_v3_module, fresh_web_process
 
 
 def test_main_config_save_keeps_a_plugin_secret_out_of_config_json(
-        api_v3_client, api_v3_module, fresh_web_process, tmp_path):
+        api_v3_client, api_v3_module, fresh_web_process, plugins_dir, tmp_path):
+    # /config/main validates a plugin section like POST /plugins/config does,
+    # so it needs a real schema manager rather than the helper's mock.
+    api_v3_module.api_v3.schema_manager = SchemaManager(plugins_dir=plugins_dir)
     config_file = tmp_path / 'config.json'
     config_file.write_text('{}')
     secrets_file = tmp_path / 'config_secrets.json'

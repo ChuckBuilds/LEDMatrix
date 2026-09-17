@@ -22,6 +22,38 @@ fi
 
 PROJECT_DIR="${HOME}/LEDMatrix"
 
+# Report web_display_autostart the way scripts/utils/start_web_conditionally.py
+# (what ledmatrix-web.service runs) decides it: only an explicit false/off keeps
+# the web interface down; a missing key or an unreadable config starts it.
+# Prints "on <value>", "off <value>", "default" (key not set) or "unreadable".
+web_autostart_state() {
+    (cd "$1" && python3 - 2>/dev/null <<'PY'
+import json, os, sys
+sys.path.insert(0, os.path.join(os.getcwd(), "scripts", "utils"))
+try:
+    from start_web_conditionally import autostart_enabled
+except Exception:
+    def autostart_enabled(config):
+        value = config.get("web_display_autostart", True)
+        if isinstance(value, str):
+            return value.strip().lower() not in ("off", "false", "no", "0")
+        return bool(value)
+try:
+    with open(os.path.join("config", "config.json"), encoding="utf-8") as f:
+        config = json.load(f)
+except Exception:
+    config = None
+if not isinstance(config, dict):
+    print("unreadable")
+elif "web_display_autostart" not in config:
+    print("default")
+else:
+    raw = json.dumps(config["web_display_autostart"])
+    print(("on " if autostart_enabled(config) else "off ") + raw)
+PY
+    ) || echo "unknown"
+}
+
 echo "1. Checking service status..."
 echo "------------------------------"
 if systemctl is-active --quiet ledmatrix-web 2>/dev/null || sudo systemctl is-active --quiet ledmatrix-web 2>/dev/null; then
@@ -47,16 +79,25 @@ echo "3. Checking configuration file..."
 echo "------------------------------"
 if [ -f "${PROJECT_DIR}/config/config.json" ]; then
     echo -e "${GREEN}✓ Config file exists${NC}"
-    AUTOSTART=$(grep -o '"web_display_autostart":\s*\(true\|false\)' "${PROJECT_DIR}/config/config.json" | grep -o '\(true\|false\)' || echo "not found")
-    if [ "$AUTOSTART" = "true" ]; then
-        echo -e "${GREEN}✓ web_display_autostart is set to TRUE${NC}"
-    elif [ "$AUTOSTART" = "false" ]; then
-        echo -e "${RED}✗ web_display_autostart is set to FALSE (web UI won't start!)${NC}"
-        echo "   Fix: Edit config.json and set 'web_display_autostart': true"
-    else
-        echo -e "${YELLOW}⚠ web_display_autostart setting not found (defaults to false)${NC}"
-        echo "   Fix: Add 'web_display_autostart': true to config.json"
-    fi
+    AUTOSTART=$(web_autostart_state "$PROJECT_DIR")
+    case "$AUTOSTART" in
+        on\ *)
+            echo -e "${GREEN}✓ web_display_autostart is ${AUTOSTART#on } (web UI starts)${NC}"
+            ;;
+        off\ *)
+            echo -e "${RED}✗ web_display_autostart is ${AUTOSTART#off } (web UI won't start!)${NC}"
+            echo "   Fix: Edit config.json and set 'web_display_autostart': true"
+            ;;
+        default)
+            echo -e "${GREEN}✓ web_display_autostart is not set (defaults to on; web UI starts)${NC}"
+            ;;
+        unreadable)
+            echo -e "${YELLOW}⚠ config.json could not be parsed (the web UI still starts so it can be repaired)${NC}"
+            ;;
+        *)
+            echo -e "${YELLOW}⚠ Could not evaluate web_display_autostart (python3 unavailable?)${NC}"
+            ;;
+    esac
 else
     echo -e "${RED}✗ Config file NOT FOUND at ${PROJECT_DIR}/config/config.json${NC}"
 fi
@@ -82,7 +123,7 @@ FILES_TO_CHECK=(
     "web_interface/start.py"
     "web_interface/app.py"
     "web_interface/requirements.txt"
-    "web_interface/blueprints/api_v3.py"
+    "web_interface/blueprints/api_v3/__init__.py"
     "web_interface/blueprints/pages_v3.py"
 )
 
@@ -175,7 +216,7 @@ echo "Diagnostic Summary"
 echo "=========================================="
 echo ""
 echo "Most common issues:"
-echo "  1. web_display_autostart is false or missing in config.json"
+echo "  1. web_display_autostart is set to false in config.json (a missing key means on)"
 echo "  2. Service not enabled or not started"
 echo "  3. Missing dependencies (Flask, etc.)"
 echo "  4. Import errors in web_interface/app.py"

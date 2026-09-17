@@ -37,9 +37,11 @@ from PIL import Image, ImageDraw, ImageFont
 from src.common.font_layout import crisp_size, load_truetype, resolve_asset_path
 from src.display_geometry import (
     DEFAULT_CHAIN_LENGTH, DEFAULT_COLS, DEFAULT_PARALLEL, DEFAULT_ROWS,
-    physical_size, resolve_double_sided,
+    ORIENTATION_ROTATE_DEGREES, compose_pixel_mapper_config, physical_size,
+    resolve_double_sided,
 )
-from src.pi5_matrix_support import is_raspberry_pi_5, pi5_unsupported_settings
+from src.matrix_support import MatrixSettingsRefused, library_refusals, refusal_message
+from src.pi5_matrix_support import is_raspberry_pi_5
 import threading
 import time
 from collections import OrderedDict
@@ -91,9 +93,11 @@ class _LogicalMatrix:
     """Proxy that reports a logical (per-screen) size for a physical matrix.
 
     In double-sided mode the physical panel chain shows N identical copies of a
-    smaller logical screen. Plugins size themselves from ``matrix.width`` /
-    ``matrix.height`` (the documented convention, used at 30+ call sites), so
-    this proxy reports the logical dimensions while delegating every real
+    smaller logical screen. Plugins size themselves from
+    ``display_manager.width`` / ``height`` (the documented convention), which
+    defer to ``matrix.width`` / ``matrix.height`` -- and many older plugins read
+    ``matrix.width`` directly -- so this proxy reports the logical dimensions
+    while delegating every real
     operation — ``CreateFrameCanvas``, ``SwapOnVSync``, ``brightness``,
     ``Clear`` and so on — to the underlying physical matrix. The duplication
     itself happens once per frame in :meth:`DisplayManager.update_display`.
@@ -247,28 +251,41 @@ class DisplayManager:
         # Calendar manager is now initialized by DisplayController
         
     # Orientation setting -> rpi-rgb-led-matrix "Rotate:<deg>" pixel-mapper suffix.
-    # "normal" needs no suffix since 0 degrees is the identity transform.
-    _ORIENTATION_ROTATE_DEGREES = {'normal': None, '90': 90, '180': 180, '270': 270}
+    _ORIENTATION_ROTATE_DEGREES = ORIENTATION_ROTATE_DEGREES
 
     def _build_pixel_mapper_config(self, hardware_config: dict) -> str:
-        """Compose the raw pixel_mapper_config string with the orientation setting.
+        """Compose pixel_mapper_config with the orientation setting.
 
-        `pixel_mapper_config` stays available as a free-form advanced field (e.g.
-        for "U-mapper" chain layouts); `orientation` is the user-facing dropdown
-        for physical mounting (e.g. panels mounted upside down) and is appended as
-        a "Rotate:<deg>" mapper rather than overwriting any existing config.
+        See :func:`src.display_geometry.compose_pixel_mapper_config`, which the
+        web preview shares so it sizes the canvas the same way.
         """
-        base_mapper = (hardware_config.get('pixel_mapper_config') or '').strip()
-        orientation = hardware_config.get('orientation', 'normal')
-        degrees = self._ORIENTATION_ROTATE_DEGREES.get(orientation)
-        if degrees is None:
-            return base_mapper
-        rotate_mapper = f'Rotate:{degrees}'
-        return f'{base_mapper};{rotate_mapper}' if base_mapper else rotate_mapper
+        return compose_pixel_mapper_config(hardware_config)
+
+    @staticmethod
+    def _fallback_advice(cause: str, error: Exception) -> str:
+        """What to do about a failed matrix init, for the log.
+
+        Only a library failure gets the rebuild hint: advice about the build
+        or GPIO timing sends someone whose settings were refused the wrong way.
+        """
+        if cause == "settings":
+            return (f"{error} Change these in the web interface's Display tab "
+                    "(or display.hardware / display.runtime in config.json) "
+                    "and restart the display service.")
+        if cause == "forced":
+            return f"Error: {error}."
+        advice = (f"Error: {error}. If the rgbmatrix library printed a message "
+                  "just before this, it names the problem.")
+        if is_raspberry_pi_5():
+            advice += (" On a Raspberry Pi 5, an mmap error means the library was "
+                       "built without Pi 5 support: sudo RPI_RGB_FORCE_REBUILD=1 "
+                       "./first_time_install.sh")
+        return advice
 
     def _setup_matrix(self):
         """Initialize the RGB matrix with configuration settings."""
         _init_error_str = None
+        _init_cause = None
         try:
             # Allow callers (e.g., web UI) to force non-hardware fallback mode
             if getattr(self, '_force_fallback', False):
@@ -278,63 +295,25 @@ class DisplayManager:
             # Hardware configuration
             hardware_config = self.config.get('display', {}).get('hardware', {})
             runtime_config = self.config.get('display', {}).get('runtime', {})
+
+            # The library has no error path for many settings it can't use:
+            # it returns no matrix (which the binding doesn't check, so the
+            # process crashes on its next call) or calls abort(), and systemd
+            # restarts the service into the same crash. Refuse those first so
+            # they become a logged, reported fallback (src/matrix_support.py).
+            refused = refusal_message(library_refusals(
+                hardware_config, runtime_config, pi5=is_raspberry_pi_5()))
+            if refused:
+                if os.getenv("EMULATOR", "false") != "true":
+                    raise MatrixSettingsRefused(refused)
+                logger.warning("Emulator mode: continuing, but on a real panel the display would not start. %s", refused)
             
-            # Basic hardware settings
-            options.rows = hardware_config.get('rows', DEFAULT_ROWS)
-            options.cols = hardware_config.get('cols', DEFAULT_COLS)
-            options.chain_length = hardware_config.get('chain_length', DEFAULT_CHAIN_LENGTH)
-            options.parallel = hardware_config.get('parallel', DEFAULT_PARALLEL)
-            options.hardware_mapping = hardware_config.get('hardware_mapping', 'adafruit-hat-pwm')
-            
-            # Performance and stability settings
-            options.brightness = hardware_config.get('brightness', 90)
-            options.pwm_bits = hardware_config.get('pwm_bits', 10)
-            options.pwm_lsb_nanoseconds = hardware_config.get('pwm_lsb_nanoseconds', 150)
-            options.led_rgb_sequence = hardware_config.get('led_rgb_sequence', 'RGB')
-            options.pixel_mapper_config = self._build_pixel_mapper_config(hardware_config)
-            options.row_address_type = hardware_config.get('row_address_type', 0)
-            options.multiplexing = hardware_config.get('multiplexing', 0)
-            options.panel_type = hardware_config.get('panel_type', '')
-            options.disable_hardware_pulsing = hardware_config.get('disable_hardware_pulsing', False)
-            options.show_refresh_rate = hardware_config.get('show_refresh_rate', False)
-            options.limit_refresh_rate_hz = hardware_config.get('limit_refresh_rate_hz', 90)
-            options.gpio_slowdown = runtime_config.get('gpio_slowdown', 3)
-            
-            # Disable internal privilege dropping - we manage this via systemd or remain root
-            # This prevents the library from dropping to 'daemon' user which breaks file permissions
-            options.drop_privileges = False
-            
-            # Additional settings from config
-            if 'scan_mode' in hardware_config:
-                options.scan_mode = hardware_config.get('scan_mode')
-            if 'pwm_dither_bits' in hardware_config:
-                options.pwm_dither_bits = hardware_config.get('pwm_dither_bits')
-            if 'inverse_colors' in hardware_config:
-                options.inverse_colors = hardware_config.get('inverse_colors')
-            # Pi 5 only: 0=PIO/RP1 coprocessor (default, less CPU),
-            # 1=RIO/Registered IO (faster; gpio_slowdown effect is inverted in this mode)
-            if 'rp1_rio' in runtime_config:
-                if hasattr(options, 'rp1_rio'):
-                    options.rp1_rio = runtime_config.get('rp1_rio')
-                else:
-                    logger.warning(
-                        "rp1_rio is set in config but the installed rgbmatrix library does "
-                        "not support it — the library was likely built without Pi 5 RP1 "
-                        "support (mmap to 0x3f000000 instead of RP1 chip). "
-                        "Fix: sudo RPI_RGB_FORCE_REBUILD=1 ./first_time_install.sh"
-                    )
+            # Every option comes from display.hardware / display.runtime, in
+            # one place that scripts/scroll_speeds.py shares.
+            self.apply_matrix_options(options, self.config)
             
             logger.info(f"Initializing RGB Matrix with settings: rows={options.rows}, cols={options.cols}, chain_length={options.chain_length}, parallel={options.parallel}, hardware_mapping={options.hardware_mapping}")
             
-            # On a Pi 5 the library hands back no matrix for settings its RP1
-            # path can't drive, and the binding doesn't check -- the process
-            # would crash on its next call instead of reaching the fallback
-            # below. Raise first so it is a logged, reported init failure.
-            if os.getenv("EMULATOR", "false") != "true" and is_raspberry_pi_5():
-                unsupported = pi5_unsupported_settings(hardware_config)
-                if unsupported:
-                    raise RuntimeError(unsupported)
-
             # Initialize the matrix
             self.matrix = RGBMatrix(options=options)
             logger.info("RGB Matrix initialized successfully")
@@ -379,7 +358,12 @@ class DisplayManager:
             
         except Exception as e:
             _init_error_str = str(e)
-            logger.error(f"Failed to initialize RGB Matrix: {e}", exc_info=True)
+            if isinstance(e, MatrixSettingsRefused):
+                _init_cause = "settings"
+                logger.error("Failed to initialize RGB Matrix: %s", e)
+            else:
+                _init_cause = "forced" if getattr(self, '_force_fallback', False) else "library"
+                logger.error(f"Failed to initialize RGB Matrix: {e}", exc_info=True)
             # Create a fallback image for web preview using configured dimensions when available
             self.matrix = None
             try:
@@ -406,15 +390,18 @@ class DisplayManager:
                 # Best-effort; ignore drawing errors in fallback
                 pass
             logger.error(
-                f"Matrix initialization failed — running in fallback/simulation mode "
-                f"(size {fallback_width}x{fallback_height}). Error: {e}. "
-                "On Raspberry Pi 5: ensure rpi-rgb-led-matrix was built from the latest "
-                "submodule (re-run first_time_install.sh). gpio_slowdown of 2–3 is typical for Pi 5 PIO mode."
-            )
+                "Matrix initialization failed — running in fallback/simulation mode "
+                "(size %dx%d). %s",
+                fallback_width, fallback_height, self._fallback_advice(_init_cause, e))
             # Do not raise here; allow fallback mode so web preview and non-hardware environments work
 
         # Write hardware status file so the web UI can surface init failures
-        _hw_status = {"ok": self.matrix is not None, "error": _init_error_str}
+        # cause: None when ok; "settings" when LEDMatrix refused the config
+        # (fix the named settings), "library" when the library itself failed,
+        # "forced" for a caller-requested fallback. The Display tab keys its
+        # advice on it.
+        _hw_status = {"ok": self.matrix is not None, "error": _init_error_str,
+                      "cause": None if self.matrix is not None else _init_cause}
         _status_path = "/tmp/led_matrix_hw_status.json"  # nosec B108
         try:
             if os.path.islink(_status_path):
@@ -682,8 +669,10 @@ class DisplayManager:
     def render_size(self, width: int, height: Optional[int] = None):
         """Temporarily present a smaller logical canvas to plugins.
 
-        Plugins lay out against ``display_manager.matrix.width`` (and the
-        ``width``/``height`` properties, which defer to it), so the only way to
+        Plugins lay out against the ``display_manager.width``/``height``
+        properties (which defer to ``matrix.width`` when hardware is present,
+        and to the canvas when it is not; some older plugins read
+        ``matrix.width`` directly), so the only way to
         get a *narrower layout* rather than a cropped one is to tell the plugin
         the screen is narrower while it renders. Trimming after the fact cannot
         fix a forecast spread across five columns or a progress bar drawn at
@@ -1370,6 +1359,68 @@ class DisplayManager:
         
         return dt.strftime(f"%b %-d{suffix}") 
 
+    @classmethod
+    def apply_matrix_options(cls, options, config: Dict[str, Any]):
+        """Fill ``options`` (an ``RGBMatrixOptions``) from the LEDMatrix config.
+
+        This is exactly what the display service drives the panel with, so a
+        tool that opens the matrix itself (``scripts/scroll_speeds.py``) gets
+        the same panel -- same runtime ``gpio_slowdown``, ``rp1_rio``,
+        ``panel_type``, orientation and defaults -- rather than a private copy
+        that drifts. Does not open the matrix. Returns ``options``.
+        """
+        display = config.get('display', {}) if isinstance(config, dict) else {}
+        hardware_config = display.get('hardware', {})
+        runtime_config = display.get('runtime', {})
+
+        # Basic hardware settings
+        options.rows = hardware_config.get('rows', DEFAULT_ROWS)
+        options.cols = hardware_config.get('cols', DEFAULT_COLS)
+        options.chain_length = hardware_config.get('chain_length', DEFAULT_CHAIN_LENGTH)
+        options.parallel = hardware_config.get('parallel', DEFAULT_PARALLEL)
+        options.hardware_mapping = hardware_config.get('hardware_mapping', 'adafruit-hat-pwm')
+
+        # Performance and stability settings
+        options.brightness = hardware_config.get('brightness', 90)
+        options.pwm_bits = hardware_config.get('pwm_bits', 10)
+        options.pwm_lsb_nanoseconds = hardware_config.get('pwm_lsb_nanoseconds', 150)
+        options.led_rgb_sequence = hardware_config.get('led_rgb_sequence', 'RGB')
+        # _build_pixel_mapper_config reads only class attributes, so the class
+        # stands in for an instance here.
+        options.pixel_mapper_config = cls._build_pixel_mapper_config(cls, hardware_config)
+        options.row_address_type = hardware_config.get('row_address_type', 0)
+        options.multiplexing = hardware_config.get('multiplexing', 0)
+        options.panel_type = hardware_config.get('panel_type', '')
+        options.disable_hardware_pulsing = hardware_config.get('disable_hardware_pulsing', False)
+        options.show_refresh_rate = hardware_config.get('show_refresh_rate', False)
+        options.limit_refresh_rate_hz = hardware_config.get('limit_refresh_rate_hz', 90)
+        options.gpio_slowdown = runtime_config.get('gpio_slowdown', 3)
+
+        # Disable internal privilege dropping - we manage this via systemd or remain root
+        # This prevents the library from dropping to 'daemon' user which breaks file permissions
+        options.drop_privileges = False
+
+        # Additional settings from config
+        if 'scan_mode' in hardware_config:
+            options.scan_mode = hardware_config.get('scan_mode')
+        if 'pwm_dither_bits' in hardware_config:
+            options.pwm_dither_bits = hardware_config.get('pwm_dither_bits')
+        if 'inverse_colors' in hardware_config:
+            options.inverse_colors = hardware_config.get('inverse_colors')
+        # Pi 5 only: 0=PIO/RP1 coprocessor (default, less CPU),
+        # 1=RIO/Registered IO (faster; gpio_slowdown effect is inverted in this mode)
+        if 'rp1_rio' in runtime_config:
+            if hasattr(options, 'rp1_rio'):
+                options.rp1_rio = runtime_config.get('rp1_rio')
+            else:
+                logger.warning(
+                    "rp1_rio is set in config but the installed rgbmatrix library does "
+                    "not support it — the library was likely built without Pi 5 RP1 "
+                    "support (mmap to 0x3f000000 instead of RP1 chip). "
+                    "Fix: sudo RPI_RGB_FORCE_REBUILD=1 ./first_time_install.sh"
+                )
+        return options
+
     @property
     def refresh_hz(self) -> float:
         """The panel's refresh rate in Hz, from the hardware config.
@@ -1414,6 +1465,12 @@ class DisplayManager:
         how many panel refreshes each frame is held for -- 2 gives one whole
         pixel every second refresh, which is how a scroll runs at half the
         refresh rate without fractional pixel positions.
+
+        The hold is part of the scroll's speed. A ScrollHelper configured by
+        ``scroll_config.configure()`` advances a fixed whole-pixel step per
+        presented frame and reads no clock, so pass the returned
+        ``settings.frame_hold`` here: a scroll that leaves it at 1 is
+        presented every refresh and runs ``frame_hold`` times too fast.
 
         The hold is set here rather than once at plugin construction because
         it must not outlive the scroll that asked for it: plugins share one

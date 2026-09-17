@@ -83,8 +83,9 @@ second refresh, instead of half a pixel every refresh (which has no good
 rendering, only a choice between blur and judder).
 
 `scroll_config.configure()` snaps the requested speed to the nearest entry on
-the ladder and reports the hold that speed needs. It does **not** apply the
-hold: the hold belongs to a scroll, not to a plugin's lifetime, and plugins
+the ladder, sets the helper to advance that entry's whole-pixel step on every
+presented frame (`ScrollHelper.set_pixels_per_frame`), and reports the hold
+that speed needs. It does **not** apply the hold: the hold belongs to a scroll, not to a plugin's lifetime, and plugins
 share one display manager -- one set at construction is reset the moment any
 other plugin finishes scrolling. Apply it yourself when the scroll starts:
 
@@ -102,10 +103,18 @@ self.display_manager.set_scrolling_state(True, frame_hold=settings.frame_hold)
 
 Passing `display_manager` only lets `configure` read the true refresh rate from
 `display.hardware`, which a plugin config cannot see. Skipping the
-`set_scrolling_state` call is the mistake that matters: the speed still
-resolves, but the panel keeps presenting a new frame every refresh, so a slow
-snapped speed falls back to fractional pixels. Pass `snap_to_crisp=False` to
-keep an exact requested speed and accept the artefacts.
+`set_scrolling_state(True, frame_hold=...)` call is the mistake that matters.
+The helper consults no clock in this mode -- it moves the fixed step once per
+`update_scroll_position()` call, and `SwapOnVSync` is what paces those calls --
+so without the hold the panel presents a new frame every refresh and the scroll
+runs `frame_hold` times too fast: 50 px/s (hold 2) plays at 100 px/s.
+
+Pass `snap_to_crisp=False` to keep an exact requested speed and accept the
+artefacts. The helper then paces off elapsed time instead of stepping, and the
+hold is 1.
+
+The General tab's `target_fps` ("Scroll Frame Rate") plays no part in any of
+this: frames are presented at the panel refresh divided by the hold.
 
 Speeds slower than about 20 px/s are stepped no matter what, because a 1-pixel
 advance at 20 fps is simply a coarse increment. That is the pixel pitch, not a
@@ -123,9 +132,12 @@ settings = scroll_config.configure(
     self.scroll_helper,
     plugin_config=self.config,
     global_config=self.global_config,
-    refresh_hz=scroll_config.refresh_hz_from_config(self.global_config),
+    display_manager=self.display_manager,
     plugin_logger=self.logger,
 )
+
+# each frame of a scroll (or at least when it starts):
+self.display_manager.set_scrolling_state(True, frame_hold=settings.frame_hold)
 ```
 
 It resolves every config shape in one place, applies the speed, and returns
@@ -153,6 +165,14 @@ schema defaults are merged into plugin config. Ranking it above the pair means
 it is always present and always wins, so the documented settings become
 unreachable. That is a real, shipped bug — see
 [ledmatrix-plugins#408](https://github.com/ChuckBuilds/ledmatrix-plugins/issues/408).
+
+The flip side: a `scroll_pixels_per_second` you add by hand is ignored whenever
+the plugin's config also carries the pair, which it does whenever the pair has
+a schema default. Set the speed through the pair instead.
+
+The sports scoreboards (`src.common.sports_scroll`) are the exception to all of
+the above: they read `scroll_settings.scroll_speed` per league as px/s directly,
+and their `scroll_delay` is kept for compatibility but ignored for pacing.
 
 If you are writing a plugin: do not give a deprecated key a schema default.
 
@@ -198,8 +218,16 @@ zero pixels and rendered an identical frame, which dirty-tracking skipped, so
 it returned in ~2 ms and the beat repeated. No `scroll_delay` value tunes this
 out — a shorter delay just trades stalled frames for periodic double-steps.
 
-`ScrollHelper` now accumulates elapsed time in both modes at the same
-configured speed, so position stays proportional to real time.
+A crisp speed configured through `scroll_config` no longer consults a clock at
+all. Once `SwapOnVSync` blocks until the panel has taken the frame, the frame
+count is a truer clock than `time.time()`, so the helper advances a fixed whole
+number of pixels per presented frame (`set_pixels_per_frame`) and the display
+manager holds each frame for `frame_hold` refreshes. Every frame moves the eye
+by the same amount.
+
+The time-based path remains only for callers that set a speed directly or pass
+`snap_to_crisp=False`. There, frame-based mode no longer steps either: it
+advances by elapsed time at `scroll_speed / scroll_delay` px/s.
 
 ## Diagnosing a juddery scroller
 
@@ -222,11 +250,17 @@ p95 10.11ms max 12.03ms min 7.98ms | stalls 0 (0.0%) skips 0 (0.0%)
 
 Reading it, on a 100 Hz panel:
 
+A healthy median is the refresh period times the scroll's frame hold: 10 ms
+for a hold of 1 (100 px/s), **20 ms for 50 px/s** (hold 2), 30 ms for 33.3 px/s.
+A 20 ms median on a 50 px/s scroll is the hold doing its job, not missed
+refreshes. The `Scroll configured:` log line gives the hold (`1px every 2
+refreshes`).
+
 | you see | it means |
 |---|---|
-| median 10 ms, p95 within ~0.5 ms of it | healthy — locked to the panel |
-| p95 or max at 20/30/50 ms | frames missing refreshes — per-frame work is overrunning, or a background thread is holding the GIL |
-| non-zero **skips**, or a median *below* 10 ms | **duplicate frames** — the swap was skipped because the image did not change, so the frame never waited on vsync. The scroller is advancing less than one pixel per frame. |
+| median = refresh period × hold, p95 within ~0.5 ms of it | healthy — locked to the panel |
+| p95 or max a whole refresh period or more above that median | frames missing refreshes — per-frame work is overrunning, or a background thread is holding the GIL |
+| non-zero **skips**, or a median *below* the expected one | **duplicate frames** — the swap was skipped because the image did not change, so the frame never waited on vsync. The scroller is advancing less than one pixel per frame, which a crisp fixed-step scroll never does; look for a plugin pacing off time or not passing the hold. |
 | non-zero **stalls** | frames past 1.5× the median, which is the measure of judder that survives averaging |
 
 `stalls` and `skips` are both counted against that window's own median, so they

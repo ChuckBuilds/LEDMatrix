@@ -8,6 +8,7 @@ Fails fast with clear error messages to prevent runtime issues.
 import os
 from typing import Any, List, Optional, Tuple
 from pathlib import Path
+from src.core_config_keys import CORE_CONFIG_KEYS
 from src.exceptions import ConfigError, PluginError, CacheError
 from src.logging_config import get_logger
 
@@ -275,8 +276,9 @@ class StartupValidator:
             
             # Check for enabled plugins that don't exist
             for plugin_id, plugin_config in config.items():
-                # Skip non-plugin config sections
-                if plugin_id in ['display', 'schedule', 'timezone', 'plugin_system']:
+                # Skip core sections: auto_update and dim_schedule have an
+                # 'enabled' key too, and are not plugins that went missing.
+                if plugin_id in CORE_CONFIG_KEYS:
                     continue
                 
                 if not isinstance(plugin_config, dict):

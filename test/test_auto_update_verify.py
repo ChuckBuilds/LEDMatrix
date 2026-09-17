@@ -69,6 +69,8 @@ class FakeHost:
         self.running_head = None  # not restarted yet: still the old, healthy code
         self.restarts = []        # (unit, commit it was restarted onto)
         self.pip_installs = []
+        self.pip_timeouts = []
+        self.pip = None  # optional (args, host) -> result, or raises, instead of pip_ok
         self.now = 0.0
         self.nrestarts = 0
 
@@ -90,6 +92,9 @@ class FakeHost:
             return done(args, f'{self.nrestarts}\n')
         if args[0] == 'sudo' and any(a.endswith('safe_pip_install.sh') for a in args):
             self.pip_installs.append(args[-1])
+            self.pip_timeouts.append(kwargs.get('timeout'))
+            if self.pip:
+                return self.pip(args, self)
             return done(args, rc=0 if self.pip_ok else 1)
         if args[:4] == ['sudo', '-n', 'systemctl', 'restart']:
             if self.restart_failures:
@@ -169,6 +174,77 @@ def test_a_failed_dependency_reinstall_is_reported(tmp_path):
                                                pip_ok=False)
     assert result['status'] == 'rolled_back' and head == old
     assert 'Install Base Requirements' in result['detail']
+
+
+def _rollback_with_pip(tmp_path, pip, web_requirements_too=False):
+    """Roll back an update that changed the requirements, with pip faked by ``pip``."""
+    repo, old, new = updated_repo(tmp_path, new_requirements=True)
+    if web_requirements_too:
+        (repo / 'web_interface').mkdir()
+        (repo / 'web_interface' / 'requirements.txt').write_text('flask\n')
+        git(repo, 'add', '.')
+        git(repo, 'commit', '-qm', 'web reqs')
+        (repo / 'web_interface' / 'requirements.txt').write_text('flask\nnew\n')
+        (repo / 'requirements.txt').write_text('requests\nnewer\n')
+        git(repo, 'commit', '-qam', 'bump both')
+        old, new = git(repo, 'rev-parse', 'HEAD~1'), git(repo, 'rev-parse', 'HEAD')
+    host = FakeHost(repo, new)
+    host.pip = pip
+    ok, detail = host.verifier().rollback({'old_head': old, 'new_head': new})
+    return ok, detail, host
+
+
+def test_a_failed_pip_is_not_run_again_with_the_other_bash(tmp_path):
+    """Retrying after pip itself ran only repeats it, and every repeat can
+    take PIP_TIMEOUT_SECONDS of the unit's time limit."""
+    ok, detail, host = _rollback_with_pip(
+        tmp_path, lambda args, h: subprocess.CompletedProcess(args, 1, '', 'ERROR: No matching distribution'))
+    assert ok and 'requirements.txt' in detail
+    assert len(host.pip_installs) == 1
+
+
+def test_a_pip_timeout_is_not_retried(tmp_path):
+    def slow(args, h):
+        h.now += h.pip_timeouts[-1]
+        raise subprocess.TimeoutExpired(args, h.pip_timeouts[-1])
+    ok, detail, host = _rollback_with_pip(tmp_path, slow)
+    assert ok and 'Install Base Requirements' in detail
+    assert len(host.pip_installs) == 1
+
+
+def test_a_sudo_refusal_tries_the_next_bash(tmp_path):
+    def refused_once(args, h):
+        if len(h.pip_installs) == 1:
+            return subprocess.CompletedProcess(args, 1, '', 'sudo: a password is required')
+        return done(args)
+    ok, detail, host = _rollback_with_pip(tmp_path, refused_once)
+    assert ok and detail == ''
+    assert len(host.pip_installs) == 2
+
+
+def test_reinstalls_share_one_time_budget(tmp_path):
+    def hangs(args, h):
+        h.now += h.pip_timeouts[-1]
+        raise subprocess.TimeoutExpired(args, h.pip_timeouts[-1])
+    ok, detail, host = _rollback_with_pip(tmp_path, hangs, web_requirements_too=True)
+    assert ok and 'requirements.txt' in detail and 'web_interface/requirements.txt' in detail
+    assert sum(host.pip_timeouts) <= av.PIP_BUDGET_SECONDS
+    assert len(host.pip_installs) == 1, "the first file used the whole budget"
+
+
+def test_the_worst_case_fits_the_unit_time_limit():
+    """systemd kills the check at TimeoutStartSec, mid-rollback, and the update
+    then sits in "verifying" until the web interface calls it lost."""
+    from web_interface import auto_update as au
+    service = (ROOT / 'systemd' / 'ledmatrix-update-verify.service').read_text(encoding='utf-8')
+    minutes = int(re.search(r'^TimeoutStartSec=(\d+)min$', service, re.M).group(1))
+    assert av.WORST_CASE_SECONDS < minutes * 60
+    assert minutes * 60 < au.VERIFY_LOST_SECONDS, "the web UI must not call a running check lost"
+
+
+def test_sudo_refusal_wording_matches_permission_utils():
+    from src.common import permission_utils
+    assert set(av.SUDO_REFUSAL_PHRASES) == set(permission_utils.SUDO_REFUSAL_PHRASES)
 
 
 def test_still_broken_after_rolling_back_is_rollback_failed(tmp_path):

@@ -273,7 +273,7 @@ sudo systemctl cat ledmatrix-web | grep User
 1. **Verify file structure:**
    ```bash
    ls -l web_interface/app.py
-   ls -l web_interface/blueprints/api_v3.py
+   ls -ld web_interface/blueprints/api_v3/
    ls -l web_interface/blueprints/pages_v3.py
    ```
 
@@ -531,7 +531,7 @@ sudo systemctl cat ledmatrix-web | grep User
 
    ```bash
    # Clear the cache with the helper script
-   sudo python3 scripts/utils/clear_cache.py
+   sudo python3 scripts/utils/clear_cache.py --clear-all
 
    # Or remove files manually from the cache dir in use, e.g.:
    sudo rm -rf /var/cache/ledmatrix/*

@@ -12,12 +12,36 @@ from web_interface.blueprints.api_v3 import (
     success_response,
 )
 from src.common.path_safety import resolve_under
-from src.pi5_matrix_support import is_raspberry_pi_5, pi5_unsupported_settings
+from src.display_geometry import ORIENTATION_ROTATE_DEGREES
+from src.matrix_support import INT_SETTING_LIMITS, describe_range, library_refusals, refusal_message
+from src.pi5_matrix_support import is_raspberry_pi_5
 import web_interface.blueprints.api_v3 as _pkg
+
 # Read through the module rather than bound by value: tests patch these
 # as module attributes, and a value binding would not see the patch.
 # Several are also called from helpers that live in __init__, so the
 # package is the only patch point that covers every caller.
+
+#: Hidden input the v3 settings forms (general.html, display.html,
+#: durations.html) post to /config/main. Its presence tells save_main_config
+#: that a missing checkbox was unchecked, not merely left out of an API call.
+FORM_SECTION_FIELD = '__form_section'
+
+
+def _day_setting(data, day, flat_key, nested_key):
+    """(present, value) of one per-day schedule setting in a POST body.
+
+    The schedule forms post flat keys (``monday_start``), while GET returns
+    the stored shape, ``days.monday.start_time``. Accept both, so a client can
+    post back what it read; a flat key wins when a body carries both.
+    """
+    if flat_key in data:
+        return True, data[flat_key]
+    days = data.get('days')
+    day_config = days.get(day) if isinstance(days, dict) else None
+    if isinstance(day_config, dict) and nested_key in day_config:
+        return True, day_config[nested_key]
+    return False, None
 
 
 @api_v3.route('/config/main', methods=['GET'])
@@ -123,8 +147,8 @@ def save_schedule_config():
                 end_key = f'{day}_end'
 
                 # Check if day is enabled
-                if enabled_key in data:
-                    enabled_val = data[enabled_key]
+                has_enabled, enabled_val = _day_setting(data, day, enabled_key, 'enabled')
+                if has_enabled:
                     # Handle checkbox values that may come as 'on', True, or False
                     if isinstance(enabled_val, str):
                         day_config['enabled'] = enabled_val.lower() in ('true', 'on', '1')
@@ -140,15 +164,8 @@ def save_schedule_config():
                     start_time = None
                     end_time = None
 
-                    if start_key in data and data[start_key]:
-                        start_time = data[start_key]
-                    else:
-                        start_time = '07:00'
-
-                    if end_key in data and data[end_key]:
-                        end_time = data[end_key]
-                    else:
-                        end_time = '23:00'
+                    start_time = _day_setting(data, day, start_key, 'start_time')[1] or '07:00'
+                    end_time = _day_setting(data, day, end_key, 'end_time')[1] or '23:00'
 
                     # Validate time formats
                     is_valid, error_msg = _validate_time_format(start_time)
@@ -352,8 +369,8 @@ def save_dim_schedule_config():
                 end_key = f'{day}_end'
 
                 # Check if day is enabled
-                if enabled_key in data:
-                    enabled_val = data[enabled_key]
+                has_enabled, enabled_val = _day_setting(data, day, enabled_key, 'enabled')
+                if has_enabled:
                     if isinstance(enabled_val, str):
                         day_config['enabled'] = enabled_val.lower() in ('true', 'on', '1')
                     else:
@@ -364,8 +381,8 @@ def save_dim_schedule_config():
                 # Only add times if day is enabled
                 if day_config.get('enabled', True):
                     enabled_days_count += 1
-                    start_time = data.get(start_key) or '20:00'
-                    end_time = data.get(end_key) or '07:00'
+                    start_time = _day_setting(data, day, start_key, 'start_time')[1] or '20:00'
+                    end_time = _day_setting(data, day, end_key, 'end_time')[1] or '07:00'
 
                     # Validate time formats
                     is_valid, error_msg = _validate_time_format(start_time)
@@ -433,8 +450,10 @@ def save_main_config():
 
         # Try to get JSON data first, fallback to form data
         data = None
-        if request.content_type == 'application/json':
+        if request.is_json:
             data = request.get_json()
+            if data is not None and not isinstance(data, dict):
+                return jsonify({'status': 'error', 'message': 'Request body must be a JSON object'}), 400
         else:
             # Handle form data
             data = request.form.to_dict()
@@ -445,6 +464,24 @@ def save_main_config():
 
         if not data:
             return jsonify({'status': 'error', 'message': 'No data provided'}), 400
+
+        # A missing checkbox means different things to the two kinds of caller.
+        # The settings forms post every field, and a browser leaves an
+        # unchecked box out entirely, so for them absent means False. A JSON
+        # API client (the MQTT bridge's brightness slider, a curl call from the
+        # REST docs) sends only what it is changing, and there absent means
+        # "leave it alone": treating it as unchecked turned off
+        # disable_hardware_pulsing and three other settings on every
+        # brightness change, and weekly auto-updates on every timezone change.
+        # The v3 forms post JSON too (htmx json-enc), so they identify
+        # themselves with a hidden FORM_SECTION_FIELD input. A form-encoded
+        # post is a form by definition.
+        is_form_submission = bool(data.pop(FORM_SECTION_FIELD, None)) or not request.is_json
+
+        def _set_checkbox(section, key, field):
+            """Store checkbox ``field`` as ``section[key]``, if this request sets it."""
+            if is_form_submission or field in data:
+                section[key] = _coerce_to_bool(data.get(field))
 
         # What arrives here is the config itself, and the headers carry the
         # session cookie -- neither belongs in the journal, least of all at
@@ -461,15 +498,16 @@ def save_main_config():
         # Note: Checkboxes don't send data when unchecked, so we need to check if we're updating general settings
         # If any general setting is present, we're updating the general tab
         is_general_update = any(k in data for k in ['timezone', 'city', 'state', 'country', 'web_display_autostart',
-                                                     'auto_discover', 'auto_load_enabled', 'development_mode', 'plugins_directory',
-                                                     'auto_update_enabled'])
+                                                     'plugins_directory', 'auto_update_enabled'])
 
         if is_general_update:
-            # For checkbox: if not present in data during general update, it means unchecked
-            current_config['web_display_autostart'] = _coerce_to_bool(data.get('web_display_autostart'))
-            if not isinstance(current_config.get('auto_update'), dict):
-                current_config['auto_update'] = {}
-            current_config['auto_update']['enabled'] = _coerce_to_bool(data.get('auto_update_enabled'))
+            # For checkbox: if not present in data during a general *form*
+            # update, it means unchecked (see _set_checkbox)
+            _set_checkbox(current_config, 'web_display_autostart', 'web_display_autostart')
+            if is_form_submission or 'auto_update_enabled' in data:
+                if not isinstance(current_config.get('auto_update'), dict):
+                    current_config['auto_update'] = {}
+                _set_checkbox(current_config['auto_update'], 'enabled', 'auto_update_enabled')
 
         if 'timezone' in data:
             current_config['timezone'] = data['timezone']
@@ -520,10 +558,14 @@ def save_main_config():
             if 'plugin_system' not in current_config:
                 current_config['plugin_system'] = {}
 
-            # Handle plugin system checkboxes - always set to handle unchecked state
-            # HTML checkboxes omit the key when unchecked, so missing key = unchecked = False
-            for checkbox in ['auto_discover', 'auto_load_enabled', 'development_mode']:
-                current_config['plugin_system'][checkbox] = _coerce_to_bool(data.get(checkbox))
+            # auto_discover / auto_load_enabled / development_mode are read by
+            # nothing and no longer have General-tab toggles. The form still
+            # posts plugins_directory, so treating a missing key as an
+            # unchecked box would rewrite stored values to false on every
+            # save; only store what a client actually sends.
+            for legacy_flag in ['auto_discover', 'auto_load_enabled', 'development_mode']:
+                if legacy_flag in data:
+                    current_config['plugin_system'][legacy_flag] = _coerce_to_bool(data.get(legacy_flag))
 
             # Handle plugins_directory
             if 'plugins_directory' in data:
@@ -561,28 +603,20 @@ def save_main_config():
                 return jsonify({'status': 'error', 'message': 'pixel_mapper_config must be a string (e.g. "U-mapper;Rotate:90" or empty)'}), 400
 
             # Validate orientation (physical mounting rotation; composed onto pixel_mapper_config at runtime)
-            ORIENTATION_ALLOWED = {'normal', '180'}
+            ORIENTATION_ALLOWED = set(ORIENTATION_ROTATE_DEGREES)
             if 'orientation' in data and data['orientation'] not in ORIENTATION_ALLOWED:
                 return jsonify({'status': 'error', 'message': f"Invalid orientation '{data['orientation']}'. Allowed values: {', '.join(sorted(ORIENTATION_ALLOWED))}"}), 400
 
-            # Panel geometry, PWM and GPIO timing, held to what the rgbmatrix library
-            # accepts (RGBMatrix::Options::Validate in lib/options-initialize.cc,
-            # the gpio_slowdown check in lib/led-matrix.cc). Outside those ranges
-            # the config used to save, then the matrix refused to start and the
-            # display dropped to fallback mode. cols, chain_length and
-            # limit_refresh_rate_hz (0 = no cap) have no upper bound in the
-            # library. rows has none here by choice: the library currently
-            # rejects more than 64 per panel, and that limit is left to it so a
-            # library that lifts it needs no change here.
-            def _hardware_int_error(field, low, high=None, even=False):
+            # Panel geometry, PWM and GPIO timing, held to what the rgbmatrix
+            # library and its Python binding accept (src/matrix_support.py:
+            # Options::Validate, the gpio_slowdown check, and the binding's
+            # uint8_t setters, which cap chain_length at 255). Outside those
+            # ranges the library returns no matrix and the display service
+            # crash-loops rather than falling back, so they never save.
+            def _hardware_int_error(field, low, high, even=False):
                 """A 400 response if data[field] is not an allowed integer, else None."""
                 raw = data[field]
-                kind = "an even integer" if even else "an integer"
-                if high is None:
-                    allowed = f"{kind} of at least {low}"
-                else:
-                    allowed = f"{kind} from {low} to {high}"
-                rejection = (jsonify({'status': 'error', 'message': f"Invalid {field} '{raw}'. Must be {allowed}."}), 400)
+                rejection = (jsonify({'status': 'error', 'message': f"Invalid {field} '{raw}'. Must be {describe_range(low, high, even)}."}), 400)
                 # int() would quietly turn true into 1 and 48.5 into 48.
                 if isinstance(raw, bool) or (isinstance(raw, float) and not raw.is_integer()):
                     return rejection
@@ -590,34 +624,31 @@ def save_main_config():
                     value = int(raw)
                 except (ValueError, TypeError, OverflowError):
                     return rejection
-                if value < low or (high is not None and value > high) or (even and value % 2):
+                if value < low or value > high or (even and value % 2):
                     return rejection
                 return None
 
-            for field, low, high, even in (('rows', 8, None, True), ('cols', 16, None, False),
-                                           ('chain_length', 1, None, False), ('parallel', 1, 3, False),
-                                           ('brightness', 1, 100, False), ('scan_mode', 0, 1, False),
-                                           ('pwm_bits', 1, 11, False), ('pwm_dither_bits', 0, 2, False),
-                                           ('pwm_lsb_nanoseconds', 50, 3000, False),
-                                           ('limit_refresh_rate_hz', 0, None, False),
-                                           ('row_address_type', 0, 5, False), ('multiplexing', 0, 22, False),
-                                           ('gpio_slowdown', 0, 10, False)):
-                if field in data:
+            # rp1_rio has its own check below.
+            for field, (_section, low, high, even) in INT_SETTING_LIMITS.items():
+                if field in data and field != 'rp1_rio':
                     error = _hardware_int_error(field, low, high, even)
                     if error:
                         return error
 
-            # A Pi 5 can't drive every combination (src/pi5_matrix_support.py),
-            # and one it can't crashes the display service instead of falling
-            # back. Checked only when this request sets one of those fields, so
-            # a combination already stored doesn't block unrelated saves.
-            pi5_fields = ('row_address_type', 'parallel', 'hardware_mapping')
-            if any(k in data for k in pi5_fields) and is_raspberry_pi_5():
+            # Combinations the library can't start with: a hardware mapping it
+            # doesn't have, more parallel chains than the mapping has outputs,
+            # and on a Pi 5 its narrower RP1 support. Reported only when this
+            # request sets one of the settings involved, so a problem already
+            # stored doesn't block unrelated saves.
+            combination_fields = ('hardware_mapping', 'parallel', 'row_address_type')
+            if any(k in data for k in combination_fields):
                 effective = dict(current_config['display']['hardware'])
-                effective.update({k: data[k] for k in pi5_fields if k in data})
-                unsupported = pi5_unsupported_settings(effective)
-                if unsupported:
-                    return jsonify({'status': 'error', 'message': unsupported}), 400
+                effective.update({k: v for k, v in data.items()
+                                  if k in combination_fields or k in INT_SETTING_LIMITS})
+                refusals = [r for r in library_refusals(effective, pi5=is_raspberry_pi_5())
+                            if any(f in data for f in r.fields)]
+                if refusals:
+                    return jsonify({'status': 'error', 'message': refusal_message(refusals)}), 400
 
             # Handle hardware settings
             for field in ['rows', 'cols', 'chain_length', 'parallel', 'brightness', 'hardware_mapping', 'scan_mode',
@@ -646,10 +677,10 @@ def save_main_config():
 
             # Handle checkboxes - coerce to bool to ensure proper JSON types
             for checkbox in ['disable_hardware_pulsing', 'inverse_colors', 'show_refresh_rate']:
-                current_config['display']['hardware'][checkbox] = _coerce_to_bool(data.get(checkbox))
+                _set_checkbox(current_config['display']['hardware'], checkbox, checkbox)
 
-            # Handle display-level checkboxes (always set to handle unchecked state)
-            current_config['display']['use_short_date_format'] = _coerce_to_bool(data.get('use_short_date_format'))
+            # Handle display-level checkboxes (unchecked state on form saves)
+            _set_checkbox(current_config['display'], 'use_short_date_format', 'use_short_date_format')
 
             # Handle dynamic duration settings
             if 'max_dynamic_duration_seconds' in data:
@@ -671,8 +702,11 @@ def save_main_config():
             # checkbox, so when the feature is off we accept the values without
             # rejecting the whole save — otherwise a stale copies/chain_length
             # mismatch locks the user out of every other display setting.
-            enabled = _coerce_to_bool(data.get('double_sided_enabled'))
-            ds_config['enabled'] = enabled
+            if is_form_submission or 'double_sided_enabled' in data:
+                enabled = _coerce_to_bool(data.get('double_sided_enabled'))
+                ds_config['enabled'] = enabled
+            else:
+                enabled = _coerce_to_bool(ds_config.get('enabled'))
 
             def _copies_fits_hardware(copies: int) -> Optional[str]:
                 """Error message if copies doesn't divide the panel evenly, else None."""
@@ -742,15 +776,13 @@ def save_main_config():
             # Handle enabled checkbox
             # HTML checkboxes omit the key entirely when unchecked, so if the form
             # was submitted (any vegas field present) but enabled key is missing,
-            # the checkbox was unchecked and we should set enabled=False
-            vegas_config['enabled'] = _coerce_to_bool(data.get('vegas_scroll_enabled'))
-            vegas_config['auto_trim'] = _coerce_to_bool(data.get('vegas_auto_trim'))
-            vegas_config['dynamic_duration_enabled'] = _coerce_to_bool(
-                data.get('vegas_dynamic_duration_enabled'))
-            vegas_config['continuous_scroll'] = _coerce_to_bool(
-                data.get('vegas_continuous_scroll'))
-            vegas_config['smooth_scroll'] = _coerce_to_bool(
-                data.get('vegas_smooth_scroll'))
+            # the checkbox was unchecked and we should set enabled=False.
+            # A JSON API call only changes the checkboxes it sends.
+            _set_checkbox(vegas_config, 'enabled', 'vegas_scroll_enabled')
+            _set_checkbox(vegas_config, 'auto_trim', 'vegas_auto_trim')
+            _set_checkbox(vegas_config, 'dynamic_duration_enabled', 'vegas_dynamic_duration_enabled')
+            _set_checkbox(vegas_config, 'continuous_scroll', 'vegas_continuous_scroll')
+            _set_checkbox(vegas_config, 'smooth_scroll', 'vegas_smooth_scroll')
 
             # max_plugin_width_ratio is the one fractional setting, so it is
             # handled outside the integer loop below.
@@ -916,8 +948,12 @@ def save_main_config():
         # them AGAIN as bogus top-level config keys (e.g. "clock_duration": 30
         # sitting at config root alongside the correct
         # display.display_durations.clock_duration).
+        # The Vegas cycle-time fields (vegas_min_cycle_duration, ...) share the
+        # suffix but are Vegas settings, already handled above: counting them
+        # here wrote junk mode durations, and a blank one 400'd the save.
         duration_fields = [k for k in list(data.keys())
-                           if k.endswith('_duration') or k in ('default_duration', 'transition_duration')]
+                           if (k.endswith('_duration') and k not in vegas_fields)
+                           or k in ('default_duration', 'transition_duration')]
         if duration_fields:
             if 'display' not in current_config:
                 current_config['display'] = {}
@@ -957,9 +993,14 @@ def save_main_config():
                 current_config['display']['display_durations'][mode_key] = int_value
 
         # Handle plugin configurations dynamically
-        # Any key that matches a plugin ID should be saved as plugin config
-        # This includes proper secret field handling from schema
+        # Any key that matches a plugin ID is that plugin's settings. They go
+        # through the same preparation as POST /plugins/config -- merged onto
+        # the stored section, legacy booleans and schema defaults applied,
+        # filtered, validated, secrets split out -- so this route can't store
+        # a config that one rejects (stored verbatim, it left the plugin
+        # flagged degraded at its next load).
         plugin_keys_to_remove = []
+        plugin_secrets_updates = {}
         # Discovered first: a plugin key not recognised here skips secret
         # separation below and falls through to the generic merge, which wrote
         # the plugin's API key into config.json in plain text whenever nothing
@@ -969,26 +1010,22 @@ def save_main_config():
             # Check if this key is a plugin ID
             if api_v3.plugin_manager and key in plugin_manifests:
                 plugin_id = key
-                plugin_config = data[key]
+                submitted_config = data[key]
+                if not isinstance(submitted_config, dict):
+                    return error_response(
+                        ErrorCode.VALIDATION_ERROR,
+                        f"Settings for plugin '{plugin_id}' must be a JSON object",
+                        status_code=400
+                    )
 
-                # Load plugin schema to identify secret fields (same logic as save_plugin_config)
-                secret_fields = set()
-                if api_v3.plugin_manager:
-                    plugins_dir = api_v3.plugin_manager.plugins_dir
-                else:
-                    plugin_system_config = current_config.get('plugin_system', {})
-                    plugins_dir_name = plugin_system_config.get('plugins_directory', 'plugin-repos')
-                    if os.path.isabs(plugins_dir_name):
-                        plugins_dir = Path(plugins_dir_name)
-                    else:
-                        plugins_dir = PROJECT_ROOT / plugins_dir_name
                 # plugin_id is already known to be a loaded plugin (the
                 # membership test above), so this cannot currently traverse --
                 # but the path is built from a request key, and the guard and
-                # the join are far enough apart that a later edit could
-                # separate them. Build it through the shared helper instead.
-                schema_path = resolve_under(plugins_dir, plugin_id, 'config_schema.json')
-
+                # the schema load are far enough apart that a later edit could
+                # separate them. Refuse rather than save without knowing which
+                # fields are secrets.
+                schema_path = resolve_under(api_v3.plugin_manager.plugins_dir,
+                                            plugin_id, 'config_schema.json')
                 if schema_path is None:
                     return error_response(
                         ErrorCode.VALIDATION_ERROR,
@@ -996,77 +1033,48 @@ def save_main_config():
                         status_code=400
                     )
 
-                if schema_path.exists():
-                    try:
-                        with open(schema_path, 'r', encoding='utf-8') as f:
-                            schema = json.load(f)
-                            if 'properties' in schema:
-                                secret_fields = find_secret_fields(schema['properties'])
-                    except Exception as e:
-                        logger.debug("Error reading schema for secret detection: %s", e)
+                schema_mgr = api_v3.schema_manager
+                if not schema_mgr:
+                    return error_response(
+                        ErrorCode.SYSTEM_ERROR,
+                        'Schema manager not initialized',
+                        status_code=500
+                    )
+                schema = schema_mgr.load_schema(plugin_id, use_cache=False)
 
-                # Separate secrets from regular config (same logic as save_plugin_config)
-                regular_config, secrets_config = separate_secrets(plugin_config, secret_fields)
-                # The config form renders secrets masked, so every save posts
-                # them back blank. Without this the blank is merged over the
-                # stored value and the credential is destroyed by the act of
-                # changing an unrelated setting. A blank means "unchanged".
-                secrets_config = remove_empty_secrets(secrets_config)
-
-                # PRE-PROCESSING: Preserve 'enabled' state if not in regular_config
-                # This prevents overwriting the enabled state when saving config from a form that doesn't include the toggle
-                if 'enabled' not in regular_config:
-                    try:
-                        if plugin_id in current_config and 'enabled' in current_config[plugin_id]:
-                            regular_config['enabled'] = current_config[plugin_id]['enabled']
-                        elif api_v3.plugin_manager:
-                            # Fallback to plugin instance if config doesn't have it
-                            plugin_instance = api_v3.plugin_manager.get_plugin(plugin_id)
-                            if plugin_instance:
-                                regular_config['enabled'] = plugin_instance.enabled
-                        # Final fallback: default to True if plugin is loaded (matches BasePlugin default)
-                        if 'enabled' not in regular_config:
-                            regular_config['enabled'] = True
-                    except Exception as e:
-                        logger.debug("Error preserving enabled state: %s", e)
-                        # Default to True on error to avoid disabling plugins
-                        regular_config['enabled'] = True
-
-                # Get current secrets config
-                current_secrets = api_v3.config_manager.get_raw_file_content('secrets')
+                from web_interface.blueprints.api_v3.plugins import (
+                    _merge_onto_stored_plugin_config, _prepare_plugin_config_for_save,
+                )
+                plugin_config = _merge_onto_stored_plugin_config(
+                    plugin_id, submitted_config, current_config)
+                regular_config, secrets_config, error = _prepare_plugin_config_for_save(
+                    plugin_id, plugin_config, schema, schema_mgr, is_json=True)
+                if error:
+                    return error
 
                 # Deep merge regular config into main config
-                if plugin_id not in current_config:
-                    current_config[plugin_id] = {}
-                current_config[plugin_id] = deep_merge(current_config[plugin_id], regular_config)
-
-                # Deep merge secrets into secrets config
+                stored_section = current_config.get(plugin_id)
+                current_config[plugin_id] = deep_merge(
+                    stored_section if isinstance(stored_section, dict) else {}, regular_config)
                 if secrets_config:
-                    if plugin_id not in current_secrets:
-                        current_secrets[plugin_id] = {}
-                    # Lists merge by replacement, so deep_merge here wrote a
-                    # blanked array straight over the stored credentials.
-                    current_secrets[plugin_id] = merge_secrets(
-                        current_secrets[plugin_id], secrets_config)
-                    # Save secrets file
-                    api_v3.config_manager.save_raw_file_content('secrets', current_secrets)
+                    plugin_secrets_updates[plugin_id] = secrets_config
 
                 # Mark for removal from data dict (already processed)
                 plugin_keys_to_remove.append(key)
 
-                # Notify plugin of config change if loaded (with merged config including secrets)
-                try:
-                    if api_v3.plugin_manager:
-                        plugin_instance = api_v3.plugin_manager.get_plugin(plugin_id)
-                        if plugin_instance:
-                            # Reload merged config (includes secrets) and pass the plugin-specific section
-                            merged_config = api_v3.config_manager.load_config()
-                            plugin_full_config = merged_config.get(plugin_id, {})
-                            if hasattr(plugin_instance, 'on_config_change'):
-                                plugin_instance.on_config_change(plugin_full_config)
-                except Exception as hook_err:
-                    # Don't fail the save if hook fails
-                    logger.warning("on_config_change failed: %s", hook_err)
+        # Deep merge secrets into secrets config, once every plugin section
+        # has validated
+        if plugin_secrets_updates:
+            current_secrets = api_v3.config_manager.get_raw_file_content('secrets')
+            for plugin_id, secrets_config in plugin_secrets_updates.items():
+                if plugin_id not in current_secrets:
+                    current_secrets[plugin_id] = {}
+                # Lists merge by replacement, so deep_merge here wrote a
+                # blanked array straight over the stored credentials.
+                current_secrets[plugin_id] = merge_secrets(
+                    current_secrets[plugin_id], secrets_config)
+            # Save secrets file
+            api_v3.config_manager.save_raw_file_content('secrets', current_secrets)
 
         # Remove processed plugin keys from data (they're already in current_config)
         for key in plugin_keys_to_remove:
@@ -1114,6 +1122,19 @@ def save_main_config():
             invalidate_cache()
         except ImportError:
             pass
+
+        # Notify saved plugins of their new config (with secrets merged), now
+        # that it is on disk.
+        for plugin_id in plugin_keys_to_remove:
+            try:
+                plugin_instance = api_v3.plugin_manager.get_plugin(plugin_id)
+                if plugin_instance and hasattr(plugin_instance, 'on_config_change'):
+                    merged_config = api_v3.config_manager.load_config()
+                    plugin_instance.on_config_change(_pkg._prepared_plugin_config(
+                        plugin_id, merged_config.get(plugin_id, {})))
+            except Exception as hook_err:
+                # Don't fail the save if hook fails
+                logger.warning("on_config_change failed: %s", hook_err)
 
         message = 'Configuration saved successfully'
         # Switching automatic updates on finishes their setup, which needs
@@ -1167,10 +1188,27 @@ def save_raw_main_config():
         if not data:
             return jsonify({'status': 'error', 'message': 'No data provided'}), 400
 
+        was_auto_update_enabled = False
+        try:
+            previous = api_v3.config_manager.get_raw_file_content('main') or {}
+            was_auto_update_enabled = bool((previous.get('auto_update') or {}).get('enabled'))
+        except Exception:
+            logger.debug("Could not read the previous auto_update setting", exc_info=True)
+
         # Save the raw config file
         api_v3.config_manager.save_raw_file_content('main', data)
 
-        return jsonify({'status': 'success', 'message': 'Main configuration saved successfully'})
+        message = 'Main configuration saved successfully'
+        # Same hook as save_main_config: switching automatic updates on here
+        # must finish their setup too, not wait for the next service restart.
+        try:
+            from web_interface import auto_update
+            note = auto_update.start_setup_if_needed(was_auto_update_enabled, data)
+            if note:
+                message = f'{message}. {note}'
+        except Exception:
+            logger.warning("Automatic update setup could not be started", exc_info=True)
+        return jsonify({'status': 'success', 'message': message})
     except Exception as e:
         from src.exceptions import ConfigError
         logger.error("Error saving raw main config", exc_info=True)

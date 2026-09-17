@@ -30,6 +30,10 @@
               showNotification(message, status);
           "
           class="space-y-6">
+        {# Marks this post as the whole form, so an unchecked box saves as
+           false. Without it the save endpoint treats absent keys as unchanged
+           (FORM_SECTION_FIELD in api_v3/config.py). #}
+        <input type="hidden" name="__form_section" value="general">
 
         <!-- Web Display Autostart -->
         <div class="form-group" id="setting-general-web_display_autostart" data-setting-key="web_display_autostart">
@@ -88,9 +92,9 @@
             <div id="timezone_container" class="mt-1"></div>
         </div>
 
-        <!-- Scroll frame rate (device-wide) -->
+        <!-- Legacy scroll frame rate (device-wide). Core scrolling no longer reads it. -->
         <div class="form-group" id="setting-general-target-fps" data-setting-key="target_fps">
-            <label for="target_fps" class="block text-sm font-medium text-gray-700">Scroll Frame Rate{{ ui.help_tip('Frames per second for scrolling content, applied across plugins that scroll.\nHigher is smoother but uses more CPU; lower frees CPU but looks steppier.\nRange 30-200. Default: 100.', 'Scroll Frame Rate') }}</label>
+            <label for="target_fps" class="block text-sm font-medium text-gray-700">Scroll Frame Rate (legacy){{ ui.help_tip('Kept for older plugins that read it. It no longer changes scrolling speed or smoothness.\nScrolling runs at the panel refresh rate (Display settings), and each plugin sets its own scroll speed.\nRange 30-200. Default: 100.', 'Scroll Frame Rate (legacy)') }}</label>
             <input type="number"
                    id="target_fps"
                    name="target_fps"
@@ -166,44 +170,10 @@
             <p class="text-sm text-gray-600 mb-4">Configure the core plugin system behavior.</p>
 
             <div class="space-y-4">
-                <!-- Auto Discover -->
-                <div class="form-group" id="setting-general-auto_discover" data-setting-key="plugin_system.auto_discover">
-                    <label class="flex items-center">
-                        <input type="checkbox"
-                               name="auto_discover"
-                               value="true"
-                               {% if main_config.get('plugin_system', {}).get('auto_discover', True) %}checked{% endif %}
-                               class="form-control h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
-                        <span class="ml-2 text-sm font-medium text-gray-900">Auto Discover Plugins</span>
-                        {{ ui.help_tip('Scan the plugins directory for installed plugins each time the service starts.\nDefault: on. Leave on unless you manage plugins manually.', 'Auto Discover Plugins') }}
-                    </label>
-                </div>
-
-                <!-- Auto Load Enabled -->
-                <div class="form-group" id="setting-general-auto_load_enabled" data-setting-key="plugin_system.auto_load_enabled">
-                    <label class="flex items-center">
-                        <input type="checkbox"
-                               name="auto_load_enabled"
-                               value="true"
-                               {% if main_config.get('plugin_system', {}).get('auto_load_enabled', True) %}checked{% endif %}
-                               class="form-control h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
-                        <span class="ml-2 text-sm font-medium text-gray-900">Auto Load Enabled Plugins</span>
-                        {{ ui.help_tip('Load every plugin marked enabled in the configuration at startup.\nDefault: on. Turn off to keep plugins installed but dormant.', 'Auto Load Enabled Plugins') }}
-                    </label>
-                </div>
-
-                <!-- Development Mode -->
-                <div class="form-group" id="setting-general-development_mode" data-setting-key="plugin_system.development_mode">
-                    <label class="flex items-center">
-                        <input type="checkbox"
-                               name="development_mode"
-                               value="true"
-                               {% if main_config.get('plugin_system', {}).get('development_mode', False) %}checked{% endif %}
-                               class="form-control h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
-                        <span class="ml-2 text-sm font-medium text-gray-900">Development Mode</span>
-                        {{ ui.help_tip('Enable verbose logging and developer features for plugin debugging.\nDefault: off. Keep off for normal use — it increases log volume.', 'Development Mode') }}
-                    </label>
-                </div>
+                <!-- plugin_system.auto_discover, auto_load_enabled and
+                     development_mode used to be toggles here. Nothing reads
+                     them: plugins are always discovered and every enabled
+                     plugin is loaded. Stored values are left alone. -->
 
                 <!-- Plugins Directory -->
                 <div class="form-group" id="setting-general-plugins_directory" data-setting-key="plugin_system.plugins_directory">

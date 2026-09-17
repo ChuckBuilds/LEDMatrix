@@ -19,6 +19,44 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+Config saves and plugin config preparation:
+
+- A JSON `POST /api/v3/config/main` changes only the keys it sends. The MQTT
+  bridge's brightness slider used to turn off `disable_hardware_pulsing`,
+  `inverse_colors`, `show_refresh_rate` and `use_short_date_format`, and a
+  timezone- or location-only save turned off web-UI autostart and weekly
+  automatic updates. Missing checkboxes still save as unchecked for the
+  settings forms (they now send a hidden `__form_section` field) and for
+  form-encoded posts.
+- A partial JSON `POST /api/v3/plugins/config` merges onto the plugin's stored
+  settings instead of resetting everything it didn't send to the schema
+  defaults, and keeps a submitted `skin`, `skin_options`, `vegas_width_pct`,
+  `vegas_overflow` or `vegas_max_width_screens` (they were silently dropped).
+- Plugin sections posted to `/config/main` are validated and prepared exactly
+  like `/plugins/config`; a value that endpoint rejects is rejected here too,
+  and nothing is saved.
+- Legacy boolean settings (#588) are read as `{"enabled": ...}` objects
+  everywhere, not just when the plugin loads: `GET /plugins/config` returns
+  the object, posting it back saves, and hot reload hands plugins the same
+  shape (schema defaults included) they were constructed with.
+  `schema_manager.prepare_plugin_config` is the one implementation.
+- `scripts/dev_server.py`, `check_plugin.py`, `render_plugin.py` and the plugin
+  harness build configs the way a device does: nested defaults are included,
+  a schema `enabled: false` no longer beats the forced `enabled: true` in the
+  dev server, and nested overrides such as `{"nhl": {"enabled": true}}` keep
+  the other defaults of that section.
+- Clearing Vegas "Min/Max Cycle Time" no longer rejects the whole Display save,
+  and those fields no longer add junk entries to `display.display_durations`.
+- Turning automatic updates on from the Raw JSON editor finishes their setup
+  like the General tab does, instead of waiting for the next display restart.
+- `POST /config/schedule` and `/config/dim-schedule` accept the per-day
+  `days.<day>.{enabled,start_time,end_time}` shape their GETs return, as well
+  as the flat form keys.
+- The startup check no longer warns that `auto_update` or `dim_schedule` is
+  "enabled but not found in plugins directory", and plugin ids that collide
+  with any core config section are flagged: the last private copies of the
+  core-key list now use `src/core_config_keys.py`.
+
 New module a plugin may import via `src.*` (floor on the release that ships
 this):
 
@@ -59,6 +97,36 @@ Sports data:
   to decide whether to submit a season range to the service or fetch it
   themselves on an older core.
 
+Scrolling:
+
+- **Scoreboard scroll speed no longer changes with the General tab's "Scroll
+  Frame Rate" (`target_fps`).** Scoreboards on `src.common.sports_scroll`
+  computed their speed for that rate while the panel kept presenting at its
+  real refresh, so on a 100 Hz panel 60 ran a 50 px/s scoreboard at 100 px/s
+  and 200 ran it at 25 px/s. Speed now comes from `scroll_speed` and the panel
+  refresh only. The field is labelled legacy: nothing in core scrolling reads
+  it. Anyone who lowered it will see scoreboards scroll slower than before --
+  at the speed they configured.
+- `scripts/scroll_speeds.py --measure` / `--demo` open the panel with the
+  display service's own options (`DisplayManager.apply_matrix_options`), so
+  `display.runtime.gpio_slowdown`, `rp1_rio`, `panel_type` and orientation are
+  honoured; the script used to read `gpio_slowdown` from `display.hardware`.
+  Its closing advice now gives the `scroll_speed` + `scroll_delay` pair
+  instead of `scroll_pixels_per_second`, which the resolver ignores whenever
+  the pair is present.
+- The frame-stats log no longer opens a scroll with a one-frame window for
+  scrollers that never call `reset_scroll()`.
+- Removed dead scroll code: the optional scipy import (`HAS_SCIPY`),
+  `ScrollHelper._last_integer_position` and `frame_time_target`.
+  `ScrollHelper.target_fps` / `set_target_fps()` remain, documented as
+  informational.
+- Docs describe the fixed-step scroll model: `PLUGIN_API_REFERENCE.md`
+  documents `set_scrolling_state(..., frame_hold)` (omitting the hold runs a
+  scroll `frame_hold` times too fast), `SCROLL_PERFORMANCE.md` no longer reads a
+  held 20 ms frame as missed refreshes, and Vegas `frame_based_scrolling` /
+  `scroll_delay` are described as the speed clamp they are rather than frame
+  stepping. Scoreboard `scroll_delay` is documented as ignored for pacing.
+
 Web interface:
 
 - The plugin settings form honours `"x-display": "hidden"` in config schemas:
@@ -68,9 +136,9 @@ Web interface:
   declared, e.g. countdown's row `id` and weather's `api_key` / `radar_zoom`.
   See `docs/widget-guide.md`.
 - Display settings no longer silently cut values on save: columns were capped
-  at 128, chain length at 24 and PWM LSB nanoseconds at 500. Rows, columns and
-  chain length now have no upper limit (the current rgbmatrix library still
-  rejects more than 64 rows per panel); rows must be even and at least 8,
+  at 128, chain length at 24 and PWM LSB nanoseconds at 500. Columns have no
+  upper limit, chain length is 1–255 and rows must be even and 8–64 (see
+  "Display hardware settings the library refuses" below);
   parallel is 1–3 and PWM dither bits 0–2, matching the library. A stored GPIO
   slowdown, PWM dither bits or refresh-rate cap of 0 no longer shows (and
   re-saves) as 3, 1 or 120, and the refresh cap accepts 0 (no cap). The config
@@ -112,6 +180,57 @@ Web interface:
   re-sent with backoff instead of being counted as failed and skipped — that is
   how a disabled plugin with an update waiting was silently left out.
 
+Security (request paths and inline handlers, siblings of #561):
+
+- `POST /api/v3/plugins/assets/upload`, `GET .../assets/list` and
+  `POST .../assets/delete` validate `plugin_id` with `src/common/path_safety`
+  and answer 400 otherwise. A `plugin_id` of `../../config` used to create an
+  `uploads/` directory outside `assets/plugins`, write images and
+  `.metadata.json` there, list it, and delete whatever file a metadata entry
+  named. Delete now unlinks only a path that resolves inside that plugin's
+  uploads directory (any other entry is dropped without touching a file).
+- `PluginManager.get_plugin_directory()` returns `None` for anything but a
+  plain name, so `POST /api/v3/plugins/action` can no longer run a manifest
+  script from a directory outside the plugins directory (`../elsewhere`); the
+  route also rejects such ids with 400.
+- Plugin Store, saved-repository and custom-registry buttons escape registry
+  values for their inline `onclick` handlers (`jsStringAttr` in
+  `plugins_manager.js`). An entry id containing `'` used to close the attribute
+  and add its own script. The store's View button opens only `http(s)` links.
+- The uploaded-images list escapes each file's original name, path and ids; a
+  name like `<img src=x onerror=...>.png` was inserted as markup.
+
+Display hardware settings the library refuses:
+
+- The rgbmatrix library answers several settings with no matrix or `abort()`
+  rather than an error, on every board, so the display service crash-looped
+  instead of falling back: rows above 64, `chain_length` above 255 (the Python
+  binding stores it in one byte; this was documented as "no upper limit"), a
+  misspelled `hardware_mapping`, and `parallel` 2–3 on a mapping with one output
+  (`adafruit-hat`, `adafruit-hat-pwm`, `regular-pi1`, `classic-pi1`) — the last
+  one reachable from the Display form on the default mapping. The config API
+  now refuses them with a 400 naming the setting, and `DisplayManager` refuses
+  a hand-edited one before creating the matrix: logged, fallback mode, reported
+  by `/api/v3/hardware/status`. The rules, including the Pi 5 ones, live in
+  `src/matrix_support.py` and must be re-checked when the submodule is bumped.
+- `/api/v3/hardware/status` adds `cause`: `"settings"` when LEDMatrix refused
+  the config, `"library"` when the library failed. The Display tab banner and
+  the fallback log line give the Pi 5 rebuild hint only for a library failure;
+  they used to follow every failure with it and with GPIO slowdown advice.
+- The Display form offers the `classic` and `classic-pi1` mappings and the
+  `90` / `270` orientations, and renders any other stored mapping selected with
+  a warning. With no option selected the browser posted the first one, so one
+  unrelated save rewrote those settings. The API accepts orientation `90` and
+  `270`, which `DisplayManager` already applied.
+- The display size the web preview, Starlark magnify default and
+  `scripts/dev/vegas_audit.py` compute (`src/display_geometry.py`) now applies
+  `orientation` and `pixel_mapper_config` as the library does: `Rotate:90`
+  swaps width and height, `U-mapper` folds the chain.
+- One Raspberry Pi 5 GPIO slowdown recommendation everywhere: 1–3 in PIO mode,
+  starting at 1. README and the config reference now describe the template
+  values as the defaults; the "code default" values they listed never apply,
+  because config migration fills missing keys from the template.
+
 Plugin system:
 
 - A plugin no longer starts with a schema warning and a degraded flag because
@@ -140,6 +259,96 @@ Core:
   handling, so the restore stopped at `config.json` with nothing restored. The
   ownership step is now skipped where `os.chown` is missing. No behaviour
   change on the Pi.
+
+Automatic updates and Update Code:
+
+- An update that changes `web_interface/requirements.txt` is no longer rolled
+  back on every auto-updating device. `safe_pip_install.sh` allowed only the
+  root `requirements.txt`, so the install Update Code and the health check run
+  for the web requirements was refused, and the health check rolls back any
+  update whose dependencies failed (Install Base Requirements failed the same
+  way). The wrapper now allows both core requirement files; a core requirement
+  file symlinked out of the project is refused.
+- The automatic update's local-change check and Update Code now count changes
+  the same way (`auto_update.local_changes`): permission-only changes and
+  anything under `plugins/` or `plugin-repos/` don't count, and a core path
+  that merely contains `plugins/` does. Such edits used to pass the check and
+  then be stashed by the pull and never restored, despite "will not stash your
+  changes". The pull's `--autostash` now carries them across. Update Code
+  still stashes other edits; the automatic update refuses instead.
+- When the automatic update's own rollback fails (a partial pull, or a health
+  check that never started), plugins are no longer updated and the display is
+  not restarted, as the 3.4.0 notes promised.
+- The health check's dependency reinstall no longer retries pip failures or
+  timeouts with a second bash path, and all reinstalls share a 10-minute
+  budget, so a rollback finishes inside the unit's 30-minute limit instead of
+  being killed mid-way.
+
+Small fixes (update-all, plugin system settings, scripts):
+
+- **Check & Update All** counts a plugin that had nothing to update as
+  "already up to date" instead of "updated". ZIP-installed monorepo plugins
+  (most official ones) already at the registry version were called "updated
+  successfully" on every run. `POST /plugins/update` now returns
+  `data.update_status` (`updated`, `up_to_date`, `local_only`).
+- An update request that got an HTTP error answer without an `error_code`, or
+  a body that is not JSON (e.g. a reverse proxy's 502 page), is no longer
+  classified as `NETWORK_ERROR` and re-sent five times. Only a request that got
+  no HTTP answer is retried; the rest are `API_ERROR` with the HTTP status.
+- The General tab no longer shows Auto Discover Plugins, Auto Load Enabled
+  Plugins or Development Mode. Nothing read `plugin_system.auto_discover`,
+  `auto_load_enabled` or `development_mode`: every enabled plugin was always
+  discovered and loaded. Stored values are kept, and saving the General tab no
+  longer rewrites them to `false`.
+- `BackgroundDataService` shares the 6-hour "ESPN rejects date ranges" memo
+  with `fetch_espn_scoreboard`, so a background season fetch no longer spends a
+  doomed range request first once either path has seen a rejection.
+- `scripts/install_plugin_dependencies.sh` installs from the configured
+  `plugin_system.plugins_directory` (default `plugin-repos`, where the Plugin
+  Store installs) and also scans `plugins/` for dev symlinks. It used to scan
+  only `plugins/` and find nothing. A failed `pip install` is now reported as a
+  failure instead of being hidden by `tee`.
+- `scripts/verify_installation.sh` no longer fails a healthy install: it
+  checked for the removed `web_interface_v2.py` and port 5001. It and
+  `scripts/verify_web_ui.sh` now check port 5000, where the web interface
+  listens.
+- `scripts/install/install_service.sh --help` prints usage and exits without
+  changes. It used to ignore the flag and reinstall and restart every service.
+  Unknown arguments are rejected before anything runs.
+- `scripts/diagnose_web_ui.sh`, `scripts/diagnose_web_interface.sh` and
+  `scripts/debug/debug_web_manual.py` apply the launcher's own autostart rule
+  (only an explicit `web_display_autostart: false` keeps the web interface
+  down), so a missing key no longer shows as disabled. The shell scripts also
+  check `web_interface/blueprints/api_v3/`, which became a package, instead of
+  reporting `api_v3.py` as missing.
+
+Docs and developer tools:
+
+- `docs/REST_API_REFERENCE.md` rechecked against every handler: request
+  fields that made documented calls fail (`repo_url`, `action_id`/`params`,
+  `files`/`image_id`, `font_file`+`font_family`, `?font=`, cache `key`,
+  `auto_enable_ap_mode`, plugin limit keys) and response shapes are fixed, the
+  removed font-override endpoints are gone, and the 26 undocumented routes
+  (backup, git/auto-update, WiFi radio, Starlark editor, MQTT bridge, status
+  endpoints, skins) are listed. Store search is `/plugins/store/list?query=`.
+- `FONT_MANAGER.md` no longer tells plugins to read
+  `display_manager.font_manager`, which does not exist; use
+  `plugin_manager.font_manager` / `BasePlugin._get_font_manager()`.
+- Plugin docs, `DisplayManager` docstrings and the bundled `starlark-apps`
+  plugin now all read the display size from `display_manager.width/height`,
+  which works in fallback mode where `matrix` is `None`.
+- `scripts/dev/dev_plugin_setup.sh link-github <name>` links the plugin from a
+  clone of the `ledmatrix-plugins` monorepo (per-plugin `ledmatrix-<name>`
+  repositories no longer exist). `dev_plugins.json` honours `github_user`,
+  `plugins_repo` and `plugins_branch`; `dev_plugins.json.example` ships and
+  `dev_plugins.json` is git-ignored. `update`/`status` handle monorepo links,
+  and `status` no longer exits 1 when nothing is broken.
+- Rewritten for current behaviour: plugin dependency installation (web service
+  runs as the installing user and installs through `safe_pip_install.sh`),
+  `PLUGIN_CONFIG_ARCHITECTURE.md`, `MULTI_ROOT_WORKSPACE_SETUP.md`; stale
+  `app.py` line numbers, `api_v3.py` paths, StreamManager method names,
+  nonexistent version-bump scripts and `ledmatrix` service user references
+  removed.
 
 ## 3.4.0
 
