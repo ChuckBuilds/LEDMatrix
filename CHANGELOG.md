@@ -135,6 +135,34 @@ Core:
   `ensure_shared_group_ownership()` now returns immediately when `os.geteuid`
   or `os.chown` is missing. No behaviour change on the Pi.
 
+Docs and developer tools:
+
+- `docs/REST_API_REFERENCE.md` rechecked against every handler: request
+  fields that made documented calls fail (`repo_url`, `action_id`/`params`,
+  `files`/`image_id`, `font_file`+`font_family`, `?font=`, cache `key`,
+  `auto_enable_ap_mode`, plugin limit keys) and response shapes are fixed, the
+  removed font-override endpoints are gone, and the 26 undocumented routes
+  (backup, git/auto-update, WiFi radio, Starlark editor, MQTT bridge, status
+  endpoints, skins) are listed. Store search is `/plugins/store/list?query=`.
+- `FONT_MANAGER.md` no longer tells plugins to read
+  `display_manager.font_manager`, which does not exist; use
+  `plugin_manager.font_manager` / `BasePlugin._get_font_manager()`.
+- Plugin docs, `DisplayManager` docstrings and the bundled `starlark-apps`
+  plugin now all read the display size from `display_manager.width/height`,
+  which works in fallback mode where `matrix` is `None`.
+- `scripts/dev/dev_plugin_setup.sh link-github <name>` links the plugin from a
+  clone of the `ledmatrix-plugins` monorepo (per-plugin `ledmatrix-<name>`
+  repositories no longer exist). `dev_plugins.json` honours `github_user`,
+  `plugins_repo` and `plugins_branch`; `dev_plugins.json.example` ships and
+  `dev_plugins.json` is git-ignored. `update`/`status` handle monorepo links,
+  and `status` no longer exits 1 when nothing is broken.
+- Rewritten for current behaviour: plugin dependency installation (web service
+  runs as the installing user and installs through `safe_pip_install.sh`),
+  `PLUGIN_CONFIG_ARCHITECTURE.md`, `MULTI_ROOT_WORKSPACE_SETUP.md`; stale
+  `app.py` line numbers, `api_v3.py` paths, StreamManager method names,
+  nonexistent version-bump scripts and `ledmatrix` service user references
+  removed.
+
 ## 3.4.0
 
 Plugin-facing changes since 3.3.0 (tag `v3.3.1`) not covered further down:
