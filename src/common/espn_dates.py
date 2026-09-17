@@ -34,7 +34,9 @@ workaround retires itself if ESPN reverts.
 
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
+from functools import partial
 from typing import Any, Dict, List, Optional, Tuple
 
 # Above this, ESPN returns a truncated list instead of an error. See module
@@ -44,11 +46,19 @@ ESPN_MAX_LIMIT = 500
 # How long a rejected range keeps later ranges from being tried as ranges.
 RANGE_RETRY_SECONDS = 6 * 60 * 60
 
+# How many chunk requests may be in flight at once. A cold college-baseball
+# season is ~130 chunks once the busy months are re-asked day by day; asking
+# for them one at a time took long enough that scoreboard plugins blew the
+# 20s update() timeout on first run. Kept under requests' default
+# pool_maxsize of 10 so the shared Session never has to discard connections.
+ESPN_CHUNK_WORKERS = 6
+
 _range_lock = threading.Lock()
 _ranges_rejected_until = 0.0
 
 __all__ = [
     "ESPN_MAX_LIMIT",
+    "ESPN_CHUNK_WORKERS",
     "RANGE_RETRY_SECONDS",
     "clamp_espn_limit",
     "parse_espn_date_range",
@@ -169,6 +179,55 @@ def merge_scoreboard_payloads(payloads: List[Dict[str, Any]]) -> Dict[str, Any]:
     return merged
 
 
+def _fetch_one_chunk(
+    session, url: str, params: Dict[str, Any], headers, timeout, logger, chunk: str,
+) -> Optional[Dict[str, Any]]:
+    """GET a single ``dates=`` chunk, or None when it failed.
+
+    One bad chunk must not sink the rest of the season, so every error is
+    logged and swallowed here rather than raised to the gather below.
+    """
+    try:
+        response = session.get(
+            url,
+            params=dict(params, dates=chunk, limit=ESPN_MAX_LIMIT),
+            headers=headers,
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        return response.json()
+    except Exception as exc:  # noqa: BLE001 - see docstring
+        if logger:
+            logger.warning("ESPN chunk %s failed, skipping it: %s", chunk, exc)
+        return None
+
+
+def _fetch_chunks(
+    session, url: str, params: Dict[str, Any], headers, timeout, logger,
+    chunks: List[str],
+) -> List[Optional[Dict[str, Any]]]:
+    """Fetch every chunk, returning payloads positionally aligned with ``chunks``.
+
+    Requests go out ``ESPN_CHUNK_WORKERS`` at a time because a cold season is
+    over a hundred of them. The order they come back in is not significant --
+    callers keep ``chunks`` order from the returned list -- but it does mean
+    the session is shared across threads, which is why this only ever issues
+    GETs and never touches session state.
+    """
+    if not chunks:
+        return []
+    fetch = partial(
+        _fetch_one_chunk, session, url, params, headers, timeout, logger,
+    )
+    if len(chunks) == 1:
+        return [fetch(chunks[0])]
+    workers = min(ESPN_CHUNK_WORKERS, len(chunks))
+    with ThreadPoolExecutor(
+        max_workers=workers, thread_name_prefix="espn-chunk",
+    ) as pool:
+        return list(pool.map(fetch, chunks))
+
+
 def fetch_espn_date_chunks(
     session,
     url: str,
@@ -188,6 +247,11 @@ def fetch_espn_date_chunks(
     largest value that does not corrupt the answer. A month that comes back
     with 500 events is assumed truncated and re-asked day by day. A failed
     chunk is logged and skipped so one bad day cannot cost a whole season.
+
+    Chunks go out ``ESPN_CHUNK_WORKERS`` at a time, in two passes: the months
+    and edge days first, then the days of any month that came back capped.
+    Merged events keep ``espn_date_chunks`` order regardless of which request
+    finished first, so the result does not depend on the race.
     """
     params = dict(params or {})
     span = parse_espn_date_range(params.get("dates"))
@@ -201,35 +265,44 @@ def fetch_espn_date_chunks(
             params.get("dates"), len(chunks),
         )
 
-    payloads: List[Dict[str, Any]] = []
-    attempted = 0
-    pending = list(chunks)
-    while pending:
-        chunk = pending.pop(0)
-        attempted += 1
-        try:
-            response = session.get(
-                url,
-                params=dict(params, dates=chunk, limit=ESPN_MAX_LIMIT),
-                headers=headers,
-                timeout=timeout,
-            )
-            response.raise_for_status()
-            payload = response.json()
-        except Exception as exc:  # noqa: BLE001 - one bad chunk must not sink the rest
-            if logger:
-                logger.warning("ESPN chunk %s failed, skipping it: %s", chunk, exc)
+    results = _fetch_chunks(
+        session, url, params, headers, timeout, logger, chunks,
+    )
+    attempted = len(chunks)
+
+    # A month that came back at the cap is truncated; its days replace it in
+    # place, so merged events stay in chunk order however the requests raced.
+    slots: List[Any] = list(results)
+    capped: Dict[int, List[str]] = {}
+    for index, (chunk, payload) in enumerate(zip(chunks, results)):
+        if payload is None or len(chunk) != 6:
             continue
         events = payload.get("events") if isinstance(payload, dict) else None
-        if len(chunk) == 6 and len(events or []) >= ESPN_MAX_LIMIT:
+        if len(events or []) >= ESPN_MAX_LIMIT:
             if logger:
                 logger.info(
                     "ESPN month %s hit the %d-event cap; re-asking it day by day",
                     chunk, ESPN_MAX_LIMIT,
                 )
-            pending[:0] = _days_of_month(chunk)
+            capped[index] = _days_of_month(chunk)
+
+    if capped:
+        days = [day for index in sorted(capped) for day in capped[index]]
+        attempted += len(days)
+        by_day = dict(zip(days, _fetch_chunks(
+            session, url, params, headers, timeout, logger, days,
+        )))
+        for index, month_days in capped.items():
+            slots[index] = [by_day.get(day) for day in month_days]
+
+    payloads: List[Dict[str, Any]] = []
+    for slot in slots:
+        if slot is None:
             continue
-        payloads.append(payload)
+        if isinstance(slot, list):
+            payloads.extend(payload for payload in slot if payload is not None)
+        else:
+            payloads.append(slot)
 
     if not payloads:
         return None

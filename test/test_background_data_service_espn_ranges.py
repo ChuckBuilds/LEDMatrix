@@ -115,8 +115,11 @@ def test_a_rejected_season_is_recovered_and_cached(service, cache):
 def test_a_full_season_costs_chunks_not_one_request_per_day(service):
     session = RangeRejectingSession({"202609": [{"id": "a"}]})
     submit_and_wait(service, session, "20260801-20270301")
-    assert [call["dates"] for call in session.calls] == [
-        "20260801-20270301",
+    sent = [call["dates"] for call in session.calls]
+    # Eight chunks rather than 213 per-day requests. They are fetched
+    # concurrently, so the range is the only one pinned to a position.
+    assert sent[0] == "20260801-20270301"
+    assert sorted(sent[1:]) == [
         "202608",
         "202609",
         "202610",
