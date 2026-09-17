@@ -153,31 +153,54 @@ const PluginAPI = {
                 options.body = JSON.stringify(data);
             }
             
+            // NETWORK_ERROR means only that fetch() itself rejected: no HTTP
+            // answer arrived (connection refused/reset, e.g. the web service
+            // restarting). Callers retry that (install_manager.js updateAll).
+            // Any HTTP response is the server's -- or a proxy's -- answer, so
+            // a 502 HTML page or a JSON error without error_code is API_ERROR
+            // and is not retried.
+            let response;
             try {
-                const response = await fetch(url, options);
-                const responseData = await response.json();
-                
-                if (!response.ok) {
-                    // Handle structured errors
-                    if (responseData.error_code) {
-                        throw responseData;
-                    }
-                    throw new Error(responseData.message || `HTTP ${response.status}`);
-                }
-                
-                return responseData;
+                response = await fetch(url, options);
             } catch (error) {
-                // Re-throw structured errors
-                if (error.error_code) {
-                    throw error;
-                }
-                // Wrap network errors
                 throw {
                     error_code: 'NETWORK_ERROR',
-                    message: error.message || 'Network error',
+                    message: (error && error.message) || 'Network error',
                     original_error: error
                 };
             }
+
+            let responseData = null;
+            let parseError = null;
+            try {
+                responseData = await response.json();
+            } catch (error) {
+                parseError = error;
+            }
+
+            if (!response.ok) {
+                // Handle structured errors
+                if (responseData && responseData.error_code) {
+                    throw responseData;
+                }
+                throw {
+                    error_code: 'API_ERROR',
+                    status: response.status,
+                    message: (responseData && responseData.message) || `HTTP ${response.status}`,
+                    original_error: parseError || undefined
+                };
+            }
+
+            if (parseError) {
+                throw {
+                    error_code: 'API_ERROR',
+                    status: response.status,
+                    message: `Unreadable response from the server (HTTP ${response.status})`,
+                    original_error: parseError
+                };
+            }
+
+            return responseData;
         };
         
         // Use throttling for GET requests, immediate execution for POST/PUT/DELETE

@@ -146,6 +146,46 @@ const noSleep = { sleep: async () => {} };
     ok('...and is reported as a failure', results.find(x => x.pluginId === 'static-image').success === false);
   }
 
+  console.log('\nthe real api_client.js: only a missing HTTP answer is retried');
+  {
+    // The fake PluginAPI above decides error_code itself. This runs the shipped
+    // client so its classification is what gets tested: a proxy's 502 page or
+    // a JSON 500 without error_code used to come back as NETWORK_ERROR and be
+    // re-sent five more times.
+    const PluginAPI = require(path.join(V3, 'js/plugins/api_client.js'));
+    const run = async (makeFetch) => {
+      let requests = 0, sleeps = 0;
+      global.fetch = async () => { requests++; return makeFetch(requests); };
+      global.window = { PluginAPI, installedPlugins: [{ id: 'stock-news' }] };
+      const results = await Manager.updateAll(null, { sleep: async () => { sleeps++; }, retryDelaysMs: [1, 1, 1] });
+      return { requests, sleeps, result: results[0] };
+    };
+    const httpAnswer = (status, json) => ({ ok: status < 400, status, json });
+
+    let r = await run(() => httpAnswer(502, async () => { throw new SyntaxError('Unexpected token <'); }));
+    ok('a 502 with an HTML body is sent once', r.requests === 1 && r.sleeps === 0, r);
+    ok('...and is an API_ERROR carrying the status, not NETWORK_ERROR',
+       r.result.success === false && r.result.error.error_code === 'API_ERROR' && r.result.error.status === 502, r.result.error);
+
+    r = await run(() => httpAnswer(500, async () => ({ status: 'error', message: 'boom' })));
+    ok('a JSON 500 without error_code is sent once', r.requests === 1 && r.sleeps === 0, r);
+    ok('...and keeps the server message', r.result.error.message === 'boom', r.result.error);
+
+    r = await run(() => httpAnswer(500, async () => ({ status: 'error', error_code: 'PLUGIN_UPDATE_FAILED', message: 'x' })));
+    ok('a structured error is passed through unchanged',
+       r.requests === 1 && r.result.error.error_code === 'PLUGIN_UPDATE_FAILED', r.result.error);
+
+    r = await run((n) => {
+      if (n === 1) throw new TypeError('Failed to fetch');
+      return httpAnswer(200, async () => ({ status: 'success', message: 'ok', data: { update_status: 'updated' } }));
+    });
+    ok('a fetch() that rejects is NETWORK_ERROR and re-sent', r.requests === 2 && r.sleeps === 1 && r.result.success, r);
+
+    r = await run(() => httpAnswer(200, async () => { throw new SyntaxError('Unexpected end of JSON input'); }));
+    ok('an unreadable 200 is not retried either', r.requests === 1 && r.result.error.error_code === 'API_ERROR', r);
+    delete global.fetch;
+  }
+
   console.log('\nsummary: a no-op update is not counted as updated');
   {
     const answer = (update_status, message) => ({ success: true, result: { status: 'success', message, data: { update_status } } });
