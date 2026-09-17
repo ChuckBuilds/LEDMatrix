@@ -90,7 +90,7 @@ maps into the nested config:
 |--------|-----------|
 | `timezone`, `city`, `state`, `country` | `timezone`, `location.*` |
 | `web_display_autostart`, `auto_update_enabled` | `web_display_autostart`, `auto_update.enabled` |
-| `plugins_directory`, `auto_discover`, `auto_load_enabled`, `development_mode` | `plugin_system.*` |
+| `plugins_directory` (and the unused legacy flags `auto_discover`, `auto_load_enabled`, `development_mode`, stored only when sent) | `plugin_system.*` |
 | `target_fps` (30-200) | `target_fps` |
 | `rows`, `cols`, `chain_length`, `parallel`, `brightness`, `hardware_mapping`, `pwm_bits`, `led_rgb_sequence`, `panel_type`, `pixel_mapper_config`, `disable_hardware_pulsing`, `inverse_colors`, `show_refresh_rate`, ... | `display.hardware.*` |
 | `gpio_slowdown`, `rp1_rio` | `display.runtime.*` |
