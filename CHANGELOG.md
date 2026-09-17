@@ -112,6 +112,26 @@ Web interface:
   re-sent with backoff instead of being counted as failed and skipped — that is
   how a disabled plugin with an update waiting was silently left out.
 
+Security (request paths and inline handlers, siblings of #561):
+
+- `POST /api/v3/plugins/assets/upload`, `GET .../assets/list` and
+  `POST .../assets/delete` validate `plugin_id` with `src/common/path_safety`
+  and answer 400 otherwise. A `plugin_id` of `../../config` used to create an
+  `uploads/` directory outside `assets/plugins`, write images and
+  `.metadata.json` there, list it, and delete whatever file a metadata entry
+  named. Delete now unlinks only a path that resolves inside that plugin's
+  uploads directory (any other entry is dropped without touching a file).
+- `PluginManager.get_plugin_directory()` returns `None` for anything but a
+  plain name, so `POST /api/v3/plugins/action` can no longer run a manifest
+  script from a directory outside the plugins directory (`../elsewhere`); the
+  route also rejects such ids with 400.
+- Plugin Store, saved-repository and custom-registry buttons escape registry
+  values for their inline `onclick` handlers (`jsStringAttr` in
+  `plugins_manager.js`). An entry id containing `'` used to close the attribute
+  and add its own script. The store's View button opens only `http(s)` links.
+- The uploaded-images list escapes each file's original name, path and ids; a
+  name like `<img src=x onerror=...>.png` was inserted as markup.
+
 Plugin system:
 
 - A plugin no longer starts with a schema warning and a degraded flag because
