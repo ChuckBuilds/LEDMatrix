@@ -214,7 +214,8 @@ class Verifier:
             # Only a refused command line is worth the next candidate. A pip
             # that ran and failed, or timed out, would just do it again.
             if not any(phrase in (result.stderr or '') for phrase in SUDO_REFUSAL_PHRASES):
-                self.log(f'reinstalling {rel} failed: {(result.stderr or "").strip()[-300:]}')
+                # Not pip's output: it can echo an index URL's credentials.
+                self.log(f'reinstalling {rel} failed (exit {result.returncode})')
                 return False
         return False
 
