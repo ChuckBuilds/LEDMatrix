@@ -102,7 +102,9 @@ Configure basic system settings:
   check are shown under the toggle, and anything other than success raises a
   banner on **Overview**.
   - *Checks first:* the code update is skipped, with the reason shown, if
-    tracked files were edited locally, the checkout has local commits, a
+    tracked files were edited locally (permission-only changes and edits under
+    `plugins/` or `plugin-repos/` don't count; the pull carries those across
+    and puts them back), the checkout has local commits, a
     rebase/merge is in progress, the branch has no upstream, less than 300 MB
     is free, or the newest version already failed once. A failed fetch is
     retried the next day.

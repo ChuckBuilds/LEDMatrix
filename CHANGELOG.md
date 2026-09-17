@@ -216,6 +216,30 @@ Core:
   `ensure_shared_group_ownership()` now returns immediately when `os.geteuid`
   or `os.chown` is missing. No behaviour change on the Pi.
 
+Automatic updates and Update Code:
+
+- An update that changes `web_interface/requirements.txt` is no longer rolled
+  back on every auto-updating device. `safe_pip_install.sh` allowed only the
+  root `requirements.txt`, so the install Update Code and the health check run
+  for the web requirements was refused, and the health check rolls back any
+  update whose dependencies failed (Install Base Requirements failed the same
+  way). The wrapper now allows both core requirement files; a core requirement
+  file symlinked out of the project is refused.
+- The automatic update's local-change check and Update Code now count changes
+  the same way (`auto_update.local_changes`): permission-only changes and
+  anything under `plugins/` or `plugin-repos/` don't count, and a core path
+  that merely contains `plugins/` does. Such edits used to pass the check and
+  then be stashed by the pull and never restored, despite "will not stash your
+  changes". The pull's `--autostash` now carries them across. Update Code
+  still stashes other edits; the automatic update refuses instead.
+- When the automatic update's own rollback fails (a partial pull, or a health
+  check that never started), plugins are no longer updated and the display is
+  not restarted, as the 3.4.0 notes promised.
+- The health check's dependency reinstall no longer retries pip failures or
+  timeouts with a second bash path, and all reinstalls share a 10-minute
+  budget, so a rollback finishes inside the unit's 30-minute limit instead of
+  being killed mid-way.
+
 ## 3.4.0
 
 Plugin-facing changes since 3.3.0 (tag `v3.3.1`) not covered further down:
