@@ -146,6 +146,33 @@ const noSleep = { sleep: async () => {} };
     ok('...and is reported as a failure', results.find(x => x.pluginId === 'static-image').success === false);
   }
 
+  console.log('\nsummary: a no-op update is not counted as updated');
+  {
+    const answer = (update_status, message) => ({ success: true, result: { status: 'success', message, data: { update_status } } });
+    const results = [
+      answer('updated', 'Plugin a updated to version 2.8.0'),
+      // ZIP-installed monorepo plugin already at the registry version: the
+      // route used to call this "updated successfully".
+      answer('up_to_date', 'Plugin stock-news already up to date (version 2.8.0)'),
+      answer('up_to_date', 'Plugin clock already up to date (commit abcdef1)'),
+      answer('local_only', 'Plugin mine is managed locally and does not receive registry updates'),
+      { success: false, error: { error_code: 'PLUGIN_UPDATE_FAILED' } },
+    ];
+    const s = Manager.summarizeUpdateResults(results);
+    ok('counts come from update_status',
+       s.updated === 1 && s.upToDate === 2 && s.localOnly === 1 && s.failed === 1, s);
+    ok('toast text names each outcome',
+       s.text === '1 updated, 2 already up to date, 1 managed locally, 1 failed', s.text);
+    ok('a failure alongside an update is a warning', s.type === 'warning', s.type);
+    ok('an older server that only says so in the message is still up to date',
+       Manager.updateOutcome({ success: true, result: { message: 'Plugin x already up to date (commit 1234567)' } }) === 'up_to_date');
+    ok('a success without a status or telltale message counts as updated',
+       Manager.updateOutcome({ success: true, result: { message: 'Plugin x updated successfully' } }) === 'updated');
+    const allNoop = Manager.summarizeUpdateResults([answer('up_to_date', ''), answer('up_to_date', '')]);
+    ok('nothing to do is a success toast with no "updated"',
+       allNoop.type === 'success' && allNoop.text === '2 already up to date', allNoop);
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });

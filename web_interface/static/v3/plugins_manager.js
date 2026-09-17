@@ -1999,22 +1999,21 @@ function runUpdateAllPlugins() {
                 showNotification('No plugins to update.', 'info');
                 return;
             }
-            let updated = 0, upToDate = 0, failed = 0;
-            for (const r of results) {
-                if (!r.success) {
-                    failed++;
-                } else if (r.result && r.result.message && r.result.message.includes('already up to date')) {
-                    upToDate++;
-                } else {
-                    updated++;
-                }
-            }
-            const parts = [];
-            if (updated > 0) parts.push(`${updated} updated`);
-            if (upToDate > 0) parts.push(`${upToDate} already up to date`);
-            if (failed > 0) parts.push(`${failed} failed`);
-            const type = failed > 0 ? (updated > 0 ? 'warning' : 'error') : 'success';
-            showNotification(parts.join(', '), type);
+            // Counted by install_manager.js from each answer's update_status:
+            // a no-op update is "already up to date", not "updated". A cached
+            // install_manager.js from before that helper gets a plain count.
+            const manager = window.PluginInstallManager;
+            const summary = (manager && typeof manager.summarizeUpdateResults === 'function')
+                ? manager.summarizeUpdateResults(results)
+                : (() => {
+                    const failed = results.filter(r => !r.success).length;
+                    const checked = results.length - failed;
+                    return {
+                        text: `${checked} checked` + (failed ? `, ${failed} failed` : ''),
+                        type: failed ? (checked ? 'warning' : 'error') : 'success'
+                    };
+                })();
+            showNotification(summary.text, summary.type);
         })
         .catch(error => {
             console.error('Error updating all plugins:', error);
