@@ -148,7 +148,7 @@ The system supports live, recent, and upcoming game information for multiple spo
     ```bash
     sudo RPI_RGB_FORCE_REBUILD=1 ./first_time_install.sh
     ```
-  - Pi 5 config: leave `rp1_rio` at `0` (PIO mode, default) and set `gpio_slowdown` to `1` or `2`.
+  - Pi 5 config: leave `rp1_rio` at `0` (PIO mode, default) and start `gpio_slowdown` at `1`, raising it a step at a time if the image flickers or shows garbage (see `gpio_slowdown` under Display Settings).
   - **1GB models (Pi 3B / 3B+) and other low-memory boards**: supported, but the `rpi-rgb-led-matrix` C++ build needs more memory than the Pi has. The installer detects this automatically, compiles with fewer parallel jobs, and adds a temporary swapfile for the build which it removes afterwards. Expect that step to take 15-25 minutes instead of 2-5, and leave at least **3GB free** on the SD card. If you manage swap yourself, opt out with `--skip-swap`. To pin the compiler down further, use `--build-jobs 1`.
 
 
@@ -485,6 +485,10 @@ If you are copying my exact setup, you can likely leave the defaults alone. Howe
 
 The display settings are located in `config/config.json` under the `"display"` key and are organized into three main sections: `hardware`, `runtime`, and `display_durations`.
 
+The defaults below are the values in `config/config.template.json`. They are what applies when you haven't set a key: on every load, LEDMatrix adds any key your `config.json` lacks from the template, so `DisplayManager`'s own fallbacks are never reached on a normal install.
+
+The web UI and the config API refuse values the rgbmatrix library can't start with. If one is written into `config.json` by hand anyway, the display logs which setting it is (`Failed to initialize RGB Matrix` in `sudo journalctl -u ledmatrix`), runs in fallback mode, and the Display tab shows the message.
+
 ### Hardware Configuration (`display.hardware`)
 
 These settings control the physical hardware configuration and how the matrix is driven.
@@ -494,9 +498,7 @@ These settings control the physical hardware configuration and how the matrix is
 - **`rows`** (integer, default: 32)
   - Number of LED rows (vertical pixels) in each panel
   - Common values: 16, 32, 48, 64
-  - Must be an even number, at least 8. LEDMatrix sets no upper limit, but the
-    current rgbmatrix library rejects more than 64 rows per panel — the display
-    then won't start (see Troubleshooting Display Settings below)
+  - An even number from 8 to 64, the most the rgbmatrix library drives per panel
   - Must match your physical panel configuration
 
 - **`cols`** (integer, default: 64)
@@ -507,7 +509,7 @@ These settings control the physical hardware configuration and how the matrix is
 
 - **`chain_length`** (integer, default: 2)
   - Number of LED panels chained together horizontally
-  - At least 1, with no upper limit; longer chains lower the refresh rate
+  - 1 to 255 (the library's Python binding stores it in one byte); longer chains lower the refresh rate
   - If you have 2 panels side-by-side, set to 2
   - If you have 4 panels in a row, set to 4
   - Total display width = `cols × chain_length`
@@ -516,7 +518,7 @@ These settings control the physical hardware configuration and how the matrix is
   - Number of parallel chains (panels stacked vertically)
   - Use 1 for a single row of panels
   - Use 2 if you have panels stacked in two rows
-  - 1–3 on a Raspberry Pi, and the HAT needs that many outputs
+  - 1–3, and no more than your `hardware_mapping` has outputs: `regular` and `classic` have 3 (e.g. the Adafruit Triple LED Matrix Bonnet); `adafruit-hat`, `adafruit-hat-pwm`, `regular-pi1` and `classic-pi1` have 1. The library stops the display service outright on a mismatch, so it is refused
   - Total display height = `rows × parallel`
 
 #### Brightness and Visual Settings
@@ -529,12 +531,14 @@ These settings control the physical hardware configuration and how the matrix is
 
 #### Hardware Mapping
 
-- **`hardware_mapping`** (string, default: "adafruit-hat-pwm")
+- **`hardware_mapping`** (string, default: "adafruit-hat")
   - Specifies which GPIO pin mapping to use for your hardware
   - **`"adafruit-hat-pwm"`**: Use this for Adafruit RGB Matrix Bonnet/HAT WITH the jumper mod (PWM enabled). This is the recommended setting for Adafruit hardware with the PWM jumper soldered.
   - **`"adafruit-hat"`**: Use this for Adafruit RGB Matrix Bonnet/HAT WITHOUT the jumper mod (no PWM). Remove `-pwm` from the value if you did not solder the jumper.
   - **`"regular"`**: Standard GPIO pin mapping for direct GPIO connections (Generic). Also the right choice for the Adafruit Triple LED Matrix Bonnet
   - **`"regular-pi1"`**: Standard GPIO pin mapping for Raspberry Pi 1 (older hardware or non-standard hat mapping)
+  - **`"classic"`** / **`"classic-pi1"`**: the library's original pin-outs, for old adapter boards wired to them. Not used by current HATs
+  - Any other name is refused. `compute-module` is only compiled in when the library is built with `ENABLE_WIDE_GPIO_COMPUTE_MODULE`, which the installer doesn't do. On a Raspberry Pi 5, `classic-pi1` isn't supported
   - Choose the option that matches your specific hardware setup, if aren't sure try them all.
   - Hardware pulsing (see `disable_hardware_pulsing`) needs the panel's OE line on GPIO 18, which `adafruit-hat-pwm` and `regular` provide and `adafruit-hat` does not
 
@@ -571,7 +575,6 @@ These settings affect color fidelity and smoothness of color transitions:
   - Caps the panel refresh rate in Hz; `0` = no cap
   - A steady cap reduces flicker caused by other activity on the Pi, and in camera recordings
   - Scroll speeds are worked out against this value (against 100 Hz when it is `0`), so a cap the panel can actually hold keeps scrolling even
-  - If the key is missing from the config, `DisplayManager` uses 90
   - Recommended: 80-120. `sudo python3 scripts/scroll_speeds.py --measure` reports the rate your panel really achieves
 
 - **`disable_hardware_pulsing`** (boolean, default: false)
@@ -613,8 +616,10 @@ These settings are typically only needed for non-standard panels or custom confi
   - Set to `"180"` (or use the "Upside Down" option in the web UI's Display
     settings) if the panel is mounted upside down — useful for optimizing
     where the Raspberry Pi and wiring sit relative to the mounting location
+  - `"90"` and `"270"` are for a panel mounted on its side; they swap the
+    display's width and height
   - Applied independently of `pixel_mapper_config` (appended as a trailing
-    `Rotate:180` mapper), so custom mapper configs keep working alongside it
+    `Rotate:<degrees>` mapper), so custom mapper configs keep working alongside it
 
 - **`row_address_type`** (integer, default: 0)
   - How rows are addressed on the panel
@@ -663,7 +668,7 @@ These settings control runtime behavior and GPIO timing:
   - **Raspberry Pi Zero/1**: 0-1
   - **Raspberry Pi 2/3**: 1-3
   - **Raspberry Pi 4**: 2-4 (the config template ships 3)
-  - **Raspberry Pi 5**: 1–3 in PIO mode (`rp1_rio: 0`, the default); start with `1` and increase if you see flickering
+  - **Raspberry Pi 5**: 1–3 in PIO mode (`rp1_rio: 0`, the default). Start at `1` (the library treats `0` as `1` there) and raise it a step at a time if the image flickers or shows garbage — chained panels are the likeliest to need it
   - Panels on `row_address_type` 5 (SM5368 row drivers) can need 6-8 on a Pi 4
   - Too low: garbage, flicker or rows jumping. Too high: a lower refresh rate
   - If you experience issues, try adjusting this value up or down by 1
@@ -752,7 +757,7 @@ Controls how long each installed plugin stays visible in seconds before switchin
 - Verify `hardware_mapping` matches your HAT/connection type
 - Try adjusting `gpio_slowdown`
 - Ensure your display doesn't need the E-Addressable line
-- If it went blank right after a settings change, check `sudo journalctl -u ledmatrix` for `Failed to initialize RGB Matrix`: the rgbmatrix library refused a value (for example more than 64 `rows`, or `pwm_dither_bits` above 2) and the display fell back to no output. The library's own message nearby names the setting; on a Raspberry Pi 5, LEDMatrix's message names any unsupported `row_address_type`, `parallel` or `hardware_mapping`
+- If it went blank right after a settings change, the Display tab shows a "simulation mode" banner, and `sudo journalctl -u ledmatrix` shows `Failed to initialize RGB Matrix` followed by the reason. When LEDMatrix refused the settings (for example more than 64 `rows`, `parallel` 2 on an `adafruit-hat` mapping, a misspelled `hardware_mapping`, or on a Raspberry Pi 5 a `row_address_type` other than 0 or 2), the message names each one: change them, save, and restart the display service. Otherwise the library itself failed, and its own message just before names the problem
 - A repeating scramble points at `row_address_type` or `multiplexing`; a panel that stays dark, at `panel_type`
 
 **Rows jump up and down, or the bottom row repeats other rows:**

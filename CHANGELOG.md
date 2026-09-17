@@ -68,9 +68,9 @@ Web interface:
   declared, e.g. countdown's row `id` and weather's `api_key` / `radar_zoom`.
   See `docs/widget-guide.md`.
 - Display settings no longer silently cut values on save: columns were capped
-  at 128, chain length at 24 and PWM LSB nanoseconds at 500. Rows, columns and
-  chain length now have no upper limit (the current rgbmatrix library still
-  rejects more than 64 rows per panel); rows must be even and at least 8,
+  at 128, chain length at 24 and PWM LSB nanoseconds at 500. Columns have no
+  upper limit, chain length is 1–255 and rows must be even and 8–64 (see
+  "Display hardware settings the library refuses" below);
   parallel is 1–3 and PWM dither bits 0–2, matching the library. A stored GPIO
   slowdown, PWM dither bits or refresh-rate cap of 0 no longer shows (and
   re-saves) as 3, 1 or 120, and the refresh cap accepts 0 (no cap). The config
@@ -111,6 +111,37 @@ Web interface:
   request that gets no HTTP answer (e.g. the web service restarting mid-run) is
   re-sent with backoff instead of being counted as failed and skipped — that is
   how a disabled plugin with an update waiting was silently left out.
+
+Display hardware settings the library refuses:
+
+- The rgbmatrix library answers several settings with no matrix or `abort()`
+  rather than an error, on every board, so the display service crash-looped
+  instead of falling back: rows above 64, `chain_length` above 255 (the Python
+  binding stores it in one byte; this was documented as "no upper limit"), a
+  misspelled `hardware_mapping`, and `parallel` 2–3 on a mapping with one output
+  (`adafruit-hat`, `adafruit-hat-pwm`, `regular-pi1`, `classic-pi1`) — the last
+  one reachable from the Display form on the default mapping. The config API
+  now refuses them with a 400 naming the setting, and `DisplayManager` refuses
+  a hand-edited one before creating the matrix: logged, fallback mode, reported
+  by `/api/v3/hardware/status`. The rules, including the Pi 5 ones, live in
+  `src/matrix_support.py` and must be re-checked when the submodule is bumped.
+- `/api/v3/hardware/status` adds `cause`: `"settings"` when LEDMatrix refused
+  the config, `"library"` when the library failed. The Display tab banner and
+  the fallback log line give the Pi 5 rebuild hint only for a library failure;
+  they used to follow every failure with it and with GPIO slowdown advice.
+- The Display form offers the `classic` and `classic-pi1` mappings and the
+  `90` / `270` orientations, and renders any other stored mapping selected with
+  a warning. With no option selected the browser posted the first one, so one
+  unrelated save rewrote those settings. The API accepts orientation `90` and
+  `270`, which `DisplayManager` already applied.
+- The display size the web preview, Starlark magnify default and
+  `scripts/dev/vegas_audit.py` compute (`src/display_geometry.py`) now applies
+  `orientation` and `pixel_mapper_config` as the library does: `Rotate:90`
+  swaps width and height, `U-mapper` folds the chain.
+- One Raspberry Pi 5 GPIO slowdown recommendation everywhere: 1–3 in PIO mode,
+  starting at 1. README and the config reference now describe the template
+  values as the defaults; the "code default" values they listed never apply,
+  because config migration fills missing keys from the template.
 
 Plugin system:
 
