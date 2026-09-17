@@ -1254,8 +1254,13 @@ def _set_missing_booleans_to_false(plugin_config, schema_props, form_keys, prefi
                     )
 def _enhance_schema_with_core_properties(schema):
     """
-    Enhance schema with core plugin properties (enabled, display_duration, live_priority).
-    These properties are system-managed and should always be allowed even if not in the plugin's schema.
+    Enhance schema with the core-owned per-plugin properties.
+
+    ``enabled``, ``display_duration``, ``live_priority``, ``skin``,
+    ``skin_options`` and the ``vegas_*`` tuning keys are system-managed and
+    always allowed, even when the plugin's schema doesn't declare them. The
+    list is ``schema_manager.CORE_PLUGIN_PROPERTIES``, the one validation uses,
+    so the save filter keeps exactly what validation accepts.
 
     Args:
         schema: The original JSON schema dict
@@ -1263,44 +1268,31 @@ def _enhance_schema_with_core_properties(schema):
     Returns:
         Enhanced schema dict with core properties injected
     """
-    import copy
+    from src.plugin_system.schema_manager import with_core_plugin_properties
 
     if not schema:
         return schema
+    return with_core_plugin_properties(schema)
 
-    # Core plugin properties that should always be allowed
-    # These match the definitions in SchemaManager.validate_config_against_schema()
-    core_properties = {
-        "enabled": {
-            "type": "boolean",
-            "default": True,
-            "description": "Enable or disable this plugin"
-        },
-        "display_duration": {
-            "type": "number",
-            "default": 15,
-            "minimum": 1,
-            "maximum": 300,
-            "description": "How long to display this plugin in seconds"
-        },
-        "live_priority": {
-            "type": "boolean",
-            "default": False,
-            "description": "Enable live priority takeover when plugin has live content"
-        }
-    }
 
-    # Create a deep copy of the schema to modify (to avoid mutating the original)
-    enhanced_schema = copy.deepcopy(schema)
-    if "properties" not in enhanced_schema:
-        enhanced_schema["properties"] = {}
+def _prepared_plugin_config(plugin_id, raw_config):
+    """A plugin's config section as the plugin runs with it, for on_config_change.
 
-    # Inject core properties if they're not already defined in the schema
-    for prop_name, prop_def in core_properties.items():
-        if prop_name not in enhanced_schema["properties"]:
-            enhanced_schema["properties"][prop_name] = copy.deepcopy(prop_def)
+    Loading a plugin reads legacy booleans as objects and fills in schema
+    defaults (PluginManager.prepare_plugin_config); a save's notification must
+    hand over the same shape. Falls back to the raw section.
+    """
+    prepare = getattr(api_v3.plugin_manager, 'prepare_plugin_config', None)
+    if callable(prepare):
+        try:
+            prepared = prepare(plugin_id, raw_config)
+            if isinstance(prepared, dict):
+                return prepared
+        except Exception:
+            logger.debug("Could not prepare config for %s", plugin_id, exc_info=True)
+    return raw_config
 
-    return enhanced_schema
+
 def _filter_config_by_schema(config, schema, prefix=''):
     """
     Filter config to only include fields defined in the schema.

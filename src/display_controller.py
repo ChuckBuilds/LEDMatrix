@@ -2976,6 +2976,14 @@ class DisplayController:
                                        _pid: str = plugin_id, _plugin: Any = plugin_instance) -> None:
                 """Callback for plugin config changes."""
                 try:
+                    # ConfigService hands over the raw config.json section.
+                    # Prepare it as loading did (legacy booleans read as
+                    # objects, schema defaults filled in), so the plugin gets
+                    # the same shape it was constructed with.
+                    prepare = getattr(self.plugin_manager, 'prepare_plugin_config', None)
+                    prepared = prepare(_pid, new_config) if callable(prepare) else None
+                    if isinstance(prepared, dict):
+                        new_config = prepared
                     _plugin.on_config_change(new_config)
                     logger.debug("Plugin %s notified of config change", _pid)
                 except Exception as e:

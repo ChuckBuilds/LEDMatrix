@@ -41,3 +41,13 @@ CORE_CONFIG_KEYS = frozenset({
     'vegas_excluded_plugins',
     'vegas_scroll_enabled',
 })
+
+#: Top-level keys of ``config_secrets.json`` that belong to the core rather than
+#: to a plugin: the GitHub token the Plugin Store reads, and the historical
+#: ``youtube`` section. Plugin secrets are namespaced by plugin id, so anything
+#: deciding whether a secrets section is a plugin's needs this as well as
+#: ``CORE_CONFIG_KEYS``.
+CORE_SECRETS_KEYS = frozenset({
+    'github',
+    'youtube',
+})

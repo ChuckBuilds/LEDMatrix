@@ -13,6 +13,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import jsonschema
 from jsonschema import Draft7Validator, ValidationError
 
+from src.core_config_keys import CORE_CONFIG_KEYS
+
 
 def _renders_as_object(prop: Dict[str, Any]) -> bool:
     """``field_type == 'object'`` as ``plugin_config.html`` computes it.
@@ -91,6 +93,222 @@ def normalize_legacy_booleans(config: Any, schema: Any,
                 result = dict(config)
             result[key] = new_value
     return result
+
+
+#: Per-plugin settings the **core** owns: it reads them out of each plugin's
+#: config section, so they are allowed in every plugin's config whether or not
+#: the plugin's schema declares them. The one list for validation, for the web
+#: save filter and for the load-time checks -- a private copy is how JSON saves
+#: came to drop ``skin`` and the ``vegas_*`` keys while the validator accepted
+#: them.
+#:
+#: Values are the schema used when the plugin does not declare the property.
+CORE_PLUGIN_PROPERTIES: Dict[str, Dict[str, Any]] = {
+    # Defaults match BasePlugin behavior: enabled=True, display_duration=15,
+    # live_priority=False.
+    "enabled": {
+        "type": "boolean",
+        "default": True,
+        "description": "Enable or disable this plugin"
+    },
+    "display_duration": {
+        "type": "number",
+        "default": 15,
+        "minimum": 1,
+        "maximum": 300,
+        "description": "How long to display this plugin in seconds"
+    },
+    "live_priority": {
+        "type": "boolean",
+        "default": False,
+        "description": "Enable live priority takeover when plugin has live content"
+    },
+    # Skin selection (docs/SKIN_SYSTEM.md). Deliberately NOT an enum here:
+    # validation must keep passing when a configured skin gets uninstalled
+    # (rendering falls back to built-in). The install-dependent enum is
+    # injected only at serve time (inject_skin_selector) for the web UI
+    # dropdown.
+    "skin": {
+        "type": ["string", "object", "null"],
+        "description": "Visual skin id, or a per-mode mapping like {\"live\": \"my-skin\"}"
+    },
+    "skin_options": {
+        "type": "object",
+        "description": "Options passed through to the selected skin"
+    },
+    # Vegas tuning read by vegas_mode/plugin_adapter.py and base_plugin.py.
+    # Left untyped: the adapter validates them itself and ignores a bad
+    # value with a log line, so a stored one must never block a save.
+    "vegas_width_pct": {
+        "description": "Vegas mode: width of this plugin's card, as a percentage of the panel"
+    },
+    "vegas_overflow": {
+        "description": "Vegas mode: 'rotate' or 'truncate' when this plugin's content overflows"
+    },
+    "vegas_max_width_screens": {
+        "description": "Vegas mode: widest this plugin's card may be, in screens"
+    },
+}
+
+#: The keys of CORE_PLUGIN_PROPERTIES that are Vegas tuning rather than plugin
+#: state. PluginManager strips these before its soft validation (see
+#: PluginManager.CORE_OWNED_CONFIG_KEYS).
+CORE_VEGAS_TUNING_KEYS = frozenset({
+    'vegas_width_pct', 'vegas_overflow', 'vegas_max_width_screens',
+})
+
+
+def with_core_plugin_properties(schema: Dict[str, Any]) -> Dict[str, Any]:
+    """A deep copy of a plugin schema with CORE_PLUGIN_PROPERTIES allowed.
+
+    Properties the plugin declares itself are left as declared. Core
+    properties are removed from ``required``: they are system-managed.
+    """
+    enhanced = copy.deepcopy(schema) if isinstance(schema, dict) else {}
+    properties = enhanced.setdefault("properties", {})
+    for name, definition in CORE_PLUGIN_PROPERTIES.items():
+        if name not in properties:
+            properties[name] = copy.deepcopy(definition)
+    if "required" in enhanced:
+        enhanced["required"] = [field for field in enhanced["required"]
+                                if field not in CORE_PLUGIN_PROPERTIES]
+    return enhanced
+
+
+def extract_schema_defaults(schema: Dict[str, Any]) -> Dict[str, Any]:
+    """Default values of a JSON Schema's properties, recursively.
+
+    A property's own ``default`` wins; otherwise a nested object contributes
+    its children's defaults, and an array contributes ``[]`` (or a one-item
+    list of its ``items`` default). This is what a device runs with, so the
+    dev tools use it too (src/plugin_system/testing/loading.py).
+    """
+    defaults: Dict[str, Any] = {}
+    properties = schema.get('properties', {}) if isinstance(schema, dict) else {}
+    if not isinstance(properties, dict):
+        return defaults
+
+    for key, prop_schema in properties.items():
+        if not isinstance(prop_schema, dict):
+            continue
+        # If property has a default, use it
+        if 'default' in prop_schema:
+            defaults[key] = prop_schema['default']
+            continue
+
+        # Handle nested objects
+        if prop_schema.get('type') == 'object' and 'properties' in prop_schema:
+            nested_defaults = extract_schema_defaults(prop_schema)
+            if nested_defaults:
+                defaults[key] = nested_defaults
+
+        # Handle arrays with object items
+        elif prop_schema.get('type') == 'array' and 'items' in prop_schema:
+            items_schema = prop_schema['items']
+            if items_schema.get('type') == 'object' and 'properties' in items_schema:
+                # For arrays of objects, use empty array as default
+                # Individual objects will use their defaults when created
+                defaults[key] = []
+            elif 'default' in items_schema:
+                # Array with default item value
+                defaults[key] = [items_schema['default']]
+            else:
+                # Empty array as default
+                defaults[key] = []
+
+        # For other types without defaults, don't add to defaults dict
+        # This allows plugins to handle missing values as needed
+
+    return defaults
+
+
+def plugin_config_defaults(schema: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Every default a plugin's config gets: the schema's plus the core ones.
+
+    A plugin with no schema gets the minimal ``enabled: False,
+    display_duration: 15``. Device location is not applied here; that needs a
+    config manager (SchemaManager.generate_default_config).
+    """
+    if not schema:
+        return {
+            'enabled': False,
+            'display_duration': 15
+        }
+
+    defaults = extract_schema_defaults(schema)
+
+    # Ensure core properties have defaults (they may not be in the schema)
+    # These match BasePlugin behavior
+    for name in ('enabled', 'display_duration', 'live_priority'):
+        if name not in defaults:
+            defaults[name] = CORE_PLUGIN_PROPERTIES[name]['default']
+    return defaults
+
+
+def merge_config_defaults(config: Dict[str, Any], defaults: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge configuration with defaults, preserving user values.
+
+    Also replaces None values with defaults so a config never starts with
+    None where a default exists. Neither argument is mutated.
+    """
+    merged = copy.deepcopy(defaults)
+
+    def deep_merge(target: Dict[str, Any], source: Dict[str, Any], default_dict: Dict[str, Any]) -> None:
+        """Recursively merge source into target, replacing None with defaults."""
+        for key, value in source.items():
+            default_value = default_dict.get(key)
+
+            if key in target and isinstance(target[key], dict) and isinstance(value, dict):
+                # Both are dicts, recursively merge
+                if isinstance(default_value, dict):
+                    deep_merge(target[key], value, default_value)
+                else:
+                    deep_merge(target[key], value, {})
+            elif value is None and default_value is not None:
+                # Value is None and we have a default, use the default
+                target[key] = copy.deepcopy(default_value) if isinstance(default_value, (dict, list)) else default_value
+            else:
+                # Normal merge: user value takes precedence (copy if dict/list)
+                if isinstance(value, (dict, list)):
+                    target[key] = copy.deepcopy(value)
+                else:
+                    target[key] = value
+
+    deep_merge(merged, config, defaults)
+
+    # Final pass: replace any remaining None values at any level with defaults
+    def replace_none_with_defaults(target: Dict[str, Any], default_dict: Dict[str, Any]) -> None:
+        """Recursively replace None values with defaults."""
+        for key in list(target.keys()):
+            value = target[key]
+            default_value = default_dict.get(key)
+
+            if value is None and default_value is not None:
+                # Replace None with default
+                target[key] = copy.deepcopy(default_value) if isinstance(default_value, (dict, list)) else default_value
+            elif isinstance(value, dict) and isinstance(default_value, dict):
+                # Recursively process nested dicts
+                replace_none_with_defaults(value, default_value)
+
+    replace_none_with_defaults(merged, defaults)
+    return merged
+
+
+def prepare_plugin_config(config: Any, schema: Optional[Dict[str, Any]],
+                          defaults: Dict[str, Any],
+                          changed_paths: Optional[List[str]] = None) -> Dict[str, Any]:
+    """The config a plugin runs with, from its stored (or submitted) section.
+
+    Legacy booleans are read as ``{"enabled": ...}`` objects
+    (normalize_legacy_booleans), then schema defaults fill in whatever is
+    missing. Loading a plugin, both config saves, GET /plugins/config, hot
+    reload and the dev tools all go through this, so a plugin sees the same
+    shape however its config reached it.
+    """
+    config = config if isinstance(config, dict) else {}
+    if schema:
+        config = normalize_legacy_booleans(config, schema, changed_paths)
+    return merge_config_defaults(config, defaults)
 
 
 class SchemaManager:
@@ -262,57 +480,12 @@ class SchemaManager:
     def extract_defaults_from_schema(self, schema: Dict[str, Any], prefix: str = '') -> Dict[str, Any]:
         """
         Recursively extract default values from a JSON Schema.
-        
-        Handles nested objects, arrays, and all schema types.
-        
-        Args:
-            schema: JSON Schema dictionary
-            prefix: Optional prefix for logging/debugging
-            
-        Returns:
-            Dictionary of default values
+
+        See :func:`extract_schema_defaults`; ``prefix`` is accepted for
+        compatibility and unused.
         """
-        defaults = {}
-        
-        # Handle schema with properties
-        properties = schema.get('properties', {})
-        if not properties:
-            return defaults
-        
-        for key, prop_schema in properties.items():
-            field_path = f"{prefix}.{key}" if prefix else key
-            
-            # If property has a default, use it
-            if 'default' in prop_schema:
-                defaults[key] = prop_schema['default']
-                self.logger.debug(f"Found default for {field_path}: {prop_schema['default']}")
-                continue
-            
-            # Handle nested objects
-            if prop_schema.get('type') == 'object' and 'properties' in prop_schema:
-                nested_defaults = self.extract_defaults_from_schema(prop_schema, field_path)
-                if nested_defaults:
-                    defaults[key] = nested_defaults
-            
-            # Handle arrays with object items
-            elif prop_schema.get('type') == 'array' and 'items' in prop_schema:
-                items_schema = prop_schema['items']
-                if items_schema.get('type') == 'object' and 'properties' in items_schema:
-                    # For arrays of objects, use empty array as default
-                    # Individual objects will use their defaults when created
-                    defaults[key] = []
-                elif 'default' in items_schema:
-                    # Array with default item value
-                    defaults[key] = [items_schema['default']]
-                else:
-                    # Empty array as default
-                    defaults[key] = []
-            
-            # For other types without defaults, don't add to defaults dict
-            # This allows plugins to handle missing values as needed
-        
-        return defaults
-    
+        return extract_schema_defaults(schema)
+
     def get_device_location(self) -> Optional[Dict[str, Any]]:
         """
         Return the device-wide ``location`` block from config.json, or None.
@@ -391,31 +564,39 @@ class SchemaManager:
         schema = self.load_schema(plugin_id, use_cache=use_cache)
         if not schema:
             # Return minimal defaults if no schema
-            return {
-                'enabled': False,
-                'display_duration': 15
-            }
-        
-        # Extract defaults from schema
-        defaults = self.extract_defaults_from_schema(schema)
-        
-        # Ensure core properties have defaults (they may not be in the schema)
-        # These match BasePlugin behavior
-        if 'enabled' not in defaults:
-            defaults['enabled'] = schema.get('properties', {}).get('enabled', {}).get('default', True)
-        
-        if 'display_duration' not in defaults:
-            defaults['display_duration'] = schema.get('properties', {}).get('display_duration', {}).get('default', 15)
-        
-        if 'live_priority' not in defaults:
-            defaults['live_priority'] = schema.get('properties', {}).get('live_priority', {}).get('default', False)
-        
+            return plugin_config_defaults(None)
+
+        # Schema defaults plus the core properties' (they may not be in the
+        # schema)
+        defaults = plugin_config_defaults(schema)
+
         # Cache the defaults *before* the device location is layered on, so a
         # later change to the device location is picked up by the next call.
         self._defaults_cache[plugin_id] = defaults.copy()
         
         return self.apply_device_location(defaults)
     
+    def prepare_plugin_config(self, plugin_id: str, config: Any,
+                              schema: Optional[Dict[str, Any]] = None,
+                              changed_paths: Optional[List[str]] = None) -> Dict[str, Any]:
+        """
+        The config a plugin runs with: see :func:`prepare_plugin_config`.
+
+        Args:
+            plugin_id: Plugin identifier
+            config: The plugin's stored or submitted config section
+            schema: The plugin's schema, when the caller already has it
+            changed_paths: Receives the dotted path of each legacy boolean
+                read as an object
+
+        Returns:
+            A new dict; ``config`` is not mutated
+        """
+        if schema is None:
+            schema = self.load_schema(plugin_id, use_cache=True)
+        defaults = self.generate_default_config(plugin_id, use_cache=True)
+        return prepare_plugin_config(config, schema, defaults, changed_paths)
+
     def validate_config_against_schema(self, config: Dict[str, Any], schema: Dict[str, Any], 
                                       plugin_id: Optional[str] = None) -> Tuple[bool, List[str]]:
         """
@@ -436,80 +617,18 @@ class SchemaManager:
         errors = []
         
         try:
-            # Core plugin properties that should always be allowed
-            # These are handled by the base plugin system and should not cause validation failures
-            # Defaults match BasePlugin behavior: enabled=True, display_duration=15, live_priority=False
-            core_properties = {
-                "enabled": {
-                    "type": "boolean",
-                    "default": True,
-                    "description": "Enable or disable this plugin"
-                },
-                "display_duration": {
-                    "type": "number",
-                    "default": 15,
-                    "minimum": 1,
-                    "maximum": 300,
-                    "description": "How long to display this plugin in seconds"
-                },
-                "live_priority": {
-                    "type": "boolean",
-                    "default": False,
-                    "description": "Enable live priority takeover when plugin has live content"
-                },
-                # Skin selection (docs/SKIN_SYSTEM.md). Deliberately NOT an
-                # enum here: validation must keep passing when a configured
-                # skin gets uninstalled (rendering falls back to built-in).
-                # The install-dependent enum is injected only at serve time
-                # (inject_skin_selector) for the web UI dropdown.
-                "skin": {
-                    "type": ["string", "object", "null"],
-                    "description": "Visual skin id, or a per-mode mapping like {\"live\": \"my-skin\"}"
-                },
-                "skin_options": {
-                    "type": "object",
-                    "description": "Options passed through to the selected skin"
-                }
-            }
-            
-            # Create a deep copy of the schema to modify (to avoid mutating the original)
-            enhanced_schema = copy.deepcopy(schema)
-            if "properties" not in enhanced_schema:
-                enhanced_schema["properties"] = {}
-            
-            # Inject core properties if they're not already defined in the schema
-            # This ensures core properties are always allowed even if not in the plugin's schema
-            properties_added = []
-            for prop_name, prop_def in core_properties.items():
-                if prop_name not in enhanced_schema["properties"]:
-                    enhanced_schema["properties"][prop_name] = copy.deepcopy(prop_def)
-                    properties_added.append(prop_name)
-            
-            # Log if we added any core properties (for debugging)
-            if properties_added and plugin_id:
+            # Core plugin properties (CORE_PLUGIN_PROPERTIES) are handled by
+            # the base plugin system and should not cause validation failures:
+            # they are allowed even when the plugin's schema doesn't declare
+            # them, and never required.
+            enhanced_schema = with_core_plugin_properties(schema)
+            if plugin_id:
+                declared = schema.get("properties", {}) if isinstance(schema, dict) else {}
                 self.logger.debug(
-                    f"Injected core properties into schema for {plugin_id}: {properties_added}"
+                    "Injected core properties into schema for %s: %s", plugin_id,
+                    [name for name in CORE_PLUGIN_PROPERTIES if name not in declared]
                 )
-            
-            # Remove core properties from required array (they're system-managed)
-            # Core properties should be allowed but not required for validation
-            if "required" in enhanced_schema:
-                core_prop_names = list(core_properties.keys())
-                removed_from_required = [
-                    field for field in enhanced_schema["required"]
-                    if field in core_prop_names
-                ]
-                enhanced_schema["required"] = [
-                    field for field in enhanced_schema["required"] 
-                    if field not in core_prop_names
-                ]
-                
-                # Log if we removed any core properties from required (for debugging)
-                if removed_from_required and plugin_id:
-                    self.logger.debug(
-                        f"Removed core properties from required array for {plugin_id}: {removed_from_required}"
-                    )
-            
+
             # Create validator with enhanced schema
             validator = Draft7Validator(enhanced_schema)
             
@@ -626,55 +745,15 @@ class SchemaManager:
         """
         Merge configuration with defaults, preserving user values.
         Also replaces None values with defaults to ensure config never has None from the start.
-        
+
         Args:
             config: User configuration
             defaults: Default values from schema
-            
+
         Returns:
             Merged configuration with defaults applied where missing or None
         """
-        merged = copy.deepcopy(defaults)
-        
-        def deep_merge(target: Dict[str, Any], source: Dict[str, Any], default_dict: Dict[str, Any]) -> None:
-            """Recursively merge source into target, replacing None with defaults."""
-            for key, value in source.items():
-                default_value = default_dict.get(key)
-                
-                if key in target and isinstance(target[key], dict) and isinstance(value, dict):
-                    # Both are dicts, recursively merge
-                    if isinstance(default_value, dict):
-                        deep_merge(target[key], value, default_value)
-                    else:
-                        deep_merge(target[key], value, {})
-                elif value is None and default_value is not None:
-                    # Value is None and we have a default, use the default
-                    target[key] = copy.deepcopy(default_value) if isinstance(default_value, (dict, list)) else default_value
-                else:
-                    # Normal merge: user value takes precedence (copy if dict/list)
-                    if isinstance(value, (dict, list)):
-                        target[key] = copy.deepcopy(value)
-                    else:
-                        target[key] = value
-        
-        deep_merge(merged, config, defaults)
-        
-        # Final pass: replace any remaining None values at any level with defaults
-        def replace_none_with_defaults(target: Dict[str, Any], default_dict: Dict[str, Any]) -> None:
-            """Recursively replace None values with defaults."""
-            for key in list(target.keys()):
-                value = target[key]
-                default_value = default_dict.get(key)
-                
-                if value is None and default_value is not None:
-                    # Replace None with default
-                    target[key] = copy.deepcopy(default_value) if isinstance(default_value, (dict, list)) else default_value
-                elif isinstance(value, dict) and isinstance(default_value, dict):
-                    # Recursively process nested dicts
-                    replace_none_with_defaults(value, default_value)
-        
-        replace_none_with_defaults(merged, defaults)
-        return merged
+        return merge_config_defaults(config, defaults)
 
     def detect_config_key_collisions(
         self,
@@ -698,10 +777,11 @@ class SchemaManager:
         """
         collisions = []
 
-        # Reserved top-level config keys that plugins should not use as IDs
-        reserved_keys = {
-            'display', 'schedule', 'timezone', 'plugin_system',
-            'display_modes', 'system', 'hardware', 'debug',
+        # Reserved top-level config keys that plugins should not use as IDs:
+        # every core section (src/core_config_keys.py), plus a few names that
+        # read as core even though no current section uses them.
+        reserved_keys = set(CORE_CONFIG_KEYS) | {
+            'display_modes', 'hardware', 'debug',
             'log_level', 'emulator', 'web_interface'
         }
 

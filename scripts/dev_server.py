@@ -142,17 +142,18 @@ def find_plugin_dir(plugin_id: str) -> Optional[Path]:
 
 
 def load_config_defaults(plugin_dir: 'str | Path') -> Dict[str, Any]:
-    """Extract default values from config_schema.json."""
+    """Extract default values from config_schema.json.
+
+    The same extraction a device and the plugin harness use
+    (src/plugin_system/testing/loading.py), nested defaults included.
+    """
+    from src.plugin_system.testing.loading import (
+        load_config_defaults as _load_config_defaults,
+    )
     schema_path = resolve_under(plugin_dir, 'config_schema.json')
     if schema_path is None or not schema_path.exists():
         return {}
-    with open(schema_path, 'r') as f:
-        schema = json.load(f)
-    defaults: Dict[str, Any] = {}
-    for key, prop in schema.get('properties', {}).items():
-        if 'default' in prop:
-            defaults[key] = prop['default']
-    return defaults
+    return _load_config_defaults(schema_path.parent)
 
 
 # --------------------------------------------------------------------------
@@ -303,10 +304,13 @@ def _parse_render_request(data):
     with open(manifest_path, 'r') as f:
         manifest = json.load(f)
 
-    # Build config: schema defaults + user overrides
-    config = {'enabled': True}
-    config.update(load_config_defaults(trusted_dir))
-    config.update(data.get('config', {}))
+    # Build config the way a device would: schema defaults under a forced
+    # enabled, with the user's overrides deep-merged on top
+    from src.plugin_system.testing.loading import build_config
+    overrides = data.get('config') or {}
+    if not isinstance(overrides, dict):
+        raise ValueError('config must be a JSON object')
+    config = build_config(trusted_dir, overrides)
 
     return trusted_dir, manifest, config, data.get('mock_data', {}), data.get('skip_update', False)
 

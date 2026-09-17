@@ -19,6 +19,44 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+Config saves and plugin config preparation:
+
+- A JSON `POST /api/v3/config/main` changes only the keys it sends. The MQTT
+  bridge's brightness slider used to turn off `disable_hardware_pulsing`,
+  `inverse_colors`, `show_refresh_rate` and `use_short_date_format`, and a
+  timezone- or location-only save turned off web-UI autostart and weekly
+  automatic updates. Missing checkboxes still save as unchecked for the
+  settings forms (they now send a hidden `__form_section` field) and for
+  form-encoded posts.
+- A partial JSON `POST /api/v3/plugins/config` merges onto the plugin's stored
+  settings instead of resetting everything it didn't send to the schema
+  defaults, and keeps a submitted `skin`, `skin_options`, `vegas_width_pct`,
+  `vegas_overflow` or `vegas_max_width_screens` (they were silently dropped).
+- Plugin sections posted to `/config/main` are validated and prepared exactly
+  like `/plugins/config`; a value that endpoint rejects is rejected here too,
+  and nothing is saved.
+- Legacy boolean settings (#588) are read as `{"enabled": ...}` objects
+  everywhere, not just when the plugin loads: `GET /plugins/config` returns
+  the object, posting it back saves, and hot reload hands plugins the same
+  shape (schema defaults included) they were constructed with.
+  `schema_manager.prepare_plugin_config` is the one implementation.
+- `scripts/dev_server.py`, `check_plugin.py`, `render_plugin.py` and the plugin
+  harness build configs the way a device does: nested defaults are included,
+  a schema `enabled: false` no longer beats the forced `enabled: true` in the
+  dev server, and nested overrides such as `{"nhl": {"enabled": true}}` keep
+  the other defaults of that section.
+- Clearing Vegas "Min/Max Cycle Time" no longer rejects the whole Display save,
+  and those fields no longer add junk entries to `display.display_durations`.
+- Turning automatic updates on from the Raw JSON editor finishes their setup
+  like the General tab does, instead of waiting for the next display restart.
+- `POST /config/schedule` and `/config/dim-schedule` accept the per-day
+  `days.<day>.{enabled,start_time,end_time}` shape their GETs return, as well
+  as the flat form keys.
+- The startup check no longer warns that `auto_update` or `dim_schedule` is
+  "enabled but not found in plugins directory", and plugin ids that collide
+  with any core config section are flagged: the last private copies of the
+  core-key list now use `src/core_config_keys.py`.
+
 New module a plugin may import via `src.*` (floor on the release that ships
 this):
 
