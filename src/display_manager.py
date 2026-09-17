@@ -37,9 +37,11 @@ from PIL import Image, ImageDraw, ImageFont
 from src.common.font_layout import crisp_size, load_truetype, resolve_asset_path
 from src.display_geometry import (
     DEFAULT_CHAIN_LENGTH, DEFAULT_COLS, DEFAULT_PARALLEL, DEFAULT_ROWS,
-    physical_size, resolve_double_sided,
+    ORIENTATION_ROTATE_DEGREES, compose_pixel_mapper_config, physical_size,
+    resolve_double_sided,
 )
-from src.pi5_matrix_support import is_raspberry_pi_5, pi5_unsupported_settings
+from src.matrix_support import MatrixSettingsRefused, library_refusals, refusal_message
+from src.pi5_matrix_support import is_raspberry_pi_5
 import threading
 import time
 from collections import OrderedDict
@@ -247,28 +249,41 @@ class DisplayManager:
         # Calendar manager is now initialized by DisplayController
         
     # Orientation setting -> rpi-rgb-led-matrix "Rotate:<deg>" pixel-mapper suffix.
-    # "normal" needs no suffix since 0 degrees is the identity transform.
-    _ORIENTATION_ROTATE_DEGREES = {'normal': None, '90': 90, '180': 180, '270': 270}
+    _ORIENTATION_ROTATE_DEGREES = ORIENTATION_ROTATE_DEGREES
 
     def _build_pixel_mapper_config(self, hardware_config: dict) -> str:
-        """Compose the raw pixel_mapper_config string with the orientation setting.
+        """Compose pixel_mapper_config with the orientation setting.
 
-        `pixel_mapper_config` stays available as a free-form advanced field (e.g.
-        for "U-mapper" chain layouts); `orientation` is the user-facing dropdown
-        for physical mounting (e.g. panels mounted upside down) and is appended as
-        a "Rotate:<deg>" mapper rather than overwriting any existing config.
+        See :func:`src.display_geometry.compose_pixel_mapper_config`, which the
+        web preview shares so it sizes the canvas the same way.
         """
-        base_mapper = (hardware_config.get('pixel_mapper_config') or '').strip()
-        orientation = hardware_config.get('orientation', 'normal')
-        degrees = self._ORIENTATION_ROTATE_DEGREES.get(orientation)
-        if degrees is None:
-            return base_mapper
-        rotate_mapper = f'Rotate:{degrees}'
-        return f'{base_mapper};{rotate_mapper}' if base_mapper else rotate_mapper
+        return compose_pixel_mapper_config(hardware_config)
+
+    @staticmethod
+    def _fallback_advice(cause: str, error: Exception) -> str:
+        """What to do about a failed matrix init, for the log.
+
+        Only a library failure gets the rebuild hint: advice about the build
+        or GPIO timing sends someone whose settings were refused the wrong way.
+        """
+        if cause == "settings":
+            return (f"{error} Change these in the web interface's Display tab "
+                    "(or display.hardware / display.runtime in config.json) "
+                    "and restart the display service.")
+        if cause == "forced":
+            return f"Error: {error}."
+        advice = (f"Error: {error}. If the rgbmatrix library printed a message "
+                  "just before this, it names the problem.")
+        if is_raspberry_pi_5():
+            advice += (" On a Raspberry Pi 5, an mmap error means the library was "
+                       "built without Pi 5 support: sudo RPI_RGB_FORCE_REBUILD=1 "
+                       "./first_time_install.sh")
+        return advice
 
     def _setup_matrix(self):
         """Initialize the RGB matrix with configuration settings."""
         _init_error_str = None
+        _init_cause = None
         try:
             # Allow callers (e.g., web UI) to force non-hardware fallback mode
             if getattr(self, '_force_fallback', False):
@@ -278,6 +293,18 @@ class DisplayManager:
             # Hardware configuration
             hardware_config = self.config.get('display', {}).get('hardware', {})
             runtime_config = self.config.get('display', {}).get('runtime', {})
+
+            # The library has no error path for many settings it can't use:
+            # it returns no matrix (which the binding doesn't check, so the
+            # process crashes on its next call) or calls abort(), and systemd
+            # restarts the service into the same crash. Refuse those first so
+            # they become a logged, reported fallback (src/matrix_support.py).
+            refused = refusal_message(library_refusals(
+                hardware_config, runtime_config, pi5=is_raspberry_pi_5()))
+            if refused:
+                if os.getenv("EMULATOR", "false") != "true":
+                    raise MatrixSettingsRefused(refused)
+                logger.warning("Emulator mode: continuing, but on a real panel the display would not start. %s", refused)
             
             # Basic hardware settings
             options.rows = hardware_config.get('rows', DEFAULT_ROWS)
@@ -326,15 +353,6 @@ class DisplayManager:
             
             logger.info(f"Initializing RGB Matrix with settings: rows={options.rows}, cols={options.cols}, chain_length={options.chain_length}, parallel={options.parallel}, hardware_mapping={options.hardware_mapping}")
             
-            # On a Pi 5 the library hands back no matrix for settings its RP1
-            # path can't drive, and the binding doesn't check -- the process
-            # would crash on its next call instead of reaching the fallback
-            # below. Raise first so it is a logged, reported init failure.
-            if os.getenv("EMULATOR", "false") != "true" and is_raspberry_pi_5():
-                unsupported = pi5_unsupported_settings(hardware_config)
-                if unsupported:
-                    raise RuntimeError(unsupported)
-
             # Initialize the matrix
             self.matrix = RGBMatrix(options=options)
             logger.info("RGB Matrix initialized successfully")
@@ -379,7 +397,12 @@ class DisplayManager:
             
         except Exception as e:
             _init_error_str = str(e)
-            logger.error(f"Failed to initialize RGB Matrix: {e}", exc_info=True)
+            if isinstance(e, MatrixSettingsRefused):
+                _init_cause = "settings"
+                logger.error("Failed to initialize RGB Matrix: %s", e)
+            else:
+                _init_cause = "forced" if getattr(self, '_force_fallback', False) else "library"
+                logger.error(f"Failed to initialize RGB Matrix: {e}", exc_info=True)
             # Create a fallback image for web preview using configured dimensions when available
             self.matrix = None
             try:
@@ -406,15 +429,18 @@ class DisplayManager:
                 # Best-effort; ignore drawing errors in fallback
                 pass
             logger.error(
-                f"Matrix initialization failed — running in fallback/simulation mode "
-                f"(size {fallback_width}x{fallback_height}). Error: {e}. "
-                "On Raspberry Pi 5: ensure rpi-rgb-led-matrix was built from the latest "
-                "submodule (re-run first_time_install.sh). gpio_slowdown of 2–3 is typical for Pi 5 PIO mode."
-            )
+                "Matrix initialization failed — running in fallback/simulation mode "
+                "(size %dx%d). %s",
+                fallback_width, fallback_height, self._fallback_advice(_init_cause, e))
             # Do not raise here; allow fallback mode so web preview and non-hardware environments work
 
         # Write hardware status file so the web UI can surface init failures
-        _hw_status = {"ok": self.matrix is not None, "error": _init_error_str}
+        # cause: None when ok; "settings" when LEDMatrix refused the config
+        # (fix the named settings), "library" when the library itself failed,
+        # "forced" for a caller-requested fallback. The Display tab keys its
+        # advice on it.
+        _hw_status = {"ok": self.matrix is not None, "error": _init_error_str,
+                      "cause": None if self.matrix is not None else _init_cause}
         _status_path = "/tmp/led_matrix_hw_status.json"  # nosec B108
         try:
             if os.path.islink(_status_path):

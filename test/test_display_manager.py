@@ -265,6 +265,14 @@ class TestDisplayManagerOrientation:
             options = mock_rgb_matrix['options_class'].return_value
             assert options.pixel_mapper_config == ''
 
+    @pytest.mark.parametrize('orientation', ['90', '270'])
+    def test_sideways_orientation_appends_rotate_mapper(self, mock_rgb_matrix, orientation):
+        DisplayManager._instance = None
+        with patch.dict('os.environ', {'EMULATOR': 'false'}):
+            DisplayManager(self._config(orientation=orientation), suppress_test_pattern=True)
+            options = mock_rgb_matrix['options_class'].return_value
+            assert options.pixel_mapper_config == f'Rotate:{orientation}'
+
     def test_orientation_180_appends_rotate_mapper(self, mock_rgb_matrix):
         DisplayManager._instance = None
         with patch.dict('os.environ', {'EMULATOR': 'false'}):
@@ -281,10 +289,11 @@ class TestDisplayManagerOrientation:
             assert options.pixel_mapper_config == 'U-mapper;Rotate:180'
 
 
-class TestDisplayManagerPi5Guard:
-    """On a Pi 5 the library returns no matrix for settings its RP1 path can't
-    drive, and the binding doesn't check, so the process would crash on its next
-    call. DisplayManager has to refuse before creating the matrix and fall back."""
+class TestDisplayManagerLibraryGuard:
+    """For many settings it can't use the library returns no matrix (which the
+    binding doesn't check, so the process crashes on its next call) or calls
+    abort() -- on every board, with more on a Pi 5. DisplayManager has to refuse
+    before creating the matrix and fall back, reporting why."""
 
     def _config(self, **hardware_overrides):
         config = {
@@ -327,10 +336,95 @@ class TestDisplayManagerPi5Guard:
         mock_rgb_matrix['matrix_class'].assert_called_once()
         assert dm.matrix is not None
 
-    def test_other_boards_are_left_to_the_library(self, mock_rgb_matrix, board):
+    def test_pi5_only_limits_do_not_apply_to_other_boards(self, mock_rgb_matrix, board):
         board('Raspberry Pi 4 Model B Rev 1.5')
         DisplayManager._instance = None
         with patch.dict('os.environ', {'EMULATOR': 'false'}):
             dm = DisplayManager(self._config(row_address_type=5), suppress_test_pattern=True)
         mock_rgb_matrix['matrix_class'].assert_called_once()
         assert dm.matrix is not None
+
+    @pytest.fixture
+    def hw_status(self, tmp_path, monkeypatch):
+        """What DisplayManager writes to /tmp/led_matrix_hw_status.json."""
+        import json as _json
+        import tempfile as _tempfile
+        from src import display_manager as dm_module
+        written = {}
+        real_replace = os.replace
+        real_mkstemp = _tempfile.mkstemp
+
+        def fake_mkstemp(dir=None, prefix=None):
+            return real_mkstemp(dir=str(tmp_path), prefix=prefix)
+
+        def fake_replace(src, dst):
+            if str(dst).endswith('led_matrix_hw_status.json'):
+                with open(src) as f:
+                    written.update(_json.load(f))
+                os.remove(src)
+            else:
+                real_replace(src, dst)
+
+        monkeypatch.setattr(dm_module.tempfile, 'mkstemp', fake_mkstemp)
+        monkeypatch.setattr(dm_module.os, 'replace', fake_replace)
+        monkeypatch.setattr(dm_module.os.path, 'islink', lambda _p: False)
+        return written
+
+    @pytest.mark.parametrize('overrides,named', [
+        ({'hardware_mapping': 'adafruit-hat-pwm', 'parallel': 2}, 'parallel 2'),
+        ({'hardware_mapping': 'adafruit-hat', 'parallel': 3}, 'parallel 3'),
+        ({'hardware_mapping': 'adafruit-hat-pwn'}, 'adafruit-hat-pwn'),
+        ({'rows': 128}, 'rows 128'),
+        ({'chain_length': 300}, 'chain_length 300'),
+    ])
+    def test_hand_edited_setting_the_library_refuses_falls_back_on_any_board(
+            self, mock_rgb_matrix, board, hw_status, overrides, named):
+        board('Raspberry Pi 4 Model B Rev 1.5')
+        DisplayManager._instance = None
+        with patch.dict('os.environ', {'EMULATOR': 'false'}):
+            dm = DisplayManager(self._config(**overrides), suppress_test_pattern=True)
+        mock_rgb_matrix['matrix_class'].assert_not_called()
+        assert dm.matrix is None
+        assert hw_status['ok'] is False
+        assert hw_status['cause'] == 'settings'
+        assert named in hw_status['error']
+
+    def test_library_failure_is_reported_as_the_library(self, mock_rgb_matrix, board, hw_status):
+        board('Raspberry Pi 4 Model B Rev 1.5')
+        mock_rgb_matrix['matrix_class'].side_effect = RuntimeError('boom')
+        DisplayManager._instance = None
+        with patch.dict('os.environ', {'EMULATOR': 'false'}):
+            dm = DisplayManager(self._config(), suppress_test_pattern=True)
+        assert dm.matrix is None
+        assert hw_status == {'ok': False, 'error': 'boom', 'cause': 'library'}
+
+    def test_success_reports_no_cause(self, mock_rgb_matrix, board, hw_status):
+        board('Raspberry Pi 4 Model B Rev 1.5')
+        DisplayManager._instance = None
+        with patch.dict('os.environ', {'EMULATOR': 'false'}):
+            DisplayManager(self._config(), suppress_test_pattern=True)
+        assert hw_status == {'ok': True, 'error': None, 'cause': None}
+
+    def test_emulator_warns_but_still_starts(self, mock_rgb_matrix, board, caplog):
+        board('Raspberry Pi 4 Model B Rev 1.5')
+        DisplayManager._instance = None
+        with patch.dict('os.environ', {'EMULATOR': 'true'}):
+            dm = DisplayManager(self._config(rows=128), suppress_test_pattern=True)
+        mock_rgb_matrix['matrix_class'].assert_called_once()
+        assert dm.matrix is not None
+        assert 'rows 128' in caplog.text
+
+    def test_refused_settings_advice_does_not_send_users_to_rebuild(self, board):
+        """The Pi 5 rebuild / GPIO slowdown hint used to follow every failure,
+        including settings LEDMatrix itself refused."""
+        from src.matrix_support import MatrixSettingsRefused
+        board('Raspberry Pi 5 Model B Rev 1.0')
+        advice = DisplayManager._fallback_advice(
+            'settings', MatrixSettingsRefused('row address type 5'))
+        assert 'Display tab' in advice
+        assert 'first_time_install' not in advice and 'slowdown' not in advice
+        library = DisplayManager._fallback_advice('library', RuntimeError('mmap failed'))
+        assert 'RPI_RGB_FORCE_REBUILD=1' in library
+        board('Raspberry Pi 4 Model B Rev 1.5')
+        assert 'RPI_RGB_FORCE_REBUILD' not in DisplayManager._fallback_advice(
+            'library', RuntimeError('boom'))

@@ -47,38 +47,43 @@ saved via `POST /api/v3/config/dim-schedule`). The display returns to
 ## `display.hardware` — matrix panel hardware
 
 All keys map to the corresponding `rpi-rgb-led-matrix` options and are read
-in `DisplayManager` (`src/display_manager.py`, ~lines 270–295).
+in `DisplayManager._setup_matrix` (`src/display_manager.py`). Defaults are the
+`config/config.template.json` values: `ConfigManager` adds any key missing from
+`config.json` from the template on load, so `DisplayManager`'s own fallbacks
+don't apply on a normal install.
+
+The ranges are what the pinned rgbmatrix library and its Python binding accept
+(`src/matrix_support.py`). The config API refuses anything else; a value
+hand-edited into `config.json` makes the display log the setting and run in
+fallback mode instead of starting the matrix.
 
 | Key | Type / default |
 |---|---|
-| `rows` / `cols` | int, `32` / `64` — rows: even, at least 8, no upper limit here (the current rgbmatrix library rejects more than 64); cols: at least 16, no upper limit |
-| `chain_length` | int, `2` — at least 1, no upper limit |
-| `parallel` | int, `1` — 1–3 |
+| `rows` / `cols` | int, `32` / `64` — rows: even, 8–64; cols: at least 16 |
+| `chain_length` | int, `2` — 1–255 (the Python binding stores it in one byte) |
+| `parallel` | int, `1` — 1–3, and no more than `hardware_mapping` has outputs (`regular`, `classic`: 3; the others: 1) |
 | `brightness` | int, `90` — 1–100 |
-| `hardware_mapping` | string, `"adafruit-hat"` (code default `"adafruit-hat-pwm"`) |
+| `hardware_mapping` | string, `"adafruit-hat"` — `"adafruit-hat-pwm"`, `"adafruit-hat"`, `"regular"`, `"regular-pi1"`, `"classic"` or `"classic-pi1"` (case-insensitive; `compute-module` isn't in the installed build). A Pi 5 doesn't support `"classic-pi1"` |
 | `scan_mode` | int, `0` — `0` progressive, `1` interlaced |
-| `pwm_bits` | int, `9` (code default 10) — 1–11 |
+| `pwm_bits` | int, `9` — 1–11 |
 | `pwm_dither_bits` | int, `1` — 0–2 |
-| `pwm_lsb_nanoseconds` | int, `130` (code default 150) — 50–3000 |
+| `pwm_lsb_nanoseconds` | int, `130` — 50–3000 |
 | `disable_hardware_pulsing` | bool, `false` — `true` times brightness pulses in software (less exact); hardware pulsing needs the OE line on GPIO 18 and the Pi's onboard sound driver off |
 | `inverse_colors` | bool, `false` |
 | `show_refresh_rate` | bool, `false` — prints the refresh rate to stdout; draws nothing on the panel |
 | `led_rgb_sequence` | string, `"RGB"` — `"RGB"`, `"RBG"`, `"GRB"`, `"GBR"`, `"BRG"` or `"BGR"` |
-| `limit_refresh_rate_hz` | int, `100` (code default 90) — `0` = no cap; scroll timing assumes 100 Hz when `0` |
-| `pixel_mapper_config` | string, `""` — e.g. `"U-mapper"` / `"Rotate:90"` |
-| `orientation` | string, `"normal"` — `"180"` rotates the rendered image 180° for panels physically mounted upside down (e.g. to move the Pi/wiring to a more convenient side); composed onto `pixel_mapper_config` as a trailing `Rotate:180` mapper, so it stays independent of any custom `pixel_mapper_config` value |
+| `limit_refresh_rate_hz` | int, `100` — `0` = no cap; scroll timing assumes 100 Hz when `0` |
+| `pixel_mapper_config` | string, `""` — e.g. `"U-mapper"` / `"Rotate:90"`; mappers that rotate or fold the chain change the display size plugins and the web preview see |
+| `orientation` | string, `"normal"` — `"180"` rotates the rendered image 180° for panels physically mounted upside down (e.g. to move the Pi/wiring to a more convenient side); `"90"` / `"270"` for a panel on its side, swapping width and height; composed onto `pixel_mapper_config` as a trailing `Rotate:<degrees>` mapper, so it stays independent of any custom `pixel_mapper_config` value |
 | `row_address_type` | int, `0` — non-standard panel row addressing: `1` AB, `2` direct row select, `3` ABC, `4` ABC shift + DE direct, `5` SM5368 / B707 row shift register (e.g. Waveshare 96x48 V2, with `led_rgb_sequence` `"BGR"`). On a Pi 5 the library supports only `0` and `2`, and LEDMatrix enforces that (`src/pi5_matrix_support.py`) |
 | `multiplexing` | int, `0` — 0–22, pixel wiring scheme for outdoor/specialty panels (names listed in the README) |
 | `panel_type` | string, `""` — set to `"FM6126A"` or `"FM6127"` for panels needing init; FM6124 / FM6124D / FM6124DJ panels need none, so leave it `""` |
-
-Where "code default" differs from the template value, the code default only
-applies if the key is missing entirely from your config.
 
 ## `display.runtime`
 
 | Key | Type / default | Meaning |
 |---|---|---|
-| `gpio_slowdown` | int, `3` | GPIO timing slowdown for faster Pis (0–10). Panels on `row_address_type` `5` (SM5368 row drivers) can need 6–8 on a Pi 4 — lower values make rows jump |
+| `gpio_slowdown` | int, `3` | GPIO timing slowdown for faster Pis (0–10). On a Pi 5 in PIO mode start at `1` (`0` acts as `1`) and raise it if the image flickers or shows garbage. Panels on `row_address_type` `5` (SM5368 row drivers) can need 6–8 on a Pi 4 — lower values make rows jump |
 | `rp1_rio` | int, `0` | Pi 5 only: `0` = PIO (less CPU), `1` = RIO (higher refresh; `gpio_slowdown` effect inverted). Applied only if the installed matrix library supports it |
 
 ## `display.double_sided`
