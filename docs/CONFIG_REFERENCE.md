@@ -17,7 +17,7 @@ tooling against it.
 |---|---|---|---|
 | `web_display_autostart` | bool, `true` | Whether the web interface service starts with the system | `scripts/utils/start_web_conditionally.py` |
 | `timezone` | string, `"America/New_York"` | IANA timezone for schedules and displays | `ConfigManager.get_timezone()` |
-| `target_fps` | int, `100` | Frame-rate ceiling for plugin rendering | `src/plugin_system/base_plugin.py`, `src/common/sports_scroll.py` |
+| `target_fps` | int, `100` | Legacy "Scroll Frame Rate". Core scrolling no longer reads it: scroll frames are presented at `display.hardware.limit_refresh_rate_hz` divided by each scroll's frame hold, and speed comes from each plugin's scroll settings. Still exposed to plugins via `BasePlugin.global_config` | `src/plugin_system/base_plugin.py` |
 | `location` | object | `city` / `state` / `country`. Supplies the **default** for a plugin's own `location_city` / `location_state` / `location_country` setting, so weather, radar and friends follow this device without being configured twice. A value saved on the plugin itself still overrides it. | `SchemaManager.apply_device_location()`, then plugins via merged config |
 
 ## `schedule` — display on/off hours
@@ -139,8 +139,8 @@ Read by `src/vegas_mode/config.py` (`VegasScrollConfig.from_config`). See
 | `dynamic_duration_enabled` | bool, `true` |
 | `min_cycle_duration` | int, `60` |
 | `max_cycle_duration` | int, `240` |
-| `frame_based_scrolling` | bool, `true` — frame-count-based scroll stepping |
-| `scroll_delay` | float, `0.02` — seconds between scroll updates (~50 FPS) |
+| `frame_based_scrolling` | bool, `true` — does not step or set a frame rate; motion is by elapsed time either way. When `true`, `scroll_speed` passes through a clamp of 0.1–5 px per `scroll_delay` (see next row) |
+| `scroll_delay` | float, `0.02` — not a frame period. Only used with `frame_based_scrolling`: the applied speed is `clamp(scroll_speed × scroll_delay, 0.1, 5) / scroll_delay` px/s, so at `0.02` speeds under 5 px/s run at 5, and at `0.001` nothing runs slower than 100 px/s |
 | `live_in_ticker` | bool, `false` — keep scrolling during live games instead of handing the display to a full-screen scoreboard |
 | `live_weight` | int, `3` (1–10) — slots per cycle for a plugin with live content |
 | `favorite_live_weight` | int, `5` (1–10) — slots per cycle when a plugin reports a favorite team is live |

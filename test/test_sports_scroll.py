@@ -6,8 +6,11 @@ is shared, the content layer is not. Two things are worth asserting beyond
 
 * ``prepare_scroll_content`` must stay an override point — a base class that
   quietly rendered *something* would let a plugin ship a blank scroll.
-* ``target_fps`` must actually reach the helper. That is the whole reason this
-  module exists upstream; the bundled plugin copies hardcode ~100 FPS.
+* Speed must depend only on ``scroll_speed`` and the panel refresh. The helper
+  steps a fixed number of whole pixels per presented frame and the panel
+  presents at its refresh divided by the frame hold, so a ladder computed for
+  any other rate -- the global ``target_fps`` used to be one -- plays back at
+  the wrong speed.
 """
 
 import logging
@@ -221,12 +224,14 @@ class TestConfigureScrollHelper:
         bare = SportsScrollDisplay.__new__(SportsScrollDisplay)
         assert SportsScrollDisplay._scroll_frame_hold(bare) == 1
 
-    def test_stepping_is_time_based(self, build):
-        """Frame-based mode gated motion on a wall clock at 1/scroll_delay
-        steps, with scroll_delay set to the frame period -- putting the
-        comparison exactly on its own threshold, so it flipped on sub-
-        millisecond jitter."""
-        build().scroll_helper.set_frame_based_scrolling.assert_called_once_with(False)
+    def test_helper_steps_whole_pixels_per_presented_frame(self, build):
+        """No wall clock: the helper advances the ladder's whole-pixel step on
+        every presented frame, and the frame hold sets how often that is."""
+        display = build()
+        helper = display.scroll_helper
+        helper.set_frame_based_scrolling.assert_called_once_with(False)
+        helper.set_pixels_per_frame.assert_called_once_with(
+            display._scroll_settings.crisp.pixels_per_frame)
 
     def test_dynamic_duration_settings_are_applied(self, build):
         display = build({"nhl": {"scroll_settings": {
@@ -243,31 +248,65 @@ class TestConfigureScrollHelper:
         applied = display.scroll_helper.set_scroll_speed.call_args[0][0]
         assert applied == pytest.approx(100.0, abs=1.0)
 
-    def test_global_target_fps_sets_the_refresh_the_ladder_uses(self, build):
-        """Under the old model this key was the rate frames were presented at,
-        so it is the faithful translation of it into a panel refresh."""
-        display = build(global_config={"target_fps": 60})
-        assert display._resolve_refresh_hz() == 60.0
+    @pytest.mark.parametrize("global_config", [
+        {},
+        {"target_fps": 60},
+        {"target_fps": 100},
+        {"target_fps": 120},
+        {"target_fps": 200},
+        {"scroll_target_fps": 90},
+        {"target_fps": 120, "scroll_target_fps": 90},
+    ])
+    def test_target_fps_does_not_change_scroll_speed(self, build, global_config):
+        """The General tab's "Scroll Frame Rate" is not a speed control.
 
-    def test_legacy_key_is_honored(self, build):
-        display = build(global_config={"scroll_target_fps": 90})
-        assert display._resolve_refresh_hz() == 90.0
+        It used to set the refresh the ladder was computed against, while the
+        panel kept presenting at its real 100Hz: 60 doubled every scoreboard's
+        speed and 200 halved it."""
+        display = build(global_config=global_config)
+        assert display._resolve_refresh_hz() == 100.0
+        assert display._scroll_settings.pixels_per_second == pytest.approx(50.0)
+        assert display._scroll_settings.frame_hold == 2
+        assert display._scroll_settings.crisp.pixels_per_frame == 1
 
-    def test_modern_key_wins_over_legacy(self, build):
-        display = build(global_config={"target_fps": 120, "scroll_target_fps": 90})
-        assert display._resolve_refresh_hz() == 120.0
-
-    def test_configured_hardware_refresh_wins_over_the_fps_target(self, build):
+    def test_configured_hardware_refresh_sets_the_ladder(self, build):
         display = build(global_config={
             "target_fps": 60,
             "display": {"hardware": {"limit_refresh_rate_hz": 120}}})
         assert display._resolve_refresh_hz() == 120.0
+        assert display._scroll_settings.crisp.refresh_hz == 120.0
+
+    def test_display_manager_refresh_wins_over_global_config(self, build,
+                                                             display_manager):
+        """The display manager reports the rate the panel is driven at."""
+        display_manager.refresh_hz = 60.0
+        display = build(global_config={
+            "target_fps": 200,
+            "display": {"hardware": {"limit_refresh_rate_hz": 120}}})
+        assert display._resolve_refresh_hz() == 60.0
+
+    @pytest.mark.parametrize("reported", [True, 0, -5, "100", None])
+    def test_unusable_display_manager_refresh_falls_back(self, build,
+                                                          display_manager,
+                                                          reported):
+        display_manager.refresh_hz = reported
+        display = build(global_config={
+            "display": {"hardware": {"limit_refresh_rate_hz": 120}}})
+        assert display._resolve_refresh_hz() == 120.0
 
     @pytest.mark.parametrize("bad", ["fast", None, {}, [], "", 0])
-    def test_unusable_target_fps_degrades_instead_of_raising(self, build, bad):
-        """A malformed global config must cost the FPS target, not the display."""
+    def test_unusable_target_fps_is_harmless(self, build, bad):
+        """A malformed global config must not cost the display."""
         display = build(global_config={"target_fps": bad})
-        assert display._scroll_settings.pixels_per_second > 0
+        assert display._scroll_settings.pixels_per_second == pytest.approx(50.0)
+
+    @pytest.mark.parametrize("delay", [0.001, 0.01, 0.05, 0.1])
+    def test_scroll_delay_is_ignored_for_pacing(self, build, delay):
+        """Kept in the settings for compatibility; it does not change speed."""
+        display = build({"nhl": {"scroll_settings": {
+            "scroll_speed": 50.0, "scroll_delay": delay}}})
+        assert display._scroll_settings.pixels_per_second == pytest.approx(50.0)
+        assert display._scroll_settings.frame_hold == 2
 
     @pytest.mark.parametrize("bad", [None, "fast", {}, []])
     def test_unusable_scroll_speed_degrades_instead_of_crashing(self, build, bad):
@@ -475,7 +514,9 @@ class TestLifecycle:
 class TestManager:
     @pytest.fixture
     def manager(self, display_manager):
-        return _Manager(display_manager, {}, LOGGER, global_config={"target_fps": 120})
+        return _Manager(display_manager, {}, LOGGER, global_config={
+            "target_fps": 120,
+            "display": {"hardware": {"limit_refresh_rate_hz": 120}}})
 
     def test_displays_are_created_lazily_and_reused(self, manager):
         first = manager.get_scroll_display("live")
@@ -487,15 +528,13 @@ class TestManager:
             "recent")
 
     def test_global_config_is_threaded_to_children(self, manager):
-        """A missed hand-off here is exactly how the plugin copies ended up
-        never honoring target_fps."""
+        """The child needs the global config to find the panel refresh when
+        the display manager cannot report one."""
         child = manager.get_scroll_display("live")
-        assert child.global_config == {"target_fps": 120}
-        # The target is now the refresh the crisp ladder is computed against,
-        # so what proves the hand-off is that the child reasons about 120Hz --
-        # not the presentation rate, which the chosen hold divides down.
+        assert child.global_config["target_fps"] == 120
+        # What proves the hand-off is that the child reasons about the 120Hz
+        # hardware refresh from that config (target_fps plays no part).
         assert child._resolve_refresh_hz() == 120.0
-        child.scroll_helper.set_target_fps.assert_called_once()
 
     def test_prepare_sets_the_active_type(self, manager):
         assert manager.prepare_and_display([{"id": "g1"}], "live", ["nhl"]) is True
@@ -619,15 +658,17 @@ class TestAgainstTheRealScrollHelper:
     def test_configuration_lands_on_the_real_helper(self, real):
         display = real.get_scroll_display("live")
         helper = display.scroll_helper
-        # 500 px/s on a 120Hz panel snaps to a whole number of pixels per
-        # refresh, and the helper is driven in px/s in time-based mode.
+        # 500 px/s on the default 100Hz panel is a whole number of pixels per
+        # refresh, and the helper steps that many pixels per presented frame.
         assert helper.frame_based_scrolling is False
         assert helper.scroll_speed == pytest.approx(
             display._scroll_settings.pixels_per_second)
         assert helper.scroll_speed == pytest.approx(500.0, abs=25.0)
-        # target_fps is the presentation rate the chosen hold produces.
+        assert helper.fixed_pixels_per_frame == (
+            display._scroll_settings.crisp.pixels_per_frame)
+        # target_fps is informational: the presentation rate the hold gives.
         assert helper.target_fps == pytest.approx(
-            120.0 / display._scroll_settings.frame_hold, abs=1.0)
+            100.0 / display._scroll_settings.frame_hold, abs=1.0)
 
     def test_a_strip_is_built_and_scrolls_to_completion(self, real):
         import time
@@ -638,21 +679,58 @@ class TestAgainstTheRealScrollHelper:
         # 3 cards of 100px + gaps, so the strip is wider than the 128px panel.
         assert display.scroll_helper.cached_image.width > 128
 
-        # Frame-based scrolling is wall-clock gated on scroll_delay, so the
-        # loop has to actually pass time rather than spin.
+        # The helper steps a fixed whole-pixel amount per presented frame and
+        # consults no clock, so the scroll completes in a bounded number of
+        # frames however fast this loop spins.
         deadline = time.time() + 20
-        while not real.is_complete() and time.time() < deadline:
+        frames = 0
+        while not real.is_complete() and time.time() < deadline and frames < 10000:
             real.display_frame()
-            time.sleep(0.0012)
+            frames += 1
 
-        # Asserted separately so a host too slow to sustain the frame rate
-        # reports a timeout rather than looking like a scrolling defect.
-        assert time.time() < deadline, (
-            "scroll did not finish within 20s — the host may be too slow to "
-            "sustain the configured frame rate")
+        assert time.time() < deadline, "scroll did not finish within 20s"
         assert real.is_complete() is True
         assert display.scroll_helper.scroll_position > 128
 
     def test_dynamic_duration_is_a_real_number(self, real):
         real.prepare_and_display([{"id": "a"}], "live", ["nhl"])
         assert real.get_scroll_display("live").get_dynamic_duration() > 0
+
+    @pytest.mark.parametrize("target_fps", [None, 60, 100, 200])
+    def test_presented_speed_is_independent_of_target_fps(self, monkeypatch,
+                                                          target_fps):
+        """End to end: the px/s the panel actually shows.
+
+        The panel is simulated the way SwapOnVSync paces it: each drawn frame
+        occupies ``frame_hold`` refreshes of a 100Hz panel. Ten seconds of
+        refreshes must move the strip 500px at the default 50 px/s, whatever
+        the General tab's target_fps says."""
+        from src.common.scroll_helper import ScrollHelper
+        monkeypatch.setattr("src.common.sports_scroll.ScrollHelper", ScrollHelper)
+
+        class _Panel:
+            matrix = None
+            width, height = 128, 32
+            refresh_hz = 100.0
+            hold = 1
+            image = None
+
+            def set_scrolling_state(self, scrolling, frame_hold=1):
+                self.hold = frame_hold
+
+            def update_display(self):
+                pass
+
+        global_config = {"display": {"hardware": {"limit_refresh_rate_hz": 100}}}
+        if target_fps is not None:
+            global_config["target_fps"] = target_fps
+        panel = _Panel()
+        display = _RealDisplay(panel, {}, LOGGER, global_config=global_config)
+        display.scroll_helper.set_scrolling_image(Image.new("RGB", (5000, 32)))
+
+        refreshes = 0
+        while refreshes < 1000:  # ten seconds at 100Hz
+            assert display.display_scroll_frame() is True
+            refreshes += panel.hold
+        moved = display.scroll_helper.total_distance_scrolled
+        assert moved / 10.0 == pytest.approx(50.0, abs=1.0)

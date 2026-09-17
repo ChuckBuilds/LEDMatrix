@@ -47,52 +47,47 @@ from src.common import scroll_config  # noqa: E402
 CONFIG = Path(__file__).resolve().parent.parent / "config" / "config.json"
 
 
-def load_hardware():
+def load_config():
+    """The whole config.json, or {} when it is missing or unreadable."""
     try:
         with open(CONFIG, encoding="utf-8") as handle:
-            return (json.load(handle).get("display") or {}).get("hardware") or {}
+            config = json.load(handle)
     except (OSError, ValueError):
         return {}
+    return config if isinstance(config, dict) else {}
 
 
-def build_options(hardware, refresh_override=None):
-    from rgbmatrix import RGBMatrixOptions
-
-    o = RGBMatrixOptions()
-    from src.display_geometry import (
-        DEFAULT_CHAIN_LENGTH, DEFAULT_COLS, DEFAULT_PARALLEL, DEFAULT_ROWS,
-    )
-    o.rows = int(hardware.get("rows", DEFAULT_ROWS))
-    o.cols = int(hardware.get("cols", DEFAULT_COLS))
-    o.chain_length = int(hardware.get("chain_length", DEFAULT_CHAIN_LENGTH))
-    o.parallel = int(hardware.get("parallel", DEFAULT_PARALLEL))
-    o.brightness = int(hardware.get("brightness", 80))
-    o.hardware_mapping = hardware.get("hardware_mapping", "regular")
-    o.pwm_bits = int(hardware.get("pwm_bits", 11))
-    o.pwm_dither_bits = int(hardware.get("pwm_dither_bits", 0))
-    o.pwm_lsb_nanoseconds = int(hardware.get("pwm_lsb_nanoseconds", 130))
-    o.led_rgb_sequence = hardware.get("led_rgb_sequence", "RGB")
-    o.scan_mode = int(hardware.get("scan_mode", 0))
-    o.row_address_type = int(hardware.get("row_address_type", 0))
-    o.multiplexing = int(hardware.get("multiplexing", 0))
-    o.gpio_slowdown = int(hardware.get("gpio_slowdown", 2))
-    o.limit_refresh_rate_hz = (
-        int(refresh_override) if refresh_override is not None
-        else int(hardware.get("limit_refresh_rate_hz", 0))
-    )
-    return o
+def hardware_of(config):
+    return (config.get("display") or {}).get("hardware") or {}
 
 
-def open_matrix(hardware, refresh_override=None):
+def build_options(config, refresh_override=None):
+    """The matrix options the display service would use for this config.
+
+    Built by DisplayManager.apply_matrix_options, not a copy of it, so the
+    measurement and the demo drive the panel exactly as the service does
+    (runtime gpio_slowdown, rp1_rio, panel_type, orientation, defaults).
+    ``refresh_override`` replaces limit_refresh_rate_hz; 0 means uncapped.
+    """
+    from src.display_manager import DisplayManager, RGBMatrixOptions
+
+    options = DisplayManager.apply_matrix_options(RGBMatrixOptions(), config)
+    if refresh_override is not None:
+        options.limit_refresh_rate_hz = int(refresh_override)
+    return options
+
+
+def open_matrix(config, refresh_override=None):
     """Construct the matrix, or explain why it will not open."""
     if os.geteuid() != 0:
         sys.exit("this needs root for GPIO access - rerun with sudo")
     try:
-        from rgbmatrix import RGBMatrix
-    except ImportError:
-        sys.exit("rgbmatrix is not installed on this machine")
+        from src.display_manager import RGBMatrix
+    except ImportError as exc:
+        sys.exit("could not load the display stack ({}); is rgbmatrix "
+                 "installed on this machine?".format(exc))
     try:
-        return RGBMatrix(options=build_options(hardware, refresh_override))
+        return RGBMatrix(options=build_options(config, refresh_override))
     except Exception as exc:  # pragma: no cover - hardware dependent
         sys.exit(
             "could not open the panel ({}).\n"
@@ -101,7 +96,7 @@ def open_matrix(hardware, refresh_override=None):
         )
 
 
-def measure_refresh(hardware, seconds=6.0):
+def measure_refresh(config, seconds=6.0):
     """Actual refresh rate, by running uncapped and timing the swaps.
 
     SwapOnVSync blocks until the panel's next refresh, so an unthrottled loop
@@ -109,7 +104,7 @@ def measure_refresh(hardware, seconds=6.0):
     chain will really give you, as opposed to whatever limit_refresh_rate_hz
     optimistically asks for.
     """
-    matrix = open_matrix(hardware, refresh_override=0)
+    matrix = open_matrix(config, refresh_override=0)
     canvas = matrix.CreateFrameCanvas()
     canvas = matrix.SwapOnVSync(canvas)  # discard the first, it includes setup
     frames = 0
@@ -122,17 +117,17 @@ def measure_refresh(hardware, seconds=6.0):
     return measured
 
 
-def demo(hardware, target, seconds):
+def demo(config, target, seconds):
     """Scroll text at the crisp speed nearest `target`."""
     from PIL import Image, ImageDraw, ImageFont
 
     from src.common.font_layout import load_truetype
 
-    hz = float(hardware.get("limit_refresh_rate_hz") or scroll_config.DEFAULT_REFRESH_HZ)
+    hz = scroll_config.refresh_hz_from_config(config)
     choice = scroll_config.solve_crisp(target, hz)
     print("asked for {:.0f} px/s -> {}".format(target, choice.describe()))
 
-    matrix = open_matrix(hardware)
+    matrix = open_matrix(config)
     canvas = matrix.CreateFrameCanvas()
     W, H = canvas.width, canvas.height
 
@@ -195,9 +190,38 @@ def print_ladder(hz, highlight=None):
         ) else ""
         print("  " + entry.describe() + mark)
     print("")
-    print("Set one in config.json as pixels per second, e.g.")
-    print('  "display_options": {{"scroll_pixels_per_second": {:.0f}}}'.format(
-        scroll_config.solve_crisp(highlight if highlight else hz / 2, hz).pixels_per_second))
+    print_config_advice(scroll_config.solve_crisp(highlight if highlight else hz / 2, hz))
+
+
+def config_advice(choice):
+    """The config that selects ``choice``, in the keys the resolver honours.
+
+    Tickers take a ``scroll_speed`` (px per step) + ``scroll_delay`` (seconds)
+    pair, and scroll_config ranks that pair ABOVE ``scroll_pixels_per_second``
+    -- deliberately, because some plugins give the flat key a schema default.
+    Many schemas default the pair too, so a flat key added by hand is usually
+    ignored. Advise the pair: pixels_per_frame every frame_hold/refresh
+    seconds is exactly the crisp speed.
+    """
+    pair = {
+        "scroll_speed": choice.pixels_per_frame,
+        "scroll_delay": round(choice.frame_hold / choice.refresh_hz, 6),
+    }
+    scoreboard = {"scroll_speed": round(choice.pixels_per_second, 2)}
+    return pair, scoreboard
+
+
+def print_config_advice(choice):
+    pair, scoreboard = config_advice(choice)
+    print("To use {:.1f} px/s, set it where the plugin keeps its scroll speed.".format(
+        choice.pixels_per_second))
+    print("Tickers take a scroll_speed (px per step) + scroll_delay (seconds) pair:")
+    print('  "display_options": {}'.format(json.dumps(pair)))
+    print("(some plugins keep the pair at the top level or under \"display\").")
+    print("The pair outranks scroll_pixels_per_second, which is ignored whenever the")
+    print("pair is present -- and schema defaults usually put it there.")
+    print("Sports scoreboards take pixels per second per league instead:")
+    print('  "scroll_settings": {}'.format(json.dumps(scoreboard)))
 
 
 def main():
@@ -214,15 +238,15 @@ def main():
                     help="highlight the entry nearest this speed")
     args = ap.parse_args()
 
-    hardware = load_hardware()
-    configured = float(hardware.get("limit_refresh_rate_hz") or 0)
+    config = load_config()
+    configured = float(hardware_of(config).get("limit_refresh_rate_hz") or 0)
 
     if args.demo is not None:
-        demo(hardware, args.demo, args.seconds)
+        demo(config, args.demo, args.seconds)
         return
 
     if args.measure:
-        measured = measure_refresh(hardware)
+        measured = measure_refresh(config)
         print("measured panel refresh: {:.1f}Hz".format(measured))
         if configured:
             print("configured limit_refresh_rate_hz: {:.0f}".format(configured))

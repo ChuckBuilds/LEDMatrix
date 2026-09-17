@@ -514,20 +514,58 @@ self.display_manager.draw_text_with_icons(
 
 For plugins that implement scrolling content, use these methods to coordinate with the display system.
 
-#### `set_scrolling_state(is_scrolling: bool) -> None`
+#### `set_scrolling_state(is_scrolling: bool, frame_hold: int = 1) -> None`
 
-Mark the display as scrolling or not scrolling. Call when scrolling starts/stops.
+Mark the display as scrolling or not scrolling, and set this scroll's frame
+pacing. Call it when a scroll starts (calling it on every scroll frame is fine)
+and with `False` when it stops.
 
 **Parameters**:
 - `is_scrolling` (bool): True if currently scrolling, False otherwise
+- `frame_hold` (int, default 1): how many panel refreshes each pushed frame is
+  held for (clamped to 1-255; ignored when `is_scrolling` is False, which
+  resets it to 1). Pass the `frame_hold` of the settings
+  `src.common.scroll_config.configure()` returned. Added in core 3.4.0.
+
+**Why `frame_hold` matters**: `scroll_config.configure()` snaps the speed to
+one the panel can show in whole pixels and sets the `ScrollHelper` to advance a
+fixed number of pixels on every presented frame -- no clock is consulted. The
+panel presents frames at its refresh rate divided by the hold, so the hold is
+part of the speed. Omit it and a 50 px/s scroll (1px every 2nd refresh on a
+100 Hz panel) runs at 100 px/s. The hold is not applied by `configure()`
+because it must not outlive the scroll: plugins share one display manager.
 
 **Example**:
 ```python
+from src.common import scroll_config
+from src.common.scroll_helper import ScrollHelper
+
+def __init__(self, *args, **kwargs):
+    super().__init__(*args, **kwargs)
+    self.scroll_helper = ScrollHelper(
+        self.display_manager.width, self.display_manager.height, self.logger)
+    # ...later, hand it content with self.scroll_helper.set_scrolling_image(img)
+    self.scroll_settings = scroll_config.configure(
+        self.scroll_helper,
+        plugin_config=self.config,
+        global_config=self.global_config,
+        display_manager=self.display_manager,
+        plugin_logger=self.logger,
+    )
+
 def display(self, force_clear=False):
-    self.display_manager.set_scrolling_state(True)
-    # Scroll content...
-    self.display_manager.set_scrolling_state(False)
+    self.display_manager.set_scrolling_state(
+        True, frame_hold=self.scroll_settings.frame_hold)
+    self.scroll_helper.update_scroll_position()
+    self.display_manager.image = self.scroll_helper.get_visible_portion()
+    self.display_manager.update_display()
+    if self.scroll_helper.is_scroll_complete():
+        self.display_manager.set_scrolling_state(False)
 ```
+
+Don't pace the loop with `time.sleep()`: `update_display()` blocks on the
+panel's vsync, which is what paces a scroll. See `docs/SCROLL_PERFORMANCE.md`
+for choosing a speed.
 
 #### `is_currently_scrolling() -> bool`
 
@@ -998,9 +1036,10 @@ if "weather" in enabled_plugins:
        self.display_manager.update_display()
    ```
 
-3. **Handle scrolling state**: If your plugin scrolls, use scrolling state methods
+3. **Handle scrolling state**: If your plugin scrolls, use scrolling state methods,
+   passing the frame hold `scroll_config.configure()` returned
    ```python
-   self.display_manager.set_scrolling_state(True)
+   self.display_manager.set_scrolling_state(True, frame_hold=settings.frame_hold)
    # Scroll content...
    self.display_manager.set_scrolling_state(False)
    ```

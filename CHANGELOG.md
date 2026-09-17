@@ -59,6 +59,36 @@ Sports data:
   to decide whether to submit a season range to the service or fetch it
   themselves on an older core.
 
+Scrolling:
+
+- **Scoreboard scroll speed no longer changes with the General tab's "Scroll
+  Frame Rate" (`target_fps`).** Scoreboards on `src.common.sports_scroll`
+  computed their speed for that rate while the panel kept presenting at its
+  real refresh, so on a 100 Hz panel 60 ran a 50 px/s scoreboard at 100 px/s
+  and 200 ran it at 25 px/s. Speed now comes from `scroll_speed` and the panel
+  refresh only. The field is labelled legacy: nothing in core scrolling reads
+  it. Anyone who lowered it will see scoreboards scroll slower than before --
+  at the speed they configured.
+- `scripts/scroll_speeds.py --measure` / `--demo` open the panel with the
+  display service's own options (`DisplayManager.apply_matrix_options`), so
+  `display.runtime.gpio_slowdown`, `rp1_rio`, `panel_type` and orientation are
+  honoured; the script used to read `gpio_slowdown` from `display.hardware`.
+  Its closing advice now gives the `scroll_speed` + `scroll_delay` pair
+  instead of `scroll_pixels_per_second`, which the resolver ignores whenever
+  the pair is present.
+- The frame-stats log no longer opens a scroll with a one-frame window for
+  scrollers that never call `reset_scroll()`.
+- Removed dead scroll code: the optional scipy import (`HAS_SCIPY`),
+  `ScrollHelper._last_integer_position` and `frame_time_target`.
+  `ScrollHelper.target_fps` / `set_target_fps()` remain, documented as
+  informational.
+- Docs describe the fixed-step scroll model: `PLUGIN_API_REFERENCE.md`
+  documents `set_scrolling_state(..., frame_hold)` (omitting the hold runs a
+  scroll `frame_hold` times too fast), `SCROLL_PERFORMANCE.md` no longer reads a
+  held 20 ms frame as missed refreshes, and Vegas `frame_based_scrolling` /
+  `scroll_delay` are described as the speed clamp they are rather than frame
+  stepping. Scoreboard `scroll_delay` is documented as ignored for pacing.
+
 Web interface:
 
 - The plugin settings form honours `"x-display": "hidden"` in config schemas:

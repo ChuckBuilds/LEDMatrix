@@ -18,10 +18,15 @@ Promoting the content layer would be exactly the mistake
 ``docs/SPORTS_UNIFICATION.md`` warns against — merging on the intuition that
 same-named methods are the same method. Same name, different job.
 
-The one behavior this module adds over the plugin copies is native support for
-``global_config['target_fps']``: the bundled copies hardcode ~100 FPS via
-``scroll_delay=0.01`` and never consult the global smooth-scrolling target. A
-plugin inheriting from here gets it for free.
+What this module adds over the plugin copies is pacing through
+:mod:`src.common.scroll_config`, the resolver every other scroller uses: the
+configured px/s is snapped to a whole-pixel speed for the panel's refresh, the
+helper steps a fixed number of pixels per presented frame, and each drawn frame
+publishes the frame hold to the display manager. Speed depends only on
+``scroll_speed`` and the panel refresh
+(``display.hardware.limit_refresh_rate_hz``) -- not on the global
+``target_fps``, and not on ``scroll_delay``, which is kept in the settings for
+compatibility only.
 
 Usage::
 
@@ -94,9 +99,9 @@ class SportsScrollDisplay:
         :param display_manager: the core display manager
         :param config: the plugin's configuration
         :param custom_logger: the plugin's logger, so scroll lines are attributed
-        :param global_config: the LEDMatrix global config — the source of
-            ``target_fps``. Optional so an older caller that does not pass it
-            keeps working at the config-derived pacing.
+        :param global_config: the LEDMatrix global config, consulted for the
+            panel refresh when the display manager cannot report one.
+            Optional so an older caller that does not pass it keeps working.
         """
         self.display_manager = display_manager
         self.config = config
@@ -196,21 +201,6 @@ class SportsScrollDisplay:
                 return {**settings, **override}
         return settings
 
-    def _resolve_target_fps(self) -> Optional[float]:
-        """The global smooth-scrolling FPS target, or None to keep config pacing.
-
-        Coerced before use: a malformed value in the global config must degrade
-        to the existing ``scroll_delay`` pacing, never raise on a display path.
-        """
-        raw = self.global_config.get("target_fps") or self.global_config.get(
-            "scroll_target_fps"
-        )
-        try:
-            return float(raw) if raw is not None else None
-        except (TypeError, ValueError):
-            self.logger.debug("Ignoring unusable target_fps: %r", raw)
-            return None
-
     def _coerce_float(self, value: Any, default: float) -> float:
         """A usable float from config, or ``default``.
 
@@ -246,8 +236,8 @@ class SportsScrollDisplay:
         # settings dict: the two read the same key names with different
         # meanings, and the collision is a factor of 1/scroll_delay.
         #
-        #   sports_scroll: scroll_speed is px/SECOND; scroll_delay is only the
-        #                  frame period used to reach px/frame.
+        #   sports_scroll: scroll_speed is px/SECOND; scroll_delay is ignored
+        #                  for pacing (see _resolve_pixels_per_second).
         #   scroll_config: scroll_speed is px per STEP, so px/s = speed/delay.
         #
         # Passing {"scroll_speed": 50.0, "scroll_delay": 0.01} straight through
@@ -276,8 +266,13 @@ class SportsScrollDisplay:
     def _resolve_pixels_per_second(self, settings: Dict[str, Any]) -> float:
         """This module's config shape, expressed as plain pixels per second.
 
-        ``scroll_speed`` is already px/s here. ``scroll_delay`` only matters
-        when a caller supplied px/frame instead, which the 0 case covers.
+        ``scroll_speed`` is already px/s here, and it is the whole answer.
+        ``scroll_delay`` is kept in the settings for compatibility but is
+        ignored for pacing: the frame rate is the panel refresh divided by the
+        frame hold scroll_config picks, so no positive delay changes the speed.
+        The one exception is a delay of exactly 0 (below every scoreboard
+        schema's minimum), which is read as ``scroll_speed`` being px per
+        frame at ``ASSUMED_FPS_WHEN_UNPACED``.
         """
         scroll_speed = self._coerce_float(settings.get("scroll_speed"), 50.0)
         scroll_delay = self._coerce_float(settings.get("scroll_delay"), 0.01)
@@ -285,19 +280,29 @@ class SportsScrollDisplay:
             return scroll_speed * ASSUMED_FPS_WHEN_UNPACED
         return scroll_speed
 
-    def _resolve_refresh_hz(self) -> Optional[float]:
+    def _resolve_refresh_hz(self) -> float:
         """The panel refresh the crisp ladder should be computed against.
 
-        Prefers the configured hardware refresh. Falls back to the global
-        ``target_fps``/``scroll_target_fps`` this module has always honoured:
-        under the old model that key *was* the rate frames were presented at,
-        so it is the faithful translation for anyone who set it. Returning
-        None lets scroll_config apply its own default.
+        This has to be the rate frames are actually presented at, because the
+        helper advances a fixed number of whole pixels per presented frame and
+        the display manager holds each frame for ``frame_hold`` refreshes. A
+        ladder built for any other rate plays back at the wrong speed: built
+        for 60 Hz and shown on a 100 Hz panel, it runs 100/60 too fast.
+
+        So it is the display manager's ``refresh_hz`` (what the panel is
+        driven at), then ``display.hardware.limit_refresh_rate_hz`` from the
+        global config, then scroll_config's default. The global ``target_fps``
+        is deliberately NOT consulted: before frame-locked presentation it was
+        the rate frames were shown at, but now honouring it only turned the
+        General tab's "Scroll Frame Rate" into a scoreboard speed multiplier.
         """
-        hardware = scroll_config.refresh_hz_from_config(self.global_config)
-        if hardware and hardware != scroll_config.DEFAULT_REFRESH_HZ:
-            return hardware
-        return self._resolve_target_fps() or hardware or None
+        reported = getattr(self.display_manager, "refresh_hz", None)
+        # A real number only: a stub or a mock answering for anything must not
+        # become the refresh rate.
+        if (isinstance(reported, (int, float)) and not isinstance(reported, bool)
+                and reported > 0):
+            return float(reported)
+        return scroll_config.refresh_hz_from_config(self.global_config)
 
     def _scroll_frame_hold(self) -> int:
         """Refreshes to hold each frame for, from the resolved settings."""
@@ -327,11 +332,12 @@ class SportsScrollDisplay:
                 return False
 
             # Tell the core the panel is scrolling, and for how many
-            # refreshes to hold each frame. Without this the frame hold is
-            # never applied -- so a speed the ladder made crisp still presents
-            # a new frame every refresh and judders -- and, because deferred
-            # updates only run while nothing is scrolling, core would run
-            # blocking work in the middle of this scroll.
+            # refreshes to hold each frame. The helper advances a fixed number
+            # of whole pixels per presented frame, so without the hold a new
+            # frame is presented every refresh and the scroll runs frame_hold
+            # times too fast. And because deferred updates only run while
+            # nothing is scrolling, core would otherwise run blocking work in
+            # the middle of this scroll.
             if hasattr(self.display_manager, "set_scrolling_state"):
                 self.display_manager.set_scrolling_state(
                     True, frame_hold=self._scroll_frame_hold())

@@ -306,50 +306,9 @@ class DisplayManager:
                     raise MatrixSettingsRefused(refused)
                 logger.warning("Emulator mode: continuing, but on a real panel the display would not start. %s", refused)
             
-            # Basic hardware settings
-            options.rows = hardware_config.get('rows', DEFAULT_ROWS)
-            options.cols = hardware_config.get('cols', DEFAULT_COLS)
-            options.chain_length = hardware_config.get('chain_length', DEFAULT_CHAIN_LENGTH)
-            options.parallel = hardware_config.get('parallel', DEFAULT_PARALLEL)
-            options.hardware_mapping = hardware_config.get('hardware_mapping', 'adafruit-hat-pwm')
-            
-            # Performance and stability settings
-            options.brightness = hardware_config.get('brightness', 90)
-            options.pwm_bits = hardware_config.get('pwm_bits', 10)
-            options.pwm_lsb_nanoseconds = hardware_config.get('pwm_lsb_nanoseconds', 150)
-            options.led_rgb_sequence = hardware_config.get('led_rgb_sequence', 'RGB')
-            options.pixel_mapper_config = self._build_pixel_mapper_config(hardware_config)
-            options.row_address_type = hardware_config.get('row_address_type', 0)
-            options.multiplexing = hardware_config.get('multiplexing', 0)
-            options.panel_type = hardware_config.get('panel_type', '')
-            options.disable_hardware_pulsing = hardware_config.get('disable_hardware_pulsing', False)
-            options.show_refresh_rate = hardware_config.get('show_refresh_rate', False)
-            options.limit_refresh_rate_hz = hardware_config.get('limit_refresh_rate_hz', 90)
-            options.gpio_slowdown = runtime_config.get('gpio_slowdown', 3)
-            
-            # Disable internal privilege dropping - we manage this via systemd or remain root
-            # This prevents the library from dropping to 'daemon' user which breaks file permissions
-            options.drop_privileges = False
-            
-            # Additional settings from config
-            if 'scan_mode' in hardware_config:
-                options.scan_mode = hardware_config.get('scan_mode')
-            if 'pwm_dither_bits' in hardware_config:
-                options.pwm_dither_bits = hardware_config.get('pwm_dither_bits')
-            if 'inverse_colors' in hardware_config:
-                options.inverse_colors = hardware_config.get('inverse_colors')
-            # Pi 5 only: 0=PIO/RP1 coprocessor (default, less CPU),
-            # 1=RIO/Registered IO (faster; gpio_slowdown effect is inverted in this mode)
-            if 'rp1_rio' in runtime_config:
-                if hasattr(options, 'rp1_rio'):
-                    options.rp1_rio = runtime_config.get('rp1_rio')
-                else:
-                    logger.warning(
-                        "rp1_rio is set in config but the installed rgbmatrix library does "
-                        "not support it — the library was likely built without Pi 5 RP1 "
-                        "support (mmap to 0x3f000000 instead of RP1 chip). "
-                        "Fix: sudo RPI_RGB_FORCE_REBUILD=1 ./first_time_install.sh"
-                    )
+            # Every option comes from display.hardware / display.runtime, in
+            # one place that scripts/scroll_speeds.py shares.
+            self.apply_matrix_options(options, self.config)
             
             logger.info(f"Initializing RGB Matrix with settings: rows={options.rows}, cols={options.cols}, chain_length={options.chain_length}, parallel={options.parallel}, hardware_mapping={options.hardware_mapping}")
             
@@ -1396,6 +1355,68 @@ class DisplayManager:
         
         return dt.strftime(f"%b %-d{suffix}") 
 
+    @classmethod
+    def apply_matrix_options(cls, options, config: Dict[str, Any]):
+        """Fill ``options`` (an ``RGBMatrixOptions``) from the LEDMatrix config.
+
+        This is exactly what the display service drives the panel with, so a
+        tool that opens the matrix itself (``scripts/scroll_speeds.py``) gets
+        the same panel -- same runtime ``gpio_slowdown``, ``rp1_rio``,
+        ``panel_type``, orientation and defaults -- rather than a private copy
+        that drifts. Does not open the matrix. Returns ``options``.
+        """
+        display = config.get('display', {}) if isinstance(config, dict) else {}
+        hardware_config = display.get('hardware', {})
+        runtime_config = display.get('runtime', {})
+
+        # Basic hardware settings
+        options.rows = hardware_config.get('rows', DEFAULT_ROWS)
+        options.cols = hardware_config.get('cols', DEFAULT_COLS)
+        options.chain_length = hardware_config.get('chain_length', DEFAULT_CHAIN_LENGTH)
+        options.parallel = hardware_config.get('parallel', DEFAULT_PARALLEL)
+        options.hardware_mapping = hardware_config.get('hardware_mapping', 'adafruit-hat-pwm')
+
+        # Performance and stability settings
+        options.brightness = hardware_config.get('brightness', 90)
+        options.pwm_bits = hardware_config.get('pwm_bits', 10)
+        options.pwm_lsb_nanoseconds = hardware_config.get('pwm_lsb_nanoseconds', 150)
+        options.led_rgb_sequence = hardware_config.get('led_rgb_sequence', 'RGB')
+        # _build_pixel_mapper_config reads only class attributes, so the class
+        # stands in for an instance here.
+        options.pixel_mapper_config = cls._build_pixel_mapper_config(cls, hardware_config)
+        options.row_address_type = hardware_config.get('row_address_type', 0)
+        options.multiplexing = hardware_config.get('multiplexing', 0)
+        options.panel_type = hardware_config.get('panel_type', '')
+        options.disable_hardware_pulsing = hardware_config.get('disable_hardware_pulsing', False)
+        options.show_refresh_rate = hardware_config.get('show_refresh_rate', False)
+        options.limit_refresh_rate_hz = hardware_config.get('limit_refresh_rate_hz', 90)
+        options.gpio_slowdown = runtime_config.get('gpio_slowdown', 3)
+
+        # Disable internal privilege dropping - we manage this via systemd or remain root
+        # This prevents the library from dropping to 'daemon' user which breaks file permissions
+        options.drop_privileges = False
+
+        # Additional settings from config
+        if 'scan_mode' in hardware_config:
+            options.scan_mode = hardware_config.get('scan_mode')
+        if 'pwm_dither_bits' in hardware_config:
+            options.pwm_dither_bits = hardware_config.get('pwm_dither_bits')
+        if 'inverse_colors' in hardware_config:
+            options.inverse_colors = hardware_config.get('inverse_colors')
+        # Pi 5 only: 0=PIO/RP1 coprocessor (default, less CPU),
+        # 1=RIO/Registered IO (faster; gpio_slowdown effect is inverted in this mode)
+        if 'rp1_rio' in runtime_config:
+            if hasattr(options, 'rp1_rio'):
+                options.rp1_rio = runtime_config.get('rp1_rio')
+            else:
+                logger.warning(
+                    "rp1_rio is set in config but the installed rgbmatrix library does "
+                    "not support it — the library was likely built without Pi 5 RP1 "
+                    "support (mmap to 0x3f000000 instead of RP1 chip). "
+                    "Fix: sudo RPI_RGB_FORCE_REBUILD=1 ./first_time_install.sh"
+                )
+        return options
+
     @property
     def refresh_hz(self) -> float:
         """The panel's refresh rate in Hz, from the hardware config.
@@ -1440,6 +1461,12 @@ class DisplayManager:
         how many panel refreshes each frame is held for -- 2 gives one whole
         pixel every second refresh, which is how a scroll runs at half the
         refresh rate without fractional pixel positions.
+
+        The hold is part of the scroll's speed. A ScrollHelper configured by
+        ``scroll_config.configure()`` advances a fixed whole-pixel step per
+        presented frame and reads no clock, so pass the returned
+        ``settings.frame_hold`` here: a scroll that leaves it at 1 is
+        presented every refresh and runs ``frame_hold`` times too fast.
 
         The hold is set here rather than once at plugin construction because
         it must not outlive the scroll that asked for it: plugins share one

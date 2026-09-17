@@ -433,10 +433,14 @@ Vegas mode consists of four core components working together to provide smooth 1
 - **Frame Rate Control:** Precise timing to maintain 125 FPS
 - **Pre-rendered Content:** Plugins pre-render during update()
 
-**Scroll Speed Calculation:**
+**Scroll Speed Calculation:** motion is by elapsed time; `target_fps` paces
+the render loop, not the speed.
 ```python
-pixels_per_frame = (scroll_speed / target_fps)
-scroll_position += pixels_per_frame * elapsed_time
+# frame_based_scrolling: false
+scroll_position += scroll_speed * elapsed_time            # scroll_speed in px/s
+# frame_based_scrolling: true (the default) -- not stepping, just a clamp
+applied = clamp(scroll_speed * scroll_delay, 0.1, 5) / scroll_delay
+scroll_position += applied * elapsed_time
 ```
 
 #### Component Interactions

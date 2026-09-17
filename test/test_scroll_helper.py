@@ -460,6 +460,19 @@ class TestIdleGapIsNotAFrame:
         assert not info.called
         assert len(helper._window) == 1
 
+    def test_a_dropped_gap_restarts_the_window_timer_too(self, helper):
+        """The size-guard path is the one scrollers that never call
+        reset_scroll() take, so it must restart the window like the sentinel
+        does, or their next scroll opens with a one-frame stats line."""
+        helper.log_frame_rate()                     # seeds
+        helper.last_frame_time = time.time() - 137.0
+        helper.last_fps_log_time = 0.0              # boundary long overdue
+        with patch.object(helper.logger, "info") as info:
+            helper.log_frame_rate()                 # the gap, dropped
+            helper.log_frame_rate()                 # first real frame
+        assert not info.called, "a one-frame window was reported"
+        assert len(helper._window) == 1
+
     def test_a_normal_frame_still_counts(self, helper):
         helper.last_frame_time = time.time() - 0.010
         helper.log_frame_rate()
