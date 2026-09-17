@@ -32,7 +32,7 @@ fi
 # Render the unit from systemd/ledmatrix-web.service. That template is the
 # only description of the unit; this script used to carry its own heredoc copy,
 # and install_service.sh a third, which is how the installed unit on real rigs
-# ended up missing RestartSec, SyslogIdentifier and CacheDirectory while
+# ended up missing RestartSec and SyslogIdentifier while
 # src/startup_validator.py warned about drift on every boot.
 TEMPLATE="$PROJECT_ROOT_DIR/systemd/ledmatrix-web.service"
 if [ ! -f "$TEMPLATE" ]; then
@@ -62,31 +62,47 @@ for VERIFY_UNIT in ledmatrix-update-verify.service ledmatrix-update-verify.path;
     fi
 done
 
-# Ensure cache directory exists with proper permissions
-# This is a fallback for older systemd versions that don't support CacheDirectory
-# Systemd 239+ will automatically create it via CacheDirectory directive
+# Shared cache directory. The display service (root) and this web service both
+# write here and read each other's files, which are created 0660, so the two
+# share it through the directory's group: ledmatrix when the installing user
+# is in it (first_time_install.sh / setup_cache.sh set that up), otherwise the
+# user's own group. setgid makes new files inherit that group.
+#
+# An existing directory keeps its group whenever the web user can read through
+# it -- ledmatrix, or the user's own group where systemd's old CacheDirectory=
+# left it -- because re-grouping a working directory strands every file already
+# in it on the old group. Only a group the user is not in (root's, or ledmatrix
+# for a user outside it) is replaced. This used to force the user's group on
+# every run, replacing the ledmatrix group setup_cache.sh had set.
 echo "Setting up cache directory..."
 CACHE_DIR="/var/cache/ledmatrix"
+USER_GROUPS=$(id -nG "$ACTUAL_USER" 2>/dev/null | tr ' ' '\n')
+if printf '%s\n' "$USER_GROUPS" | grep -qx ledmatrix; then
+    CACHE_GROUP="ledmatrix"
+else
+    CACHE_GROUP=$(id -gn "$ACTUAL_USER" 2>/dev/null || echo root)
+fi
 if [ ! -d "$CACHE_DIR" ]; then
     mkdir -p "$CACHE_DIR"
-    # Set group ownership to allow both root and web user access
-    # Try to use ACTUAL_USER's group, fallback to root if that fails
-    if getent group "$ACTUAL_USER" > /dev/null 2>&1; then
-        chown root:"$ACTUAL_USER" "$CACHE_DIR" 2>/dev/null || chown root:root "$CACHE_DIR"
-    else
-        chown root:root "$CACHE_DIR"
-    fi
-    chmod 775 "$CACHE_DIR"
+    chown root:"$CACHE_GROUP" "$CACHE_DIR" 2>/dev/null || true
     echo "✓ Cache directory created: $CACHE_DIR"
 else
-    # Ensure permissions are correct
-    chmod 775 "$CACHE_DIR" 2>/dev/null || true
-    # Try to set group ownership if possible
-    if getent group "$ACTUAL_USER" > /dev/null 2>&1; then
-        chown root:"$ACTUAL_USER" "$CACHE_DIR" 2>/dev/null || true
+    DIR_GROUP=$(stat -c %G "$CACHE_DIR" 2>/dev/null)
+    if ! printf '%s\n' "$USER_GROUPS" | grep -qx "$DIR_GROUP"; then
+        if chgrp "$CACHE_GROUP" "$CACHE_DIR" 2>/dev/null; then
+            echo "✓ Cache directory group changed from $DIR_GROUP to $CACHE_GROUP"
+            # Files already there keep the old group. The display service
+            # re-groups its own files when it starts (DiskCache.share_existing_files,
+            # which refuses symlinks and hard links); a recursive chgrp here
+            # would not. try-restart does nothing if the service is not running.
+            if find "$CACHE_DIR" -maxdepth 1 -name '*.json' -user root ! -group "$CACHE_GROUP" -print -quit 2>/dev/null | grep -q .; then
+                systemctl try-restart ledmatrix.service 2>/dev/null || true
+            fi
+        fi
     fi
     echo "✓ Cache directory exists: $CACHE_DIR"
 fi
+chmod 2775 "$CACHE_DIR" 2>/dev/null || true
 
 # Reload systemd to recognize the new service
 echo "Reloading systemd..."

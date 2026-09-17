@@ -762,6 +762,14 @@ class CacheManager:
             self.logger.info("Disk cache cleanup thread started (interval: %d hours)", 
                            self._disk_cleanup_interval_hours)
             
+            # Repair files an older version wrote unreadable by the web
+            # interface (see disk_cache.py, "SHARING CACHE FILES"). Once per
+            # directory per process, which is what this thread already is.
+            try:
+                self._disk_cache_component.share_existing_files()
+            except Exception as e:
+                self.logger.error("Error sharing existing cache files: %s", e, exc_info=True)
+
             # Run initial cleanup on startup (deferred from __init__ to avoid blocking)
             try:
                 self.logger.debug("Running initial disk cache cleanup")

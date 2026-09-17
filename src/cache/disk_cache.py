@@ -7,6 +7,7 @@ Handles persistent disk-based caching with atomic writes and error recovery.
 import json
 import math
 import os
+import stat
 import time
 import tempfile
 import logging
@@ -137,6 +138,65 @@ else:
 
     def _loads(raw: bytes) -> Any:
         return json.loads(raw)
+
+
+# SHARING CACHE FILES BETWEEN THE TWO SERVICES
+# --------------------------------------------
+# The display service runs as root and the web interface as the installing
+# user, and the web interface reads records only the display writes
+# (display_current_state, display_on_demand_state, plugin_metrics:*). Files are
+# written 0660, so the web interface can read one only through its group.
+#
+# The installers rely on the directory's setgid bit to set that group. That is
+# not something the cache can count on: systemd's CacheDirectory=, which
+# ledmatrix-web.service carried until Sept 2026, re-owns the directory and
+# everything in it to the web user and its primary group whenever the
+# directory's owner does not match, and the setgid layout never survives that.
+# From then on every file root creates is root:root 0660, unreadable by the web
+# interface. Measured on one rig: 365 such files, and the web UI's display
+# status, on-demand state and plugin health all silently empty.
+#
+# So a cache file takes its group from the directory explicitly, whether or
+# not setgid is set. Only a group-writable directory counts as shared: that
+# group can already replace any file in it, so reading them grants nothing new.
+#
+# Everything here works on an open descriptor, never a path. The directory is
+# writable by the web user, so between a path check and a path operation that
+# user could put a symlink in the file's place, and root would then chown and
+# chmod whatever it points at.
+
+_CACHE_FILE_MODE = 0o660
+
+
+def _shared_group(directory: str) -> Optional[int]:
+    """The group a cache file in ``directory`` should carry, if it is shared."""
+    try:
+        st = os.stat(directory)
+    except OSError:
+        return None
+    if not st.st_mode & stat.S_IWGRP:
+        return None
+    return st.st_gid
+
+
+def _share_open_file(fd: int, group: Optional[int]) -> None:
+    """Make an open cache file readable by the other service. Best effort."""
+    fchmod = getattr(os, 'fchmod', None)  # absent on Windows before 3.13
+    if fchmod is not None:
+        try:
+            fchmod(fd, _CACHE_FILE_MODE)
+        except OSError:
+            pass
+    fchown = getattr(os, 'fchown', None)  # absent on Windows
+    if fchown is None or group is None:
+        return
+    try:
+        if os.fstat(fd).st_gid != group:
+            fchown(fd, -1, group)
+    except OSError:
+        # Not a member of the directory's group and not root: nothing to do,
+        # and the file keeps the group it was created with.
+        pass
 
 
 class DiskCache:
@@ -350,13 +410,12 @@ class DiskCache:
                         try:
                             with os.fdopen(fd, 'wb') as tmp_file:
                                 tmp_file.write(payload)
+                                # Before the rename, not after: mkstemp
+                                # creates the file 0600, and a reader that
+                                # opened it in between was refused.
+                                _share_open_file(tmp_file.fileno(), _shared_group(tmp_dir))
                             os.replace(tmp_path, cache_path)
                             self._write_digests[key] = digest
-                            # Set proper permissions: 660 (rw-rw----) for group-readable cache files
-                            try:
-                                os.chmod(cache_path, 0o660)  # nosec B103 - intentional; web UI and service share a group
-                            except OSError:
-                                pass  # Non-critical if chmod fails
                         finally:
                             if os.path.exists(tmp_path):
                                 try:
@@ -368,12 +427,8 @@ class DiskCache:
                         try:
                             with open(cache_path, 'wb') as cache_file:
                                 cache_file.write(payload)
+                                _share_open_file(cache_file.fileno(), _shared_group(tmp_dir))
                             self._write_digests[key] = digest
-                            # Set proper permissions: 660 (rw-rw----) for group-readable cache files
-                            try:
-                                os.chmod(cache_path, 0o660)  # nosec B103 - intentional; web UI and service share a group
-                            except OSError:
-                                pass  # Non-critical if chmod fails
                             self.logger.debug("Wrote cache for %s directly (non-atomic)", key)
                         except (IOError, OSError, PermissionError) as write_error:
                             # If direct write also fails, try fallback location
@@ -398,11 +453,7 @@ class DiskCache:
                             fallback_path = os.path.join(fallback_dir, os.path.basename(cache_path))
                             with open(fallback_path, 'wb') as tmp_file:
                                 tmp_file.write(payload)
-                            # Set proper permissions: 660 (rw-rw----) for group-readable cache files
-                            try:
-                                os.chmod(fallback_path, 0o660)  # nosec B103 - intentional; web UI and service share a group
-                            except OSError:
-                                pass  # Non-critical if chmod fails
+                                _share_open_file(tmp_file.fileno(), _shared_group(fallback_dir))
                             self.logger.debug("Cache wrote to fallback location: %s", fallback_path)
                             return  # Successfully wrote to fallback, exit gracefully
                     except (IOError, OSError, PermissionError) as e2:
@@ -459,6 +510,72 @@ class DiskCache:
     def get_cache_dir(self) -> Optional[str]:
         """Get the cache directory path."""
         return self.cache_dir
+
+    def share_existing_files(self) -> int:
+        """Give cache files already on disk the group set() now gives new ones.
+
+        set() fixes every file it writes from now on; this repairs the ones an
+        older version left behind as root:root, which the web interface cannot
+        read until each key happens to be rewritten -- and some, like a
+        plugin's metrics, may not be for a long time. Meant to run once per
+        process, off the startup path.
+
+        Only this process's own regular files are touched, and each one through
+        a descriptor opened with O_NOFOLLOW and checked for a single link: the
+        directory is writable by the web user, and a root process must not be
+        steered into changing a file outside it.
+
+        Returns:
+            Number of files whose group or mode was changed.
+        """
+        fchown = getattr(os, 'fchown', None)
+        geteuid = getattr(os, 'geteuid', None)
+        nofollow = getattr(os, 'O_NOFOLLOW', None)
+        if not self.cache_dir or fchown is None or geteuid is None or nofollow is None:
+            return 0
+        group = _shared_group(self.cache_dir)
+        if group is None:
+            return 0
+        euid = geteuid()
+
+        changed = 0
+        try:
+            entries = list(os.scandir(self.cache_dir))
+        except OSError as e:
+            self.logger.debug("Could not scan %s to share cache files: %s", self.cache_dir, e)
+            return 0
+        for entry in entries:
+            if not entry.name.endswith('.json'):
+                continue
+            try:
+                st = entry.stat(follow_symlinks=False)
+            except OSError:
+                continue
+            if (not stat.S_ISREG(st.st_mode) or st.st_uid != euid
+                    or (st.st_gid == group and stat.S_IMODE(st.st_mode) == _CACHE_FILE_MODE)):
+                continue
+            try:
+                fd = os.open(entry.path, os.O_RDONLY | nofollow | getattr(os, 'O_NONBLOCK', 0))
+            except OSError:
+                continue
+            try:
+                st = os.fstat(fd)
+                if not stat.S_ISREG(st.st_mode) or st.st_uid != euid or st.st_nlink != 1:
+                    continue
+                _share_open_file(fd, group)
+                st = os.fstat(fd)
+                if st.st_gid == group and stat.S_IMODE(st.st_mode) == _CACHE_FILE_MODE:
+                    changed += 1
+            except OSError:
+                continue
+            finally:
+                os.close(fd)
+        if changed:
+            self.logger.info(
+                "Made %d cache file(s) in %s readable by the directory's group "
+                "(gid %d) so the web interface can read them",
+                changed, self.cache_dir, group)
+        return changed
     
     @staticmethod
     def _is_orphaned_temp(filename: str) -> bool:
