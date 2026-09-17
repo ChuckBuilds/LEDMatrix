@@ -530,12 +530,15 @@ def _copy_file(src: Path, dst: Path) -> None:
             os.chmod(tmp_path, existing_mode)
         else:
             shutil.copymode(src, tmp_path)
-        if existing_owner is not None:
+        if existing_owner is not None and hasattr(os, 'chown'):
             # Replacing a file creates a new inode owned by whoever is running,
             # which would silently move a root-owned config to the web user.
             # Carry the previous owner across when the OS permits it — only
             # root can hand a file to another user, so this is best-effort and
             # a plain restore as the web user simply keeps its own ownership.
+            # os.chown does not exist on Windows (where st_uid/st_gid are just
+            # 0); looking it up there raises AttributeError, which no caller
+            # catches, so every restore over an existing file aborted.
             try:
                 os.chown(tmp_path, existing_owner[0], existing_owner[1])
             except (OSError, PermissionError):

@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import os
 import stat
+import sys
 import zipfile
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -300,6 +303,11 @@ def test_restore_rejects_malicious_zip(empty_project: Path, tmp_path: Path) -> N
     assert any("unsafe" in e.lower() for e in result.errors)
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="simulates root-owned POSIX files with chmod 0o444, which on Windows sets the "
+    "read-only attribute, and Windows refuses to rename over a read-only file",
+)
 def test_restore_over_a_file_the_user_cannot_write(
     project: Path, empty_project: Path, tmp_path: Path
 ) -> None:
@@ -334,3 +342,53 @@ def test_restore_over_a_file_the_user_cannot_write(
 
     # The destination's mode is preserved rather than widened to the umask.
     assert stat.S_IMODE((empty_project / "config" / "config_secrets.json").stat().st_mode) == 0o444
+
+
+def _existing_config(empty_project: Path) -> None:
+    (empty_project / "config").mkdir(parents=True, exist_ok=True)
+    for name in ("config.json", "config_secrets.json", "wifi_config.json", "ytm_auth.json"):
+        (empty_project / "config" / name).write_text("{}", encoding="utf-8")
+
+
+def test_restore_over_existing_files_without_os_chown(
+    project: Path, empty_project: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Restore must work where the OS has no file ownership API (Windows).
+
+    Replacing a file tries to carry its previous owner across with os.chown.
+    That name does not exist on Windows, and the AttributeError is not an
+    OSError, so it escaped every per-section handler: restoring over any
+    existing config aborted the whole restore and left the old files in place.
+    """
+    zip_path = create_backup(project, output_dir=tmp_path / "exports")
+    _existing_config(empty_project)
+    monkeypatch.delattr(os, "chown", raising=False)
+
+    result = restore_backup(zip_path, empty_project, RestoreOptions())
+
+    assert result.success, result.errors
+    for section in ("config", "secrets", "wifi", "ytm_auth"):
+        assert section in result.restored, f"{section} not restored: {result.errors}"
+    restored = json.loads((empty_project / "config" / "config.json").read_text())
+    assert restored["my-plugin"]["favorites"] == ["A", "B"]
+
+
+def test_restore_still_carries_the_previous_owner_across(
+    project: Path, empty_project: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Where os.chown exists, the replaced file keeps the old file's owner."""
+    zip_path = create_backup(project, output_dir=tmp_path / "exports")
+    _existing_config(empty_project)
+    target = empty_project / "config" / "config.json"
+    old = target.stat()
+    chown = MagicMock()
+    monkeypatch.setattr(os, "chown", chown, raising=False)
+
+    result = restore_backup(zip_path, empty_project, RestoreOptions(
+        restore_secrets=False, restore_wifi=False,
+        restore_fonts=False, restore_plugin_uploads=False, reinstall_plugins=False,
+    ))
+
+    assert result.success, result.errors
+    owners = {(c.args[1], c.args[2]) for c in chown.call_args_list}
+    assert owners == {(old.st_uid, old.st_gid)}
