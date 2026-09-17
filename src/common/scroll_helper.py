@@ -985,11 +985,7 @@ class ScrollHelper:
         # the real stall rates being measured, so the number could not be
         # trusted at all. Seed the clock and take no sample.
         if self.last_frame_time is None:
-            self.last_frame_time = current_time
-            # Restart the window with the scroll. Otherwise the boundary is
-            # already long overdue when the second frame arrives, and the new
-            # scroll opens by reporting a window of exactly one frame.
-            self.last_fps_log_time = current_time
+            self._restart_stats_window(current_time)
             return
 
         # Calculate instantaneous frame time
@@ -998,9 +994,10 @@ class ScrollHelper:
         # A caller that scrolls without ever calling reset_scroll() never arms
         # the sentinel above, so catch the same gap by its size. Nothing that
         # renders a scroll produces a frame longer than the log interval; a
-        # sample that large is an idle period, not a frame.
+        # sample that large is an idle period, not a frame. It starts a new
+        # scroll exactly as the sentinel does, window timer included.
         if frame_time >= FPS_LOG_INTERVAL:
-            self.last_frame_time = current_time
+            self._restart_stats_window(current_time)
             return
 
         self.frame_times.append(frame_time)
@@ -1034,7 +1031,17 @@ class ScrollHelper:
 
         self.last_frame_time = current_time
         self.frame_count += 1
-    
+
+    def _restart_stats_window(self, current_time: float) -> None:
+        """Seed the frame clock at the start of a scroll, taking no sample.
+
+        The window timer restarts with it. Otherwise the 5s boundary is
+        already long overdue when the next frame arrives, and the new scroll
+        opens by reporting a window of exactly one frame.
+        """
+        self.last_frame_time = current_time
+        self.last_fps_log_time = current_time
+
     def clear_cache(self) -> None:
         """
         Clear the cached scrolling image.
