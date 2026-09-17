@@ -68,12 +68,16 @@ done
 # is in it (first_time_install.sh / setup_cache.sh set that up), otherwise the
 # user's own group. setgid makes new files inherit that group.
 #
-# An existing directory keeps its group unless root's group holds it, which
-# the web user can never read through. This used to force it to the user's
-# group on every run, replacing the ledmatrix group setup_cache.sh had set.
+# An existing directory keeps its group whenever the web user can read through
+# it -- ledmatrix, or the user's own group where systemd's old CacheDirectory=
+# left it -- because re-grouping a working directory strands every file already
+# in it on the old group. Only a group the user is not in (root's, or ledmatrix
+# for a user outside it) is replaced. This used to force the user's group on
+# every run, replacing the ledmatrix group setup_cache.sh had set.
 echo "Setting up cache directory..."
 CACHE_DIR="/var/cache/ledmatrix"
-if id -nG "$ACTUAL_USER" 2>/dev/null | tr ' ' '\n' | grep -qx ledmatrix; then
+USER_GROUPS=$(id -nG "$ACTUAL_USER" 2>/dev/null | tr ' ' '\n')
+if printf '%s\n' "$USER_GROUPS" | grep -qx ledmatrix; then
     CACHE_GROUP="ledmatrix"
 else
     CACHE_GROUP=$(id -gn "$ACTUAL_USER" 2>/dev/null || echo root)
@@ -83,8 +87,18 @@ if [ ! -d "$CACHE_DIR" ]; then
     chown root:"$CACHE_GROUP" "$CACHE_DIR" 2>/dev/null || true
     echo "✓ Cache directory created: $CACHE_DIR"
 else
-    if [ "$(stat -c %g "$CACHE_DIR" 2>/dev/null)" = "0" ]; then
-        chgrp "$CACHE_GROUP" "$CACHE_DIR" 2>/dev/null || true
+    DIR_GROUP=$(stat -c %G "$CACHE_DIR" 2>/dev/null)
+    if ! printf '%s\n' "$USER_GROUPS" | grep -qx "$DIR_GROUP"; then
+        if chgrp "$CACHE_GROUP" "$CACHE_DIR" 2>/dev/null; then
+            echo "✓ Cache directory group changed from $DIR_GROUP to $CACHE_GROUP"
+            # Files already there keep the old group. The display service
+            # re-groups its own files when it starts (DiskCache.share_existing_files,
+            # which refuses symlinks and hard links); a recursive chgrp here
+            # would not. try-restart does nothing if the service is not running.
+            if find "$CACHE_DIR" -maxdepth 1 -name '*.json' -user root ! -group "$CACHE_GROUP" -print -quit 2>/dev/null | grep -q .; then
+                systemctl try-restart ledmatrix.service 2>/dev/null || true
+            fi
+        fi
     fi
     echo "✓ Cache directory exists: $CACHE_DIR"
 fi
