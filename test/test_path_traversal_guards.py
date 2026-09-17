@@ -315,3 +315,202 @@ class TestPluginVersionLookup:
             assert module._get_plugin_version("..") == ""
         finally:
             module.api_v3.plugin_store_manager = original
+
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 20
+
+
+class TestPluginAssetRoutes:
+    """/api/v3/plugins/assets/upload, /list and /delete
+
+    All three joined a request-supplied plugin_id straight onto
+    assets/plugins, so '../../config' created an uploads directory under
+    config/, wrote images and .metadata.json there, listed it, and deleted
+    whatever file a metadata entry's path named. #561 fixed only the route
+    that serves the uploaded files.
+    """
+
+    @pytest.fixture
+    def project(self, tmp_path, api_v3_module, monkeypatch):
+        import web_interface.blueprints.api_v3.plugins as plugins_module
+
+        monkeypatch.setattr(plugins_module, "PROJECT_ROOT", tmp_path)
+        (tmp_path / "config").mkdir()
+        secrets = tmp_path / "config" / "config_secrets.json"
+        secrets.write_text('{"api_key":"hunter2"}', encoding="utf-8")
+        return tmp_path, secrets
+
+    def _upload(self, client, plugin_id):
+        import io
+
+        return client.post(
+            "/api/v3/plugins/assets/upload",
+            data={"plugin_id": plugin_id, "files": (io.BytesIO(PNG), "x.png")},
+            content_type="multipart/form-data",
+        )
+
+    def _tree(self, root):
+        return sorted(str(p.relative_to(root)) for p in root.rglob("*"))
+
+    def test_an_ordinary_upload_list_and_delete_still_work(self, api_v3_client, project):
+        root, _ = project
+        response = self._upload(api_v3_client, "static-image")
+        assert response.status_code == 200, response.get_json()
+        uploaded = response.get_json()["uploaded_files"][0]
+        assert uploaded["path"].startswith("assets/plugins/static-image/uploads/")
+        stored = root / uploaded["path"]
+        assert stored.exists()
+
+        listed = api_v3_client.get(
+            "/api/v3/plugins/assets/list", query_string={"plugin_id": "static-image"}
+        )
+        assert listed.status_code == 200
+        assert [a["id"] for a in listed.get_json()["data"]["assets"]] == [uploaded["id"]]
+
+        deleted = api_v3_client.post(
+            "/api/v3/plugins/assets/delete",
+            json={"plugin_id": "static-image", "image_id": uploaded["id"]},
+        )
+        assert deleted.status_code == 200
+        assert not stored.exists()
+
+    @pytest.mark.parametrize("plugin_id", [
+        "../../config", "..", "a/b", "/abs", "x" + BACKSLASH + "y", "C:",
+    ])
+    def test_a_traversing_upload_writes_nothing(self, api_v3_client, project, plugin_id):
+        root, _ = project
+        before = self._tree(root)
+        response = self._upload(api_v3_client, plugin_id)
+        assert response.status_code == 400
+        assert self._tree(root) == before
+
+    def test_a_traversing_list_reads_nothing(self, api_v3_client, project):
+        root, _ = project
+        outside = root / "config" / "uploads"
+        outside.mkdir()
+        (outside / ".metadata.json").write_text(
+            json.dumps({"i": {"id": "i", "path": "leaked"}}), encoding="utf-8"
+        )
+        response = api_v3_client.get(
+            "/api/v3/plugins/assets/list", query_string={"plugin_id": "../../config"}
+        )
+        assert response.status_code == 400
+        assert b"leaked" not in response.data
+
+    def test_a_traversing_delete_deletes_nothing(self, api_v3_client, project):
+        root, secrets = project
+        outside = root / "config" / "uploads"
+        outside.mkdir()
+        (outside / ".metadata.json").write_text(
+            json.dumps({"i": {"id": "i", "path": "config/config_secrets.json"}}),
+            encoding="utf-8",
+        )
+        response = api_v3_client.post(
+            "/api/v3/plugins/assets/delete",
+            json={"plugin_id": "../../config", "image_id": "i"},
+        )
+        assert response.status_code == 400
+        assert secrets.exists(), "file outside assets/plugins was deleted"
+
+    @pytest.mark.parametrize("stored_path", [
+        "config/config_secrets.json",
+        "assets/plugins/static-image/uploads/../../../../config/config_secrets.json",
+        "assets/plugins/other/uploads/x.png",
+        None,
+    ])
+    def test_a_metadata_path_outside_the_uploads_is_never_unlinked(
+        self, api_v3_client, project, stored_path
+    ):
+        root, secrets = project
+        uploads = root / "assets" / "plugins" / "static-image" / "uploads"
+        uploads.mkdir(parents=True)
+        other = root / "assets" / "plugins" / "other" / "uploads"
+        other.mkdir(parents=True)
+        (other / "x.png").write_bytes(PNG)
+        (uploads / ".metadata.json").write_text(
+            json.dumps({"i": {"id": "i", "path": stored_path}}), encoding="utf-8"
+        )
+        response = api_v3_client.post(
+            "/api/v3/plugins/assets/delete",
+            json={"plugin_id": "static-image", "image_id": "i"},
+        )
+        assert response.status_code == 200
+        assert secrets.exists(), "file named by tampered metadata was deleted"
+        assert (other / "x.png").exists(), "another plugin's upload was deleted"
+        # The bad entry is still dropped, so the UI can get rid of it.
+        assert json.loads((uploads / ".metadata.json").read_text(encoding="utf-8")) == {}
+
+
+class TestPluginActionDirectory:
+    """POST /api/v3/plugins/action runs a script named by the manifest in
+    get_plugin_directory(plugin_id), and plugin_id is the request body's.
+    get_plugin_directory joined it onto plugins_dir unchecked, so
+    '../elsewhere' ran a script from any directory holding a manifest.
+    """
+
+    @pytest.fixture
+    def tree(self, tmp_path):
+        import threading
+
+        from src.plugin_system.plugin_manager import PluginManager
+
+        plugins = tmp_path / "plugin-repos"
+        (plugins / "demo").mkdir(parents=True)
+        (plugins / "ledmatrix-legacy").mkdir()
+        outside = tmp_path / "elsewhere"
+        outside.mkdir()
+        (outside / "manifest.json").write_text(json.dumps({
+            "web_ui_actions": [{"id": "go", "type": "script", "script": "s.py"}],
+        }), encoding="utf-8")
+        marker = tmp_path / "PWNED"
+        (outside / "s.py").write_text(
+            "open(%r, 'w').write('ran')\n" % str(marker), encoding="utf-8"
+        )
+        manager = MagicMock()
+        manager.plugins_dir = plugins
+        manager._discovery_lock = threading.Lock()
+        manager.plugin_directories = {}
+        manager.get_plugin_directory = (
+            lambda pid: PluginManager.get_plugin_directory(manager, pid)
+        )
+        return manager, plugins, marker
+
+    def test_real_plugin_directories_are_still_found(self, tree):
+        manager, plugins, _ = tree
+        assert manager.get_plugin_directory("demo") == str(plugins / "demo")
+        assert manager.get_plugin_directory("legacy") == str(plugins / "ledmatrix-legacy")
+        assert manager.get_plugin_directory("nope") is None
+
+    def test_a_discovered_plugin_is_returned_from_the_registry(self, tree, tmp_path):
+        manager, _, _ = tree
+        manager.plugin_directories = {"linked": tmp_path / "somewhere"}
+        assert manager.get_plugin_directory("linked") == str(tmp_path / "somewhere")
+
+    @pytest.mark.parametrize("plugin_id", [
+        "..", "../elsewhere", "a/b", "/abs", "x" + BACKSLASH + "..", "",
+    ])
+    def test_get_plugin_directory_refuses_anything_but_a_plain_name(self, tree, plugin_id):
+        manager, _, _ = tree
+        assert manager.get_plugin_directory(plugin_id) is None
+
+    def test_the_action_endpoint_runs_nothing_outside_the_plugins_dir(
+        self, api_v3_client, api_v3_module, tree
+    ):
+        manager, _, marker = tree
+        api_v3_module.api_v3.plugin_manager = manager
+        response = api_v3_client.post(
+            "/api/v3/plugins/action",
+            json={"plugin_id": "../elsewhere", "action_id": "go", "params": {}},
+        )
+        assert response.status_code == 400
+        assert not marker.exists(), "script outside the plugins directory ran"
+
+    def test_the_fallback_without_a_plugin_manager_is_guarded_too(
+        self, api_v3_client, api_v3_module
+    ):
+        api_v3_module.api_v3.plugin_manager = None
+        response = api_v3_client.post(
+            "/api/v3/plugins/action",
+            json={"plugin_id": "../elsewhere", "action_id": "go", "params": {}},
+        )
+        assert response.status_code == 400

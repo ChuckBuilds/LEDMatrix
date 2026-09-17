@@ -23,6 +23,7 @@ from src.plugin_system.plugin_loader import PluginLoader
 from src.plugin_system.plugin_executor import PluginExecutor
 from src.plugin_system.plugin_state import PluginStateManager, PluginState
 from src.plugin_system.schema_manager import SchemaManager, normalize_legacy_booleans
+from src.common.path_safety import safe_path_component
 from src.common.permission_utils import (
     ensure_directory_permissions,
     get_plugin_dir_mode
@@ -743,11 +744,20 @@ class PluginManager:
             
         Returns:
             Directory path as string or None if not found
+
+        ``plugin_id`` often comes straight from a request, so anything that is
+        not one plain path segment (``..``, ``a/b``, an absolute path) is
+        refused instead of being joined onto ``plugins_dir``. The join is not
+        resolved further: dev plugins are symlinks into ``plugins_dir``.
         """
         with self._discovery_lock:
             if hasattr(self, 'plugin_directories') and plugin_id in self.plugin_directories:
                 return str(self.plugin_directories[plugin_id])
-        
+
+        plugin_id = safe_path_component(plugin_id)
+        if plugin_id is None:
+            return None
+
         plugin_dir = self.plugins_dir / plugin_id
         if plugin_dir.exists():
             return str(plugin_dir)
