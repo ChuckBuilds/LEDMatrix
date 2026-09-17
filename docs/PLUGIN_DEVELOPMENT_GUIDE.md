@@ -3,8 +3,10 @@
 This guide explains how to set up a development workflow for plugins that are maintained in separate Git repositories while still being able to test them within the LEDMatrix project.
 
 > **Rendering guidance:** plugins should read the display size dynamically
-> (`self.display_manager.matrix.width/height`) rather than hardcoding one
-> panel. For plugins that want to *scale* their layout to any panel, the
+> (`self.display_manager.width/height`) rather than hardcoding one
+> panel. Don't read `display_manager.matrix.width/height`: `matrix` is
+> `None` when hardware init fails, while the `width`/`height` properties
+> fall back to the canvas size. For plugins that want to *scale* their layout to any panel, the
 > opt-in adaptive layout system ([ADAPTIVE_LAYOUT.md](ADAPTIVE_LAYOUT.md))
 > provides the shared helpers — fonts, images, and composite layouts that
 > scale. Existing plugins keep their classic rendering unless they adopt
