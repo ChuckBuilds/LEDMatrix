@@ -834,9 +834,11 @@ sudo ./scripts/install/install_service.sh
 
 The script will:
 - Detect your user account and home directory
-- Install the service file with the correct paths
-- Enable the service to start on boot
-- Start the service immediately
+- Install `ledmatrix.service` (display, runs as root), `ledmatrix-web.service`
+  (web interface, runs as your user) and the `ledmatrix-update-verify` units,
+  with the correct paths
+- Enable them to start on boot
+- Start them immediately
 
 ### Managing the Service
 
