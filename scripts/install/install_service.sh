@@ -70,7 +70,7 @@ echo "Installing LEDMatrix Web Interface service (ledmatrix-web.service)..."
 # Rendered from systemd/ledmatrix-web.service, the same template
 # install_web_service.sh uses. This was an inline heredoc until it drifted from
 # the template: it had lost Wants=network-online.target, RestartSec,
-# SyslogIdentifier, CacheDirectory and Environment=USE_THREADING. Because
+# SyslogIdentifier and Environment=USE_THREADING. Because
 # src/startup_validator.py compares the installed unit against the template,
 # every boot warned "re-run install_service.sh" -- and doing so reinstalled the
 # same stale copy, so the warning could never clear.

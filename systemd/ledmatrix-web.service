@@ -25,9 +25,13 @@ RestartSec=10
 StandardOutput=syslog
 StandardError=syslog
 SyslogIdentifier=ledmatrix-web
-# Automatically create and manage cache directory
-CacheDirectory=ledmatrix
-CacheDirectoryMode=0775
+# No CacheDirectory=. /var/cache/ledmatrix is shared with ledmatrix.service,
+# which runs as root, and the installers set it up as root:ledmatrix 2775 so
+# both services can read what the other writes. CacheDirectory= makes systemd
+# re-own that directory and everything in it to this unit's User= and that
+# user's primary group whenever the owner differs -- which, for a directory
+# root created, is on the first start. That erased the shared group, and from
+# then on the web interface could not read a single file the display wrote.
 
 [Install]
 WantedBy=multi-user.target
