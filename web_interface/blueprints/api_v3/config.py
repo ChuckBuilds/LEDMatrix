@@ -522,10 +522,14 @@ def save_main_config():
             if 'plugin_system' not in current_config:
                 current_config['plugin_system'] = {}
 
-            # Handle plugin system checkboxes - always set to handle unchecked state
-            # HTML checkboxes omit the key when unchecked, so missing key = unchecked = False
-            for checkbox in ['auto_discover', 'auto_load_enabled', 'development_mode']:
-                current_config['plugin_system'][checkbox] = _coerce_to_bool(data.get(checkbox))
+            # auto_discover / auto_load_enabled / development_mode are read by
+            # nothing and no longer have General-tab toggles. The form still
+            # posts plugins_directory, so treating a missing key as an
+            # unchecked box would rewrite stored values to false on every
+            # save; only store what a client actually sends.
+            for legacy_flag in ['auto_discover', 'auto_load_enabled', 'development_mode']:
+                if legacy_flag in data:
+                    current_config['plugin_system'][legacy_flag] = _coerce_to_bool(data.get(legacy_flag))
 
             # Handle plugins_directory
             if 'plugins_directory' in data:

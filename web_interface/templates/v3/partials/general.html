@@ -166,44 +166,10 @@
             <p class="text-sm text-gray-600 mb-4">Configure the core plugin system behavior.</p>
 
             <div class="space-y-4">
-                <!-- Auto Discover -->
-                <div class="form-group" id="setting-general-auto_discover" data-setting-key="plugin_system.auto_discover">
-                    <label class="flex items-center">
-                        <input type="checkbox"
-                               name="auto_discover"
-                               value="true"
-                               {% if main_config.get('plugin_system', {}).get('auto_discover', True) %}checked{% endif %}
-                               class="form-control h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
-                        <span class="ml-2 text-sm font-medium text-gray-900">Auto Discover Plugins</span>
-                        {{ ui.help_tip('Scan the plugins directory for installed plugins each time the service starts.\nDefault: on. Leave on unless you manage plugins manually.', 'Auto Discover Plugins') }}
-                    </label>
-                </div>
-
-                <!-- Auto Load Enabled -->
-                <div class="form-group" id="setting-general-auto_load_enabled" data-setting-key="plugin_system.auto_load_enabled">
-                    <label class="flex items-center">
-                        <input type="checkbox"
-                               name="auto_load_enabled"
-                               value="true"
-                               {% if main_config.get('plugin_system', {}).get('auto_load_enabled', True) %}checked{% endif %}
-                               class="form-control h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
-                        <span class="ml-2 text-sm font-medium text-gray-900">Auto Load Enabled Plugins</span>
-                        {{ ui.help_tip('Load every plugin marked enabled in the configuration at startup.\nDefault: on. Turn off to keep plugins installed but dormant.', 'Auto Load Enabled Plugins') }}
-                    </label>
-                </div>
-
-                <!-- Development Mode -->
-                <div class="form-group" id="setting-general-development_mode" data-setting-key="plugin_system.development_mode">
-                    <label class="flex items-center">
-                        <input type="checkbox"
-                               name="development_mode"
-                               value="true"
-                               {% if main_config.get('plugin_system', {}).get('development_mode', False) %}checked{% endif %}
-                               class="form-control h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
-                        <span class="ml-2 text-sm font-medium text-gray-900">Development Mode</span>
-                        {{ ui.help_tip('Enable verbose logging and developer features for plugin debugging.\nDefault: off. Keep off for normal use — it increases log volume.', 'Development Mode') }}
-                    </label>
-                </div>
+                <!-- plugin_system.auto_discover, auto_load_enabled and
+                     development_mode used to be toggles here. Nothing reads
+                     them: plugins are always discovered and every enabled
+                     plugin is loaded. Stored values are left alone. -->
 
                 <!-- Plugins Directory -->
                 <div class="form-group" id="setting-general-plugins_directory" data-setting-key="plugin_system.plugins_directory">

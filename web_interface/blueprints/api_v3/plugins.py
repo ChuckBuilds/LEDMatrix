@@ -988,6 +988,7 @@ def update_plugin():
             )
 
         current_last_updated = None
+        current_version = None
         current_commit = None
         current_branch = None
 
@@ -997,6 +998,7 @@ def update_plugin():
                 with open(manifest_path, 'r', encoding='utf-8') as f:
                     manifest = json.load(f)
                     current_last_updated = manifest.get('last_updated')
+                    current_version = manifest.get('version')
                 if manifest.get('local_only'):
                     logger.debug("Skipping update for local-only plugin: %s", plugin_id)
                     if api_v3.operation_history:
@@ -1006,7 +1008,9 @@ def update_plugin():
                             status="skipped",
                             details={"reason": "local_only"}
                         )
-                    return success_response(message=f'Plugin {plugin_id} is managed locally and does not receive registry updates')
+                    return success_response(
+                        data={'update_status': 'local_only'},
+                        message=f'Plugin {plugin_id} is managed locally and does not receive registry updates')
             except Exception as e:
                 logger.debug("Could not read local manifest for plugin: %s", e)
 
@@ -1036,12 +1040,14 @@ def update_plugin():
 
         if success:
             updated_last_updated = current_last_updated
+            updated_version = current_version
             try:
                 if manifest_path.exists():
                     import json
                     with open(manifest_path, 'r', encoding='utf-8') as f:
                         manifest = json.load(f)
                         updated_last_updated = manifest.get('last_updated', current_last_updated)
+                        updated_version = manifest.get('version', current_version)
             except Exception as e:
                 logger.debug("Could not read updated manifest after update: %s", e)
 
@@ -1053,15 +1059,28 @@ def update_plugin():
                     updated_commit = git_info_after.get('sha')
                     updated_branch = git_info_after.get('branch') or updated_branch
 
+            # update_plugin() answers True for "nothing to do" as well as for
+            # a real update (a ZIP-installed monorepo plugin already at the
+            # registry version, a bundled plugin), so what changed is read off
+            # the plugin itself: its git commit, else its manifest.
+            update_status = 'updated'
             message = f'Plugin {plugin_id} updated successfully'
             if current_commit and updated_commit and current_commit == updated_commit:
+                update_status = 'up_to_date'
                 message = f'Plugin {plugin_id} already up to date (commit {updated_commit[:7]})'
             elif updated_commit:
                 message = f'Plugin {plugin_id} updated to commit {updated_commit[:7]}'
                 if updated_branch:
                     message += f' on branch {updated_branch}'
+            elif updated_version and updated_version != current_version:
+                message = f'Plugin {plugin_id} updated to version {updated_version}'
             elif updated_last_updated and updated_last_updated != current_last_updated:
                 message = f'Plugin {plugin_id} refreshed (Last Updated {updated_last_updated})'
+            elif not current_commit:
+                update_status = 'up_to_date'
+                message = f'Plugin {plugin_id} already up to date'
+                if updated_version:
+                    message += f' (version {updated_version})'
 
             remote_commit_short = remote_commit[:7] if remote_commit else None
             if remote_commit_short and updated_commit and remote_commit_short != updated_commit[:7]:
@@ -1093,14 +1112,16 @@ def update_plugin():
                         "version": version,
                         "previous_commit": current_commit[:7] if current_commit else None,
                         "commit": updated_commit[:7] if updated_commit else None,
-                        "branch": updated_branch
+                        "branch": updated_branch,
+                        "update_status": update_status
                     }
                 )
 
             return success_response(
                 data={
                     'last_updated': updated_last_updated,
-                    'commit': updated_commit
+                    'commit': updated_commit,
+                    'update_status': update_status
                 },
                 message=message
             )

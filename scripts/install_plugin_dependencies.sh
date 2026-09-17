@@ -3,6 +3,8 @@
 # Use this if automatic dependency installation fails
 
 set -e
+# A failed pip must fail the `pip ... | tee` pipeline below, not be hidden by tee.
+set -o pipefail
 
 # Colors for output
 RED='\033[0;31m'
@@ -28,15 +30,50 @@ echo ""
 # Get the directory where this script is located
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 LEDMATRIX_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-PLUGINS_DIR="$LEDMATRIX_DIR/plugins"
+CONFIG_FILE="$LEDMATRIX_DIR/config/config.json"
+
+# The Plugin Store installs into plugin_system.plugins_directory from
+# config.json (default plugin-repos), resolved against the project root like
+# the display and web services do. plugins/ is also scanned: it holds the
+# symlinks scripts/dev/dev_plugin_setup.sh creates.
+CONFIGURED_DIR="plugin-repos"
+if [ -f "$CONFIG_FILE" ] && command -v python3 >/dev/null 2>&1; then
+    CONFIGURED_DIR="$(LEDMATRIX_CONFIG_FILE="$CONFIG_FILE" python3 -c '
+import json, os
+try:
+    with open(os.environ["LEDMATRIX_CONFIG_FILE"], encoding="utf-8") as f:
+        value = (json.load(f).get("plugin_system") or {}).get("plugins_directory")
+except Exception:
+    value = None
+print(value if isinstance(value, str) and value.strip() else "plugin-repos")
+' 2>/dev/null)" || CONFIGURED_DIR="plugin-repos"
+    [ -n "$CONFIGURED_DIR" ] || CONFIGURED_DIR="plugin-repos"
+fi
+case "$CONFIGURED_DIR" in
+    /*) PLUGINS_DIR="$CONFIGURED_DIR" ;;
+    *)  PLUGINS_DIR="$LEDMATRIX_DIR/$CONFIGURED_DIR" ;;
+esac
+DEV_PLUGINS_DIR="$LEDMATRIX_DIR/plugins"
 
 echo "LEDMatrix directory: $LEDMATRIX_DIR"
-echo "Plugins directory: $PLUGINS_DIR"
+echo "Plugins directory: $PLUGINS_DIR (plugin_system.plugins_directory)"
+
+SCAN_DIRS=()
+PLUGINS_DIR_REAL=""
+if [ -d "$PLUGINS_DIR" ]; then
+    SCAN_DIRS+=("$PLUGINS_DIR")
+    PLUGINS_DIR_REAL="$(cd "$PLUGINS_DIR" && pwd -P)"
+fi
+if [ -d "$DEV_PLUGINS_DIR" ] && [ "$(cd "$DEV_PLUGINS_DIR" && pwd -P)" != "$PLUGINS_DIR_REAL" ]; then
+    echo "Also scanning dev plugins: $DEV_PLUGINS_DIR"
+    SCAN_DIRS+=("$DEV_PLUGINS_DIR")
+fi
 echo ""
 
-# Check if plugins directory exists
-if [ ! -d "$PLUGINS_DIR" ]; then
+# Check if a plugins directory exists
+if [ ${#SCAN_DIRS[@]} -eq 0 ]; then
     echo -e "${RED}Error: Plugins directory not found at $PLUGINS_DIR${NC}"
+    echo "Install a plugin from the Plugin Store first, or check plugin_system.plugins_directory in $CONFIG_FILE"
     exit 1
 fi
 
@@ -47,12 +84,21 @@ echo ""
 PLUGINS_FOUND=0
 PLUGINS_INSTALLED=0
 PLUGINS_FAILED=0
+SEEN_PLUGIN_PATHS=" "
 
-for plugin_dir in "$PLUGINS_DIR"/*/ ; do
+for scan_dir in "${SCAN_DIRS[@]}"; do
+for plugin_dir in "$scan_dir"/*/ ; do
     if [ -d "$plugin_dir" ]; then
         plugin_name=$(basename "$plugin_dir")
         requirements_file="$plugin_dir/requirements.txt"
-        
+
+        # A dev symlink can point at a plugin already scanned; install it once.
+        real_plugin_dir="$(cd "$plugin_dir" && pwd -P)"
+        case "$SEEN_PLUGIN_PATHS" in
+            *" $real_plugin_dir "*) continue ;;
+        esac
+        SEEN_PLUGIN_PATHS="$SEEN_PLUGIN_PATHS$real_plugin_dir "
+
         if [ -f "$requirements_file" ]; then
             PLUGINS_FOUND=$((PLUGINS_FOUND + 1))
             echo -e "${GREEN}Found plugin: ${plugin_name}${NC}"
@@ -78,6 +124,7 @@ for plugin_dir in "$PLUGINS_DIR"/*/ ; do
             echo ""
         fi
     fi
+done
 done
 
 # Summary

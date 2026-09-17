@@ -146,6 +146,73 @@ const noSleep = { sleep: async () => {} };
     ok('...and is reported as a failure', results.find(x => x.pluginId === 'static-image').success === false);
   }
 
+  console.log('\nthe real api_client.js: only a missing HTTP answer is retried');
+  {
+    // The fake PluginAPI above decides error_code itself. This runs the shipped
+    // client so its classification is what gets tested: a proxy's 502 page or
+    // a JSON 500 without error_code used to come back as NETWORK_ERROR and be
+    // re-sent five more times.
+    const PluginAPI = require(path.join(V3, 'js/plugins/api_client.js'));
+    const run = async (makeFetch) => {
+      let requests = 0, sleeps = 0;
+      global.fetch = async () => { requests++; return makeFetch(requests); };
+      global.window = { PluginAPI, installedPlugins: [{ id: 'stock-news' }] };
+      const results = await Manager.updateAll(null, { sleep: async () => { sleeps++; }, retryDelaysMs: [1, 1, 1] });
+      return { requests, sleeps, result: results[0] };
+    };
+    const httpAnswer = (status, json) => ({ ok: status < 400, status, json });
+
+    let r = await run(() => httpAnswer(502, async () => { throw new SyntaxError('Unexpected token <'); }));
+    ok('a 502 with an HTML body is sent once', r.requests === 1 && r.sleeps === 0, r);
+    ok('...and is an API_ERROR carrying the status, not NETWORK_ERROR',
+       r.result.success === false && r.result.error.error_code === 'API_ERROR' && r.result.error.status === 502, r.result.error);
+
+    r = await run(() => httpAnswer(500, async () => ({ status: 'error', message: 'boom' })));
+    ok('a JSON 500 without error_code is sent once', r.requests === 1 && r.sleeps === 0, r);
+    ok('...and keeps the server message', r.result.error.message === 'boom', r.result.error);
+
+    r = await run(() => httpAnswer(500, async () => ({ status: 'error', error_code: 'PLUGIN_UPDATE_FAILED', message: 'x' })));
+    ok('a structured error is passed through unchanged',
+       r.requests === 1 && r.result.error.error_code === 'PLUGIN_UPDATE_FAILED', r.result.error);
+
+    r = await run((n) => {
+      if (n === 1) throw new TypeError('Failed to fetch');
+      return httpAnswer(200, async () => ({ status: 'success', message: 'ok', data: { update_status: 'updated' } }));
+    });
+    ok('a fetch() that rejects is NETWORK_ERROR and re-sent', r.requests === 2 && r.sleeps === 1 && r.result.success, r);
+
+    r = await run(() => httpAnswer(200, async () => { throw new SyntaxError('Unexpected end of JSON input'); }));
+    ok('an unreadable 200 is not retried either', r.requests === 1 && r.result.error.error_code === 'API_ERROR', r);
+    delete global.fetch;
+  }
+
+  console.log('\nsummary: a no-op update is not counted as updated');
+  {
+    const answer = (update_status, message) => ({ success: true, result: { status: 'success', message, data: { update_status } } });
+    const results = [
+      answer('updated', 'Plugin a updated to version 2.8.0'),
+      // ZIP-installed monorepo plugin already at the registry version: the
+      // route used to call this "updated successfully".
+      answer('up_to_date', 'Plugin stock-news already up to date (version 2.8.0)'),
+      answer('up_to_date', 'Plugin clock already up to date (commit abcdef1)'),
+      answer('local_only', 'Plugin mine is managed locally and does not receive registry updates'),
+      { success: false, error: { error_code: 'PLUGIN_UPDATE_FAILED' } },
+    ];
+    const s = Manager.summarizeUpdateResults(results);
+    ok('counts come from update_status',
+       s.updated === 1 && s.upToDate === 2 && s.localOnly === 1 && s.failed === 1, s);
+    ok('toast text names each outcome',
+       s.text === '1 updated, 2 already up to date, 1 managed locally, 1 failed', s.text);
+    ok('a failure alongside an update is a warning', s.type === 'warning', s.type);
+    ok('an older server that only says so in the message is still up to date',
+       Manager.updateOutcome({ success: true, result: { message: 'Plugin x already up to date (commit 1234567)' } }) === 'up_to_date');
+    ok('a success without a status or telltale message counts as updated',
+       Manager.updateOutcome({ success: true, result: { message: 'Plugin x updated successfully' } }) === 'updated');
+    const allNoop = Manager.summarizeUpdateResults([answer('up_to_date', ''), answer('up_to_date', '')]);
+    ok('nothing to do is a success toast with no "updated"',
+       allNoop.type === 'success' && allNoop.text === '2 already up to date', allNoop);
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });

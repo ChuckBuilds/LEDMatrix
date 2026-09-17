@@ -80,6 +80,67 @@ class TestUpdateRouteRejectsStarlarkIds:
         assert [c.args[0] for c in store.update_plugin.call_args_list] == ['stock-news', 'starlark-apps']
 
 
+class TestUpdateRouteReportsNoOps:
+    """update_plugin() answers True when there was nothing to do.
+
+    A ZIP-installed monorepo plugin (no .git) already at the registry version
+    is the common case for official plugins. The route used to call that
+    "updated successfully", so Check & Update All counted it as updated.
+    """
+
+    def _install(self, tmp_path, pid, version, last_updated='2026-09-01'):
+        (tmp_path / pid).mkdir()
+        (tmp_path / pid / 'manifest.json').write_text(
+            '{"id": "%s", "version": "%s", "last_updated": "%s"}' % (pid, version, last_updated),
+            encoding='utf-8')
+
+    def test_a_zip_plugin_already_at_the_registry_version_is_up_to_date(self, client, store, tmp_path):
+        self._install(tmp_path, 'stock-news', '2.8.0')
+        body = client.post('/api/v3/plugins/update', json={'plugin_id': 'stock-news'}).get_json()
+        assert body['status'] == 'success'
+        assert body['data']['update_status'] == 'up_to_date'
+        assert 'already up to date' in body['message'], body
+        assert 'updated successfully' not in body['message']
+
+    def test_a_zip_plugin_reinstalled_at_a_new_version_is_updated(self, client, store, tmp_path):
+        self._install(tmp_path, 'stock-news', '2.6.2')
+
+        def reinstall(pid):
+            (tmp_path / pid / 'manifest.json').write_text(
+                '{"id": "%s", "version": "2.8.0", "last_updated": "2026-09-01"}' % pid,
+                encoding='utf-8')
+            return True
+        store.update_plugin.side_effect = reinstall
+
+        body = client.post('/api/v3/plugins/update', json={'plugin_id': 'stock-news'}).get_json()
+        assert body['data']['update_status'] == 'updated'
+        assert '2.8.0' in body['message'], body
+
+    def test_a_git_plugin_whose_commit_is_unchanged_is_up_to_date(self, client, store, tmp_path):
+        self._install(tmp_path, 'clock', '1.0.0')
+        store._get_local_git_info.return_value = {'sha': 'abcdef1234567', 'branch': 'main'}
+        body = client.post('/api/v3/plugins/update', json={'plugin_id': 'clock'}).get_json()
+        assert body['data']['update_status'] == 'up_to_date'
+
+    def test_a_git_plugin_that_moved_is_updated(self, client, store, tmp_path):
+        self._install(tmp_path, 'clock', '1.0.0')
+        store._get_local_git_info.side_effect = [
+            {'sha': 'aaaaaaa000', 'branch': 'main'},   # before
+            {'sha': 'aaaaaaa000', 'branch': 'main'},   # is-git check
+            {'sha': 'bbbbbbb111', 'branch': 'main'},   # after
+        ]
+        body = client.post('/api/v3/plugins/update', json={'plugin_id': 'clock'}).get_json()
+        assert body['data']['update_status'] == 'updated', body
+
+    def test_a_local_only_plugin_says_so(self, client, store, tmp_path):
+        (tmp_path / 'mine').mkdir()
+        (tmp_path / 'mine' / 'manifest.json').write_text(
+            '{"id": "mine", "version": "0.1.0", "local_only": true}', encoding='utf-8')
+        body = client.post('/api/v3/plugins/update', json={'plugin_id': 'mine'}).get_json()
+        assert body['data']['update_status'] == 'local_only'
+        store.update_plugin.assert_not_called()
+
+
 class TestInstalledListContract:
     """What update-all filters on is what /plugins/installed publishes."""
 

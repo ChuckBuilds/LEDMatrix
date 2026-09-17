@@ -25,7 +25,14 @@ from enum import Enum
 import queue
 from concurrent.futures import ThreadPoolExecutor
 from src.cache_manager import CacheManager
-from src.common.espn_dates import clamp_espn_limit, fetch_espn_date_chunks
+from src.common.espn_dates import (
+    RANGE_RETRY_SECONDS,
+    _note_range_rejected,
+    _ranges_known_rejected,
+    clamp_espn_limit,
+    fetch_espn_date_chunks,
+    parse_espn_date_range,
+)
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -350,19 +357,38 @@ class BackgroundDataService:
             
             logger.info(f"Starting background fetch for {request.sport} {request.year}")
             
-            # Perform HTTP request with retry logic
-            response = self._make_request_with_retry(request)
-
             # ESPN stopped accepting dates=YYYYMMDD-YYYYMMDD on 2026-09-15 and
             # answers 400 for every sport. Re-ask in months and days rather
             # than let a whole season fail. See src/common/espn_dates.py.
-            if response.status_code == 400:
+            # The "ranges are rejected" memo is shared with
+            # fetch_espn_scoreboard(): once either path has seen a range
+            # rejected, the other skips the doomed range request too.
+            is_range = parse_espn_date_range(request.params.get("dates")) is not None
+            data = None
+            chunks_tried = False
+            if is_range and _ranges_known_rejected():
                 data = self._fetch_in_date_chunks(request)
-                if data is None:
+                # Every chunk failed: ask for the range itself below so the
+                # failure carries a real HTTP error, without re-spending chunks.
+                chunks_tried = data is None
+
+            if data is None:
+                # Perform HTTP request with retry logic
+                response = self._make_request_with_retry(request)
+                if is_range and response.status_code == 400 and not chunks_tried:
+                    _note_range_rejected()
+                    logger.warning(
+                        "ESPN rejected the date range %s (400); fetching it as "
+                        "month/day chunks, and fetching ranges that way for the "
+                        "next %d hours",
+                        request.params.get("dates"), RANGE_RETRY_SECONDS // 3600,
+                    )
+                    data = self._fetch_in_date_chunks(request)
+                    if data is None:
+                        response.raise_for_status()
+                else:
                     response.raise_for_status()
-            else:
-                response.raise_for_status()
-                data = response.json()
+                    data = response.json()
             
             # Validate data structure
             if not isinstance(data, dict):

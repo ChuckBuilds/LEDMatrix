@@ -121,19 +121,24 @@ fi
 echo ""
 
 # 5. Check web interface
+# ledmatrix-web.service runs scripts/utils/start_web_conditionally.py, which
+# starts web_interface/start.py; the app binds port 5000 (web_interface/start.py).
 echo "=== Web Interface ==="
-if [ -f "$PROJECT_ROOT/web_interface_v2.py" ]; then
-    check_pass "web_interface_v2.py exists"
-else
-    check_fail "web_interface_v2.py is missing"
-fi
+WEB_PORT=5000
+for web_file in scripts/utils/start_web_conditionally.py web_interface/start.py web_interface/app.py; do
+    if [ -f "$PROJECT_ROOT/$web_file" ]; then
+        check_pass "$web_file exists"
+    else
+        check_fail "$web_file is missing"
+    fi
+done
 
 # Check if web service is listening
 if systemctl is-active --quiet ledmatrix-web.service 2>/dev/null; then
-    if netstat -tuln 2>/dev/null | grep -q ":5001" || ss -tuln 2>/dev/null | grep -q ":5001"; then
-        check_pass "Web interface is listening on port 5001"
+    if netstat -tuln 2>/dev/null | grep -qE ":${WEB_PORT}([^0-9]|$)" || ss -tuln 2>/dev/null | grep -qE ":${WEB_PORT}([^0-9]|$)"; then
+        check_pass "Web interface is listening on port $WEB_PORT"
     else
-        check_warn "Web service is running but port 5001 may not be listening"
+        check_warn "Web service is running but port $WEB_PORT may not be listening"
     fi
 else
     check_warn "Web service is not running (cannot check port)"
@@ -204,7 +209,7 @@ if [ "$ALL_PASSED" = true ]; then
     echo -e "${GREEN}Installation verification PASSED${NC}"
     echo ""
     echo "Next steps:"
-    echo "1. Access the web interface at: http://$(hostname -I | awk '{print $1}'):5001"
+    echo "1. Access the web interface at: http://$(hostname -I | awk '{print $1}'):$WEB_PORT"
     echo "2. Check service status: sudo systemctl status ledmatrix.service"
     echo "3. View logs: journalctl -u ledmatrix.service -f"
     exit 0
