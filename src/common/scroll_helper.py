@@ -282,7 +282,14 @@ class ScrollHelper:
     
     def update_scroll_position(self) -> None:
         """
-        Update scroll position with high FPS control and handle wrap-around.
+        Advance the scroll by one presented frame and handle wrap-around.
+
+        With a fixed per-frame step (set_pixels_per_frame, which
+        scroll_config.configure sets for a crisp speed) every call moves
+        exactly that many pixels and no clock is read; the caller's
+        vsync-blocking swap, held for ``frame_hold`` refreshes, sets the rate.
+        Otherwise the position advances by elapsed time at the configured
+        speed.
         """
         if not self.cached_image:
             return
@@ -823,11 +830,13 @@ class ScrollHelper:
     
     def set_scroll_speed(self, speed: float) -> None:
         """
-        Set the scroll speed.
-        
-        In time-based mode: pixels per second (typically 10-200)
-        In frame-based mode: pixels per frame (typically 0.5-5 for smooth scrolling)
-        
+        Set the scroll speed, and leave fixed-step mode.
+
+        In time-based mode: pixels per second (clamped to 1-500).
+        In frame-based mode: pixels per ``scroll_delay`` seconds (clamped to
+        0.1-5), still applied by elapsed time as scroll_speed / scroll_delay
+        px/s.
+
         Args:
             speed: Scroll speed (interpretation depends on frame_based_scrolling mode)
         """

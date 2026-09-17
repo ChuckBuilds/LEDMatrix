@@ -1415,6 +1415,12 @@ class DisplayManager:
         pixel every second refresh, which is how a scroll runs at half the
         refresh rate without fractional pixel positions.
 
+        The hold is part of the scroll's speed. A ScrollHelper configured by
+        ``scroll_config.configure()`` advances a fixed whole-pixel step per
+        presented frame and reads no clock, so pass the returned
+        ``settings.frame_hold`` here: a scroll that leaves it at 1 is
+        presented every refresh and runs ``frame_hold`` times too fast.
+
         The hold is set here rather than once at plugin construction because
         it must not outlive the scroll that asked for it: plugins share one
         display manager, so a hold left set by whoever scrolled last would

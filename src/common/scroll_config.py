@@ -22,12 +22,27 @@ shimmer) or repeat frames (which reads as judder). :func:`resolve` warns when
 the requested speed will not divide evenly, because that is a real display
 artefact and not a rounding detail.
 
-Speed is always expressed to the helper as pixels per second and applied in
-time-based mode. Frame-based stepping gates motion on a wall clock at
-``1/scroll_delay`` steps per second; plugins set ``scroll_delay`` to the frame
-period, which puts that comparison exactly on its own threshold and makes the
-step count flip on sub-millisecond jitter. Accumulating elapsed time keeps
-position proportional to real time instead.
+How the speed is applied
+------------------------
+:func:`configure` snaps the requested speed to a :class:`CrispSpeed` -- a whole
+number of pixels per presented frame, with each frame held for ``frame_hold``
+panel refreshes -- and puts the helper in fixed-step mode
+(``ScrollHelper.set_pixels_per_frame``). In that mode the helper consults no
+clock: every ``update_scroll_position()`` call moves exactly that many pixels.
+``SwapOnVSync`` blocks until the panel has taken each frame, so the frame count
+is the clock, and the speed on the panel is::
+
+    px/s = refresh_hz / frame_hold * pixels_per_frame
+
+That makes the hold part of the speed. The caller must pass
+``settings.frame_hold`` to ``display_manager.set_scrolling_state(True, ...)``;
+a caller that omits it is presented every refresh and scrolls ``frame_hold``
+times too fast. The refresh is the panel's (``display_manager.refresh_hz``,
+i.e. ``display.hardware.limit_refresh_rate_hz``) -- never the global
+``target_fps``, which no longer paces anything.
+
+With ``snap_to_crisp=False`` there is no fixed step: the helper is set to
+px/s and advances by elapsed time, and the hold is 1.
 """
 
 from __future__ import annotations
@@ -330,17 +345,18 @@ def configure(
 ) -> ScrollSettings:
     """Resolve the config and apply it to ``scroll_helper``.
 
-    Applied in time-based mode: see the module docstring for why frame-based
-    stepping is not used. ``hasattr`` guards keep this usable against older
-    ScrollHelper builds that a plugin may be running on.
+    Frame-based mode is switched off, the (snapped) speed is set, and with
+    ``snap_to_crisp`` the helper steps a fixed whole-pixel amount per presented
+    frame -- see the module docstring. ``hasattr`` guards keep this usable
+    against older ScrollHelper builds that a plugin may be running on.
 
     :param display_manager: consulted for the panel's refresh rate only (it can
         see display.hardware; a plugin cannot). The frame hold is NOT applied
         here -- see the note in the body. The caller must pass
         ``settings.frame_hold`` to ``display_manager.set_scrolling_state(True,
-        ...)`` when it starts scrolling, or a sub-refresh speed still presents
-        a new frame every refresh and the motion falls back to fractional
-        pixels.
+        ...)`` when it scrolls. The helper moves its fixed step on every call,
+        so without the hold each step is presented every refresh and the
+        scroll runs ``frame_hold`` times faster than the resolved speed.
     :param snap_to_crisp: move the requested speed to the nearest speed the
         panel can show in whole pixels. On by default because a speed that does
         not divide evenly has no good rendering, only a choice of artefacts.
@@ -357,7 +373,8 @@ def configure(
     # refresh to fill in target_fps, pixels_per_frame and the judder warning,
     # so deriving it afterwards described a 100Hz panel to everyone running at
     # 60 -- and with snap_to_crisp=False nothing downstream corrected it, so
-    # set_target_fps() paced the helper to 100 FPS on a 60Hz panel.
+    # the settings and the helper's (informational) target_fps said 100 FPS on
+    # a 60Hz panel.
     hz = _coerce(refresh_hz)
     if hz is None and display_manager is not None:
         hz = _coerce(getattr(display_manager, "refresh_hz", None))
