@@ -250,14 +250,21 @@ WARNING - Plugin ID 'Football-Scoreboard' may conflict with 'football-scoreboard
 
 ## Checking Configuration via API
 
-The API blueprint mounts at `/api/v3` (`web_interface/app.py:144`).
+The API blueprint (`web_interface/blueprints/api_v3/`) is registered at
+`/api/v3` in `web_interface/app.py`.
 
 ```bash
-# Get full main config (includes all plugin sections)
+# Get full main config (includes all plugin sections; credential-named
+# fields are blanked in the response)
 curl http://localhost:5000/api/v3/config/main
 
-# Save updated main config
+# Change some settings: only the keys you send are changed
 curl -X POST http://localhost:5000/api/v3/config/main \
+  -H "Content-Type: application/json" \
+  -d '{"timezone": "America/Chicago", "brightness": 80}'
+
+# Replace config.json wholesale (advanced)
+curl -X POST http://localhost:5000/api/v3/config/raw/main \
   -H "Content-Type: application/json" \
   -d @new-config.json
 
@@ -269,8 +276,10 @@ curl "http://localhost:5000/api/v3/plugins/config?plugin_id=football-scoreboard"
 ```
 
 > There is no dedicated `/config/plugin/<id>` or `/config/validate`
-> endpoint — config validation runs server-side automatically when you
-> POST to `/config/main` or `/plugins/config`. See
+> endpoint. `POST /plugins/config` validates against the plugin's schema
+> and rejects an invalid config with `400`; `POST /config/main` checks the
+> individual fields it knows (display hardware values, durations, Vegas
+> and sync settings). See
 > [REST_API_REFERENCE.md](REST_API_REFERENCE.md) for the full list.
 
 ## Backup and Recovery
