@@ -2832,6 +2832,12 @@ def execute_plugin_action():
                 'received': {'plugin_id': plugin_id, 'action_id': action_id, 'has_params': bool(action_params)}
             }), 400
 
+        # plugin_id comes from the request body and picks the directory whose
+        # manifest names the script to run, so it must be a plain name.
+        plugin_id = safe_path_component(plugin_id)
+        if plugin_id is None:
+            return jsonify({'status': 'error', 'message': 'Invalid plugin_id'}), 400
+
         # Get plugin directory
         if api_v3.plugin_manager:
             plugin_dir = api_v3.plugin_manager.get_plugin_directory(plugin_id)
@@ -3303,6 +3309,15 @@ def authenticate_ytm():
     except Exception as e:
         logger.error('Error in authenticate_ytm', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
+def _plugin_uploads_dir(plugin_id):
+    """assets/plugins/<plugin_id>/uploads for a request-supplied id, or None.
+
+    Same guard as the serving route in app.py: one plain path segment,
+    resolved and contained under assets/plugins.
+    """
+    return resolve_under(PROJECT_ROOT / 'assets' / 'plugins', plugin_id, 'uploads')
+
+
 @api_v3.route('/plugins/assets/upload', methods=['POST'])
 def upload_plugin_asset():
     """Upload asset files for a plugin"""
@@ -3322,8 +3337,13 @@ def upload_plugin_asset():
         if len(files) > 10:
             return jsonify({'status': 'error', 'message': 'Maximum 10 files per upload'}), 400
 
-        # Setup plugin assets directory
-        assets_dir = PROJECT_ROOT / 'assets' / 'plugins' / plugin_id / 'uploads'
+        # Setup plugin assets directory. plugin_id is a form field: without
+        # the guard '../../config' created, listed and wrote into directories
+        # outside assets/plugins (the serving route was fixed in #561).
+        assets_dir = _plugin_uploads_dir(plugin_id)
+        if assets_dir is None:
+            return jsonify({'status': 'error', 'message': 'Invalid plugin_id'}), 400
+        plugin_id = safe_path_component(plugin_id)
         assets_dir.mkdir(parents=True, exist_ok=True)
 
         # Load metadata file
@@ -3958,7 +3978,9 @@ def delete_plugin_asset():
             return jsonify({'status': 'error', 'message': 'plugin_id and image_id are required'}), 400
 
         # Get asset directory
-        assets_dir = PROJECT_ROOT / 'assets' / 'plugins' / plugin_id / 'uploads'
+        assets_dir = _plugin_uploads_dir(plugin_id)
+        if assets_dir is None:
+            return jsonify({'status': 'error', 'message': 'Invalid plugin_id'}), 400
         metadata_file = assets_dir / '.metadata.json'
 
         if not metadata_file.exists():
@@ -3971,9 +3993,17 @@ def delete_plugin_asset():
         if image_id not in metadata:
             return jsonify({'status': 'error', 'message': 'Image not found'}), 404
 
-        # Delete file
-        file_path = PROJECT_ROOT / metadata[image_id]['path']
-        if file_path.exists():
+        # Delete file. The stored path is data, not a trusted location: only
+        # unlink it when it resolves to a file directly inside this plugin's
+        # uploads. An entry pointing anywhere else is dropped from the
+        # metadata without touching the file it names.
+        entry = metadata[image_id] if isinstance(metadata[image_id], dict) else {}
+        parts = safe_relative_parts(entry.get('path'))
+        file_path = resolve_under(PROJECT_ROOT, *parts) if parts else None
+        if file_path is None or file_path.parent != assets_dir:
+            logger.warning('Asset %s has a path outside its uploads directory; '
+                           'removing the entry without deleting a file', image_id)
+        elif file_path.exists():
             file_path.unlink()
 
         # Remove from metadata
@@ -3997,7 +4027,9 @@ def list_plugin_assets():
             return jsonify({'status': 'error', 'message': 'plugin_id is required'}), 400
 
         # Get asset directory
-        assets_dir = PROJECT_ROOT / 'assets' / 'plugins' / plugin_id / 'uploads'
+        assets_dir = _plugin_uploads_dir(plugin_id)
+        if assets_dir is None:
+            return jsonify({'status': 'error', 'message': 'Invalid plugin_id'}), 400
         metadata_file = assets_dir / '.metadata.json'
 
         if not metadata_file.exists():
