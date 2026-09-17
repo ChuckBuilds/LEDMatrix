@@ -1,169 +1,154 @@
 # Multi-Root Workspace Setup Guide
 
-This document explains how the LEDMatrix project uses a multi-root workspace to manage plugins as separate Git repositories.
+This document explains how to work on LEDMatrix and the official plugins side
+by side, with one editor workspace and the plugins loaded straight from your
+plugin checkout.
 
 ## Overview
 
-The LEDMatrix project has been migrated from a git submodule implementation to a **multi-root workspace** implementation for managing plugins. This allows:
+Official plugins live in a single repository,
+[ledmatrix-plugins](https://github.com/ChuckBuilds/ledmatrix-plugins), with one
+directory per plugin under `plugins/`. There are no separate per-plugin
+repositories. For development you clone that monorepo **next to** LEDMatrix
+and symlink its plugin directories into LEDMatrix's `plugin-repos/`, which is
+where the plugin loader looks by default.
 
-- ✅ Plugins to exist as independent Git repositories
-- ✅ Updates to plugins without modifying the LEDMatrix project
-- ✅ Easy development workflow with all repos in one workspace
-- ✅ Plugin system discovers plugins via symlinks in `plugin-repos/`
+- ✅ Plugin code stays in the monorepo checkout, with its own git history
+- ✅ LEDMatrix discovers the plugins through symlinks in `plugin-repos/`
+- ✅ `LEDMatrix.code-workspace` opens both repositories in VS Code/Cursor
 
 ## Directory Structure
 
 ```text
-/home/chuck/Github/
-├── LEDMatrix/                    # Main project
-│   ├── plugin-repos/             # Symlinks to actual repos (managed automatically)
-│   │   ├── ledmatrix-clock-simple -> ../../ledmatrix-clock-simple
-│   │   ├── ledmatrix-weather -> ../../ledmatrix-weather
+~/Github/
+├── LEDMatrix/                        # Main project
+│   ├── plugin-repos/                 # Plugin directory the loader scans
+│   │   ├── starlark-apps/            # Bundled with LEDMatrix (tracked in git)
+│   │   ├── web-ui-info/              # Bundled with LEDMatrix (tracked in git)
+│   │   ├── clock-simple -> ../../ledmatrix-plugins/plugins/clock-simple
+│   │   ├── ledmatrix-weather -> ../../ledmatrix-plugins/plugins/ledmatrix-weather
 │   │   └── ...
-│   ├── LEDMatrix.code-workspace  # Multi-root workspace configuration
+│   ├── LEDMatrix.code-workspace      # Opens LEDMatrix and ../ledmatrix-plugins
 │   └── ...
-├── ledmatrix-clock-simple/       # Plugin repository (actual git repo)
-├── ledmatrix-weather/            # Plugin repository (actual git repo)
-├── ledmatrix-football-scoreboard/ # Plugin repository (actual git repo)
-└── ...                           # Other plugin repos
+└── ledmatrix-plugins/                # Plugin monorepo (git repo)
+    ├── plugins/
+    │   ├── clock-simple/
+    │   ├── ledmatrix-weather/
+    │   └── ...
+    ├── plugins.json                  # Store registry
+    └── update_registry.py
 ```
 
 ## How It Works
 
-### 1. Plugin Repositories
+### 1. The plugin monorepo
 
-All plugin repositories are cloned to `/home/chuck/Github/` (parent directory of LEDMatrix) as regular Git repositories:
+Clone ledmatrix-plugins into the same parent directory as LEDMatrix (the
+scripts below look for `../ledmatrix-plugins` relative to the LEDMatrix
+root):
 
-- `ledmatrix-clock-simple/`
-- `ledmatrix-weather/`
-- `ledmatrix-football-scoreboard/`
-- etc.
+```bash
+cd ~/Github
+git clone https://github.com/ChuckBuilds/ledmatrix-plugins.git
+```
 
 ### 2. Symlinks in plugin-repos/
 
-The `LEDMatrix/plugin-repos/` directory contains symlinks pointing to the actual repositories in the parent directory. This allows the plugin system to discover plugins without modifying the project structure.
+`scripts/setup_plugin_repos.py` creates one symlink per plugin in
+`LEDMatrix/plugin-repos/`, named after the plugin's manifest `id` and pointing
+at `../ledmatrix-plugins/plugins/<dir>`.
 
-### 3. Multi-Root Workspace
+### 3. Multi-root workspace
 
-The `LEDMatrix.code-workspace` file configures VS Code/Cursor to open all plugin repositories as separate workspace roots, allowing easy development across all repos.
+`LEDMatrix.code-workspace` has two roots: LEDMatrix itself and
+`../ledmatrix-plugins`.
 
 ## Setup Scripts
 
 ### Initial Setup
 
-If you already have plugin repositories cloned, use the setup script:
-
 ```bash
-cd /home/chuck/Github/LEDMatrix
+cd ~/Github/LEDMatrix
 python3 scripts/setup_plugin_repos.py
 ```
 
 This script:
-- Reads the workspace configuration
-- Creates symlinks in `plugin-repos/` pointing to actual repos
-- Verifies all links are created correctly
+- Reads each `manifest.json` under `../ledmatrix-plugins/plugins/`
+- Creates `plugin-repos/<id>` symlinks (relative) to those directories
+- Leaves correct links alone, replaces links that point elsewhere, and skips
+  (does not overwrite) a real directory of the same name — for example a
+  plugin you installed from the Plugin Store. Remove that directory first if
+  you want the linked copy.
 
 ### Updating Plugins
 
-To update all plugin repositories:
-
 ```bash
-cd /home/chuck/Github/LEDMatrix
+cd ~/Github/LEDMatrix
 python3 scripts/update_plugin_repos.py
 ```
 
-This script:
-- Finds all plugins in the workspace
-- Runs `git pull` on each repository
-- Reports which plugins were updated
+This runs `git pull` in `../ledmatrix-plugins` and prints the result. The
+symlinks pick up the new code; restart the display to load it.
 
 ## Configuration
 
-The plugin system is configured in `config/config.json`:
+The loader reads plugins from `plugin_system.plugins_directory` in
+`config/config.json`. The default is already right for this setup:
 
 ```json
 {
   "plugin_system": {
-    "plugins_directory": "plugin-repos",
-    "auto_discover": true,
-    "auto_load_enabled": true
+    "plugins_directory": "plugin-repos"
   }
 }
 ```
-
-The `plugins_directory` points to `plugin-repos/`, which contains symlinks to the actual repositories.
 
 ## Workflow
 
 ### Daily Development
 
 1. **Open Workspace**: Open `LEDMatrix.code-workspace` in VS Code/Cursor
-2. **All Repos Available**: All plugin repos appear as separate folders in the workspace
-3. **Edit Plugins**: Edit plugin code directly in their repositories
-4. **Update Plugins**: Run `update_plugin_repos.py` to pull latest changes
+2. **Edit Plugins**: Edit code under `ledmatrix-plugins/plugins/<plugin>/`
+3. **Test**: `python3 run.py -e` (emulator) or
+   `python3 scripts/check_plugin.py --plugin <id>` from LEDMatrix
+4. **Ship**: Bump `version` in the plugin's `manifest.json`, run
+   `python update_registry.py` in ledmatrix-plugins, commit there
 
 ### Adding New Plugins
 
-1. **Clone Repository**: Clone the new plugin repo to `/home/chuck/Github/`
-2. **Add to Workspace**: Add the plugin folder to `LEDMatrix.code-workspace`
-3. **Create Symlink**: Run `setup_plugin_repos.py` to create the symlink
-
-### Updating Individual Plugins
-
-Since plugins are regular Git repositories, you can update them individually:
-
-```bash
-cd /home/chuck/Github/ledmatrix-weather
-git pull origin master
-```
-
-Or update all at once:
-
-```bash
-cd /home/chuck/Github/LEDMatrix
-python3 scripts/update_plugin_repos.py
-```
-
-## Benefits
-
-1. **No Submodule Hassle**: No need to update `.gitmodules` or run `git submodule update`
-2. **Independent Updates**: Update plugins independently without touching LEDMatrix
-3. **Clean Separation**: Each plugin is a separate repository with its own history
-4. **Easy Development**: Multi-root workspace makes it easy to work across repos
-5. **Automatic Discovery**: Plugin system automatically discovers plugins via symlinks
+1. Create `plugins/<your-plugin-id>/` in the monorepo checkout
+2. Run `python3 scripts/setup_plugin_repos.py` in LEDMatrix to link it
 
 ## Troubleshooting
 
-### Symlinks Not Working
-
-If plugins aren't being discovered:
+### Plugins not discovered
 
 ```bash
-cd /home/chuck/Github/LEDMatrix
-python3 scripts/setup_plugin_repos.py
+cd ~/Github/LEDMatrix
+ls -la plugin-repos/                  # links present and not broken?
+python3 scripts/setup_plugin_repos.py # recreate them
 ```
 
-This will recreate all symlinks.
+Also check that `plugin_system.plugins_directory` is `plugin-repos`.
 
-### Missing Plugins
+### "Monorepo plugins directory not found"
 
-If a plugin is in the workspace but not found:
+`setup_plugin_repos.py` expects the monorepo at `../ledmatrix-plugins`. Clone
+it there (or symlink it there).
 
-1. Check if the repo exists in `/home/chuck/Github/`
-2. Check if the symlink exists in `plugin-repos/`
-3. Run `setup_plugin_repos.py` to recreate symlinks
+### Plugin updates not showing
 
-### Plugin Updates Not Showing
-
-If changes to plugins aren't appearing:
-
-1. Verify the symlink points to the correct directory: `ls -la plugin-repos/ledmatrix-weather`
-2. Check that you're editing in the actual repo, not a copy
-3. Restart the LEDMatrix service if running
+1. Verify the link target: `ls -la plugin-repos/<id>`
+2. Check that you're editing the monorepo checkout, not a store-installed copy
+3. Restart the LEDMatrix service (or `run.py`)
 
 ## Notes
 
-- The `plugin-repos/` directory is tracked in git, but only contains symlinks
-- Actual plugin code lives in `/home/chuck/Github/ledmatrix-*/`
-- Each plugin repo can be updated independently via `git pull`
-- The LEDMatrix project doesn't need to be updated when plugins change
+- `plugin-repos/` is tracked in git only for the bundled plugins
+  (`starlark-apps`, `web-ui-info`). The symlinks you create are untracked
+  files; don't commit them.
+- For linking a single plugin into `plugins/` instead (without a sibling
+  checkout), see `scripts/dev/dev_plugin_setup.sh` in the
+  [Plugin Development Guide](PLUGIN_DEVELOPMENT_GUIDE.md).
+- When changing a plugin in the monorepo, bump its manifest `version` and run
+  `python update_registry.py`, or users won't receive the update.

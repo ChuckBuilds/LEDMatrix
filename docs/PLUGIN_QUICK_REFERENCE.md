@@ -127,7 +127,8 @@ git push origin v1.0.0
 
 ### REST API
 
-The API is mounted at `/api/v3` (`web_interface/app.py:199`).
+The API is mounted at `/api/v3` (the `api_v3` blueprint in
+`web_interface/blueprints/api_v3/`, registered in `web_interface/app.py`).
 
 ```bash
 # Install plugin from the registry

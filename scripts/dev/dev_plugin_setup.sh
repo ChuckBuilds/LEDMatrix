@@ -10,8 +10,14 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PLUGINS_DIR="$PROJECT_ROOT/plugins"
 CONFIG_FILE="$PROJECT_ROOT/dev_plugins.json"
 DEFAULT_DEV_DIR="$HOME/.ledmatrix-dev-plugins"
-GITHUB_USER="ChuckBuilds"
-GITHUB_PATTERN="ledmatrix-"
+# Official plugins live in one monorepo: <github_user>/<plugins_repo>, one
+# directory per plugin under plugins/. Both can be overridden in
+# dev_plugins.json (e.g. to work from a fork).
+DEFAULT_GITHUB_USER="ChuckBuilds"
+DEFAULT_PLUGINS_REPO="ledmatrix-plugins"
+GITHUB_USER="$DEFAULT_GITHUB_USER"
+PLUGINS_REPO="$DEFAULT_PLUGINS_REPO"
+PLUGINS_BRANCH=""
 
 # Colors for output
 RED='\033[0;31m'
@@ -37,16 +43,53 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
+# Print a top-level string field of a JSON file, or nothing if it is absent.
+# Uses jq when installed, else python3.
+json_field() {
+    local file="$1"
+    local key="$2"
+    if command -v jq >/dev/null 2>&1; then
+        jq -r --arg k "$key" '.[$k] // empty | select(type == "string")' "$file" 2>/dev/null || true
+    elif command -v python3 >/dev/null 2>&1; then
+        python3 - "$file" "$key" <<'PY' 2>/dev/null || true
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as f:
+        value = json.load(f).get(sys.argv[2])
+except Exception:
+    value = None
+if isinstance(value, str):
+    print(value)
+PY
+    fi
+}
+
 # Load configuration file
 load_config() {
+    DEV_PLUGINS_DIR="$DEFAULT_DEV_DIR"
     if [[ -f "$CONFIG_FILE" ]]; then
-        DEV_PLUGINS_DIR=$(jq -r '.dev_plugins_dir // "'"$DEFAULT_DEV_DIR"'"' "$CONFIG_FILE" 2>/dev/null || echo "$DEFAULT_DEV_DIR")
-        # Expand ~ in path
-        DEV_PLUGINS_DIR="${DEV_PLUGINS_DIR/#\~/$HOME}"
-    else
-        DEV_PLUGINS_DIR="$DEFAULT_DEV_DIR"
+        local value
+        value=$(json_field "$CONFIG_FILE" dev_plugins_dir)
+        [[ -n "$value" ]] && DEV_PLUGINS_DIR="$value"
+        value=$(json_field "$CONFIG_FILE" github_user)
+        [[ -n "$value" ]] && GITHUB_USER="$value"
+        value=$(json_field "$CONFIG_FILE" plugins_repo)
+        [[ -n "$value" ]] && PLUGINS_REPO="$value"
+        value=$(json_field "$CONFIG_FILE" plugins_branch)
+        [[ -n "$value" ]] && PLUGINS_BRANCH="$value"
+        if [[ -n "$(json_field "$CONFIG_FILE" github_pattern)" ]]; then
+            log_warn "dev_plugins.json: github_pattern is no longer used (official plugins are in the $PLUGINS_REPO monorepo)"
+        fi
     fi
+    # Expand ~ in path
+    DEV_PLUGINS_DIR="${DEV_PLUGINS_DIR/#\~/$HOME}"
     mkdir -p "$DEV_PLUGINS_DIR"
+}
+
+# Top level of the git checkout containing a path, or nothing.
+# A monorepo plugin is a subdirectory, so its .git is not in the plugin dir.
+git_root_of() {
+    git -C "$1" rev-parse --show-toplevel 2>/dev/null || true
 }
 
 # Validate plugin structure
@@ -63,7 +106,7 @@ validate_plugin() {
 get_plugin_id() {
     local plugin_path="$1"
     if [[ -f "$plugin_path/manifest.json" ]]; then
-        jq -r '.id // empty' "$plugin_path/manifest.json" 2>/dev/null || echo ""
+        json_field "$plugin_path/manifest.json" id
     fi
 }
 
@@ -176,50 +219,104 @@ clone_from_github() {
     return 0
 }
 
+# Clone a repository into DEV_PLUGINS_DIR, or update the existing clone.
+# Prints the clone's path on stdout (log output goes to stderr).
+ensure_clone() {
+    local repo_url="$1"
+    local branch="${2:-}"
+    local repo_name
+    repo_name=$(basename "$repo_url" .git)
+    local target_dir="$DEV_PLUGINS_DIR/$repo_name"
+
+    if [[ -d "$target_dir" ]]; then
+        log_info "Repository already exists at $target_dir" >&2
+        if [[ -d "$target_dir/.git" ]]; then
+            log_info "Updating repository..." >&2
+            (cd "$target_dir" && git pull --rebase) >&2 || true
+        fi
+    else
+        if ! clone_from_github "$repo_url" "$target_dir" "$branch" >&2; then
+            return 1
+        fi
+    fi
+    echo "$target_dir"
+}
+
+# Find a plugin's directory inside a monorepo clone: plugins/<name>,
+# plugins/ledmatrix-<name>, or the directory whose manifest id is <name>.
+find_monorepo_plugin() {
+    local repo_dir="$1"
+    local name="$2"
+    local candidate
+    for candidate in "$repo_dir/plugins/$name" "$repo_dir/plugins/ledmatrix-$name"; do
+        if [[ -f "$candidate/manifest.json" ]]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    for candidate in "$repo_dir"/plugins/*/; do
+        candidate="${candidate%/}"
+        [[ -f "$candidate/manifest.json" ]] || continue
+        if [[ "$(get_plugin_id "$candidate")" == "$name" ]]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
 # Link plugin from GitHub
 link_github_plugin() {
-    local plugin_name="$1"
+    local plugin_name="${1:-}"
     local repo_url="${2:-}"
-    
+
     if [[ -z "$plugin_name" ]]; then
         log_error "Usage: $0 link-github <plugin-name> [repo-url]"
         exit 1
     fi
-    
+
     load_config
-    
-    # Construct repo URL if not provided
-    if [[ -z "$repo_url" ]]; then
-        repo_url="https://github.com/${GITHUB_USER}/${GITHUB_PATTERN}${plugin_name}.git"
-        log_info "Using default GitHub URL: $repo_url"
-    fi
-    
-    # Determine target directory name from URL
-    local repo_name=$(basename "$repo_url" .git)
-    local target_dir="$DEV_PLUGINS_DIR/$repo_name"
-    
-    # Check if already cloned
-    if [[ -d "$target_dir" ]]; then
-        log_info "Repository already exists at $target_dir"
-        if [[ -d "$target_dir/.git" ]]; then
-            log_info "Updating repository..."
-            (cd "$target_dir" && git pull --rebase) || true
-        fi
-    else
-        # Clone the repository
-        if ! clone_from_github "$repo_url" "$target_dir"; then
+
+    if [[ -n "$repo_url" ]]; then
+        # A plugin with its own repository (e.g. a third-party plugin): the
+        # repository root is the plugin.
+        local target_dir
+        if ! target_dir=$(ensure_clone "$repo_url"); then
             exit 1
         fi
+        if ! validate_plugin "$target_dir"; then
+            log_error "Cloned repository does not appear to be a valid plugin"
+            exit 1
+        fi
+        link_plugin "$plugin_name" "$target_dir"
+        return
     fi
-    
-    # Validate plugin structure
-    if ! validate_plugin "$target_dir"; then
-        log_error "Cloned repository does not appear to be a valid plugin"
+
+    # Official plugins: clone the monorepo once, link plugins/<dir> from it.
+    repo_url="https://github.com/${GITHUB_USER}/${PLUGINS_REPO}.git"
+    log_info "Using plugin monorepo: $repo_url"
+    local repo_dir
+    if ! repo_dir=$(ensure_clone "$repo_url" "$PLUGINS_BRANCH"); then
         exit 1
     fi
-    
-    # Link the plugin
-    link_plugin "$plugin_name" "$target_dir"
+
+    local plugin_dir
+    if ! plugin_dir=$(find_monorepo_plugin "$repo_dir" "$plugin_name"); then
+        log_error "No plugin named '$plugin_name' in $repo_dir/plugins"
+        log_info "Plugins are the directory names under $repo_dir/plugins, or their manifest ids"
+        exit 1
+    fi
+
+    # Link under the manifest id: that is the name the plugin loader and
+    # config.json use, and it can differ from the directory name
+    # (plugins/ledmatrix-music has id ledmatrix-music, not music).
+    local link_name
+    link_name=$(get_plugin_id "$plugin_dir")
+    [[ -n "$link_name" ]] || link_name=$(basename "$plugin_dir")
+    if [[ "$link_name" != "$plugin_name" ]]; then
+        log_info "Linking as '$link_name' (the plugin's manifest id)"
+    fi
+    link_plugin "$link_name" "$plugin_dir"
 }
 
 # Unlink a plugin
@@ -274,7 +371,7 @@ list_plugins() {
             echo "  → $target"
             
             # Check git status if it's a git repo
-            if [[ -d "$target/.git" ]]; then
+            if [[ -n "$(git_root_of "$target")" ]]; then
                 local branch=$(cd "$target" && git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
                 local status=$(cd "$target" && git status --porcelain 2>/dev/null | head -1)
                 if [[ -n "$status" ]]; then
@@ -327,7 +424,7 @@ check_status() {
             echo -e "${GREEN}✓${NC} ${BLUE}$plugin_name${NC}"
             echo "  Path: $target"
             
-            if [[ -d "$target/.git" ]]; then
+            if [[ -n "$(git_root_of "$target")" ]]; then
                 local branch=$(cd "$target" && git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
                 local remote=$(cd "$target" && git remote get-url origin 2>/dev/null || echo "no remote")
                 local commits_behind=$(cd "$target" && git rev-list --count HEAD..@{upstream} 2>/dev/null || echo "0")
@@ -360,9 +457,13 @@ check_status() {
     done
     
     echo "Summary:"
-    echo "  ${GREEN}Clean: $clean_count${NC}"
-    echo "  ${YELLOW}Needs attention: $dirty_count${NC}"
-    [[ $broken_count -gt 0 ]] && echo -e "  ${RED}Broken: $broken_count${NC}"
+    echo -e "  ${GREEN}Clean: $clean_count${NC}"
+    echo -e "  ${YELLOW}Needs attention: $dirty_count${NC}"
+    # An if, not `[[ ]] &&`: as the function's last command a false test made
+    # `status` exit 1 whenever nothing was broken.
+    if [[ $broken_count -gt 0 ]]; then
+        echo -e "  ${RED}Broken: $broken_count${NC}"
+    fi
 }
 
 # Update plugin(s)
@@ -384,39 +485,46 @@ update_plugins() {
         fi
         
         local target=$(get_symlink_target "$plugin_name")
-        
-        if [[ ! -d "$target/.git" ]]; then
+        local root
+        root=$(git_root_of "$target")
+
+        if [[ -z "$root" ]]; then
             log_error "Plugin repository is not a git repository: $target"
             exit 1
         fi
-        
-        log_info "Updating $plugin_name from $target"
-        (cd "$target" && git pull --rebase)
+
+        log_info "Updating $plugin_name from $root"
+        (cd "$root" && git pull --rebase)
         log_success "Updated $plugin_name"
     else
-        # Update all linked plugins
+        # Update all linked plugins. Plugins linked from the monorepo share one
+        # checkout, which is pulled once.
         log_info "Updating all linked plugins..."
         local updated=0
         local failed=0
-        
+        local pulled_roots=" "
+
         for item in "$PLUGINS_DIR"/*; do
             [[ -e "$item" ]] || continue
             [[ -d "$item" ]] || continue
-            
+
             local name=$(basename "$item")
             [[ "$name" =~ ^\.|^_ ]] && continue
-            
+
             if is_symlink "$item"; then
                 local target=$(get_symlink_target "$name")
-                if [[ -d "$target/.git" ]]; then
-                    log_info "Updating $name..."
-                    if (cd "$target" && git pull --rebase); then
-                        log_success "Updated $name"
-                        updated=$((updated + 1))
-                    else
-                        log_error "Failed to update $name"
-                        failed=$((failed + 1))
-                    fi
+                local root
+                root=$(git_root_of "$target")
+                [[ -n "$root" ]] || continue
+                [[ "$pulled_roots" == *" $root "* ]] && continue
+                pulled_roots="$pulled_roots$root "
+                log_info "Updating $root (for $name)..."
+                if (cd "$root" && git pull --rebase); then
+                    log_success "Updated $root"
+                    updated=$((updated + 1))
+                else
+                    log_error "Failed to update $root"
+                    failed=$((failed + 1))
                 fi
             fi
         done
@@ -439,7 +547,12 @@ Commands:
     
   link-github <plugin-name> [repo-url]
       Clone and link a plugin from GitHub
-      If repo-url is not provided, uses: https://github.com/${GITHUB_USER}/${GITHUB_PATTERN}<plugin-name>.git
+      Without repo-url: clones (or updates) the official plugin monorepo,
+      https://github.com/${DEFAULT_GITHUB_USER}/${DEFAULT_PLUGINS_REPO}.git, and links its
+      plugins/<plugin-name> (or plugins/ledmatrix-<plugin-name>) under the
+      plugin's manifest id
+      With repo-url: clones a plugin that has its own repository and links
+      the repository root
     
   unlink <plugin-name>
       Remove symlink for a plugin (preserves repository)
@@ -458,25 +571,30 @@ Commands:
       Show this help message
 
 Examples:
-  # Link a local plugin
-  $0 link music ../ledmatrix-music
-  
-  # Link from GitHub (auto-detects URL)
-  $0 link-github music
-  
-  # Link from GitHub with custom URL
-  $0 link-github stocks https://github.com/ChuckBuilds/ledmatrix-stocks.git
-  
+  # Link an official plugin from the monorepo
+  $0 link-github football-scoreboard
+
+  # Link a plugin from a local monorepo checkout
+  $0 link hello-world ../ledmatrix-plugins/plugins/hello-world
+
+  # Link a third-party plugin from its own repository
+  $0 link-github my-plugin https://github.com/OtherUser/ledmatrix-my-plugin.git
+
   # Check status
   $0 status
-  
+
   # Update all plugins
   $0 update
 
 Configuration:
-  Create dev_plugins.json in project root to customize:
+  Copy dev_plugins.json.example to dev_plugins.json (git-ignored) to customize:
   - dev_plugins_dir: Where to clone GitHub repos (default: ~/.ledmatrix-dev-plugins)
-  - plugins: Plugin definitions (optional, for auto-discovery)
+  - github_user:     Owner of the plugin monorepo, e.g. your fork (default: ${DEFAULT_GITHUB_USER})
+  - plugins_repo:    Name of the plugin monorepo (default: ${DEFAULT_PLUGINS_REPO})
+  - plugins_branch:  Branch to clone the monorepo at (default: its default branch)
+
+  Symlinks are created in plugins/. Set plugin_system.plugins_directory to
+  "plugins" in config/config.json so the plugin loader discovers them.
 
 EOF
 }

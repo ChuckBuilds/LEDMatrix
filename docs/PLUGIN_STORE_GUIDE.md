@@ -131,13 +131,13 @@ else:
 **Via REST API:**
 ```bash
 # Search by query
-curl "http://your-pi-ip:5000/api/v3/plugins/store/search?q=hockey"
+curl "http://your-pi-ip:5000/api/v3/plugins/store/list?query=hockey"
 
 # Filter by category
-curl "http://your-pi-ip:5000/api/v3/plugins/store/search?category=sports"
+curl "http://your-pi-ip:5000/api/v3/plugins/store/list?category=sports"
 
 # Filter by tags
-curl "http://your-pi-ip:5000/api/v3/plugins/store/search?tags=nhl&tags=hockey"
+curl "http://your-pi-ip:5000/api/v3/plugins/store/list?tags=nhl&tags=hockey"
 ```
 
 **Via Python:**
@@ -351,8 +351,7 @@ All API endpoints return JSON with this structure:
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/v3/plugins/store/list` | List all plugins in store |
-| GET | `/api/v3/plugins/store/search` | Search for plugins |
+| GET | `/api/v3/plugins/store/list` | List plugins in store; `?query=`, `?category=`, `?tags=` search and filter |
 | GET | `/api/v3/plugins/installed` | List installed plugins |
 | POST | `/api/v3/plugins/install` | Install from registry |
 | POST | `/api/v3/plugins/install-from-url` | Install from GitHub URL |

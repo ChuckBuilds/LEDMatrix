@@ -6,7 +6,8 @@
 > in the "Implementation Details" section below still reference the
 > pre-v3 file layout (`web_interface_v2.py`, `templates/index_v2.html`).
 > The current implementation lives in `web_interface/app.py`,
-> `web_interface/blueprints/api_v3.py`, and `web_interface/templates/v3/`.
+> `web_interface/blueprints/api_v3/` (plugin config handlers in
+> `plugins.py`), and `web_interface/templates/v3/`.
 > The user-facing description (Overview, Features, Form Generation
 > Process) is still accurate.
 

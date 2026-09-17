@@ -67,9 +67,7 @@ The main configuration file (`config/config.json`) now contains only essential s
         "time_format": "%I:%M %p"
     },
     "plugin_system": {
-        "plugins_directory": "plugin-repos",
-        "auto_discover": true,
-        "auto_load_enabled": true
+        "plugins_directory": "plugin-repos"
     }
 }
 ```
@@ -93,9 +91,9 @@ The main configuration file (`config/config.json`) now contains only essential s
 
 #### 4. Plugin System
 - **plugin_system**: Plugin system configuration
-  - **plugins_directory**: Directory where plugins are stored
-  - **auto_discover**: Automatically discover plugins
-  - **auto_load_enabled**: Automatically load enabled plugins
+  - **plugins_directory**: Directory where plugins are stored (the only one the loader scans)
+  - `auto_discover`, `auto_load_enabled`, `development_mode` may still appear in
+    older configs; nothing reads them (see [CONFIG_REFERENCE.md](CONFIG_REFERENCE.md#plugin_system))
 
 ## Plugin Configuration
 

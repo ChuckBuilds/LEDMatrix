@@ -52,9 +52,11 @@ This directory contains systemd service unit files for LEDMatrix services.
 ## Installation
 
 These service files are installed by the installation scripts in `scripts/install/`:
-- `install_service.sh` installs `ledmatrix.service`
-- `install_web_service.sh` installs `ledmatrix-web.service` and the
-  `ledmatrix-update-verify` service and path units
+- `install_service.sh` installs `ledmatrix.service`, `ledmatrix-web.service`
+  and the `ledmatrix-update-verify` service and path units, then enables and
+  starts them
+- `install_web_service.sh` installs only `ledmatrix-web.service` and the
+  `ledmatrix-update-verify` units
 - `install_wifi_monitor.sh` installs `ledmatrix-wifi-monitor.service`
 - `install_dns_fix.sh` installs `ledmatrix-dns-fix.service` (opt-in, not run
   by the normal installer)

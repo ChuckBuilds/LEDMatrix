@@ -114,7 +114,10 @@ python3 integrations/mqtt_bridge/ledmatrix_mqtt_bridge.py --config integrations/
   discovery itself. Discovery is lazy and normally happens because somebody
   opened the dashboard; without that endpoint a bridge that never does would
   see an empty list.
-- Brightness writes `display.hardware.brightness` through `/api/v3/config/main`,
-  and changes nothing else. The running display service notices the saved
-  config within a few seconds and applies the new brightness without a
-  restart (unless `LEDMATRIX_HOT_RELOAD=false`).
+- Brightness writes `display.hardware.brightness` by posting
+  `{"brightness": N}` to `/api/v3/config/main`. A JSON save changes only the
+  keys it sends, so the other display settings are left as they were. The
+  display service's config hot reload notices the change within a few seconds
+  and applies it without a restart (unless `LEDMATRIX_HOT_RELOAD=false`; while
+  a dim schedule is dimming the panel, the dim level wins until the dim period
+  ends).

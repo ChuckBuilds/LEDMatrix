@@ -30,7 +30,7 @@
   `config.get(...)`, never a separate accessor
 
 ## Dev Workflow
-- Link a plugin for development: `./scripts/dev/dev_plugin_setup.sh link-github <name>` (or `link <name> <path>`); symlinks land in `plugins/` — set `plugin_system.plugins_directory` to `plugins` so discovery picks them up
+- Link a plugin for development: `./scripts/dev/dev_plugin_setup.sh link-github <name>` clones the `ledmatrix-plugins` monorepo into `~/.ledmatrix-dev-plugins/` and links its `plugins/<name>` under the manifest id (add a repo URL for a plugin with its own repo; or `link <name> <path>`); symlinks land in `plugins/` — set `plugin_system.plugins_directory` to `plugins` so discovery picks them up. Fork/location overrides: `dev_plugins.json` (from `dev_plugins.json.example`)
 - Browser preview without the display loop: `python3 scripts/dev_server.py` → http://localhost:5001
 - Full display in emulator mode: `python3 run.py -e` (or `EMULATOR=true python3 run.py`)
 - Validate one plugin headlessly: `python3 scripts/check_plugin.py --plugin <id>`

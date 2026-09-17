@@ -377,9 +377,16 @@ Vegas mode consists of four core components working together to provide smooth 1
 5. Compose into continuous stream with separators
 
 **Key Methods:**
-- `get_stream_content()` - Returns current stream content as PIL Image
-- `advance_stream(pixels)` - Advances stream by N pixels
-- `refresh_stream()` - Regenerates stream from current plugins
+- `get_next_segment()` - Returns the next buffered `ContentSegment` (or `None`)
+- `take_next_group(count=None, offscreen_only=False)` - Hands over the next
+  slice of the rotation as `(plugin_id, images)` groups
+- `get_grouped_content_for_composition()` - Buffered images grouped by plugin
+- `mark_plugin_updated(plugin_id)` / `process_updates()` - Refresh one
+  plugin's segment in place when its data changes
+- `refresh()` - Re-read the plugin list and config
+- `advance_cycle()` - Clear the active buffer when a scroll cycle completes
+
+(`src/vegas_mode/stream_manager.py`)
 
 #### 3. PluginAdapter
 
@@ -556,7 +563,8 @@ time when something is active.
 
 ### REST API Reference
 
-The API is mounted at `/api/v3` (`web_interface/app.py:199`).
+The API is mounted at `/api/v3` (the `api_v3` blueprint, registered in
+`web_interface/app.py`). Full details: [REST_API_REFERENCE.md](REST_API_REFERENCE.md#display-control).
 
 #### Start On-Demand Display
 
@@ -612,20 +620,30 @@ curl http://localhost:5000/api/v3/display/on-demand/status
 
 # Response:
 {
-  "active": true,
-  "plugin_id": "weather",
-  "mode": "weather",
-  "remaining": 25.5,
-  "pinned": false,
-  "status": "active"
+  "status": "success",
+  "data": {
+    "state": {
+      "active": true,
+      "plugin_id": "weather",
+      "mode": "weather",
+      "duration": 30,
+      "pinned": false,
+      "status": "running",
+      "last_updated": 1234567890.1
+    },
+    "service": {"active": true, "returncode": 0, "stdout": "active", "stderr": ""}
+  }
 }
 ```
+
+When nothing is running on demand, `data.state` is
+`{"active": false, "status": "idle", "last_updated": null}`.
 
 > There is no public Python on-demand API. The display controller's
 > on-demand machinery is internal — drive it through the REST endpoints
 > above (or the web UI buttons). The API handlers
 > (`start_on_demand_display()` / `stop_on_demand_display()` in
-> `web_interface/blueprints/api_v3.py`) write a request into the cache
+> `web_interface/blueprints/api_v3/display.py`) write a request into the cache
 > manager under the `display_on_demand_request` key, which
 > `DisplayController._poll_on_demand_requests()`
 > (`src/display_controller.py`) picks up. A separate

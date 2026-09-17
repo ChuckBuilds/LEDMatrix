@@ -12,9 +12,27 @@
 The enhanced FontManager provides comprehensive font management for the LEDMatrix application with support for:
 - Manager font registration and detection
 - Plugin font management
-- Manual font overrides via web interface
+- Programmatic per-element font overrides
 - Performance monitoring and caching
 - Dynamic font discovery
+
+## Getting the FontManager
+
+There is one shared FontManager per display process. The display controller
+creates it and hands it to the `PluginManager`, so a plugin reaches it
+through its `plugin_manager`:
+
+```python
+class MyPlugin(BasePlugin):
+    def __init__(self, plugin_id, config, display_manager, cache_manager, plugin_manager):
+        super().__init__(plugin_id, config, display_manager, cache_manager, plugin_manager)
+        self.font_manager = self._get_font_manager()
+```
+
+`BasePlugin._get_font_manager()` returns `plugin_manager.font_manager`, or a
+standalone FontManager when none is available (test harnesses, mocks).
+`DisplayManager` has **no** `font_manager` attribute —
+`display_manager.font_manager` raises `AttributeError`.
 
 ## Architecture
 
@@ -40,8 +58,9 @@ Manager requests font → Check manual overrides → Apply manager choice → Ca
 from src.font_manager import FontManager
 
 class MyManager:
-    def __init__(self, config, display_manager, cache_manager):
-        self.font_manager = display_manager.font_manager  # Access shared FontManager
+    def __init__(self, config, display_manager, cache_manager, plugin_manager):
+        self.display_manager = display_manager
+        self.font_manager = plugin_manager.font_manager  # Shared FontManager
         self.manager_id = "my_manager"
         
     def display(self):
@@ -80,8 +99,9 @@ class MyManager:
 
 ```python
 class AdvancedManager:
-    def __init__(self, config, display_manager, cache_manager):
-        self.font_manager = display_manager.font_manager
+    def __init__(self, config, display_manager, cache_manager, plugin_manager):
+        self.display_manager = display_manager
+        self.font_manager = plugin_manager.font_manager
         self.manager_id = "advanced_manager"
         
         # Define your font specifications
@@ -152,19 +172,13 @@ font = self.font_manager.resolve_font(
 > URIs documented below are resolved relative to the plugin's
 > install directory.
 >
-> The **Fonts** tab in the web UI that lists detected
-> manager-registered fonts is still a **placeholder
-> implementation** — fonts that managers register through
-> `register_manager_font()` do not yet appear there. The
-> programmatic per-element override workflow described in
-> [Manual Font Overrides](#manual-font-overrides) below
-> (`set_override()` / `remove_override()` / the
-> `config/font_overrides.json` store) **does** work today and is
-> the supported way to override a font for an element until the
-> Fonts tab is wired up. If you can't wait and need a workaround
-> right now, you can also just load the font directly with PIL
-> (or `freetype-py` for BDF) inside your plugin's `manager.py`
-> and skip the override system entirely.
+> The web UI's **Fonts** tab lists, uploads, previews and deletes the
+> font files in `assets/fonts/`. It does not show fonts registered
+> through `register_manager_font()` and has no override editor (the
+> override panels and `/api/v3/fonts/overrides` endpoints were removed).
+> The programmatic override workflow in
+> [Manual Font Overrides](#manual-font-overrides) below still works.
+> Let users pick fonts through your plugin's own config schema.
 
 ### Plugin Font Registration
 
@@ -200,10 +214,10 @@ In your plugin's `manifest.json`:
 ### Using Plugin Fonts
 
 ```python
-class PluginManager:
-    def __init__(self, config, display_manager, cache_manager, plugin_id):
-        self.font_manager = display_manager.font_manager
-        self.plugin_id = plugin_id
+class MyPlugin(BasePlugin):
+    def __init__(self, plugin_id, config, display_manager, cache_manager, plugin_manager):
+        super().__init__(plugin_id, config, display_manager, cache_manager, plugin_manager)
+        self.font_manager = self._get_font_manager()
         
     def display(self):
         # Use plugin font (automatically namespaced)
@@ -219,17 +233,8 @@ class PluginManager:
 
 ## Manual Font Overrides
 
-Users can override any font through the web interface:
-
-1. Navigate to **Fonts** tab
-2. View **Detected Manager Fonts** to see what's currently in use
-3. In **Element Overrides** section:
-   - Select the element (e.g., "nfl.live.score")
-   - Choose a different font family
-   - Choose a different size
-   - Click **Add Override**
-
-Overrides are stored in `config/font_overrides.json` and persist across restarts.
+Overrides are set in code (there is no web UI or REST endpoint for them).
+They are stored in `config/font_overrides.json` and persist across restarts.
 
 ### Programmatic Overrides
 

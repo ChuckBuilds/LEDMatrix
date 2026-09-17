@@ -59,9 +59,12 @@ sudo ./scripts/install/install_service.sh
 After updating your scripts, verify they still work:
 
 ```bash
-# Test installation scripts (if needed)
+# Check the installation scripts are at their new paths
 ls scripts/install/*.sh
-sudo ./scripts/install/install_service.sh --help
+./scripts/install/install_service.sh --help   # prints usage only
+# Note: running install_service.sh for real (with sudo, no --help)
+# reinstalls, enables and restarts ledmatrix.service, ledmatrix-web.service
+# and the update-verify units.
 
 # Test permission scripts
 ls scripts/fix_perms/*.sh

@@ -93,9 +93,11 @@ class _LogicalMatrix:
     """Proxy that reports a logical (per-screen) size for a physical matrix.
 
     In double-sided mode the physical panel chain shows N identical copies of a
-    smaller logical screen. Plugins size themselves from ``matrix.width`` /
-    ``matrix.height`` (the documented convention, used at 30+ call sites), so
-    this proxy reports the logical dimensions while delegating every real
+    smaller logical screen. Plugins size themselves from
+    ``display_manager.width`` / ``height`` (the documented convention), which
+    defer to ``matrix.width`` / ``matrix.height`` -- and many older plugins read
+    ``matrix.width`` directly -- so this proxy reports the logical dimensions
+    while delegating every real
     operation — ``CreateFrameCanvas``, ``SwapOnVSync``, ``brightness``,
     ``Clear`` and so on — to the underlying physical matrix. The duplication
     itself happens once per frame in :meth:`DisplayManager.update_display`.
@@ -667,8 +669,10 @@ class DisplayManager:
     def render_size(self, width: int, height: Optional[int] = None):
         """Temporarily present a smaller logical canvas to plugins.
 
-        Plugins lay out against ``display_manager.matrix.width`` (and the
-        ``width``/``height`` properties, which defer to it), so the only way to
+        Plugins lay out against the ``display_manager.width``/``height``
+        properties (which defer to ``matrix.width`` when hardware is present,
+        and to the canvas when it is not; some older plugins read
+        ``matrix.width`` directly), so the only way to
         get a *narrower layout* rather than a cropped one is to tell the plugin
         the screen is narrower while it renders. Trimming after the fact cannot
         fix a forecast spread across five columns or a progress bar drawn at
