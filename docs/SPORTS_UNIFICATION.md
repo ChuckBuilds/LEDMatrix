@@ -218,6 +218,14 @@ The one behavior the upstreamed version adds is native
 Part A threaded it through each copy by hand, and this makes that threading
 legacy compatibility rather than the mechanism.
 
+> **Superseded.** Once presentation became frame-locked (#545) the helper
+> steps a fixed whole-pixel amount per presented frame and the panel presents
+> at its own refresh, so honouring `target_fps` only turned it into a speed
+> multiplier (60 doubled a scoreboard's speed, 200 halved it). `sports_scroll`
+> no longer reads it: the crisp-speed ladder uses the panel refresh
+> (`display_manager.refresh_hz`), and speed comes from
+> `scroll_settings.scroll_speed` alone. See `docs/SCROLL_PERFORMANCE.md`.
+
 ## Phases
 
 B0–B3 are merged and shipping in core 3.2.0. Everything that remains is
@@ -464,8 +472,9 @@ After adoption plus the frozen legacy copies it was 10,610; removing the dead
 inline duplication (plugins #252) brought it to roughly 8,620. B6 would take it
 to about 3,300 including the shared core module — some 2,400 fewer than before
 this project started. **Until B6 runs, the adoption is net negative on disk**,
-and its one delivered user-visible gain is that adopted plugins honour the
-global `target_fps` instead of hardcoding ~100 FPS.
+and its one delivered user-visible gain was that adopted plugins honoured the
+global `target_fps` instead of hardcoding ~100 FPS (since withdrawn: see the
+note under the B3 design above).
 
 ### Decision: stop adopting further modules until B6 closes
 
