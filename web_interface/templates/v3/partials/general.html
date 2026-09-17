@@ -88,9 +88,9 @@
             <div id="timezone_container" class="mt-1"></div>
         </div>
 
-        <!-- Scroll frame rate (device-wide) -->
+        <!-- Legacy scroll frame rate (device-wide). Core scrolling no longer reads it. -->
         <div class="form-group" id="setting-general-target-fps" data-setting-key="target_fps">
-            <label for="target_fps" class="block text-sm font-medium text-gray-700">Scroll Frame Rate{{ ui.help_tip('Frames per second for scrolling content, applied across plugins that scroll.\nHigher is smoother but uses more CPU; lower frees CPU but looks steppier.\nRange 30-200. Default: 100.', 'Scroll Frame Rate') }}</label>
+            <label for="target_fps" class="block text-sm font-medium text-gray-700">Scroll Frame Rate (legacy){{ ui.help_tip('Kept for older plugins that read it. It no longer changes scrolling speed or smoothness.\nScrolling runs at the panel refresh rate (Display settings), and each plugin sets its own scroll speed.\nRange 30-200. Default: 100.', 'Scroll Frame Rate (legacy)') }}</label>
             <input type="number"
                    id="target_fps"
                    name="target_fps"
