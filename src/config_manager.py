@@ -29,6 +29,7 @@ import os
 import logging
 from pathlib import Path
 from typing import Dict, Any, Optional, List
+from src.core_config_keys import CORE_CONFIG_KEYS, CORE_SECRETS_KEYS
 from src.exceptions import ConfigError
 from src.logging_config import get_logger
 from src.config_manager_atomic import (
@@ -756,12 +757,13 @@ class ConfigManager:
             
             valid_set = set(valid_plugin_ids)
             
-            # Find orphaned plugins in main config
-            main_plugins = set(main_config.keys())
+            # Find orphaned plugins in main config. Core sections (display,
+            # schedule, auto_update, ...) are not plugins and never orphans.
+            main_plugins = set(main_config.keys()) - CORE_CONFIG_KEYS
             orphaned_main = main_plugins - valid_set
             
             # Find orphaned plugins in secrets config
-            secrets_plugins = set(secrets_config.keys())
+            secrets_plugins = set(secrets_config.keys()) - CORE_CONFIG_KEYS - CORE_SECRETS_KEYS
             orphaned_secrets = secrets_plugins - valid_set
             
             all_orphaned = orphaned_main | orphaned_secrets
@@ -815,8 +817,8 @@ class ConfigManager:
                 if not isinstance(plugin_config, dict):
                     continue
                 
-                # Skip non-plugin config sections
-                if plugin_id in ['display', 'schedule', 'timezone', 'plugin_system']:
+                # Skip core config sections
+                if plugin_id in CORE_CONFIG_KEYS:
                     continue
                 
                 schema = plugin_schema_manager.load_schema(plugin_id, use_cache=True)

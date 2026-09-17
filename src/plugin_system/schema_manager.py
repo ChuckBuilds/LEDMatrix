@@ -13,6 +13,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import jsonschema
 from jsonschema import Draft7Validator, ValidationError
 
+from src.core_config_keys import CORE_CONFIG_KEYS
+
 
 def _renders_as_object(prop: Dict[str, Any]) -> bool:
     """``field_type == 'object'`` as ``plugin_config.html`` computes it.
@@ -698,10 +700,11 @@ class SchemaManager:
         """
         collisions = []
 
-        # Reserved top-level config keys that plugins should not use as IDs
-        reserved_keys = {
-            'display', 'schedule', 'timezone', 'plugin_system',
-            'display_modes', 'system', 'hardware', 'debug',
+        # Reserved top-level config keys that plugins should not use as IDs:
+        # every core section (src/core_config_keys.py), plus a few names that
+        # read as core even though no current section uses them.
+        reserved_keys = set(CORE_CONFIG_KEYS) | {
+            'display_modes', 'hardware', 'debug',
             'log_level', 'emulator', 'web_interface'
         }
 
