@@ -42,10 +42,30 @@ HEALTH_TIMEOUT_SECONDS = 180
 #: loop look healthy between attempts, so a single "is-active" proves nothing.
 STABLE_SECONDS = 45
 POLL_SECONDS = 5
+WEB_CHECK_TIMEOUT_SECONDS = 5
+SYSTEMCTL_QUERY_TIMEOUT_SECONDS = 10
+RESTART_TIMEOUT_SECONDS = 90
+GIT_TIMEOUT_SECONDS = 60
+GIT_RESET_TIMEOUT_SECONDS = 120
 PIP_TIMEOUT_SECONDS = 600
+#: All of a rollback's dependency reinstalls together. A pip that times out
+#: or fails is not retried: systemd stops this unit at TimeoutStartSec, and a
+#: rollback killed half-way leaves the update reported as still verifying.
+PIP_BUDGET_SECONDS = 600
 #: sudoers matches the exact command line, so bash is named by path, the same
-#: candidates src/common/permission_utils.install_requirements_file tries.
+#: candidates src/common/permission_utils.install_requirements_file tries...
 BASH_CANDIDATES = ('/usr/bin/bash', '/bin/bash')
+#: ...and, like it, moves to the next one only when sudo refused the command
+#: line (permission_utils.SUDO_REFUSAL_PHRASES), never after pip itself ran.
+SUDO_REFUSAL_PHRASES = ('a password is required', 'is not allowed to run', 'no tty present')
+
+#: The longest one health check can take: restart and wait, roll back
+#: (diff, reset, reinstalls), restart and wait again. A wait's last poll can
+#: start just before its deadline and run every query to its timeout.
+_WAIT_WORST_SECONDS = (HEALTH_TIMEOUT_SECONDS + STABLE_SECONDS + WEB_CHECK_TIMEOUT_SECONDS
+                       + 2 * SYSTEMCTL_QUERY_TIMEOUT_SECONDS + POLL_SECONDS)
+WORST_CASE_SECONDS = (2 * (2 * RESTART_TIMEOUT_SECONDS + _WAIT_WORST_SECONDS)
+                      + GIT_TIMEOUT_SECONDS + GIT_RESET_TIMEOUT_SECONDS + PIP_BUDGET_SECONDS)
 
 #: What a command that could not run at all reports: its callers only read
 #: these three fields, the same ones a completed subprocess has.
@@ -83,7 +103,7 @@ def write_pending(path, data):
 
 def _web_responds(url=WEB_HEALTH_URL):
     try:
-        with urllib.request.urlopen(url, timeout=5) as resp:  # nosec B310 - fixed loopback URL
+        with urllib.request.urlopen(url, timeout=WEB_CHECK_TIMEOUT_SECONDS) as resp:  # nosec B310 - fixed loopback URL
             return resp.status == 200
     except (urllib.error.URLError, OSError, ValueError):
         return False
@@ -104,7 +124,7 @@ class Verifier:
         self.web_responds = web_responds
         self.log = log or (lambda msg: print(f'[auto-update-verify] {msg}', flush=True))
 
-    def _run(self, args, timeout=60):
+    def _run(self, args, timeout=GIT_TIMEOUT_SECONDS):
         try:
             return self.run(args, cwd=str(self.project_root), capture_output=True,
                             text=True, timeout=timeout)
@@ -114,15 +134,17 @@ class Verifier:
     # -- services ---------------------------------------------------------
 
     def service_active(self, unit):
-        return self._run(['systemctl', 'is-active', unit], timeout=10).stdout.strip() == 'active'
+        return self._run(['systemctl', 'is-active', unit],
+                         timeout=SYSTEMCTL_QUERY_TIMEOUT_SECONDS).stdout.strip() == 'active'
 
     def restart_count(self, unit):
         out = self._run(['systemctl', 'show', '-p', 'NRestarts', '--value', unit],
-                        timeout=10).stdout.strip()
+                        timeout=SYSTEMCTL_QUERY_TIMEOUT_SECONDS).stdout.strip()
         return int(out) if out.isdigit() else None
 
     def restart(self, unit):
-        result = self._run(['sudo', '-n', 'systemctl', 'restart', f'{unit}.service'], timeout=90)
+        result = self._run(['sudo', '-n', 'systemctl', 'restart', f'{unit}.service'],
+                           timeout=RESTART_TIMEOUT_SECONDS)
         if result.returncode != 0:
             self.log(f'restarting {unit} failed: {(result.stderr or "").strip()}')
         return result.returncode == 0
@@ -173,16 +195,27 @@ class Verifier:
         changed = set(result.stdout.split()) if result.returncode == 0 else set(REQUIREMENT_FILES)
         return [rel for rel in REQUIREMENT_FILES if rel in changed]
 
-    def install_requirements(self, rel):
+    def install_requirements(self, rel, deadline=None):
+        """Install one requirements file through the root wrapper, by ``deadline``."""
         wrapper = self.project_root / 'scripts' / 'fix_perms' / 'safe_pip_install.sh'
         req = self.project_root / rel
         if not req.exists():
             return True
         for bash in BASH_CANDIDATES:
-            result = self._run(['sudo', '-n', bash, str(wrapper), str(req)],
-                               timeout=PIP_TIMEOUT_SECONDS)
+            timeout = PIP_TIMEOUT_SECONDS
+            if deadline is not None:
+                timeout = min(timeout, deadline - self.clock())
+                if timeout <= 0:
+                    self.log(f'no time left to reinstall {rel}')
+                    return False
+            result = self._run(['sudo', '-n', bash, str(wrapper), str(req)], timeout=timeout)
             if result.returncode == 0:
                 return True
+            # Only a refused command line is worth the next candidate. A pip
+            # that ran and failed, or timed out, would just do it again.
+            if not any(phrase in (result.stderr or '') for phrase in SUDO_REFUSAL_PHRASES):
+                self.log(f'reinstalling {rel} failed: {(result.stderr or "").strip()[-300:]}')
+                return False
         return False
 
     def rollback(self, pending):
@@ -196,11 +229,12 @@ class Verifier:
         # plugin folders the only thing this discards is the update. Edits
         # under plugins/ and plugin-repos/, which that check leaves to the
         # pull's --autostash, are reset along with it.
-        result = self._run(['git', 'reset', '--hard', old], timeout=120)
+        result = self._run(['git', 'reset', '--hard', old], timeout=GIT_RESET_TIMEOUT_SECONDS)
         if result.returncode != 0:
             return False, (f'"git reset --hard {old}" failed: '
                            f'{(result.stderr or result.stdout or "").strip()}')
-        failed = [rel for rel in requirements if not self.install_requirements(rel)]
+        deadline = self.clock() + PIP_BUDGET_SECONDS
+        failed = [rel for rel in requirements if not self.install_requirements(rel, deadline)]
         if failed:
             return True, ('reinstalling the previous dependencies from ' + ', '.join(failed)
                           + ' failed; run Install Base Requirements from the Tools tab')

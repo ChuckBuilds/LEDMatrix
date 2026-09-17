@@ -373,6 +373,14 @@ def sudo_remove_directory(path: Path, allowed_bases: Optional[list] = None) -> b
         return False
 
 
+#: What sudo prints when it refuses a command line outright (not in sudoers for
+#: that exact argv, or it wants a password). Only then is another bash path
+#: worth trying: after pip itself ran, a retry just repeats the failure. The
+#: automatic update's health check keeps its own copy of this list
+#: (scripts/utils/auto_update_verify.py runs without importing src/).
+SUDO_REFUSAL_PHRASES = ("a password is required", "is not allowed to run", "no tty present")
+
+
 def install_requirements_file(req_file: Path, timeout: int = 300) -> subprocess.CompletedProcess:
     """
     Install a requirements.txt file for a plugin (or the project itself).
@@ -434,10 +442,7 @@ def install_requirements_file(req_file: Path, timeout: int = 300) -> subprocess.
             # Distinguish "sudo rejected this exact command line" (worth
             # trying the next bash candidate) from "sudo ran it but pip
             # itself failed" (a real error — stop and surface it).
-            denied = any(
-                phrase in result.stderr
-                for phrase in ("a password is required", "is not allowed to run", "no tty present")
-            )
+            denied = any(phrase in result.stderr for phrase in SUDO_REFUSAL_PHRASES)
             if not denied:
                 # Deliberately don't interpolate req_file or the pip output here:
                 # this log line is scanner-visible, and a static analyzer can't
