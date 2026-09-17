@@ -135,7 +135,8 @@ const PluginAPI = {
     checkEndpoint(endpoint) {
         const path = typeof endpoint === 'string' ? endpoint.split(/[?#]/)[0] : '';
         if (!path.startsWith('/') || path.startsWith('//') ||
-                /[\\\s\x00-\x1f\x7f]/.test(endpoint) ||
+                /[\\\s]/.test(endpoint) ||
+                Array.from(endpoint).some(ch => ch.charCodeAt(0) < 0x20 || ch.charCodeAt(0) === 0x7f) ||
                 path.split('/').some(segment => segment === '..' || segment === '.')) {
             throw {
                 error_code: 'INVALID_ENDPOINT',
