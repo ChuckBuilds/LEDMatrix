@@ -135,6 +135,44 @@ Core:
   `ensure_shared_group_ownership()` now returns immediately when `os.geteuid`
   or `os.chown` is missing. No behaviour change on the Pi.
 
+Small fixes (update-all, plugin system settings, scripts):
+
+- **Check & Update All** counts a plugin that had nothing to update as
+  "already up to date" instead of "updated". ZIP-installed monorepo plugins
+  (most official ones) already at the registry version were called "updated
+  successfully" on every run. `POST /plugins/update` now returns
+  `data.update_status` (`updated`, `up_to_date`, `local_only`).
+- An update request that got an HTTP error answer without an `error_code`, or
+  a body that is not JSON (e.g. a reverse proxy's 502 page), is no longer
+  classified as `NETWORK_ERROR` and re-sent five times. Only a request that got
+  no HTTP answer is retried; the rest are `API_ERROR` with the HTTP status.
+- The General tab no longer shows Auto Discover Plugins, Auto Load Enabled
+  Plugins or Development Mode. Nothing read `plugin_system.auto_discover`,
+  `auto_load_enabled` or `development_mode`: every enabled plugin was always
+  discovered and loaded. Stored values are kept, and saving the General tab no
+  longer rewrites them to `false`.
+- `BackgroundDataService` shares the 6-hour "ESPN rejects date ranges" memo
+  with `fetch_espn_scoreboard`, so a background season fetch no longer spends a
+  doomed range request first once either path has seen a rejection.
+- `scripts/install_plugin_dependencies.sh` installs from the configured
+  `plugin_system.plugins_directory` (default `plugin-repos`, where the Plugin
+  Store installs) and also scans `plugins/` for dev symlinks. It used to scan
+  only `plugins/` and find nothing. A failed `pip install` is now reported as a
+  failure instead of being hidden by `tee`.
+- `scripts/verify_installation.sh` no longer fails a healthy install: it
+  checked for the removed `web_interface_v2.py` and port 5001. It and
+  `scripts/verify_web_ui.sh` now check port 5000, where the web interface
+  listens.
+- `scripts/install/install_service.sh --help` prints usage and exits without
+  changes. It used to ignore the flag and reinstall and restart every service.
+  Unknown arguments are rejected before anything runs.
+- `scripts/diagnose_web_ui.sh`, `scripts/diagnose_web_interface.sh` and
+  `scripts/debug/debug_web_manual.py` apply the launcher's own autostart rule
+  (only an explicit `web_display_autostart: false` keeps the web interface
+  down), so a missing key no longer shows as disabled. The shell scripts also
+  check `web_interface/blueprints/api_v3/`, which became a package, instead of
+  reporting `api_v3.py` as missing.
+
 ## 3.4.0
 
 Plugin-facing changes since 3.3.0 (tag `v3.3.1`) not covered further down:
