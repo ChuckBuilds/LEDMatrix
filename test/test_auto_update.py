@@ -349,6 +349,11 @@ def _device_with_plugin_and_script(tmp_path):
                       ('scripts/run.sh', 'echo hi\n')):
         (repo.seed / rel).parent.mkdir(parents=True, exist_ok=True)
         (repo.seed / rel).write_text(text)
+    # Executable on disk too, not only in the index: Repo.publish() commits
+    # with -a, which on Linux would otherwise record run.sh as 100644 upstream
+    # and hide the device's own mode change behind the pull.
+    import os
+    os.chmod(repo.seed / 'scripts' / 'run.sh', 0o755)
     git(repo.seed, 'add', '.')
     git(repo.seed, 'update-index', '--chmod=+x', 'scripts/run.sh')
     git(repo.seed, 'commit', '-qm', 'layout')
