@@ -14,10 +14,32 @@ from web_interface.blueprints.api_v3 import (
 from src.common.path_safety import resolve_under
 from src.pi5_matrix_support import is_raspberry_pi_5, pi5_unsupported_settings
 import web_interface.blueprints.api_v3 as _pkg
+
 # Read through the module rather than bound by value: tests patch these
 # as module attributes, and a value binding would not see the patch.
 # Several are also called from helpers that live in __init__, so the
 # package is the only patch point that covers every caller.
+
+#: Hidden input the v3 settings forms (general.html, display.html,
+#: durations.html) post to /config/main. Its presence tells save_main_config
+#: that a missing checkbox was unchecked, not merely left out of an API call.
+FORM_SECTION_FIELD = '__form_section'
+
+
+def _day_setting(data, day, flat_key, nested_key):
+    """(present, value) of one per-day schedule setting in a POST body.
+
+    The schedule forms post flat keys (``monday_start``), while GET returns
+    the stored shape, ``days.monday.start_time``. Accept both, so a client can
+    post back what it read; a flat key wins when a body carries both.
+    """
+    if flat_key in data:
+        return True, data[flat_key]
+    days = data.get('days')
+    day_config = days.get(day) if isinstance(days, dict) else None
+    if isinstance(day_config, dict) and nested_key in day_config:
+        return True, day_config[nested_key]
+    return False, None
 
 
 @api_v3.route('/config/main', methods=['GET'])
@@ -123,8 +145,8 @@ def save_schedule_config():
                 end_key = f'{day}_end'
 
                 # Check if day is enabled
-                if enabled_key in data:
-                    enabled_val = data[enabled_key]
+                has_enabled, enabled_val = _day_setting(data, day, enabled_key, 'enabled')
+                if has_enabled:
                     # Handle checkbox values that may come as 'on', True, or False
                     if isinstance(enabled_val, str):
                         day_config['enabled'] = enabled_val.lower() in ('true', 'on', '1')
@@ -140,15 +162,8 @@ def save_schedule_config():
                     start_time = None
                     end_time = None
 
-                    if start_key in data and data[start_key]:
-                        start_time = data[start_key]
-                    else:
-                        start_time = '07:00'
-
-                    if end_key in data and data[end_key]:
-                        end_time = data[end_key]
-                    else:
-                        end_time = '23:00'
+                    start_time = _day_setting(data, day, start_key, 'start_time')[1] or '07:00'
+                    end_time = _day_setting(data, day, end_key, 'end_time')[1] or '23:00'
 
                     # Validate time formats
                     is_valid, error_msg = _validate_time_format(start_time)
@@ -352,8 +367,8 @@ def save_dim_schedule_config():
                 end_key = f'{day}_end'
 
                 # Check if day is enabled
-                if enabled_key in data:
-                    enabled_val = data[enabled_key]
+                has_enabled, enabled_val = _day_setting(data, day, enabled_key, 'enabled')
+                if has_enabled:
                     if isinstance(enabled_val, str):
                         day_config['enabled'] = enabled_val.lower() in ('true', 'on', '1')
                     else:
@@ -364,8 +379,8 @@ def save_dim_schedule_config():
                 # Only add times if day is enabled
                 if day_config.get('enabled', True):
                     enabled_days_count += 1
-                    start_time = data.get(start_key) or '20:00'
-                    end_time = data.get(end_key) or '07:00'
+                    start_time = _day_setting(data, day, start_key, 'start_time')[1] or '20:00'
+                    end_time = _day_setting(data, day, end_key, 'end_time')[1] or '07:00'
 
                     # Validate time formats
                     is_valid, error_msg = _validate_time_format(start_time)
@@ -433,8 +448,10 @@ def save_main_config():
 
         # Try to get JSON data first, fallback to form data
         data = None
-        if request.content_type == 'application/json':
+        if request.is_json:
             data = request.get_json()
+            if data is not None and not isinstance(data, dict):
+                return jsonify({'status': 'error', 'message': 'Request body must be a JSON object'}), 400
         else:
             # Handle form data
             data = request.form.to_dict()
@@ -445,6 +462,24 @@ def save_main_config():
 
         if not data:
             return jsonify({'status': 'error', 'message': 'No data provided'}), 400
+
+        # A missing checkbox means different things to the two kinds of caller.
+        # The settings forms post every field, and a browser leaves an
+        # unchecked box out entirely, so for them absent means False. A JSON
+        # API client (the MQTT bridge's brightness slider, a curl call from the
+        # REST docs) sends only what it is changing, and there absent means
+        # "leave it alone": treating it as unchecked turned off
+        # disable_hardware_pulsing and three other settings on every
+        # brightness change, and weekly auto-updates on every timezone change.
+        # The v3 forms post JSON too (htmx json-enc), so they identify
+        # themselves with a hidden FORM_SECTION_FIELD input. A form-encoded
+        # post is a form by definition.
+        is_form_submission = bool(data.pop(FORM_SECTION_FIELD, None)) or not request.is_json
+
+        def _set_checkbox(section, key, field):
+            """Store checkbox ``field`` as ``section[key]``, if this request sets it."""
+            if is_form_submission or field in data:
+                section[key] = _coerce_to_bool(data.get(field))
 
         # What arrives here is the config itself, and the headers carry the
         # session cookie -- neither belongs in the journal, least of all at
@@ -465,11 +500,13 @@ def save_main_config():
                                                      'auto_update_enabled'])
 
         if is_general_update:
-            # For checkbox: if not present in data during general update, it means unchecked
-            current_config['web_display_autostart'] = _coerce_to_bool(data.get('web_display_autostart'))
-            if not isinstance(current_config.get('auto_update'), dict):
-                current_config['auto_update'] = {}
-            current_config['auto_update']['enabled'] = _coerce_to_bool(data.get('auto_update_enabled'))
+            # For checkbox: if not present in data during a general *form*
+            # update, it means unchecked (see _set_checkbox)
+            _set_checkbox(current_config, 'web_display_autostart', 'web_display_autostart')
+            if is_form_submission or 'auto_update_enabled' in data:
+                if not isinstance(current_config.get('auto_update'), dict):
+                    current_config['auto_update'] = {}
+                _set_checkbox(current_config['auto_update'], 'enabled', 'auto_update_enabled')
 
         if 'timezone' in data:
             current_config['timezone'] = data['timezone']
@@ -523,7 +560,7 @@ def save_main_config():
             # Handle plugin system checkboxes - always set to handle unchecked state
             # HTML checkboxes omit the key when unchecked, so missing key = unchecked = False
             for checkbox in ['auto_discover', 'auto_load_enabled', 'development_mode']:
-                current_config['plugin_system'][checkbox] = _coerce_to_bool(data.get(checkbox))
+                _set_checkbox(current_config['plugin_system'], checkbox, checkbox)
 
             # Handle plugins_directory
             if 'plugins_directory' in data:
@@ -646,10 +683,10 @@ def save_main_config():
 
             # Handle checkboxes - coerce to bool to ensure proper JSON types
             for checkbox in ['disable_hardware_pulsing', 'inverse_colors', 'show_refresh_rate']:
-                current_config['display']['hardware'][checkbox] = _coerce_to_bool(data.get(checkbox))
+                _set_checkbox(current_config['display']['hardware'], checkbox, checkbox)
 
-            # Handle display-level checkboxes (always set to handle unchecked state)
-            current_config['display']['use_short_date_format'] = _coerce_to_bool(data.get('use_short_date_format'))
+            # Handle display-level checkboxes (unchecked state on form saves)
+            _set_checkbox(current_config['display'], 'use_short_date_format', 'use_short_date_format')
 
             # Handle dynamic duration settings
             if 'max_dynamic_duration_seconds' in data:
@@ -671,8 +708,11 @@ def save_main_config():
             # checkbox, so when the feature is off we accept the values without
             # rejecting the whole save — otherwise a stale copies/chain_length
             # mismatch locks the user out of every other display setting.
-            enabled = _coerce_to_bool(data.get('double_sided_enabled'))
-            ds_config['enabled'] = enabled
+            if is_form_submission or 'double_sided_enabled' in data:
+                enabled = _coerce_to_bool(data.get('double_sided_enabled'))
+                ds_config['enabled'] = enabled
+            else:
+                enabled = _coerce_to_bool(ds_config.get('enabled'))
 
             def _copies_fits_hardware(copies: int) -> Optional[str]:
                 """Error message if copies doesn't divide the panel evenly, else None."""
@@ -742,15 +782,13 @@ def save_main_config():
             # Handle enabled checkbox
             # HTML checkboxes omit the key entirely when unchecked, so if the form
             # was submitted (any vegas field present) but enabled key is missing,
-            # the checkbox was unchecked and we should set enabled=False
-            vegas_config['enabled'] = _coerce_to_bool(data.get('vegas_scroll_enabled'))
-            vegas_config['auto_trim'] = _coerce_to_bool(data.get('vegas_auto_trim'))
-            vegas_config['dynamic_duration_enabled'] = _coerce_to_bool(
-                data.get('vegas_dynamic_duration_enabled'))
-            vegas_config['continuous_scroll'] = _coerce_to_bool(
-                data.get('vegas_continuous_scroll'))
-            vegas_config['smooth_scroll'] = _coerce_to_bool(
-                data.get('vegas_smooth_scroll'))
+            # the checkbox was unchecked and we should set enabled=False.
+            # A JSON API call only changes the checkboxes it sends.
+            _set_checkbox(vegas_config, 'enabled', 'vegas_scroll_enabled')
+            _set_checkbox(vegas_config, 'auto_trim', 'vegas_auto_trim')
+            _set_checkbox(vegas_config, 'dynamic_duration_enabled', 'vegas_dynamic_duration_enabled')
+            _set_checkbox(vegas_config, 'continuous_scroll', 'vegas_continuous_scroll')
+            _set_checkbox(vegas_config, 'smooth_scroll', 'vegas_smooth_scroll')
 
             # max_plugin_width_ratio is the one fractional setting, so it is
             # handled outside the integer loop below.
@@ -916,8 +954,12 @@ def save_main_config():
         # them AGAIN as bogus top-level config keys (e.g. "clock_duration": 30
         # sitting at config root alongside the correct
         # display.display_durations.clock_duration).
+        # The Vegas cycle-time fields (vegas_min_cycle_duration, ...) share the
+        # suffix but are Vegas settings, already handled above: counting them
+        # here wrote junk mode durations, and a blank one 400'd the save.
         duration_fields = [k for k in list(data.keys())
-                           if k.endswith('_duration') or k in ('default_duration', 'transition_duration')]
+                           if (k.endswith('_duration') and k not in vegas_fields)
+                           or k in ('default_duration', 'transition_duration')]
         if duration_fields:
             if 'display' not in current_config:
                 current_config['display'] = {}
@@ -1162,10 +1204,27 @@ def save_raw_main_config():
         if not data:
             return jsonify({'status': 'error', 'message': 'No data provided'}), 400
 
+        was_auto_update_enabled = False
+        try:
+            previous = api_v3.config_manager.get_raw_file_content('main') or {}
+            was_auto_update_enabled = bool((previous.get('auto_update') or {}).get('enabled'))
+        except Exception:
+            logger.debug("Could not read the previous auto_update setting", exc_info=True)
+
         # Save the raw config file
         api_v3.config_manager.save_raw_file_content('main', data)
 
-        return jsonify({'status': 'success', 'message': 'Main configuration saved successfully'})
+        message = 'Main configuration saved successfully'
+        # Same hook as save_main_config: switching automatic updates on here
+        # must finish their setup too, not wait for the next service restart.
+        try:
+            from web_interface import auto_update
+            note = auto_update.start_setup_if_needed(was_auto_update_enabled, data)
+            if note:
+                message = f'{message}. {note}'
+        except Exception:
+            logger.warning("Automatic update setup could not be started", exc_info=True)
+        return jsonify({'status': 'success', 'message': message})
     except Exception as e:
         from src.exceptions import ConfigError
         logger.error("Error saving raw main config", exc_info=True)

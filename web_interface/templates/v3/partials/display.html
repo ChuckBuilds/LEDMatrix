@@ -34,6 +34,10 @@
           class="space-y-6"
           novalidate
           onsubmit="fixInvalidNumberInputs(this); return true;">
+        {# Marks this post as the whole form, so an unchecked box saves as
+           false. Without it the save endpoint treats absent keys as unchanged
+           (FORM_SECTION_FIELD in api_v3/config.py). #}
+        <input type="hidden" name="__form_section" value="display">
 
         <!-- Hardware Settings -->
         <div class="bg-gray-50 rounded-lg p-4">

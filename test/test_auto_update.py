@@ -668,7 +668,9 @@ class TestSettingsSave:
 
     def test_unchecked_toggle_on_general_save_disables(self, api_client):
         client, cm, setup_calls = api_client
-        resp = client.post('/api/v3/config/main', json={'timezone': 'UTC'})
+        # The General form marks its posts; an unchecked box is then absent.
+        resp = client.post('/api/v3/config/main',
+                           json={'__form_section': 'general', 'timezone': 'UTC'})
         assert resp.status_code == 200
         assert self._saved(cm)['auto_update'] == {'enabled': False}
         assert setup_calls == [True]
