@@ -568,21 +568,41 @@ def _installed_plugin_ids():
     enumerate the installed plugins and read each one's persisted summary by ID
     instead of relying on the tracker's in-memory `get_all_*` view.
     """
-    pm = api_v3.plugin_manager
-    manifests = getattr(pm, 'plugin_manifests', None)
-    if not manifests:
-        # Only pay for a discovery scan when we haven't discovered anything yet;
-        # subsequent polls reuse the already-populated manifest map.
-        try:
-            pm.discover_plugins()
-        except Exception:
-            logger.debug('discover_plugins failed while listing plugin ids', exc_info=True)
-        manifests = getattr(pm, 'plugin_manifests', None)
+    manifests = _discovered_plugin_manifests()
     try:
         return list(manifests.keys()) if manifests else []
     except Exception:
         logger.debug('listing plugin_manifests failed while building plugin ids', exc_info=True)
         return []
+def _discovered_plugin_manifests(plugin_id=None, rescan=False):
+    """The plugin manager's manifests, discovering plugins first if needed.
+
+    The web process discovers plugins lazily (see app.py): nothing scans at
+    startup, so plugin_manifests is empty until some endpoint calls
+    discover_plugins(). A route that looks a plugin up without coming through
+    here answers "not found" for every installed plugin until something else
+    has run -- after a web restart, POST /display/on-demand/start returned 404
+    for minutes on a real rig, and only API-only callers ever noticed.
+
+    Scans when nothing is discovered yet, when ``plugin_id`` is given and not
+    among the manifests (it may have been installed since the last scan), or
+    when ``rescan`` is set (for lookups that are not by id, such as a mode).
+    Otherwise the existing map is reused, so a steady stream of requests
+    for known plugins costs nothing.
+
+    Returns the manifest map, or {} when there is no plugin manager.
+    """
+    pm = api_v3.plugin_manager
+    if pm is None:
+        return {}
+    manifests = getattr(pm, 'plugin_manifests', None)
+    if not manifests or rescan or (plugin_id is not None and plugin_id not in manifests):
+        try:
+            pm.discover_plugins()
+        except Exception:
+            logger.warning('Plugin discovery failed', exc_info=True)
+        manifests = getattr(pm, 'plugin_manifests', None)
+    return manifests or {}
 def _do_transactional_uninstall(plugin_id, preserve_config):
     """Execute an uninstall with snapshot-based rollback.
 

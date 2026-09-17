@@ -453,7 +453,7 @@ def toggle_plugin():
             return _toggle_starlark_app(plugin_id[len('starlark:'):], enabled)
 
         # Check if plugin exists in manifests (discovered but may not be loaded)
-        if plugin_id not in api_v3.plugin_manager.plugin_manifests:
+        if plugin_id not in _pkg._discovered_plugin_manifests(plugin_id):
             return jsonify({'status': 'error', 'message': 'Plugin not found'}), 404
 
         # Update config (this is what the display controller reads)

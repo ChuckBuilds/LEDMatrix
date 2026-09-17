@@ -253,6 +253,12 @@ Core:
   from every config load and could not `import web_interface.app` at all.
   `ensure_shared_group_ownership()` now returns immediately when `os.geteuid`
   or `os.chown` is missing. No behaviour change on the Pi.
+- Restoring a backup on Windows no longer fails over files that already exist.
+  The restore carries each replaced file's owner across with `os.chown`, which
+  does not exist on Windows; the `AttributeError` escaped the per-file error
+  handling, so the restore stopped at `config.json` with nothing restored. The
+  ownership step is now skipped where `os.chown` is missing. No behaviour
+  change on the Pi.
 
 Automatic updates and Update Code:
 

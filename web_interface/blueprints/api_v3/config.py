@@ -1001,9 +1001,14 @@ def save_main_config():
         # flagged degraded at its next load).
         plugin_keys_to_remove = []
         plugin_secrets_updates = {}
+        # Discovered first: a plugin key not recognised here skips secret
+        # separation below and falls through to the generic merge, which wrote
+        # the plugin's API key into config.json in plain text whenever nothing
+        # had yet discovered plugins in this process (any save after a restart).
+        plugin_manifests = _pkg._discovered_plugin_manifests()
         for key in data:
             # Check if this key is a plugin ID
-            if api_v3.plugin_manager and key in api_v3.plugin_manager.plugin_manifests:
+            if api_v3.plugin_manager and key in plugin_manifests:
                 plugin_id = key
                 submitted_config = data[key]
                 if not isinstance(submitted_config, dict):
