@@ -346,11 +346,16 @@ class AutoUpdater:
             core = {'outcome': 'error', 'message': f'The LEDMatrix update failed unexpectedly: {e}'}
 
         deferred = core['outcome'] == 'verifying'
-        updated, failed = ([], []) if deferred else self._update_plugins()
+        # A core whose rollback failed is in an unknown state: as when the
+        # health check reports rollback_failed, plugins are left alone and
+        # nothing is restarted onto it.
+        stranded = core['outcome'] == 'rollback_failed'
+        updated, failed = ([], []) if deferred or stranded else self._update_plugins()
         self._store_run(state, core, updated, failed)
         logger.info("Automatic update: core %s (%s); plugins updated=%s failed=%s%s",
                     core['outcome'], core['message'], updated, failed,
-                    '; plugins wait for the health check' if deferred else '')
+                    '; plugins wait for the health check' if deferred
+                    else '; plugins left alone' if stranded else '')
 
         # Code restarts belong to the health check; this only covers plugins.
         if updated:

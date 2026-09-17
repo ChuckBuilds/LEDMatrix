@@ -414,6 +414,36 @@ class TestUpdateIsVerified:
         assert repo.head() == old
         assert 'rolled back' in result['core_message']
 
+    @pytest.mark.parametrize('how', ['partial_pull', 'check_never_started'])
+    def test_a_failed_rollback_leaves_plugins_and_the_display_alone(self, tmp_path, how):
+        """update_core returns rollback_failed itself on two paths. The device
+        is then in an unknown state, exactly as when the health check reports
+        rollback_failed, so no plugin updates and no restart may follow."""
+        repo = Repo(tmp_path)
+        repo.publish()
+        store = FakeStore(tmp_path / 'plugins', {'clock': '1.0.0'}, bump={'clock'})
+        pull = real_pull(repo.device)
+
+        def half_failed(**kwargs):
+            pull()
+            return {'status': 'error', 'message': 'Update failed: interrupted'}
+        h = Harness(tmp_path, repo, store=store, pickup=how != 'check_never_started',
+                    core_update=half_failed if how == 'partial_pull' else None)
+        real_run = h.updater.run_command
+
+        def reset_fails(args, **kwargs):
+            if args[:3] == ['git', 'reset', '--hard']:
+                return subprocess.CompletedProcess(args, 1, stdout='', stderr='index.lock exists')
+            return real_run(args, **kwargs)
+        h.updater.run_command = reset_fails
+
+        result = h.updater.run()
+        assert result['core_outcome'] == 'rollback_failed'
+        assert store.updated_calls == [], "plugins must not pile onto a core in an unknown state"
+        assert h.restarts == []
+        assert h.state['plugins_pending'] is False and result['plugins_deferred'] is False
+        assert h.state['alert']
+
 
 # -- reporting the health check's outcome --------------------------------------
 
