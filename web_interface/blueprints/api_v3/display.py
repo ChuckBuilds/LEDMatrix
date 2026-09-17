@@ -178,14 +178,20 @@ def start_on_demand_display():
         resolved_mode = mode
 
         if api_v3.plugin_manager:
-            if resolved_plugin and resolved_plugin not in api_v3.plugin_manager.plugin_manifests:
+            if resolved_plugin and resolved_plugin not in _pkg._discovered_plugin_manifests(resolved_plugin):
                 return jsonify({'status': 'error', 'message': f'Plugin {resolved_plugin} not found'}), 404
 
             if resolved_plugin and not resolved_mode:
                 modes = api_v3.plugin_manager.get_plugin_display_modes(resolved_plugin)
                 resolved_mode = modes[0] if modes else resolved_plugin
             elif resolved_mode and not resolved_plugin:
+                _pkg._discovered_plugin_manifests()
                 resolved_plugin = api_v3.plugin_manager.find_plugin_for_mode(resolved_mode)
+                if not resolved_plugin:
+                    # Not among what was discovered: the plugin that declares
+                    # it may have been installed since. Scan once more.
+                    _pkg._discovered_plugin_manifests(rescan=True)
+                    resolved_plugin = api_v3.plugin_manager.find_plugin_for_mode(resolved_mode)
                 if not resolved_plugin:
                     return jsonify({'status': 'error', 'message': f'Mode {resolved_mode} not found'}), 404
 
