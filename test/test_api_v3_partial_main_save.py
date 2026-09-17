@@ -92,12 +92,23 @@ class TestJsonPartialSaves:
         assert config['web_display_autostart'] is True
         assert config['auto_update'] == {'enabled': True}
 
-    def test_location_only_keeps_plugin_system_toggles(self, api_v3_client, saved):
-        resp = _post_json(api_v3_client, {'city': 'Paris', 'plugins_directory': 'plugin-repos'})
+    def test_location_only_keeps_autostart_and_auto_update(self, api_v3_client, saved):
+        resp = _post_json(api_v3_client, {'city': 'Paris', 'country': 'FR'})
         assert resp.status_code == 200, resp.get_json()
-        assert saved['config']['plugin_system'] == {
-            'auto_discover': True, 'auto_load_enabled': True,
-            'development_mode': True, 'plugins_directory': 'plugin-repos'}
+        config = saved['config']
+        assert config['location'] == {'city': 'Paris', 'country': 'FR'}
+        assert config['web_display_autostart'] is True
+        assert config['auto_update'] == {'enabled': True}
+
+    @pytest.mark.parametrize('key', ['auto_discover', 'auto_load_enabled', 'development_mode'])
+    def test_a_legacy_plugin_system_toggle_is_not_a_general_save(self, api_v3_client, saved, key):
+        # These left the General form; a client still sending one must not
+        # have the general-settings checkboxes treated as unchecked.
+        resp = api_v3_client.post('/api/v3/config/main', data={key: 'on'},
+                                  content_type='application/x-www-form-urlencoded')
+        assert resp.status_code == 200, resp.get_json()
+        assert saved['config']['web_display_autostart'] is True
+        assert saved['config']['auto_update'] == {'enabled': True}
 
     def test_vegas_speed_only_keeps_vegas_toggles(self, api_v3_client, saved):
         resp = _post_json(api_v3_client, {'vegas_scroll_speed': 80})

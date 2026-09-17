@@ -496,8 +496,7 @@ def save_main_config():
         # Note: Checkboxes don't send data when unchecked, so we need to check if we're updating general settings
         # If any general setting is present, we're updating the general tab
         is_general_update = any(k in data for k in ['timezone', 'city', 'state', 'country', 'web_display_autostart',
-                                                     'auto_discover', 'auto_load_enabled', 'development_mode', 'plugins_directory',
-                                                     'auto_update_enabled'])
+                                                     'plugins_directory', 'auto_update_enabled'])
 
         if is_general_update:
             # For checkbox: if not present in data during a general *form*
@@ -560,7 +559,7 @@ def save_main_config():
             # Handle plugin system checkboxes - always set to handle unchecked state
             # HTML checkboxes omit the key when unchecked, so missing key = unchecked = False
             for checkbox in ['auto_discover', 'auto_load_enabled', 'development_mode']:
-                _set_checkbox(current_config['plugin_system'], checkbox, checkbox)
+                current_config['plugin_system'][checkbox] = _coerce_to_bool(data.get(checkbox))
 
             # Handle plugins_directory
             if 'plugins_directory' in data:
