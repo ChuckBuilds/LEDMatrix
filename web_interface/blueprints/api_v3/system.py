@@ -228,6 +228,12 @@ def _sudo_hint_for(text):
 
 _core_update_lock = threading.Lock()
 
+#: The core's own requirement files, installed after a pull that changes them.
+#: scripts/fix_perms/safe_pip_install.sh must accept every one (it refuses
+#: anything it does not list), and scripts/utils/auto_update_verify.py
+#: reinstalls the same files when it rolls an update back.
+CORE_REQUIREMENT_FILES = ('requirements.txt', 'web_interface/requirements.txt')
+
 
 def perform_core_update():
     """Pull the latest LEDMatrix code and sync its dependencies.
@@ -369,7 +375,7 @@ def _perform_core_update_locked():
                     ['git', 'diff', '--name-only', f'{old_head}..{new_head}'],
                     capture_output=True, text=True, timeout=15, cwd=project_dir)
                 changed = set(diff.stdout.split()) if diff.returncode == 0 else set()
-                for rel in ('requirements.txt', 'web_interface/requirements.txt'):
+                for rel in CORE_REQUIREMENT_FILES:
                     req_path = PROJECT_ROOT / rel
                     if rel not in changed or not req_path.exists():
                         continue
