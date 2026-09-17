@@ -1,0 +1,6 @@
+{
+  "dev_plugins_dir": "~/.ledmatrix-dev-plugins",
+  "github_user": "ChuckBuilds",
+  "plugins_repo": "ledmatrix-plugins",
+  "plugins_branch": "main"
+}

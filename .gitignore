@@ -39,11 +39,12 @@ htmlcov/
 # Cache directory (root level only, not src/cache which is source code)
 /cache/
 
-# Development plugins directory
-# Plugins are managed as separate repositories via multi-root workspace
-# See docs/MULTI_ROOT_WORKSPACE_SETUP.md for details
+# Development plugins directory: symlinks into a ledmatrix-plugins checkout
+# See docs/PLUGIN_DEVELOPMENT_GUIDE.md and docs/MULTI_ROOT_WORKSPACE_SETUP.md
 plugins/*
 !plugins/.gitkeep
+# Local settings for scripts/dev/dev_plugin_setup.sh (template: dev_plugins.json.example)
+/dev_plugins.json
 
 # Binary files and backups
 bin/pixlet/
