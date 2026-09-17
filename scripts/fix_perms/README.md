@@ -7,8 +7,10 @@ install as the wrong user, after a manual file copy that didn't preserve
 ownership, or after a permissions-related error from the display or
 web service.
 
-Most of these scripts require `sudo` since they touch directories
-owned by the `ledmatrix` service user or by `root`.
+Most of these scripts require `sudo` since they touch directories owned
+by `root` (the display service's user) or by the user you installed
+LEDMatrix as (the web service's user). There is no dedicated `ledmatrix`
+system user.
 
 ## Scripts
 
@@ -16,11 +18,12 @@ owned by the `ledmatrix` service user or by `root`.
   permissions on the `assets/` tree so plugins can download and cache
   team logos, fonts, and other static content.
 
-- **`fix_cache_permissions.sh`** — Fixes permissions on every cache
-  directory the project may use (`/var/cache/ledmatrix/`,
-  `~/.cache/ledmatrix/`, `/opt/ledmatrix/cache/`, project-local
-  `cache/`). Also creates placeholder logo subdirectories used by the
-  sports plugins.
+- **`fix_cache_permissions.sh`** — Creates (if missing) and fixes
+  permissions on `/var/cache/ledmatrix/` and `~/.ledmatrix_cache/` of the
+  user running `sudo`, and creates
+  `/var/cache/ledmatrix/placeholder_logos/` for the sports plugins. It does
+  not touch the cache manager's other fallbacks (`/opt/ledmatrix/cache`,
+  `$TMPDIR/ledmatrix_cache`).
 
 - **`fix_plugin_permissions.sh`** — Fixes ownership on the plugins
   directory so both the root display service and the web service user
@@ -30,6 +33,11 @@ owned by the `ledmatrix` service user or by `root`.
 - **`fix_web_permissions.sh`** — Fixes permissions on log files,
   systemd journal access, and the sudoers entries the web interface
   needs to control the display service.
+
+- **`safe_pip_install.sh`** — Installs a `requirements.txt` as root
+  after checking it is the project's own or one under `plugin-repos/` or
+  `plugins/`. Used by the web interface (via sudo) to install plugin
+  dependencies where `ledmatrix.service` can import them.
 
 - **`safe_plugin_rm.sh`** — Validates that a plugin removal path is
   inside an allowed base directory before deleting it. Used by the web
