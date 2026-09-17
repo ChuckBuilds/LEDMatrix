@@ -183,6 +183,22 @@ const noSleep = { sleep: async () => {} };
 
     r = await run(() => httpAnswer(200, async () => { throw new SyntaxError('Unexpected end of JSON input'); }));
     ok('an unreadable 200 is not retried either', r.requests === 1 && r.result.error.error_code === 'API_ERROR', r);
+
+    // Every endpoint is one of the client's own API paths; one that could
+    // leave baseURL never reaches fetch(), and plugin ids are encoded.
+    const urls = [];
+    global.fetch = async (url) => { urls.push(url); return httpAnswer(200, async () => ({ status: 'success' })); };
+    const refusal = async (endpoint) => {
+      try { await PluginAPI.request(endpoint, 'POST'); return null; } catch (e) { return e.error_code; }
+    };
+    const bad = ['//evil.example/x', '/plugins/../../x', '/a\b', '/a b', 'plugins', null];
+    const codes = [];
+    for (const endpoint of bad) codes.push(await refusal(endpoint));
+    ok('an endpoint that could leave the API path is refused before fetch()',
+       codes.every(c => c === 'INVALID_ENDPOINT') && urls.length === 0, { codes, urls });
+    await PluginAPI.resetPluginConfig('a/../b&x=1');
+    ok('a plugin id is encoded into the URL, not spliced into it',
+       urls[0] === '/api/v3/plugins/config/reset?plugin_id=a%2F..%2Fb%26x%3D1', urls);
     delete global.fetch;
   }
 

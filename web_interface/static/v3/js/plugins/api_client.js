@@ -124,6 +124,28 @@ const PluginAPI = {
     baseURL: '/api/v3',
     
     /**
+     * The endpoint, if it is a path under baseURL; throws INVALID_ENDPOINT
+     * otherwise. Every endpoint is one of this client's own API paths, so
+     * anything that could leave that path -- "//host", a backslash, a ".."
+     * segment, whitespace or control characters -- is a bug, not a request.
+     *
+     * @param {string} endpoint - API endpoint, starting with "/"
+     * @returns {string} The same endpoint
+     */
+    checkEndpoint(endpoint) {
+        const path = typeof endpoint === 'string' ? endpoint.split(/[?#]/)[0] : '';
+        if (!path.startsWith('/') || path.startsWith('//') ||
+                /[\\\s\x00-\x1f\x7f]/.test(endpoint) ||
+                path.split('/').some(segment => segment === '..' || segment === '.')) {
+            throw {
+                error_code: 'INVALID_ENDPOINT',
+                message: `Not an API endpoint: ${String(endpoint)}`
+            };
+        }
+        return endpoint;
+    },
+
+    /**
      * Make an API request with throttling and caching.
      * 
      * @param {string} endpoint - API endpoint
@@ -141,7 +163,7 @@ const PluginAPI = {
         const requestKey = `${method}:${endpoint}:${data ? JSON.stringify(data) : ''}`;
         
         const makeRequest = async () => {
-            const url = `${this.baseURL}${endpoint}`;
+            const url = `${this.baseURL}${this.checkEndpoint(endpoint)}`;
             const options = {
                 method,
                 headers: {
@@ -161,7 +183,9 @@ const PluginAPI = {
             // and is not retried.
             let response;
             try {
-                response = await fetch(url, options);
+                // url is baseURL plus an endpoint checkEndpoint() accepted: a
+                // path on this origin's API, never a caller-chosen host.
+                response = await fetch(url, options); // nosemgrep
             } catch (error) {
                 throw {
                     error_code: 'NETWORK_ERROR',
@@ -266,7 +290,7 @@ const PluginAPI = {
      * @returns {Promise<Object>} Plugin configuration
      */
     async getPluginConfig(pluginId) {
-        const response = await this.request(`/plugins/config?plugin_id=${pluginId}`);
+        const response = await this.request(`/plugins/config?plugin_id=${encodeURIComponent(pluginId)}`);
         return response.data || {};
     },
     
@@ -291,7 +315,7 @@ const PluginAPI = {
      * @returns {Promise<Object>} Response data
      */
     async resetPluginConfig(pluginId) {
-        return await this.request(`/plugins/config/reset?plugin_id=${pluginId}`, 'POST');
+        return await this.request(`/plugins/config/reset?plugin_id=${encodeURIComponent(pluginId)}`, 'POST');
     },
     
     /**
@@ -301,7 +325,7 @@ const PluginAPI = {
      * @returns {Promise<Object>} Plugin schema
      */
     async getPluginSchema(pluginId) {
-        const response = await this.request(`/plugins/schema?plugin_id=${pluginId}`);
+        const response = await this.request(`/plugins/schema?plugin_id=${encodeURIComponent(pluginId)}`);
         return response.data?.schema || null;
     },
     
@@ -364,7 +388,7 @@ const PluginAPI = {
      */
     async getPluginHealth(pluginId = null) {
         const endpoint = pluginId
-            ? `/plugins/health/${pluginId}`
+            ? `/plugins/health/${encodeURIComponent(pluginId)}`
             : '/plugins/health';
         const response = await this.request(endpoint);
         return response.data || {};
@@ -378,7 +402,7 @@ const PluginAPI = {
      */
     async getPluginMetrics(pluginId = null) {
         const endpoint = pluginId
-            ? `/plugins/metrics/${pluginId}`
+            ? `/plugins/metrics/${encodeURIComponent(pluginId)}`
             : '/plugins/metrics';
         const response = await this.request(endpoint);
         return response.data || {};

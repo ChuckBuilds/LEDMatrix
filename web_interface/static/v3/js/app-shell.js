@@ -838,8 +838,8 @@
                             // PluginAPI.batch returns already-parsed JSON objects
                             try {
                                 const results = await window.PluginAPI.batch([
-                                    {endpoint: `/plugins/config?plugin_id=${pluginId}`, method: 'GET'},
-                                    {endpoint: `/plugins/schema?plugin_id=${pluginId}`, method: 'GET'},
+                                    {endpoint: `/plugins/config?plugin_id=${encodeURIComponent(pluginId)}`, method: 'GET'},
+                                    {endpoint: `/plugins/schema?plugin_id=${encodeURIComponent(pluginId)}`, method: 'GET'},
                                     {endpoint: '/plugins/installed', method: 'GET'}
                                 ]);
                                 [configData, schemaData, pluginsData] = results;

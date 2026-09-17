@@ -510,8 +510,10 @@ class PluginManager:
             if schema:
                 try:
                     prepared = normalize_legacy_booleans(prepared, schema, upgraded)
-                except Exception:
-                    pass
+                except Exception as legacy_error:
+                    self.logger.warning(
+                        "Could not read legacy boolean settings for %s: %s",
+                        plugin_id, legacy_error)
         if upgraded:
             self.logger.info(
                 "Plugin %s: reading legacy boolean setting %s as "
