@@ -792,12 +792,16 @@ def get_plugin_config():
         main_config = api_v3.config_manager.load_config()
         plugin_config = main_config.get(plugin_id, {})
 
-        # Merge with defaults from schema so form shows default values for missing fields
+        # Merge with defaults from schema so form shows default values for
+        # missing fields, reading legacy booleans as objects first: what the
+        # plugin runs with, and what posts back through the JSON save
         schema_mgr = api_v3.schema_manager
         if schema_mgr:
             try:
+                from src.plugin_system.schema_manager import prepare_plugin_config
                 defaults = schema_mgr.generate_default_config(plugin_id, use_cache=True)
-                plugin_config = schema_mgr.merge_with_defaults(plugin_config, defaults)
+                plugin_config = prepare_plugin_config(
+                    plugin_config, schema_mgr.load_schema(plugin_id, use_cache=True), defaults)
             except Exception as e:
                 # Log but don't fail - defaults merge is best effort
                 import logging
@@ -1725,7 +1729,14 @@ def save_plugin_config():
             if error:
                 return error
             plugin_id = data['plugin_id']
-            plugin_config = data.get('config', {})
+            submitted_config = data.get('config', {})
+            if not isinstance(submitted_config, dict):
+                return error_response(
+                    ErrorCode.INVALID_INPUT,
+                    'config must be a JSON object',
+                    status_code=400
+                )
+            plugin_config = _merge_onto_stored_plugin_config(plugin_id, submitted_config)
         else:
             # Form data (HTMX submission)
             # plugin_id comes from query string, config from form fields
@@ -2162,398 +2173,11 @@ def save_plugin_config():
         if 'application/json' in content_type:
             schema = schema_mgr.load_schema(plugin_id, use_cache=False)
 
-        # JSON path: fix numeric-keyed dicts that should be arrays.
-        # JS dotToNested() converts feeds.custom_feeds.0.name → {'0': {name:...}}
-        # instead of [{name:...}]. The form-data path has fix_array_structures for this;
-        # mirror that logic here for JSON submissions.
-        if 'application/json' in content_type and schema and 'properties' in schema:
-            def _fix_json_arrays(cfg, props):
-                for k, ps in props.items():
-                    if not isinstance(cfg, dict) or k not in cfg:
-                        continue
-                    pt = ps.get('type')
-                    val = cfg[k]
-                    if pt == 'array':
-                        items_schema = ps.get('items', {})
-                        item_type = items_schema.get('type')
-                        if isinstance(val, dict):
-                            keys = list(val.keys())
-                            if keys and all(str(x).isdigit() for x in keys):
-                                sorted_keys = sorted(keys, key=lambda x: int(str(x)))
-                                arr = [val[sk] for sk in sorted_keys]
-                                if item_type in ('integer', 'number'):
-                                    converted = []
-                                    for v in arr:
-                                        if isinstance(v, str):
-                                            try:
-                                                converted.append(int(v) if item_type == 'integer' else float(v))
-                                            except (ValueError, TypeError, OverflowError):
-                                                converted.append(v)
-                                        else:
-                                            converted.append(v)
-                                    arr = converted
-                                cfg[k] = arr
-                            elif not keys:
-                                cfg[k] = []
-                        # Recurse into each element when items are objects with properties,
-                        # covering both freshly-converted and already-list values.
-                        if item_type == 'object' and 'properties' in items_schema:
-                            for elem in (cfg[k] if isinstance(cfg[k], list) else []):
-                                if isinstance(elem, dict):
-                                    _fix_json_arrays(elem, items_schema['properties'])
-                    elif pt == 'object' and 'properties' in ps and isinstance(val, dict):
-                        _fix_json_arrays(val, ps['properties'])
-            _fix_json_arrays(plugin_config, schema['properties'])
-
-        # PRE-PROCESSING: Preserve 'enabled' state if not in request
-        # This prevents overwriting the enabled state when saving config from a form that doesn't include the toggle
-        if 'enabled' not in plugin_config:
-            try:
-                current_config = api_v3.config_manager.load_config()
-                if plugin_id in current_config and 'enabled' in current_config[plugin_id]:
-                    plugin_config['enabled'] = current_config[plugin_id]['enabled']
-                    # logger.debug(f"Preserving enabled state for {plugin_id}: {plugin_config['enabled']}")
-                elif api_v3.plugin_manager:
-                    # Fallback to plugin instance if config doesn't have it
-                    plugin_instance = api_v3.plugin_manager.get_plugin(plugin_id)
-                    if plugin_instance:
-                        plugin_config['enabled'] = plugin_instance.enabled
-                # Final fallback: default to True if plugin is loaded (matches BasePlugin default)
-                if 'enabled' not in plugin_config:
-                    plugin_config['enabled'] = True
-            except Exception as e:
-                logger.debug("Error preserving enabled state: %s", e)
-                # Default to True on error to avoid disabling plugins
-                plugin_config['enabled'] = True
-
-        # Find secret fields (supports nested schemas and array-item secrets)
-        secret_fields = set()
-
-        if schema and 'properties' in schema:
-            secret_fields = find_secret_fields(schema['properties'])
-
-        # Apply defaults from schema to config BEFORE validation
-        # This ensures required fields with defaults are present before validation
-        # Store preserved enabled value before merge to protect it from defaults
-        preserved_enabled = None
-        if 'enabled' in plugin_config:
-            preserved_enabled = plugin_config['enabled']
-
-        if schema:
-            defaults = schema_mgr.generate_default_config(plugin_id, use_cache=True)
-            plugin_config = schema_mgr.merge_with_defaults(plugin_config, defaults)
-
-        # After merging defaults, replace any None array values with their schema defaults.
-        # merge_with_defaults gives user config higher priority, so a None submitted by
-        # the client can survive the merge — this pass cleans those up.
-        def _fix_none_arrays(cfg, props):
-            for k, pschema in props.items():
-                if pschema.get('type') == 'array':
-                    if isinstance(cfg, dict) and (k not in cfg or cfg[k] is None):
-                        cfg[k] = pschema.get('default', [])
-                elif pschema.get('type') == 'object' and 'properties' in pschema:
-                    if isinstance(cfg, dict) and isinstance(cfg.get(k), dict):
-                        _fix_none_arrays(cfg[k], pschema['properties'])
-
-        if schema and 'properties' in schema and isinstance(plugin_config, dict):
-            _fix_none_arrays(plugin_config, schema['properties'])
-
-        # Ensure enabled state is preserved after defaults merge
-        # Defaults should not overwrite an explicitly preserved enabled value
-        if preserved_enabled is not None:
-            # Restore preserved value if it was changed by defaults merge
-            if plugin_config.get('enabled') != preserved_enabled:
-                plugin_config['enabled'] = preserved_enabled
-
-        # Normalize config data: convert string numbers to integers/floats where schema expects numbers
-        # This handles form data which sends everything as strings
-        def normalize_config_values(config, schema_props, prefix=''):
-            """Recursively normalize config values based on schema types"""
-            if not isinstance(config, dict) or not isinstance(schema_props, dict):
-                return config
-
-            normalized = {}
-            for key, value in config.items():
-                field_path = f"{prefix}.{key}" if prefix else key
-
-                if key not in schema_props:
-                    # Field not in schema, keep as-is (will be caught by additionalProperties check if needed)
-                    normalized[key] = value
-                    continue
-
-                prop_schema = schema_props[key]
-                prop_type = prop_schema.get('type')
-
-                # Handle union types (e.g., ["integer", "null"])
-                if isinstance(prop_type, list):
-                    # Check if null is allowed and value is empty/null
-                    if 'null' in prop_type:
-                        # Handle various representations of null/empty
-                        if value is None:
-                            normalized[key] = None
-                            continue
-                        elif isinstance(value, str):
-                            # Strip whitespace and check for null representations
-                            value_stripped = value.strip()
-                            if value_stripped == '' or value_stripped.lower() in ('null', 'none', 'undefined'):
-                                normalized[key] = None
-                                continue
-
-                    # Try to normalize based on non-null types in the union
-                    # Check integer first (more specific than number)
-                    if 'integer' in prop_type:
-                        if isinstance(value, str):
-                            value_stripped = value.strip()
-                            if value_stripped == '':
-                                # Empty string with null allowed - already handled above, but double-check
-                                if 'null' in prop_type:
-                                    normalized[key] = None
-                                    continue
-                            try:
-                                normalized[key] = int(value_stripped)
-                                continue
-                            except (ValueError, TypeError, OverflowError):
-                                pass
-                        elif isinstance(value, (int, float)):
-                            normalized[key] = int(value)
-                            continue
-
-                    # Check number (less specific, but handles floats)
-                    if 'number' in prop_type:
-                        if isinstance(value, str):
-                            value_stripped = value.strip()
-                            if value_stripped == '':
-                                # Empty string with null allowed - already handled above, but double-check
-                                if 'null' in prop_type:
-                                    normalized[key] = None
-                                    continue
-                            try:
-                                normalized[key] = float(value_stripped)
-                                continue
-                            except (ValueError, TypeError, OverflowError):
-                                pass
-                        elif isinstance(value, (int, float)):
-                            normalized[key] = float(value)
-                            continue
-
-                    # Check boolean
-                    if 'boolean' in prop_type:
-                        if isinstance(value, str):
-                            normalized[key] = value.strip().lower() in ('true', '1', 'on', 'yes')
-                            continue
-
-                    # If no conversion worked and null is allowed, try to set to None
-                    # This handles cases where the value is an empty string or can't be converted
-                    if 'null' in prop_type:
-                        if isinstance(value, str):
-                            value_stripped = value.strip()
-                            if value_stripped == '' or value_stripped.lower() in ('null', 'none', 'undefined'):
-                                normalized[key] = None
-                                continue
-                        # If it's already None, keep it
-                        if value is None:
-                            normalized[key] = None
-                            continue
-
-                    # If no conversion worked, keep original value (will fail validation, but that's expected)
-                    # Log a warning for debugging
-                    logger.warning(f"Could not normalize field {field_path}: value={repr(value)}, type={type(value)}, schema_type={prop_type}")
-                    normalized[key] = value
-                    continue
-
-                if isinstance(value, dict) and prop_type == 'object' and 'properties' in prop_schema:
-                    # Recursively normalize nested objects
-                    normalized[key] = normalize_config_values(value, prop_schema['properties'], field_path)
-                elif isinstance(value, list) and prop_type == 'array' and 'items' in prop_schema:
-                    # Normalize array items
-                    items_schema = prop_schema['items']
-                    item_type = items_schema.get('type')
-
-                    # Handle union types in array items
-                    if isinstance(item_type, list):
-                        normalized_array = []
-                        for v in value:
-                            # Check if null is allowed
-                            if 'null' in item_type:
-                                if v is None or v == '' or (isinstance(v, str) and v.lower() in ('null', 'none')):
-                                    normalized_array.append(None)
-                                    continue
-
-                            # Try to normalize based on non-null types
-                            if 'integer' in item_type:
-                                if isinstance(v, str):
-                                    try:
-                                        normalized_array.append(int(v))
-                                        continue
-                                    except (ValueError, TypeError, OverflowError):
-                                        pass
-                                elif isinstance(v, (int, float)):
-                                    normalized_array.append(int(v))
-                                    continue
-                            elif 'number' in item_type:
-                                if isinstance(v, str):
-                                    try:
-                                        normalized_array.append(float(v))
-                                        continue
-                                    except (ValueError, TypeError, OverflowError):
-                                        pass
-                                elif isinstance(v, (int, float)):
-                                    normalized_array.append(float(v))
-                                    continue
-
-                            # If no conversion worked, keep original value
-                            normalized_array.append(v)
-                        normalized[key] = normalized_array
-                    elif item_type == 'integer':
-                        # Convert string numbers to integers
-                        normalized_array = []
-                        for v in value:
-                            if isinstance(v, str):
-                                try:
-                                    normalized_array.append(int(v))
-                                except (ValueError, TypeError, OverflowError):
-                                    normalized_array.append(v)
-                            elif isinstance(v, (int, float)):
-                                normalized_array.append(int(v))
-                            else:
-                                normalized_array.append(v)
-                        normalized[key] = normalized_array
-                    elif item_type == 'number':
-                        # Convert string numbers to floats
-                        normalized_array = []
-                        for v in value:
-                            if isinstance(v, str):
-                                try:
-                                    normalized_array.append(float(v))
-                                except (ValueError, TypeError, OverflowError):
-                                    normalized_array.append(v)
-                            else:
-                                normalized_array.append(v)
-                        normalized[key] = normalized_array
-                    elif item_type == 'object' and 'properties' in items_schema:
-                        # Recursively normalize array of objects
-                        normalized_array = []
-                        for v in value:
-                            if isinstance(v, dict):
-                                normalized_array.append(
-                                    normalize_config_values(v, items_schema['properties'], f"{field_path}[]")
-                                )
-                            else:
-                                normalized_array.append(v)
-                        normalized[key] = normalized_array
-                    else:
-                        normalized[key] = value
-                elif prop_type == 'integer':
-                    # Convert string to integer
-                    if isinstance(value, str):
-                        try:
-                            normalized[key] = int(value)
-                        except (ValueError, TypeError, OverflowError):
-                            normalized[key] = value
-                    else:
-                        normalized[key] = value
-                elif prop_type == 'number':
-                    # Convert string to float
-                    if isinstance(value, str):
-                        try:
-                            normalized[key] = float(value)
-                        except (ValueError, TypeError, OverflowError):
-                            normalized[key] = value
-                    else:
-                        normalized[key] = value
-                elif prop_type == 'boolean':
-                    # Convert string booleans
-                    if isinstance(value, str):
-                        normalized[key] = value.lower() in ('true', '1', 'on', 'yes')
-                    else:
-                        normalized[key] = value
-                else:
-                    normalized[key] = value
-
-            return normalized
-
-        # Normalize config before validation
-        if schema and 'properties' in schema:
-            plugin_config = normalize_config_values(plugin_config, schema['properties'])
-
-        # Filter config to only include schema-defined fields (important when additionalProperties is false)
-        # Use enhanced schema with core properties to ensure core properties are preserved during filtering
-        if schema and 'properties' in schema:
-            enhanced_schema_for_filtering = _enhance_schema_with_core_properties(schema)
-            plugin_config = _filter_config_by_schema(plugin_config, enhanced_schema_for_filtering)
-
-        # Debug logging for union type fields (temporary)
-        if 'rotation_settings' in plugin_config and 'random_seed' in plugin_config.get('rotation_settings', {}):
-            seed_value = plugin_config['rotation_settings']['random_seed']
-            logger.debug(f"After normalization, random_seed value: {repr(seed_value)}, type: {type(seed_value)}")
-
-        # Validate configuration against schema before saving
-        if schema:
-            # Log what we're validating for debugging
-            logger.info(f"Validating config for {plugin_id}")
-            # Only the shape. plugin_config still holds the submitted secret
-            # values at this point -- separate_secrets does not run until
-            # below -- so logging it wrote live credentials to the journal.
-            logger.info(f"Config keys being validated: {list(plugin_config.keys())}")
-
-            # Get enhanced schema keys (including injected core properties)
-            # We need to create an enhanced schema to get the actual allowed keys
-            import copy
-            enhanced_schema = copy.deepcopy(schema)
-            if "properties" not in enhanced_schema:
-                enhanced_schema["properties"] = {}
-
-            # Core properties that are always injected during validation
-            core_properties = ["enabled", "display_duration", "live_priority"]
-            for prop_name in core_properties:
-                if prop_name not in enhanced_schema["properties"]:
-                    # Add placeholder to get the full list of allowed keys
-                    enhanced_schema["properties"][prop_name] = {"type": "any"}
-
-            is_valid, validation_errors = schema_mgr.validate_config_against_schema(
-                plugin_config, schema, plugin_id
-            )
-            if not is_valid:
-                # Log validation errors for debugging
-                logger.error(f"Config validation failed for {plugin_id}")
-                logger.error(f"Validation errors: {validation_errors}")
-                # Keys only, for the same reason as above.
-                logger.error(f"Config keys that failed: {list(plugin_config.keys())}")
-                logger.error(f"Schema properties: {list(enhanced_schema.get('properties', {}).keys())}")
-
-                # Also print to console for immediate visibility
-                import json
-                logger.warning("Config validation failed for plugin (see debug logs)")
-
-                # Log raw form data if this was a form submission
-                if 'application/json' not in (request.content_type or ''):
-                    form_data = request.form.to_dict()
-                return error_response(
-                    ErrorCode.CONFIG_VALIDATION_FAILED,
-                    'Configuration validation failed',
-                    details='; '.join(validation_errors) if validation_errors else 'Unknown validation error',
-                    context={
-                        'plugin_id': plugin_id,
-                        'validation_errors': validation_errors,
-                        'config_keys': list(plugin_config.keys()),
-                        'schema_keys': list(enhanced_schema.get('properties', {}).keys())
-                    },
-                    suggested_fixes=[
-                        'Review validation errors above',
-                        'Check config against schema',
-                        'Verify all required fields are present'
-                    ],
-                    status_code=400
-                )
-
-        # Separate secrets from regular config (handles nested configs and
-        # array-item secrets — see src/web_interface/secret_helpers.py)
-        regular_config, secrets_config = separate_secrets(plugin_config, secret_fields)
-        # The config form renders secrets masked, so every save posts
-        # them back blank. Without this the blank is merged over the
-        # stored value and the credential is destroyed by the act of
-        # changing an unrelated setting. A blank means "unchanged".
-        secrets_config = remove_empty_secrets(secrets_config)
+        regular_config, secrets_config, error = _prepare_plugin_config_for_save(
+            plugin_id, plugin_config, schema, schema_mgr,
+            is_json='application/json' in content_type)
+        if error:
+            return error
 
         # Get current configs
         current_config = api_v3.config_manager.load_config()
@@ -2626,7 +2250,8 @@ def save_plugin_config():
                 if plugin_instance:
                     # Reload merged config (includes secrets) and pass the plugin-specific section
                     merged_config = api_v3.config_manager.load_config()
-                    plugin_full_config = merged_config.get(plugin_id, {})
+                    plugin_full_config = _pkg._prepared_plugin_config(
+                        plugin_id, merged_config.get(plugin_id, {}))
                     if hasattr(plugin_instance, 'on_config_change'):
                         plugin_instance.on_config_change(plugin_full_config)
 
@@ -2677,6 +2302,419 @@ def save_plugin_config():
             context=error.context,
             status_code=500
         )
+def _merge_onto_stored_plugin_config(plugin_id, submitted_config, current_config=None):
+    """A JSON plugin-config body merged onto the plugin's stored section.
+
+    A JSON body carries the settings being changed, as a form post does: the
+    rest keep their stored values. Built from defaults alone, a body such as
+    ``{"enabled": true}`` reset every unsent setting of the plugin.
+    ``current_config`` is the loaded main config when the caller has one.
+    """
+    import copy
+    if current_config is None:
+        current_config = api_v3.config_manager.load_config()
+    stored = current_config.get(plugin_id)
+    base = copy.deepcopy(stored) if isinstance(stored, dict) else {}
+    return deep_merge(base, submitted_config)
+
+
+def _prepare_plugin_config_for_save(plugin_id, plugin_config, schema, schema_mgr, is_json):
+    """Turn a submitted plugin config into what gets stored.
+
+    Fixes array shapes, keeps the enabled state, reads legacy booleans and
+    applies schema defaults, normalizes value types, filters to the schema plus
+    the core-owned per-plugin properties, validates, and splits out secrets.
+    Shared by POST /plugins/config and plugin sections posted to
+    POST /config/main, so both store the same thing.
+
+    Returns ``(regular_config, secrets_config, None)``, or
+    ``(None, None, error_response)`` when validation fails.
+    """
+    # JSON path: fix numeric-keyed dicts that should be arrays.
+    # JS dotToNested() converts feeds.custom_feeds.0.name → {'0': {name:...}}
+    # instead of [{name:...}]. The form-data path has fix_array_structures for this;
+    # mirror that logic here for JSON submissions.
+    if is_json and schema and 'properties' in schema:
+        def _fix_json_arrays(cfg, props):
+            for k, ps in props.items():
+                if not isinstance(cfg, dict) or k not in cfg:
+                    continue
+                pt = ps.get('type')
+                val = cfg[k]
+                if pt == 'array':
+                    items_schema = ps.get('items', {})
+                    item_type = items_schema.get('type')
+                    if isinstance(val, dict):
+                        keys = list(val.keys())
+                        if keys and all(str(x).isdigit() for x in keys):
+                            sorted_keys = sorted(keys, key=lambda x: int(str(x)))
+                            arr = [val[sk] for sk in sorted_keys]
+                            if item_type in ('integer', 'number'):
+                                converted = []
+                                for v in arr:
+                                    if isinstance(v, str):
+                                        try:
+                                            converted.append(int(v) if item_type == 'integer' else float(v))
+                                        except (ValueError, TypeError, OverflowError):
+                                            converted.append(v)
+                                    else:
+                                        converted.append(v)
+                                arr = converted
+                            cfg[k] = arr
+                        elif not keys:
+                            cfg[k] = []
+                    # Recurse into each element when items are objects with properties,
+                    # covering both freshly-converted and already-list values.
+                    if item_type == 'object' and 'properties' in items_schema:
+                        for elem in (cfg[k] if isinstance(cfg[k], list) else []):
+                            if isinstance(elem, dict):
+                                _fix_json_arrays(elem, items_schema['properties'])
+                elif pt == 'object' and 'properties' in ps and isinstance(val, dict):
+                    _fix_json_arrays(val, ps['properties'])
+        _fix_json_arrays(plugin_config, schema['properties'])
+
+    # PRE-PROCESSING: Preserve 'enabled' state if not in request
+    # This prevents overwriting the enabled state when saving config from a form that doesn't include the toggle
+    if 'enabled' not in plugin_config:
+        try:
+            current_config = api_v3.config_manager.load_config()
+            if plugin_id in current_config and 'enabled' in current_config[plugin_id]:
+                plugin_config['enabled'] = current_config[plugin_id]['enabled']
+                # logger.debug(f"Preserving enabled state for {plugin_id}: {plugin_config['enabled']}")
+            elif api_v3.plugin_manager:
+                # Fallback to plugin instance if config doesn't have it
+                plugin_instance = api_v3.plugin_manager.get_plugin(plugin_id)
+                if plugin_instance:
+                    plugin_config['enabled'] = plugin_instance.enabled
+            # Final fallback: default to True if plugin is loaded (matches BasePlugin default)
+            if 'enabled' not in plugin_config:
+                plugin_config['enabled'] = True
+        except Exception as e:
+            logger.debug("Error preserving enabled state: %s", e)
+            # Default to True on error to avoid disabling plugins
+            plugin_config['enabled'] = True
+
+    # Find secret fields (supports nested schemas and array-item secrets)
+    secret_fields = set()
+
+    if schema and 'properties' in schema:
+        secret_fields = find_secret_fields(schema['properties'])
+
+    # Apply defaults from schema to config BEFORE validation
+    # This ensures required fields with defaults are present before validation
+    # Store preserved enabled value before merge to protect it from defaults
+    preserved_enabled = None
+    if 'enabled' in plugin_config:
+        preserved_enabled = plugin_config['enabled']
+
+    if schema:
+        # Legacy booleans read as {"enabled": ...} objects first (#588), the
+        # same preparation loading applies, so a config the device reads
+        # without complaint also saves.
+        from src.plugin_system.schema_manager import prepare_plugin_config
+        defaults = schema_mgr.generate_default_config(plugin_id, use_cache=True)
+        plugin_config = prepare_plugin_config(plugin_config, schema, defaults)
+
+    # After merging defaults, replace any None array values with their schema defaults.
+    # merge_with_defaults gives user config higher priority, so a None submitted by
+    # the client can survive the merge — this pass cleans those up.
+    def _fix_none_arrays(cfg, props):
+        for k, pschema in props.items():
+            if pschema.get('type') == 'array':
+                if isinstance(cfg, dict) and (k not in cfg or cfg[k] is None):
+                    cfg[k] = pschema.get('default', [])
+            elif pschema.get('type') == 'object' and 'properties' in pschema:
+                if isinstance(cfg, dict) and isinstance(cfg.get(k), dict):
+                    _fix_none_arrays(cfg[k], pschema['properties'])
+
+    if schema and 'properties' in schema and isinstance(plugin_config, dict):
+        _fix_none_arrays(plugin_config, schema['properties'])
+
+    # Ensure enabled state is preserved after defaults merge
+    # Defaults should not overwrite an explicitly preserved enabled value
+    if preserved_enabled is not None:
+        # Restore preserved value if it was changed by defaults merge
+        if plugin_config.get('enabled') != preserved_enabled:
+            plugin_config['enabled'] = preserved_enabled
+
+    # Normalize config data: convert string numbers to integers/floats where schema expects numbers
+    # This handles form data which sends everything as strings
+    def normalize_config_values(config, schema_props, prefix=''):
+        """Recursively normalize config values based on schema types"""
+        if not isinstance(config, dict) or not isinstance(schema_props, dict):
+            return config
+
+        normalized = {}
+        for key, value in config.items():
+            field_path = f"{prefix}.{key}" if prefix else key
+
+            if key not in schema_props:
+                # Field not in schema, keep as-is (will be caught by additionalProperties check if needed)
+                normalized[key] = value
+                continue
+
+            prop_schema = schema_props[key]
+            prop_type = prop_schema.get('type')
+
+            # Handle union types (e.g., ["integer", "null"])
+            if isinstance(prop_type, list):
+                # Check if null is allowed and value is empty/null
+                if 'null' in prop_type:
+                    # Handle various representations of null/empty
+                    if value is None:
+                        normalized[key] = None
+                        continue
+                    elif isinstance(value, str):
+                        # Strip whitespace and check for null representations
+                        value_stripped = value.strip()
+                        if value_stripped == '' or value_stripped.lower() in ('null', 'none', 'undefined'):
+                            normalized[key] = None
+                            continue
+
+                # Try to normalize based on non-null types in the union
+                # Check integer first (more specific than number)
+                if 'integer' in prop_type:
+                    if isinstance(value, str):
+                        value_stripped = value.strip()
+                        if value_stripped == '':
+                            # Empty string with null allowed - already handled above, but double-check
+                            if 'null' in prop_type:
+                                normalized[key] = None
+                                continue
+                        try:
+                            normalized[key] = int(value_stripped)
+                            continue
+                        except (ValueError, TypeError, OverflowError):
+                            pass
+                    elif isinstance(value, (int, float)):
+                        normalized[key] = int(value)
+                        continue
+
+                # Check number (less specific, but handles floats)
+                if 'number' in prop_type:
+                    if isinstance(value, str):
+                        value_stripped = value.strip()
+                        if value_stripped == '':
+                            # Empty string with null allowed - already handled above, but double-check
+                            if 'null' in prop_type:
+                                normalized[key] = None
+                                continue
+                        try:
+                            normalized[key] = float(value_stripped)
+                            continue
+                        except (ValueError, TypeError, OverflowError):
+                            pass
+                    elif isinstance(value, (int, float)):
+                        normalized[key] = float(value)
+                        continue
+
+                # Check boolean
+                if 'boolean' in prop_type:
+                    if isinstance(value, str):
+                        normalized[key] = value.strip().lower() in ('true', '1', 'on', 'yes')
+                        continue
+
+                # If no conversion worked and null is allowed, try to set to None
+                # This handles cases where the value is an empty string or can't be converted
+                if 'null' in prop_type:
+                    if isinstance(value, str):
+                        value_stripped = value.strip()
+                        if value_stripped == '' or value_stripped.lower() in ('null', 'none', 'undefined'):
+                            normalized[key] = None
+                            continue
+                    # If it's already None, keep it
+                    if value is None:
+                        normalized[key] = None
+                        continue
+
+                # If no conversion worked, keep original value (will fail validation, but that's expected)
+                # Log a warning for debugging
+                logger.warning(f"Could not normalize field {field_path}: value={repr(value)}, type={type(value)}, schema_type={prop_type}")
+                normalized[key] = value
+                continue
+
+            if isinstance(value, dict) and prop_type == 'object' and 'properties' in prop_schema:
+                # Recursively normalize nested objects
+                normalized[key] = normalize_config_values(value, prop_schema['properties'], field_path)
+            elif isinstance(value, list) and prop_type == 'array' and 'items' in prop_schema:
+                # Normalize array items
+                items_schema = prop_schema['items']
+                item_type = items_schema.get('type')
+
+                # Handle union types in array items
+                if isinstance(item_type, list):
+                    normalized_array = []
+                    for v in value:
+                        # Check if null is allowed
+                        if 'null' in item_type:
+                            if v is None or v == '' or (isinstance(v, str) and v.lower() in ('null', 'none')):
+                                normalized_array.append(None)
+                                continue
+
+                        # Try to normalize based on non-null types
+                        if 'integer' in item_type:
+                            if isinstance(v, str):
+                                try:
+                                    normalized_array.append(int(v))
+                                    continue
+                                except (ValueError, TypeError, OverflowError):
+                                    pass
+                            elif isinstance(v, (int, float)):
+                                normalized_array.append(int(v))
+                                continue
+                        elif 'number' in item_type:
+                            if isinstance(v, str):
+                                try:
+                                    normalized_array.append(float(v))
+                                    continue
+                                except (ValueError, TypeError, OverflowError):
+                                    pass
+                            elif isinstance(v, (int, float)):
+                                normalized_array.append(float(v))
+                                continue
+
+                        # If no conversion worked, keep original value
+                        normalized_array.append(v)
+                    normalized[key] = normalized_array
+                elif item_type == 'integer':
+                    # Convert string numbers to integers
+                    normalized_array = []
+                    for v in value:
+                        if isinstance(v, str):
+                            try:
+                                normalized_array.append(int(v))
+                            except (ValueError, TypeError, OverflowError):
+                                normalized_array.append(v)
+                        elif isinstance(v, (int, float)):
+                            normalized_array.append(int(v))
+                        else:
+                            normalized_array.append(v)
+                    normalized[key] = normalized_array
+                elif item_type == 'number':
+                    # Convert string numbers to floats
+                    normalized_array = []
+                    for v in value:
+                        if isinstance(v, str):
+                            try:
+                                normalized_array.append(float(v))
+                            except (ValueError, TypeError, OverflowError):
+                                normalized_array.append(v)
+                        else:
+                            normalized_array.append(v)
+                    normalized[key] = normalized_array
+                elif item_type == 'object' and 'properties' in items_schema:
+                    # Recursively normalize array of objects
+                    normalized_array = []
+                    for v in value:
+                        if isinstance(v, dict):
+                            normalized_array.append(
+                                normalize_config_values(v, items_schema['properties'], f"{field_path}[]")
+                            )
+                        else:
+                            normalized_array.append(v)
+                    normalized[key] = normalized_array
+                else:
+                    normalized[key] = value
+            elif prop_type == 'integer':
+                # Convert string to integer
+                if isinstance(value, str):
+                    try:
+                        normalized[key] = int(value)
+                    except (ValueError, TypeError, OverflowError):
+                        normalized[key] = value
+                else:
+                    normalized[key] = value
+            elif prop_type == 'number':
+                # Convert string to float
+                if isinstance(value, str):
+                    try:
+                        normalized[key] = float(value)
+                    except (ValueError, TypeError, OverflowError):
+                        normalized[key] = value
+                else:
+                    normalized[key] = value
+            elif prop_type == 'boolean':
+                # Convert string booleans
+                if isinstance(value, str):
+                    normalized[key] = value.lower() in ('true', '1', 'on', 'yes')
+                else:
+                    normalized[key] = value
+            else:
+                normalized[key] = value
+
+        return normalized
+
+    # Normalize config before validation
+    if schema and 'properties' in schema:
+        plugin_config = normalize_config_values(plugin_config, schema['properties'])
+
+    # Filter config to only include schema-defined fields (important when additionalProperties is false)
+    # Use enhanced schema with core properties to ensure core properties are preserved during filtering
+    if schema and 'properties' in schema:
+        enhanced_schema_for_filtering = _enhance_schema_with_core_properties(schema)
+        plugin_config = _filter_config_by_schema(plugin_config, enhanced_schema_for_filtering)
+
+    # Debug logging for union type fields (temporary)
+    if 'rotation_settings' in plugin_config and 'random_seed' in plugin_config.get('rotation_settings', {}):
+        seed_value = plugin_config['rotation_settings']['random_seed']
+        logger.debug(f"After normalization, random_seed value: {repr(seed_value)}, type: {type(seed_value)}")
+
+    # Validate configuration against schema before saving
+    if schema:
+        # Log what we're validating for debugging
+        logger.info(f"Validating config for {plugin_id}")
+        # Only the shape. plugin_config still holds the submitted secret
+        # values at this point -- separate_secrets does not run until
+        # below -- so logging it wrote live credentials to the journal.
+        logger.info(f"Config keys being validated: {list(plugin_config.keys())}")
+
+        # Schema keys including the injected core properties, for the error
+        enhanced_schema = _enhance_schema_with_core_properties(schema)
+
+        is_valid, validation_errors = schema_mgr.validate_config_against_schema(
+            plugin_config, schema, plugin_id
+        )
+        if not is_valid:
+            # Log validation errors for debugging
+            logger.error(f"Config validation failed for {plugin_id}")
+            logger.error(f"Validation errors: {validation_errors}")
+            # Keys only, for the same reason as above.
+            logger.error(f"Config keys that failed: {list(plugin_config.keys())}")
+            logger.error(f"Schema properties: {list(enhanced_schema.get('properties', {}).keys())}")
+
+            # Also print to console for immediate visibility
+            logger.warning("Config validation failed for plugin (see debug logs)")
+
+            return None, None, error_response(
+                ErrorCode.CONFIG_VALIDATION_FAILED,
+                'Configuration validation failed',
+                details='; '.join(validation_errors) if validation_errors else 'Unknown validation error',
+                context={
+                    'plugin_id': plugin_id,
+                    'validation_errors': validation_errors,
+                    'config_keys': list(plugin_config.keys()),
+                    'schema_keys': list(enhanced_schema.get('properties', {}).keys())
+                },
+                suggested_fixes=[
+                    'Review validation errors above',
+                    'Check config against schema',
+                    'Verify all required fields are present'
+                ],
+                status_code=400
+            )
+
+    # Separate secrets from regular config (handles nested configs and
+    # array-item secrets — see src/web_interface/secret_helpers.py)
+    regular_config, secrets_config = separate_secrets(plugin_config, secret_fields)
+    # The config form renders secrets masked, so every save posts
+    # them back blank. Without this the blank is merged over the
+    # stored value and the credential is destroyed by the act of
+    # changing an unrelated setting. A blank means "unchanged".
+    secrets_config = remove_empty_secrets(secrets_config)
+
+    return regular_config, secrets_config, None
+
+
 @api_v3.route('/plugins/schema', methods=['GET'])
 def get_plugin_schema():
     """Get plugin configuration schema"""

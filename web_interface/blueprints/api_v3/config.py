@@ -999,33 +999,34 @@ def save_main_config():
                 current_config['display']['display_durations'][mode_key] = int_value
 
         # Handle plugin configurations dynamically
-        # Any key that matches a plugin ID should be saved as plugin config
-        # This includes proper secret field handling from schema
+        # Any key that matches a plugin ID is that plugin's settings. They go
+        # through the same preparation as POST /plugins/config -- merged onto
+        # the stored section, legacy booleans and schema defaults applied,
+        # filtered, validated, secrets split out -- so this route can't store
+        # a config that one rejects (stored verbatim, it left the plugin
+        # flagged degraded at its next load).
         plugin_keys_to_remove = []
+        plugin_secrets_updates = {}
         for key in data:
             # Check if this key is a plugin ID
             if api_v3.plugin_manager and key in api_v3.plugin_manager.plugin_manifests:
                 plugin_id = key
-                plugin_config = data[key]
+                submitted_config = data[key]
+                if not isinstance(submitted_config, dict):
+                    return error_response(
+                        ErrorCode.VALIDATION_ERROR,
+                        f"Settings for plugin '{plugin_id}' must be a JSON object",
+                        status_code=400
+                    )
 
-                # Load plugin schema to identify secret fields (same logic as save_plugin_config)
-                secret_fields = set()
-                if api_v3.plugin_manager:
-                    plugins_dir = api_v3.plugin_manager.plugins_dir
-                else:
-                    plugin_system_config = current_config.get('plugin_system', {})
-                    plugins_dir_name = plugin_system_config.get('plugins_directory', 'plugin-repos')
-                    if os.path.isabs(plugins_dir_name):
-                        plugins_dir = Path(plugins_dir_name)
-                    else:
-                        plugins_dir = PROJECT_ROOT / plugins_dir_name
                 # plugin_id is already known to be a loaded plugin (the
                 # membership test above), so this cannot currently traverse --
                 # but the path is built from a request key, and the guard and
-                # the join are far enough apart that a later edit could
-                # separate them. Build it through the shared helper instead.
-                schema_path = resolve_under(plugins_dir, plugin_id, 'config_schema.json')
-
+                # the schema load are far enough apart that a later edit could
+                # separate them. Refuse rather than save without knowing which
+                # fields are secrets.
+                schema_path = resolve_under(api_v3.plugin_manager.plugins_dir,
+                                            plugin_id, 'config_schema.json')
                 if schema_path is None:
                     return error_response(
                         ErrorCode.VALIDATION_ERROR,
@@ -1033,77 +1034,48 @@ def save_main_config():
                         status_code=400
                     )
 
-                if schema_path.exists():
-                    try:
-                        with open(schema_path, 'r', encoding='utf-8') as f:
-                            schema = json.load(f)
-                            if 'properties' in schema:
-                                secret_fields = find_secret_fields(schema['properties'])
-                    except Exception as e:
-                        logger.debug("Error reading schema for secret detection: %s", e)
+                schema_mgr = api_v3.schema_manager
+                if not schema_mgr:
+                    return error_response(
+                        ErrorCode.SYSTEM_ERROR,
+                        'Schema manager not initialized',
+                        status_code=500
+                    )
+                schema = schema_mgr.load_schema(plugin_id, use_cache=False)
 
-                # Separate secrets from regular config (same logic as save_plugin_config)
-                regular_config, secrets_config = separate_secrets(plugin_config, secret_fields)
-                # The config form renders secrets masked, so every save posts
-                # them back blank. Without this the blank is merged over the
-                # stored value and the credential is destroyed by the act of
-                # changing an unrelated setting. A blank means "unchanged".
-                secrets_config = remove_empty_secrets(secrets_config)
-
-                # PRE-PROCESSING: Preserve 'enabled' state if not in regular_config
-                # This prevents overwriting the enabled state when saving config from a form that doesn't include the toggle
-                if 'enabled' not in regular_config:
-                    try:
-                        if plugin_id in current_config and 'enabled' in current_config[plugin_id]:
-                            regular_config['enabled'] = current_config[plugin_id]['enabled']
-                        elif api_v3.plugin_manager:
-                            # Fallback to plugin instance if config doesn't have it
-                            plugin_instance = api_v3.plugin_manager.get_plugin(plugin_id)
-                            if plugin_instance:
-                                regular_config['enabled'] = plugin_instance.enabled
-                        # Final fallback: default to True if plugin is loaded (matches BasePlugin default)
-                        if 'enabled' not in regular_config:
-                            regular_config['enabled'] = True
-                    except Exception as e:
-                        logger.debug("Error preserving enabled state: %s", e)
-                        # Default to True on error to avoid disabling plugins
-                        regular_config['enabled'] = True
-
-                # Get current secrets config
-                current_secrets = api_v3.config_manager.get_raw_file_content('secrets')
+                from web_interface.blueprints.api_v3.plugins import (
+                    _merge_onto_stored_plugin_config, _prepare_plugin_config_for_save,
+                )
+                plugin_config = _merge_onto_stored_plugin_config(
+                    plugin_id, submitted_config, current_config)
+                regular_config, secrets_config, error = _prepare_plugin_config_for_save(
+                    plugin_id, plugin_config, schema, schema_mgr, is_json=True)
+                if error:
+                    return error
 
                 # Deep merge regular config into main config
-                if plugin_id not in current_config:
-                    current_config[plugin_id] = {}
-                current_config[plugin_id] = deep_merge(current_config[plugin_id], regular_config)
-
-                # Deep merge secrets into secrets config
+                stored_section = current_config.get(plugin_id)
+                current_config[plugin_id] = deep_merge(
+                    stored_section if isinstance(stored_section, dict) else {}, regular_config)
                 if secrets_config:
-                    if plugin_id not in current_secrets:
-                        current_secrets[plugin_id] = {}
-                    # Lists merge by replacement, so deep_merge here wrote a
-                    # blanked array straight over the stored credentials.
-                    current_secrets[plugin_id] = merge_secrets(
-                        current_secrets[plugin_id], secrets_config)
-                    # Save secrets file
-                    api_v3.config_manager.save_raw_file_content('secrets', current_secrets)
+                    plugin_secrets_updates[plugin_id] = secrets_config
 
                 # Mark for removal from data dict (already processed)
                 plugin_keys_to_remove.append(key)
 
-                # Notify plugin of config change if loaded (with merged config including secrets)
-                try:
-                    if api_v3.plugin_manager:
-                        plugin_instance = api_v3.plugin_manager.get_plugin(plugin_id)
-                        if plugin_instance:
-                            # Reload merged config (includes secrets) and pass the plugin-specific section
-                            merged_config = api_v3.config_manager.load_config()
-                            plugin_full_config = merged_config.get(plugin_id, {})
-                            if hasattr(plugin_instance, 'on_config_change'):
-                                plugin_instance.on_config_change(plugin_full_config)
-                except Exception as hook_err:
-                    # Don't fail the save if hook fails
-                    logger.warning("on_config_change failed: %s", hook_err)
+        # Deep merge secrets into secrets config, once every plugin section
+        # has validated
+        if plugin_secrets_updates:
+            current_secrets = api_v3.config_manager.get_raw_file_content('secrets')
+            for plugin_id, secrets_config in plugin_secrets_updates.items():
+                if plugin_id not in current_secrets:
+                    current_secrets[plugin_id] = {}
+                # Lists merge by replacement, so deep_merge here wrote a
+                # blanked array straight over the stored credentials.
+                current_secrets[plugin_id] = merge_secrets(
+                    current_secrets[plugin_id], secrets_config)
+            # Save secrets file
+            api_v3.config_manager.save_raw_file_content('secrets', current_secrets)
 
         # Remove processed plugin keys from data (they're already in current_config)
         for key in plugin_keys_to_remove:
@@ -1151,6 +1123,19 @@ def save_main_config():
             invalidate_cache()
         except ImportError:
             pass
+
+        # Notify saved plugins of their new config (with secrets merged), now
+        # that it is on disk.
+        for plugin_id in plugin_keys_to_remove:
+            try:
+                plugin_instance = api_v3.plugin_manager.get_plugin(plugin_id)
+                if plugin_instance and hasattr(plugin_instance, 'on_config_change'):
+                    merged_config = api_v3.config_manager.load_config()
+                    plugin_instance.on_config_change(_pkg._prepared_plugin_config(
+                        plugin_id, merged_config.get(plugin_id, {})))
+            except Exception as hook_err:
+                # Don't fail the save if hook fails
+                logger.warning("on_config_change failed: %s", hook_err)
 
         message = 'Configuration saved successfully'
         # Switching automatic updates on finishes their setup, which needs

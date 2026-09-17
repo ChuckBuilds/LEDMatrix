@@ -22,7 +22,9 @@ from src.logging_config import get_logger
 from src.plugin_system.plugin_loader import PluginLoader
 from src.plugin_system.plugin_executor import PluginExecutor
 from src.plugin_system.plugin_state import PluginStateManager, PluginState
-from src.plugin_system.schema_manager import SchemaManager, normalize_legacy_booleans
+from src.plugin_system.schema_manager import (
+    CORE_VEGAS_TUNING_KEYS, SchemaManager, normalize_legacy_booleans,
+)
 from src.common.permission_utils import (
     ensure_directory_permissions,
     get_plugin_dir_mode
@@ -369,32 +371,11 @@ class PluginManager:
                         f"The schema may be invalid. Please verify the schema file at: {schema_path}"
                     )
 
-            # A plugin that turned an on/off boolean into an {enabled, ...}
-            # object still finds the boolean in config.json until the user saves
-            # its settings form, which carries it over (plugin_config.html).
-            # Read it the same way here, before the defaults fill in the rest
-            # of the object and before schema validation, so the plugin doesn't
-            # start with a schema warning and a degraded flag. In memory only:
-            # config.json is written by saves, never by loading a plugin.
-            if schema:
-                upgraded: List[str] = []
-                config = normalize_legacy_booleans(config, schema, upgraded)
-                if upgraded:
-                    self.logger.info(
-                        "Plugin %s: reading legacy boolean setting %s as "
-                        "{\"enabled\": ...}; saving the plugin's settings "
-                        "stores the new shape",
-                        plugin_id, ", ".join(upgraded),
-                    )
-
-            # Merge config with schema defaults to ensure all defaults are applied
-            try:
-                defaults = self.schema_manager.generate_default_config(plugin_id, use_cache=True)
-                config = self.schema_manager.merge_with_defaults(config, defaults)
-                self.logger.debug(f"Merged config with schema defaults for {plugin_id}")
-            except Exception as e:
-                self.logger.warning(f"Could not apply schema defaults for {plugin_id}: {e}")
-                # Continue with original config if defaults can't be applied
+            # Legacy booleans read as objects, then schema defaults: the same
+            # preparation saves, GET /plugins/config and hot reload apply
+            # (prepare_plugin_config). In memory only: config.json is written
+            # by saves, never by loading a plugin.
+            config = self.prepare_plugin_config(plugin_id, config, schema=schema)
             
             # Use PluginLoader to load plugin
             plugin_instance, module = self.plugin_loader.load_plugin(
@@ -489,11 +470,55 @@ class PluginManager:
     #:
     #: Read by: ``vegas_mode/plugin_adapter.py`` (``vegas_width_pct``,
     #: ``vegas_overflow``) and ``base_plugin.py`` (``vegas_max_width_screens``).
-    CORE_OWNED_CONFIG_KEYS = frozenset({
-        'vegas_width_pct',
-        'vegas_overflow',
-        'vegas_max_width_screens',
-    })
+    #:
+    #: The list itself lives with the other core-owned per-plugin properties in
+    #: ``schema_manager.CORE_PLUGIN_PROPERTIES``, which the web save path also
+    #: uses to keep these keys.
+    CORE_OWNED_CONFIG_KEYS = CORE_VEGAS_TUNING_KEYS
+
+    def prepare_plugin_config(self, plugin_id: str, config: Any,
+                              schema: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """The config a plugin runs with, built from its raw config.json section.
+
+        A plugin that turned an on/off boolean into an ``{enabled, ...}``
+        object still finds the boolean in config.json until its settings are
+        next saved; it is read as the object, and schema defaults fill in the
+        rest (``SchemaManager.prepare_plugin_config``). Used when loading a
+        plugin and on hot reload (DisplayController), so ``on_config_change``
+        receives the same shape the plugin was constructed with.
+
+        Never raises: on failure the legacy-boolean pass alone is applied, or
+        failing that the section is returned as it was.
+        """
+        if schema is None:
+            try:
+                schema = self.schema_manager.load_schema(plugin_id)
+            except Exception as e:
+                self.logger.debug("Could not load schema for %s: %s", plugin_id, e)
+                schema = None
+        upgraded: List[str] = []
+        try:
+            prepared = self.schema_manager.prepare_plugin_config(
+                plugin_id, config, schema=schema, changed_paths=upgraded)
+            self.logger.debug("Merged config with schema defaults for %s", plugin_id)
+        except Exception as e:
+            self.logger.warning("Could not apply schema defaults for %s: %s", plugin_id, e)
+            # Continue without defaults if they can't be applied
+            upgraded = []
+            prepared = config if isinstance(config, dict) else {}
+            if schema:
+                try:
+                    prepared = normalize_legacy_booleans(prepared, schema, upgraded)
+                except Exception:
+                    pass
+        if upgraded:
+            self.logger.info(
+                "Plugin %s: reading legacy boolean setting %s as "
+                "{\"enabled\": ...}; saving the plugin's settings "
+                "stores the new shape",
+                plugin_id, ", ".join(upgraded),
+            )
+        return prepared
 
     def _strip_core_owned_keys(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """A shallow copy of ``config`` without the core's own tuning keys.
