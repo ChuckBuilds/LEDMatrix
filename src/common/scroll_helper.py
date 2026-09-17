@@ -22,13 +22,6 @@ from typing import Optional, Dict, Any
 from PIL import Image
 import numpy as np
 
-# Try to import scipy for sub-pixel interpolation, fallback to simpler method if not available
-try:
-    from scipy.ndimage import shift
-    HAS_SCIPY = True
-except ImportError:
-    HAS_SCIPY = False
-
 
 # How often the frame-stats line is emitted, and therefore also the ceiling
 # on a believable frame time: a scroll that renders at all cannot take this
@@ -138,21 +131,22 @@ class ScrollHelper:
         # blend (blur) or repeat frames (judder); blending is the worse of the
         # two here. Vegas mode still opts in via set_sub_pixel_scrolling().
         self.sub_pixel_scrolling = False
-        self._last_integer_position = 0  # Cache for integer position to avoid repeated calculations
-        
+
         # Frame-based scrolling settings
         self.frame_based_scrolling = False
         #: Whole pixels to advance per presented frame, or None to pace
         #: off elapsed time. See set_pixels_per_frame.
-        self.fixed_pixels_per_frame = None  # If True, use scroll_delay to throttle and move scroll_speed pixels
-        self.last_step_time = 0.0  # Track last step time for frame-based throttling
-        
+        self.fixed_pixels_per_frame = None
+        self.last_step_time = 0.0  # Time of the last position update
+
         # Time tracking for scroll updates
         self.last_update_time: Optional[float] = None
-        
-        # High FPS settings
-        self.target_fps = 120  # Target 120 FPS for smooth scrolling
-        self.frame_time_target = 1.0 / self.target_fps
+
+        #: Informational only: the presentation rate scroll_config chose
+        #: (panel refresh / frame hold). Nothing paces off it -- the helper
+        #: steps per call and SwapOnVSync paces the calls. Kept because
+        #: plugins and their tests read it back.
+        self.target_fps = 120
         
         # Dynamic duration settings
         self.dynamic_duration_enabled = True
@@ -461,10 +455,9 @@ class ScrollHelper:
         Linear blend between the frames at ``start_x`` and ``start_x + 1``.
 
         Implemented with numpy rather than scipy.ndimage.shift: scipy is not
-        installed on the target devices (HAS_SCIPY is False there), which is why
-        the pre-existing sub-pixel path was dead code — get_visible_portion never
-        consulted the flag, and the scipy fallback would not have interpolated
-        anyway.
+        installed on the target devices, and the old scipy-based sub-pixel path
+        was dead code -- get_visible_portion never consulted the flag. The scipy
+        import was removed with it; installing scipy has no effect.
 
         Args:
             start_x: Left column of the earlier of the two frames
@@ -896,14 +889,19 @@ class ScrollHelper:
 
     def set_target_fps(self, fps: float) -> None:
         """
-        Set the target frames per second for scrolling.
-        
+        Record the presentation rate, for diagnostics only.
+
+        Nothing paces off this value: with a fixed per-frame step the helper
+        advances once per call, and without one it advances by elapsed time.
+        The rate frames are shown at is the panel refresh divided by the frame
+        hold passed to ``display_manager.set_scrolling_state``. scroll_config
+        sets it to that rate so it can be read back.
+
         Args:
-            fps: Target FPS (typically 30-200, default 120)
+            fps: Frames per second (clamped to 30-200)
         """
         self.target_fps = max(30.0, min(200.0, fps))
-        self.frame_time_target = 1.0 / self.target_fps
-        self.logger.debug(f"Target FPS set to: {self.target_fps} FPS (frame_time_target: {self.frame_time_target:.4f}s)")
+        self.logger.debug("Target FPS recorded: %s FPS (informational)", self.target_fps)
     
     def set_sub_pixel_scrolling(self, enabled: bool) -> None:
         """
@@ -914,7 +912,7 @@ class ScrollHelper:
         When disabled, uses integer pixel positioning (faster but may skip pixels).
         
         Args:
-            enabled: True to enable sub-pixel scrolling (default: True)
+            enabled: True to enable sub-pixel scrolling (default: False)
         """
         self.sub_pixel_scrolling = enabled
         self.logger.debug(f"Sub-pixel scrolling {'enabled' if enabled else 'disabled'}")
@@ -923,10 +921,12 @@ class ScrollHelper:
         """
         Enable or disable frame-based scrolling.
         
-        When enabled, update_scroll_position() respects scroll_delay and moves
-        scroll_speed pixels per step. This provides a "stepped" look similar to
-        traditional tickers and can be visually smoother on LED matrices.
-        
+        This does not step. When enabled, ``scroll_speed`` is read as pixels
+        per ``scroll_delay`` seconds (set_scroll_speed clamps it to 0.1-5), and
+        update_scroll_position() still advances by elapsed time at
+        ``scroll_speed / scroll_delay`` px/s. A fixed per-frame step set by
+        set_pixels_per_frame() takes precedence over both modes.
+
         Args:
             enabled: True to enable frame-based scrolling (default: False)
         """

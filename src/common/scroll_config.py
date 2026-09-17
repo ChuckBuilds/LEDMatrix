@@ -399,6 +399,9 @@ def configure(
     if hasattr(scroll_helper, "set_pixels_per_frame"):
         scroll_helper.set_pixels_per_frame(
             choice.pixels_per_frame if choice else None)
+    # Informational only: nothing in the helper paces off target_fps. It is
+    # still recorded because plugins read it back (ledmatrix-elections'
+    # test_scroll_pacing.py asserts it equals the crisp presentation rate).
     if choice and hasattr(scroll_helper, "set_target_fps"):
         scroll_helper.set_target_fps(choice.frames_per_second)
     elif settings.target_fps and hasattr(scroll_helper, "set_target_fps"):
