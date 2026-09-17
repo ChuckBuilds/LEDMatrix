@@ -190,9 +190,38 @@ def print_ladder(hz, highlight=None):
         ) else ""
         print("  " + entry.describe() + mark)
     print("")
-    print("Set one in config.json as pixels per second, e.g.")
-    print('  "display_options": {{"scroll_pixels_per_second": {:.0f}}}'.format(
-        scroll_config.solve_crisp(highlight if highlight else hz / 2, hz).pixels_per_second))
+    print_config_advice(scroll_config.solve_crisp(highlight if highlight else hz / 2, hz))
+
+
+def config_advice(choice):
+    """The config that selects ``choice``, in the keys the resolver honours.
+
+    Tickers take a ``scroll_speed`` (px per step) + ``scroll_delay`` (seconds)
+    pair, and scroll_config ranks that pair ABOVE ``scroll_pixels_per_second``
+    -- deliberately, because some plugins give the flat key a schema default.
+    Many schemas default the pair too, so a flat key added by hand is usually
+    ignored. Advise the pair: pixels_per_frame every frame_hold/refresh
+    seconds is exactly the crisp speed.
+    """
+    pair = {
+        "scroll_speed": choice.pixels_per_frame,
+        "scroll_delay": round(choice.frame_hold / choice.refresh_hz, 6),
+    }
+    scoreboard = {"scroll_speed": round(choice.pixels_per_second, 2)}
+    return pair, scoreboard
+
+
+def print_config_advice(choice):
+    pair, scoreboard = config_advice(choice)
+    print("To use {:.1f} px/s, set it where the plugin keeps its scroll speed.".format(
+        choice.pixels_per_second))
+    print("Tickers take a scroll_speed (px per step) + scroll_delay (seconds) pair:")
+    print('  "display_options": {}'.format(json.dumps(pair)))
+    print("(some plugins keep the pair at the top level or under \"display\").")
+    print("The pair outranks scroll_pixels_per_second, which is ignored whenever the")
+    print("pair is present -- and schema defaults usually put it there.")
+    print("Sports scoreboards take pixels per second per league instead:")
+    print('  "scroll_settings": {}'.format(json.dumps(scoreboard)))
 
 
 def main():

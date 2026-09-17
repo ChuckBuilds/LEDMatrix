@@ -96,3 +96,49 @@ def test_the_service_uses_the_shared_builder(test_config):
         finally:
             DisplayManager._instance = None
     shared.assert_called_once()
+
+
+class TestSpeedAdvice:
+    """The advice must name keys the resolver actually honours."""
+
+    def _advice(self, script, capsys, hz, want):
+        script.print_ladder(hz, want)
+        return capsys.readouterr().out
+
+    def test_advice_is_the_speed_delay_pair(self, script, capsys):
+        out = self._advice(script, capsys, 100.0, 60)
+        assert '"scroll_speed": 2' in out
+        assert '"scroll_delay": 0.03' in out
+
+    @pytest.mark.parametrize("hz,want", [(100.0, 60), (100.0, 50), (120.0, 45),
+                                         (60.0, 30), (100.0, None)])
+    def test_the_advised_pair_resolves_to_the_advised_speed(self, script, capsys,
+                                                            hz, want):
+        """Apply the printed pair over a schema-default pair, as a saved config
+        would carry it, and the resolver must land on the advertised speed."""
+        import json
+        import re
+
+        from src.common import scroll_config
+
+        out = self._advice(script, capsys, hz, want)
+        block = re.search(r'"display_options": (\{[^}]*\})', out)
+        assert block, out
+        advised = json.loads(block.group(1))
+        config = {"display_options": {"scroll_speed": 1.0, "scroll_delay": 0.02,
+                                      "scroll_pixels_per_second": 999,
+                                      **advised}}
+        expected = scroll_config.solve_crisp(want if want else hz / 2, hz)
+        settings = scroll_config.configure(
+            _Helper(), plugin_config=config, refresh_hz=hz)
+        assert settings.pixels_per_second == pytest.approx(expected.pixels_per_second)
+        assert settings.frame_hold == expected.frame_hold
+
+    def test_the_deprecated_key_is_not_recommended(self, script, capsys):
+        out = self._advice(script, capsys, 100.0, 60)
+        assert '"scroll_pixels_per_second":' not in out
+
+
+class _Helper:
+    def set_scroll_speed(self, speed):
+        pass
