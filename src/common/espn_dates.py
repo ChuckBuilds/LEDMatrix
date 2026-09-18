@@ -46,10 +46,9 @@ ESPN_MAX_LIMIT = 500
 # How long a rejected range keeps later ranges from being tried as ranges.
 RANGE_RETRY_SECONDS = 6 * 60 * 60
 
-# How many chunk requests may be in flight at once. A cold college-baseball
-# season is ~130 chunks once the busy months are re-asked day by day; asking
-# for them one at a time took long enough that scoreboard plugins blew the
-# 20s update() timeout on first run. Kept under requests' default
+# How many chunk requests may be in flight at once. Four busy months of
+# college baseball are ~130 chunks once each is re-asked day by day: 17.7s one
+# at a time on a Pi 4, 2.6-3.3s six at a time. Kept under requests' default
 # pool_maxsize of 10 so the shared Session never has to discard connections.
 ESPN_CHUNK_WORKERS = 6
 
