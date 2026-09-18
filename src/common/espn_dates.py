@@ -272,9 +272,10 @@ def fetch_espn_date_chunks(
 
     # A month that came back at the cap is truncated; its days replace it in
     # place, so merged events stay in chunk order however the requests raced.
-    slots: List[Any] = list(results)
+    slots: List[Any] = results
     capped: Dict[int, List[str]] = {}
-    for index, (chunk, payload) in enumerate(zip(chunks, results)):
+    for index, chunk in enumerate(chunks):
+        payload = slots[index]
         if payload is None or len(chunk) != 6:
             continue
         events = payload.get("events") if isinstance(payload, dict) else None
@@ -285,6 +286,13 @@ def fetch_espn_date_chunks(
                     chunk, ESPN_MAX_LIMIT,
                 )
             capped[index] = _days_of_month(chunk)
+            # Drop the truncated month now rather than after its days arrive:
+            # a capped college-baseball month is ~2MB of parsed JSON, and
+            # holding four of them through ~120 day requests added ~25MB to
+            # the peak -- more than the concurrency itself. Low-memory boards
+            # (docs/LOW_MEMORY_BOARDS.md) have under 200MB of headroom.
+            slots[index] = None
+    payload = events = None
 
     if capped:
         days = [day for index in sorted(capped) for day in capped[index]]
