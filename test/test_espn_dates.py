@@ -12,6 +12,8 @@ Nothing here touches the network. The fake session records what a caller would
 have sent, which is the part that regressed.
 """
 
+import threading
+import time
 from datetime import date, timedelta
 
 import pytest
@@ -245,7 +247,10 @@ class TestFetch:
         )
         assert [e["id"] for e in data["events"]] == ["a", "b", "c"]
         sent = [call["dates"] for call in session.calls]
-        assert sent == ["20260901-20261001", "202609", "20261001"]
+        # Chunks race, so only the rejected range is pinned to a position --
+        # the merged event order above is what has to stay deterministic.
+        assert sent[0] == "20260901-20261001"
+        assert sorted(sent[1:]) == ["202609", "20261001"]
 
     def test_chunk_requests_keep_the_clamped_limit(self):
         session = FakeSession({"202609": []})
@@ -301,9 +306,11 @@ class TestMonthCap:
 
         data = fetch_espn_date_chunks(session, URL, params={"dates": "20260301-20260331"})
 
-        assert [call["dates"] for call in session.calls] == ["202603"] + [
-            "202603%02d" % day for day in range(1, 32)
-        ]
+        sent = [call["dates"] for call in session.calls]
+        # The month has to be asked before its days can be known to be needed;
+        # the days themselves race, so compare them as a set.
+        assert sent[0] == "202603"
+        assert sorted(sent[1:]) == ["202603%02d" % day for day in range(1, 32)]
         # The truncated month payload is dropped, not merged with the days.
         assert [event["id"] for event in data["events"]] == [
             "d%d" % day for day in range(1, 32)
@@ -370,3 +377,115 @@ class TestRejectedRangeMemo:
         with pytest.raises(RuntimeError):
             fetch_espn_scoreboard(session, URL, params={"dates": "20260914-20260915"})
         assert session.calls[-1]["dates"] == "20260914-20260915"
+
+
+class TestConcurrency:
+    """Chunks go out in parallel, which must not change what comes back.
+
+    A cold college-baseball season is ~130 chunks once February through May
+    are re-asked day by day. Sequentially that outran the 20s plugin update()
+    timeout on a Pi, so the requests now overlap -- but the merged payload has
+    to stay exactly what the sequential version produced.
+    """
+
+    def test_events_keep_chunk_order_however_the_requests_race(self):
+        # Answer the later chunks fastest, so completion order is the reverse
+        # of chunk order and a naive gather would interleave them wrongly.
+        class RacingSession(FakeSession):
+            def get(self, url, params=None, headers=None, timeout=None):
+                dates = str((params or {}).get("dates", ""))
+                if len(dates) == 6:
+                    time.sleep(0.02 / (int(dates[4:]) or 1))
+                return super().get(url, params=params, headers=headers, timeout=timeout)
+
+        session = RacingSession(
+            {
+                "202609": [{"id": "sep"}],
+                "202610": [{"id": "oct"}],
+                "202611": [{"id": "nov"}],
+            }
+        )
+        data = fetch_espn_date_chunks(
+            session, URL, params={"dates": "20260901-20261130"}
+        )
+        assert [event["id"] for event in data["events"]] == ["sep", "oct", "nov"]
+
+    def test_a_capped_month_splices_its_days_in_place(self):
+        # October is capped and expands to 31 days; September and November
+        # must still bracket those days in the merged result.
+        full = [{"id": "cap%d" % i} for i in range(ESPN_MAX_LIMIT)]
+        by_chunk = {
+            "202609": [{"id": "sep"}],
+            "202610": full,
+            "202611": [{"id": "nov"}],
+        }
+        by_chunk.update(
+            {"202610%02d" % day: [{"id": "oct%02d" % day}] for day in range(1, 32)}
+        )
+        session = FakeSession(by_chunk)
+
+        data = fetch_espn_date_chunks(
+            session, URL, params={"dates": "20260901-20261130"}
+        )
+
+        expected = ["sep"] + ["oct%02d" % day for day in range(1, 32)] + ["nov"]
+        assert [event["id"] for event in data["events"]] == expected
+
+    def test_two_capped_months_expand_without_crossing_over(self):
+        full = [{"id": "cap%d" % i} for i in range(ESPN_MAX_LIMIT)]
+        by_chunk = {"202609": full, "202610": full}
+        by_chunk.update(
+            {"202609%02d" % day: [{"id": "s%02d" % day}] for day in range(1, 31)}
+        )
+        by_chunk.update(
+            {"202610%02d" % day: [{"id": "o%02d" % day}] for day in range(1, 32)}
+        )
+        session = FakeSession(by_chunk)
+
+        data = fetch_espn_date_chunks(
+            session, URL, params={"dates": "20260901-20261031"}
+        )
+
+        expected = ["s%02d" % day for day in range(1, 31)] + [
+            "o%02d" % day for day in range(1, 32)
+        ]
+        assert [event["id"] for event in data["events"]] == expected
+
+    def test_a_failed_day_inside_a_capped_month_only_costs_that_day(self):
+        full = [{"id": "cap%d" % i} for i in range(ESPN_MAX_LIMIT)]
+        by_chunk = {"202610": full}
+        by_chunk.update(
+            {"202610%02d" % day: [{"id": "o%02d" % day}] for day in range(1, 32)}
+        )
+        session = FakeSession(by_chunk, fail_chunks={"20261015"})
+
+        data = fetch_espn_date_chunks(
+            session, URL, params={"dates": "20261001-20261031"}
+        )
+
+        expected = ["o%02d" % day for day in range(1, 32) if day != 15]
+        assert [event["id"] for event in data["events"]] == expected
+
+    def test_no_more_than_the_worker_cap_are_in_flight_at_once(self):
+        live = {"now": 0, "peak": 0}
+        guard = threading.Lock()
+
+        class CountingSession(FakeSession):
+            def get(self, url, params=None, headers=None, timeout=None):
+                with guard:
+                    live["now"] += 1
+                    live["peak"] = max(live["peak"], live["now"])
+                try:
+                    time.sleep(0.01)
+                    return super().get(
+                        url, params=params, headers=headers, timeout=timeout
+                    )
+                finally:
+                    with guard:
+                        live["now"] -= 1
+
+        session = CountingSession()
+        fetch_espn_date_chunks(session, URL, params={"dates": "20260101-20261231"})
+
+        assert live["peak"] <= espn_dates.ESPN_CHUNK_WORKERS
+        assert live["peak"] > 1, "chunks should actually overlap"
