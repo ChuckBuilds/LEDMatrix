@@ -40,6 +40,14 @@ Config saves and plugin config preparation:
   the object, posting it back saves, and hot reload hands plugins the same
   shape (schema defaults included) they were constructed with.
   `schema_manager.prepare_plugin_config` is the one implementation.
+- A plugin's settings tab shows schema defaults for options its saved config
+  doesn't have yet. A boolean added with `"default": true` in a plugin update
+  (geochron 1.2.0's `show_date` and `show_date_line`) used to render unchecked,
+  and the next save of that tab stored it as `false`. Enum dropdowns likewise
+  showed their first option instead of the default. The partial now runs the
+  stored section through `prepare_plugin_config` like `GET /plugins/config`
+  (secrets are still masked, after the merge), and the form falls back to a
+  field's own `default` inside objects that declare a default of their own.
 - `scripts/dev_server.py`, `check_plugin.py`, `render_plugin.py` and the plugin
   harness build configs the way a device does: nested defaults are included,
   a schema `enabled: false` no longer beats the forced `enabled: true` in the
