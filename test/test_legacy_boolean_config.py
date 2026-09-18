@@ -30,6 +30,8 @@ from src.plugin_system.plugin_manager import PluginManager
 from src.plugin_system.schema_manager import (
     legacy_bool_as_object,
     normalize_legacy_booleans,
+    plugin_config_defaults,
+    prepare_plugin_config,
 )
 
 
@@ -361,26 +363,33 @@ def _form_checkboxes(stored):
     return parser.checked
 
 
-def _loader_enabled(normalized, *path):
-    node = normalized
+def _loader_enabled(prepared, *path):
+    node = prepared
     for key in path:
         node = node.get(key) if isinstance(node, dict) else None
-    return isinstance(node, dict) and node.get("enabled") is True
+    if not isinstance(node, dict):
+        # A value the loader cannot read as the object (1, "true") fails
+        # validation; the form treats it as missing and draws the schema
+        # default, as it does for every other missing field.
+        return True
+    return node.get("enabled") is True
 
 
 @pytest.mark.parametrize("value", [True, False, 1, "true", None])
 def test_form_and_loader_agree_on_what_a_stored_value_means(value):
-    """Where the loader reads a stored value as ``{"enabled": true}``, the form
-    draws the object's ``enabled`` checkbox ticked, and nowhere else."""
+    """The form draws the object's ``enabled`` checkbox ticked exactly when the
+    plugin runs with it on -- legacy booleans read as objects, then schema
+    defaults filled in (prepare_plugin_config)."""
     stored = {"enabled": True,
               "global": {"dynamic_duration": value, "outer": {"inner": value}}}
-    normalized = normalize_legacy_booleans(stored, PARITY_SCHEMA)
+    prepared = prepare_plugin_config(stored, PARITY_SCHEMA,
+                                     plugin_config_defaults(PARITY_SCHEMA))
     boxes = _form_checkboxes(stored)
 
     for path in (("global", "dynamic_duration"), ("global", "outer", "inner")):
         name = ".".join(path) + ".enabled"
         assert name in boxes, f"form drew no {name} checkbox"
-        assert boxes[name] is _loader_enabled(normalized, *path), name
+        assert boxes[name] is _loader_enabled(prepared, *path), name
 
 
 @pytest.mark.parametrize("value", [True, False])

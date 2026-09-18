@@ -13,6 +13,7 @@ _SAFE_WEB_UI_FILE_RE = re.compile(r'^[a-zA-Z0-9_-]{1,64}\.html$')
 _SAFE_WIDGET_NAME_RE = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
 _SAFE_WIDGET_SCRIPT_RE = re.compile(r'^[a-zA-Z0-9_-]{1,64}\.js$')
 from src.web_interface.secret_helpers import mask_secret_fields
+from src.plugin_system.schema_manager import plugin_config_defaults, prepare_plugin_config
 from src.common.path_safety import resolve_under, safe_path_component
 from src.pi5_matrix_support import is_raspberry_pi_5
 from web_interface import widget_bundle
@@ -917,10 +918,25 @@ def _load_plugin_config_partial(plugin_id):
             except Exception as e:
                 logger.warning("Could not load manifest for plugin: %s", e)
         
-        # Mask secret fields before rendering template (fail closed — never leak secrets)
         schema_properties = schema.get('properties') if isinstance(schema, dict) else None
         if not isinstance(schema_properties, dict):
             return '<div class="text-red-500 p-4">Error loading plugin config securely: schema unavailable.</div>', 500
+
+        # Fill in schema defaults for keys the saved config doesn't have yet,
+        # as GET /api/v3/plugins/config does. Without this, an option added in
+        # a plugin update (geochron 1.2.0's show_date, default true) renders
+        # as an unchecked box, and because the save treats every drawn but
+        # unposted checkbox as false, the first save turns it off for good.
+        try:
+            defaults = plugin_config_defaults(schema)
+            if schema_mgr is not None:
+                defaults = schema_mgr.apply_device_location(defaults)
+            config = prepare_plugin_config(config, schema, defaults)
+        except Exception as e:
+            logger.warning("Could not merge schema defaults for %s: %s", plugin_id, e)
+
+        # Mask secret fields before rendering template (fail closed — never
+        # leak secrets). After the merge, so a secret's default is masked too.
         config = mask_secret_fields(config, schema_properties)
 
         # Determine enabled status

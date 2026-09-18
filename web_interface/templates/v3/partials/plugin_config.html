@@ -29,6 +29,11 @@
 
 {% macro render_field(key, prop, value, prefix='', plugin_id='') %}
     {% if not prop_is_hidden(prop)|trim %}
+    {# A key the saved config doesn't have renders its schema default. The
+       route merges defaults first, but that merge stops at an object that
+       declares its own default (often {}), leaving its children missing here.
+       Booleans matter most: an unchecked box saves as false. #}
+    {% if value is none and prop.default is defined %}{% set value = prop.default %}{% endif %}
     {% set full_key = (prefix ~ '.' ~ key) if prefix else key %}
     {% set field_id = (plugin_id ~ '-' ~ full_key)|replace('.', '-')|replace('_', '-') %}
     {% set label = prop.title if prop.title else key|replace('_', ' ')|title %}
