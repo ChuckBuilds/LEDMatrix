@@ -362,7 +362,7 @@ class TestLiveMixin:
         h = self._idle_host()
         soon = datetime.now(timezone.utc) + timedelta(minutes=20)
         h._note_scheduled_start_candidate({"is_live": False, "start_time_utc": soon})
-        assert h._next_scheduled_start_ts == pytest.approx(soon.timestamp())
+        assert h._next_scheduled_start_ts == pytest.approx(soon.timestamp(), abs=1)
 
     def test_the_earliest_pending_game_wins(self):
         h = self._idle_host()
@@ -370,10 +370,10 @@ class TestLiveMixin:
         sooner = datetime.now(timezone.utc) + timedelta(minutes=30)
         h._note_scheduled_start_candidate({"start_time_utc": later})
         h._note_scheduled_start_candidate({"start_time_utc": sooner})
-        assert h._next_scheduled_start_ts == pytest.approx(sooner.timestamp())
+        assert h._next_scheduled_start_ts == pytest.approx(sooner.timestamp(), abs=1)
         # ... and a later one does not push the stored kickoff back out.
         h._note_scheduled_start_candidate({"start_time_utc": later})
-        assert h._next_scheduled_start_ts == pytest.approx(sooner.timestamp())
+        assert h._next_scheduled_start_ts == pytest.approx(sooner.timestamp(), abs=1)
 
     def test_a_live_game_is_not_a_kickoff_to_wait_for(self):
         h = self._idle_host()
@@ -395,7 +395,7 @@ class TestLiveMixin:
         h._next_scheduled_start_ts = time.time() - 10_000
         later = datetime.now(timezone.utc) + timedelta(hours=3)
         h._note_scheduled_start_candidate({"start_time_utc": later})
-        assert h._next_scheduled_start_ts == pytest.approx(later.timestamp())
+        assert h._next_scheduled_start_ts == pytest.approx(later.timestamp(), abs=1)
 
     def test_junk_candidates_are_ignored_rather_than_raising(self):
         h = self._idle_host()
@@ -443,16 +443,27 @@ class TestLiveMixin:
         h._next_scheduled_start_ts = time.time() - (sports_shared._KICKOFF_GRACE_SECONDS + 60)
         later = datetime.now(timezone.utc) + timedelta(hours=3)
         h._note_scheduled_start_candidate({"start_time_utc": later})
-        assert h._next_scheduled_start_ts == pytest.approx(later.timestamp())
+        assert h._next_scheduled_start_ts == pytest.approx(later.timestamp(), abs=1)
 
-    def test_an_earlier_kickoff_still_wins_during_the_grace(self):
-        # A game starting in ten minutes must still displace one that kicked
-        # off a moment ago -- the grace must not pin us to the past.
+    def test_a_nearer_kickoff_does_not_dislodge_the_grace(self):
+        # A game ten minutes out does NOT displace one that kicked off moments
+        # ago, and that is deliberate: while the grace holds we poll at the live
+        # cadence, which is strictly tighter than anything clamping to the
+        # nearer kickoff would give. Letting the candidate win here would set
+        # the wait to ~600s at the exact moment games are starting -- the dead
+        # grace window this change exists to fix.
+        #
+        # The original form of this test asserted the opposite and still passed,
+        # because pytest.approx's default tolerance on a unix timestamp is about
+        # 1790 seconds. Every timestamp assertion here now pins abs=1.
         h = self._idle_host()
-        h._next_scheduled_start_ts = time.time() - 45
+        passed = time.time() - 45
+        h._next_scheduled_start_ts = passed
         soon = datetime.now(timezone.utc) + timedelta(minutes=10)
         h._note_scheduled_start_candidate({"start_time_utc": soon})
-        assert h._next_scheduled_start_ts == pytest.approx(soon.timestamp())
+        assert h._next_scheduled_start_ts == pytest.approx(passed, abs=1)
+        # The safety property that makes it correct: 30s beats 600s.
+        assert h._idle_live_interval() == h.update_interval
 
     def test_finding_a_live_game_resets_the_streak(self):
         h = _LiveHost()
