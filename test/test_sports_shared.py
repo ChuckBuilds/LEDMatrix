@@ -21,8 +21,10 @@ and by 176 byte-identical safety-harness renders. What is genuinely new is:
 import ast
 import os
 import sys
+import time
 import types
 from abc import ABC
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -304,6 +306,153 @@ class TestLiveMixin:
         assert h._idle_live_interval() == 900
         h._empty_live_streak = 24
         assert h._idle_live_interval() == 900
+
+    # ---- the back-off must not sleep through a kickoff -------------------
+    #
+    # The escalation counts empty looks and nothing else, so an in-season
+    # league a few hours before kickoff looks identical to one months out of
+    # season. Both reach the ceiling, and the ceiling then becomes the blind
+    # spot. Measured on two rigs on 2026-09-19: gaps of up to 928s between
+    # looks, ten of them at or above 900s. That is the "it doesn't pick up new
+    # live games until I restart it" report -- restarting being the one thing
+    # that forces an immediate look.
+
+    def _idle_host(self, streak=24, no_data_interval=300, ceiling=900):
+        h = _LiveHost(no_data_interval=no_data_interval)
+        h.live_idle_max_interval = ceiling
+        h.update_interval = 30
+        h._empty_live_streak = streak
+        return h
+
+    def test_without_a_known_kickoff_the_escalation_is_unchanged(self):
+        h = self._idle_host()
+        assert h._idle_live_interval() == 900
+
+    def test_the_wait_never_runs_past_a_known_kickoff(self):
+        h = self._idle_host()
+        h._next_scheduled_start_ts = time.time() + 120
+        # 900s would sleep straight through a kickoff 2 minutes out.
+        assert 30 <= h._idle_live_interval() <= 120
+
+    def test_a_distant_kickoff_does_not_shorten_the_wait(self):
+        h = self._idle_host()
+        h._next_scheduled_start_ts = time.time() + 6 * 3600
+        assert h._idle_live_interval() == 900
+
+    def test_the_wait_never_drops_below_the_live_cadence(self):
+        # A kickoff one second away must not turn into a one-second poll.
+        h = self._idle_host()
+        h._next_scheduled_start_ts = time.time() + 1
+        assert h._idle_live_interval() == h.update_interval
+
+    def test_just_after_kickoff_it_holds_the_live_cadence(self):
+        # ESPN does not flip a game to in-progress exactly at kickoff, and
+        # each early look would otherwise escalate the back-off further,
+        # precisely when the game is starting.
+        h = self._idle_host()
+        h._next_scheduled_start_ts = time.time() - 60
+        assert h._idle_live_interval() == h.update_interval
+
+    def test_long_after_a_kickoff_the_escalation_returns(self):
+        h = self._idle_host()
+        h._next_scheduled_start_ts = time.time() - (sports_shared._KICKOFF_GRACE_SECONDS + 60)
+        assert h._idle_live_interval() == 900
+
+    def test_a_pending_game_is_recorded_as_the_next_kickoff(self):
+        h = self._idle_host()
+        soon = datetime.now(timezone.utc) + timedelta(minutes=20)
+        h._note_scheduled_start_candidate({"is_live": False, "start_time_utc": soon})
+        assert h._next_scheduled_start_ts == pytest.approx(soon.timestamp())
+
+    def test_the_earliest_pending_game_wins(self):
+        h = self._idle_host()
+        later = datetime.now(timezone.utc) + timedelta(hours=4)
+        sooner = datetime.now(timezone.utc) + timedelta(minutes=30)
+        h._note_scheduled_start_candidate({"start_time_utc": later})
+        h._note_scheduled_start_candidate({"start_time_utc": sooner})
+        assert h._next_scheduled_start_ts == pytest.approx(sooner.timestamp())
+        # ... and a later one does not push the stored kickoff back out.
+        h._note_scheduled_start_candidate({"start_time_utc": later})
+        assert h._next_scheduled_start_ts == pytest.approx(sooner.timestamp())
+
+    def test_a_live_game_is_not_a_kickoff_to_wait_for(self):
+        h = self._idle_host()
+        start = datetime.now(timezone.utc) + timedelta(minutes=5)
+        h._note_scheduled_start_candidate({"is_live": True, "start_time_utc": start})
+        h._note_scheduled_start_candidate({"is_halftime": True, "start_time_utc": start})
+        assert getattr(h, "_next_scheduled_start_ts", None) is None
+
+    def test_a_start_already_past_is_not_recorded(self):
+        h = self._idle_host()
+        gone = datetime.now(timezone.utc) - timedelta(minutes=5)
+        h._note_scheduled_start_candidate({"start_time_utc": gone})
+        assert getattr(h, "_next_scheduled_start_ts", None) is None
+
+    def test_a_stored_kickoff_that_passed_is_replaced_not_pinned(self):
+        # A postponed game must not hold the cadence to a kickoff that never
+        # happens; the next candidate offered replaces it.
+        h = self._idle_host()
+        h._next_scheduled_start_ts = time.time() - 10_000
+        later = datetime.now(timezone.utc) + timedelta(hours=3)
+        h._note_scheduled_start_candidate({"start_time_utc": later})
+        assert h._next_scheduled_start_ts == pytest.approx(later.timestamp())
+
+    def test_junk_candidates_are_ignored_rather_than_raising(self):
+        h = self._idle_host()
+        for junk in (None, "not-a-dict", 42, {}, {"start_time_utc": None},
+                     {"start_time_utc": "2026-09-20T13:00Z"},
+                     {"start_time_utc": object()}):
+            h._note_scheduled_start_candidate(junk)
+        assert getattr(h, "_next_scheduled_start_ts", None) is None
+
+    def test_a_host_without_update_interval_still_clamps(self):
+        # The mixin documents no update_interval requirement.
+        h = _LiveHost(no_data_interval=300)
+        h.live_idle_max_interval = 900
+        h._empty_live_streak = 24
+        h._next_scheduled_start_ts = time.time() - 60
+        assert h._idle_live_interval() == sports_shared._KICKOFF_POLL_FLOOR
+
+    # The regression the 2026-09-20 soak caught: these two methods have to be
+    # tested together. Set _next_scheduled_start_ts by hand and the grace
+    # window looks fine; drive it through the candidate logic the way the live
+    # loop does, and the just-passed kickoff was replaced by the next one on
+    # the card, `now < start` went true again, and the back-off returned to its
+    # ceiling at exactly the wrong moment.
+
+    def test_a_just_passed_kickoff_is_not_replaced_by_the_next_one(self):
+        h = self._idle_host()
+        now = time.time()
+        h._next_scheduled_start_ts = now - 45          # kicked off 45s ago
+        later = datetime.now(timezone.utc) + timedelta(hours=3)
+        h._note_scheduled_start_candidate({"start_time_utc": later})
+        assert h._next_scheduled_start_ts == pytest.approx(now - 45, abs=1)
+
+    def test_and_so_the_grace_window_actually_fires(self):
+        # The end-to-end property: a kickoff moments ago keeps the live cadence
+        # even while the rest of the day's card is being offered.
+        h = self._idle_host()
+        h._next_scheduled_start_ts = time.time() - 45
+        for hours in (3, 4, 7):
+            h._note_scheduled_start_candidate(
+                {"start_time_utc": datetime.now(timezone.utc) + timedelta(hours=hours)})
+        assert h._idle_live_interval() == h.update_interval
+
+    def test_once_the_grace_expires_the_next_kickoff_takes_over(self):
+        h = self._idle_host()
+        h._next_scheduled_start_ts = time.time() - (sports_shared._KICKOFF_GRACE_SECONDS + 60)
+        later = datetime.now(timezone.utc) + timedelta(hours=3)
+        h._note_scheduled_start_candidate({"start_time_utc": later})
+        assert h._next_scheduled_start_ts == pytest.approx(later.timestamp())
+
+    def test_an_earlier_kickoff_still_wins_during_the_grace(self):
+        # A game starting in ten minutes must still displace one that kicked
+        # off a moment ago -- the grace must not pin us to the past.
+        h = self._idle_host()
+        h._next_scheduled_start_ts = time.time() - 45
+        soon = datetime.now(timezone.utc) + timedelta(minutes=10)
+        h._note_scheduled_start_candidate({"start_time_utc": soon})
+        assert h._next_scheduled_start_ts == pytest.approx(soon.timestamp())
 
     def test_finding_a_live_game_resets_the_streak(self):
         h = _LiveHost()

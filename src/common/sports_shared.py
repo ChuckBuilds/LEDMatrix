@@ -99,6 +99,13 @@ _IDLE_LONG_STREAK = 24
 _IDLE_LONG_FACTOR = 6
 _DEFAULT_LIVE_IDLE_MAX_SECONDS = 900
 
+#: How long after a scheduled start to keep looking on the live cadence. ESPN
+#: does not flip a game to in-progress exactly at kickoff, and an escalated
+#: back-off treats each of those early looks as another empty one.
+_KICKOFF_GRACE_SECONDS = 900
+#: Fallback cadence around a kickoff when the manager has no update_interval.
+_KICKOFF_POLL_FLOOR = 30
+
 
 def _resolve_font_path(path: str) -> str:
     """Resolve a bundled font path without depending on the process cwd.
@@ -1310,6 +1317,11 @@ class SportsLiveSharedMixin:
         Capped rather than unbounded: the cost of backing off is how late the
         first game after a quiet spell is noticed, and past the cap the saving
         stops being worth that.
+
+        The escalation is then clamped by the next kickoff the league already
+        knows about -- see _clamp_to_scheduled_start. Without that clamp the cap
+        *is* the miss: a league idle overnight reaches the ceiling, and the
+        first game of the next day is not noticed for up to that long.
         """
         streak = getattr(self, "_empty_live_streak", 0)
         base = self.no_data_interval
@@ -1321,10 +1333,87 @@ class SportsLiveSharedMixin:
         # *shrink* as the streak grew (3600s at streak 0, 900s at streak 24),
         # the opposite of what the setting named "maximum" promises.
         if streak >= _IDLE_LONG_STREAK:
-            return min(int(base * _IDLE_LONG_FACTOR), ceiling)
-        if streak >= _IDLE_SHORT_STREAK:
-            return min(int(base * _IDLE_SHORT_FACTOR), ceiling)
-        return min(base, ceiling)
+            interval = min(int(base * _IDLE_LONG_FACTOR), ceiling)
+        elif streak >= _IDLE_SHORT_STREAK:
+            interval = min(int(base * _IDLE_SHORT_FACTOR), ceiling)
+        else:
+            interval = min(base, ceiling)
+        return self._clamp_to_scheduled_start(interval)
+
+    def _clamp_to_scheduled_start(self, interval: int) -> int:
+        """Shorten an idle wait that would sleep through a known kickoff.
+
+        The back-off counts consecutive empty looks and nothing else, so it
+        cannot tell an out-of-season league from an in-season one a few hours
+        before kickoff. Both reach the ceiling, and the ceiling then becomes the
+        blind spot: measured on two rigs on 2026-09-19, gaps of up to 928s
+        between looks, 10 of them at or above 900s. A game starting inside such
+        a gap is not noticed until it ends -- which is the "it doesn't pick up
+        new live games until I restart it" report, restarting being the one
+        thing that forces an immediate look.
+
+        The fix costs no extra request: the live fetch already downloads the
+        whole day's scoreboard, upcoming games included, and
+        _note_scheduled_start_candidate keeps the earliest start still ahead of
+        us out of exactly that payload.
+
+        Two cases, either side of the kickoff:
+
+        * before it -- wait at most until it starts, never past it;
+        * just after it -- hold the live cadence for _KICKOFF_GRACE_SECONDS,
+          because a provider that has not yet flipped the status would
+          otherwise look like another empty check and escalate the back-off
+          again, right when the game is actually starting.
+        """
+        start = getattr(self, "_next_scheduled_start_ts", None)
+        if not start:
+            return interval
+        live = getattr(self, "update_interval", None) or _KICKOFF_POLL_FLOOR
+        now = time.time()
+        if now < start:
+            return max(live, min(interval, int(start - now)))
+        if now - start <= _KICKOFF_GRACE_SECONDS:
+            return live
+        return interval
+
+    def _note_scheduled_start_candidate(self, details) -> None:
+        """Offer a game from the current look as the next kickoff to wake for.
+
+        Called for every event the live fetch returns, live or not, so the
+        earliest start still ahead of us falls out of the payload the manager
+        already has. Self-correcting: a stored start that has passed is
+        replaced by the next one offered, so a postponed game cannot pin the
+        cadence to a kickoff that never happens.
+        """
+        if not isinstance(details, dict):
+            return
+        if details.get("is_live") or details.get("is_halftime"):
+            return
+        start = details.get("start_time_utc")
+        timestamp = getattr(start, "timestamp", None)
+        if timestamp is None:
+            return
+        try:
+            candidate = float(timestamp())
+        except (TypeError, ValueError, OSError, OverflowError):
+            return
+        now = time.time()
+        if candidate <= now:
+            return
+        current = getattr(self, "_next_scheduled_start_ts", None)
+        # A kickoff that has only just passed is *kept*, not replaced by the
+        # next one on the card. Replacing it immediately is what made the grace
+        # window in _clamp_to_scheduled_start dead code: the moment 13:00 came
+        # round, the stored start jumped to the 16:05 games, `now < start` went
+        # true again, and the back-off returned to its ceiling -- at exactly the
+        # moment the games were starting. Observed live on 2026-09-20: the rig
+        # polled at 13:00:45, found nothing live because ESPN had not flipped
+        # the status yet, and then went quiet for the next quarter of an hour,
+        # which is the behaviour this whole clamp exists to prevent.
+        if (current is None
+                or current <= now - _KICKOFF_GRACE_SECONDS
+                or candidate < current):
+            self._next_scheduled_start_ts = candidate
 
     def _note_live_fetch(self, found_live: bool) -> None:
         """Record whether a look for live games found any."""
