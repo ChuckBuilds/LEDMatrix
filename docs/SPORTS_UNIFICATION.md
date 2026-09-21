@@ -81,7 +81,7 @@ src/common/
   sports_scroll.py       SportsScrollDisplay / …Manager — scroll orchestration
                          (content building stays in the plugins)
   sports_helpers.py      clamp/logo/rotation free functions + SportsHelpersMixin
-                         (unreleased) — the helpers byte-identical in the
+                         (3.5.0) — the helpers byte-identical in the
                          plugins' sports.py, and the _favorite_key seam
 ```
 
