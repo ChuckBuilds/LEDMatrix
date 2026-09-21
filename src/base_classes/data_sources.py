@@ -114,35 +114,68 @@ class ESPNDataSource(DataSource):
             return []
     
     def fetch_standings(self, sport: str, league: str) -> Dict:
-        """Fetch standings from ESPN API."""
-        # Try standings endpoint first (for professional leagues like NFL, NBA, etc.)
-        try:
-            url = f"{self.base_url}/{sport}/{league}/standings"
-            response = self.session.get(url, headers=self.get_headers(), timeout=15)
-            response.raise_for_status()
-            
-            data = response.json()
-            self.logger.debug(f"Fetched standings for {sport}/{league}")
+        """Fetch standings, or the poll for leagues that have one.
+
+        Order matters and used to be wrong. College leagues publish a poll at
+        /rankings and a records table at /standings; professional leagues have
+        only /standings. The old code tried /standings first and fell back to
+        /rankings only on a 404 -- but college /standings answers 200, so the
+        fallback never fired and college rankings came back empty forever.
+        Nothing failed; the AP rank badge simply never appeared, and anything
+        else keyed off rankings quietly did nothing.
+
+        A 200 that lacks the key is treated as a miss, so a league answering
+        both endpoints still ends up with whichever one actually carries a poll.
+        """
+        league_name = (league or "").lower()
+        wants_poll = "college" in league_name or "ncaa" in league_name
+        endpoints = ["rankings", "standings"] if wants_poll else ["standings", "rankings"]
+
+        for endpoint in endpoints:
+            url = f"{self.base_url}/{sport}/{league}/{endpoint}"
+            # Only the request is guarded. Inspecting the payload happens
+            # below, outside the handler, so that a bug in this method cannot
+            # be mistaken for an endpoint that failed -- that mistake would
+            # silently drop rankings for a league that has them, which is the
+            # exact failure this function was written to fix.
+            try:
+                response = self.session.get(
+                    url, headers=self.get_headers(), timeout=15
+                )
+                response.raise_for_status()
+                data = response.json()
+            except (requests.RequestException, ValueError) as e:
+                status = getattr(getattr(e, "response", None), "status_code", None)
+                # Only a 404 is routine -- it is how a league says "no poll
+                # here". Everything else is worth an error, and `status is
+                # None` covers the ones that matter most: ConnectionError,
+                # Timeout, a body that would not parse. Silencing those left a
+                # board that could not reach ESPN with one debug line, and the
+                # ranked filter running on an empty table.
+                if status != 404:
+                    self.logger.error(
+                        f"Error fetching {endpoint} from ESPN for "
+                        f"{sport}/{league}: {e}"
+                    )
+                continue
+
+            if not isinstance(data, dict):
+                # A list or a bare string is not something the callers can
+                # read. Treat it as a miss so the other endpoint still gets a
+                # turn, but say so -- this means ESPN changed shape.
+                self.logger.error(
+                    f"Unexpected {endpoint} payload for {sport}/{league}: "
+                    f"got {type(data).__name__}, expected an object"
+                )
+                continue
+            if endpoint == "rankings" and not data.get("rankings"):
+                continue
+            self.logger.debug(f"Fetched {endpoint} for {sport}/{league}")
             return data
-        except Exception as e:
-            # If standings doesn't exist, try rankings (for college sports)
-            if hasattr(e, 'response') and hasattr(e.response, 'status_code') and e.response.status_code == 404:
-                try:
-                    url = f"{self.base_url}/{sport}/{league}/rankings"
-                    response = self.session.get(url, headers=self.get_headers(), timeout=15)
-                    response.raise_for_status()
-                    
-                    data = response.json()
-                    self.logger.debug(f"Fetched rankings for {sport}/{league}")
-                    return data
-                except Exception:
-                    # Both endpoints failed - standings/rankings may not be available for this sport/league
-                    self.logger.debug(f"Standings/rankings not available for {sport}/{league} from ESPN API")
-                    return {}
-            else:
-                # Non-404 error - log at debug level since standings are optional
-                self.logger.debug(f"Error fetching standings from ESPN for {sport}/{league}: {e}")
-                return {}
+        self.logger.debug(
+            f"Standings/rankings not available for {sport}/{league} from ESPN API"
+        )
+        return {}
 
 
 class MLBAPIDataSource(DataSource):
