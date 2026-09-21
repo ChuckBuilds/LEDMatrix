@@ -132,18 +132,19 @@ class ESPNDataSource(DataSource):
         endpoints = ["rankings", "standings"] if wants_poll else ["standings", "rankings"]
 
         for endpoint in endpoints:
+            url = f"{self.base_url}/{sport}/{league}/{endpoint}"
+            # Only the request is guarded. Inspecting the payload happens
+            # below, outside the handler, so that a bug in this method cannot
+            # be mistaken for an endpoint that failed -- that mistake would
+            # silently drop rankings for a league that has them, which is the
+            # exact failure this function was written to fix.
             try:
-                url = f"{self.base_url}/{sport}/{league}/{endpoint}"
                 response = self.session.get(
                     url, headers=self.get_headers(), timeout=15
                 )
                 response.raise_for_status()
                 data = response.json()
-                if endpoint == "rankings" and not data.get("rankings"):
-                    continue
-                self.logger.debug(f"Fetched {endpoint} for {sport}/{league}")
-                return data
-            except Exception as e:
+            except (requests.RequestException, ValueError) as e:
                 status = getattr(getattr(e, "response", None), "status_code", None)
                 # Only a 404 is routine -- it is how a league says "no poll
                 # here". Everything else is worth an error, and `status is
@@ -156,6 +157,21 @@ class ESPNDataSource(DataSource):
                         f"Error fetching {endpoint} from ESPN for "
                         f"{sport}/{league}: {e}"
                     )
+                continue
+
+            if not isinstance(data, dict):
+                # A list or a bare string is not something the callers can
+                # read. Treat it as a miss so the other endpoint still gets a
+                # turn, but say so -- this means ESPN changed shape.
+                self.logger.error(
+                    f"Unexpected {endpoint} payload for {sport}/{league}: "
+                    f"got {type(data).__name__}, expected an object"
+                )
+                continue
+            if endpoint == "rankings" and not data.get("rankings"):
+                continue
+            self.logger.debug(f"Fetched {endpoint} for {sport}/{league}")
+            return data
         self.logger.debug(
             f"Standings/rankings not available for {sport}/{league} from ESPN API"
         )
