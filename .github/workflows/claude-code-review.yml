@@ -36,6 +36,12 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Review PRs opened by the Claude GitHub App. Without this the action
+          # aborts before reading the diff ("Workflow initiated by non-human
+          # actor"), so every such PR shows this check red. Named rather than
+          # '*': the allow-list is matched against the triggering actor, so
+          # this admits claude[bot] alone and no other app.
+          allowed_bots: 'claude'
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
           plugins: 'code-review@claude-code-plugins'
           prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
