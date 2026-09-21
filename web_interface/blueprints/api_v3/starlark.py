@@ -735,6 +735,12 @@ def install_from_tronbyte_repository():
         logger.exception("[Starlark] install_from_tronbyte_repository failed")
         hint = _ownership_hint(e)
         if hint:
+            # `details` is kept deliberately. CodeQL flags it as information
+            # exposure, but this package's rule is "if it returns 5xx, it says
+            # why" -- enforced by test_no_api_v3_handler_discards_its_exception,
+            # whose PRE_EXISTING allowance may shrink and never grow. The
+            # Starlark routes are exactly the ones that policy was written for:
+            # they answered 500 with no detail for three releases. It stays.
             return jsonify({'status': 'error', 'message': hint,
                             'details': describe_exception(e)}), 500
         return jsonify({'status': 'error', 'message': 'Failed to install from repository', 'details': describe_exception(e)}), 500

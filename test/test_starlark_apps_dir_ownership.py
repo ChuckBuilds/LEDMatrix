@@ -22,6 +22,7 @@ by this.
 """
 
 import importlib.util
+import os
 import sys
 import types
 from pathlib import Path
@@ -49,8 +50,13 @@ def manager_module():
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         return module
-    except Exception as e:  # noqa: BLE001 - optional deps may be absent
-        pytest.skip(f"starlark-apps manager is not importable here: {e}")
+    except ImportError as e:
+        # Only a genuinely absent dependency is a skip. A syntax error or a
+        # NameError in the plugin is a regression these tests exist to catch,
+        # and swallowing it here would turn a red suite green.
+        if any(dep in str(e) for dep in ("PIL", "Pillow", "pixlet", "frame_extractor")):
+            pytest.skip(f"starlark-apps optional dependency missing: {e}")
+        raise
     finally:
         sys.path.remove(str(PLUGIN_DIR))
         if injected_fcntl:
@@ -66,11 +72,22 @@ def _plugin(manager_module):
 
 
 class _Stat:
-    """Only st_uid/st_gid are read by the code under test."""
+    """A real stat_result with only the ownership fields overridden.
 
-    def __init__(self, uid, gid):
+    Everything else is delegated to the genuine result. A stub carrying just
+    st_uid/st_gid passed locally but broke in CI, because pathlib itself reads
+    st_mode while walking the tree on some Python versions -- and the fields
+    it needs are an implementation detail, not something this test should be
+    asserting about.
+    """
+
+    def __init__(self, real, uid, gid):
+        self._real = real
         self.st_uid = uid
         self.st_gid = gid
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
 
 
 @pytest.fixture
@@ -82,14 +99,23 @@ def owned(monkeypatch):
     """
     fake = {}
     real_stat = Path.stat
+    real_lstat = os.lstat
 
-    def patched(self, *args, **kwargs):
+    def patched_stat(self, *args, **kwargs):
+        st = real_stat(self, *args, **kwargs)
         key = str(self)
-        if key in fake:
-            return _Stat(*fake[key])
-        return real_stat(self, *args, **kwargs)
+        return _Stat(st, *fake[key]) if key in fake else st
 
-    monkeypatch.setattr(Path, "stat", patched)
+    def patched_lstat(path, *args, **kwargs):
+        st = real_lstat(path, *args, **kwargs)
+        key = str(path)
+        return _Stat(st, *fake[key]) if key in fake else st
+
+    # Both, because the code reads the checkout owner through Path.stat and
+    # each entry it repairs through os.lstat -- lstat so a symlink reports
+    # itself rather than its target.
+    monkeypatch.setattr(Path, "stat", patched_stat)
+    monkeypatch.setattr(os, "lstat", patched_lstat)
     return fake
 
 
@@ -98,7 +124,9 @@ def as_root(monkeypatch):
     """Run the handover as root, recording chowns instead of performing them."""
     calls = []
     monkeypatch.setattr("os.geteuid", lambda: 0)
-    monkeypatch.setattr("os.chown", lambda p, uid, gid: calls.append((str(p), uid, gid)))
+    monkeypatch.setattr(
+        "os.chown",
+        lambda p, uid, gid, **kw: calls.append((str(p), uid, gid)))
     return calls
 
 
@@ -161,7 +189,7 @@ class TestItDoesNotOverreach:
         owned[str(apps)] = (0, 0)
         calls = []
         monkeypatch.setattr("os.geteuid", lambda: 1000)
-        monkeypatch.setattr("os.chown", lambda p, u, g: calls.append(p))
+        monkeypatch.setattr("os.chown", lambda p, u, g, **kw: calls.append(p))
 
         _plugin(manager_module)._hand_apps_dir_to_checkout_owner(apps, tmp_path)
 
@@ -240,8 +268,11 @@ class TestTheErrorNamesTheCause:
     def hint(self):
         try:
             from web_interface.blueprints.api_v3.starlark import _ownership_hint
-        except Exception as e:  # noqa: BLE001 - Flask/web deps may be absent
-            pytest.skip(f"web_interface is not importable here: {e}")
+        except ImportError as e:
+            # Same rule as above: absent Flask is a skip, a broken module is not.
+            if "flask" in str(e).lower():
+                pytest.skip(f"Flask is not installed here: {e}")
+            raise
         return _ownership_hint
 
     def test_a_permission_error_explains_itself(self, hint):
@@ -262,3 +293,74 @@ class TestTheErrorNamesTheCause:
         for err in (ValueError("bad json"), OSError(28, "No space left on device"),
                     TimeoutError("github timed out")):
             assert hint(err) is None
+
+
+class TestItWillNotBeTrickedIntoGivingAwayAFile:
+    """Root chowning a tree is a privilege-escalation primitive if it follows
+    links: anyone who can write in the directory could point one at a
+    root-owned file and have this hand it over."""
+
+    def test_a_symlink_is_never_followed(self, manager_module, tmp_path, owned, as_root):
+        apps = _tree(tmp_path)
+        target = tmp_path / "precious"
+        target.write_text("root-owned secret")
+        (apps / "evil").symlink_to(target)
+        owned[str(tmp_path)] = (1000, 1000)
+        owned[str(apps)] = (0, 0)
+        # The link must look like it NEEDS handing over, or it would be
+        # skipped for already having the right owner and this test would pass
+        # without ever exercising the symlink check.
+        owned[str(apps / "evil")] = (0, 0)
+        owned[str(target)] = (0, 0)
+
+        _plugin(manager_module)._hand_apps_dir_to_checkout_owner(apps, tmp_path)
+
+        chowned = {c[0] for c in as_root}
+        assert str(target) not in chowned
+        assert str(apps / "evil") not in chowned
+
+    def test_the_directory_is_handed_over_last(self, manager_module, tmp_path, owned, as_root):
+        """Its contents must be settled before the container changes hands."""
+        apps = _tree(tmp_path)
+        owned[str(tmp_path)] = (1000, 1000)
+        for p in (apps, apps / "analogclock",
+                  apps / "analogclock" / "analog_clock.star",
+                  apps / "manifest.json"):
+            owned[str(p)] = (0, 0)
+
+        _plugin(manager_module)._hand_apps_dir_to_checkout_owner(apps, tmp_path)
+
+        order = [c[0] for c in as_root]
+        assert order[-1] == str(apps)
+
+
+class TestAPermissionFailureReachesTheCaller:
+    def test_install_app_does_not_swallow_permission_errors(
+            self, manager_module, tmp_path, monkeypatch):
+        """A False here reads as "this app is broken" and routes to a generic
+        message -- which is how the ownership bug stayed invisible."""
+        plugin = _plugin(manager_module)
+        plugin.apps_dir = tmp_path
+        plugin.apps = {}
+
+        def denied(self, *a, **kw):
+            raise PermissionError(13, "Permission denied")
+
+        monkeypatch.setattr(Path, "mkdir", denied)
+
+        with pytest.raises(PermissionError):
+            plugin.install_app("analogclock", str(tmp_path / "x.star"), {})
+
+    def test_other_install_failures_still_return_false(
+            self, manager_module, tmp_path, monkeypatch):
+        """Only permission errors are promoted; the bool contract is intact."""
+        plugin = _plugin(manager_module)
+        plugin.apps_dir = tmp_path
+        plugin.apps = {}
+
+        def broken(self, *a, **kw):
+            raise OSError(28, "No space left on device")
+
+        monkeypatch.setattr(Path, "mkdir", broken)
+
+        assert plugin.install_app("analogclock", str(tmp_path / "x.star"), {}) is False

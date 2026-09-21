@@ -10,6 +10,7 @@ API Version: 1.0.0
 import json
 import os
 import re
+import stat
 import time
 import fcntl
 from pathlib import Path
@@ -501,15 +502,26 @@ class StarlarkAppsPlugin(BasePlugin):
             # directory is correct and there is nobody to hand it to.
             return
 
-        for path in (apps_dir, *apps_dir.rglob("*")):
+        # Deepest first, with the directory itself last. Handing over the
+        # container before its contents would briefly let a local user rename
+        # entries underneath a repair that is still running.
+        descendants = sorted(apps_dir.rglob("*"),
+                             key=lambda p: len(p.parts), reverse=True)
+        for path in (*descendants, apps_dir):
             try:
-                st = path.stat()
+                st = os.lstat(path)
             except OSError:
+                continue
+            if stat.S_ISLNK(st.st_mode):
+                # Never hand over a link's target. Anyone able to write in
+                # this directory could otherwise point a symlink at a
+                # root-owned file and have this give it away -- the whole
+                # point of the loop is that it runs as root.
                 continue
             if st.st_uid == owner.st_uid and st.st_gid == owner.st_gid:
                 continue
             try:
-                chown(path, owner.st_uid, owner.st_gid)
+                chown(path, owner.st_uid, owner.st_gid, follow_symlinks=False)
             except OSError as e:
                 self.logger.warning(
                     "Could not hand %s to uid %s: %s -- installs from the web "
@@ -1065,6 +1077,13 @@ class StarlarkAppsPlugin(BasePlugin):
             self.logger.info(f"Installed Starlark app: {app_id} (sanitized: {safe_app_id})")
             return True
 
+        except PermissionError:
+            # Deliberately not folded into the False below. A False here is
+            # reported as a generic install failure, which is how the
+            # directory-ownership bug stayed invisible: the caller could not
+            # tell "this app is broken" from "this process cannot write here".
+            # The routes turn this into a message that names the fix.
+            raise
         except Exception as e:
             self.logger.error(f"Error installing app {app_id}: {e}")
             return False
