@@ -130,6 +130,19 @@ TEMP_SUDOERS="/tmp/ledmatrix_web_sudoers_$$"
     echo "$WEB_USER ALL=(ALL) NOPASSWD: $BASH_PATH $SAFE_PIP_INSTALL_PATH *"
 } > "$TEMP_SUDOERS"
 
+# Never offer to install rules we have not parsed. A malformed drop-in in
+# /etc/sudoers.d makes sudo refuse every command for every user.
+if command -v visudo >/dev/null 2>&1; then
+    if ! visudo -c -f "$TEMP_SUDOERS" >/dev/null 2>&1; then
+        echo ""
+        echo "✗ The generated sudoers rules did not parse:" >&2
+        visudo -c -f "$TEMP_SUDOERS" >&2 || true
+        echo "Nothing was changed." >&2
+        rm -f "$TEMP_SUDOERS"
+        exit 1
+    fi
+fi
+
 echo ""
 echo "Generated sudoers configuration:"
 echo "--------------------------------"
