@@ -1504,6 +1504,9 @@ echo "------------------------------------------------"
 # Create sudoers configuration for the web interface
 echo "Creating sudoers configuration..."
 SUDOERS_FILE="/etc/sudoers.d/ledmatrix_web"
+# A predictable name in a world-writable directory is a symlink target;
+# root writes the rules here, so let mktemp pick the name.
+SUDOERS_TMP=$(mktemp "${TMPDIR:-/tmp}/ledmatrix_web_sudoers.XXXXXX")
 
 # Get command paths
 PYTHON_PATH=$(which python3)
@@ -1514,7 +1517,7 @@ BASH_PATH=$(which bash)
 JOURNALCTL_PATH=$(which journalctl 2>/dev/null || true)
 
 # Create sudoers content
-cat > /tmp/ledmatrix_web_sudoers << EOF
+cat > "$SUDOERS_TMP" << EOF
 # LED Matrix Web Interface passwordless sudo configuration
 # This allows the web interface user to run specific commands without a password
 
@@ -1541,7 +1544,7 @@ $ACTUAL_USER ALL=(ALL) NOPASSWD: $BASH_PATH $PROJECT_ROOT_DIR/scripts/fix_perms/
 $ACTUAL_USER ALL=(ALL) NOPASSWD: $BASH_PATH $PROJECT_ROOT_DIR/scripts/fix_perms/safe_pip_install.sh *
 EOF
 if [ -n "$JOURNALCTL_PATH" ]; then
-    cat >> /tmp/ledmatrix_web_sudoers << EOF
+    cat >> "$SUDOERS_TMP" << EOF
 # NOEXEC, because these rules end in a wildcard and journalctl starts a pager
 # when its output is a terminal. From that pager (less) a "!sh" is a root
 # shell -- the standard journalctl escalation. The web interface always passes
@@ -1555,17 +1558,38 @@ $ACTUAL_USER ALL=(ALL) NOPASSWD:NOEXEC: $JOURNALCTL_PATH -t ledmatrix *
 EOF
 fi
 
-if [ -f "$SUDOERS_FILE" ] && cmp -s /tmp/ledmatrix_web_sudoers "$SUDOERS_FILE"; then
-    echo "Sudoers configuration already up to date"
-    rm /tmp/ledmatrix_web_sudoers
+# Never install rules we have not parsed. A malformed drop-in in
+# /etc/sudoers.d makes sudo refuse every command for every user, which on a
+# headless Pi leaves no way in at all. If the rules do not parse, say so and
+# keep whatever is already installed.
+SUDOERS_VALID=1
+if command -v visudo >/dev/null 2>&1; then
+    if ! visudo -c -f "$SUDOERS_TMP" >/dev/null 2>&1; then
+        SUDOERS_VALID=0
+        echo "⚠ The generated sudoers rules did not parse:" >&2
+        visudo -c -f "$SUDOERS_TMP" >&2 || true
+        echo "⚠ Leaving $SUDOERS_FILE unchanged. The web interface cannot control" >&2
+        echo "  the display service until this is fixed." >&2
+    fi
 else
-    echo "Installing/updating sudoers configuration..."
-    cp /tmp/ledmatrix_web_sudoers "$SUDOERS_FILE"
-    chmod 440 "$SUDOERS_FILE"
-    rm /tmp/ledmatrix_web_sudoers
+    echo "⚠ visudo not found; installing the sudoers rules unvalidated"
 fi
 
-echo "✓ Passwordless sudo access configured"
+if [ "$SUDOERS_VALID" = "0" ]; then
+    rm -f "$SUDOERS_TMP"
+elif [ -f "$SUDOERS_FILE" ] && cmp -s "$SUDOERS_TMP" "$SUDOERS_FILE"; then
+    echo "Sudoers configuration already up to date"
+    rm -f "$SUDOERS_TMP"
+else
+    echo "Installing/updating sudoers configuration..."
+    cp "$SUDOERS_TMP" "$SUDOERS_FILE"
+    chmod 440 "$SUDOERS_FILE"
+    rm -f "$SUDOERS_TMP"
+fi
+
+if [ "$SUDOERS_VALID" = "1" ]; then
+    echo "✓ Passwordless sudo access configured"
+fi
 echo ""
 
 CURRENT_STEP="Configure WiFi management permissions"
