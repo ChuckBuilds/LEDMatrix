@@ -4,5 +4,5 @@ LEDMatrix Display System
 Core source package for the LED Matrix Display project.
 """
 
-__version__ = "3.4.0"
+__version__ = "3.5.0"
 

@@ -19,7 +19,32 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
-Config saves and plugin config preparation:
+## 3.5.0
+
+New modules a plugin may import via `src.*` (floor on 3.5.0):
+
+- `src/common/sports_helpers.py` — the helpers the scoreboards' `sports.py`
+  carry byte-identical copies of: `clamp_window`, `clamp_seconds`,
+  `logo_needs_refresh`, `spread_weighted_order` (+ `MIN_WINDOW_DAYS`,
+  `MAX_WINDOW_DAYS`), and `SportsHelpersMixin` with `_mode_customization`,
+  `_setting_int`, `_reset_dwell_on_reentry`, `_next_switch_index`,
+  `_spread_weighted_order`, `_odds_color`, `_upcoming_date_and_time_text` under
+  the plugins' names and signatures, plus the `_favorite_key` override point.
+  Constructor-free; keeps lazy state on its host (see the module docstring,
+  which also gives the host contract).
+  A new module rather than more methods on `sports_shared`: a plugin that
+  deletes a copy and leans on an older module having grown the method fails at
+  runtime with `AttributeError`, which no load-time check sees, while a missing
+  module fails at load. Nothing in core uses it yet.
+- `test/test_common_is_hardware_free.py` — `src/common` must import without
+  `rgbmatrix` and never import `src.base_classes`, `src.display_manager` or
+  `src.plugin_system` at module level.
+- `src/common/espn_dates.py` — `fetch_espn_scoreboard`,
+  `fetch_espn_date_chunks`, `espn_date_chunks`, `clamp_espn_limit`,
+  `ESPN_MAX_LIMIT`: fetch an ESPN scoreboard date range now that ESPN rejects
+  ranges (see Sports data below). Plugins bundle a copy of it.
+
+### Config saves and plugin config preparation
 
 - A JSON `POST /api/v3/config/main` changes only the keys it sends. The MQTT
   bridge's brightness slider used to turn off `disable_hardware_pulsing`,
@@ -65,31 +90,7 @@ Config saves and plugin config preparation:
   with any core config section are flagged: the last private copies of the
   core-key list now use `src/core_config_keys.py`.
 
-New module a plugin may import via `src.*` (floor on the release that ships
-this):
-
-- `src/common/sports_helpers.py` — the helpers the scoreboards' `sports.py`
-  carry byte-identical copies of: `clamp_window`, `clamp_seconds`,
-  `logo_needs_refresh`, `spread_weighted_order` (+ `MIN_WINDOW_DAYS`,
-  `MAX_WINDOW_DAYS`), and `SportsHelpersMixin` with `_mode_customization`,
-  `_setting_int`, `_reset_dwell_on_reentry`, `_next_switch_index`,
-  `_spread_weighted_order`, `_odds_color`, `_upcoming_date_and_time_text` under
-  the plugins' names and signatures, plus the `_favorite_key` override point.
-  Constructor-free; keeps lazy state on its host (see the module docstring,
-  which also gives the host contract).
-  A new module rather than more methods on `sports_shared`: a plugin that
-  deletes a copy and leans on an older module having grown the method fails at
-  runtime with `AttributeError`, which no load-time check sees, while a missing
-  module fails at load. Nothing in core uses it yet.
-- `test/test_common_is_hardware_free.py` — `src/common` must import without
-  `rgbmatrix` and never import `src.base_classes`, `src.display_manager` or
-  `src.plugin_system` at module level.
-- `src/common/espn_dates.py` — `fetch_espn_scoreboard`,
-  `fetch_espn_date_chunks`, `espn_date_chunks`, `clamp_espn_limit`,
-  `ESPN_MAX_LIMIT`: fetch an ESPN scoreboard date range now that ESPN rejects
-  ranges (see Sports data below). Plugins bundle a copy of it.
-
-Sports data:
+### Sports data
 
 - Since 2026-09-15 ESPN answers `dates=YYYYMMDD-YYYYMMDD` scoreboard queries
   with `400 Bad Request` for every sport, so season schedules, the weeks window
@@ -104,8 +105,28 @@ Sports data:
 - `BackgroundDataService.handles_espn_date_ranges` is `True`. Plugins check it
   to decide whether to submit a season range to the service or fetch it
   themselves on an older core.
+- A league with no live games no longer backs its poll off past the next
+  kickoff. The escalation counted empty looks and nothing else, so a league
+  three hours before kickoff was indistinguishable from one out of season and
+  both reached `live_idle_max_interval`: measured gaps of up to 928 seconds,
+  and a rig that sat for a quarter of an hour with eight NFL games in progress
+  without noticing any of them. The wait is now clamped so it cannot run past
+  the earliest start still ahead, which the live fetch already downloads, so
+  it costs no extra request. Just after a kickoff the live cadence is held for
+  a grace window, because a provider that has not yet flipped the status would
+  otherwise read as another empty check and escalate the back-off again.
+- ESPN date chunks are fetched six at a time (`ESPN_CHUNK_WORKERS`) in two
+  passes: months and edge days first, then the days of any month that came
+  back at the cap. A cold college-baseball season is about 130 requests, and
+  they went out one at a time; March and April measured on a Pi 4 (63
+  requests, 3101 events) went from 11.2s to 1.6s. Merged events still follow
+  `espn_date_chunks` order, so the payload does not depend on which request
+  won the race, and a capped month's payload is dropped before its days are
+  fetched, which keeps the peak memory of a four-capped-month fetch to about
+  16 MB over the sequential path rather than 43 MB — `docs/LOW_MEMORY_BOARDS.md`
+  puts a 1 GB Pi 3B+ at under 200 MB of headroom.
 
-Scrolling:
+### Scrolling
 
 - **Scoreboard scroll speed no longer changes with the General tab's "Scroll
   Frame Rate" (`target_fps`).** Scoreboards on `src.common.sports_scroll`
@@ -135,7 +156,7 @@ Scrolling:
   `scroll_delay` are described as the speed clamp they are rather than frame
   stepping. Scoreboard `scroll_delay` is documented as ignored for pacing.
 
-Web interface:
+### Web interface
 
 - The plugin settings form honours `"x-display": "hidden"` in config schemas:
   the property gets no control at any depth (top level, nested objects, array
@@ -187,8 +208,19 @@ Web interface:
   request that gets no HTTP answer (e.g. the web service restarting mid-run) is
   re-sent with backoff instead of being counted as failed and skipped — that is
   how a disabled plugin with an update waiting was silently left out.
+- Three routes consulted the web process's plugin manifests without
+  discovering plugins first, so they misbehaved from every `ledmatrix-web`
+  restart until something else ran a discovery — in practice until someone
+  opened the dashboard, measured at over three minutes on one rig.
+  `POST /display/on-demand/start` and `POST /plugins/toggle` answered 404
+  "Plugin not found", and `POST /config/main` did not recognise a plugin
+  section, so it skipped secret separation and wrote the plugin's API key to
+  `config.json` in plain text instead of `config_secrets.json`. The routes now
+  discover when nothing has been discovered yet, and rescan once when a
+  specific plugin id (or, for on-demand by mode, a mode) is not found, so a
+  plugin installed since the last scan is found too.
 
-Security (request paths and inline handlers, siblings of #561):
+### Security (request paths and inline handlers, siblings of #561)
 
 - `POST /api/v3/plugins/assets/upload`, `GET .../assets/list` and
   `POST .../assets/delete` validate `plugin_id` with `src/common/path_safety`
@@ -208,7 +240,7 @@ Security (request paths and inline handlers, siblings of #561):
 - The uploaded-images list escapes each file's original name, path and ids; a
   name like `<img src=x onerror=...>.png` was inserted as markup.
 
-Display hardware settings the library refuses:
+### Display hardware settings the library refuses
 
 - The rgbmatrix library answers several settings with no matrix or `abort()`
   rather than an error, on every board, so the display service crash-looped
@@ -239,7 +271,7 @@ Display hardware settings the library refuses:
   values as the defaults; the "code default" values they listed never apply,
   because config migration fills missing keys from the template.
 
-Plugin system:
+### Plugin system
 
 - A plugin no longer starts with a schema warning and a degraded flag because
   config.json still holds a boolean where its schema now has an object with an
@@ -250,7 +282,7 @@ Plugin system:
   is written at load; the next save of that plugin's settings stores the object.
   Other type mismatches still warn.
 
-Core:
+### Core
 
 - `ConfigManager.load_config()` no longer raises on a host without the POSIX
   ownership APIs. The self-heal that chgrp's `config_secrets.json` to the
@@ -268,7 +300,37 @@ Core:
   ownership step is now skipped where `os.chown` is missing. No behaviour
   change on the Pi.
 
-Automatic updates and Update Code:
+### Cache permissions
+
+- The web interface can read what the display service caches again.
+  `ledmatrix-web.service` carried `CacheDirectory=ledmatrix`, and systemd
+  re-owns `/var/cache/ledmatrix` and its contents to the unit's `User=`
+  whenever the directory's owner differs, which erased the `root:ledmatrix`
+  setgid layout the installers set up: every file the root display service
+  wrote afterwards was `root:root` 0660 and unreadable by the web interface
+  (392 unreadable files on one rig, with display status, on-demand state and
+  plugin health empty). Since #547 the web unit is rendered from its template
+  on every install, so every fresh install hit this.
+  `DiskCache.set` now gives each file the directory's group (when that
+  directory is group-writable) and 0660 on the open descriptor before the
+  rename, independent of setgid, which also closes a window where a fresh
+  file was visible as mkstemp's 0600. `DiskCache.share_existing_files`
+  repairs files an older version left behind, once per process, through
+  `O_NOFOLLOW` descriptors, skipping hard links and other users' files.
+  Existing installs only ever receive `git pull`, so that repair is the fix
+  for them; new installs also drop `CacheDirectory=` and
+  `CacheDirectoryMode=` from the web unit.
+- `install_web_service.sh` replaces an existing cache directory's group
+  whenever the installing user is not in it. It used to replace only root's,
+  so a `root:ledmatrix` directory belonging to a user outside that group was
+  left alone and everything root wrote there stayed unreadable.
+- `/display/on-demand/status` and the current-display status read the display
+  service's keys with `memory_ttl=0`, as every other cross-process reader
+  already does. They served the first copy the web process had read for the
+  full 120s `max_age`, so on-demand reported "active" for over 100 seconds
+  after the file on disk said "idle".
+
+### Automatic updates and Update Code
 
 - An update that changes `web_interface/requirements.txt` is no longer rolled
   back on every auto-updating device. `safe_pip_install.sh` allowed only the
@@ -292,7 +354,7 @@ Automatic updates and Update Code:
   budget, so a rollback finishes inside the unit's 30-minute limit instead of
   being killed mid-way.
 
-Small fixes (update-all, plugin system settings, scripts):
+### Small fixes (update-all, plugin system settings, scripts)
 
 - **Check & Update All** counts a plugin that had nothing to update as
   "already up to date" instead of "updated". ZIP-installed monorepo plugins
@@ -330,7 +392,7 @@ Small fixes (update-all, plugin system settings, scripts):
   check `web_interface/blueprints/api_v3/`, which became a package, instead of
   reporting `api_v3.py` as missing.
 
-Docs and developer tools:
+### Docs and developer tools
 
 - `docs/REST_API_REFERENCE.md` rechecked against every handler: request
   fields that made documented calls fail (`repo_url`, `action_id`/`params`,
