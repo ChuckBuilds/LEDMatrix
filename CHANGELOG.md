@@ -367,6 +367,19 @@ New modules a plugin may import via `src.*` (floor on 3.5.0):
   budget, so a rollback finishes inside the unit's 30-minute limit instead of
   being killed mid-way.
 
+### Installers
+
+- The generated `ledmatrix_web` sudoers rules are parsed before they are
+  installed. Both installers built the drop-in from `which` lookups and copied
+  it into `/etc/sudoers.d` without ever checking it, and a malformed file there
+  makes sudo refuse every command for every user — on a headless Pi, that is
+  unrecoverable over SSH. `first_time_install.sh` now runs `visudo -c` on the
+  generated file and, if it does not parse, prints what visudo said and leaves
+  the installed file untouched instead of replacing it with a broken one;
+  `configure_web_sudo.sh` does the same before offering the rules for
+  confirmation. `first_time_install.sh` also built that file at a fixed `/tmp`
+  path as root; `mktemp` now picks the name.
+
 ### Small fixes (update-all, plugin system settings, scripts)
 
 - **Check & Update All** counts a plugin that had nothing to update as
