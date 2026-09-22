@@ -160,9 +160,7 @@ Read by `src/common/sync_manager.py` and `src/display_controller.py`.
 | Key | Type / default | Meaning |
 |---|---|---|
 | `plugins_directory` | string, `"plugin-repos"` | Where the Plugin Store installs plugins and the only directory the plugin loader scans. Read by `PluginManager` and `PluginStoreManager` (`src/plugin_system/`); editable under General settings |
-| `auto_discover` | bool, `true` | **Unused.** Legacy key, read by nothing. Plugins are always discovered, and every plugin with `enabled: true` is loaded. Not shown in the web UI; may be left in or removed from config.json |
-| `auto_load_enabled` | bool, `true` | **Unused.** Legacy key, read by nothing (see `auto_discover`). To keep a plugin installed but dormant, set its own `enabled` to `false` |
-| `development_mode` | bool, `false` | **Unused.** Legacy key, read by nothing |
+| `auto_discover`, `auto_load_enabled`, `development_mode` | bool | **Unused.** Legacy keys, read by nothing and no longer in the template; older configs may still carry them. Plugins are always discovered, and every plugin with `enabled: true` is loaded — to keep a plugin installed but dormant, set its own `enabled` to `false`. Not shown in the web UI; may be left in or removed from config.json |
 
 ## Plugin config blocks
 
