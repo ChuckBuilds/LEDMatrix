@@ -410,8 +410,10 @@ window.__pluginDomReady = window.__pluginDomReady || false;
 // plugin endpoint.)
 (function setupGlobalEventDelegation() {
     const handleGlobalPluginAction = function(event) {
-        const el = event.target.closest('button[data-action][data-plugin-id]') ||
-                   event.target.closest('input[data-action][data-plugin-id]');
+        const target = event.target;
+        if (!target || typeof target.closest !== 'function') return;
+        const el = target.closest('button[data-action][data-plugin-id]') ||
+                   target.closest('input[data-action][data-plugin-id]');
         if (!el || typeof window.handlePluginAction !== 'function') return;
         window.handlePluginAction(event);
     };

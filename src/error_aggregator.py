@@ -64,7 +64,7 @@ class ErrorPattern:
             "count": self.count,
             "first_seen": self.first_seen.isoformat(),
             "last_seen": self.last_seen.isoformat(),
-            "affected_plugins": list(set(self.affected_plugins)),
+            "affected_plugins": list(dict.fromkeys(self.affected_plugins)),
             "sample_messages": self.sample_messages[:3],  # Keep only 3 samples
             "severity": self.severity
         }

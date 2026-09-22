@@ -86,6 +86,14 @@ function setup() {
   }
 
   {
+    // A non-Element target (a text node, the document) has no closest().
+    const t = setup();
+    let threw = null;
+    try { for (const fn of t.listeners.click) fn({ type: 'click', target: {} }); } catch (e) { threw = e; }
+    ok('non-Element event target is ignored', threw === null, threw && threw.message);
+  }
+
+  {
     const t = setup();
     t.click('uninstall', 'starlark:analogclock');
     ok('Starlark uninstall confirms once', t.calls.confirm === 1, t.calls.confirm);

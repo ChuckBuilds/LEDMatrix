@@ -162,6 +162,7 @@ class TestPatternDetection:
         for i in range(300):
             aggregator.record_error(error=ValueError("loop"), plugin_id=f"p{i % 3}")
         assert aggregator._patterns["ValueError"].affected_plugins == ["p0", "p1", "p2"]
+        assert aggregator._patterns["ValueError"].to_dict()["affected_plugins"] == ["p0", "p1", "p2"]
 
     def test_pattern_severity_increases_with_count(self):
         """Pattern severity should increase with more occurrences."""
