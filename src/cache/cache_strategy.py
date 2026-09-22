@@ -1,7 +1,7 @@
 """
 Cache Strategy
 
-Manages cache strategies for different data types with sport-specific configurations.
+Manages cache strategies (TTLs) for different data types.
 """
 
 import logging
@@ -18,7 +18,8 @@ class CacheStrategy:
         Initialize cache strategy manager.
         
         Args:
-            config_manager: Optional ConfigManager instance for sport-specific configs
+            config_manager: Optional ConfigManager instance. Kept for callers
+                that pass one; no strategy currently reads it.
             logger: Optional logger instance
         """
         self.config_manager = config_manager
@@ -26,57 +27,38 @@ class CacheStrategy:
     
     def get_sport_live_interval(self, sport_key: str) -> int:
         """
-        Get the live_update_interval for a specific sport from config.
-        Falls back to default values if config is not available.
-        
+        Live-data cache interval, in seconds, for a sport: 60 for every sport.
+
+        This used to read ``live_update_interval`` from a ``<sport>_scoreboard``
+        config section. Those sections belonged to the built-in scoreboards
+        that the plugin system replaced; plugin config is keyed by plugin id
+        (``football-scoreboard``), so the lookup always fell back to 60.
+
         Args:
             sport_key: Sport identifier (e.g., 'nba', 'nfl')
-            
+
         Returns:
             Live update interval in seconds
         """
-        if not self.config_manager:
-            return 60
+        return 60
 
-        try:
-            config = self.config_manager.config
-            # All sports now use _scoreboard suffix
-            sport_config = config.get(f"{sport_key}_scoreboard", {})
-            return sport_config.get("live_update_interval", 60)  # Default to 60 seconds
-        except (KeyError, AttributeError, TypeError) as e:
-            self.logger.warning("Could not get live_update_interval for %s: %s", sport_key, e, exc_info=True)
-            return 60  # Default to 60 seconds
-    
     def get_cache_strategy(self, data_type: str, sport_key: Optional[str] = None) -> Dict[str, Any]:
         """
         Get cache strategy for different data types.
-        Now respects sport-specific live_update_interval configurations.
-        
+
         Args:
             data_type: Type of data (e.g., 'live_scores', 'stocks', 'weather_current')
-            sport_key: Optional sport key for sport-specific intervals
-            
+            sport_key: Optional sport key; for live data it selects the
+                per-sport interval from :meth:`get_sport_live_interval`
+                instead of the generic live default.
+
         Returns:
             Dictionary with cache strategy (max_age, memory_ttl, etc.)
         """
-        # Get sport-specific live interval if provided
         live_interval = None
         if sport_key and data_type in ['sports_live', 'live_scores']:
             live_interval = self.get_sport_live_interval(sport_key)
-        
-        # Try to read sport-specific config for recent/upcoming
-        recent_interval = None
-        upcoming_interval = None
-        if self.config_manager and sport_key:
-            try:
-                # All sports now use _scoreboard suffix
-                sport_cfg = self.config_manager.config.get(f"{sport_key}_scoreboard", {})
-                recent_interval = sport_cfg.get('recent_update_interval')
-                upcoming_interval = sport_cfg.get('upcoming_update_interval')
-            except (KeyError, AttributeError, TypeError) as e:
-                self.logger.debug("Could not read sport-specific recent/upcoming intervals for %s: %s", 
-                                sport_key, e, exc_info=True)
-        
+
         strategies = {
             # Ultra time-sensitive data (live scores, current weather)
             'live_scores': {
@@ -110,13 +92,13 @@ class CacheStrategy:
             
             # Sports data
             'sports_recent': {
-                'max_age': recent_interval or 1800,  # 30 minutes default; override by config
-                'memory_ttl': (recent_interval or 1800) * 2,
+                'max_age': 1800,  # 30 minutes
+                'memory_ttl': 3600,
                 'force_refresh': False
             },
             'sports_upcoming': {
-                'max_age': upcoming_interval or 10800,  # 3 hours default; override by config
-                'memory_ttl': (upcoming_interval or 10800) * 2,
+                'max_age': 10800,  # 3 hours
+                'memory_ttl': 21600,
                 'force_refresh': False
             },
             'sports_schedules': {

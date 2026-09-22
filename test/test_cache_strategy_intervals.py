@@ -4,7 +4,9 @@ The strategy table used to carry a per-sport defaults dict whose every value
 was 60, and a soccer branch identical to its else. These tests pin the
 returned strategy for every data type x sport key x config shape, so
 simplifying the lookup cannot change what any caller gets back. They were
-written against the pre-cleanup code and pass on it unchanged.
+written against the pre-cleanup code and pass on it unchanged, except for
+the legacy `<sport>_scoreboard` config shape (see below), which that code
+still read.
 """
 
 import pytest
@@ -30,10 +32,23 @@ _PLUGIN_ID_CONFIG = {
                 "baseball-scoreboard", "hockey-scoreboard", "soccer-scoreboard")
 }
 
+# `<sport>_scoreboard` sections come from the built-in scoreboards the plugin
+# system replaced. An install upgraded from that era can still carry them in
+# config.json (nothing deletes them). No current caller passes a sport key to
+# the strategy, but a stale section must not steer cache TTLs if one does.
+_LEGACY_SCOREBOARD_CONFIG = {
+    f"{sport}_scoreboard": {"live_update_interval": 5,
+                            "recent_update_interval": 7,
+                            "upcoming_update_interval": 9}
+    for sport in ("nfl", "nba", "mlb", "nhl", "soccer", "ncaa_fb",
+                  "ncaa_baseball", "ncaam_basketball", "milb")
+}
+
 CONFIG_MANAGERS = {
     "no_config_manager": None,
     "empty_config": _Cfg({}),
     "plugin_id_config": _Cfg(_PLUGIN_ID_CONFIG),
+    "legacy_scoreboard_config": _Cfg(_LEGACY_SCOREBOARD_CONFIG),
     "config_is_none": _Cfg(None),
     "config_is_not_a_dict": _Cfg("x"),
     "config_manager_without_config": _NoConfigAttr(),
