@@ -3246,25 +3246,3 @@ class PluginStoreManager:
                 installed.append(item.name)
         
         return installed
-    
-    def get_installed_plugin_info(self, plugin_id: str) -> Optional[Dict]:
-        """
-        Get manifest information for an installed plugin.
-        
-        Args:
-            plugin_id: Plugin identifier
-            
-        Returns:
-            Manifest data or None if not found
-        """
-        manifest_path = self.plugins_dir / plugin_id / "manifest.json"
-        
-        if not manifest_path.exists():
-            return None
-        
-        try:
-            with open(manifest_path, 'r') as f:
-                return json.load(f)
-        except Exception as e:
-            self.logger.error(f"Error reading manifest for {plugin_id}: {e}")
-            return None

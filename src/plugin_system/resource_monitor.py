@@ -94,9 +94,6 @@ class PluginResourceMonitor:
         # they are rate-limited instead. See _METRICS_PERSIST_INTERVAL.
         self._metrics_persisted_at: Dict[str, float] = {}
 
-        # Thread-local storage for execution tracking
-        self._local = threading.local()
-
         # Lock for thread-safe access
         self._lock = threading.Lock()
 
