@@ -189,6 +189,4 @@
             }
         }
     });
-
-    console.log('[DatePickerWidget] Date picker widget registered');
 })();

@@ -50,7 +50,7 @@
                 this._handlers.set(widgetName, definition.handlers);
             }
             
-            console.log(`[WidgetRegistry] Registered widget: ${widgetName}`);
+            if (window.debugLog) window.debugLog(`[WidgetRegistry] Registered widget: ${widgetName}`);
             return true;
         },
         
@@ -212,6 +212,4 @@
             })));
         };
     }
-    
-    console.log('[WidgetRegistry] Widget registry initialized');
 })();

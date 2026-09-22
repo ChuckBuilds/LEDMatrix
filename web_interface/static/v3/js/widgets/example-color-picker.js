@@ -197,6 +197,4 @@
             }
         }
     });
-
-    console.log('[ColorPickerWidget] Color picker widget registered (example)');
 })();
