@@ -186,11 +186,8 @@ curl "http://your-pi-ip:5000/api/v3/plugins/installed"
 from src.plugin_system.store_manager import PluginStoreManager
 
 store = PluginStoreManager(plugins_dir="plugin-repos")
-installed = store.list_installed_plugins()
-
-for plugin_id in installed:
-    info = store.get_installed_plugin_info(plugin_id)
-    print(f"{info['name']} (Last updated: {info.get('last_updated', 'unknown')})")
+for plugin_id in store.list_installed_plugins():
+    print(plugin_id)
 ```
 
 ### Enable/Disable Plugins
@@ -456,8 +453,7 @@ python3 -c "
 from src.plugin_system.store_manager import PluginStoreManager
 store = PluginStoreManager(plugins_dir='plugin-repos')
 for plugin_id in store.list_installed_plugins():
-    info = store.get_installed_plugin_info(plugin_id)
-    print(f'{plugin_id}: {info[\"name\"]} (Last updated: {info.get(\"last_updated\", \"unknown\")})')
+    print(plugin_id)
 "
 
 # Uninstall

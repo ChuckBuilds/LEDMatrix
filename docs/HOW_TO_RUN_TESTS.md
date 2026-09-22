@@ -225,15 +225,10 @@ test/
 ├── test_error_aggregator.py             # Error aggregation tests
 ├── test_schema_manager.py               # Schema manager tests
 ├── test_web_api.py                      # Web API tests
-├── plugins/                             # Per-plugin test suites
-│   ├── test_clock_simple.py
-│   ├── test_calendar.py
-│   ├── test_basketball_scoreboard.py
-│   ├── test_soccer_scoreboard.py
-│   ├── test_odds_ticker.py
-│   ├── test_text_display.py
-│   ├── test_visual_rendering.py
-│   └── test_plugin_base.py
+├── plugins/                             # Plugin rendering suites
+│   ├── test_plugin_matrix.py            # Every discovered plugin, across panel sizes
+│   ├── test_harness.py
+│   └── test_visual_rendering.py
 └── web_interface/
     ├── test_config_manager_atomic.py
     ├── test_state_reconciliation.py

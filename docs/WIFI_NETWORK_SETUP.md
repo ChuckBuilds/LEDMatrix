@@ -78,14 +78,7 @@ WiFi settings are stored in `config/wifi_config.json`:
 {
   "ap_ssid": "LEDMatrix-Setup",
   "ap_channel": 7,
-  "auto_enable_ap_mode": true,
-  "saved_networks": [
-    {
-      "ssid": "YourNetwork",
-      "password": "your-password",
-      "saved_at": 1234567890.0
-    }
-  ]
+  "auto_enable_ap_mode": true
 }
 ```
 
@@ -96,7 +89,6 @@ WiFi settings are stored in `config/wifi_config.json`:
 | `ap_ssid` | `LEDMatrix-Setup` | Network name broadcast in AP mode |
 | `ap_channel` | `7` | WiFi channel (1, 6, or 11 are non-overlapping) |
 | `auto_enable_ap_mode` | `true` | Automatically enable AP mode when both WiFi and Ethernet are disconnected |
-| `saved_networks` | `[]` | Array of saved WiFi credentials |
 
 ### Auto-Enable AP Mode Behavior
 
@@ -251,21 +243,11 @@ sudo chmod 600 config/wifi_config.json
 
 ### Network Configuration Tips
 
-**Save Multiple Networks:**
-```json
-{
-  "saved_networks": [
-    {
-      "ssid": "Home-Network",
-      "password": "home-password"
-    },
-    {
-      "ssid": "Office-Network",
-      "password": "office-password"
-    }
-  ]
-}
-```
+**Multiple Networks:**
+
+NetworkManager remembers every network you connect to and rejoins whichever is
+in range; list them with `nmcli connection show`. LEDMatrix itself does not
+store WiFi passwords.
 
 **Adjust Check Interval:**
 
