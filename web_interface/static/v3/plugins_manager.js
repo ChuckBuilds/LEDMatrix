@@ -401,124 +401,23 @@ window.__pendingInstalledPlugins = window.__pendingInstalledPlugins || null;
 window.__pendingStorePlugins = window.__pendingStorePlugins || null;
 window.__pluginDomReady = window.__pluginDomReady || false;
 
-// Set up global event delegation for plugin actions (works even before plugins are loaded)
+// Document-level delegation for plugin card actions, so a card works even if
+// it was rendered before the grid's own listener was attached. It hands the
+// event to handlePluginAction, which the plugin-manager IIFE below exposes on
+// window. (It used to test `typeof handlePluginAction`, which is IIFE-scoped
+// and so never visible here: every click took a copied fallback instead, which
+// asked to confirm an uninstall twice and sent Starlark app uninstalls to the
+// plugin endpoint.)
 (function setupGlobalEventDelegation() {
-    // Use document-level delegation so it works for dynamically added content
     const handleGlobalPluginAction = function(event) {
-        // Only handle if it's a plugin action
-        const button = event.target.closest('button[data-action][data-plugin-id]') ||
-                       event.target.closest('input[data-action][data-plugin-id]');
-        if (!button) return;
-
-        const action = button.getAttribute('data-action');
-        const pluginId = button.getAttribute('data-plugin-id');
-
-        // For toggle and configure, ensure functions are available
-        if (action === 'toggle' || action === 'configure') {
-            const funcName = action === 'toggle' ? 'togglePlugin' : 'configurePlugin';
-            if (!window[funcName] || typeof window[funcName] !== 'function') {
-                // Prevent default and stop propagation immediately to avoid double handling
-                event.preventDefault();
-                event.stopPropagation();
-
-                console.warn(`[GLOBAL DELEGATION] ${funcName} not available yet, waiting...`);
-
-                // Capture state synchronously from plugin data (source of truth)
-                let targetChecked = false;
-                if (action === 'toggle') {
-                    const plugin = (window.installedPlugins || []).find(p => p.id === pluginId);
-
-                    let currentEnabled;
-                    if (plugin) {
-                        currentEnabled = Boolean(plugin.enabled);
-                    } else if (button.type === 'checkbox') {
-                        currentEnabled = button.checked;
-                    } else {
-                        currentEnabled = false;
-                    }
-
-                    targetChecked = !currentEnabled; // Toggle to opposite state
-                }
-
-                // Wait for function to be available
-                let attempts = 0;
-                const maxAttempts = 20; // 1 second total
-                const checkInterval = setInterval(() => {
-                    attempts++;
-                    if (window[funcName] && typeof window[funcName] === 'function') {
-                        clearInterval(checkInterval);
-                        // Call the function directly
-                        if (action === 'toggle') {
-                            window.togglePlugin(pluginId, targetChecked);
-                        } else {
-                            window.configurePlugin(pluginId);
-                        }
-                    } else if (attempts >= maxAttempts) {
-                        clearInterval(checkInterval);
-                        console.error(`[GLOBAL DELEGATION] ${funcName} not available after ${maxAttempts} attempts`);
-                        if (typeof showNotification === 'function') {
-                            showNotification(`${funcName} not loaded. Please refresh the page.`, 'error');
-                        }
-                    }
-                }, 50);
-                return; // Don't proceed with normal handling
-            }
-        }
-
-        // Prevent default and stop propagation to avoid double handling
-        event.preventDefault();
-        event.stopPropagation();
-
-        // If handlePluginAction exists, use it; otherwise handle directly
-        if (typeof handlePluginAction === 'function') {
-            handlePluginAction(event);
-        } else {
-            // Fallback: handle directly if functions are available
-            if (action === 'toggle' && window.togglePlugin) {
-                // Get the current enabled state from plugin data (source of truth)
-                const plugin = (window.installedPlugins || []).find(p => p.id === pluginId);
-
-                let currentEnabled;
-                if (plugin) {
-                    currentEnabled = Boolean(plugin.enabled);
-                } else if (button.type === 'checkbox') {
-                    currentEnabled = button.checked;
-                } else {
-                    currentEnabled = false;
-                }
-
-                // Toggle the state - we want the opposite of current state
-                const isChecked = !currentEnabled;
-
-                // Prevent default behavior to avoid double-toggling and change event
-                // (Already done at start of function, but safe to repeat)
-                event.preventDefault();
-                event.stopPropagation();
-
-                debugLog('[DEBUG toggle fallback] Plugin:', pluginId, 'Current enabled (from data):', currentEnabled, 'New state:', isChecked);
-
-                window.togglePlugin(pluginId, isChecked);
-            } else if (action === 'configure' && window.configurePlugin) {
-                event.preventDefault();
-                event.stopPropagation();
-                window.configurePlugin(pluginId);
-            } else if (action === 'update' && window.updatePlugin) {
-                event.preventDefault();
-                event.stopPropagation();
-                debugLog('[DEBUG update fallback] Updating plugin:', pluginId);
-                window.updatePlugin(pluginId);
-            } else if (action === 'uninstall' && window.uninstallPlugin) {
-                event.preventDefault();
-                event.stopPropagation();
-                debugLog('[DEBUG uninstall fallback] Uninstalling plugin:', pluginId);
-                if (confirm(`Are you sure you want to uninstall ${pluginId}?`)) {
-                    window.uninstallPlugin(pluginId);
-                }
-            }
-        }
+        const el = event.target.closest('button[data-action][data-plugin-id]') ||
+                   event.target.closest('input[data-action][data-plugin-id]');
+        if (!el || typeof window.handlePluginAction !== 'function') return;
+        window.handlePluginAction(event);
     };
 
-    // Set up delegation on document (capture phase for better reliability)
+    // Capture phase, so this runs before the grid's own listener;
+    // handlePluginAction stops propagation, so an action is handled once.
     document.addEventListener('click', handleGlobalPluginAction, true);
     document.addEventListener('change', handleGlobalPluginAction, true);
     debugLog('[PLUGINS SCRIPT] Global event delegation set up');
@@ -1846,6 +1745,7 @@ function handlePluginAction(event) {
             break;
     }
 }
+window.handlePluginAction = handlePluginAction;
 
 function findInstalledPlugin(pluginId) {
     const plugins = window.installedPlugins || installedPlugins || [];

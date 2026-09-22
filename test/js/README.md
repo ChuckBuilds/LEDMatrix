@@ -15,7 +15,8 @@ npm install                 # jsdom, for the DOM suites only
 node run_all.js
 ```
 
-The unit suites need nothing but node. The DOM suites additionally need a
+The unit suites need nothing but node; `test/test_js_unit_suites.py` runs every
+`unit/*.js` under pytest, so CI covers them. The DOM suites additionally need a
 running web interface, because they test against the **real** server-rendered
 HTML and the **real** API rather than fixtures:
 
@@ -41,6 +42,7 @@ nothing is listening, so it stays useful in a bare checkout.
 | `unit/test_style_editor_layout_leaf_columns.js` | no | `columnsFor()` from `widgets/style-editor.js`: a layout-only key whose own value is a leaf (no x/y sub-object, e.g. a `show_logo` toggle) gets a self-keyed column instead of a blank, uneditable row |
 | `unit/test_style_editor_layout_leaf_collision.js` | no | `columnsFor()` from `widgets/style-editor.js`: a layout-only leaf key still gets its own column even when its name collides with an unrelated element's style sub-field or another layout axis's sub-field |
 | `unit/test_inline_handler_escaping.js` | no | The store, saved-repository and custom-registry inline `onclick` handlers and the live `window.updateImageList` from `plugins_manager.js`: a registry id, URL or uploaded file name carrying `'`, `"` or entities adds no attributes and reaches the handler intact, and the store's View button opens only http(s) links |
+| `unit/test_plugin_action_delegation.js` | no | The document-level card-action delegation and `handlePluginAction` from `plugins_manager.js`, run with the handler inside an IIFE as in the real file: each action is handled once, a Starlark app uninstall goes to `DELETE /starlark/apps/<id>`, and an uninstall is confirmed once |
 | `dom/test_installed_dom.js` | yes | The toolbar in a real DOM: pill/search/sort interaction, the HTMX partial re-swap, and a `getComputedStyle` check that `.filter-pill[data-active]` really matches the emitted markup |
 | `dom/test_store_dom.js` | yes | Store pagination, per-page, category, tri-state Installed button, and persistence across a re-boot, against the live registry |
 | `dom/test_no_double_fetch.js` | yes | Loads the **whole** `plugins_manager.js` and counts requests: typing in the store search must filter the cached list, not refetch `/api/v3/plugins/store/list` |
