@@ -411,56 +411,58 @@ class CacheManager:
         current_time = time.time()
         
         try:
-            with self._cache_lock:
-                for filename in os.listdir(self.cache_dir):
-                    if not filename.endswith('.json'):
-                        continue
+            # No lock: this is disk-only work, and the memory-tier lock it used
+            # to hold would stall every get/set while thousands of files are
+            # stat'd. A file deleted mid-scan is skipped below.
+            for filename in os.listdir(self.cache_dir):
+                if not filename.endswith('.json'):
+                    continue
+                
+                # Extract key from filename (remove .json extension)
+                key = filename[:-5]  # Remove '.json'
+                
+                file_path = os.path.join(self.cache_dir, filename)
+                
+                try:
+                    # Get file stats
+                    stat_info = os.stat(file_path)
+                    size_bytes = stat_info.st_size
+                    modified_time = stat_info.st_mtime
+                    age_seconds = current_time - modified_time
                     
-                    # Extract key from filename (remove .json extension)
-                    key = filename[:-5]  # Remove '.json'
+                    # Format age display
+                    if age_seconds < 60:
+                        age_display = f"{int(age_seconds)}s"
+                    elif age_seconds < 3600:
+                        age_display = f"{int(age_seconds / 60)}m"
+                    elif age_seconds < 86400:
+                        age_display = f"{int(age_seconds / 3600)}h"
+                    else:
+                        age_display = f"{int(age_seconds / 86400)}d"
                     
-                    file_path = os.path.join(self.cache_dir, filename)
+                    # Format size display
+                    if size_bytes < 1024:
+                        size_display = f"{size_bytes}B"
+                    elif size_bytes < 1024 * 1024:
+                        size_display = f"{size_bytes / 1024:.1f}KB"
+                    else:
+                        size_display = f"{size_bytes / (1024 * 1024):.1f}MB"
                     
-                    try:
-                        # Get file stats
-                        stat_info = os.stat(file_path)
-                        size_bytes = stat_info.st_size
-                        modified_time = stat_info.st_mtime
-                        age_seconds = current_time - modified_time
-                        
-                        # Format age display
-                        if age_seconds < 60:
-                            age_display = f"{int(age_seconds)}s"
-                        elif age_seconds < 3600:
-                            age_display = f"{int(age_seconds / 60)}m"
-                        elif age_seconds < 86400:
-                            age_display = f"{int(age_seconds / 3600)}h"
-                        else:
-                            age_display = f"{int(age_seconds / 86400)}d"
-                        
-                        # Format size display
-                        if size_bytes < 1024:
-                            size_display = f"{size_bytes}B"
-                        elif size_bytes < 1024 * 1024:
-                            size_display = f"{size_bytes / 1024:.1f}KB"
-                        else:
-                            size_display = f"{size_bytes / (1024 * 1024):.1f}MB"
-                        
-                        cache_files.append({
-                            'key': key,
-                            'filename': filename,
-                            'age_seconds': age_seconds,
-                            'age_display': age_display,
-                            'size_bytes': size_bytes,
-                            'size_display': size_display,
-                            'path': file_path,
-                            'modified_time': modified_time,
-                            'modified_datetime': datetime.fromtimestamp(modified_time).isoformat()
-                        })
-                    except OSError as e:
-                        self.logger.warning(f"Error getting stats for cache file {filename} at {file_path}: {e}", exc_info=True)
-                        continue
-                        
+                    cache_files.append({
+                        'key': key,
+                        'filename': filename,
+                        'age_seconds': age_seconds,
+                        'age_display': age_display,
+                        'size_bytes': size_bytes,
+                        'size_display': size_display,
+                        'path': file_path,
+                        'modified_time': modified_time,
+                        'modified_datetime': datetime.fromtimestamp(modified_time).isoformat()
+                    })
+                except OSError as e:
+                    self.logger.warning(f"Error getting stats for cache file {filename} at {file_path}: {e}", exc_info=True)
+                    continue
+                    
         except OSError as e:
             self.logger.error(f"Error listing cache directory {self.cache_dir}: {e}", exc_info=True)
             return []
