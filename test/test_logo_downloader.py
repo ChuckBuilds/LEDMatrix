@@ -7,16 +7,20 @@ ensure_logo_directory, and the download_missing_logo function path
 (with HTTP mocked).
 """
 
+import io
 import os
+import threading
 import time
 
 import pytest
+import requests
 from pathlib import Path
 from unittest.mock import patch, Mock, MagicMock
 
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo
 
+import src.logo_downloader as logo_downloader_module
 from src.logo_downloader import (
     PLACEHOLDER_BG,
     PLACEHOLDER_MARKER,
@@ -351,3 +355,266 @@ class TestRefreshPlaceholderTimestamp:
 
     def test_missing_file_is_not_an_error(self, tmp_path):
         assert refresh_placeholder_timestamp(tmp_path / "nope.png") is False
+
+
+# ---------------------------------------------------------------------------
+# download_logo: the download the scoreboard plugins actually use
+#
+# It used to read response.content with no size cap, write straight to the
+# final path (so a failed or corrupt download could be left there and then be
+# cached as the logo), and build a fresh Session for every logo. It now goes
+# through fetch_logo, the hardened download LogoHelper also uses.
+# ---------------------------------------------------------------------------
+
+def _png(img: Image.Image) -> bytes:
+    buf = io.BytesIO()
+    img.save(buf, "PNG")
+    return buf.getvalue()
+
+
+def _stream(body: bytes, content_type: str = "image/png", chunk: int = 1024,
+            die_after: int | None = None):
+    """A streamed requests.Response stand-in.
+
+    ``die_after`` makes the transfer fail after that many bytes, the way a
+    reset connection does mid-body.
+    """
+    response = MagicMock()
+    response.__enter__.return_value = response
+    response.__exit__.return_value = False
+    response.raise_for_status = MagicMock()
+    response.headers = {"content-type": content_type}
+
+    def _iter_content(*_args, **_kwargs):
+        sent = 0
+        for i in range(0, len(body), chunk):
+            if die_after is not None and sent >= die_after:
+                raise requests.exceptions.ChunkedEncodingError("connection reset")
+            piece = body[i:i + chunk]
+            sent += len(piece)
+            yield piece
+
+    response.iter_content = _iter_content
+    return response
+
+
+@pytest.fixture
+def fresh_thread_state(monkeypatch):
+    """Each test gets its own per-thread downloader cache."""
+    monkeypatch.setattr(logo_downloader_module, "_thread_state", threading.local())
+
+
+@pytest.fixture
+def downloader():
+    return LogoDownloader()
+
+
+@pytest.fixture
+def old_logo(tmp_path):
+    """A logo already on disk that a failed re-download must not damage."""
+    path = tmp_path / "PHI.png"
+    Image.new("RGBA", (30, 30), (1, 2, 3, 255)).save(path)
+    return path, path.read_bytes()
+
+
+def _leftovers(directory: Path, keep: str | None = None):
+    return sorted(p.name for p in directory.iterdir() if p.name != keep)
+
+
+class TestDownloadLogoHardening:
+    def test_valid_logo_is_saved_as_rgba_png(self, downloader, tmp_path):
+        target = tmp_path / "PHI.png"
+        downloader.session.get = MagicMock(
+            return_value=_stream(_png(Image.new("RGB", (20, 10), (9, 8, 7)))))
+        assert downloader.download_logo("http://x/phi.png", target, "PHI") is True
+        with Image.open(target) as img:
+            assert img.format == "PNG" and img.mode == "RGBA"
+            assert img.getpixel((0, 0)) == (9, 8, 7, 255)
+        assert _leftovers(tmp_path, keep="PHI.png") == []
+        # Streamed, so the size cap applies before the body is buffered.
+        assert downloader.session.get.call_args.kwargs["stream"] is True
+
+    def test_oversized_response_is_rejected_and_leaves_no_file(
+            self, downloader, tmp_path, monkeypatch):
+        monkeypatch.setattr(logo_downloader_module, "MAX_LOGO_BYTES", 4096)
+        target = tmp_path / "BIG.png"
+        body = _png(Image.new("RGB", (8, 8))) + b"\x00" * 8192
+        downloader.session.get = MagicMock(return_value=_stream(body))
+        assert downloader.download_logo("http://x/big.png", target, "BIG") is False
+        assert list(tmp_path.iterdir()) == []
+
+    def test_oversized_response_does_not_replace_an_existing_logo(
+            self, downloader, old_logo, monkeypatch):
+        path, before = old_logo
+        monkeypatch.setattr(logo_downloader_module, "MAX_LOGO_BYTES", 4096)
+        downloader.session.get = MagicMock(
+            return_value=_stream(b"\x89PNG" + b"\x00" * 8192))
+        assert downloader.download_logo("http://x/big.png", path, "PHI") is False
+        assert path.read_bytes() == before
+        assert _leftovers(path.parent, keep=path.name) == []
+
+    def test_mid_download_failure_leaves_no_partial_file(self, downloader, tmp_path):
+        target = tmp_path / "CUT.png"
+        body = _png(Image.new("RGB", (200, 200), (5, 5, 5))) + b"\x00" * 4096
+        downloader.session.get = MagicMock(
+            return_value=_stream(body, chunk=256, die_after=512))
+        assert downloader.download_logo("http://x/cut.png", target, "CUT") is False
+        assert list(tmp_path.iterdir()) == []
+
+    def test_mid_download_failure_keeps_the_previous_logo(self, downloader, old_logo):
+        # The old code opened the final path for writing before the body
+        # arrived, so a dropped connection truncated the logo it was replacing.
+        path, before = old_logo
+        body = _png(Image.new("RGB", (200, 200), (5, 5, 5))) + b"\x00" * 4096
+        downloader.session.get = MagicMock(
+            return_value=_stream(body, chunk=256, die_after=512))
+        assert downloader.download_logo("http://x/cut.png", path, "PHI") is False
+        assert path.read_bytes() == before
+        assert _leftovers(path.parent, keep=path.name) == []
+
+    def test_non_image_content_type_is_rejected(self, downloader, old_logo):
+        # Rejected on the label alone, before the body is trusted: these bytes
+        # would decode, so only the content-type check stops them.
+        path, before = old_logo
+        body = _png(Image.new("RGB", (8, 8), (250, 0, 0)))
+        downloader.session.get = MagicMock(
+            return_value=_stream(body, content_type="text/html"))
+        assert downloader.download_logo("http://x/404", path, "PHI") is False
+        assert path.read_bytes() == before
+        assert _leftovers(path.parent, keep=path.name) == []
+
+    def test_bytes_that_do_not_decode_are_rejected(self, downloader, old_logo):
+        # A server that labels an error page image/png must not get it cached.
+        path, before = old_logo
+        downloader.session.get = MagicMock(
+            return_value=_stream(b"<html>oops</html>", content_type="image/png"))
+        assert downloader.download_logo("http://x/lie.png", path, "PHI") is False
+        assert path.read_bytes() == before
+        assert _leftovers(path.parent, keep=path.name) == []
+
+    def test_http_error_keeps_the_previous_logo(self, downloader, old_logo):
+        path, before = old_logo
+        response = _stream(b"")
+        response.raise_for_status.side_effect = requests.exceptions.HTTPError("503")
+        downloader.session.get = MagicMock(return_value=response)
+        assert downloader.download_logo("http://x/phi.png", path, "PHI") is False
+        assert path.read_bytes() == before
+        assert _leftovers(path.parent, keep=path.name) == []
+
+    def test_unwritable_directory_returns_false(self, downloader, tmp_path):
+        downloader.session.get = MagicMock()
+        with patch("src.logo_downloader.tempfile.mkstemp",
+                   side_effect=PermissionError("read-only")):
+            assert downloader.download_logo(
+                "http://x/phi.png", tmp_path / "PHI.png", "PHI") is False
+        downloader.session.get.assert_not_called()
+
+
+class TestDownloadLogoTransparency:
+    """Plugins paste logos with the image as its own mask; alpha must survive."""
+
+    def _download(self, downloader, tmp_path, body, content_type="image/png"):
+        target = tmp_path / "LOGO.png"
+        downloader.session.get = MagicMock(return_value=_stream(body, content_type))
+        assert downloader.download_logo("http://x/logo", target, "LOGO") is True
+        with Image.open(target) as img:
+            img.load()
+            return img.copy(), img.format
+
+    def test_rgba_alpha_is_kept_exactly(self, downloader, tmp_path):
+        src = Image.new("RGBA", (16, 16), (0, 0, 0, 0))
+        for x in range(16):
+            src.putpixel((x, 3), (200, 100, 50, x * 16))
+        out, _ = self._download(downloader, tmp_path, _png(src))
+        assert out.mode == "RGBA"
+        assert list(out.getdata()) == list(src.getdata())
+
+    def test_palette_transparency_becomes_alpha(self, downloader, tmp_path):
+        src = Image.new("P", (8, 8), 0)
+        src.putpalette([0, 0, 0, 255, 0, 0] + [0] * (254 * 3))
+        src.putpixel((4, 4), 1)
+        buf = io.BytesIO()
+        src.save(buf, "PNG", transparency=0)
+        out, _ = self._download(downloader, tmp_path, buf.getvalue())
+        assert out.mode == "RGBA"
+        assert out.getpixel((0, 0))[3] == 0
+        assert out.getpixel((4, 4)) == (255, 0, 0, 255)
+
+    def test_greyscale_transparency_becomes_alpha(self, downloader, tmp_path):
+        src = Image.new("L", (8, 8), 0)
+        src.putpixel((2, 2), 255)
+        buf = io.BytesIO()
+        src.save(buf, "PNG", transparency=0)
+        out, _ = self._download(downloader, tmp_path, buf.getvalue())
+        assert out.getpixel((0, 0))[3] == 0
+        assert out.getpixel((2, 2)) == (255, 255, 255, 255)
+
+    def test_jpeg_is_stored_as_opaque_rgba_png(self, downloader, tmp_path):
+        buf = io.BytesIO()
+        Image.new("RGB", (8, 8), (10, 200, 30)).save(buf, "JPEG", quality=95)
+        out, fmt = self._download(downloader, tmp_path, buf.getvalue(), "image/jpeg")
+        assert fmt == "PNG" and out.mode == "RGBA"
+        assert out.getchannel("A").getextrema() == (255, 255)
+
+
+class TestSharedDownloader:
+    def test_download_missing_logo_reuses_one_session(self, tmp_path, fresh_thread_state):
+        sessions = []
+        real_session = requests.Session
+
+        def counting_session(*args, **kwargs):
+            s = real_session(*args, **kwargs)
+            sessions.append(s)
+            return s
+
+        with patch("src.logo_downloader.requests.Session", side_effect=counting_session):
+            with patch.object(LogoDownloader, "download_logo", return_value=True) as dl:
+                for abbr in ("AAA", "BBB", "CCC"):
+                    assert download_missing_logo(
+                        "nfl", "1", abbr, tmp_path / f"{abbr}.png",
+                        logo_url=f"http://x/{abbr}.png",
+                        create_placeholder=False) is True
+        assert dl.call_count == 3
+        assert len(sessions) == 1
+
+    def test_each_thread_gets_its_own_downloader(self, fresh_thread_state):
+        here = logo_downloader_module.shared_downloader()
+        assert logo_downloader_module.shared_downloader() is here
+        seen = []
+        t = threading.Thread(target=lambda: seen.append(
+            logo_downloader_module.shared_downloader()))
+        t.start()
+        t.join()
+        assert seen and seen[0] is not here
+        assert seen[0].session is not here.session
+
+
+class TestPlaceholderWrite:
+    def test_no_write_probe_file_is_created(self, tmp_path):
+        created = []
+        real_touch = Path.touch
+
+        def spy_touch(self, *args, **kwargs):
+            created.append(self.name)
+            return real_touch(self, *args, **kwargs)
+
+        with patch.object(Path, "touch", spy_touch):
+            assert LogoDownloader().create_placeholder_logo("COLL", str(tmp_path)) is True
+        assert "test_write.tmp" not in created
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["COLL.png"]
+
+    def test_unwritable_directory_returns_false(self, tmp_path):
+        with patch.object(LogoDownloader, "ensure_logo_directory", return_value=True), \
+             patch("src.logo_downloader.tempfile.mkstemp",
+                   side_effect=PermissionError("read-only")):
+            assert LogoDownloader().create_placeholder_logo("COLL", str(tmp_path)) is False
+        assert list(tmp_path.iterdir()) == []
+
+    def test_failed_save_keeps_the_previous_file(self, tmp_path):
+        path = tmp_path / "COLL.png"
+        Image.new("RGBA", (30, 30), (1, 2, 3, 255)).save(path)
+        before = path.read_bytes()
+        with patch("src.logo_downloader.os.replace", side_effect=OSError("disk full")):
+            assert LogoDownloader().create_placeholder_logo("COLL", str(tmp_path)) is False
+        assert path.read_bytes() == before
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["COLL.png"]

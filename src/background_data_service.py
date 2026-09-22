@@ -170,14 +170,10 @@ class BackgroundDataService:
         self.session.mount('http://', requests.adapters.HTTPAdapter(max_retries=3))
         self.session.mount('https://', requests.adapters.HTTPAdapter(max_retries=3))
         
-        # Default headers
-        self.default_headers = {
-            'User-Agent': 'LEDMatrix/1.0 (https://github.com/yourusername/LEDMatrix)',
-            'Accept': 'application/json',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Connection': 'keep-alive'
-        }
+        # Default headers: core's shared set (real User-Agent, no hand-set
+        # Accept-Encoding) -- see src/common/api_helper.py.
+        from src.common.api_helper import DEFAULT_HTTP_HEADERS
+        self.default_headers = dict(DEFAULT_HTTP_HEADERS)
         
         logger.info(f"BackgroundDataService initialized with {max_workers} workers")
     
