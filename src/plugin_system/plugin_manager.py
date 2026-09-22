@@ -967,7 +967,7 @@ class PluginManager:
         self.logger.warning("Plugin %s update() failed; will retry after interval", plugin_id)
         with self._plugin_last_update_lock:
             self.plugin_last_update[plugin_id] = failure_time
-        self.state_manager.set_state_with_error(plugin_id, PluginState.ENABLED, error_info, error=err)
+        self.state_manager.set_state_with_error(plugin_id, PluginState.ENABLED, error_info)
         if self.health_tracker:
             self.health_tracker.record_failure(plugin_id, err)
 
