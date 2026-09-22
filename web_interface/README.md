@@ -26,7 +26,6 @@ web_interface/
 ├── templates/                # HTML templates
 │   └── v3/
 │       ├── base.html
-│       ├── index.html
 │       └── partials/
 └── static/                   # CSS/JS assets
     └── v3/
