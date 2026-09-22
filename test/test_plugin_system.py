@@ -23,17 +23,6 @@ class TestPluginManager:
             assert pm.cache_manager == mock_cache_manager
             assert pm.plugins == {}
 
-    def test_discover_plugins(self, test_plugin_manager):
-        """Test plugin discovery."""
-        pm = test_plugin_manager
-        # Mock _scan_directory_for_plugins since we can't easily create real files in fixture
-        pm._scan_directory_for_plugins = MagicMock(return_value=["plugin1", "plugin2"])
-        
-        # We need to call the real discover_plugins method, not the mock from the fixture
-        # But the fixture mocks the whole class instance.
-        # Let's create a real instance with mocked dependencies for this test
-        pass  # Handled by separate test below
-
     def test_load_plugin_success(self, mock_config_manager, mock_display_manager, mock_cache_manager):
         """Test successful plugin loading."""
         with patch('src.plugin_system.plugin_manager.ensure_directory_permissions'), \
@@ -134,16 +123,6 @@ class TestPluginManager:
             plugin_instance.update.assert_called_once()
             assert "test_plugin" in pm.plugin_last_update
             assert pm.state_manager.get_state("test_plugin") == PluginState.ENABLED
-
-
-class TestPluginLoader:
-    """Test PluginLoader functionality."""
-    
-    def test_dependency_check(self):
-        """Test dependency checking logic."""
-        # Covered by test_plugin_loader.py's install_dependencies tests,
-        # which exercise requirements_has_real_deps/requirements_are_satisfied
-        # and the pip subprocess fallback.
 
 
 class TestPluginExecutor:
