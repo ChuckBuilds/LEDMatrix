@@ -16,6 +16,7 @@ tooling against it.
 | Key | Type / default | Meaning | Read by |
 |---|---|---|---|
 | `web_display_autostart` | bool, `true` | Whether the web interface service starts with the system | `scripts/utils/start_web_conditionally.py` |
+| `auto_update.enabled` | bool, `false` | Weekly automatic updates: LEDMatrix code first (health-checked, rolled back on failure), then installed plugins. Toggle in the General tab or install with `first_time_install.sh --enable-auto-update` | `web_interface/auto_update.py`, `src/auto_update_setup.py` (`is_enabled()`) |
 | `timezone` | string, `"America/New_York"` | IANA timezone for schedules and displays | `ConfigManager.get_timezone()` |
 | `target_fps` | int, `100` | Legacy "Scroll Frame Rate". Core scrolling no longer reads it: scroll frames are presented at `display.hardware.limit_refresh_rate_hz` divided by each scroll's frame hold, and speed comes from each plugin's scroll settings. Still exposed to plugins via `BasePlugin.global_config` | `src/plugin_system/base_plugin.py` |
 | `location` | object | `city` / `state` / `country`. Supplies the **default** for a plugin's own `location_city` / `location_state` / `location_country` setting, so weather, radar and friends follow this device without being configured twice. A value saved on the plugin itself still overrides it. | `SchemaManager.apply_device_location()`, then plugins via merged config |
@@ -29,18 +30,18 @@ tooling against it.
 | `start_time` / `end_time` | `"HH:MM"`, `07:00`–`23:00` | Global-mode on/off times |
 | `days.<weekday>.{enabled,start_time,end_time}` | per-day objects | Per-day-mode overrides |
 
-Read by `DisplayController` (`src/display_controller.py`, `_check_schedule`
-around line 603). Managed in the web UI under Schedule.
+Read by `DisplayController._check_schedule()` (`src/display_controller.py`).
+Managed in the web UI under Schedule.
 
 ## `dim_schedule` — scheduled brightness dimming
 
-Same shape as `schedule`, plus:
+Same shape as `schedule` (the template sets its `mode` to `"global"`), plus:
 
 | Key | Type / default | Meaning |
 |---|---|---|
 | `dim_brightness` | int, `30` | Brightness percentage applied while the dim window is active |
 
-Read by `DisplayController` (`src/display_controller.py` around line 770;
+Read by `DisplayController._check_dim_schedule()` (`src/display_controller.py`;
 saved via `POST /api/v3/config/dim-schedule`). The display returns to
 `display.hardware.brightness` outside the window.
 
@@ -101,10 +102,10 @@ logical image to multiple chained physical panels.
 
 | Key | Type / default | Meaning | Read by |
 |---|---|---|---|
-| `display_durations` | object, `{}` | Per-plugin display duration in seconds, keyed by plugin id (e.g. `"clock": 15`) | `src/display_controller.py:1030` |
-| `plugin_rotation_order` | array, `[]` | Explicit rotation order of plugin ids; empty = all enabled plugins in discovery order | `src/display_controller.py:2894` |
+| `display_durations` | object, `{}` | Per-plugin display duration in seconds, keyed by plugin id (e.g. `"clock": 15`) | `DisplayController._get_display_duration()` (`src/display_controller.py`) |
+| `plugin_rotation_order` | array, `[]` | Explicit rotation order of plugin ids; empty = all enabled plugins in discovery order | `DisplayController._apply_plugin_rotation_order()` (`src/display_controller.py`) |
 | `use_short_date_format` | bool, `true` | Compact date rendering in sports scoreboards | `src/base_classes/sports/core.py` |
-| `dynamic_duration.max_duration_seconds` | int, optional | Cap for plugins that request dynamic display time | `src/display_controller.py:405` |
+| `dynamic_duration.max_duration_seconds` | int, optional | Cap for plugins that request dynamic display time | `DisplayController._get_global_dynamic_cap()` (`src/display_controller.py`) |
 
 ## `display.vegas_scroll` — continuous scroll mode
 
@@ -153,7 +154,7 @@ Read by `src/common/sync_manager.py` and `src/display_controller.py`.
 |---|---|---|
 | `role` | `"standalone"` (default), `"leader"`, or `"follower"` | This device's role in a synced pair |
 | `port` | int, `5765` | TCP port used for sync traffic |
-| `follower_position` | `"left"` (default) or `"right"` | Which half of the combined image this follower renders (`src/display_controller.py:522`) |
+| `follower_position` | `"left"` (default) or `"right"` | Which half of the combined image this follower renders (`src/display_controller.py`) |
 
 ## `plugin_system`
 
@@ -174,5 +175,5 @@ See [PLUGIN_CONFIG_CORE_PROPERTIES.md](PLUGIN_CONFIG_CORE_PROPERTIES.md).
 
 | Key | Meaning |
 |---|---|
-| `github.api_token` | Optional GitHub token the Plugin Store uses to avoid API rate limits (`src/plugin_system/store_manager.py:348`) |
+| `github.api_token` | Optional GitHub token the Plugin Store uses to avoid API rate limits (`src/plugin_system/store_manager.py`) |
 | `<plugin-id>.*` | Secrets a plugin declares with `"x-secret": true` in its config schema; merged into that plugin's config at load time |
