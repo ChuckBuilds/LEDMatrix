@@ -13,6 +13,7 @@ Complete API reference for plugin developers. This document describes all method
 - [Display Manager](#display-manager)
 - [Cache Manager](#cache-manager)
 - [Plugin Manager](#plugin-manager)
+- [Deprecated APIs](#deprecated-apis)
 
 ---
 
@@ -1073,4 +1074,24 @@ if "weather" in enabled_plugins:
 - [Plugin Manager Source](../src/plugin_system/plugin_manager.py) - Plugin manager implementation
 - [Plugin Development Guide](PLUGIN_DEVELOPMENT_GUIDE.md) - Complete development guide
 - [Advanced Plugin Development](ADVANCED_PLUGIN_DEVELOPMENT.md) - Advanced patterns and examples
+
+---
+
+## Deprecated APIs
+
+These still work in 3.6 but log a warning the first time they are called
+(`journalctl -u ledmatrix` shows which one), and are **removed in 3.7.0**.
+Nothing in core, the official plugins or the third-party plugins in the
+registry calls them.
+
+| Object | Methods | Instead |
+|---|---|---|
+| `cache_manager` | `update_cache` | `set()` |
+| `cache_manager` | `get_background_cached_data`, `is_background_data_available` | `get()` |
+| `cache_manager` | `has_data_changed`, `setup_persistent_cache`, `get_sport_live_interval`, `get_sport_key_from_cache_key`, `record_cache_hit`, `record_cache_miss`, `record_fetch_time`, `get_cache_metrics`, `log_cache_metrics`, `get_memory_cache_stats` | no replacement |
+| `display_manager` | `draw_weather_icon`, `draw_sun`, `draw_cloud`, `draw_rain`, `draw_snow`, `draw_text_with_icons` | draw your own icons (the weather plugin ships `WeatherIcons`) |
+| `display_manager` | `get_scrolling_stats` | no replacement |
+| `font_manager` | `get_font_catalog`, `get_available_fonts` | read `font_catalog` |
+| `font_manager` | `set_override`, `remove_override`, `get_overrides`, `add_font`, `remove_font`, `validate_font`, `get_size_tokens`, `get_performance_stats`, `get_manager_fonts`, `get_detected_fonts`, `get_plugin_fonts`, `unregister_plugin_fonts` | no replacement |
+| `plugin_manager` | `get_enabled_plugins` | check `enabled` on the entries in `plugin_manager.plugins` |
 
