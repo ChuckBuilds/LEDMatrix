@@ -24,7 +24,7 @@ and reported success.
 
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -41,7 +41,8 @@ def restart_path(api_v3_module):
 
     plugin_manager and config_manager are set to None so the route takes
     the simplest path to that branch rather than tripping over unrelated
-    MagicMock plumbing; _ensure_cache_manager, _get_display_service_status,
+    MagicMock plumbing. The cache is the blueprint's cache_manager, which
+    api_v3_module already set to a MagicMock. _get_display_service_status,
     _stop_display_service and _ensure_display_service_running are bound by
     value in display.py (see its own docstring), so they are patched on
     that submodule rather than on the package.
@@ -49,16 +50,13 @@ def restart_path(api_v3_module):
     api_v3_module.api_v3.plugin_manager = None
     api_v3_module.api_v3.config_manager = None
 
-    with patch("web_interface.blueprints.api_v3.display._ensure_cache_manager") as ensure_cache, \
-         patch("web_interface.blueprints.api_v3.display._get_display_service_status") as get_status, \
+    with patch("web_interface.blueprints.api_v3.display._get_display_service_status") as get_status, \
          patch("web_interface.blueprints.api_v3.display._stop_display_service") as stop_service, \
          patch("web_interface.blueprints.api_v3.display._ensure_display_service_running") as ensure_running:
-        ensure_cache.return_value = MagicMock()
         # Active before the request: service_was_running becomes True.
         get_status.return_value = {"active": True}
         ensure_running.return_value = {"active": True}
         yield {
-            "ensure_cache": ensure_cache,
             "get_status": get_status,
             "stop_service": stop_service,
             "ensure_running": ensure_running,

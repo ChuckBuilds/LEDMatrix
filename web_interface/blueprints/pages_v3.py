@@ -20,12 +20,8 @@ from web_interface import widget_bundle
 
 logger = logging.getLogger(__name__)
 
-# Will be initialized when blueprint is registered
-config_manager = None
-plugin_manager = None
-plugin_store_manager = None
-schema_manager = None
-
+# The managers live on the blueprint object: app.py sets
+# pages_v3.config_manager, pages_v3.plugin_manager and the rest.
 pages_v3 = Blueprint('pages_v3', __name__)
 
 

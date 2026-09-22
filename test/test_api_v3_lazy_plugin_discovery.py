@@ -76,13 +76,12 @@ def fresh_web_process(api_v3_module, plugins_dir):
 
 
 @pytest.fixture
-def display_service():
+def display_service(api_v3_module):
     """Keep on-demand start away from systemctl and the real cache."""
-    with patch('web_interface.blueprints.api_v3.display._ensure_cache_manager') as cache, \
-         patch('web_interface.blueprints.api_v3.display._get_display_service_status') as status:
-        cache.return_value = MagicMock()
+    cache = api_v3_module.api_v3.cache_manager = MagicMock()
+    with patch('web_interface.blueprints.api_v3.display._get_display_service_status') as status:
         status.return_value = {'active': True}
-        yield cache.return_value
+        yield cache
 
 
 def _start(client, **body):
