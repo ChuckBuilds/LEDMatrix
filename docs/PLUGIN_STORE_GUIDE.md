@@ -4,13 +4,22 @@
 
 The LEDMatrix Plugin Store allows you to discover, install, and manage display plugins for your LED matrix. Install curated plugins from the official registry or add custom plugins directly from any GitHub repository.
 
+In the web interface, the **Plugin Store** is a section of the **Plugin
+Manager** tab (below the installed plugins), followed by an **Install from
+GitHub** section.
+
+The Python examples below pass `plugins_dir="plugin-repos"`:
+`PluginStoreManager()` defaults to `plugins`, but the web interface and the
+plugin loader use `plugin_system.plugins_directory` from `config.json`
+(`plugin-repos` by default).
+
 ---
 
 ## Quick Reference
 
 ### Install from Store
 ```bash
-# Web UI: Plugin Store → Search → Click Install
+# Web UI: Plugin Manager → Plugin Store section → Search → Click Install
 # API:
 curl -X POST http://your-pi-ip:5000/api/v3/plugins/install \
   -H "Content-Type: application/json" \
@@ -19,7 +28,7 @@ curl -X POST http://your-pi-ip:5000/api/v3/plugins/install \
 
 ### Install from GitHub URL
 ```bash
-# Web UI: Plugin Store → "Install from URL" → Paste URL
+# Web UI: Plugin Manager → Install from GitHub → "Install Single Plugin" → Paste URL
 # API:
 curl -X POST http://your-pi-ip:5000/api/v3/plugins/install-from-url \
   -H "Content-Type: application/json" \
@@ -57,7 +66,7 @@ The official plugin store contains curated, verified plugins that have been revi
 
 **Via Web Interface:**
 1. Open the web interface at http://your-pi-ip:5000
-2. Navigate to the "Plugin Store" tab
+2. Navigate to the "Plugin Manager" tab and scroll to the "Plugin Store" section
 3. Browse or search for plugins
 4. Click "Install" on the desired plugin
 5. Wait for installation to complete
@@ -74,7 +83,7 @@ curl -X POST http://your-pi-ip:5000/api/v3/plugins/install \
 ```python
 from src.plugin_system.store_manager import PluginStoreManager
 
-store = PluginStoreManager()
+store = PluginStoreManager(plugins_dir="plugin-repos")
 success = store.install_plugin('clock-simple')
 if success:
     print("Plugin installed!")
@@ -90,10 +99,11 @@ Install any plugin directly from a GitHub repository, even if it's not in the of
 
 **Via Web Interface:**
 1. Open the web interface
-2. Navigate to the "Plugin Store" tab
-3. Find the "Install from URL" section
+2. Navigate to the "Plugin Manager" tab
+3. Find "Install Single Plugin" in the "Install from GitHub" section
 4. Paste the GitHub repository URL (e.g., `https://github.com/user/ledmatrix-my-plugin`)
-5. Click "Install from URL"
+   and optionally a branch
+5. Click "Install"
 6. Review the warning about unverified plugins
 7. Confirm installation
 8. Wait for installation to complete
@@ -110,7 +120,7 @@ curl -X POST http://your-pi-ip:5000/api/v3/plugins/install-from-url \
 ```python
 from src.plugin_system.store_manager import PluginStoreManager
 
-store = PluginStoreManager()
+store = PluginStoreManager(plugins_dir="plugin-repos")
 result = store.install_from_url('https://github.com/user/ledmatrix-my-plugin')
 
 if result['success']:
@@ -144,7 +154,7 @@ curl "http://your-pi-ip:5000/api/v3/plugins/store/list?tags=nhl&tags=hockey"
 ```python
 from src.plugin_system.store_manager import PluginStoreManager
 
-store = PluginStoreManager()
+store = PluginStoreManager(plugins_dir="plugin-repos")
 
 # Search by query
 results = store.search_plugins(query="hockey")
@@ -175,7 +185,7 @@ curl "http://your-pi-ip:5000/api/v3/plugins/installed"
 ```python
 from src.plugin_system.store_manager import PluginStoreManager
 
-store = PluginStoreManager()
+store = PluginStoreManager(plugins_dir="plugin-repos")
 installed = store.list_installed_plugins()
 
 for plugin_id in installed:
@@ -216,7 +226,7 @@ curl -X POST http://your-pi-ip:5000/api/v3/plugins/update \
 ```python
 from src.plugin_system.store_manager import PluginStoreManager
 
-store = PluginStoreManager()
+store = PluginStoreManager(plugins_dir="plugin-repos")
 success = store.update_plugin('clock-simple')
 ```
 
@@ -239,7 +249,7 @@ curl -X POST http://your-pi-ip:5000/api/v3/plugins/uninstall \
 ```python
 from src.plugin_system.store_manager import PluginStoreManager
 
-store = PluginStoreManager()
+store = PluginStoreManager(plugins_dir="plugin-repos")
 success = store.uninstall_plugin('clock-simple')
 ```
 
@@ -296,13 +306,17 @@ When installing from a custom GitHub URL, you'll see a warning about installing 
 
 ### Plugin Won't Install
 
-**Problem:** Installation fails with "Failed to clone or download repository"
+**Problem:** Installation fails
 
 **Solutions:**
-- Check that git is installed: `which git`
+- Plugins from the official registry live in the `ledmatrix-plugins`
+  monorepo and are downloaded, not cloned: the store fetches the plugin's
+  directory through the GitHub API and falls back to extracting it from the
+  repository ZIP, so git is not involved (the installed copy has no `.git`)
+- A plugin installed by URL from its own repository is cloned with git,
+  falling back to an archive download; check `which git` if that fails
 - Verify the GitHub URL is correct
 - Check your internet connection
-- The system will automatically try ZIP download as fallback
 
 ### Plugin Won't Load
 
@@ -410,10 +424,10 @@ As a plugin developer, you can share your plugin with others even before it's in
 2. Share the URL with users
 3. Users install via:
    - Open the LEDMatrix web interface
-   - Click "Plugin Store" tab
-   - Scroll to "Install from URL"
+   - Open the "Plugin Manager" tab
+   - Scroll to "Install from GitHub" → "Install Single Plugin"
    - Paste the URL
-   - Click "Install from URL"
+   - Click "Install"
 
 ---
 
@@ -425,14 +439,14 @@ For advanced users, manage plugins via command line:
 # Install from registry
 python3 -c "
 from src.plugin_system.store_manager import PluginStoreManager
-store = PluginStoreManager()
+store = PluginStoreManager(plugins_dir='plugin-repos')
 store.install_plugin('clock-simple')
 "
 
 # Install from URL
 python3 -c "
 from src.plugin_system.store_manager import PluginStoreManager
-store = PluginStoreManager()
+store = PluginStoreManager(plugins_dir='plugin-repos')
 result = store.install_from_url('https://github.com/user/plugin')
 print(result)
 "
@@ -440,7 +454,7 @@ print(result)
 # List installed
 python3 -c "
 from src.plugin_system.store_manager import PluginStoreManager
-store = PluginStoreManager()
+store = PluginStoreManager(plugins_dir='plugin-repos')
 for plugin_id in store.list_installed_plugins():
     info = store.get_installed_plugin_info(plugin_id)
     print(f'{plugin_id}: {info[\"name\"]} (Last updated: {info.get(\"last_updated\", \"unknown\")})')
@@ -449,7 +463,7 @@ for plugin_id in store.list_installed_plugins():
 # Uninstall
 python3 -c "
 from src.plugin_system.store_manager import PluginStoreManager
-store = PluginStoreManager()
+store = PluginStoreManager(plugins_dir='plugin-repos')
 store.uninstall_plugin('clock-simple')
 "
 ```
@@ -468,10 +482,17 @@ A: Yes, you can install anytime, but you must restart the display to load them.
 A: The existing copy will be replaced with the latest code from the repository.
 
 **Q: Can I install multiple versions of the same plugin?**
-A: No, each plugin ID maps to a single checkout of the repository's default branch.
+A: No, each plugin ID maps to a single installed copy.
 
 **Q: How do I update all plugins at once?**
-A: Currently, you need to update each plugin individually. Bulk update is planned for a future release.
+A: Click **Check & Update All** at the top of the Plugin Manager tab. You can
+also turn on weekly automatic updates (off by default) in the General tab;
+they update LEDMatrix itself and then the installed plugins
+(`web_interface/auto_update.py`).
+
+**Q: How does the store know an update is available?**
+A: For registry plugins it compares the installed manifest's `version` with
+the registry's `latest_version`; git tags and releases are not consulted.
 
 **Q: Can plugins access my API keys from config_secrets.json?**
 A: Yes, if a plugin needs API keys, it can access them like core managers do.

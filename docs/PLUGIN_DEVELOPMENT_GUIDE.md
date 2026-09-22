@@ -660,7 +660,8 @@ To have your plugin added to the official plugin store:
 For your plugin to work well in the plugin store:
 
 - **GitHub repository**: Must be publicly accessible on GitHub
-- **Releases or tags**: Recommended for version tracking
+- **`version` in manifest.json**: The store offers updates by comparing it
+  with the registry's `latest_version`; releases and tags are not read
 - **README.md**: Clear installation and configuration instructions
 - **config_schema.json**: Recommended for web UI configuration
 - **manifest.json**: Required with all required fields
@@ -670,7 +671,8 @@ For your plugin to work well in the plugin store:
 
 1. **Official Registry** (Recommended):
    - Listed in default plugin store
-   - Automatic updates
+   - Update offers in the Plugin Manager (and weekly automatic updates, if
+     the user turns them on)
    - Verified badge
    - Requires approval
 
