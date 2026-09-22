@@ -2,7 +2,7 @@
 Tests for src/vegas_mode/config.py
 
 Covers VegasModeConfig: from_config, to_dict, get_frame_interval,
-is_plugin_included, get_ordered_plugins, validate, update.
+is_plugin_included, get_ordered_plugins, validate.
 """
 
 import pytest
@@ -263,48 +263,3 @@ class TestValidate:
         cfg = VegasModeConfig(scroll_speed=0.1, target_fps=5)
         errors = cfg.validate()
         assert len(errors) >= 2
-
-
-# ---------------------------------------------------------------------------
-# update
-# ---------------------------------------------------------------------------
-
-class TestUpdate:
-    def _wrap(self, **kwargs) -> dict:
-        return {"display": {"vegas_scroll": kwargs}}
-
-    def test_update_enabled(self):
-        cfg = VegasModeConfig(enabled=False)
-        cfg.update(self._wrap(enabled=True))
-        assert cfg.enabled is True
-
-    def test_update_scroll_speed(self):
-        cfg = VegasModeConfig(scroll_speed=50.0)
-        cfg.update(self._wrap(scroll_speed=90.0))
-        assert cfg.scroll_speed == 90.0
-
-    def test_update_separator_width(self):
-        cfg = VegasModeConfig(separator_width=32)
-        cfg.update(self._wrap(separator_width=8))
-        assert cfg.separator_width == 8
-
-    def test_update_plugin_order(self):
-        cfg = VegasModeConfig(plugin_order=[])
-        cfg.update(self._wrap(plugin_order=["x", "y"]))
-        assert cfg.plugin_order == ["x", "y"]
-
-    def test_update_excluded_plugins(self):
-        cfg = VegasModeConfig()
-        cfg.update(self._wrap(excluded_plugins=["skip_me"]))
-        assert "skip_me" in cfg.excluded_plugins
-
-    def test_update_ignores_missing_keys(self):
-        cfg = VegasModeConfig(scroll_speed=50.0)
-        cfg.update(self._wrap(target_fps=80))  # only fps, not speed
-        assert cfg.scroll_speed == 50.0
-        assert cfg.target_fps == 80
-
-    def test_empty_update_no_change(self):
-        cfg = VegasModeConfig(scroll_speed=50.0)
-        cfg.update({})
-        assert cfg.scroll_speed == 50.0

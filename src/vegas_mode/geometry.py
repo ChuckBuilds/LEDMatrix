@@ -230,45 +230,6 @@ def blank_runs(
     return list(zip(starts[long_enough].tolist(), ends[long_enough].tolist()))
 
 
-def find_item_boundary(
-    img: Image.Image,
-    target: int,
-    min_run: int,
-    threshold: int = DEFAULT_INK_THRESHOLD,
-) -> Optional[int]:
-    """
-    Find the column nearest ``target`` that sits inside a gap between items.
-
-    Used to narrow an oversized segment without cutting through a word. Only
-    runs of at least ``min_run`` blank columns are considered, so the
-    single-column gaps between characters are never chosen — cutting there
-    orphaned the tail of a word into the following cycle, which is how a lone
-    "y" from "Wednesday" ended up floating between two unrelated plugins.
-
-    Args:
-        img: Image to cut
-        target: Preferred cut column
-        min_run: Minimum blank-run width that counts as an item boundary
-        threshold: Ink threshold
-
-    Returns:
-        A column inside a qualifying gap, or None when the image has no such
-        gap at all — in which case the caller must not cut it.
-    """
-    runs = blank_runs(img, min_run, threshold)
-    if not runs:
-        return None
-
-    # Nearest point of the nearest run. For a run left of target that is its
-    # end (content resumes just after), for a run right of target its start
-    # (content stopped just before) — the right choice in both directions.
-    def clamp_to_run(run: Tuple[int, int]) -> int:
-        start, end = run
-        return max(start, min(target, end - 1))
-
-    return min((clamp_to_run(r) for r in runs), key=lambda c: abs(c - target))
-
-
 def find_blank_cut(
     img: Image.Image,
     target: int,
