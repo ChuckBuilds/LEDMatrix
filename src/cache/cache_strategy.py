@@ -36,20 +36,8 @@ class CacheStrategy:
             Live update interval in seconds
         """
         if not self.config_manager:
-            # Default intervals - all sports use 60 seconds as default
-            default_intervals = {
-                'soccer': 60,
-                'nfl': 60,
-                'nhl': 60,
-                'nba': 60,
-                'mlb': 60,
-                'milb': 60,
-                'ncaa_fb': 60,
-                'ncaa_baseball': 60,
-                'ncaam_basketball': 60,
-            }
-            return default_intervals.get(sport_key, 60)
-        
+            return 60
+
         try:
             config = self.config_manager.config
             # All sports now use _scoreboard suffix
@@ -206,8 +194,6 @@ class CacheStrategy:
 
         # Live sports data
         if any(x in key_lower for x in ['live', 'current', 'scoreboard']):
-            if 'soccer' in key_lower:
-                return 'sports_live'  # Soccer live data is very time-sensitive
             return 'sports_live'
 
         # Weather data
