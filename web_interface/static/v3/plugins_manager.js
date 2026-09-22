@@ -41,164 +41,6 @@ const safeLocalStorage = {
 const _PLUGIN_DEBUG_EARLY = safeLocalStorage.getItem('pluginDebug') === 'true';
 if (_PLUGIN_DEBUG_EARLY) debugLog('[PLUGINS SCRIPT] Defining configurePlugin and togglePlugin at top level...');
 
-// Expose on-demand functions early as stubs (will be replaced when IIFE runs)
-window.openOnDemandModal = function(pluginId) {
-    console.warn('openOnDemandModal called before initialization, waiting...');
-    // Wait for the real function to be available
-    let attempts = 0;
-    const maxAttempts = 50; // 2.5 seconds
-    const checkInterval = setInterval(() => {
-        attempts++;
-        if (window.__openOnDemandModalImpl) {
-            clearInterval(checkInterval);
-            window.__openOnDemandModalImpl(pluginId);
-        } else if (attempts >= maxAttempts) {
-            clearInterval(checkInterval);
-            console.error('openOnDemandModal not available after waiting');
-            if (typeof showNotification === 'function') {
-                showNotification('On-demand modal unavailable. Please refresh the page.', 'error');
-            }
-        }
-    }, 50);
-};
-
-window.requestOnDemandStop = function({ stopService = false } = {}) {
-    console.warn('requestOnDemandStop called before initialization, waiting...');
-    // Wait for the real function to be available
-    let attempts = 0;
-    const maxAttempts = 50; // 2.5 seconds
-    const checkInterval = setInterval(() => {
-        attempts++;
-        if (window.__requestOnDemandStopImpl) {
-            clearInterval(checkInterval);
-            return window.__requestOnDemandStopImpl({ stopService });
-        } else if (attempts >= maxAttempts) {
-            clearInterval(checkInterval);
-            console.error('requestOnDemandStop not available after waiting');
-            if (typeof showNotification === 'function') {
-                showNotification('On-demand stop unavailable. Please refresh the page.', 'error');
-            }
-            return Promise.reject(new Error('Function not available'));
-        }
-    }, 50);
-    return Promise.resolve();
-};
-
-// Define updatePlugin early as a stub to ensure it's always available
-window.updatePlugin = window.updatePlugin || function(pluginId) {
-    if (_PLUGIN_DEBUG_EARLY) debugLog('[PLUGINS STUB] updatePlugin called for', pluginId);
-
-    // Validate pluginId
-    if (!pluginId || typeof pluginId !== 'string') {
-        console.error('Invalid pluginId:', pluginId);
-        if (typeof showNotification === 'function') {
-            showNotification('Invalid plugin ID', 'error');
-        }
-        return Promise.reject(new Error('Invalid plugin ID'));
-    }
-
-    // Show immediate feedback
-    if (typeof showNotification === 'function') {
-        showNotification(`Updating ${pluginId}...`, 'info');
-    }
-
-    // Prepare request body
-    const requestBody = { plugin_id: pluginId };
-    const requestBodyJson = JSON.stringify(requestBody);
-
-    debugLog('[UPDATE] Sending request:', { url: '/api/v3/plugins/update', body: requestBodyJson });
-
-    // Make the API call directly
-    return fetch('/api/v3/plugins/update', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-        },
-        body: requestBodyJson
-    })
-    .then(async response => {
-        // Check if response is OK before parsing
-        if (!response.ok) {
-            // Try to parse error response
-            let errorData;
-            try {
-                const text = await response.text();
-                console.error('[UPDATE] Error response:', { status: response.status, statusText: response.statusText, body: text });
-                errorData = JSON.parse(text);
-            } catch (e) {
-                errorData = { message: `Server error: ${response.status} ${response.statusText}` };
-            }
-
-            if (typeof showNotification === 'function') {
-                showNotification(errorData.message || `Update failed: ${response.status}`, 'error');
-            }
-            throw new Error(errorData.message || `Update failed: ${response.status}`);
-        }
-
-        // Parse successful response
-        return response.json();
-    })
-    .then(data => {
-        if (typeof showNotification === 'function') {
-            showNotification(data.message || 'Update initiated', data.status || 'info');
-        }
-        // Refresh installed plugins if available
-        if (typeof loadInstalledPlugins === 'function') {
-            loadInstalledPlugins();
-        } else if (typeof window.pluginManager?.loadInstalledPlugins === 'function') {
-            window.pluginManager.loadInstalledPlugins();
-        }
-        return data;
-    })
-    .catch(error => {
-        console.error('[UPDATE] Error updating plugin:', error);
-        if (typeof showNotification === 'function') {
-            showNotification('Error updating plugin: ' + error.message, 'error');
-        }
-        throw error;
-    });
-};
-
-// Define uninstallPlugin early as a stub
-window.uninstallPlugin = window.uninstallPlugin || function(pluginId) {
-    if (_PLUGIN_DEBUG_EARLY) debugLog('[PLUGINS STUB] uninstallPlugin called for', pluginId);
-
-    if (!confirm(`Are you sure you want to uninstall ${pluginId}?`)) {
-        return Promise.resolve({ cancelled: true });
-    }
-
-    if (typeof showNotification === 'function') {
-        showNotification(`Uninstalling ${pluginId}...`, 'info');
-    }
-
-    return fetch('/api/v3/plugins/uninstall', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ plugin_id: pluginId })
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (typeof showNotification === 'function') {
-            showNotification(data.message || 'Uninstall initiated', data.status || 'info');
-        }
-        // Refresh installed plugins if available
-        if (typeof loadInstalledPlugins === 'function') {
-            loadInstalledPlugins();
-        } else if (typeof window.pluginManager?.loadInstalledPlugins === 'function') {
-            window.pluginManager.loadInstalledPlugins();
-        }
-        return data;
-    })
-    .catch(error => {
-        console.error('Error uninstalling plugin:', error);
-        if (typeof showNotification === 'function') {
-            showNotification('Error uninstalling plugin: ' + error.message, 'error');
-        }
-        throw error;
-    });
-};
-
 // Define configurePlugin early to ensure it's always available
 window.configurePlugin = window.configurePlugin || async function(pluginId) {
     if (_PLUGIN_DEBUG_EARLY) debugLog('[PLUGINS STUB] configurePlugin called for', pluginId);
@@ -2220,7 +2062,6 @@ window.__openOnDemandModalImpl = function(pluginId) {
     });
 };
 
-// Replace the stub with the real implementation
 window.openOnDemandModal = window.__openOnDemandModalImpl;
 
 // Release handle for the on-demand modal's focus trap (window.LEDDialog).
@@ -2358,8 +2199,6 @@ function stopOnDemand(event) {
     requestOnDemandStop({ stopService });
 }
 
-// Store the real implementation and replace the stub
-window.__requestOnDemandStopImpl = requestOnDemandStop;
 window.requestOnDemandStop = requestOnDemandStop;
 
 function closeOnDemandModalOnBackdrop(event) {
@@ -2614,98 +2453,6 @@ window.updateKeyValuePairData = function(fieldId, fullKey) {
     });
 
     hiddenInput.value = JSON.stringify(pairs);
-};
-
-// Functions to handle array-of-objects
-window.addArrayObjectItem = function(fieldId, fullKey, maxItems) {
-    const itemsContainer = document.getElementById(fieldId + '_items');
-    const hiddenInput = document.getElementById(fieldId + '_data');
-    if (!itemsContainer || !hiddenInput) return;
-
-    const currentItems = itemsContainer.querySelectorAll('.array-object-item');
-    if (currentItems.length >= maxItems) {
-        alert(`Maximum ${maxItems} items allowed`);
-        return;
-    }
-
-    // Get schema for item properties from the hidden input's data attribute or currentPluginConfig
-    const schema = (typeof currentPluginConfig !== 'undefined' && currentPluginConfig?.schema) || (typeof window.currentPluginConfig !== 'undefined' && window.currentPluginConfig?.schema);
-    if (!schema) return;
-
-    // Navigate to the items schema
-    const keys = fullKey.split('.');
-    let itemsSchema = schema.properties;
-    for (const key of keys) {
-        if (itemsSchema && itemsSchema[key]) {
-            itemsSchema = itemsSchema[key];
-            if (itemsSchema.type === 'array' && itemsSchema.items) {
-                itemsSchema = itemsSchema.items;
-                break;
-            }
-        }
-    }
-
-    if (!itemsSchema || !itemsSchema.properties) return;
-
-    const newIndex = currentItems.length;
-    const itemHtml = renderArrayObjectItem(fieldId, fullKey, itemsSchema.properties, {}, newIndex, itemsSchema);
-    itemsContainer.insertAdjacentHTML('beforeend', itemHtml);
-    updateArrayObjectData(fieldId);
-
-    // Update add button state
-    const addButton = itemsContainer.nextElementSibling;
-    if (addButton && currentItems.length + 1 >= maxItems) {
-        addButton.disabled = true;
-        addButton.style.opacity = '0.5';
-        addButton.style.cursor = 'not-allowed';
-    }
-};
-
-window.removeArrayObjectItem = function(fieldId, index) {
-    const itemsContainer = document.getElementById(fieldId + '_items');
-    if (!itemsContainer) return;
-
-    const item = itemsContainer.querySelector(`.array-object-item[data-index="${index}"]`);
-    if (item) {
-        item.remove();
-        // Re-index remaining items
-        const remainingItems = itemsContainer.querySelectorAll('.array-object-item');
-        remainingItems.forEach((itemEl, newIndex) => {
-            itemEl.setAttribute('data-index', newIndex);
-            // Update the id attribute to match new index (used by file upload selectors)
-            const newItemId = `${fieldId}_item_${newIndex}`;
-            itemEl.id = newItemId;
-            // Update all inputs within this item - need to update name/id attributes
-            itemEl.querySelectorAll('input, select, textarea').forEach(input => {
-                const name = input.getAttribute('name') || input.id;
-                if (name) {
-                    // Update name/id attribute with new index
-                    const newName = name.replace(/\[\d+\]/, `[${newIndex}]`);
-                    if (input.getAttribute('name')) input.setAttribute('name', newName);
-                    if (input.id) input.id = input.id.replace(/\d+/, newIndex);
-                }
-            });
-            // Update button onclick attributes
-            itemEl.querySelectorAll('button[onclick]').forEach(button => {
-                const onclick = button.getAttribute('onclick');
-                if (onclick) {
-                    button.setAttribute('onclick', onclick.replace(/\d+/, newIndex));
-                }
-            });
-        });
-        updateArrayObjectData(fieldId);
-
-        // Update add button state
-        const addButton = itemsContainer.nextElementSibling;
-        if (addButton) {
-            const maxItems = parseInt(addButton.getAttribute('onclick').match(/\d+/)[0]);
-            if (remainingItems.length < maxItems) {
-                addButton.disabled = false;
-                addButton.style.opacity = '1';
-                addButton.style.cursor = 'pointer';
-            }
-        }
-    }
 };
 
 window.updateArrayObjectData = function(fieldId) {
@@ -3420,78 +3167,6 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
 }
 
 // togglePlugin is already defined at the top of the script - no need to redefine
-
-// Only override updatePlugin if it doesn't already have improved error handling
-if (!window.updatePlugin || window.updatePlugin.toString().includes('[UPDATE]')) {
-    window.updatePlugin = function(pluginId) {
-        // Validate pluginId
-        if (!pluginId || typeof pluginId !== 'string') {
-            console.error('[UPDATE] Invalid pluginId:', pluginId);
-            if (typeof showNotification === 'function') {
-                showNotification('Invalid plugin ID', 'error');
-            }
-            return Promise.reject(new Error('Invalid plugin ID'));
-        }
-
-        showNotification(`Updating ${pluginId}...`, 'info');
-
-        // Prepare request body
-        const requestBody = { plugin_id: pluginId };
-        const requestBodyJson = JSON.stringify(requestBody);
-
-        debugLog('[UPDATE] Sending request:', { url: '/api/v3/plugins/update', body: requestBodyJson });
-
-        return fetch('/api/v3/plugins/update', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Accept': 'application/json'
-            },
-            body: requestBodyJson
-        })
-        .then(async response => {
-            // Check if response is OK before parsing
-            if (!response.ok) {
-                // Try to parse error response
-                let errorData;
-                try {
-                    const text = await response.text();
-                    console.error('[UPDATE] Error response:', { status: response.status, statusText: response.statusText, body: text });
-                    errorData = JSON.parse(text);
-                } catch (e) {
-                    errorData = { message: `Server error: ${response.status} ${response.statusText}` };
-                }
-
-                if (typeof showNotification === 'function') {
-                    showNotification(errorData.message || `Update failed: ${response.status}`, 'error');
-                }
-                throw new Error(errorData.message || `Update failed: ${response.status}`);
-            }
-
-            // Parse successful response
-            return response.json();
-        })
-        .then(data => {
-            showNotification(data.message || 'Update initiated', data.status || 'info');
-            if (data.status === 'success') {
-                // Refresh the list
-                if (typeof loadInstalledPlugins === 'function') {
-                    loadInstalledPlugins();
-                } else if (typeof window.pluginManager?.loadInstalledPlugins === 'function') {
-                    window.pluginManager.loadInstalledPlugins();
-                }
-            }
-            return data;
-        })
-        .catch(error => {
-            console.error('[UPDATE] Error updating plugin:', error);
-            if (typeof showNotification === 'function') {
-                showNotification('Error updating plugin: ' + error.message, 'error');
-            }
-            throw error;
-        });
-    };
-}
 
 window.uninstallPlugin = function(pluginId) {
     const plugin = (window.installedPlugins || installedPlugins || []).find(p => p.id === pluginId);
@@ -4627,34 +4302,6 @@ function jsStringAttr(value) {
     return escapeAttribute(JSON.stringify(value == null ? '' : String(value)));
 }
 
-// Format date for display
-function formatDate(dateString) {
-    if (!dateString) return 'Unknown';
-
-    try {
-        const date = new Date(dateString);
-        const now = new Date();
-        const diffTime = Math.abs(now - date);
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-
-        if (diffDays < 1) {
-            return 'Today';
-        } else if (diffDays < 2) {
-            return 'Yesterday';
-        } else if (diffDays < 7) {
-            return `${diffDays} days ago`;
-        } else if (diffDays < 30) {
-            const weeks = Math.floor(diffDays / 7);
-            return `${weeks} ${weeks === 1 ? 'week' : 'weeks'} ago`;
-        } else {
-            // Return formatted date for older items
-            return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-        }
-    } catch (e) {
-        return dateString;
-    }
-}
-
 function isNewPlugin(lastUpdated) {
     if (!lastUpdated) return false;
 
@@ -5013,10 +4660,6 @@ window.handleCredentialsUpload = async function(event, fieldId, uploadEndpoint, 
 
 // handleFiles is now defined exclusively in file-upload.js widget
 
-window.deleteUploadedImage = async function(fieldId, imageId, pluginId) {
-    return window.deleteUploadedFile(fieldId, imageId, pluginId, 'image', null);
-}
-
 window.deleteUploadedFile = async function(fieldId, fileId, pluginId, fileType, customDeleteEndpoint) {
     const fileTypeLabel = fileType === 'json' ? 'file' : 'image';
     if (!confirm(`Are you sure you want to delete this ${fileTypeLabel}?`)) {
@@ -5084,18 +4727,6 @@ window.deleteUploadedFile = async function(fieldId, fileId, pluginId, fileType, 
 // getUploadConfig is defined in file-upload.js widget which loads first.
 // No override needed here — file-upload.js owns this function.
 
-window.getCurrentImages = function(fieldId) {
-    const hiddenInput = document.getElementById(`${fieldId}_images_data`);
-    if (hiddenInput && hiddenInput.value) {
-        try {
-            return JSON.parse(hiddenInput.value);
-        } catch (e) {
-            console.error('Error parsing images data:', e);
-        }
-    }
-    return [];
-}
-
 window.updateImageList = function(fieldId, images) {
     const hiddenInput = document.getElementById(`${fieldId}_images_data`);
     if (hiddenInput) {
@@ -5158,17 +4789,6 @@ window.updateImageList = function(fieldId, images) {
     }
 }
 
-window.showUploadProgress = function(fieldId, totalFiles) {
-    const dropZone = document.getElementById(`${fieldId}_drop_zone`);
-    if (dropZone) {
-        dropZone.innerHTML = `
-            <i class="fas fa-spinner fa-spin text-3xl text-blue-500 mb-2"></i>
-            <p class="text-sm text-gray-600">Uploading ${totalFiles} file(s)...</p>
-        `;
-        dropZone.style.pointerEvents = 'none';
-    }
-}
-
 window.hideUploadProgress = function(fieldId) {
     const uploadConfig = window.getUploadConfig(fieldId);
     const maxFiles = uploadConfig.max_files || 10;
@@ -5186,14 +4806,6 @@ window.hideUploadProgress = function(fieldId) {
     }
 }
 
-window.formatFileSize = function(bytes) {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
-}
-
 function formatDate(dateString) {
     if (!dateString) return 'Unknown date';
     try {
@@ -5202,30 +4814,6 @@ function formatDate(dateString) {
     } catch (e) {
         return dateString;
     }
-}
-
-window.getScheduleSummary = function(schedule) {
-    if (!schedule || !schedule.enabled || schedule.mode === 'always') {
-        return 'Always shown';
-    }
-
-    if (schedule.mode === 'time_range') {
-        return `${schedule.start_time || '08:00'} - ${schedule.end_time || '18:00'} (daily)`;
-    }
-
-    if (schedule.mode === 'per_day' && schedule.days) {
-        const enabledDays = Object.entries(schedule.days)
-            .filter(([day, config]) => config && config.enabled)
-            .map(([day]) => day.charAt(0).toUpperCase() + day.slice(1, 3));
-
-        if (enabledDays.length === 0) {
-            return 'Never shown';
-        }
-
-        return enabledDays.join(', ') + ' only';
-    }
-
-    return 'Scheduled';
 }
 
 window.openImageSchedule = function(fieldId, imageId, imageIdx) {
@@ -5614,14 +5202,6 @@ if (typeof window !== 'undefined') {
         }
     };
 
-    // updateArrayObjectData is defined earlier in the file (line ~3596)
-    // Only define stub if it doesn't already exist (defensive fallback)
-    if (typeof window.updateArrayObjectData === 'undefined') {
-        window.updateArrayObjectData = function(fieldId) {
-            console.warn('updateArrayObjectData stub called - implementation should be defined earlier');
-        };
-    }
-
     window.updateCheckboxGroupData = function(fieldId) {
         // Update hidden _data input with currently checked values
         const hiddenInput = document.getElementById(fieldId + '_data');
@@ -5639,22 +5219,6 @@ if (typeof window !== 'undefined') {
 
         hiddenInput.value = JSON.stringify(selectedValues);
     };
-
-    // handleArrayObjectFileUpload and removeArrayObjectFile are defined earlier in the file
-    // Only define stubs if they don't already exist (defensive fallback)
-    if (typeof window.handleArrayObjectFileUpload === 'undefined') {
-        window.handleArrayObjectFileUpload = function(event, fieldId, itemIndex, propKey, pluginId) {
-            console.warn('handleArrayObjectFileUpload stub called - implementation should be defined earlier');
-            window.updateArrayObjectData(fieldId);
-        };
-    }
-
-    if (typeof window.removeArrayObjectFile === 'undefined') {
-        window.removeArrayObjectFile = function(fieldId, itemIndex, propKey) {
-            console.warn('removeArrayObjectFile stub called - implementation should be defined earlier');
-            window.updateArrayObjectData(fieldId);
-        };
-    }
 
     // Debug logging (only if pluginDebug is enabled)
     if (_PLUGIN_DEBUG_EARLY) {
@@ -5674,23 +5238,6 @@ window.currentPluginConfig = null;
 // Force initialization immediately when script loads (for HTMX swapped content)
 debugLog('Plugins script loaded, checking for elements...');
 
-// Ensure all functions are globally available (in case IIFE didn't expose them properly)
-// These should already be set inside the IIFE, but this ensures they're available
-if (typeof initializePluginPageWhenReady !== 'undefined') {
-    window.initializePluginPageWhenReady = initializePluginPageWhenReady;
-}
-if (typeof initializePlugins !== 'undefined') {
-    window.initializePlugins = initializePlugins;
-}
-if (typeof loadInstalledPlugins !== 'undefined') {
-    window.loadInstalledPlugins = loadInstalledPlugins;
-}
-if (typeof renderInstalledPlugins !== 'undefined') {
-    window.renderInstalledPlugins = renderInstalledPlugins;
-}
-// GitHub install handlers are now exposed inside the IIFE (see above).
-// searchPluginStore is also exposed inside the IIFE after its definition.
-
 // Verify critical functions are available
 if (_PLUGIN_DEBUG_EARLY) {
     debugLog('Plugin functions available:', {
@@ -5706,18 +5253,6 @@ if (_PLUGIN_DEBUG_EARLY) {
 if (window.checkGitHubAuthStatus && document.getElementById('github-auth-warning')) {
     debugLog('[EARLY] Checking GitHub auth status immediately on script load...');
     window.checkGitHubAuthStatus();
-}
-
-// Initialize on-demand modal immediately since it's in base.html
-if (typeof initializeOnDemandModal === 'function') {
-    // Run immediately and also after DOM is ready
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', initializeOnDemandModal);
-    } else {
-        initializeOnDemandModal();
-    }
-    // Also try after a short delay to ensure elements are available
-    setTimeout(initializeOnDemandModal, 100);
 }
 
 setTimeout(function() {
