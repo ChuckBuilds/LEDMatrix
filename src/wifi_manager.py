@@ -75,12 +75,6 @@ DEFAULT_AP_CHANNEL = 7
 # LED status message file (for display_controller integration)
 LED_STATUS_FILE = None  # Will be set dynamically
 
-# NetworkManager connection file locations (Trixie uses /run, Bookworm uses /etc)
-NM_CONNECTIONS_PATHS = [
-    Path("/etc/NetworkManager/system-connections"),
-    Path("/run/NetworkManager/system-connections"),  # Trixie with Netplan
-]
-
 
 @dataclass
 class WiFiNetwork:
@@ -134,9 +128,6 @@ class WiFiManager:
         # Discover WiFi interface (don't hardcode wlan0)
         self._wifi_interface = self._discover_wifi_interface()
 
-        # Detect if we're running on Trixie (Netplan-based NetworkManager)
-        self._is_trixie = self._detect_trixie()
-
         # Initialize disconnected check counter for grace period
         # This prevents AP mode from enabling on transient network hiccups
         self._disconnected_checks = 0
@@ -149,7 +140,7 @@ class WiFiManager:
 
         logger.info(f"WiFi Manager initialized - nmcli: {self.has_nmcli}, iwlist: {self.has_iwlist}, "
                    f"hostapd: {self.has_hostapd}, dnsmasq: {self.has_dnsmasq}, "
-                   f"interface: {self._wifi_interface}, trixie: {self._is_trixie}")
+                   f"interface: {self._wifi_interface}")
 
         # Once per process: remove a stale force-AP flag left by a prior crash.
         # Guard with a class-level flag so the nmcli AP-state check only runs
@@ -291,44 +282,6 @@ class WiFiManager:
         logger.warning("Could not discover WiFi interface, defaulting to wlan0")
         return "wlan0"
 
-    def _detect_trixie(self) -> bool:
-        """
-        Detect if running on Raspberry Pi OS Trixie (Debian 13).
-
-        Trixie uses Netplan with NetworkManager, which changes behavior:
-        - Connection files are stored in /run/NetworkManager/system-connections
-        - nmcli hotspot requires different handling
-        - PMF (Protected Management Frames) may need to be disabled
-        """
-        try:
-            # Check for Netplan (primary indicator of Trixie)
-            netplan_path = Path("/etc/netplan")
-            if netplan_path.exists() and any(netplan_path.glob("*.yaml")):
-                logger.debug("Detected Trixie: Netplan configuration found")
-                return True
-
-            # Check Debian version
-            os_release = Path("/etc/os-release")
-            if os_release.exists():
-                content = os_release.read_text()
-                if 'VERSION_CODENAME=trixie' in content or 'VERSION_ID="13"' in content:
-                    logger.debug("Detected Trixie: os-release indicates Debian 13")
-                    return True
-
-            # Check if NM connections are in /run (Trixie behavior)
-            # NM_CONNECTIONS_PATHS[0] = /etc/..., NM_CONNECTIONS_PATHS[1] = /run/...
-            etc_nm_path = NM_CONNECTIONS_PATHS[0]  # Bookworm location
-            run_nm_path = NM_CONNECTIONS_PATHS[1]  # Trixie location
-            if run_nm_path.exists() and any(run_nm_path.glob("*.nmconnection")):
-                if not etc_nm_path.exists() or not any(etc_nm_path.glob("*.nmconnection")):
-                    logger.debug("Detected Trixie: NM connections in /run only")
-                    return True
-
-        except (OSError, PermissionError) as e:
-            logger.debug(f"Could not detect Trixie: {e}")
-
-        return False
-
     def _load_config(self):
         """Load WiFi configuration from file"""
         if self.config_path.exists():
@@ -343,14 +296,19 @@ class WiFiManager:
             self.config = {
                 "ap_ssid": DEFAULT_AP_SSID,
                 "ap_channel": DEFAULT_AP_CHANNEL,
-                "auto_enable_ap_mode": True,  # Default: auto-enable when no network (safe due to grace period)
-                "saved_networks": []
+                "auto_enable_ap_mode": True  # Default: auto-enable when no network (safe due to grace period)
             }
             self._save_config()
         
         # Ensure auto_enable_ap_mode exists in config (for existing configs)
         if "auto_enable_ap_mode" not in self.config:
             self.config["auto_enable_ap_mode"] = True  # Default: auto-enable when no network (safe due to grace period)
+            self._save_config()
+
+        # Older versions stored every joined network's password here in
+        # plaintext and never read it back; scrub it from existing files.
+        if "saved_networks" in self.config:
+            del self.config["saved_networks"]
             self._save_config()
     
     def _save_config(self):
@@ -1611,9 +1569,6 @@ class WiFiManager:
                             break
                     
                     if connected:
-                        # Save network to config
-                        self._save_network(ssid, password)
-                        
                         ip = status.ip_address or "Unknown"
                         self._show_led_message(f"Connected! {ip}", duration=5)
                         logger.info(f"Successfully connected to {ssid} with IP {ip}")
@@ -1625,7 +1580,6 @@ class WiFiManager:
             
             # No existing connection or activation failed, create new connection
             logger.info(f"Creating new connection for {ssid}...")
-            self._save_network(ssid, password)
             
             # Connect using nmcli
             if password:
@@ -1755,8 +1709,6 @@ class WiFiManager:
     def _connect_wpa_supplicant(self, ssid: str, password: str) -> Tuple[bool, str]:
         """Connect using wpa_supplicant (fallback)"""
         try:
-            self._save_network(ssid, password)
-            
             # This would require modifying /etc/wpa_supplicant/wpa_supplicant.conf
             # For now, return not implemented
             return False, "wpa_supplicant connection not yet implemented. Please use NetworkManager (nmcli)."
@@ -1843,23 +1795,6 @@ class WiFiManager:
         except Exception as e:
             logger.error(f"Error disconnecting from WiFi: {e}")
             return False, str(e)
-    
-    def _save_network(self, ssid: str, password: str):
-        """Save network credentials to config"""
-        # Remove existing entry for this SSID
-        self.config["saved_networks"] = [
-            n for n in self.config["saved_networks"]
-            if n.get("ssid") != ssid
-        ]
-        
-        # Add new entry
-        self.config["saved_networks"].append({
-            "ssid": ssid,
-            "password": password,
-            "saved_at": time.time()
-        })
-        
-        self._save_config()
     
     def _ensure_wifi_radio_enabled(self, max_retries: int = 3) -> bool:
         """
@@ -2581,38 +2516,6 @@ ignore_broadcast_ssid=0
         except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError) as e:
             logger.error(f"Error creating hostapd config: {e}")
             raise
-
-    def _check_dnsmasq_conflict(self) -> Tuple[bool, str]:
-        """
-        Check if dnsmasq is already in use for other purposes (e.g., Pi-hole).
-
-        Returns:
-            Tuple of (conflict_detected, description)
-        """
-        try:
-            # Check if dnsmasq service is active
-            result = subprocess.run(
-                ["systemctl", "is-active", "dnsmasq"],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            if result.stdout.strip() == "active":
-                # Check if it's configured for something other than our AP
-                if DNSMASQ_CONFIG_PATH.exists():
-                    try:
-                        content = DNSMASQ_CONFIG_PATH.read_text()
-                        # Check for Pi-hole or other common dnsmasq uses
-                        if 'pihole' in content.lower() or 'pi-hole' in content.lower():
-                            return True, "Pi-hole detected - dnsmasq is in use"
-                        if 'server=' in content and self._wifi_interface not in content:
-                            return True, "dnsmasq appears to be configured for DNS forwarding"
-                    except (OSError, PermissionError):
-                        pass
-
-            return False, ""
-        except (subprocess.TimeoutExpired, subprocess.SubprocessError):
-            return False, ""
 
     def _create_dnsmasq_config(self):
         """
