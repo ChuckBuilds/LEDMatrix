@@ -59,7 +59,7 @@ class TestPluginManager:
             result = pm.load_plugin("test_plugin")
             
             assert result is True
-            assert "test_plugin" in pm.plugin_modules
+            assert "test_plugin" in pm.plugins
             # PluginManager sets state to ENABLED after successful load
             assert pm.state_manager.get_state("test_plugin") == PluginState.ENABLED
 

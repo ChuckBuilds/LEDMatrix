@@ -86,15 +86,14 @@ class PluginManager:
         self._skip_reported: set = set()
 
         # Lock protecting plugin_last_update from concurrent mutation/iteration.
-        # It's written from run_scheduled_updates()/update_all_plugins() (main
-        # loop) and read/diffed by run_scheduled_updates_with_changes(), which
+        # It's written from run_scheduled_updates() (main loop) and read/diffed by run_scheduled_updates_with_changes(), which
         # Vegas mode calls from its own background update-tick thread.
         self._plugin_last_update_lock = threading.RLock()
 
         # Active plugins
         self.plugins: Dict[str, Any] = {}
         self.plugin_manifests: Dict[str, Dict[str, Any]] = {}
-        self.plugin_modules: Dict[str, Any] = {}
+        self.plugin_directories: Dict[str, Path] = {}
         self.plugin_last_update: Dict[str, float] = {}
 
         # Cached data-fetch intervals per plugin_id.
@@ -263,10 +262,7 @@ class PluginManager:
         with self._discovery_lock:
             self.plugin_manifests.clear()
             self.plugin_manifests.update(new_manifests)
-            if not hasattr(self, 'plugin_directories'):
-                self.plugin_directories = {}
-            else:
-                self.plugin_directories.clear()
+            self.plugin_directories.clear()
             self.plugin_directories.update(new_directories)
 
         return plugin_ids
@@ -327,11 +323,10 @@ class PluginManager:
             self.state_manager.set_state(plugin_id, PluginState.LOADED)
             
             # Find plugin directory using PluginLoader
-            plugin_directories = getattr(self, 'plugin_directories', None)
             plugin_dir = self.plugin_loader.find_plugin_directory(
                 plugin_id,
                 self.plugins_dir,
-                plugin_directories
+                self.plugin_directories
             )
             
             if plugin_dir is None:
@@ -341,9 +336,7 @@ class PluginManager:
                 return False
             
             # Update mapping if found via search
-            if plugin_directories is None or plugin_id not in plugin_directories:
-                if not hasattr(self, 'plugin_directories'):
-                    self.plugin_directories = {}
+            if plugin_id not in self.plugin_directories:
                 self.plugin_directories[plugin_id] = plugin_dir
             
             # Get plugin config
@@ -379,7 +372,7 @@ class PluginManager:
             config = self.prepare_plugin_config(plugin_id, config, schema=schema)
             
             # Use PluginLoader to load plugin
-            plugin_instance, module = self.plugin_loader.load_plugin(
+            plugin_instance, _module = self.plugin_loader.load_plugin(
                 plugin_id=plugin_id,
                 manifest=manifest,
                 plugin_dir=plugin_dir,
@@ -391,9 +384,6 @@ class PluginManager:
                 plugins_dir=self.plugins_dir,
             )
             
-            # Store module
-            self.plugin_modules[plugin_id] = module
-
             # Register plugin-shipped fonts with the FontManager (if any).
             # Plugin manifests can declare a "fonts" block that ships custom
             # fonts with the plugin; FontManager.register_plugin_fonts handles
@@ -633,9 +623,6 @@ class PluginManager:
             # Delegate sub-module and cached-module cleanup to the loader
             self.plugin_loader.unregister_plugin_modules(plugin_id)
 
-            # Remove from plugin_modules
-            self.plugin_modules.pop(plugin_id, None)
-            
             # Update state
             self.state_manager.set_state(plugin_id, PluginState.UNLOADED)
             self.state_manager.clear_state(plugin_id)
@@ -778,7 +765,7 @@ class PluginManager:
         resolved further: dev plugins are symlinks into ``plugins_dir``.
         """
         with self._discovery_lock:
-            if hasattr(self, 'plugin_directories') and plugin_id in self.plugin_directories:
+            if plugin_id in self.plugin_directories:
                 return str(self.plugin_directories[plugin_id])
 
         plugin_id = safe_path_component(plugin_id)
@@ -1299,97 +1286,3 @@ class PluginManager:
             done = sorted(self._completed_updates)
             self._completed_updates.clear()
             return done
-
-    def update_all_plugins(self) -> None:
-        """
-        Update all enabled plugins.
-        Calls update() on each enabled plugin using PluginExecutor.
-        """
-        for plugin_id, plugin_instance in list(self.plugins.items()):
-            if not getattr(plugin_instance, "enabled", True):
-                continue
-            
-            if not hasattr(plugin_instance, "update"):
-                continue
-            
-            # Eligibility check and the RUNNING transition together, so a
-            # concurrent scheduler cannot claim the same plugin (see
-            # _reserve_for_update).
-            if not self._reserve_for_update(plugin_id):
-                continue
-
-            try:
-                success = self.plugin_executor.execute_update(plugin_instance, plugin_id)
-                if success:
-                    with self._plugin_last_update_lock:
-                        self.plugin_last_update[plugin_id] = time.time()
-                    self._note_update_completed(plugin_id)
-                    self.state_manager.record_update(plugin_id)
-                    self.state_manager.set_state(plugin_id, PluginState.ENABLED)
-                else:
-                    self._record_update_failure(plugin_id)
-            except Exception as exc:  # pylint: disable=broad-except
-                self.logger.exception("Error updating plugin %s: %s", plugin_id, exc)
-                self._record_update_failure(plugin_id, exc=exc)
-    
-    def get_plugin_health_metrics(self) -> Dict[str, Any]:
-        """
-        Get health metrics for all plugins.
-        
-        Returns:
-            Dictionary mapping plugin_id to health metrics
-        """
-        metrics = {}
-        for plugin_id in self.plugins.keys():
-            plugin_metrics = {}
-            
-            # Get state information
-            state_info = self.state_manager.get_state_info(plugin_id)
-            plugin_metrics.update(state_info)
-            
-            # Get health tracker metrics if available
-            if self.health_tracker:
-                health_info = self.health_tracker.get_health_summary(plugin_id)
-                plugin_metrics['health'] = health_info
-            else:
-                plugin_metrics['health'] = {'status': 'unknown'}
-            
-            metrics[plugin_id] = plugin_metrics
-        return metrics
-    
-    def get_plugin_resource_metrics(self) -> Dict[str, Any]:
-        """
-        Get resource usage metrics for all plugins.
-        
-        Returns:
-            Dictionary mapping plugin_id to resource metrics
-        """
-        metrics = {}
-        for plugin_id in self.plugins.keys():
-            plugin_metrics = {}
-            
-            # Get state information
-            state_info = self.state_manager.get_state_info(plugin_id)
-            plugin_metrics.update(state_info)
-            
-            # Get resource monitor metrics if available
-            if self.resource_monitor:
-                resource_info = self.resource_monitor.get_metrics_summary(plugin_id)
-                plugin_metrics['resources'] = resource_info
-            else:
-                plugin_metrics['resources'] = {'status': 'unknown'}
-            
-            metrics[plugin_id] = plugin_metrics
-        return metrics
-    
-    def get_plugin_state(self, plugin_id: str) -> Dict[str, Any]:
-        """
-        Get comprehensive state information for a plugin.
-        
-        Args:
-            plugin_id: Plugin identifier
-            
-        Returns:
-            Dictionary with state information
-        """
-        return self.state_manager.get_state_info(plugin_id)

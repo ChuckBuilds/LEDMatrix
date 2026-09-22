@@ -183,17 +183,6 @@ class TestNoConcurrentUpdate:
             f"update() ran {plugin.max_concurrent}x concurrently on the "
             "synchronous path")
 
-    def test_update_all_plugins_never_overlaps(self, pm):
-        plugin = OverlapDetectingPlugin(update_seconds=0.25)
-        _install(pm, plugin)
-        _widen_check_then_act_window(pm)
-
-        _hammer(pm.update_all_plugins, threads=8)
-
-        assert plugin.max_concurrent == 1, (
-            f"update() ran {plugin.max_concurrent}x concurrently via "
-            "update_all_plugins()")
-
     def test_async_path_never_overlaps(self, pm):
         plugin = OverlapDetectingPlugin(update_seconds=0.2)
         plugin_id = _install(pm, plugin)
