@@ -12,6 +12,7 @@ from typing import Dict, List, Optional, Union
 
 import requests
 from PIL import Image
+from src.common.api_helper import USER_AGENT
 from src.common.permission_utils import (
     ensure_directory_permissions,
     get_assets_dir_mode,
@@ -104,7 +105,7 @@ class LogoHelper:
         # Session for HTTP requests
         self.session = requests.Session()
         self.session.headers.update({
-            'User-Agent': 'LEDMatrix-Common/1.0',
+            'User-Agent': USER_AGENT,
             'Accept': 'image/*',
         })
     

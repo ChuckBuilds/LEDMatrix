@@ -424,7 +424,8 @@ class TestPlaceholderLogo:
 
 class TestSessionConfiguration:
     def test_user_agent_and_accept_headers(self, helper):
-        assert helper.session.headers["User-Agent"] == "LEDMatrix-Common/1.0"
+        from src.common.api_helper import USER_AGENT
+        assert helper.session.headers["User-Agent"] == USER_AGENT
         assert helper.session.headers["Accept"] == "image/*"
 
 

@@ -33,6 +33,13 @@ class TestSharedHeaders:
     def test_api_helper_sends_the_same_user_agent(self):
         assert APIHelper().session.headers['User-Agent'] == USER_AGENT
 
+    def test_api_helper_does_not_hand_set_brotli(self):
+        assert 'br' not in APIHelper().session.headers.get('Accept-Encoding', '')
+
+    def test_logo_helper_sends_the_same_user_agent(self):
+        from src.common.logo_helper import LogoHelper
+        assert LogoHelper(display_width=64, display_height=32).session.headers['User-Agent'] == USER_AGENT
+
 
 class TestLogoDownloaderHeaders:
     def test_uses_the_shared_headers(self):
