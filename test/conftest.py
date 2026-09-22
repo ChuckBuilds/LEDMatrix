@@ -370,7 +370,6 @@ def test_plugin_manager(mock_config_manager, mock_display_manager, mock_cache_ma
             pm = MagicMock()
             pm.plugins = {}
             pm.plugin_manifests = {}
-            pm.loaded_plugins = {}
             pm.plugin_last_update = {}
             pm.discover_plugins = MagicMock(return_value=[])
             pm.load_plugin = MagicMock(return_value=True)
@@ -406,7 +405,6 @@ def test_display_controller(mock_config_manager, mock_display_manager, mock_cach
         mock_pm.load_plugin = MagicMock(return_value=True)
         mock_pm.get_plugin = MagicMock(return_value=None)
         mock_pm.plugins = {}
-        mock_pm.loaded_plugins = {}
         mock_pm.plugin_manifests = {}
         mock_pm.plugin_last_update = {}
         mock_pm.plugin_executor = MagicMock()
