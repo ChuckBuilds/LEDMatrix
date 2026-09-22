@@ -19,6 +19,13 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+- `FontManager.get_font()` returns a BDF font at its native size when asked for
+  a size the file doesn't contain (5x7.bdf at 8 or 10px, say). It used to
+  return PIL's default font, a different typeface, so a plugin that relied on
+  that will now render the font it asked for.
+- `src.wifi_manager.get_wifi_status_path()` — where WiFi status messages for
+  the display are written (`config/wifi_status.json`).
+
 ## 3.5.0
 
 New modules a plugin may import via `src.*` (floor on 3.5.0):
