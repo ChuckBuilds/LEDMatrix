@@ -53,67 +53,6 @@
                         }
                     });
                     
-                    // Suppress HTMX insertBefore errors and other noisy errors - they're harmless but noisy
-                    const originalError = console.error;
-                    const originalWarn = console.warn;
-                    
-                    console.error = function(...args) {
-                        const errorStr = args.join(' ');
-                        const errorStack = args.find(arg => arg && typeof arg === 'string' && arg.includes('htmx')) || '';
-                        
-                        // Suppress HTMX insertBefore errors (comprehensive check)
-                        // These occur when HTMX tries to swap content but the target element is null
-                        // Usually happens due to timing/race conditions and is harmless
-                        if (errorStr.includes("insertBefore") || 
-                            errorStr.includes("Cannot read properties of null") ||
-                            errorStr.includes("reading 'insertBefore'")) {
-                            // Check if it's from HTMX by looking at stack trace or error string
-                            // Also check the call stack if available
-                            const isHtmxError = errorStr.includes('htmx') ||
-                                               errorStack.includes('htmx') ||
-                                               args.some(arg => {
-                                                   if (typeof arg === 'string') {
-                                                       return arg.includes('htmx');
-                                                   }
-                                                   // Check error objects for stack traces
-                                                   if (arg && typeof arg === 'object' && arg.stack) {
-                                                       return arg.stack.includes('htmx');
-                                                   }
-                                                   return false;
-                                               });
-                            
-                            if (isHtmxError) {
-                                return; // Suppress - this is a harmless HTMX timing/race condition issue
-                            }
-                        }
-                        
-                        // Suppress script execution errors from malformed HTML
-                        if (errorStr.includes("Failed to execute 'appendChild' on 'Node'") ||
-                            errorStr.includes("Failed to execute 'insertBefore' on 'Node'")) {
-                            if (errorStr.includes('Unexpected token')) {
-                                return; // Suppress malformed HTML errors
-                            }
-                        }
-                        originalError.apply(console, args);
-                    };
-                    
-                    console.warn = function(...args) {
-                        const warnStr = args.join(' ');
-                        // Suppress Permissions-Policy warnings (harmless browser warnings)
-                        if (warnStr.includes('Permissions-Policy header') ||
-                            warnStr.includes('Unrecognized feature') ||
-                            warnStr.includes('Origin trial controlled feature') ||
-                            warnStr.includes('browsing-topics') ||
-                            warnStr.includes('run-ad-auction') ||
-                            warnStr.includes('join-ad-interest-group') ||
-                            warnStr.includes('private-state-token') ||
-                            warnStr.includes('private-aggregation') ||
-                            warnStr.includes('attribution-reporting')) {
-                            return; // Suppress - these are harmless browser feature warnings
-                        }
-                        originalWarn.apply(console, args);
-                    };
-                    
                     // Handle HTMX errors gracefully with detailed logging
                     document.body.addEventListener('htmx:responseError', function(event) {
                         const detail = event.detail;
