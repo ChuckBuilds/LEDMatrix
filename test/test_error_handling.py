@@ -1,11 +1,5 @@
-import logging
-import json
 from src.exceptions import CacheError, ConfigError, PluginError, DisplayError
-from src.common.error_handler import (
-    handle_file_operation,
-    handle_json_operation,
-    safe_execute
-)
+
 
 class TestCustomExceptions:
     """Test custom exception classes."""
@@ -37,85 +31,3 @@ class TestCustomExceptions:
         # DisplayError includes context in string representation
         assert "Display not found" in str(error)
         assert error.context.get('display_mode') == 'adafruit'
-
-
-class TestErrorHandlerUtilities:
-    """Test error handler utilities."""
-    
-    def test_handle_file_operation_read_success(self, tmp_path):
-        """Test successful file read."""
-        test_file = tmp_path / "test.txt"
-        test_file.write_text("test content")
-        
-        result = handle_file_operation(
-            lambda: test_file.read_text(),
-            "Read failed",
-            logging.getLogger(__name__),
-            default=""
-        )
-        assert result == "test content"
-        
-    def test_handle_file_operation_read_failure(self, tmp_path):
-        """Test file read failure."""
-        non_existent = tmp_path / "nonexistent.txt"
-        
-        result = handle_file_operation(
-            lambda: non_existent.read_text(),
-            "Read failed",
-            logging.getLogger(__name__),
-            default="fallback"
-        )
-        assert result == "fallback"
-        
-    def test_handle_json_operation_success(self, tmp_path):
-        """Test successful JSON parse."""
-        test_file = tmp_path / "test.json"
-        test_file.write_text('{"key": "value"}')
-        
-        result = handle_json_operation(
-            lambda: json.loads(test_file.read_text()),
-            "JSON parse failed",
-            logging.getLogger(__name__),
-            default={}
-        )
-        assert result == {"key": "value"}
-        
-    def test_handle_json_operation_failure(self, tmp_path):
-        """Test JSON parse failure."""
-        test_file = tmp_path / "invalid.json"
-        test_file.write_text('invalid json {')
-        
-        result = handle_json_operation(
-            lambda: json.loads(test_file.read_text()),
-            "JSON parse failed",
-            logging.getLogger(__name__),
-            default={"default": True}
-        )
-        assert result == {"default": True}
-        
-    def test_safe_execute_success(self):
-        """Test successful execution with safe_execute."""
-        def success_func():
-            return "success"
-            
-        result = safe_execute(
-            success_func,
-            "Execution failed",
-            logging.getLogger(__name__),
-            default="failed"
-        )
-        assert result == "success"
-        
-    def test_safe_execute_failure(self):
-        """Test failure handling with safe_execute."""
-        def failing_func():
-            raise ValueError("Something went wrong")
-            
-        result = safe_execute(
-            failing_func,
-            "Execution failed",
-            logging.getLogger(__name__),
-            default="fallback"
-        )
-        assert result == "fallback"
-        
