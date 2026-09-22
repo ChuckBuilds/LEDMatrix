@@ -195,7 +195,9 @@ class ErrorAggregator:
                 severity = "warning"
 
             # Collect affected plugins
-            affected_plugins = [r.plugin_id for r in recent_same_type if r.plugin_id]
+            # Unique, in first-seen order. Each repeat re-scans the whole
+            # window, so merging duplicates in below grew without bound.
+            affected_plugins = list(dict.fromkeys(r.plugin_id for r in recent_same_type if r.plugin_id))
 
             # Collect sample messages
             sample_messages = list(set(r.message for r in recent_same_type[:5]))
@@ -233,7 +235,8 @@ class ErrorAggregator:
                 self._patterns[pattern_key].count = count
                 self._patterns[pattern_key].last_seen = record.timestamp
                 self._patterns[pattern_key].severity = severity
-                self._patterns[pattern_key].affected_plugins.extend(affected_plugins)
+                known = self._patterns[pattern_key].affected_plugins
+                known.extend(p for p in affected_plugins if p not in known)
 
     def on_pattern_detected(self, callback: Callable[[ErrorPattern], None]) -> None:
         """
