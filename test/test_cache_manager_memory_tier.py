@@ -28,6 +28,50 @@ def cm(tmp_path):
     yield manager
 
 
+def test_cleanup_and_stats_follow_a_replaced_component(cm):
+    """Replace the component the way test_cache_ttl_honoured does; cleanup and
+    stats must act on the new one, not on dicts captured at construction."""
+    cm._memory_cache_component = MemoryCache(max_size=7, cleanup_interval=11.0)
+    cm._memory_cache_component.set("fresh", {"v": 1})
+    cm._memory_cache_component.set("stale", {"v": 2})
+    cm._memory_cache_component._timestamps["stale"] = time.time() - 4000
+
+    assert cm._cleanup_memory_cache(force=True) == 1
+    assert cm._memory_cache_component.get("stale") is None
+    assert cm._memory_cache_component.get("fresh") == {"v": 1}
+
+    stats = cm.get_memory_cache_stats()
+    assert stats["size"] == 1
+    assert stats["max_size"] == 7
+    assert stats["cleanup_interval"] == 11.0
+    assert stats["usage_percent"] == pytest.approx(100 / 7)
+
+
+def test_periodic_cleanup_is_throttled_and_records_its_run(cm):
+    mem = cm._memory_cache_component
+    mem.set("stale", {"v": 1})
+    mem._timestamps["stale"] = time.time() - 4000
+
+    # Within the interval: nothing runs, even through the get path.
+    assert cm._cleanup_memory_cache() == 0
+    assert mem.size() == 1
+
+    mem._last_cleanup = time.time() - mem._cleanup_interval - 1
+    before = time.time()
+    cm.get_cached_data("missing")          # triggers the periodic sweep
+    assert mem.size() == 0
+    assert cm.get_memory_cache_stats()["last_cleanup"] >= before
+
+
+def test_stats_have_the_documented_shape(cm):
+    cm.set("k", {"v": 1})
+    stats = cm.get_memory_cache_stats()
+    assert set(stats) == {"size", "max_size", "usage_percent",
+                          "last_cleanup", "cleanup_interval"}
+    assert stats["size"] == 1
+    assert stats["max_size"] == cm._memory_cache_component.max_size()
+
+
 def test_listing_the_cache_dir_does_not_hold_the_memory_lock(cm, tmp_path):
     """8,864 files on a real rig: every get/set used to wait out the scan."""
     for name in ("a", "b"):
