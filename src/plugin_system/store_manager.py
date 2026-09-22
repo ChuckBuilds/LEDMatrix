@@ -91,15 +91,7 @@ class PluginStoreManager:
         self._token_validation_cache = {}  # Cache for token validation results: {token: (is_valid, timestamp, error_message)}
         self._token_validation_cache_timeout = 300  # 5 minutes cache for token validation
 
-        # Per-plugin tombstone timestamps for plugins that were uninstalled
-        # recently via the UI. Used by the state reconciler to avoid
-        # resurrecting a plugin the user just deleted when reconciliation
-        # races against the uninstall operation. Cleared after ``_uninstall_tombstone_ttl``.
-        self._uninstall_tombstones: Dict[str, float] = {}
-        self._uninstall_tombstone_ttl = 300  # 5 minutes
-
-        # Persistent record of plugins the user has uninstalled. Unlike the
-        # in-memory tombstones above (a short-lived race guard), this survives
+        # Persistent record of plugins the user has uninstalled. It survives
         # restarts so that a core ``git pull`` update cannot resurrect a
         # built-in plugin the user removed. Built-in plugins (e.g.
         # ``web-ui-info``, ``starlark-apps``) are committed into the repo under
@@ -188,21 +180,6 @@ class PluginStoreManager:
         """
         synthetic_ts = time.time() + self._failure_backoff_seconds - cache_timeout
         cache_dict[cache_key] = (synthetic_ts, payload)
-
-    def mark_recently_uninstalled(self, plugin_id: str) -> None:
-        """Record that ``plugin_id`` was just uninstalled by the user."""
-        self._uninstall_tombstones[plugin_id] = time.time()
-
-    def was_recently_uninstalled(self, plugin_id: str) -> bool:
-        """Return True if ``plugin_id`` has an active uninstall tombstone."""
-        ts = self._uninstall_tombstones.get(plugin_id)
-        if ts is None:
-            return False
-        if time.time() - ts > self._uninstall_tombstone_ttl:
-            # Expired — clean up so the dict doesn't grow unbounded.
-            self._uninstall_tombstones.pop(plugin_id, None)
-            return False
-        return True
 
     def _is_valid_plugin_id(self, plugin_id: Any) -> bool:
         """Return True if ``plugin_id`` is a safe single-component plugin id.
