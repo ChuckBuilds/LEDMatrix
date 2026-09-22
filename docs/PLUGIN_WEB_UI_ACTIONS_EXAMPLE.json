@@ -37,9 +37,6 @@
       "script": "authenticate_spotify.py",
       "oauth_flow": true,
       "section_description": "Authenticate with Spotify or YouTube Music to enable music playback display.",
-      "success_message": "Spotify authentication completed successfully",
-      "error_message": "Spotify authentication failed",
-      "step1_message": "Authorization URL generated",
       "step2_prompt": "Please paste the full redirect URL from Spotify after authorization:",
       "step2_button_text": "Complete Authentication"
     },
@@ -51,9 +48,7 @@
       "button_text": "Authenticate YTM",
       "icon": "fab fa-youtube",
       "color": "red",
-      "script": "authenticate_ytm.py",
-      "success_message": "YouTube Music authentication completed successfully",
-      "error_message": "YouTube Music authentication failed"
+      "script": "authenticate_ytm.py"
     }
   ],
   "versions": [
