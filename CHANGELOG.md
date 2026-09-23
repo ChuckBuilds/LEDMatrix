@@ -44,6 +44,22 @@ core, the monorepo or the registry's third-party plugins calls them:
   `unregister_plugin_fonts`.
 - `PluginManager.get_enabled_plugins`.
 
+### Config writes
+
+- A power cut or crash mid-save can no longer leave `config/config.json`
+  truncated. `ConfigManager.save_config()` wrote the file in place; it,
+  `save_config_atomic()`, `save_raw_file_content()` and backup rollback now
+  share one writer (`atomic_write_text` in `src/config_manager_atomic.py`)
+  that fsyncs a temp file, renames it into place and fsyncs the directory.
+- `save_config_atomic()` no longer rewrites `config_secrets.json` on every
+  save, only when its content changes, and rotating backups no longer re-reads
+  every backup. The backups themselves are unchanged:
+  `config/backups/config.json.backup.<version>` plus its paired secrets
+  backup, five newest kept.
+- A save by the root-run display service keeps the file's previous owner
+  instead of handing `config.json` to root, and an install path with
+  "secrets" in a directory name no longer makes `config.json` mode 0640.
+
 New names in existing modules (no new modules; a plugin importing these must
 floor on the release that ships them):
 

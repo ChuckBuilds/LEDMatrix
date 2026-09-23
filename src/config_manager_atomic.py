@@ -10,15 +10,16 @@ import os
 import re
 import shutil
 import tempfile
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Any, Optional, List, Tuple, Union
 from dataclasses import dataclass
 from enum import Enum
 
 from src.exceptions import ConfigError
 from src.logging_config import get_logger
-from src.common.permission_utils import ensure_shared_group_ownership
+from src.common.permission_utils import ensure_shared_group_ownership, get_config_file_mode
 
 # Version stamp in a backup's filename: config.json.backup.<version>.
 BACKUP_VERSION_FORMAT = "%Y%m%d_%H%M%S_%f"
@@ -32,6 +33,98 @@ LEGACY_BACKUP_VERSION_FORMAT = "%Y%m%d_%H%M%S"
 # a hand-copied or renamed backup that happens to end in "-something" isn't
 # mistaken for one and silently mis-parsed.
 _BACKUP_COLLISION_SUFFIX_RE = re.compile(r"^(?P<base>.+)-(?P<collision>\d+)$")
+
+# Windows refuses to rename over a file another process has open (a reader
+# mid-load). Linux never does, so this only ever retries on a dev machine.
+_WINDOWS_REPLACE_ATTEMPTS = 10
+_WINDOWS_REPLACE_DELAY = 0.05
+
+
+def _replace(source: Path, destination: Path) -> None:
+    for attempt in range(_WINDOWS_REPLACE_ATTEMPTS):
+        try:
+            os.replace(source, destination)
+            return
+        except PermissionError:
+            if os.name != 'nt' or attempt == _WINDOWS_REPLACE_ATTEMPTS - 1:
+                raise
+            time.sleep(_WINDOWS_REPLACE_DELAY)
+
+
+def _fsync_directory(directory: Path) -> None:
+    """Persist a rename: until the directory entry itself is on disk, a power
+    cut can bring back the old file, or on some filesystems neither. Windows
+    can't open a directory for fsync, and NTFS journals renames anyway."""
+    if os.name == 'nt':
+        return
+    try:
+        fd = os.open(directory, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
+def atomic_write_text(path: Union[str, Path], text: str, mode: Optional[int] = None) -> None:
+    """
+    Replace ``path`` with ``text`` so that a crash or power cut at any point
+    leaves either the old file or the new one, never a truncated mix.
+
+    The data goes to a temp file in the same directory, is fsynced, and is
+    renamed over the target; the directory is then fsynced so the rename
+    itself survives. The temp file gets its final mode (0o644, or 0o640 when
+    the file name contains "secrets"; a directory name doesn't count) before
+    the rename, so no reader ever sees mkstemp's 0o600.
+
+    A rename hands the file to whoever wrote it. When running as root (the
+    display service) the previous owner is copied onto the temp file first,
+    so a root save doesn't leave the web user's config.json owned by root;
+    the group is then moved to the shared one (ensure_shared_group_ownership)
+    as before. On failure the temp file is removed, the target is untouched,
+    and the error propagates.
+    """
+    path = Path(path)
+    if mode is None:
+        mode = get_config_file_mode(Path(path.name))
+    try:
+        previous = path.stat()
+    except OSError:
+        previous = None
+
+    fd, temp_name = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.tmp.")
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(fd, 'wb') as f:
+            f.write(text.encode('utf-8'))
+            f.flush()
+            os.fsync(f.fileno())
+        if previous is not None and hasattr(os, 'geteuid') and os.geteuid() == 0:
+            try:
+                os.chown(temp_path, previous.st_uid, previous.st_gid)
+            except OSError:
+                pass
+        os.chmod(temp_path, mode)
+        _replace(temp_path, path)
+    except BaseException:
+        try:
+            temp_path.unlink()
+        except OSError:
+            pass
+        raise
+
+    ensure_shared_group_ownership(path)
+    _fsync_directory(path.parent)
+
+
+def atomic_write_json(path: Union[str, Path], data: Any, mode: Optional[int] = None) -> None:
+    """Serialize ``data`` the way every config file is written (indent=4) and
+    write it with :func:`atomic_write_text`. Serialization happens first, so
+    a value json can't encode fails before anything on disk changes."""
+    atomic_write_text(path, json.dumps(data, indent=4), mode)
 
 
 class SaveResultStatus(Enum):
@@ -75,11 +168,11 @@ class AtomicConfigManager:
     Manages atomic configuration saves with backup and rollback support.
     
     Provides:
-    - Atomic file writes (write to temp, validate, atomic move)
+    - Durable atomic file writes (see atomic_write_text)
     - Automatic backups before saves
     - Backup rotation (keep last N backups)
     - Rollback functionality
-    - Post-write validation
+    - Validation before the write
     """
     
     def __init__(
@@ -94,7 +187,8 @@ class AtomicConfigManager:
         
         Args:
             config_path: Path to main configuration file
-            secrets_path: Optional path to secrets file (saved atomically with main config)
+            secrets_path: Optional path to secrets file (backed up with the main
+                config, and rewritten by a save only when its content changes)
             backup_dir: Directory to store backups (default: config/backups/)
             max_backups: Maximum number of backups to keep
         """
@@ -126,24 +220,25 @@ class AtomicConfigManager:
         
         Process:
         1. Create backup if requested
-        2. Write to temporary files
-        3. Validate written files
-        4. Atomically move temp files to final locations
-        5. If validation fails, rollback
-        
+        2. Serialize and validate the new content in memory
+        3. Write each file with atomic_write_text (temp file, fsync, rename)
+
+        The secrets file is only rewritten when ``new_secrets`` differs from
+        what is already on disk.
+
         Args:
             new_config: New configuration data for main config file
             new_secrets: Optional new secrets data
             create_backup: Whether to create backup before saving
-            validate_after_write: Whether to validate after writing
-            
+            validate_after_write: Whether to validate the content before it
+                replaces the config file
+
         Returns:
             SaveResult with status and details
         """
         backup_path = None
-        
+
         try:
-            # Step 1: Create backup if requested
             if create_backup:
                 backup_result = self._create_backup()
                 if backup_result:
@@ -151,35 +246,23 @@ class AtomicConfigManager:
                     self.logger.info(f"Created backup: {backup_path}")
                 else:
                     self.logger.warning("Failed to create backup, continuing with save")
-            
-            # Step 2: Write to temporary files
-            temp_config_path, temp_secrets_path = self._write_to_temp_files(
-                new_config, new_secrets
-            )
-            
-            # Step 3: Validate written files
+
+            config_text, secrets_text = self._serialize(new_config, new_secrets)
+
             if validate_after_write:
-                validation_result = self._validate_config_file(temp_config_path)
+                validation_result = self._validate_config_text(config_text)
                 if not validation_result.is_valid:
-                    # Clean up temp files
-                    self._cleanup_temp_files(temp_config_path, temp_secrets_path)
-                    
-                    # Rollback if backup was created
-                    if backup_path:
-                        self._rollback_from_backup(backup_path)
-                    
                     return SaveResult(
                         status=SaveResultStatus.VALIDATION_FAILED,
                         message="Configuration validation failed after write",
                         backup_path=backup_path,
                         validation_errors=validation_result.errors
                     )
-            
-            # Step 4: Atomically move temp files to final locations
-            self._atomic_move(temp_config_path, self.config_path)
-            if temp_secrets_path and self.secrets_path:
-                self._atomic_move(temp_secrets_path, self.secrets_path)
-            
+
+            atomic_write_text(self.config_path, config_text)
+            if secrets_text is not None:
+                atomic_write_text(self.secrets_path, secrets_text)
+
             self.logger.info(f"Configuration saved atomically to {self.config_path}")
             
             return SaveResult(
@@ -256,57 +339,60 @@ class AtomicConfigManager:
             List of BackupInfo objects, sorted by timestamp (newest first)
         """
         backups = []
-        
-        if not self.backup_dir.exists():
-            return backups
-        
-        # Look for backup files (format: config.json.backup.<version>)
-        config_name = self.config_path.name
-        backup_pattern = f"{config_name}.backup.*"
-
-        for backup_file in self.backup_dir.glob(backup_pattern):
+        for version, backup_file, timestamp in self._backup_entries():
             try:
-                # The version reported here is what rollback_config() matches
-                # against, so it has to be the exact string in the filename.
-                #
-                # It did not used to be. This read .stem, which drops only the
-                # last dot-component, so for config.json.backup.20240101_120000
-                # parts was ['config', 'json', 'backup'] and parts[-2] was
-                # 'json' -- never 'backup'. The filename branch could not be
-                # reached, every backup fell through to the mtime fallback, and
-                # the version was a second-granularity restamp of the mtime
-                # rather than the name on disk. Two backups a second apart could
-                # therefore report the same version, and rollback would pick
-                # whichever the glob happened to yield first.
-                # Strip the exact prefix the glob just matched, so a config
-                # whose own name contains '.backup.' can't shift the split.
-                timestamp_str = backup_file.name[len(f"{config_name}.backup."):]
-                timestamp = self._parse_backup_version(timestamp_str)
-                if timestamp is None:
-                    # Not a version this code wrote (hand-copied, renamed).
-                    # Order it by mtime, but keep the on-disk version string so
-                    # it can still be named in a rollback.
-                    timestamp = datetime.fromtimestamp(backup_file.stat().st_mtime)
-
-                # Validate backup file
-                is_valid = self._validate_backup_file(backup_file)
-                
-                backup_info = BackupInfo(
-                    version=timestamp_str,
+                backups.append(BackupInfo(
+                    version=version,
                     path=str(backup_file),
                     timestamp=timestamp,
                     size=backup_file.stat().st_size,
-                    is_valid=is_valid
-                )
-                backups.append(backup_info)
-                
+                    is_valid=self._validate_backup_file(backup_file)
+                ))
             except Exception as e:
                 self.logger.warning(f"Error reading backup {backup_file}: {e}")
-        
-        # Sort by timestamp (newest first)
-        backups.sort(key=lambda b: b.timestamp, reverse=True)
-        
         return backups
+
+    def _backup_entries(self) -> List[Tuple[str, Path, datetime]]:
+        """
+        ``(version, path, timestamp)`` for every ``config.json.backup.<version>``
+        in the backup directory, newest first. Names only -- no file is opened,
+        so rotation can call this on every save without re-parsing each backup.
+        """
+        entries = []
+        if not self.backup_dir.exists():
+            return entries
+
+        prefix = f"{self.config_path.name}.backup."
+        for backup_file in self.backup_dir.glob(f"{prefix}*"):
+            # The version reported here is what rollback_config() matches
+            # against, so it has to be the exact string in the filename.
+            #
+            # It did not used to be. This read .stem, which drops only the
+            # last dot-component, so for config.json.backup.20240101_120000
+            # parts was ['config', 'json', 'backup'] and parts[-2] was
+            # 'json' -- never 'backup'. The filename branch could not be
+            # reached, every backup fell through to the mtime fallback, and
+            # the version was a second-granularity restamp of the mtime
+            # rather than the name on disk. Two backups a second apart could
+            # therefore report the same version, and rollback would pick
+            # whichever the glob happened to yield first.
+            # Strip the exact prefix the glob just matched, so a config
+            # whose own name contains '.backup.' can't shift the split.
+            version = backup_file.name[len(prefix):]
+            timestamp = self._parse_backup_version(version)
+            if timestamp is None:
+                # Not a version this code wrote (hand-copied, renamed).
+                # Order it by mtime, but keep the on-disk version string so
+                # it can still be named in a rollback.
+                try:
+                    timestamp = datetime.fromtimestamp(backup_file.stat().st_mtime)
+                except OSError as e:
+                    self.logger.warning(f"Error reading backup {backup_file}: {e}")
+                    continue
+            entries.append((version, backup_file, timestamp))
+
+        entries.sort(key=lambda entry: entry[2], reverse=True)
+        return entries
     
     @staticmethod
     def _parse_backup_version(version: str) -> Optional[datetime]:
@@ -417,100 +503,37 @@ class AtomicConfigManager:
             self.logger.error(f"Error creating backup: {e}", exc_info=True)
             return None
     
-    def _write_to_temp_files(
+    def _serialize(
         self,
         config_data: Dict[str, Any],
         secrets_data: Optional[Dict[str, Any]] = None
-    ) -> Tuple[Path, Optional[Path]]:
+    ) -> Tuple[str, Optional[str]]:
         """
-        Write configuration data to temporary files.
+        Serialize both files before either is written, so a value json can't
+        encode fails the save before anything on disk changes.
         
         Returns:
-            Tuple of (temp_config_path, temp_secrets_path)
-        """
-        # Create temp file in same directory as config (for atomic move)
-        temp_config = tempfile.NamedTemporaryFile(
-            mode='w',
-            dir=self.config_path.parent,
-            prefix=f".{self.config_path.name}.tmp.",
-            delete=False,
-            suffix='.json'
-        )
-        temp_config_path = Path(temp_config.name)
-        
-        try:
-            json.dump(config_data, temp_config, indent=4)
-            temp_config.close()
-        except Exception as e:
-            temp_config.close()
-            if temp_config_path.exists():
-                temp_config_path.unlink()
-            raise ConfigError(f"Error writing temp config file: {e}") from e
-        
-        # Write secrets to temp file if provided
-        temp_secrets_path = None
-        if secrets_data is not None and self.secrets_path:
-            temp_secrets = tempfile.NamedTemporaryFile(
-                mode='w',
-                dir=self.secrets_path.parent,
-                prefix=f".{self.secrets_path.name}.tmp.",
-                delete=False,
-                suffix='.json'
-            )
-            temp_secrets_path = Path(temp_secrets.name)
-            
-            try:
-                json.dump(secrets_data, temp_secrets, indent=4)
-                temp_secrets.close()
-            except Exception as e:
-                temp_secrets.close()
-                if temp_secrets_path.exists():
-                    temp_secrets_path.unlink()
-                # Clean up config temp file too
-                if temp_config_path.exists():
-                    temp_config_path.unlink()
-                raise ConfigError(f"Error writing temp secrets file: {e}") from e
-        
-        return temp_config_path, temp_secrets_path
-    
-    def _atomic_move(self, source: Path, destination: Path) -> None:
-        """
-        Atomically move a file (rename operation).
-        
-        On most filesystems, rename is atomic, which prevents corruption
-        if the process is interrupted.
-        
-        Sets appropriate file permissions after move to ensure service can read config.
+            Tuple of (config_text, secrets_text); secrets_text is None when
+            there is no secrets file to write or its content is unchanged.
         """
         try:
-            # Ensure destination directory exists
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            
-            # Determine target permissions based on file type
-            # config.json should be 644 (readable by all, including root service)
-            # config_secrets.json should be 640 (readable by owner and group)
-            if 'secrets' in str(destination):
-                target_mode = 0o640  # rw-r-----
-            else:
-                target_mode = 0o644  # rw-r--r--
-            
-            # Atomic move (rename)
-            source.replace(destination)
-            
-            # Set permissions after move to ensure they're correct
-            # This is important because temp files may have different permissions
-            # and we need root service to be able to read config.json
-            os.chmod(destination, target_mode)
+            config_text = json.dumps(config_data, indent=4)
+        except (TypeError, ValueError) as e:
+            raise ConfigError(f"Error serializing config: {e}") from e
 
-            # Also fix group ownership when this save is running as root
-            # (the display service): 0o640 alone only helps the non-root web
-            # user read a root-written secrets file if its group already
-            # matches the web user's group, which isn't guaranteed. See
-            # permission_utils.ensure_shared_group_ownership for why.
-            ensure_shared_group_ownership(destination)
-            
-        except Exception as e:
-            raise ConfigError(f"Error during atomic move: {e}") from e
+        if secrets_data is None or not self.secrets_path or self._secrets_unchanged(secrets_data):
+            return config_text, None
+        try:
+            return config_text, json.dumps(secrets_data, indent=4)
+        except (TypeError, ValueError) as e:
+            raise ConfigError(f"Error serializing secrets: {e}") from e
+
+    def _secrets_unchanged(self, secrets_data: Dict[str, Any]) -> bool:
+        try:
+            with open(self.secrets_path, 'r') as f:
+                return json.load(f) == secrets_data
+        except (OSError, ValueError):
+            return False
     
     def _validate_config_file(self, config_path: Path) -> ValidationResult:
         """
@@ -521,30 +544,38 @@ class AtomicConfigManager:
         - Valid JSON format
         - Can be parsed successfully
         """
-        errors = []
-        warnings = []
-        
         if not config_path.exists():
-            errors.append(f"Config file does not exist: {config_path}")
-            return ValidationResult(is_valid=False, errors=errors, warnings=warnings)
-        
+            return ValidationResult(
+                is_valid=False,
+                errors=[f"Config file does not exist: {config_path}"],
+                warnings=[]
+            )
         try:
             with open(config_path, 'r') as f:
-                data = json.load(f)
-            
-            # Basic validation: should be a dict
+                text = f.read()
+        except Exception as e:
+            return ValidationResult(
+                is_valid=False,
+                errors=[f"Error reading config file: {str(e)}"],
+                warnings=[]
+            )
+        return self._validate_config_text(text)
+
+    @staticmethod
+    def _validate_config_text(text: str) -> ValidationResult:
+        """Validate serialized configuration: parseable JSON holding an object."""
+        errors = []
+        warnings = []
+        try:
+            data = json.loads(text)
             if not isinstance(data, dict):
                 errors.append("Configuration must be a JSON object")
-            
-            # Check file is not empty
             if not data:
                 warnings.append("Configuration file is empty")
-            
         except json.JSONDecodeError as e:
             errors.append(f"Invalid JSON: {str(e)}")
         except Exception as e:
             errors.append(f"Error reading config file: {str(e)}")
-        
         return ValidationResult(
             is_valid=len(errors) == 0,
             errors=errors,
@@ -563,6 +594,9 @@ class AtomicConfigManager:
         """
         Rollback configuration from a backup file.
         
+        The backup is written back with atomic_write_text, so a failure
+        partway through a restore can't truncate the live config either.
+        
         Args:
             backup_path: Path to backup file to restore
         
@@ -575,71 +609,50 @@ class AtomicConfigManager:
             self.logger.error(f"Backup file not found: {backup_path}")
             return False
         
-        # Validate backup before restoring
-        if not self._validate_backup_file(backup_file):
+        try:
+            with open(backup_file, 'r') as f:
+                config_text = f.read()
+        except Exception as e:
+            self.logger.error(f"Error reading backup {backup_path}: {e}", exc_info=True)
+            return False
+        
+        if not self._validate_config_text(config_text).is_valid:
             self.logger.error(f"Backup file is invalid: {backup_path}")
             return False
         
         try:
-            # Restore main config
-            shutil.copy2(backup_file, self.config_path)
+            atomic_write_text(self.config_path, config_text)
             self.logger.info(f"Restored config from backup: {backup_path}")
             
-            # Try to restore secrets backup if it exists
-            if self.secrets_path:
-                # Look for corresponding secrets backup
-                # Format: config_secrets.json.backup.TIMESTAMP
-                backup_name = backup_file.name
-                if '.backup.' in backup_name:
-                    timestamp = backup_name.split('.backup.')[-1]
-                    secrets_backup_name = f"{self.secrets_path.name}.backup.{timestamp}"
-                    secrets_backup_path = self.backup_dir / secrets_backup_name
-                    
-                    if secrets_backup_path.exists():
-                        shutil.copy2(secrets_backup_path, self.secrets_path)
-                        self.logger.info(f"Restored secrets from backup: {secrets_backup_path}")
+            secrets_backup_path = self._paired_secrets_backup(backup_file)
+            if secrets_backup_path is not None and secrets_backup_path.exists():
+                with open(secrets_backup_path, 'r') as f:
+                    atomic_write_text(self.secrets_path, f.read())
+                self.logger.info(f"Restored secrets from backup: {secrets_backup_path}")
             
             return True
             
         except Exception as e:
             self.logger.error(f"Error during rollback: {e}", exc_info=True)
             return False
+
+    def _paired_secrets_backup(self, backup_file: Path) -> Optional[Path]:
+        """The config_secrets.json.backup.<version> taken alongside a config backup."""
+        if not self.secrets_path or '.backup.' not in backup_file.name:
+            return None
+        version = backup_file.name.split('.backup.')[-1]
+        return self.backup_dir / f"{self.secrets_path.name}.backup.{version}"
     
     def _rotate_backups(self) -> None:
         """Remove old backups, keeping only the most recent N backups."""
-        backups = self.list_backups()
-        
-        if len(backups) <= self.max_backups:
-            return
-        
-        # Sort by timestamp (oldest first) and remove excess
-        backups.sort(key=lambda b: b.timestamp)
-        backups_to_remove = backups[:-self.max_backups]
-        
-        for backup in backups_to_remove:
+        for _, backup_file, _ in self._backup_entries()[self.max_backups:]:
             try:
-                Path(backup.path).unlink()
-                self.logger.debug(f"Removed old backup: {backup.path}")
+                backup_file.unlink()
+                self.logger.debug(f"Removed old backup: {backup_file}")
                 
-                # Also remove corresponding secrets backup if it exists
-                if self.secrets_path:
-                    backup_name = Path(backup.path).name
-                    if '.backup.' in backup_name:
-                        timestamp = backup_name.split('.backup.')[-1]
-                        secrets_backup_name = f"{self.secrets_path.name}.backup.{timestamp}"
-                        secrets_backup_path = self.backup_dir / secrets_backup_name
-                        if secrets_backup_path.exists():
-                            secrets_backup_path.unlink()
+                secrets_backup_path = self._paired_secrets_backup(backup_file)
+                if secrets_backup_path is not None and secrets_backup_path.exists():
+                    secrets_backup_path.unlink()
                             
             except Exception as e:
-                self.logger.warning(f"Error removing old backup {backup.path}: {e}")
-    
-    def _cleanup_temp_files(self, *temp_paths: Path) -> None:
-        """Clean up temporary files."""
-        for temp_path in temp_paths:
-            if temp_path and temp_path.exists():
-                try:
-                    temp_path.unlink()
-                except Exception as e:
-                    self.logger.warning(f"Error cleaning up temp file {temp_path}: {e}")
-
+                self.logger.warning(f"Error removing old backup {backup_file}: {e}")

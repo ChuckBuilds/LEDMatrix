@@ -92,14 +92,6 @@ class CacheManager:
         self._strategy_component = CacheStrategy(config_manager=self.config_manager, logger=self.logger)
         self._metrics_component = CacheMetrics(logger=self.logger)
         
-        # Keep old attributes for backward compatibility (delegated to components)
-        self._memory_cache = self._memory_cache_component._cache
-        self._memory_cache_timestamps = self._memory_cache_component._timestamps
-        self._cache_lock = self._memory_cache_component._lock
-        self._max_memory_cache_size = self._memory_cache_component._max_size
-        self._memory_cache_cleanup_interval = self._memory_cache_component._cleanup_interval
-        self._last_memory_cache_cleanup = self._memory_cache_component._last_cleanup
-        
         # Disk cleanup configuration
         self._disk_cleanup_interval_hours = 24  # Run cleanup every 24 hours
         self._disk_cleanup_interval = 3600.0  # Minimum interval between cleanups (1 hour) for throttle
@@ -229,70 +221,14 @@ class CacheManager:
         return None
     
     def _cleanup_memory_cache(self, force: bool = False) -> int:
-        """
-        Clean up expired entries from memory cache and enforce size limits.
-        
-        Args:
-            force: If True, perform cleanup regardless of time interval
-            
+        """Sweep the memory tier: drop entries older than an hour and trim it
+        to its size ceiling, at most once per cleanup interval unless forced.
+
         Returns:
             Number of entries removed
         """
-        now = time.time()
-        
-        # Check if cleanup is needed
-        if not force and (now - self._last_memory_cache_cleanup) < self._memory_cache_cleanup_interval:
-            return 0
-        
-        with self._cache_lock:
-            removed_count = 0
-            current_time = time.time()
-            
-            # Remove expired entries (entries older than 1 hour without access are considered expired)
-            # We use a conservative TTL of 1 hour for cleanup
-            max_age_for_cleanup = 3600  # 1 hour
-            
-            expired_keys = []
-            for key, timestamp in list(self._memory_cache_timestamps.items()):
-                if isinstance(timestamp, str):
-                    try:
-                        timestamp = float(timestamp)
-                    except ValueError:
-                        timestamp = None
-                
-                if timestamp is None or (current_time - timestamp) > max_age_for_cleanup:
-                    expired_keys.append(key)
-            
-            # Remove expired entries
-            for key in expired_keys:
-                self._memory_cache.pop(key, None)
-                self._memory_cache_timestamps.pop(key, None)
-                removed_count += 1
-            
-            # Enforce size limit by removing oldest entries if cache is too large
-            if len(self._memory_cache) > self._max_memory_cache_size:
-                # Sort by timestamp (oldest first)
-                sorted_entries = sorted(
-                    self._memory_cache_timestamps.items(),
-                    key=lambda x: float(x[1]) if isinstance(x[1], (int, float)) else 0
-                )
-                
-                # Remove oldest entries until we're under the limit
-                excess_count = len(self._memory_cache) - self._max_memory_cache_size
-                for i in range(excess_count):
-                    if i < len(sorted_entries):
-                        key = sorted_entries[i][0]
-                        self._memory_cache.pop(key, None)
-                        self._memory_cache_timestamps.pop(key, None)
-                        removed_count += 1
-            
-            self._last_memory_cache_cleanup = current_time
-            
-            if removed_count > 0:
-                self.logger.debug(f"Memory cache cleanup: removed {removed_count} entries (current size: {len(self._memory_cache)})")
-            
-            return removed_count
-            
+        return self._memory_cache_component.cleanup(force=force)
+
     def _get_cache_path(self, key: str) -> Optional[str]:
         """Get the path for a cache file."""
         return self._disk_cache_component.get_cache_path(key)
@@ -412,56 +348,58 @@ class CacheManager:
         current_time = time.time()
         
         try:
-            with self._cache_lock:
-                for filename in os.listdir(self.cache_dir):
-                    if not filename.endswith('.json'):
-                        continue
+            # No lock: this is disk-only work, and the memory-tier lock it used
+            # to hold would stall every get/set while thousands of files are
+            # stat'd. A file deleted mid-scan is skipped below.
+            for filename in os.listdir(self.cache_dir):
+                if not filename.endswith('.json'):
+                    continue
+                
+                # Extract key from filename (remove .json extension)
+                key = filename[:-5]  # Remove '.json'
+                
+                file_path = os.path.join(self.cache_dir, filename)
+                
+                try:
+                    # Get file stats
+                    stat_info = os.stat(file_path)
+                    size_bytes = stat_info.st_size
+                    modified_time = stat_info.st_mtime
+                    age_seconds = current_time - modified_time
                     
-                    # Extract key from filename (remove .json extension)
-                    key = filename[:-5]  # Remove '.json'
+                    # Format age display
+                    if age_seconds < 60:
+                        age_display = f"{int(age_seconds)}s"
+                    elif age_seconds < 3600:
+                        age_display = f"{int(age_seconds / 60)}m"
+                    elif age_seconds < 86400:
+                        age_display = f"{int(age_seconds / 3600)}h"
+                    else:
+                        age_display = f"{int(age_seconds / 86400)}d"
                     
-                    file_path = os.path.join(self.cache_dir, filename)
+                    # Format size display
+                    if size_bytes < 1024:
+                        size_display = f"{size_bytes}B"
+                    elif size_bytes < 1024 * 1024:
+                        size_display = f"{size_bytes / 1024:.1f}KB"
+                    else:
+                        size_display = f"{size_bytes / (1024 * 1024):.1f}MB"
                     
-                    try:
-                        # Get file stats
-                        stat_info = os.stat(file_path)
-                        size_bytes = stat_info.st_size
-                        modified_time = stat_info.st_mtime
-                        age_seconds = current_time - modified_time
-                        
-                        # Format age display
-                        if age_seconds < 60:
-                            age_display = f"{int(age_seconds)}s"
-                        elif age_seconds < 3600:
-                            age_display = f"{int(age_seconds / 60)}m"
-                        elif age_seconds < 86400:
-                            age_display = f"{int(age_seconds / 3600)}h"
-                        else:
-                            age_display = f"{int(age_seconds / 86400)}d"
-                        
-                        # Format size display
-                        if size_bytes < 1024:
-                            size_display = f"{size_bytes}B"
-                        elif size_bytes < 1024 * 1024:
-                            size_display = f"{size_bytes / 1024:.1f}KB"
-                        else:
-                            size_display = f"{size_bytes / (1024 * 1024):.1f}MB"
-                        
-                        cache_files.append({
-                            'key': key,
-                            'filename': filename,
-                            'age_seconds': age_seconds,
-                            'age_display': age_display,
-                            'size_bytes': size_bytes,
-                            'size_display': size_display,
-                            'path': file_path,
-                            'modified_time': modified_time,
-                            'modified_datetime': datetime.fromtimestamp(modified_time).isoformat()
-                        })
-                    except OSError as e:
-                        self.logger.warning(f"Error getting stats for cache file {filename} at {file_path}: {e}", exc_info=True)
-                        continue
-                        
+                    cache_files.append({
+                        'key': key,
+                        'filename': filename,
+                        'age_seconds': age_seconds,
+                        'age_display': age_display,
+                        'size_bytes': size_bytes,
+                        'size_display': size_display,
+                        'path': file_path,
+                        'modified_time': modified_time,
+                        'modified_datetime': datetime.fromtimestamp(modified_time).isoformat()
+                    })
+                except OSError as e:
+                    self.logger.warning(f"Error getting stats for cache file {filename} at {file_path}: {e}", exc_info=True)
+                    continue
+                    
         except OSError as e:
             self.logger.error(f"Error listing cache directory {self.cache_dir}: {e}", exc_info=True)
             return []
@@ -1001,14 +939,7 @@ class CacheManager:
         Returns:
             Dictionary with memory cache statistics
         """
-        with self._cache_lock:
-            return {
-                'size': len(self._memory_cache),
-                'max_size': self._max_memory_cache_size,
-                'usage_percent': (len(self._memory_cache) / self._max_memory_cache_size * 100) if self._max_memory_cache_size > 0 else 0,
-                'last_cleanup': self._last_memory_cache_cleanup,
-                'cleanup_interval': self._memory_cache_cleanup_interval
-            }
+        return self._memory_cache_component.get_stats()
     
     def log_memory_cache_stats(self) -> None:
         """Log current memory cache statistics."""
