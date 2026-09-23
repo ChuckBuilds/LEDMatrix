@@ -472,6 +472,24 @@ class TestIdentical:
             assert host._favorite_result(game) == expected
             assert C.favorite_result({"favorite_teams": favs}, game) == expected
 
+    def test_an_ambiguous_nrl_abbreviation_tints_on_both_sides(self):
+        """Agreed -- and at odds with NRL's own favourite rule.
+
+        NRL's resolver logs a shared abbreviation ("NEW") as an error and
+        passes it through unchanged, and its _is_favorite_game matches ids
+        only, so selection never treats "NEW" as a favourite. Both colour
+        helpers match on abbreviation too, so both modes tint a Knights result
+        (and a Warriors one) for a user who typed "NEW". Not a twin
+        divergence; a seam neither helper consults.
+        """
+        on = {"customization": {"favorite_result_colors": {"enabled": True}}}
+        game = {"league": "3", "home_abbr": "NEW", "home_id": "4", "home_score": "20",
+                "away_abbr": "MEL", "away_id": "12", "away_score": "10",
+                "favorite_teams": ["NEW"]}
+        cfg = dict(on, favorite_teams=["NEW"])
+        assert _Host(cfg, favorites=["NEW"])._recent_score_color(game, (9, 9, 9)) \
+            == C.recent_score_color(cfg, LOG, game, (9, 9, 9)) == (0, 255, 0)
+
 
 # ---------------------------------------------------------------------------
 # Pinned divergences -- owner decision pending. Edit deliberately.
