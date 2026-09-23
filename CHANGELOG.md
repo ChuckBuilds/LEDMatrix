@@ -33,6 +33,12 @@ accepts both, but the store flags the old spelling as deprecated
   its own default (a failed lookup is retried after 30 minutes). Clearing an
   app's location in the web UI now actually clears it; the save used to drop
   the blank field, so the old value stayed.
+- `src.common.bdf_font` — `load_bdf_face(path, size)` (a cached
+  `freetype.Face` plus the pixel size it really renders at, falling back to
+  the file's native strike) and `draw_bdf_text(draw, text, x, y, face, color)`.
+  `DisplayManager`, `FontManager`, `element_style` and the plugin test harness
+  now all load and draw BDF text through it; the panel's pixels are unchanged
+  and BDF text draws 10-250x faster.
 
 - The web UI's Fonts tab has a **Used by** column: the loaded plugins that
   registered each font with `FontManager.register_manager_font()`, published

@@ -36,6 +36,15 @@ Utilities for loading and managing team logos.
 
 Utilities for text processing and formatting.
 
+## BDF Fonts (`bdf_font.py`)
+
+The one way to load and draw BDF bitmap fonts. `load_bdf_face(path, size)`
+returns `(face, realised_px)`, falling back to the file's native strike when
+it has none at `size`; `draw_bdf_text(draw, text, x, y, face, color)` draws
+top-left anchored onto a PIL `ImageDraw` exactly as the panel does.
+`DisplayManager`, `FontManager`, `element_style` and the plugin test harness
+all go through it.
+
 ## Scroll Helpers (`scroll_helper.py`)
 
 Utilities for scrolling text on the display.
