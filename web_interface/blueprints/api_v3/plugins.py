@@ -14,6 +14,7 @@ from web_interface.blueprints.api_v3 import (
     _set_missing_booleans_to_false,
     _set_nested_value, _starlark_virtual_plugins, _toggle_starlark_app,
     api_v3, datetime, deep_merge, describe_exception, error_response,
+    exception_error_response,
     find_secret_fields, hashlib, json, jsonify, logger, logging,
     merge_secrets, os, redact_text, remove_empty_secrets, request,
     separate_secrets, shutil, stat, subprocess, success_response,
@@ -514,14 +515,7 @@ def get_operation_status(operation_id):
 
         return success_response(data=operation.to_dict())
     except Exception as e:
-        from src.web_interface.errors import WebInterfaceError
-        error = WebInterfaceError.from_exception(e, ErrorCode.SYSTEM_ERROR)
-        return error_response(
-            error.error_code,
-            error.message,
-            details=error.details,
-            status_code=500
-        )
+        return exception_error_response(e, ErrorCode.SYSTEM_ERROR, with_context=False)
 @api_v3.route('/plugins/operation/history', methods=['GET'])
 def get_operation_history() -> Response:
     """Get operation history from the audit log."""
@@ -546,9 +540,7 @@ def get_operation_history() -> Response:
             operation_type=operation_type
         )
     except (AttributeError, RuntimeError) as e:
-        from src.web_interface.errors import WebInterfaceError
-        error = WebInterfaceError.from_exception(e, ErrorCode.SYSTEM_ERROR)
-        return error_response(error.error_code, error.message, details=error.details, status_code=500)
+        return exception_error_response(e, ErrorCode.SYSTEM_ERROR, with_context=False)
 
     return success_response(data=[record.to_dict() for record in history])
 @api_v3.route('/plugins/operation/history', methods=['DELETE'])
@@ -564,9 +556,7 @@ def clear_operation_history() -> Response:
     try:
         api_v3.operation_history.clear_history()
     except (OSError, RuntimeError) as e:
-        from src.web_interface.errors import WebInterfaceError
-        error = WebInterfaceError.from_exception(e, ErrorCode.SYSTEM_ERROR)
-        return error_response(error.error_code, error.message, details=error.details, status_code=500)
+        return exception_error_response(e, ErrorCode.SYSTEM_ERROR, with_context=False)
 
     return success_response(message='Operation history cleared')
 @api_v3.route('/plugins/state', methods=['GET'])
@@ -601,15 +591,7 @@ def get_plugin_state():
                 for plugin_id, state in all_states.items()
             })
     except Exception as e:
-        from src.web_interface.errors import WebInterfaceError
-        error = WebInterfaceError.from_exception(e, ErrorCode.SYSTEM_ERROR)
-        return error_response(
-            error.error_code,
-            error.message,
-            details=error.details,
-            context=error.context,
-            status_code=500
-        )
+        return exception_error_response(e, ErrorCode.SYSTEM_ERROR)
 @api_v3.route('/plugins/state/reconcile', methods=['POST'])
 def reconcile_plugin_state():
     """Reconcile plugin state across all sources"""
@@ -673,15 +655,7 @@ def reconcile_plugin_state():
             message=result.message
         )
     except Exception as e:
-        from src.web_interface.errors import WebInterfaceError
-        error = WebInterfaceError.from_exception(e, ErrorCode.SYSTEM_ERROR)
-        return error_response(
-            error.error_code,
-            error.message,
-            details=error.details,
-            context=error.context,
-            status_code=500
-        )
+        return exception_error_response(e, ErrorCode.SYSTEM_ERROR)
 def _drop_stale_reconciliation_findings(unresolved):
     """Re-check a stored reconciliation verdict against current state.
 
@@ -883,15 +857,7 @@ def get_plugin_config():
 
         return success_response(data=plugin_config)
     except Exception as e:
-        from src.web_interface.errors import WebInterfaceError
-        error = WebInterfaceError.from_exception(e, ErrorCode.CONFIG_LOAD_FAILED)
-        return error_response(
-            error.error_code,
-            error.message,
-            details=error.details,
-            context=error.context,
-            status_code=500
-        )
+        return exception_error_response(e, ErrorCode.CONFIG_LOAD_FAILED)
 @api_v3.route('/plugins/update', methods=['POST'])
 def update_plugin():
     """Update plugin"""
@@ -1136,8 +1102,6 @@ def update_plugin():
     except Exception as e:
         logger.error("Unhandled exception in update endpoint", exc_info=True)
         
-        from src.web_interface.errors import WebInterfaceError
-        error = WebInterfaceError.from_exception(e, ErrorCode.PLUGIN_UPDATE_FAILED)
         if api_v3.operation_history:
             api_v3.operation_history.record_operation(
                 "update",
@@ -1145,13 +1109,7 @@ def update_plugin():
                 status="failed",
                 error=str(e)
             )
-        return error_response(
-            error.error_code,
-            error.message,
-            details=error.details,
-            context=error.context,
-            status_code=500
-        )
+        return exception_error_response(e, ErrorCode.PLUGIN_UPDATE_FAILED)
 @api_v3.route('/plugins/uninstall', methods=['POST'])
 def uninstall_plugin():
     """Uninstall plugin"""
@@ -1234,8 +1192,6 @@ def uninstall_plugin():
                 )
 
     except Exception as e:
-        from src.web_interface.errors import WebInterfaceError
-        error = WebInterfaceError.from_exception(e, ErrorCode.PLUGIN_UNINSTALL_FAILED)
         if api_v3.operation_history:
             api_v3.operation_history.record_operation(
                 "uninstall",
@@ -1243,13 +1199,7 @@ def uninstall_plugin():
                 status="failed",
                 error=str(e)
             )
-        return error_response(
-            error.error_code,
-            error.message,
-            details=error.details,
-            context=error.context,
-            status_code=500
-        )
+        return exception_error_response(e, ErrorCode.PLUGIN_UNINSTALL_FAILED)
 @api_v3.route('/plugins/install', methods=['POST'])
 def install_plugin():
     """Install plugin from store"""
@@ -2240,8 +2190,6 @@ def save_plugin_config():
 
         return success_response(message=message)
     except Exception as e:
-        from src.web_interface.errors import WebInterfaceError
-        error = WebInterfaceError.from_exception(e, ErrorCode.CONFIG_SAVE_FAILED)
         if api_v3.operation_history:
             api_v3.operation_history.record_operation(
                 "configure",
@@ -2249,13 +2197,7 @@ def save_plugin_config():
                 status="failed",
                 error=str(e)
             )
-        return error_response(
-            error.error_code,
-            error.message,
-            details=error.details,
-            context=error.context,
-            status_code=500
-        )
+        return exception_error_response(e, ErrorCode.CONFIG_SAVE_FAILED)
 def _merge_onto_stored_plugin_config(plugin_id, submitted_config, current_config=None):
     """A JSON plugin-config body merged onto the plugin's stored section.
 

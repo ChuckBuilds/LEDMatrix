@@ -35,7 +35,8 @@ from typing import Dict, Any, Optional, Tuple, Type
 from urllib.parse import urlparse, urlunparse
 logger = logging.getLogger(__name__)
 # Import new infrastructure
-from src.web_interface.api_helpers import success_response, error_response, validate_request_json
+from src.web_interface.api_helpers import (success_response, error_response,
+                                           exception_error_response, validate_request_json)
 from src.web_interface.errors import ErrorCode
 from src.web_interface.secret_helpers import (find_secret_fields, mask_all_secret_values,
                                               merge_secrets, remove_empty_secrets,
