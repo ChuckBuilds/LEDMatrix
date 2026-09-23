@@ -162,3 +162,18 @@ def test_duration_is_rounded(tiny_app, caplog):
     msg = caplog.records[-1].getMessage()
     duration = msg.rsplit("(", 1)[1]
     assert duration.endswith("ms)") and len(duration.split(".")[1]) == len("0ms)"), msg
+
+
+def test_success_response_timing_uses_the_same_clock():
+    # request_logging stamps request.start_time from perf_counter; a reader
+    # subtracting it from time.time() reported ~1.8e12 ms (found on a Pi).
+    from src.web_interface.api_helpers import success_response
+    app = Flask(__name__)
+    request_logging.init_app(app)
+
+    @app.route('/timed')
+    def timed():
+        return success_response(data={}, metadata={})
+
+    body = app.test_client().get('/timed').get_json()
+    assert 0 <= body['metadata']['response_time_ms'] < 10_000
