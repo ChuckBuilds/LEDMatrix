@@ -19,7 +19,6 @@ All installation scripts have been moved from the project root to `scripts/insta
 | `install_wifi_monitor.sh` | `scripts/install/install_wifi_monitor.sh` |
 | `setup_cache.sh` | `scripts/install/setup_cache.sh` |
 | `configure_web_sudo.sh` | `scripts/install/configure_web_sudo.sh` |
-| `migrate_config.sh` | `scripts/install/migrate_config.sh` |
 
 #### Permission Fix Scripts
 

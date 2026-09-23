@@ -60,20 +60,18 @@ pytest test/test_display_controller.py::TestDisplayControllerModeRotation::test_
 
 ### Run Tests by Marker
 
-The tests use markers to categorize them:
+`pytest.ini` declares the markers `unit`, `integration`, `hardware`, `slow`
+and `plugin` (with `--strict-markers`, so a typo in a marker name is an
+error). Few tests are marked: only a handful carry `unit`, and none currently
+carry `integration`, `slow` or `hardware`, so `-m integration` and `-m slow`
+select nothing. Select tests by file, directory or `-k` instead.
 
 ```bash
-# Run only unit tests (fast, isolated)
-pytest -m unit
+# What CI runs for the core suites (excludes anything marked hardware)
+pytest -m "not hardware" test/ --ignore=test/plugins
 
-# Run only integration tests
-pytest -m integration
-
-# Run tests that don't require hardware
-pytest -m "not hardware"
-
-# Run slow tests
-pytest -m slow
+# Tests whose name matches an expression
+pytest -k "config and not secrets"
 ```
 
 ### Run Tests in a Directory
@@ -138,58 +136,35 @@ pytest -sv
 
 ## Coverage Reports
 
-The test suite is configured to generate coverage reports.
-
-### View Coverage in Terminal
-
-```bash
-# Coverage is automatically shown when running pytest
-pytest
-
-# The output will show something like:
-# ----------- coverage: platform linux, python 3.11.5 -----------
-# Name                                    Stmts   Miss  Cover   Missing
-# ---------------------------------------------------------------------
-# src/display_controller.py                 450     120    73%   45-67, 89-102
-```
-
-### Generate HTML Coverage Report
+Coverage is not collected by a plain `pytest` run: `pytest.ini` deliberately
+has no coverage flags, so local runs stay fast. Ask for it explicitly
+(needs `pytest-cov`, which is in `requirements-test.txt`):
 
 ```bash
-# HTML report is automatically generated in htmlcov/
-pytest
+# Terminal summary
+pytest --cov=src --cov=web_interface --cov-report=term test/ --ignore=test/plugins
 
-# Then open the report in your browser
-# On Linux:
-xdg-open htmlcov/index.html
-
-# On macOS:
-open htmlcov/index.html
-
-# On Windows:
-start htmlcov/index.html
+# HTML report in htmlcov/
+pytest --cov=src --cov=web_interface --cov-report=html test/ --ignore=test/plugins
 ```
 
-The HTML report shows:
-- Line-by-line coverage
-- Files with low coverage highlighted
-- Interactive navigation
+Then open `htmlcov/index.html` in your browser (`xdg-open` on Linux, `open`
+on macOS, `start` on Windows).
 
 ### Coverage Threshold
 
-The tests are configured to fail if coverage drops below 30%. To change this, edit `pytest.ini`:
-
-```ini
---cov-fail-under=30  # Change this value
-```
+The only threshold is in CI: the core unit-test job in
+[`.github/workflows/test.yml`](../.github/workflows/test.yml) runs with
+`--cov-fail-under=52`. To check it locally, add that flag to the command
+above.
 
 ## Common Test Scenarios
 
 ### Run Tests After Making Changes
 
 ```bash
-# Quick test run (just unit tests)
-pytest -m unit
+# Quick run: just the tests for the area you changed
+pytest test/test_config_manager.py
 
 # Full test suite
 pytest
@@ -250,15 +225,10 @@ test/
 ├── test_error_aggregator.py             # Error aggregation tests
 ├── test_schema_manager.py               # Schema manager tests
 ├── test_web_api.py                      # Web API tests
-├── plugins/                             # Per-plugin test suites
-│   ├── test_clock_simple.py
-│   ├── test_calendar.py
-│   ├── test_basketball_scoreboard.py
-│   ├── test_soccer_scoreboard.py
-│   ├── test_odds_ticker.py
-│   ├── test_text_display.py
-│   ├── test_visual_rendering.py
-│   └── test_plugin_base.py
+├── plugins/                             # Plugin rendering suites
+│   ├── test_plugin_matrix.py            # Every discovered plugin, across panel sizes
+│   ├── test_harness.py
+│   └── test_visual_rendering.py
 └── web_interface/
     ├── test_config_manager_atomic.py
     ├── test_state_reconciliation.py
@@ -283,8 +253,8 @@ test/
 If you see import errors:
 
 ```bash
-# Make sure you're in the project root
-cd /home/chuck/Github/LEDMatrix
+# Make sure you're in the project root (wherever you cloned it)
+cd ~/LEDMatrix
 
 # Check Python path
 python -c "import sys; print(sys.path)"
@@ -325,18 +295,18 @@ If coverage reports aren't generating:
 # Make sure pytest-cov is installed
 pip install pytest-cov
 
-# Run with explicit coverage
-pytest --cov=src --cov-report=html
+# Coverage is opt-in; ask for it explicitly
+pytest --cov=src --cov=web_interface --cov-report=html
 ```
 
 ## Continuous Integration
 
 The repo runs the pytest suite via
 [`.github/workflows/test.yml`](../.github/workflows/test.yml) on every
-push and pull request: a plugin-safety job (harness, visual rendering
-and plugin-matrix tests) plus a unit-test job that runs an explicit
-allowlist of suites — new test files must be added to that list to run
-in CI. Release version consistency is checked by
+push and pull request: a plugin-safety job that runs `test/plugins/`, and a
+core unit-test job that runs the whole `test/` tree except `test/plugins/`
+with `-m "not hardware"` and enforces coverage (`--cov-fail-under=52`). New
+test files are picked up automatically. Release version consistency is checked by
 [`.github/workflows/release-version-check.yml`](../.github/workflows/release-version-check.yml).
 Bandit, flake8, mypy and gitleaks run as pre-commit hooks (see
 `.pre-commit-config.yaml`), not in CI.
@@ -345,17 +315,17 @@ Bandit, flake8, mypy and gitleaks run as pre-commit hooks (see
 
 1. **Run tests before committing**:
    ```bash
-   pytest -m unit  # Quick check
+   pytest test/test_<area>.py  # Quick check of what you touched
    ```
 
 2. **Run full suite before pushing**:
    ```bash
-   pytest  # Full test suite with coverage
+   pytest  # Full test suite (add --cov flags for coverage)
    ```
 
 3. **Fix failing tests immediately** - Don't let them accumulate
 
-4. **Keep coverage above threshold** - Aim for 70%+ coverage
+4. **Keep coverage above threshold** - CI fails below 52%
 
 5. **Write tests for new features** - Add tests when adding new functionality
 
@@ -363,9 +333,9 @@ Bandit, flake8, mypy and gitleaks run as pre-commit hooks (see
 
 ```bash
 # Most common commands
-pytest                    # Run all tests with coverage
+pytest                    # Run all tests (no coverage)
 pytest -v                 # Verbose output
-pytest -m unit           # Run only unit tests
+pytest test/test_x.py     # Run one file
 pytest -k "test_name"    # Run tests matching pattern
 pytest --cov=src         # Generate coverage report
 pytest -x                # Stop on first failure

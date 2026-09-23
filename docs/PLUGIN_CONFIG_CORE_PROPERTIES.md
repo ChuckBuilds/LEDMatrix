@@ -6,7 +6,8 @@ The LEDMatrix plugin system automatically manages certain core properties that a
 
 ## Core Properties
 
-The following properties are automatically managed by the system:
+The following properties are automatically managed by the system (the list
+is `CORE_PLUGIN_PROPERTIES` in `src/plugin_system/schema_manager.py`):
 
 1. **`enabled`** (boolean)
    - Default: `true`
@@ -23,6 +24,23 @@ The following properties are automatically managed by the system:
    - Default: `false`
    - Description: Enable live priority takeover when plugin has live content
    - Used by DisplayController for priority scheduling
+
+4. **`skin`** (string, object or null; no default)
+   - Description: Visual skin id, or a per-mode mapping like `{"live": "my-skin"}`
+   - Not an enum, so a stored value keeps validating after the skin is
+     uninstalled. Skins do not render with the current scoreboard plugins;
+     the key is kept so stored values keep loading and saving
+
+5. **`skin_options`** (object; no default)
+   - Description: Options passed through to the selected skin
+
+6. **`vegas_width_pct`**, **`vegas_overflow`**, **`vegas_max_width_screens`**
+   (untyped; no default)
+   - Description: Vegas mode tuning for this plugin — card width as a
+     percentage of the panel, `"rotate"` or `"truncate"` on overflow, and the
+     widest the card may be in screens
+   - Read by `src/vegas_mode/plugin_adapter.py` and `BasePlugin`, which
+     validate the values themselves and ignore a bad one with a log line
 
 ## How Core Properties Work
 

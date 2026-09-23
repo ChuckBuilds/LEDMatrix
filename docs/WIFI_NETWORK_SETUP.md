@@ -21,9 +21,8 @@ The LEDMatrix WiFi system provides automatic network configuration with intellig
 
 **If not connected to WiFi:**
 1. Wait 90 seconds after boot (AP mode activation grace period)
-2. Connect to WiFi network **LEDMatrix-Setup** (default password
-   `ledmatrix123` — change it in `config/wifi_config.json` if you want
-   an open network or a different password)
+2. Connect to WiFi network **LEDMatrix-Setup** (an open network: no
+   password)
 3. Open browser to: `http://192.168.4.1:5000`
 4. Open the **WiFi** tab
 5. Scan, select your network, and connect
@@ -78,16 +77,8 @@ WiFi settings are stored in `config/wifi_config.json`:
 ```json
 {
   "ap_ssid": "LEDMatrix-Setup",
-  "ap_password": "ledmatrix123",
   "ap_channel": 7,
-  "auto_enable_ap_mode": true,
-  "saved_networks": [
-    {
-      "ssid": "YourNetwork",
-      "password": "your-password",
-      "saved_at": 1234567890.0
-    }
-  ]
+  "auto_enable_ap_mode": true
 }
 ```
 
@@ -96,10 +87,8 @@ WiFi settings are stored in `config/wifi_config.json`:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `ap_ssid` | `LEDMatrix-Setup` | Network name broadcast in AP mode |
-| `ap_password` | `ledmatrix123` | AP password. Set to `""` to make the network open (no password). |
 | `ap_channel` | `7` | WiFi channel (1, 6, or 11 are non-overlapping) |
 | `auto_enable_ap_mode` | `true` | Automatically enable AP mode when both WiFi and Ethernet are disconnected |
-| `saved_networks` | `[]` | Array of saved WiFi credentials |
 
 ### Auto-Enable AP Mode Behavior
 
@@ -214,8 +203,10 @@ The system checks connections in this order:
 ### AP Mode Settings
 
 - **SSID**: `LEDMatrix-Setup` (configurable via `ap_ssid`)
-- **Network**: WPA2, default password `ledmatrix123` (configurable via
-  `ap_password` — set to `""` for an open network)
+- **Network**: open (no password). Both AP paths create an open network
+  (`_create_hostapd_config()` and `_enable_ap_mode_nmcli_hotspot()` in
+  `src/wifi_manager.py`); an `ap_password` key in `wifi_config.json` is not
+  read
 - **IP Address**: 192.168.4.1
 - **DHCP Range**: 192.168.4.2 – 192.168.4.20
 - **Channel**: 7 (configurable via `ap_channel`)
@@ -233,16 +224,12 @@ When AP mode is active:
 
 ### Security Recommendations
 
-**1. Change AP Password (Optional):**
-```json
-{
-  "ap_password": "your-strong-password"
-}
-```
-
-**Note:** The default password is `ledmatrix123` for easy initial
-setup. Change it for any deployment in a public area, or set
-`ap_password` to `""` if you specifically want an open network.
+**1. Keep AP mode short-lived:**
+The setup network is open, so anyone nearby can join it and reach the web
+interface while it is up. AP mode only comes up when WiFi and Ethernet are
+both disconnected (after the 90 second grace period) and goes down again once
+the Pi is connected; in a public area, consider setting
+`auto_enable_ap_mode` to `false` and enabling AP mode by hand when needed.
 
 **2. Use Non-Overlapping WiFi Channels:**
 - Channels 1, 6, 11 are non-overlapping (2.4GHz)
@@ -256,21 +243,11 @@ sudo chmod 600 config/wifi_config.json
 
 ### Network Configuration Tips
 
-**Save Multiple Networks:**
-```json
-{
-  "saved_networks": [
-    {
-      "ssid": "Home-Network",
-      "password": "home-password"
-    },
-    {
-      "ssid": "Office-Network",
-      "password": "office-password"
-    }
-  ]
-}
-```
+**Multiple Networks:**
+
+NetworkManager remembers every network you connect to and rejoins whichever is
+in range; list them with `nmcli connection show`. LEDMatrix itself does not
+store WiFi passwords.
 
 **Adjust Check Interval:**
 
