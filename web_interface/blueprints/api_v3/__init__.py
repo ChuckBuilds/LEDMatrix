@@ -49,6 +49,7 @@ from src.web_interface.validators import (
 from src.error_aggregator import get_error_aggregator
 from src.common.permission_utils import install_requirements_file
 from src.common.path_safety import resolve_under
+from src.device_location import DeviceLocationResolver, apply_device_location
 _SUDO = shutil.which('sudo')
 _JOURNALCTL = shutil.which('journalctl')
 _GIT = shutil.which('git')
@@ -1719,6 +1720,32 @@ def _validate_starlark_app_path(app_id: str) -> Tuple[Optional[Path], Optional[s
     except OSError as e:
         logger.warning("Path validation error for app_id %r: %s", app_id, e)
         return None, "Invalid app_id"
+_starlark_device_location: Optional[DeviceLocationResolver] = None
+
+
+def _get_starlark_device_location() -> DeviceLocationResolver:
+    """One resolver per process, so a geocode failure's backoff is shared."""
+    global _starlark_device_location
+    if _starlark_device_location is None:
+        _starlark_device_location = DeviceLocationResolver(
+            getattr(api_v3, 'cache_manager', None) or _ensure_cache_manager(), logger)
+    return _starlark_device_location
+
+
+def _read_starlark_schema(app_dir: Path) -> Optional[Dict[str, Any]]:
+    """An installed app's schema.json, or None if it has none or it's unreadable."""
+    schema_file = app_dir / 'schema.json'
+    if not schema_file.exists():
+        return None
+    try:
+        with open(schema_file) as f:
+            schema = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        logger.warning("Could not read schema.json at %s: %s", schema_file, e)
+        return None
+    return schema if isinstance(schema, dict) else None
+
+
 def _standalone_render_starlark_app(app_id: str) -> Tuple[bool, int, Optional[str]]:
     """Render a Starlark app via pixlet directly (no plugin required).
 
@@ -1790,6 +1817,9 @@ def _standalone_render_starlark_app(app_id: str) -> Tuple[bool, int, Optional[st
 
     INTERNAL_KEYS = {'render_interval', 'display_duration'}
     pixlet_config = {k: v for k, v in app_config.items() if k not in INTERNAL_KEYS}
+    pixlet_config = apply_device_location(
+        pixlet_config, _read_starlark_schema(app_dir),
+        _get_starlark_device_location(), full_config)
 
     output_path = str(app_dir / 'cached_render.webp')
     cmd = [pixlet_path, 'render', str(star_file)]

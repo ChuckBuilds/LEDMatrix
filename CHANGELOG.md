@@ -25,6 +25,12 @@ accepts both, but the store flags the old spelling as deprecated
   that will now render the font it asked for.
 - `src.wifi_manager.get_wifi_status_path()` — where WiFi status messages for
   the display are written (`config/wifi_status.json`).
+- `src.device_location` — a blank `Location` field on a Starlark (Tidbyt) app
+  now renders at the device's City / State / Country (geocoded once via
+  Open-Meteo and cached) instead of the app author's hard-coded default,
+  usually San Francisco. A location saved on the app still wins. Clearing an
+  app's location in the web UI now actually clears it; the save used to drop
+  the blank field, so the old value stayed.
 
 ## 3.5.0
 
