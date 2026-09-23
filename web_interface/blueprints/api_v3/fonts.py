@@ -9,6 +9,46 @@ from web_interface.blueprints.api_v3 import (
 )
 
 
+def _catalog_response(catalog):
+    """The catalog response, with each font's ``used_by`` merged in now.
+
+    Usage comes from the display service (src/font_usage.py) and changes
+    independently of the files, so it is read per request and never stored
+    in the 5-minute ``fonts_catalog`` cache: entries are copied, not edited.
+    ``used_by`` is a list of plugin ids, empty when no loaded plugin
+    registered the font, and None when the display service has not reported.
+    """
+    from src.font_usage import read_font_usage
+    from web_interface.blueprints.api_v3.display import _cache_manager
+    try:
+        usage = read_font_usage(_cache_manager())
+    except Exception:
+        logger.debug("[FontCatalog] Could not read font usage", exc_info=True)
+        usage = None
+
+    used_by = {}
+    if usage is not None:
+        # The snapshot keys fonts by file stem, as the catalog does; match
+        # case-insensitively too, since FontManager lower-cases families.
+        by_lower = {key.lower(): key for key in catalog}
+        for key, plugin_ids in usage['fonts'].items():
+            row = key if key in catalog else by_lower.get(key.lower())
+            if row is not None:
+                used_by.setdefault(row, set()).update(plugin_ids)
+
+    merged = {
+        key: dict(info, used_by=(sorted(used_by.get(key, ())) if usage is not None else None))
+        for key, info in catalog.items()
+    }
+    return jsonify({'status': 'success', 'data': {
+        'catalog': merged,
+        'font_usage': {
+            'available': usage is not None,
+            'generated_at': usage['generated_at'] if usage is not None else None,
+        },
+    }})
+
+
 @api_v3.route('/fonts/catalog', methods=['GET'])
 def get_fonts_catalog():
     """Get fonts catalog"""
@@ -18,7 +58,7 @@ def get_fonts_catalog():
             from web_interface.cache import get_cached, set_cached
             cached_result = get_cached('fonts_catalog', ttl_seconds=300)
             if cached_result is not None:
-                return jsonify({'status': 'success', 'data': {'catalog': cached_result}})
+                return _catalog_response(cached_result)
         except ImportError:
             # Cache not available, continue without caching
             get_cached = None
@@ -116,7 +156,7 @@ def get_fonts_catalog():
             except Exception:
                 logger.error("[FontCatalog] Failed to cache fonts_catalog", exc_info=True)
 
-        return jsonify({'status': 'success', 'data': {'catalog': catalog}})
+        return _catalog_response(catalog)
     except Exception as e:
         logger.error("%s failed", request.path, exc_info=True)
         return jsonify({'status': 'error',

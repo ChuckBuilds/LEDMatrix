@@ -1490,23 +1490,37 @@ Delete a stored backup.
 
 Fonts in `assets/fonts/`, keyed by file name without extension.
 
+`used_by` lists the plugins that use the font, as the display service last
+reported: the loaded plugins that registered it through
+`FontManager.register_manager_font()`, under whatever family, alias
+(`press_start`, `four_by_six`, ...) or path they gave. It is `[]` when no
+loaded plugin registered it and `null` when the display service has not
+reported yet (`font_usage.available` is then `false`). A plugin that opens a
+font file directly is not counted, so `[]` does not prove a font is unused.
+The file scan is cached for 5 minutes; `used_by` is read on every request.
+
 **Response**:
 ```json
 {
   "status": "success",
   "data": {
     "catalog": {
-      "press_start": {
-        "filename": "press_start.ttf",
+      "PressStart2P-Regular": {
+        "filename": "PressStart2P-Regular.ttf",
         "family_name": "Press Start 2P",
         "display_name": "Press Start 2P",
-        "path": "assets/fonts/press_start.ttf",
+        "path": "assets/fonts/PressStart2P-Regular.ttf",
         "type": "ttf",
         "is_system": true,
         "scalable": true,
         "native_size": null,
-        "metadata": { ... }
+        "metadata": { ... },
+        "used_by": ["calendar", "hello-world"]
       }
+    },
+    "font_usage": {
+      "available": true,
+      "generated_at": "2026-09-23T10:00:00"
     }
   }
 }
@@ -1561,7 +1575,9 @@ Upload a custom font file. It is saved as `assets/fonts/<font_family><ext>`.
 **DELETE** `/api/v3/fonts/<font_family>`
 
 Delete an uploaded font (`<font_family>` is the file name without
-extension). System fonts answer `403`.
+extension). System fonts answer `403`. A font a plugin uses is not refused;
+the Fonts tab names those plugins (the catalog's `used_by`) in its
+confirmation first.
 
 ### Font Preview
 

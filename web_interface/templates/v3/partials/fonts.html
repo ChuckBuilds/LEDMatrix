@@ -9,10 +9,11 @@
         <!-- Available Fonts -->
         <div class="bg-gray-50 rounded-lg p-4">
             <h3 class="text-md font-medium text-gray-900 mb-3">Available Font Families</h3>
-            <div id="available-fonts" class="bg-gray-800 text-gray-100 font-mono text-sm p-3 rounded h-40 overflow-y-auto">
+            <div id="available-fonts" class="bg-gray-800 text-gray-100 font-mono text-sm p-3 rounded h-64 overflow-y-auto">
                 <div class="text-gray-400">Loading...</div>
             </div>
-            <p class="text-sm text-gray-600 mt-2">All available font families in the system</p>
+            <p class="text-sm text-gray-600 mt-2">All available font families in the system.
+                <span id="font-usage-note"></span></p>
         </div>
     </div>
 
@@ -299,8 +300,11 @@ async function loadFontData() {
 
     try {
         // Use absolute URLs to ensure they work when loaded via HTMX
+        // no-store: /api/v3 GETs are browser-cacheable for 5 s, and this
+        // reload follows an upload or delete (or the usage check before one),
+        // so a cached copy would show the list as it was before the change.
         const [catalogRes, tokensRes] = await Promise.all([
-            fetch(`/api/v3/fonts/catalog`),
+            fetch(`/api/v3/fonts/catalog`, { cache: 'no-store' }),
             fetch(`/api/v3/fonts/tokens`)
         ]);
 
@@ -325,6 +329,7 @@ async function loadFontData() {
 
         // Update both window properties and local references
         window.fontCatalog = catalogData.data.catalog || {};
+        window.fontUsage = catalogData.data.font_usage || { available: false, generated_at: null };
         window.fontTokens = tokensData.data.tokens || {};
         
         // Update local variable references
@@ -355,9 +360,28 @@ async function loadFontData() {
     }
 }
 
+// The plugin ids that use a font, as the catalog reports them: an array
+// (possibly empty) when the display service has reported, null when not.
+function fontUsedBy(fontInfo) {
+    if (!fontInfo || typeof fontInfo !== 'object') return null;
+    return Array.isArray(fontInfo.used_by)
+        ? fontInfo.used_by.filter(id => typeof id === 'string')
+        : null;
+}
+
 function updateAvailableFontsDisplay() {
     const container = document.getElementById('available-fonts');
     if (!container) return;
+
+    const usage = window.fontUsage || {};
+    const note = document.getElementById('font-usage-note');
+    if (note) {
+        const reported = usage.generated_at
+            ? ` (reported ${String(usage.generated_at).replace('T', ' ')})` : '';
+        note.textContent = usage.available
+            ? `"Used by" lists the running plugins that registered the font with the display service${reported}. A plugin that opens a font file directly is not listed.`
+            : '"Used by" is unknown: the display service has not reported which fonts its plugins use. Start it, or reload this tab a few seconds after it starts.';
+    }
 
     if (Object.keys(fontCatalog).length === 0) {
         container.innerHTML = '<div class="text-gray-400">No fonts available</div>';
@@ -371,18 +395,34 @@ function updateAvailableFontsDisplay() {
         const fontType = typeof fontInfo === 'object' ? (fontInfo.type || '').toUpperCase() : '';
         // Use is_system flag from API (single source of truth)
         const isSystem = typeof fontInfo === 'object' ? (fontInfo.is_system === true) : false;
-        return { name, filename, displayName, fontType, fontPath, isSystem };
+        const usedBy = fontUsedBy(fontInfo);
+        return { name, filename, displayName, fontType, fontPath, isSystem, usedBy };
     }).sort((a, b) => a.displayName.localeCompare(b.displayName));
 
-    // Build list using DOM APIs to prevent XSS
+    // Build list using DOM APIs to prevent XSS (plugin ids are untrusted too)
     container.innerHTML = '';
+
+    const header = document.createElement('div');
+    header.className = 'flex items-center gap-2 pb-1 mb-1 border-b border-gray-600 text-xs uppercase text-gray-400';
+    const fontHead = document.createElement('span');
+    fontHead.className = 'flex-1 min-w-0';
+    fontHead.textContent = 'Font';
+    const usedHead = document.createElement('span');
+    usedHead.className = 'flex-1 min-w-0';
+    usedHead.textContent = 'Used by';
+    const actionHead = document.createElement('span');
+    actionHead.className = 'w-24 flex-shrink-0';
+    header.append(fontHead, usedHead, actionHead);
+    container.appendChild(header);
+
     fontEntries.forEach(font => {
         const row = document.createElement('div');
-        row.className = 'flex items-center justify-between py-1 border-b border-gray-700 last:border-0';
+        row.className = 'flex items-start gap-2 py-1 border-b border-gray-700 last:border-0';
 
         const nameSpan = document.createElement('span');
-        nameSpan.className = 'truncate flex-1';
+        nameSpan.className = 'truncate flex-1 min-w-0';
         nameSpan.textContent = font.displayName;
+        nameSpan.title = font.filename;
 
         if (font.fontType) {
             const typeSpan = document.createElement('span');
@@ -393,29 +433,83 @@ function updateAvailableFontsDisplay() {
 
         row.appendChild(nameSpan);
 
+        // Wraps rather than truncates: the list is what a delete is weighed
+        // against, and a title tooltip is out of reach on a phone.
+        const usedSpan = document.createElement('span');
+        usedSpan.className = 'flex-1 min-w-0 break-words';
+        if (font.usedBy === null) {
+            usedSpan.classList.add('text-gray-500', 'italic');
+            usedSpan.textContent = 'unknown';
+            usedSpan.title = 'The display service has not reported which fonts its plugins use';
+        } else if (font.usedBy.length === 0) {
+            usedSpan.classList.add('text-gray-500');
+            usedSpan.textContent = '—';
+            usedSpan.title = 'No running plugin registered this font';
+        } else {
+            usedSpan.classList.add('text-gray-300');
+            usedSpan.textContent = font.usedBy.join(', ');
+        }
+        row.appendChild(usedSpan);
+
+        const actionCell = document.createElement('span');
+        actionCell.className = 'w-24 flex-shrink-0 text-right';
         if (font.isSystem) {
             const systemBadge = document.createElement('span');
-            systemBadge.className = 'text-gray-600 text-xs ml-2';
+            systemBadge.className = 'text-gray-600 text-xs';
             systemBadge.textContent = '[system]';
-            row.appendChild(systemBadge);
+            actionCell.appendChild(systemBadge);
         } else {
             const deleteBtn = document.createElement('button');
-            deleteBtn.className = 'text-red-400 hover:text-red-300 text-xs ml-2';
+            deleteBtn.className = 'text-red-400 hover:text-red-300 text-xs';
             deleteBtn.title = 'Delete font';
             deleteBtn.textContent = '[delete]';
             deleteBtn.dataset.fontName = font.name;
             deleteBtn.addEventListener('click', function() {
                 deleteFont(this.dataset.fontName);
             });
-            row.appendChild(deleteBtn);
+            actionCell.appendChild(deleteBtn);
         }
+        row.appendChild(actionCell);
 
         container.appendChild(row);
     });
 }
 
+// Which plugins use a font now. Re-reads the catalog so the warning reflects
+// the display service's latest report rather than the one the tab opened
+// with; falls back to that one if the request fails.
+async function currentFontUsedBy(fontName) {
+    const own = (obj) => obj && typeof obj === 'object'
+        && Object.prototype.hasOwnProperty.call(obj, fontName);
+    try {
+        const response = await fetch('/api/v3/fonts/catalog', { cache: 'no-store' });
+        if (response.ok) {
+            const catalog = (await response.json())?.data?.catalog;
+            if (own(catalog)) return fontUsedBy(catalog[fontName]);
+        }
+    } catch (error) {
+        console.warn('Could not refresh font usage before delete:', error);
+    }
+    return own(fontCatalog) ? fontUsedBy(fontCatalog[fontName]) : null;
+}
+
+// The confirm() text for deleting a font. Plain text: confirm() renders no
+// HTML, so a plugin id cannot inject markup here.
+function deleteFontConfirmMessage(fontFamily, usedBy) {
+    if (Array.isArray(usedBy) && usedBy.length > 0) {
+        return `Font "${fontFamily}" is in use.\n\nUsed by: ${usedBy.join(', ')}.\n\n`
+            + 'Delete anyway? This action cannot be undone.';
+    }
+    const base = `Are you sure you want to delete the font "${fontFamily}"? This action cannot be undone.`;
+    if (usedBy === null) {
+        return `${base}\n\nWhich plugins use it is unknown: the display service has not reported.`;
+    }
+    return base;
+}
+
 async function deleteFont(fontFamily) {
-    if (!confirm(`Are you sure you want to delete the font "${fontFamily}"? This action cannot be undone.`)) {
+    const usedBy = await currentFontUsedBy(fontFamily);
+    if (!confirm(deleteFontConfirmMessage(fontFamily, usedBy))) {
         return;
     }
 
