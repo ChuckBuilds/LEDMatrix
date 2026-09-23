@@ -303,6 +303,74 @@ journalctl -u ledmatrix --since "-5min" --no-pager | grep -iE "px/s|px/frame"
 If a plugin logs its scroll config **twice** with different modes, the second
 line is what is running.
 
+---
+
+## A tear across the middle on fast scrolls
+
+**Symptom:** while text scrolls, the top and bottom halves of the panel look
+shifted sideways against each other along a horizontal line at mid-height, and
+the shift grows with scroll speed. It shows most in Vegas mode at high speed.
+
+**It is the panel's scan, not the software.** A 64-row panel is multiplexed
+1:32: it lights two rows at a time, one from each half (row 0 with row 32, row 1
+with row 33, …), stepping down both halves together once per refresh. So row 31,
+the last row of the top half, lights almost a whole refresh period after row 32
+right below it. Your eye follows moving text, and moving content that lights at
+different times lands in different places, so the two rows meet with an offset
+of roughly
+
+```
+offset ≈ scroll speed × refresh period
+```
+
+Each frame already reaches the panel whole (`SwapOnVSync` swaps complete frames
+between refreshes), so there is nothing to fix in the render path; the shift is
+created inside a single refresh. Other panel heights show it too, at the point
+where their two scan halves meet.
+
+On the 2×128×64 chain above, which refreshes at about 130 Hz flat out
+(7.7 ms per pass):
+
+| scroll speed | offset at the midline |
+|---|---|
+| 50 px/s (Vegas default) | ~0.4 px |
+| 100 px/s | ~0.8 px |
+| 150 px/s | ~1.2 px, plainly visible |
+
+### What changes it
+
+Only a shorter scan period (a faster refresh) or a slower scroll. Measure what
+the panel actually achieves first. The library prints the rate with a carriage
+return and no newline, so read it from the raw journal:
+
+```bash
+# set display.hardware.show_refresh_rate to true (web UI, Display tab), restart, then:
+journalctl -u ledmatrix --since "-1min" --no-pager -o cat --all | grep -a -oE "[0-9.]+Hz" | tail -5
+```
+
+Turn it off again afterwards. Measured on that panel (Pi 4, single chain),
+changing one setting at a time from `pwm_bits: 7`, `gpio_slowdown: 3`:
+
+| change | refresh, uncapped | notes |
+|---|---|---|
+| none | ~130 Hz | the ceiling for this wiring |
+| `pwm_bits: 6` | ~138 Hz | barely faster, and half the colour depth |
+| `gpio_slowdown: 2` | ~130 Hz | no faster, **and visible glitching**; keep 3 |
+| `limit_refresh_rate_hz: 0` | ~130 Hz | Vegas dropped from 100 to 72–95 fps as the refresh thread took more CPU |
+
+None of these helps much, because the time goes into shifting each row's pixels
+out: a 2×128 chain pushes 256 pixels per row down one output. What does help is
+**fewer pixels per output**. On a bonnet with more than one output (the
+`regular` and `classic` mappings have 3; `adafruit-hat` has 1), put each panel
+on its own output and set `parallel` to the number of outputs used and
+`chain_length` to the panels per output, for example `parallel: 2`,
+`chain_length: 1` for two panels. Each refresh then shifts half the data, which
+should roughly double the refresh rate and halve the offset. That is a cable
+change, so measure again afterwards.
+
+Short of rewiring, keep fast scrolls moderate: at the default 50 px/s the
+offset is under half a pixel.
+
 ## Rebuilding the binding
 
 ```bash
