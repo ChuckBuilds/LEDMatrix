@@ -31,7 +31,7 @@
         render: function(container, config, value, options) {
             // For now, widgets are server-side rendered
             // This function is a placeholder for future client-side rendering
-            console.log('[CustomFeedsWidget] Render called (server-side rendered)');
+            if (window.debugLog) window.debugLog('[CustomFeedsWidget] Render called (server-side rendered)');
         },
         
         /**
@@ -523,6 +523,4 @@
             event.target.value = '';
         });
     };
-
-    console.log('[CustomFeedsWidget] Custom feeds widget registered');
 })();

@@ -166,6 +166,4 @@
             }
         }
     });
-
-    console.log('[TimePickerWidget] Time picker widget registered');
 })();

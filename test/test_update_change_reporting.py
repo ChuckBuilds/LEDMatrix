@@ -150,9 +150,11 @@ class EveryStampRecordsACompletion(unittest.TestCase):
             if assigns_time:
                 stamps.append(node)
 
+        # The worker and synchronous paths share one stamp, in
+        # _execute_update_now's _finish().
         self.assertGreaterEqual(
-            len(stamps), 2,
-            "expected the worker and inline success paths to stamp the time; "
+            len(stamps), 1,
+            "expected the update success path to stamp the time; "
             "if this drops, the search below is looking at the wrong thing")
 
         for stamp in stamps:

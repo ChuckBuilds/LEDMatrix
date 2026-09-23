@@ -284,6 +284,4 @@
             }
         }
     });
-
-    console.log('[UrlInputWidget] URL input widget registered');
 })();

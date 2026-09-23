@@ -355,35 +355,6 @@ def test_config_with_plugins(test_config):
 
 
 @pytest.fixture
-def test_plugin_manager(mock_config_manager, mock_display_manager, mock_cache_manager):
-    """Create a test PluginManager instance."""
-    from unittest.mock import patch, MagicMock
-    import tempfile
-    from pathlib import Path
-    
-    # Create temporary plugin directory
-    with tempfile.TemporaryDirectory() as tmpdir:
-        plugin_dir = Path(tmpdir) / "plugins"
-        plugin_dir.mkdir()
-        
-        with patch('src.plugin_system.plugin_manager.PluginManager') as MockPM:
-            pm = MagicMock()
-            pm.plugins = {}
-            pm.plugin_manifests = {}
-            pm.loaded_plugins = {}
-            pm.plugin_last_update = {}
-            pm.discover_plugins = MagicMock(return_value=[])
-            pm.load_plugin = MagicMock(return_value=True)
-            pm.unload_plugin = MagicMock(return_value=True)
-            pm.get_plugin = MagicMock(return_value=None)
-            pm.plugin_executor = MagicMock()
-            pm.health_tracker = None
-            pm.resource_monitor = None
-            MockPM.return_value = pm
-            yield pm
-
-
-@pytest.fixture
 def test_display_controller(mock_config_manager, mock_display_manager, mock_cache_manager, 
                             test_config_with_plugins, emulator_mode):
     """Create a test DisplayController instance with mocked dependencies."""
@@ -406,7 +377,6 @@ def test_display_controller(mock_config_manager, mock_display_manager, mock_cach
         mock_pm.load_plugin = MagicMock(return_value=True)
         mock_pm.get_plugin = MagicMock(return_value=None)
         mock_pm.plugins = {}
-        mock_pm.loaded_plugins = {}
         mock_pm.plugin_manifests = {}
         mock_pm.plugin_last_update = {}
         mock_pm.plugin_executor = MagicMock()

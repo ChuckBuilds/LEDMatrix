@@ -167,6 +167,4 @@
             }
         }
     });
-
-    console.log('[EmailInputWidget] Email input widget registered');
 })();

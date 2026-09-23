@@ -61,10 +61,7 @@ def tiny_floor(monkeypatch):
 def _controller(plugin_ids, executor):
     c = DisplayController.__new__(DisplayController)
     c.plugin_manager = Mock()
-    # Both attributes, because _update_modules reads
-    # `loaded_plugins or plugins` and an empty dict is falsy.
-    c.plugin_manager.loaded_plugins = {pid: Mock() for pid in plugin_ids}
-    c.plugin_manager.plugins = dict(c.plugin_manager.loaded_plugins)
+    c.plugin_manager.plugins = {pid: Mock() for pid in plugin_ids}
     c.plugin_manager.plugin_executor = executor
     c.plugin_manager.plugin_last_update = {}
     c.plugin_manager.health_tracker = None

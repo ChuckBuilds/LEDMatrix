@@ -128,6 +128,4 @@
             }
         }
     });
-
-    console.log('[SelectDropdownWidget] Select dropdown widget registered');
 })();

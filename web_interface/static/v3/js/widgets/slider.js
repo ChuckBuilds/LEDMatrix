@@ -173,6 +173,4 @@
             }
         }
     });
-
-    console.log('[SliderWidget] Slider widget registered');
 })();

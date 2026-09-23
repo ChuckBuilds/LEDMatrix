@@ -110,10 +110,8 @@
     <script>
         (function() {
             const htmxSrc = '/static/v3/js/htmx.min.js';
-            const sseSrc = '/static/v3/js/htmx-sse.js';
             const jsonEncSrc = '/static/v3/js/htmx-json-enc.js';
             const htmxCdn = 'https://unpkg.com/htmx.org@1.9.10';
-            const sseCdn = 'https://unpkg.com/htmx.org@1.9.10/dist/ext/sse.js';
             const jsonEncCdn = 'https://unpkg.com/htmx.org@1.9.10/dist/ext/json-enc.js';
 
             // Load a script with an optional one-shot fallback source
@@ -138,8 +136,7 @@
             function htmxReady() {
                 debugLog('HTMX loaded successfully');
                 window.dispatchEvent(new Event('htmx:ready'));
-                // Load extensions after core loads
-                loadScript(sseSrc, sseCdn);
+                // Load the json-enc extension after core loads
                 loadScript(jsonEncSrc, jsonEncCdn);
             }
 
@@ -979,15 +976,11 @@
     <script src="{{ url_for('static', filename='v3/js/plugins/api_client.js') }}" defer></script>
     
     <!-- Load plugin management modules -->
-    <script src="{{ url_for('static', filename='v3/js/plugins/store_manager.js') }}" defer></script>
     <script src="{{ url_for('static', filename='v3/js/plugins/state_manager.js') }}" defer></script>
     <script src="{{ url_for('static', filename='v3/js/plugins/install_manager.js') }}" defer></script>
     <!-- Shared search/filter/sort controller for the plugin card grids -->
     <script src="{{ url_for('static', filename='v3/js/plugins/list_filter.js') }}" defer></script>
 
-    <!-- Load config utilities -->
-    <script src="{{ url_for('static', filename='v3/js/config/diff_viewer.js') }}" defer></script>
-    
     <!-- Widget Registry System: all widget scripts in one request (see
          web_interface/widget_bundle.py). The individual files stay served at
          their own URLs for plugin-loader.js and debugging. -->

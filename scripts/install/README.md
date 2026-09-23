@@ -19,9 +19,6 @@ This directory contains scripts for installing and configuring the LEDMatrix sys
   (the user who runs the script, i.e. the one you installed LEDMatrix as;
   there is no `ledmatrix` system user) the passwordless `nmcli` and related
   WiFi permissions the web interface needs
-- **`migrate_config.sh`** - Migrates configuration files to new formats (if needed)
-- **`debug_install.sh`** - Diagnostic helper used when an install
-  fails; collects environment info and recent logs
 
 ## Usage
 

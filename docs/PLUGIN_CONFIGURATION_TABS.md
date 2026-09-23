@@ -1,19 +1,8 @@
 # Plugin Configuration Tabs
 
-> **Status note:** this doc was written during the rollout of the
-> per-plugin configuration tab feature. The feature itself is shipped
-> and working in the current v3 web interface, but a few file paths
-> in the "Implementation Details" section below still reference the
-> pre-v3 file layout (`web_interface_v2.py`, `templates/index_v2.html`).
-> The current implementation lives in `web_interface/app.py`,
-> `web_interface/blueprints/api_v3/` (plugin config handlers in
-> `plugins.py`), and `web_interface/templates/v3/`.
-> The user-facing description (Overview, Features, Form Generation
-> Process) is still accurate.
-
 ## Overview
 
-Each installed plugin now gets its own dedicated configuration tab in the web interface. This provides a clean, organized way to configure plugins without cluttering the main Plugins management tab.
+Each installed plugin now gets its own dedicated configuration tab in the web interface. This provides a clean, organized way to configure plugins without cluttering the **Plugin Manager** tab.
 
 ## Features
 
@@ -21,24 +10,27 @@ Each installed plugin now gets its own dedicated configuration tab in the web in
 - **JSON Schema-Based Forms**: Configuration forms are automatically generated based on each plugin's `config_schema.json`
 - **Type-Safe Inputs**: Form inputs are created based on the JSON Schema type (boolean, number, string, array, enum)
 - **Default Values**: All fields show current values or fallback to schema defaults
-- **Reset Functionality**: Users can reset all settings to defaults with one click
 - **Real-Time Validation**: Input constraints from JSON Schema are enforced (min, max, maxLength, etc.)
 
 ## User Experience
 
 ### Accessing Plugin Configuration
 
-1. Navigate to the **Plugins** tab to see all installed plugins
+1. Navigate to the **Plugin Manager** tab to see all installed plugins
 2. Click the **Configure** button on any plugin card
 3. You'll be automatically taken to that plugin's configuration tab
-4. Alternatively, click directly on the plugin's tab button (marked with a puzzle piece icon)
+4. Alternatively, click directly on the plugin's tab button in the second nav row
 
 ### Configuring a Plugin
 
 1. Open the plugin's configuration tab
 2. Modify settings using the generated form
-3. Click **Save Configuration**
-4. Restart the display service to apply changes
+3. Click **Save Configuration**. The settings apply to the running display
+   without a restart: the display service reloads `config.json` when it
+   changes and calls the plugin's `on_config_change()`
+
+The tab also has **Refresh** (reload the form), **Update** (update the
+plugin) and **Uninstall** buttons.
 
 ### Plugin Manager vs Per-Plugin Configuration
 
@@ -53,22 +45,13 @@ Each installed plugin now gets its own dedicated configuration tab in the web in
 
 ### Requirements
 
-To enable automatic configuration tab generation, your plugin must:
+Every installed plugin gets a tab. To get a generated form in it, include a
+`config_schema.json` file in the plugin's directory. The name is fixed: the
+web interface finds the schema by that file name (`SchemaManager` in
+`src/plugin_system/schema_manager.py`), and no manifest field points to it.
 
-1. Include a `config_schema.json` file
-2. Reference it in your `manifest.json`:
-
-```json
-{
-  "id": "your-plugin",
-  "name": "Your Plugin",
-  "icon": "fas fa-star",  // Optional: Custom tab icon
-  ...
-  "config_schema": "config_schema.json"
-}
-```
-
-**Note:** You can optionally specify a custom `icon` for your plugin tab. See [Plugin Custom Icons Guide](PLUGIN_CUSTOM_ICONS.md) for details.
+**Note:** You can optionally specify a Font Awesome `icon` class for your
+plugin tab in `manifest.json`. See [Plugin Custom Icons Guide](PLUGIN_CUSTOM_ICONS.md) for details.
 
 ### Supported JSON Schema Types
 
@@ -209,69 +192,32 @@ Renders as: Dropdown select
 
 ### Form Generation Process
 
-1. Web UI loads installed plugins via `/api/v3/plugins/installed`
-2. For each plugin, the backend loads its `config_schema.json`
-3. Frontend generates a tab button with plugin name
-4. Frontend generates a form based on the JSON Schema
-5. Current config values from `config.json` are populated
-6. When saved, each field is sent to `/api/v3/plugins/config` endpoint
+Forms are rendered on the server, not generated in the browser:
 
-## Implementation Details
-
-### Backend Changes
-
-**File**: `web_interface_v2.py`
-
-- Modified `/api/v3/plugins/installed` endpoint to include `config_schema_data`
-- Loads each plugin's `config_schema.json` if it exists
-- Returns schema data along with plugin info
-
-### Frontend Changes
-
-**File**: `templates/index_v2.html`
-
-New Functions:
-- `generatePluginTabs(plugins)` - Creates tab buttons and content for each plugin
-- `generatePluginConfigForm(plugin)` - Generates HTML form from JSON Schema
-- `savePluginConfiguration(pluginId)` - Saves form data to backend
-- `resetPluginConfig(pluginId)` - Resets all settings to defaults
-- `configurePlugin(pluginId)` - Navigates to plugin's tab
-
-### Data Flow
-
-```
-Page Load
-  → refreshPlugins()
-    → /api/v3/plugins/installed
-      → Returns plugins with config_schema_data
-    → generatePluginTabs()
-      → Creates tab buttons
-      → Creates tab content
-        → generatePluginConfigForm()
-          → Reads JSON Schema
-          → Creates form inputs
-          → Populates current values
-
-User Saves
-  → savePluginConfiguration()
-    → Reads form data
-    → Converts types per schema
-    → Sends to /api/v3/plugins/config
-      → Updates config.json
-    → Shows success notification
-```
+1. The web UI loads installed plugins via `/api/v3/plugins/installed` and adds
+   a tab button for each one
+2. Opening a tab loads `/v3/partials/plugin-config/<plugin_id>`
+   (`web_interface/blueprints/pages_v3.py`), which loads the plugin's schema
+   through `SchemaManager` and its current values from `config.json`
+3. `web_interface/templates/v3/partials/plugin_config.html` renders the form
+   from the schema (widgets named by `x-widget` are rendered by the scripts in
+   `web_interface/static/v3/js/widgets/`)
+4. **Save Configuration** posts the form to `/api/v3/plugins/config`
+   (`web_interface/blueprints/api_v3/plugins.py`), which validates it against
+   the schema, writes `config.json` (secret fields go to
+   `config_secrets.json`) and shows a notification
 
 ## Troubleshooting
 
 ### Plugin Tab Not Appearing
 
-- Ensure `config_schema.json` exists in plugin directory
-- Verify `config_schema` field in `manifest.json`
+- Check that the plugin is installed and appears in the **Plugin Manager** tab
 - Check browser console for errors
-- Try refreshing plugins (Plugins tab → Refresh button)
+- Reload the page
 
 ### Form Not Generating Correctly
 
+- Ensure `config_schema.json` exists in the plugin directory
 - Validate your `config_schema.json` against JSON Schema Draft 07
 - Check that all properties have a `type` field
 - Ensure `default` values match the specified type
@@ -283,7 +229,6 @@ User Saves
 - Check that config keys match schema properties
 - Verify backend API is accessible
 - Check browser network tab for API errors
-- Ensure display service is restarted after config changes
 
 ## Migration Guide
 
@@ -301,26 +246,21 @@ If your plugin doesn't have a config schema:
 2. Add descriptions for each property
 3. Set appropriate defaults
 4. Add validation constraints (min, max, etc.)
-5. Reference the schema in your `manifest.json`
 
 ### Backward Compatibility
 
 - Plugins without `config_schema.json` still work normally
-- They simply won't have a configuration tab
+- Their tab shows plain text, number and checkbox inputs for the keys already
+  in their `config.json` section, or "No configuration options available for
+  this plugin." when there are none
 - Users can still edit config via the Raw JSON editor
-- The Configure button will navigate to a tab with a friendly message
 
-## Future Enhancements
+## Beyond the Basic Types
 
-Potential improvements for future versions:
-
-- **Advanced Schema Features**: Support for nested objects, conditional fields
-- **Visual Validation**: Real-time validation feedback as user types
-- **Color Pickers**: Special input for RGB/color array types
-- **File Uploads**: Support for image/asset uploads
-- **Import/Export**: Save and share plugin configurations
-- **Presets**: Quick-switch between saved configurations
-- **Documentation Links**: Link schema fields to plugin documentation
+Nested objects (rendered as collapsible sections), `x-widget` widgets such as
+`color-picker` and `file-upload`, and more are supported; see
+[PLUGIN_CONFIGURATION_GUIDE.md](PLUGIN_CONFIGURATION_GUIDE.md) and
+`web_interface/static/v3/js/widgets/README.md`.
 
 ## Example Plugins
 

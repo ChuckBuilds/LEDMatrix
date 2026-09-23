@@ -1,10 +1,8 @@
 """
-Tests for the caching and tombstone behaviors added to PluginStoreManager
-to fix the plugin-list slowness and the uninstall-resurrection bugs.
+Tests for the caching behaviors added to PluginStoreManager to fix the
+plugin-list slowness and the uninstall-resurrection bugs.
 
 Coverage targets:
-- ``mark_recently_uninstalled`` / ``was_recently_uninstalled`` lifecycle and
-  TTL expiry.
 - ``_get_local_git_info`` mtime-gated cache: ``git`` subprocesses only run
   when ``.git/HEAD`` mtime changes.
 - ``fetch_registry`` stale-cache fallback on network failure.
@@ -18,29 +16,6 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch, MagicMock
 
 from src.plugin_system.store_manager import PluginStoreManager
-
-
-class TestUninstallTombstone(unittest.TestCase):
-    def setUp(self):
-        self._tmp = TemporaryDirectory()
-        self.addCleanup(self._tmp.cleanup)
-        self.sm = PluginStoreManager(plugins_dir=self._tmp.name)
-
-    def test_unmarked_plugin_is_not_recent(self):
-        self.assertFalse(self.sm.was_recently_uninstalled("foo"))
-
-    def test_marking_makes_it_recent(self):
-        self.sm.mark_recently_uninstalled("foo")
-        self.assertTrue(self.sm.was_recently_uninstalled("foo"))
-
-    def test_tombstone_expires_after_ttl(self):
-        self.sm._uninstall_tombstone_ttl = 0.05
-        self.sm.mark_recently_uninstalled("foo")
-        self.assertTrue(self.sm.was_recently_uninstalled("foo"))
-        time.sleep(0.1)
-        self.assertFalse(self.sm.was_recently_uninstalled("foo"))
-        # Expired entry should also be pruned from the dict.
-        self.assertNotIn("foo", self.sm._uninstall_tombstones)
 
 
 class TestPersistentUninstallRegistry(unittest.TestCase):
@@ -590,18 +565,13 @@ class TestStaleOnErrorFallbacks(unittest.TestCase):
 
 
 class TestInstallUpdateUninstallInvariants(unittest.TestCase):
-    """Regression guard: the caching and tombstone work added in this PR
-    must not break the install / update / uninstall code paths.
+    """Regression guard: the caching work added in this PR must not break
+    the install / update / uninstall code paths.
 
     Specifically:
     - ``install_plugin`` bypasses commit/manifest caches via force_refresh,
       so the 5→30 min TTL bump cannot cause users to install a stale commit.
     - ``update_plugin`` does the same.
-    - The uninstall tombstone is only honored by the state reconciler, not
-      by explicit ``install_plugin`` calls — so a user can uninstall and
-      immediately reinstall from the store UI without the tombstone getting
-      in the way.
-    - ``was_recently_uninstalled`` is not touched by ``install_plugin``.
     """
 
     def setUp(self):
@@ -649,10 +619,8 @@ class TestInstallUpdateUninstallInvariants(unittest.TestCase):
         self.assertTrue(manifest_calls, "manifest fetch was not called")
         self.assertTrue(manifest_calls[0][3], "force_refresh=True did not reach _fetch_manifest_from_github")
 
-    def test_install_plugin_is_not_blocked_by_tombstone(self):
-        """A tombstone must only gate the reconciler, not explicit installs.
-
-        Uses a complete, valid manifest stub and a no-op dependency
+    def test_install_plugin_runs_to_completion(self):
+        """Uses a complete, valid manifest stub and a no-op dependency
         installer so ``install_plugin`` runs all the way through to a
         True return. Anything less (e.g. swallowing exceptions) would
         hide real regressions in the install path.
@@ -663,11 +631,6 @@ class TestInstallUpdateUninstallInvariants(unittest.TestCase):
                          "plugin_path": ""}]
         }
         self.sm.registry_cache_time = time.time()
-
-        # Mark it recently uninstalled (simulates a user who just clicked
-        # uninstall and then immediately clicked install again).
-        self.sm.mark_recently_uninstalled("bar")
-        self.assertTrue(self.sm.was_recently_uninstalled("bar"))
 
         # Stub the heavy bits so install_plugin can run without network.
         self.sm._get_github_repo_info = lambda url: {
@@ -701,17 +664,14 @@ class TestInstallUpdateUninstallInvariants(unittest.TestCase):
 
         self.sm._install_via_git = fake_install_via_git
 
-        # No exception-swallowing: if install_plugin fails for ANY reason
-        # unrelated to the tombstone, the test fails loudly.
+        # No exception-swallowing: if install_plugin fails for ANY reason,
+        # the test fails loudly.
         result = self.sm.install_plugin("bar")
 
         self.assertTrue(
             result,
-            "install_plugin returned False — the tombstone should not gate "
-            "explicit installs and all other stubs should allow success.",
+            "install_plugin returned False — all stubs should allow success.",
         )
-        # Tombstone survives install (harmless — nothing reads it for installed plugins).
-        self.assertTrue(self.sm.was_recently_uninstalled("bar"))
 
 
 class TestRegistryStaleCacheFallback(unittest.TestCase):

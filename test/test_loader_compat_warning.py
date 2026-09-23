@@ -16,17 +16,6 @@ def _warnings(caplog):
     return [r for r in caplog.records if r.levelno == logging.WARNING]
 
 
-class TestParseSemver:
-    def test_basic(self, loader):
-        assert loader._parse_semver("3.1.0") == (3, 1, 0)
-        assert loader._parse_semver("v2.0") == (2, 0, 0)
-        assert loader._parse_semver("2.0.0-beta.1") == (2, 0, 0)
-
-    def test_unparseable(self, loader):
-        assert loader._parse_semver(None) is None
-        assert loader._parse_semver(123) is None
-
-
 class TestWarnIfIncompatible:
     def test_warns_when_plugin_needs_newer_core(self, loader, caplog, monkeypatch):
         import src

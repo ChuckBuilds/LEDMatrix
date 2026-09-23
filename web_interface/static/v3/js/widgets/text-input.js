@@ -239,6 +239,4 @@
             }
         }
     });
-
-    console.log('[TextInputWidget] Text input widget registered');
 })();

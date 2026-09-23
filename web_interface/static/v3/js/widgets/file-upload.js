@@ -32,7 +32,7 @@
         render: function(container, config, value, options) {
             // For now, widgets are server-side rendered
             // This function is a placeholder for future client-side rendering
-            console.log('[FileUploadWidget] Render called (server-side rendered)');
+            if (window.debugLog) window.debugLog('[FileUploadWidget] Render called (server-side rendered)');
         },
         
         /**
@@ -1136,6 +1136,4 @@
             window.updateImageList(fieldId, currentImages);
         }
     };
-
-    console.log('[FileUploadWidget] File upload widget registered');
 })();

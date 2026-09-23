@@ -626,11 +626,6 @@ class TestConfigSurface:
         assert restored.trim_threshold == 20
         assert restored.lead_in_width == 64
 
-    def test_update_applies_new_keys(self):
-        cfg = VegasModeConfig()
-        cfg.update({'display': {'vegas_scroll': {'content_padding': 16}}})
-        assert cfg.content_padding == 16
-
     @pytest.mark.parametrize('overrides,bad_key', [
         ({'trim_threshold': 300}, 'trim_threshold'),
         ({'trim_threshold': -1}, 'trim_threshold'),

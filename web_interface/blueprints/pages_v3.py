@@ -1,4 +1,4 @@
-from flask import Blueprint, Response, render_template, flash, jsonify, url_for
+from flask import Blueprint, Response, render_template, jsonify, url_for
 from jinja2 import TemplateNotFound
 from markupsafe import escape
 from html.parser import HTMLParser
@@ -20,12 +20,8 @@ from web_interface import widget_bundle
 
 logger = logging.getLogger(__name__)
 
-# Will be initialized when blueprint is registered
-config_manager = None
-plugin_manager = None
-plugin_store_manager = None
-schema_manager = None
-
+# The managers live on the blueprint object: app.py sets
+# pages_v3.config_manager, pages_v3.plugin_manager and the rest.
 pages_v3 = Blueprint('pages_v3', __name__)
 
 
@@ -162,37 +158,8 @@ _SEARCH_INDEX_CACHE = {'sig': None, 'fields': None}
 
 @pages_v3.route('/')
 def index():
-    """Main v3 interface page"""
-    try:
-        if pages_v3.config_manager:
-            # Load configuration data
-            main_config = pages_v3.config_manager.load_config()
-            schedule_config = main_config.get('schedule', {})
-
-            # Get raw config files for JSON editor
-            main_config_data = pages_v3.config_manager.get_raw_file_content('main')
-            secrets_config_data = pages_v3.config_manager.get_raw_file_content('secrets')
-            main_config_json = json.dumps(main_config_data, indent=4)
-            secrets_config_json = json.dumps(secrets_config_data, indent=4)
-        else:
-            raise Exception("Config manager not initialized")
-
-    except Exception as e:
-        flash(f"Error loading configuration: {e}", "error")
-        schedule_config = {}
-        main_config_json = "{}"
-        secrets_config_json = "{}"
-        main_config_data = {}
-        secrets_config_data = {}
-
-    return render_template('v3/index.html',
-                           schedule_config=schedule_config,
-                           main_config_json=main_config_json,
-                           secrets_config_json=secrets_config_json,
-                           main_config_path=pages_v3.config_manager.get_config_path() if pages_v3.config_manager else "",
-                           secrets_config_path=pages_v3.config_manager.get_secrets_path() if pages_v3.config_manager else "",
-                           main_config=main_config_data,
-                           secrets_config=secrets_config_data)
+    """Main v3 interface page: the app shell. Every tab loads as a partial."""
+    return render_template('v3/base.html')
 
 @pages_v3.route('/partials/<partial_name>')
 def load_partial(partial_name):

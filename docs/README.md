@@ -65,7 +65,6 @@ Going deeper:
 - [REST_API_REFERENCE.md](REST_API_REFERENCE.md) — all web-interface HTTP endpoints
 - [PLUGIN_API_REFERENCE.md](PLUGIN_API_REFERENCE.md) — Python APIs available to plugins
 - [DEVELOPER_QUICK_REFERENCE.md](DEVELOPER_QUICK_REFERENCE.md) — common dev tasks
-- [PLUGIN_IMPLEMENTATION_SUMMARY.md](PLUGIN_IMPLEMENTATION_SUMMARY.md) — what the plugin system actually does
 
 ## Contributing to LEDMatrix itself
 
@@ -75,18 +74,17 @@ Going deeper:
 - [MIGRATION_GUIDE.md](MIGRATION_GUIDE.md) — breaking changes between releases
 - [SPORTS_UNIFICATION.md](SPORTS_UNIFICATION.md) — how the sports scoreboard base classes are organized
 
-## Archive
+## Audits
 
-`docs/archive/` holds older guides that have been superseded or describe
-features that have been removed. They are kept for historical context and
-git history but should not be relied on.
+- [audits/WEB_UI_AUDIT_2026-09.md](audits/WEB_UI_AUDIT_2026-09.md) — web UI audit (September 2026)
 
 ## Contributing to the docs
 
 - Markdown only, professional tone, minimal emoji.
 - Prefer adding to an existing page over creating a new one. If you add a
   new page, link it from this index in the section it belongs to.
-- If a page becomes obsolete, move it to `docs/archive/` rather than
-  deleting it, so links don't rot.
+- If a page becomes obsolete, delete it (it stays in the repository
+  history) and fix the links to it; `test/test_doc_links.py` fails on
+  broken relative links.
 - Keep examples runnable — paths, commands, and config keys here should
   match what's actually in the repo.

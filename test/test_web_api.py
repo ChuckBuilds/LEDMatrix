@@ -527,13 +527,11 @@ class TestDisplayAPI:
         if response.status_code in [200, 201]:
             assert api_v3.cache_manager.set.called
     
-    @patch('web_interface.blueprints.api_v3.display._ensure_cache_manager')
-    def test_stop_on_demand_display(self, mock_ensure_cache, client):
+    def test_stop_on_demand_display(self, client):
         """Test stopping on-demand display."""
-        
-        # Mock the cache manager returned by _ensure_cache_manager
-        mock_cache_manager = MagicMock()
-        mock_ensure_cache.return_value = mock_cache_manager
+        from web_interface.blueprints.api_v3 import api_v3
+
+        mock_cache_manager = api_v3.cache_manager = MagicMock()
         
         response = client.post('/api/v3/display/on-demand/stop')
         
