@@ -108,12 +108,13 @@ class TestConfigService:
         with open(config_path, 'w') as f:
             json.dump(current_config, f)
         
-        # Trigger reload manually - should detect change and notify
-        service.reload()
+        # Reload the way the file watcher does - should detect change and notify
+        assert service._load_config() is True
         
-        # Check callback was called (may be called during init or reload)
-        # The callback should be called if config actually changed
-        assert callback.called or True  # May not be called if checksum matches
+        callback.assert_called_once()
+        old_config, new_config = callback.call_args[0]
+        assert old_config['display']['brightness'] == 50
+        assert new_config['display']['brightness'] == 75
         
     def test_plugin_specific_subscriber(self, config_manager):
         """Test plugin-specific subscriber notification."""
@@ -128,19 +129,17 @@ class TestConfigService:
         config_path = config_manager.config_path
         with open(config_path, 'r') as f:
             current_config = json.load(f)
-        if 'plugins' not in current_config:
-            current_config['plugins'] = {}
-        if 'weather' not in current_config['plugins']:
-            current_config['plugins']['weather'] = {}
-        current_config['plugins']['weather']['enabled'] = False  # Change value
+        current_config['weather'] = {'enabled': False}  # Change value
         with open(config_path, 'w') as f:
             json.dump(current_config, f)
         
-        # Trigger reload manually - should detect change and notify
-        service.reload()
+        # Reload the way the file watcher does - should detect change and notify
+        assert service._load_config() is True
         
-        # Check callback was called if config changed
-        assert callback.called or True  # May not be called if checksum matches
+        callback.assert_called_once()
+        old_plugin_config, new_plugin_config = callback.call_args[0]
+        assert new_plugin_config['enabled'] is False
+        assert new_plugin_config['api_key'] == 'secret_key'
         
     def test_config_merging(self, config_manager):
         """Test config merging logic via ConfigService."""
@@ -150,6 +149,15 @@ class TestConfigService:
         # Secrets are merged directly into config, not under _secrets key
         assert "weather" in config
         assert config["weather"]["api_key"] == "secret_key"
+        
+    def test_unchanged_config_does_not_notify(self, config_manager):
+        """Reloading an unchanged config must not notify subscribers."""
+        service = ConfigService(config_manager, enable_hot_reload=False)
+        callback = MagicMock()
+        service.subscribe(callback)
+        
+        assert service._load_config() is False
+        callback.assert_not_called()
         
     def test_shutdown(self, config_manager):
         """Test proper shutdown."""

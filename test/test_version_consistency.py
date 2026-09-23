@@ -21,8 +21,7 @@ before tagging:
     python scripts/check_release_version.py v3.2.0
 
 Note: `src.plugin_system.__version__` is deliberately NOT checked. That module
-versions the *plugin API* (it sits beside `__api_version__` and is documented as
-such), which moves independently of the core version.
+versions the *plugin API*, which moves independently of the core version.
 """
 
 import re

@@ -16,46 +16,6 @@ class TestDisplayControllerInitialization:
         assert test_display_controller.available_modes == []
 
 
-class TestDisplayControllerModeRotation:
-    """Test display mode rotation logic."""
-    
-    def test_basic_rotation(self, test_display_controller):
-        """Test basic mode rotation."""
-        controller = test_display_controller
-        controller.available_modes = ["mode1", "mode2", "mode3"]
-        controller.current_mode_index = 0
-        controller.current_display_mode = "mode1"
-        
-        # Simulate rotation
-        controller.current_mode_index = (controller.current_mode_index + 1) % len(controller.available_modes)
-        controller.current_display_mode = controller.available_modes[controller.current_mode_index]
-        
-        assert controller.current_display_mode == "mode2"
-        assert controller.current_mode_index == 1
-        
-        # Rotate again
-        controller.current_mode_index = (controller.current_mode_index + 1) % len(controller.available_modes)
-        controller.current_display_mode = controller.available_modes[controller.current_mode_index]
-        
-        assert controller.current_display_mode == "mode3"
-        
-        # Rotate back to start
-        controller.current_mode_index = (controller.current_mode_index + 1) % len(controller.available_modes)
-        controller.current_display_mode = controller.available_modes[controller.current_mode_index]
-        
-        assert controller.current_display_mode == "mode1"
-
-    def test_rotation_with_single_mode(self, test_display_controller):
-        """Test rotation with only one mode."""
-        controller = test_display_controller
-        controller.available_modes = ["mode1"]
-        controller.current_mode_index = 0
-        
-        controller.current_mode_index = (controller.current_mode_index + 1) % len(controller.available_modes)
-        
-        assert controller.current_mode_index == 0
-
-
 class TestDisplayControllerOnDemand:
     """Test on-demand request handling."""
     
@@ -93,20 +53,6 @@ class TestDisplayControllerOnDemand:
         assert controller.on_demand_active is False
         assert controller.on_demand_mode is None
         assert controller.on_demand_last_event == "expired"
-        
-    def test_on_demand_schedule_override(self, test_display_controller):
-        """Test that on-demand overrides schedule."""
-        controller = test_display_controller
-        controller.is_display_active = False
-        controller.on_demand_active = True
-        
-        # Logic in run() loop handles this, so we simulate it
-        if controller.on_demand_active and not controller.is_display_active:
-            controller.on_demand_schedule_override = True
-            controller.is_display_active = True
-            
-        assert controller.is_display_active is True
-        assert controller.on_demand_schedule_override is True
 
 
 class TestDisplayControllerLivePriority:
