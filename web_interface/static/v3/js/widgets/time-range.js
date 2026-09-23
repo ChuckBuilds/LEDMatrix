@@ -370,6 +370,4 @@
     // Expose utility functions for external use
     window.LEDMatrixWidgets.get('time-range').parseTimeToMinutes = parseTimeToMinutes;
     window.LEDMatrixWidgets.get('time-range').calculateDuration = calculateDuration;
-
-    console.log('[TimeRangeWidget] Time range widget registered');
 })();

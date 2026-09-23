@@ -144,6 +144,4 @@
             }
         }
     });
-
-    console.log('[RadioGroupWidget] Radio group widget registered');
 })();

@@ -254,6 +254,4 @@
     // Expose DAYS constant for external use
     window.LEDMatrixWidgets.get('day-selector').DAYS = DAYS;
     window.LEDMatrixWidgets.get('day-selector').DAY_LABELS = DAY_LABELS;
-
-    console.log('[DaySelectorWidget] Day selector widget registered');
 })();

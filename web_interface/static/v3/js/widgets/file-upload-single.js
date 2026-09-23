@@ -286,6 +286,4 @@
             }
         }
     });
-
-    console.log('[FileUploadSingleWidget] File upload single widget registered');
 })();

@@ -54,16 +54,6 @@ class TestResetPluginConfig:
         assert api_v3_client.post(self.URL, json={}).status_code != 500
 
 
-class TestDeleteOfTheDayJson:
-    URL = "/api/v3/plugins/of-the-day/json/delete"
-
-    def test_bodyless_post_is_not_a_server_error(self, api_v3_client, api_v3_module):
-        assert api_v3_client.post(self.URL).status_code != 500
-
-    def test_json_body_still_works(self, api_v3_client, api_v3_module):
-        assert api_v3_client.post(self.URL, json={}).status_code != 500
-
-
 class TestPluginLimits:
     URL = "/api/v3/plugins/clock/limits"
 

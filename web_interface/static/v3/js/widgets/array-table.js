@@ -32,7 +32,7 @@
         version: '2.0.0',
 
         render: function(container, config, value, options) {
-            console.log('[ArrayTableWidget] Render called (server-side rendered)');
+            if (window.debugLog) window.debugLog('[ArrayTableWidget] Render called (server-side rendered)');
         },
 
         getValue: function(fieldId) {
@@ -918,6 +918,4 @@
     } else {
         initArrayTableButtons();
     }
-
-    console.log('[ArrayTableWidget] Array table widget registered (v2.0.0)');
 })();

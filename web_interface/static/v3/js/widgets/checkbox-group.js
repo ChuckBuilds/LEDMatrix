@@ -31,7 +31,7 @@
         render: function(container, config, value, options) {
             // For now, widgets are server-side rendered
             // This function is a placeholder for future client-side rendering
-            console.log('[CheckboxGroupWidget] Render called (server-side rendered)');
+            if (window.debugLog) window.debugLog('[CheckboxGroupWidget] Render called (server-side rendered)');
         },
         
         /**
@@ -116,6 +116,4 @@
         });
         hiddenInput.dispatchEvent(event);
     };
-
-    console.log('[CheckboxGroupWidget] Checkbox group widget registered');
 })();

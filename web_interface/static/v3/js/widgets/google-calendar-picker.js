@@ -192,6 +192,4 @@
             .replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;');
     }
-
-    console.log('[GoogleCalendarPickerWidget] registered');
 })();
