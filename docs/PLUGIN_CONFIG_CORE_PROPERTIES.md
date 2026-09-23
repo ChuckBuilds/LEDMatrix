@@ -28,9 +28,8 @@ is `CORE_PLUGIN_PROPERTIES` in `src/plugin_system/schema_manager.py`):
 4. **`skin`** (string, object or null; no default)
    - Description: Visual skin id, or a per-mode mapping like `{"live": "my-skin"}`
    - Not an enum, so a stored value keeps validating after the skin is
-     uninstalled. Skins do not render with the current scoreboard plugins yet
-     (see [SKIN_SYSTEM.md](SKIN_SYSTEM.md)); the key is kept so stored values
-     keep loading and saving
+     uninstalled. Skins do not render with the current scoreboard plugins;
+     the key is kept so stored values keep loading and saving
 
 5. **`skin_options`** (object; no default)
    - Description: Options passed through to the selected skin
