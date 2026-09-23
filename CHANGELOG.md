@@ -19,6 +19,14 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+- `/api/v3` routes answer an exception they don't handle themselves from one
+  blueprint error handler, with the same `{status, message, details}` body the
+  53 removed per-route catch-alls returned. `ErrorCategory` and the
+  `error_category` key are removed from `src.web_interface.errors` (nothing read
+  them); `exception_error_response()` replaces the `from_exception` +
+  `error_response` pairs. A failing plugin action script's error now names the
+  real failure instead of `UnboundLocalError`.
+
 - `FontManager.get_font()` returns a BDF font at its native size when asked for
   a size the file doesn't contain (5x7.bdf at 8 or 10px, say). It used to
   return PIL's default font, a different typeface, so a plugin that relied on
