@@ -207,6 +207,12 @@ class DisplayController:
         # _poll_on_demand_requests. None means "never polled", so the first
         # call always goes through.
         self._last_on_demand_poll: Optional[float] = None
+        # Monotonic stamp of the last _service_pending_changes pass; same
+        # "None means never" convention as _last_on_demand_poll.
+        self._last_pending_service: Optional[float] = None
+        # A brightness set_brightness() refused, so the periodic service pass
+        # doesn't retry (and log) the same failure several times a second.
+        self._failed_brightness_target: Optional[int] = None
         self.on_demand_active = False
         self.on_demand_mode: Optional[str] = None
         self.on_demand_modes: List[str] = []  # All modes for the on-demand plugin
@@ -586,8 +592,20 @@ class DisplayController:
         Returns:
             True if Vegas should yield control, False to continue
         """
+        # A Vegas iteration runs for up to max_cycle_duration (240s by
+        # default) without returning to the main loop, and this is the only
+        # code of ours it calls while it does. Without servicing here, an
+        # on-demand request was never even read until the iteration ended --
+        # on_demand_active below is only set by that read -- and a saved
+        # brightness or a schedule boundary waited just as long.
+        self._service_pending_changes()
+
         # Check for pending on-demand request
         if self.on_demand_active:
+            return True
+
+        # Scheduled off mid-iteration: hand back so the main loop blanks it.
+        if not self.is_display_active:
             return True
 
         # Check for wifi status that needs display
@@ -1009,12 +1027,22 @@ class DisplayController:
             self.sync_manager.send_frame(follower_frame)
 
     def _sleep_with_plugin_updates(self, duration: float, tick_interval: float = 1.0):
-        """Sleep while continuing to service plugin update schedules."""
+        """Sleep while continuing to service plugin update schedules.
+
+        Also services pending changes (see _service_pending_changes), and
+        returns early when one of them changes what the panel should show --
+        an on-demand start or stop, or the display schedule turning the panel
+        on or off -- so the caller can act on it instead of finishing a dwell
+        that could be a minute long (sixty seconds while scheduled off).
+        """
         if duration <= 0:
             return
 
         end_time = time.time() + duration
-        tick_interval = max(0.001, tick_interval)
+        tick_interval = max(0.001, min(tick_interval, self.PENDING_CHANGES_INTERVAL))
+        mode = self.current_display_mode
+        display_active = self.is_display_active
+        on_demand = self.on_demand_active
 
         while True:
             remaining = end_time - time.time()
@@ -1024,6 +1052,11 @@ class DisplayController:
             sleep_time = min(tick_interval, remaining)
             time.sleep(sleep_time)
             self._tick_plugin_updates()
+            self._service_pending_changes()
+            if (self.current_display_mode != mode
+                    or self.is_display_active != display_active
+                    or self.on_demand_active != on_demand):
+                break
 
     def _get_display_duration(self, mode_key):
         """Seconds to show a mode: the Rotation & Durations page's value for it
@@ -1219,6 +1252,83 @@ class DisplayController:
     #: clicking in the web UI, so a quarter second of latency is not
     #: perceptible, and it cuts the read rate by 30x.
     ON_DEMAND_POLL_INTERVAL = 0.25
+
+    #: Shortest gap between _service_pending_changes passes. The same floor as
+    #: the mailbox poll, since that read is the only real cost in the pass:
+    #: the schedule checks are gated to once per clock minute and the rest is
+    #: attribute compares. Callers run at frame rate, so between passes the
+    #: whole cost is one monotonic-clock compare.
+    PENDING_CHANGES_INTERVAL = ON_DEMAND_POLL_INTERVAL
+
+    def _service_pending_changes(self) -> None:
+        """Apply changes made elsewhere while the display thread is busy.
+
+        The main loop applies on-demand requests, the display on/off schedule
+        and brightness (a saved display.hardware.brightness, or a dim-schedule
+        transition) once per pass -- that is, once per screen. A screen can
+        dwell a minute and a Vegas iteration four, so those waited just as
+        long: an on-demand request sat unread for up to 240s, and a brightness
+        saved and reverted within one screen never reached the panel at all.
+
+        So the places the display thread spends long stretches -- the dwell
+        sleep, the per-screen render loops and Vegas's interrupt check -- call
+        this. It is throttled to PENDING_CHANGES_INTERVAL, runs on the display
+        thread (set_brightness must not be called from the config watcher),
+        and does what the main loop does, in the same order. Callers decide
+        what to do about the result from the state it leaves behind
+        (on_demand_active, current_display_mode, is_display_active).
+        """
+        now = time.monotonic()
+        last = self._last_pending_service
+        if last is not None and now - last < self.PENDING_CHANGES_INTERVAL:
+            return
+        self._last_pending_service = now
+
+        try:
+            self._poll_on_demand_requests()
+            self._check_on_demand_expiration()
+            self._evaluate_schedule()
+            self._apply_brightness_target(repaint=True)
+        except Exception:  # pylint: disable=broad-except
+            # Called from inside Vegas and the render loops; a failure here
+            # must not take the display loop down with it.
+            logger.exception("Error servicing pending display changes")
+
+    def _evaluate_schedule(self) -> None:
+        """Re-check the on/off schedule, letting an on-demand session override it."""
+        self._check_schedule()
+        if self.on_demand_active and not self.is_display_active:
+            if not self.on_demand_schedule_override:
+                logger.info("On-demand override keeping display active during scheduled downtime")
+            self.on_demand_schedule_override = True
+            self.is_display_active = True
+        elif not self.on_demand_active and self.on_demand_schedule_override:
+            self.on_demand_schedule_override = False
+
+    def _apply_brightness_target(self, repaint: bool = False) -> None:
+        """Push the brightness the config and dim schedule call for, if it changed.
+
+        Args:
+            repaint: Re-push the current frame afterwards. The panel only shows
+                a new brightness from the next frame pushed; the main loop is
+                about to render one, but a dwell or a static screen may not
+                push again for a minute.
+        """
+        if not self.is_display_active:
+            return
+        target = self._check_dim_schedule()
+        if target == self.current_brightness:
+            self._failed_brightness_target = None
+            return
+        if target == self._failed_brightness_target:
+            return
+        if self.display_manager.set_brightness(target):
+            self.current_brightness = target
+            self._failed_brightness_target = None
+            if repaint:
+                self.display_manager.update_display()
+        else:
+            self._failed_brightness_target = target
 
     def _select_startup_plugins(self, discovered_plugins: List[str],
                                 on_demand_config: Optional[Dict[str, Any]]) -> List[str]:
@@ -1850,21 +1960,11 @@ class DisplayController:
                     self._log_memory_stats_if_due()
 
                 # Check the schedule
-                self._check_schedule()
-                if self.on_demand_active and not self.is_display_active:
-                    if not self.on_demand_schedule_override:
-                        logger.info("On-demand override keeping display active during scheduled downtime")
-                    self.on_demand_schedule_override = True
-                    self.is_display_active = True
-                elif not self.on_demand_active and self.on_demand_schedule_override:
-                    self.on_demand_schedule_override = False
+                self._evaluate_schedule()
 
-                # Check dim schedule and apply brightness (only when display is active)
-                if self.is_display_active:
-                    target_brightness = self._check_dim_schedule()
-                    if target_brightness != self.current_brightness:
-                        if self.display_manager.set_brightness(target_brightness):
-                            self.current_brightness = target_brightness
+                # Check dim schedule and apply brightness (only when display
+                # is active). No repaint: this screen's first frame pushes it.
+                self._apply_brightness_target()
 
                 if not self.is_display_active:
                     # Clear display when schedule makes it inactive to ensure blank screen
@@ -2015,6 +2115,10 @@ class DisplayController:
                             else:
                                 # Vegas was interrupted (live priority), fall through to normal handling
                                 logger.debug("Vegas mode interrupted, falling back to normal rotation")
+                                if not self.is_display_active:
+                                    # Scheduled off mid-iteration: blank the
+                                    # panel now rather than render a screen.
+                                    continue
                         except Exception:
                             logger.exception("Vegas mode error")
                             # Fall through to normal rotation on error
@@ -2478,8 +2582,8 @@ class DisplayController:
                                 self._send_follower_frame(manager_to_display)
 
                                 self._tick_plugin_updates()
-                                self._poll_on_demand_requests()
-                                self._check_on_demand_expiration()
+                                # Throttled: one clock compare between passes.
+                                self._service_pending_changes()
 
                                 # Pace to the frame deadline rather than sleeping a flat
                                 # interval on top of the work. display() has already
@@ -2497,7 +2601,8 @@ class DisplayController:
                                 # update threads and the web UI are not starved of the GIL.
                                 time.sleep(_remaining if _remaining > 0 else 0.001)
 
-                                if self.current_display_mode != active_mode:
+                                if (self.current_display_mode != active_mode
+                                        or not self.is_display_active):
                                     logger.debug("Mode changed during high-FPS loop, breaking early")
                                     break
 
@@ -2575,9 +2680,9 @@ class DisplayController:
                                 # Multi-display sync: send follower frame after each render
                                 self._send_follower_frame(manager_to_display)
 
-                                self._poll_on_demand_requests()
-                                self._check_on_demand_expiration()
-                                if self.current_display_mode != active_mode:
+                                self._service_pending_changes()
+                                if (self.current_display_mode != active_mode
+                                        or not self.is_display_active):
                                     logger.info("Mode changed during display loop from %s to %s, breaking early", active_mode, self.current_display_mode)
                                     break
 
@@ -2604,7 +2709,10 @@ class DisplayController:
                         # Removing it again will silently reintroduce both issues. _activate_on_demand
                         # already sets force_change=True and clears the display, so the next loop
                         # iteration renders the new mode immediately.
-                        if self.current_display_mode != active_mode:
+                        # Likewise if the schedule turned the display off
+                        # mid-screen: the next iteration blanks it.
+                        if (self.current_display_mode != active_mode
+                                or not self.is_display_active):
                             continue
 
                         # Ensure we honour minimum duration when not dynamic and loop ended early
@@ -2652,7 +2760,15 @@ class DisplayController:
                     else:
                         # For non-plugin modes, use the original behavior
                         self._sleep_with_plugin_updates(max_duration)
-                
+
+                # The dwell sleeps above return early when a pending change
+                # (on-demand started or stopped, display scheduled off) has
+                # already decided what comes next; rotating now would skip it
+                # -- an on-demand start would advance past the requested mode.
+                if (self.current_display_mode != active_mode
+                        or not self.is_display_active):
+                    continue
+
                 # Move to next mode
                 if self.on_demand_active:
                     # Guard against empty on_demand_modes to prevent ZeroDivisionError

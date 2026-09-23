@@ -33,7 +33,7 @@ def _no_real_chmod(monkeypatch):
     # Keep the permission helpers out of the way: their own env detection
     # is not what these tests are about.
     monkeypatch.setattr("src.common.logo_helper.ensure_directory_permissions", MagicMock())
-    monkeypatch.setattr("src.common.logo_helper.ensure_file_permissions", MagicMock())
+    monkeypatch.setattr("src.logo_downloader.ensure_file_permissions", MagicMock())
 
 
 @pytest.fixture
@@ -48,7 +48,8 @@ def write_logo(path: Path, size=(20, 20), color=(255, 0, 0), fmt="PNG") -> Path:
     return path
 
 
-def fake_response(content: bytes, chunk_size: int = 64 * 1024):
+def fake_response(content: bytes, chunk_size: int = 64 * 1024,
+                  content_type: str = "image/png"):
     """Stand-in for a streamed requests.Response.
 
     _download_logo opens `with session.get(..., stream=True)` and reads
@@ -61,6 +62,7 @@ def fake_response(content: bytes, chunk_size: int = 64 * 1024):
     response.__enter__.return_value = response
     response.__exit__.return_value = False
     response.raise_for_status = MagicMock()
+    response.headers = {"content-type": content_type}
 
     def _iter_content(*_args, **_kwargs):
         for i in range(0, len(content), chunk_size):
@@ -80,6 +82,7 @@ def endless_response(chunk: bytes = b"\x00" * 65536):
     response.__enter__.return_value = response
     response.__exit__.return_value = False
     response.raise_for_status = MagicMock()
+    response.headers = {"content-type": "image/png"}
 
     def _iter_content(*_args, **_kwargs):
         while True:
@@ -208,7 +211,7 @@ class TestLoadLogoWithDownload:
         # stream=True is load-bearing: it is what lets the size cap apply
         # before the body is buffered.
         helper.session.get.assert_called_once_with(
-            "http://x/logo.png", timeout=30, stream=True)
+            "http://x/logo.png", headers=None, timeout=30, stream=True)
 
     def test_download_failure_falls_back_to_placeholder(self, helper, tmp_path):
         helper.session.get = MagicMock(
@@ -241,7 +244,7 @@ class TestDownloadLogo:
         path.parent.mkdir()
         helper.session.get = MagicMock(return_value=fake_response(png_bytes()))
         with patch("src.common.logo_helper.ensure_directory_permissions") as dirs, \
-             patch("src.common.logo_helper.ensure_file_permissions") as files:
+             patch("src.logo_downloader.ensure_file_permissions") as files:
             helper._download_logo("http://x/logo.png", path)
         assert path.exists()
         dirs.assert_called_once()
@@ -284,6 +287,7 @@ class TestDownloadLogo:
         response.__enter__.return_value = response
         response.__exit__.return_value = False
         response.raise_for_status = MagicMock()
+        response.headers = {"content-type": "image/png"}
         response.iter_content = _dies_midway
         helper.session.get = MagicMock(return_value=response)
 
@@ -305,7 +309,7 @@ class TestDownloadLogo:
             seen.append(name)
             return fd, name
 
-        with patch("src.common.logo_helper.tempfile.mkstemp", side_effect=record):
+        with patch("src.logo_downloader.tempfile.mkstemp", side_effect=record):
             helper.session.get = MagicMock(return_value=fake_response(png_bytes()))
             helper._download_logo("http://x/logo.png", path)
             helper.session.get = MagicMock(return_value=fake_response(png_bytes()))
@@ -351,7 +355,7 @@ class TestDownloadLogo:
             def load(self):
                 raise Image.DecompressionBombError("too many pixels")
 
-        monkeypatch.setattr("src.common.logo_helper.Image.open", lambda *a, **kw: Bomb())
+        monkeypatch.setattr("src.logo_downloader.Image.open", lambda *a, **kw: Bomb())
         with pytest.raises(Image.DecompressionBombError):
             helper._download_logo("http://x/bomb.png", path)
         assert not path.exists()
@@ -420,7 +424,8 @@ class TestPlaceholderLogo:
 
 class TestSessionConfiguration:
     def test_user_agent_and_accept_headers(self, helper):
-        assert helper.session.headers["User-Agent"] == "LEDMatrix-Common/1.0"
+        from src.common.api_helper import USER_AGENT
+        assert helper.session.headers["User-Agent"] == USER_AGENT
         assert helper.session.headers["Accept"] == "image/*"
 
 

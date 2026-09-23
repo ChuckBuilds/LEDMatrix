@@ -7,17 +7,21 @@ with special support for FCS teams and other NCAA divisions.
 
 import os
 import re
+import tempfile
+import threading
 import time
 import logging
 import requests
 import json
 from typing import Dict, List, Optional, Tuple
 from pathlib import Path
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, UnidentifiedImageError
 from src.common.font_layout import load_truetype
 from PIL.PngImagePlugin import PngInfo
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from src.common.api_helper import DEFAULT_HTTP_HEADERS
+from src.common.logo_helper import MAX_LOGO_BYTES
 from src.common.permission_utils import (
     ensure_directory_permissions,
     ensure_file_permissions,
@@ -26,6 +30,142 @@ from src.common.permission_utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+#: Accept header for logo image requests (the JSON default is for the API).
+LOGO_ACCEPT = 'image/png,image/*;q=0.8'
+
+
+def _is_image_content_type(content_type: str) -> bool:
+    """True for an ``image/*`` media type, ignoring parameters and case.
+
+    Only a cheap gate before the body is read; Pillow decoding the bytes is
+    what actually decides whether they are an image.
+    """
+    return content_type.split(';', 1)[0].strip().lower().startswith('image/')
+
+
+def _to_rgba(img: Image.Image) -> Image.Image:
+    """``img`` as RGBA, keeping its transparency.
+
+    One conversion covers every mode: Pillow folds a palette's or a
+    greyscale/RGB image's ``transparency`` entry into the alpha channel when
+    converting to RGBA, and an image without one gets an opaque alpha. Plugins
+    paste logos with the image as its own mask, so the alpha is the part that
+    has to survive.
+    """
+    return img.copy() if img.mode == 'RGBA' else img.convert('RGBA')
+
+
+def _publish(tmp_path: Path, filepath: Path) -> None:
+    """Give a finished temp file the asset mode, then move it into place.
+
+    ``mkstemp`` creates files 0600, so the mode is set before the rename: the
+    logo must never be visible under its real name unreadable to the web
+    service's user. ``os.replace`` within one directory is atomic, so a reader
+    sees the old file or the new one, never a half-written one.
+    """
+    ensure_file_permissions(tmp_path, get_assets_file_mode())
+    os.replace(tmp_path, filepath)
+
+
+def _temp_beside(filepath: Path) -> Tuple[int, Path]:
+    """A unique temp file in ``filepath``'s directory.
+
+    Unique rather than a fixed ``<name>.part`` because two plugins can ask for
+    the same logo at once; a shared name would let them interleave writes into
+    one file, or delete each other's partial. The same directory keeps
+    ``os.replace`` atomic.
+    """
+    fd, tmp_name = tempfile.mkstemp(
+        dir=str(filepath.parent), prefix=filepath.name + '.', suffix='.part')
+    return fd, Path(tmp_name)
+
+
+def save_png_atomically(image: Image.Image, filepath: Path,
+                        pnginfo: Optional[PngInfo] = None) -> None:
+    """Save ``image`` as a PNG at ``filepath`` without ever exposing a partial file.
+
+    Raises on failure (including PermissionError for an unwritable
+    directory), leaving any previous file at ``filepath`` untouched and no
+    temp file behind.
+    """
+    filepath = Path(filepath)
+    fd, tmp_path = _temp_beside(filepath)
+    try:
+        with os.fdopen(fd, 'wb') as f:
+            if pnginfo is not None:
+                image.save(f, 'PNG', pnginfo=pnginfo)
+            else:
+                image.save(f, 'PNG')
+        _publish(tmp_path, filepath)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
+def fetch_logo(session: requests.Session, url: str, filepath: Path, *,
+               headers: Optional[Dict[str, str]] = None, timeout: float = 30,
+               max_bytes: Optional[int] = None) -> None:
+    """Download the image at ``url`` and save it at ``filepath`` as an RGBA PNG.
+
+    The one hardened logo download; ``LogoDownloader.download_logo`` and
+    ``LogoHelper._download_logo`` both go through it. A logo URL is remote
+    input, and whatever lands at ``filepath`` is cached and loaded on every
+    later frame, so nothing is written there until the bytes have been
+    size-checked and decoded:
+
+    - the response must be ``image/*`` and is streamed, counted as it
+      arrives, and abandoned past ``max_bytes`` (``MAX_LOGO_BYTES`` by
+      default) -- ``response.content`` would buffer a body that never ends
+      before any check could run;
+    - the bytes go to a unique temp file beside ``filepath`` and must decode
+      with Pillow (which also enforces its decompression-bomb limit);
+    - the image is converted to RGBA once, rewritten as PNG, and moved into
+      place atomically.
+
+    Raises on any failure, with no temp file left and any previous file at
+    ``filepath`` intact. The caller creates the directory.
+    """
+    if max_bytes is None:
+        max_bytes = MAX_LOGO_BYTES
+    filepath = Path(filepath)
+    fd, tmp_path = _temp_beside(filepath)
+    try:
+        # fdopen outermost so the descriptor is adopted and closed even when
+        # the request itself raises.
+        with os.fdopen(fd, 'wb') as f:
+            with session.get(url, headers=headers, timeout=timeout,
+                             stream=True) as response:
+                response.raise_for_status()
+                content_type = response.headers.get('content-type') or ''
+                if not _is_image_content_type(content_type):
+                    raise ValueError(
+                        f"Logo at {url} is not an image "
+                        f"(content-type {content_type!r}); not saved")
+                received = 0
+                for chunk in response.iter_content(chunk_size=64 * 1024):
+                    if not chunk:
+                        continue
+                    received += len(chunk)
+                    if received > max_bytes:
+                        raise ValueError(
+                            f"Logo at {url} exceeds the "
+                            f"{max_bytes}-byte limit; not saved")
+                    f.write(chunk)
+
+        # UnidentifiedImageError (an OSError) for bytes that are not an
+        # image, DecompressionBombError past Pillow's pixel limit, OSError for
+        # a truncated one.
+        with Image.open(tmp_path) as img:
+            img.load()
+            rgba = _to_rgba(img)
+        with open(tmp_path, 'wb') as f:
+            rgba.save(f, 'PNG')
+        _publish(tmp_path, filepath)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
 
 #: PNG text key stamped into a generated placeholder so a later run can tell it
 #: apart from a real logo that happens to be small.
@@ -199,14 +339,8 @@ class LogoDownloader:
         self.session.mount("https://", adapter)
         self.session.mount("http://", adapter)
         
-        # Set up headers
-        self.headers = {
-            'User-Agent': 'LEDMatrix/1.0 (https://github.com/yourusername/LEDMatrix; contact@example.com)',
-            'Accept': 'application/json',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Connection': 'keep-alive'
-        }
+        # Core's shared API headers; a plain dict so callers may adjust theirs.
+        self.headers = dict(DEFAULT_HTTP_HEADERS)
     
     @staticmethod
     def normalize_abbreviation(abbreviation: str) -> str:
@@ -301,50 +435,19 @@ class LogoDownloader:
             return False
     
     def download_logo(self, logo_url: str, filepath: Path, team_abbreviation: str) -> bool:
-        """Download a single logo from URL and save to filepath."""
+        """Download a single logo from URL and save it to filepath as an RGBA PNG.
+
+        Returns False (and logs why) on any failure; see ``fetch_logo`` for
+        the guarantees -- in particular a failure never leaves a partial file,
+        and never replaces a logo already at ``filepath``.
+        """
+        filepath = Path(filepath)
         try:
-            response = self.session.get(logo_url, headers=self.headers, timeout=self.request_timeout)
-            response.raise_for_status()
-            
-            # Verify it's actually an image
-            content_type = response.headers.get('content-type', '').lower()
-            if not any(img_type in content_type for img_type in ['image/png', 'image/jpeg', 'image/jpg', 'image/gif']):
-                logger.warning(f"Downloaded content for {team_abbreviation} is not an image: {content_type}")
-                return False
-            
-            with open(filepath, 'wb') as f:
-                f.write(response.content)
-            
-            # Verify and convert the downloaded image to RGBA format
-            try:
-                with Image.open(filepath) as img:
-                    # Convert to RGBA to avoid PIL warnings about palette images with transparency
-                    if img.mode in ('P', 'LA', 'L'):
-                        # Convert palette or grayscale images to RGBA
-                        img = img.convert('RGBA')
-                    elif img.mode == 'RGB':
-                        # Convert RGB to RGBA (add alpha channel)
-                        img = img.convert('RGBA')
-                    elif img.mode != 'RGBA':
-                        # For any other mode, convert to RGBA
-                        img = img.convert('RGBA')
-                    
-                    # Save the converted image
-                    img.save(filepath, 'PNG')
-                
-                # Set proper file permissions after saving
-                ensure_file_permissions(filepath, get_assets_file_mode())
-                
-                logger.info(f"Successfully downloaded and converted logo for {team_abbreviation} -> {filepath.name}")
-                return True
-            except Exception as e:
-                logger.error(f"Downloaded file for {team_abbreviation} is not a valid image or conversion failed: {e}")
-                try:
-                    os.remove(filepath)  # Remove invalid file
-                except OSError:
-                    pass
-                return False
-            
+            fetch_logo(self.session, logo_url, filepath,
+                       headers={**self.headers, 'Accept': LOGO_ACCEPT},
+                       timeout=self.request_timeout)
+            logger.info(f"Successfully downloaded and converted logo for {team_abbreviation} -> {filepath.name}")
+            return True
         except PermissionError as e:
             logger.error(f"Permission denied downloading logo for {team_abbreviation}: {e}")
             logger.error("Please run: sudo ./scripts/fix_perms/fix_assets_permissions.sh")
@@ -352,10 +455,13 @@ class LogoDownloader:
         except requests.exceptions.RequestException as e:
             logger.error(f"Failed to download logo for {team_abbreviation}: {e}")
             return False
+        except (ValueError, UnidentifiedImageError, Image.DecompressionBombError) as e:
+            logger.error(f"Rejected downloaded logo for {team_abbreviation}: {e}")
+            return False
         except Exception as e:
             logger.error(f"Unexpected error downloading logo for {team_abbreviation}: {e}")
             return False
-    
+
     # Allowlist for the league_code segment interpolated into ESPN API URLs
     _SAFE_LEAGUE_CODE_RE = re.compile(r'^[a-z0-9_-]+$')
 
@@ -728,20 +834,7 @@ class LogoDownloader:
             
             filename = f"{self.normalize_abbreviation(team_abbreviation)}.png"
             filepath = Path(logo_dir) / filename
-            
-            # Check if we can write to the directory
-            try:
-                # Test write permissions by creating a temporary file
-                test_file = filepath.parent / "test_write.tmp"
-                test_file.touch()
-                test_file.unlink()  # Remove the test file
-            except PermissionError:
-                logger.error(f"Permission denied: Cannot write to directory {logo_dir}")
-                return False
-            except Exception as e:
-                logger.error(f"Directory access error for {logo_dir}: {e}")
-                return False
-            
+
             # Create a simple placeholder logo
             logo = Image.new('RGBA', (64, 64), (100, 100, 100, 255))  # Gray background
             draw = ImageDraw.Draw(logo)
@@ -774,14 +867,16 @@ class LogoDownloader:
             # proof the logo was fetched.
             metadata = PngInfo()
             metadata.add_text(PLACEHOLDER_MARKER, str(time.time()))
-            logo.save(filepath, "PNG", pnginfo=metadata)
-
-            # Set proper file permissions after saving
-            ensure_file_permissions(filepath, get_assets_file_mode())
+            # Atomic, and it sets the asset mode; an unwritable directory
+            # surfaces here as PermissionError.
+            save_png_atomically(logo, filepath, pnginfo=metadata)
 
             logger.info(f"Created placeholder logo for {team_abbreviation} at {filepath}")
             return True
-            
+
+        except PermissionError as e:
+            logger.error(f"Permission denied: Cannot write placeholder logo to {logo_dir}: {e}")
+            return False
         except Exception as e:
             logger.error(f"Failed to create placeholder logo for {team_abbreviation}: {e}")
             return False
@@ -837,6 +932,31 @@ def get_soccer_league_key(league_code: str) -> str:
     return f"soccer_{league_code}"
 
 
+_thread_state = threading.local()
+
+
+def shared_downloader() -> LogoDownloader:
+    """The calling thread's reusable LogoDownloader.
+
+    ``download_missing_logo`` used to build a new downloader -- a new
+    ``requests.Session``, retry adapter and connection pool -- for every logo.
+    Reusing one keeps connections to ESPN's CDN alive between logos.
+
+    One per thread rather than one behind a lock: ``requests.Session`` is not
+    documented as safe for concurrent use, and plugins download on worker
+    threads (football-scoreboard runs a small pool precisely so downloads
+    overlap). A lock would serialise every plugin's downloads behind the
+    slowest one -- up to 30s per attempt, with retries. Pool threads persist,
+    so each still reuses its own session; a thread's downloader goes with the
+    thread.
+    """
+    downloader = getattr(_thread_state, 'downloader', None)
+    if downloader is None:
+        downloader = LogoDownloader()
+        _thread_state.downloader = downloader
+    return downloader
+
+
 # Convenience function for easy integration
 def download_missing_logo(league: str, team_id: str, team_abbreviation: str, logo_path: Path, logo_url: str | None = None, create_placeholder: bool = True) -> bool:
     """
@@ -852,8 +972,8 @@ def download_missing_logo(league: str, team_id: str, team_abbreviation: str, log
     Returns:
         True if logo exists or was successfully downloaded, False otherwise
     """
-    downloader = LogoDownloader()
-    
+    downloader = shared_downloader()
+
     # Use the directory from the logo_path parameter (respects config settings)
     logo_path = Path(logo_path)
     if not logo_path.is_absolute():
@@ -920,5 +1040,5 @@ def download_all_logos_for_league(league: str, force_download: bool = False) -> 
     Returns:
         Tuple of (downloaded_count, failed_count)
     """
-    downloader = LogoDownloader()
+    downloader = shared_downloader()
     return downloader.download_missing_logos_for_league(league, force_download)
