@@ -297,3 +297,71 @@ class TestGetBackgroundService:
         shutdown_background_service()
         with pytest.raises(ValueError):
             get_background_service()
+
+
+# ---------------------------------------------------------------------------
+# Sport cache keys
+# ---------------------------------------------------------------------------
+
+class _FrozenDatetime:
+    """Stands in for the datetime class at a fixed instant. now() without a
+    tz answers in a UTC-4 local zone, so a key built from local time shows."""
+
+    def __init__(self, moment):
+        self._moment = moment
+
+    def now(self, tz=None):
+        from datetime import timedelta, timezone
+        if tz is None:
+            return self._moment.astimezone(timezone(timedelta(hours=-4))).replace(tzinfo=None)
+        return self._moment.astimezone(tz)
+
+
+class TestSportCacheKey:
+    """get_sport_cache_key() must produce CacheManager's key format without
+    building a CacheManager (config load + cache-dir probing) to do it."""
+
+    @pytest.mark.parametrize("sport,date_str", [
+        ("nfl", "20260922"), ("ncaa_fb", "20251231"), ("soccer", ""),
+    ])
+    def test_explicit_date_matches_cache_manager(self, service, sport, date_str):
+        from src.cache_manager import CacheManager
+        expected = CacheManager.generate_sport_cache_key(None, sport, date_str)
+        assert service.get_sport_cache_key(sport, date_str) == expected
+
+    def test_default_date_is_today_in_utc_like_cache_manager(self, service):
+        from datetime import datetime, timezone
+        import src.cache_manager as cm_module
+        # 23:30 on the 21st in New York is already the 22nd in UTC.
+        frozen = _FrozenDatetime(datetime(2026, 9, 22, 3, 30, tzinfo=timezone.utc))
+        with patch.object(bds_module, "datetime", frozen), \
+                patch.object(cm_module, "datetime", frozen):
+            ours = service.get_sport_cache_key("nba")
+            theirs = cm_module.CacheManager.generate_sport_cache_key(None, "nba")
+        assert ours == theirs == "nba_20260922"
+
+    def test_does_not_construct_a_cache_manager(self, service):
+        with patch("src.cache_manager.CacheManager.__init__",
+                   side_effect=AssertionError("CacheManager constructed")):
+            assert service.get_sport_cache_key("nhl", "20260101") == "nhl_20260101"
+            assert service.get_sport_cache_key("nhl").startswith("nhl_")
+
+    def test_submit_without_cache_key_looks_up_todays_sport_key(
+            self, service, mock_cache_manager):
+        mock_cache_manager.get.return_value = {"events": []}
+        with patch("src.cache_manager.CacheManager.__init__",
+                   side_effect=AssertionError("CacheManager constructed")):
+            service.submit_fetch_request("mlb", 2026, "http://example.invalid/x")
+        key = mock_cache_manager.get.call_args[0][0]
+        assert key == service.get_sport_cache_key("mlb")
+
+
+class TestPriorityIsAcceptedAndIgnored:
+    def test_priority_keyword_is_accepted(self, service, mock_cache_manager):
+        mock_cache_manager.get.return_value = {"cached": True}
+        rid = service.submit_fetch_request(
+            "nfl", 2026, "http://example.invalid/x", cache_key="k", priority=5)
+        assert service.get_result(rid).cached is True
+
+    def test_statistics_still_report_an_empty_queue(self, service):
+        assert service.get_statistics()["queue_size"] == 0
