@@ -60,6 +60,35 @@ core, the monorepo or the registry's third-party plugins calls them:
   instead of handing `config.json` to root, and an install path with
   "secrets" in a directory name no longer makes `config.json` mode 0640.
 
+New names in existing modules (no new modules; a plugin importing these must
+floor on the release that ships them):
+
+- `src.common.api_helper`: `USER_AGENT`, `DEFAULT_HTTP_HEADERS` (read-only).
+- `src.logo_downloader`: `fetch_logo`, `save_png_atomically`,
+  `shared_downloader`.
+
+### Logo downloads
+
+- `download_missing_logo` / `LogoDownloader.download_logo` (the path the
+  scoreboard plugins use) now stream the logo with a 10 MB cap, accept only an
+  `image/*` response that Pillow can decode, and move the finished RGBA PNG
+  into place atomically. A failed, oversized or non-image download no longer
+  leaves a partial file behind, and no longer replaces a logo already on disk.
+  `LogoHelper._download_logo` goes through the same code. Signatures and return
+  values are unchanged; saved files are pixel-identical to before.
+- `download_missing_logo` reuses one downloader (one `requests.Session`) per
+  thread instead of building a new one for every logo.
+- Placeholder logos are written atomically, without the `test_write.tmp`
+  probe file.
+
+### HTTP headers
+
+- The logo downloader and the background data service send the real
+  `LEDMatrix/1.0 (+https://github.com/ChuckBuilds/LEDMatrix)` User-Agent
+  instead of a `yourusername` / `contact@example.com` placeholder, and no
+  longer set `Accept-Encoding: ... br` by hand (brotli is not installed, so a
+  `br` response could not be decoded); requests picks the encodings.
+
 ### Removed
 
 - **The skin system.** Skins never rendered with the current scoreboard

@@ -6,19 +6,16 @@ Extracted from LEDMatrix core to provide reusable functionality for plugins.
 """
 
 import logging
-import os
-import tempfile
 import time
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 
 import requests
 from PIL import Image
+from src.common.api_helper import USER_AGENT
 from src.common.permission_utils import (
     ensure_directory_permissions,
-    ensure_file_permissions,
     get_assets_dir_mode,
-    get_assets_file_mode
 )
 
 # How long a missing logo stays remembered as missing.
@@ -61,6 +58,7 @@ def _usable_scale(scale) -> float:
 
 
 # Well above any real team logo; bounds what a remote URL can write to disk.
+# The cap for every logo download: src.logo_downloader.fetch_logo uses it too.
 MAX_LOGO_BYTES = 10 * 1024 * 1024
 
 
@@ -107,7 +105,7 @@ class LogoHelper:
         # Session for HTTP requests
         self.session = requests.Session()
         self.session.headers.update({
-            'User-Agent': 'LEDMatrix-Common/1.0',
+            'User-Agent': USER_AGENT,
             'Accept': 'image/*',
         })
     
@@ -408,64 +406,23 @@ class LogoHelper:
         self._cache_order.append(cache_key)
     
     def _download_logo(self, url: str, file_path: Path) -> None:
-        """Download logo from URL.
+        """Download a logo from ``url`` to ``file_path``; raises on failure.
 
-        The response size is capped and the saved file is verified as a
-        decodable image before it is left on disk: a logo URL is remote
-        input, and without this an oversized or malformed response would
-        be cached for every later load_logo() call to trip over.
+        Delegates to ``src.logo_downloader.fetch_logo``, the same hardened
+        download the scoreboard plugins use: streamed and capped at
+        ``MAX_LOGO_BYTES``, ``image/*`` only, decoded by Pillow, stored as an
+        RGBA PNG, and moved into place atomically -- a failure leaves neither
+        a partial file nor a temp file. Uses this helper's own session.
 
-        The body is streamed and counted as it arrives rather than read
-        through response.content, which buffers the whole thing first —
-        a server that omits Content-Length and never stops sending would
-        exhaust memory before any size check could run. Nothing lands at
-        file_path until the download completes and decodes, so a failed
-        download cannot leave a truncated logo behind either.
+        Imported lazily: src.logo_downloader imports src.common, so a
+        module-level import here would be circular.
         """
+        from src.logo_downloader import fetch_logo
+
         # Ensure directory exists with proper permissions
         ensure_directory_permissions(file_path.parent, get_assets_dir_mode())
-
-        # A unique temp name, not a fixed "<name>.part": two plugins can
-        # ask for the same logo at once, and a shared name would let them
-        # interleave writes into one file, publish the mixture, or delete
-        # each other's partial. Same directory, so os.replace stays atomic.
-        fd, tmp_name = tempfile.mkstemp(
-            dir=str(file_path.parent), prefix=file_path.name + '.', suffix='.part')
-        tmp_path = Path(tmp_name)
-        try:
-            # fdopen outermost so the descriptor mkstemp handed back is
-            # always adopted and closed, including when the request itself
-            # raises — load_logo_with_download swallows that, so a leak
-            # here would accumulate quietly on a URL that keeps failing.
-            with os.fdopen(fd, 'wb') as f:
-                with self.session.get(url, timeout=30, stream=True) as response:
-                    response.raise_for_status()
-                    downloaded = 0
-                    for chunk in response.iter_content(chunk_size=64 * 1024):
-                        if not chunk:
-                            continue
-                        downloaded += len(chunk)
-                        if downloaded > MAX_LOGO_BYTES:
-                            raise ValueError(
-                                f"Logo at {url} exceeds the "
-                                f"{MAX_LOGO_BYTES}-byte limit; not saved")
-                        f.write(chunk)
-
-            # Verify it decodes before it becomes the cached logo. PIL
-            # raises DecompressionBombError past its own pixel limit; a
-            # partial or non-image response raises UnidentifiedImageError
-            # (an OSError subclass).
-            with Image.open(tmp_path) as probe:
-                probe.load()
-
-            os.replace(tmp_path, file_path)
-        except BaseException:
-            tmp_path.unlink(missing_ok=True)
-            raise
-
-        # Set proper file permissions after saving
-        ensure_file_permissions(file_path, get_assets_file_mode())
-
+        fetch_logo(self.session, url, file_path, timeout=30,
+                   max_bytes=MAX_LOGO_BYTES)
         self.logger.debug(f"Downloaded logo to {file_path}")
     
     def _create_placeholder_logo(self, team_abbr: str, 
