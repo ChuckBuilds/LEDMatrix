@@ -38,7 +38,11 @@ accepts both, but the store flags the old spelling as deprecated
   the file's native strike) and `draw_bdf_text(draw, text, x, y, face, color)`.
   `DisplayManager`, `FontManager`, `element_style` and the plugin test harness
   now all load and draw BDF text through it; the panel's pixels are unchanged
-  and BDF text draws 10-250x faster.
+  and BDF text draws 10-250x faster. The plugin test harness's
+  `calendar_font` / `bdf_5x7_font` now has the panel's 7px size set: it used
+  to be an unsized face, so in golden images and `check_plugin` /
+  `dev_server` previews its text sat 6px above where the panel draws it (off
+  the canvas entirely near the top) and `get_font_height()` returned 0.
 
 - The web UI's Fonts tab has a **Used by** column: the loaded plugins that
   registered each font with `FontManager.register_manager_font()`, published

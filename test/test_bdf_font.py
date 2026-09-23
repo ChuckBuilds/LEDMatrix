@@ -188,6 +188,18 @@ def test_display_manager_and_test_harness_draw_the_reference_pixels(name):
         _assert_same(ref, vt.image, ("VisualTestDisplayManager", name, text))
 
 
+def test_harness_calendar_font_is_the_panels():
+    # The harness built a bare freetype.Face with no size: ascender 0, so
+    # every calendar_font line drew a baseline too high, and its
+    # get_font_height() returned 0.
+    from src.plugin_system.testing.visual_display_manager import VisualTestDisplayManager
+
+    vt = VisualTestDisplayManager(64, 32)
+    panel_face, _ = load_bdf_face(str(FONTS_DIR / "5x7.bdf"), 7)
+    assert vt.calendar_font is panel_face
+    assert vt.get_font_height(vt.calendar_font) == panel_face.size.height >> 6 > 0
+
+
 # -------------------------------------------------------------------- loader
 
 def test_off_strike_size_loads_the_native_strike():

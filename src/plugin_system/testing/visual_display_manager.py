@@ -22,8 +22,8 @@ process_deferred_updates, update_display, render_size. A behavior
 change to any of those in DisplayManager must be mirrored here, or
 plugin visual tests will pass against stale behavior.
 
-BDF glyphs are not mirrored: both classes draw them through
-src/common/bdf_font.py, so those pixels cannot drift.
+BDF text is not mirrored: both classes load BDF faces and draw BDF glyphs
+through src/common/bdf_font.py, so those pixels cannot drift.
 """
 
 import math
@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Any, List, Optional, Tuple
 
 from PIL import Image, ImageDraw, ImageFont
-from src.common.bdf_font import draw_bdf_text
+from src.common.bdf_font import draw_bdf_text, load_bdf_face
 from src.common.font_layout import crisp_size, load_truetype
 
 from src.logging_config import get_logger
@@ -151,16 +151,18 @@ class VisualTestDisplayManager:
             self.small_font = load_truetype(ttf_path, crisp_size(press_start, 8))
             self.font = self.regular_font  # alias used by some code paths
 
-            # 5x7 BDF font via freetype
+            # 5x7 BDF font, loaded exactly as DisplayManager._load_fonts does
+            # (same loader, same 7px request as its _CALENDAR_FONT_PX). A bare
+            # freetype.Face has no active size, so its ascender reads 0 and
+            # every line drew a baseline too high.
             try:
-                import freetype
                 bdf_path = str(fonts_dir / '5x7.bdf')
                 if not os.path.exists(bdf_path):
                     raise FileNotFoundError(f"BDF font not found: {bdf_path}")
-                face = freetype.Face(bdf_path)
+                face, _ = load_bdf_face(bdf_path, 7)
                 self.calendar_font = face
                 self.bdf_5x7_font = face
-            except (ImportError, FileNotFoundError, OSError) as e:
+            except Exception as e:  # freetype missing or the file unloadable
                 logger.debug("BDF font not available, using small_font as fallback: %s", e)
                 self.calendar_font = self.small_font
                 self.bdf_5x7_font = self.small_font
