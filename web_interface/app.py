@@ -303,19 +303,25 @@ _service_status_cache = TTLCache()
 _AP_MODE_CACHE_TTL = 30  # seconds — AP mode is user-initiated; 30s is fine
 _LEDMATRIX_SERVICE_CACHE_TTL = 15  # seconds
 
+# The only units _unit_is_active() may ask systemctl about: its argv is built
+# from these literals, never from request data.
+_CHECKABLE_UNITS = frozenset({'hostapd', 'ledmatrix'})
+
 def _unit_is_active(unit, ttl):
     """`systemctl is-active <unit>`, cached for ``ttl`` seconds.
 
     False where there is no systemctl (a dev machine); on a failed check, the
     last known answer.
     """
+    if unit not in _CHECKABLE_UNITS:
+        raise ValueError(f"not a checkable unit: {unit!r}")
     active = _service_status_cache.get(unit)
     if active is not None:
         return active
     active = _service_status_cache.peek(unit, False)
     if _SYSTEMCTL:
         try:
-            result = subprocess.run([_SYSTEMCTL, 'is-active', unit],
+            result = subprocess.run([_SYSTEMCTL, 'is-active', unit],  # nosec B603 - list argv, unit is from _CHECKABLE_UNITS  # nosemgrep
                                     capture_output=True, text=True, timeout=2)
             active = result.stdout.strip() == 'active'
         except (subprocess.SubprocessError, OSError) as e:
