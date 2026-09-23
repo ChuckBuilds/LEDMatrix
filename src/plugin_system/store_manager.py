@@ -53,6 +53,17 @@ class PluginStoreManager:
     # "..", "../x") into a filesystem path that purge_uninstalled_plugins
     # would delete — an empty id resolves to the plugins root itself.
     _PLUGIN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+    @staticmethod
+    def is_plugin_entry(entry) -> bool:
+        """Whether a registry entry is a plugin core can install.
+
+        A missing ``type`` means plugin. Anything else (registries used to
+        carry ``"type": "skin"`` entries, and a custom registry still can) is
+        hidden from the store and refused at install, rather than being
+        unpacked into the plugins directory as if it were a plugin.
+        """
+        return isinstance(entry, dict) and (entry.get('type') or 'plugin') == 'plugin'
     
     def __init__(self, plugins_dir: str = "plugins",
                  uninstalled_registry_path: Optional[str] = None):
@@ -1313,6 +1324,10 @@ class PluginStoreManager:
         plugin_info = self.get_plugin_info(plugin_id, fetch_latest_from_github=True, force_refresh=True)
         if not plugin_info:
             self.logger.error(f"Plugin not found in registry: {plugin_id}")
+            return False
+        if not self.is_plugin_entry(plugin_info):
+            self.logger.error(f"Not installing {plugin_id}: registry entry type "
+                              f"{plugin_info.get('type')!r} is not a plugin")
             return False
 
         repo_url = plugin_info.get('repo')

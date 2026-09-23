@@ -1296,6 +1296,17 @@ def install_plugin():
         plugin_id = data['plugin_id']
         branch = data.get('branch')  # Optional branch parameter
 
+        # A registry entry that isn't a plugin (a custom registry can still
+        # list old "type": "skin" entries) gets a clear refusal, not a failed
+        # install.
+        try:
+            registry_entry = api_v3.plugin_store_manager.get_registry_info(plugin_id)
+        except Exception:
+            registry_entry = None
+        if isinstance(registry_entry, dict) and not api_v3.plugin_store_manager.is_plugin_entry(registry_entry):
+            return jsonify({'status': 'error',
+                            'message': f"{plugin_id} is a {registry_entry.get('type')!r} entry, not a plugin"}), 400
+
         # Install the plugin
         # Log the plugins directory being used for debugging
         plugins_dir = api_v3.plugin_store_manager.plugins_dir
@@ -1498,7 +1509,8 @@ def get_registry_from_url():
         if registry:
             return jsonify({
                 'status': 'success',
-                'plugins': registry.get('plugins', []),
+                'plugins': [p for p in registry.get('plugins', [])
+                            if api_v3.plugin_store_manager.is_plugin_entry(p)],
                 'registry_url': repo_url
             })
         else:
@@ -1613,6 +1625,8 @@ def list_plugin_store():
         # Format plugins for the web interface
         formatted_plugins = []
         for plugin in plugins:
+            if not api_v3.plugin_store_manager.is_plugin_entry(plugin):
+                continue
             formatted_plugins.append({
                 'id': plugin.get('id'),
                 'name': plugin.get('name'),
