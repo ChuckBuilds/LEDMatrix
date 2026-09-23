@@ -311,9 +311,11 @@ line is what is running.
 shifted sideways against each other along a horizontal line at mid-height, and
 the shift grows with scroll speed. It shows most in Vegas mode at high speed.
 
-**It is the panel's scan, not the software.** A 64-row panel is multiplexed
-1:32: it lights two rows at a time, one from each half (row 0 with row 32, row 1
-with row 33, …), stepping down both halves together once per refresh. So row 31,
+**It is the panel's scan, not the software.** The measured panel, like most
+64-row panels, is multiplexed 1:32 (some panels of the same size scan
+differently, so check yours): it lights two rows at a time, one from each half
+(row 0 with row 32, row 1 with row 33, …), stepping down both halves together
+once per refresh. So row 31,
 the last row of the top half, lights almost a whole refresh period after row 32
 right below it. Your eye follows moving text, and moving content that lights at
 different times lands in different places, so the two rows meet with an offset
