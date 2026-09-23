@@ -26,6 +26,24 @@ accepts both, but the store flags the old spelling as deprecated
 - `src.wifi_manager.get_wifi_status_path()` — where WiFi status messages for
   the display are written (`config/wifi_status.json`).
 
+Deprecated, removed in 3.7.0 (each logs a warning on first use; see
+`docs/PLUGIN_API_REFERENCE.md#deprecated-apis` for replacements). Nothing in
+core, the monorepo or the registry's third-party plugins calls them:
+
+- `CacheManager`: `has_data_changed`, `update_cache`, `setup_persistent_cache`,
+  `get_sport_live_interval`, `get_sport_key_from_cache_key`,
+  `get_background_cached_data`, `is_background_data_available`,
+  `record_cache_hit`, `record_cache_miss`, `record_fetch_time`,
+  `get_cache_metrics`, `log_cache_metrics`, `get_memory_cache_stats`.
+- `DisplayManager`: `draw_weather_icon`, `draw_sun`, `draw_cloud`, `draw_rain`,
+  `draw_snow`, `draw_text_with_icons`, `get_scrolling_stats`.
+- `FontManager`: `set_override`, `remove_override`, `get_overrides`,
+  `add_font`, `remove_font`, `validate_font`, `get_font_catalog`,
+  `get_available_fonts`, `get_size_tokens`, `get_performance_stats`,
+  `get_manager_fonts`, `get_detected_fonts`, `get_plugin_fonts`,
+  `unregister_plugin_fonts`.
+- `PluginManager.get_enabled_plugins`.
+
 ## 3.5.0
 
 New modules a plugin may import via `src.*` (floor on 3.5.0):

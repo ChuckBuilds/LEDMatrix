@@ -26,6 +26,7 @@ from src.plugin_system.schema_manager import (
     CORE_VEGAS_TUNING_KEYS, SchemaManager, normalize_legacy_booleans,
 )
 from src.common.path_safety import safe_path_component
+from src.deprecation import deprecated
 from src.common.permission_utils import (
     ensure_directory_permissions,
     get_plugin_dir_mode
@@ -698,6 +699,7 @@ class PluginManager:
         """
         return self.plugins.copy()
     
+    @deprecated("3.7.0", "check each plugin's enabled flag in plugins")
     def get_enabled_plugins(self) -> List[str]:
         """
         Get list of enabled plugin IDs.
