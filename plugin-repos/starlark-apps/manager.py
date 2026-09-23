@@ -10,6 +10,7 @@ API Version: 1.0.0
 import json
 import os
 import re
+import stat
 import time
 import fcntl
 from pathlib import Path
@@ -457,11 +458,76 @@ class StarlarkAppsPlugin(BasePlugin):
             apps_dir = project_root / "starlark-apps"
         except Exception:
             # Fallback to current working directory
-            apps_dir = Path.cwd() / "starlark-apps"
+            project_root = Path.cwd()
+            apps_dir = project_root / "starlark-apps"
 
         # Create directory if it doesn't exist
         apps_dir.mkdir(parents=True, exist_ok=True)
+        self._hand_apps_dir_to_checkout_owner(apps_dir, project_root)
         return apps_dir
+
+    def _hand_apps_dir_to_checkout_owner(self, apps_dir: Path, project_root: Path) -> None:
+        """Give the apps directory to whoever owns the checkout.
+
+        This directory is not in the repository, so it is created lazily by
+        whichever process reaches it first -- and the two that do run as
+        different users. The display service is `User=root`
+        (systemd/ledmatrix.service) and instantiates this plugin at startup,
+        which is where `_get_apps_directory` is called from. The web interface
+        is `User=<login user>` (systemd/ledmatrix-web.service) and is what
+        actually installs apps.
+
+        On a fresh install the display service usually wins that race -- the
+        documented first step is to install pixlet and reboot -- so the
+        directory lands root-owned, and every subsequent install from the web
+        UI fails on PermissionError. The user sees only "Failed to install
+        from repository", with nothing pointing at ownership.
+
+        The web user cannot repair this; it lacks permission to chown. Root
+        can, so root does it here, on every startup. That also heals installs
+        already broken by this, without the user having to find the chown.
+        """
+        geteuid = getattr(os, "geteuid", None)
+        chown = getattr(os, "chown", None)
+        if geteuid is None or chown is None or geteuid() != 0:
+            # Not root, or not a platform with POSIX ownership. If the
+            # directory is wrong we cannot fix it, and must not pretend to.
+            return
+        try:
+            owner = project_root.stat()
+        except OSError:
+            return
+        if owner.st_uid == 0:
+            # The checkout genuinely belongs to root, so root owning the apps
+            # directory is correct and there is nobody to hand it to.
+            return
+
+        # Deepest first, with the directory itself last. Handing over the
+        # container before its contents would briefly let a local user rename
+        # entries underneath a repair that is still running.
+        descendants = sorted(apps_dir.rglob("*"),
+                             key=lambda p: len(p.parts), reverse=True)
+        for path in (*descendants, apps_dir):
+            try:
+                st = os.lstat(path)
+            except OSError:
+                continue
+            if stat.S_ISLNK(st.st_mode):
+                # Never hand over a link's target. Anyone able to write in
+                # this directory could otherwise point a symlink at a
+                # root-owned file and have this give it away -- the whole
+                # point of the loop is that it runs as root.
+                continue
+            if st.st_uid == owner.st_uid and st.st_gid == owner.st_gid:
+                continue
+            try:
+                chown(path, owner.st_uid, owner.st_gid, follow_symlinks=False)
+            except OSError as e:
+                self.logger.warning(
+                    "Could not hand %s to uid %s: %s -- installs from the web "
+                    "interface will fail until this is chowned manually",
+                    path, owner.st_uid, e,
+                )
 
     def _sanitize_app_id(self, app_id: str) -> str:
         """
@@ -1011,6 +1077,13 @@ class StarlarkAppsPlugin(BasePlugin):
             self.logger.info(f"Installed Starlark app: {app_id} (sanitized: {safe_app_id})")
             return True
 
+        except PermissionError:
+            # Deliberately not folded into the False below. A False here is
+            # reported as a generic install failure, which is how the
+            # directory-ownership bug stayed invisible: the caller could not
+            # tell "this app is broken" from "this process cannot write here".
+            # The routes turn this into a message that names the fix.
+            raise
         except Exception as e:
             self.logger.error(f"Error installing app {app_id}: {e}")
             return False
