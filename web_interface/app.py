@@ -16,6 +16,17 @@ from datetime import datetime, timedelta
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Configure logging before anything below logs: the same setup as the display
+# service (run.py), so this process's journal lines carry their real syslog
+# priority too (`journalctl -p err -u ledmatrix-web`). LEDMATRIX_DEBUG=true
+# turns on DEBUG, which includes the routine per-request lines.
+from src.logging_config import setup_logging
+setup_logging(format_type=(
+    'json' if os.environ.get('LEDMATRIX_JSON_LOGGING', 'false').lower() == 'true'
+    else 'readable'))
+logging.getLogger('werkzeug').setLevel(logging.WARNING)  # request_logging covers requests
+logging.getLogger('urllib3').setLevel(logging.WARNING)
+
 from src.config_manager import ConfigManager
 from src.web_interface.error_handler import describe_exception
 from src.common.path_safety import (
@@ -346,41 +357,9 @@ def success_txt():
         return redirect(url_for('pages_v3.captive_setup'), code=302)
     return 'success', 200
 
-# Initialize logging
-try:
-    from web_interface.logging_config import setup_web_interface_logging, log_api_request
-    # Use JSON logging in production, readable logs in development
-    use_json_logging = os.environ.get('LEDMATRIX_JSON_LOGGING', 'false').lower() == 'true'
-    setup_web_interface_logging(level='INFO', use_json=use_json_logging)
-except ImportError:
-    # Logging config not available, use default
-    log_api_request = None
-
-# Request timing and logging middleware
-@app.before_request
-def before_request():
-    """Track request start time for logging."""
-    from flask import request
-    request.start_time = time.time()
-
-@app.after_request
-def after_request_logging(response):
-    """Log API requests after response."""
-    if log_api_request:
-        try:
-            from flask import request
-            duration_ms = (time.time() - getattr(request, 'start_time', time.time())) * 1000
-            ip_address = request.remote_addr if hasattr(request, 'remote_addr') else None
-            log_api_request(
-                method=request.method,
-                path=request.path,
-                status_code=response.status_code,
-                duration_ms=duration_ms,
-                ip_address=ip_address
-            )
-        except Exception:  # nosec B110 - request logging must never interrupt a live HTTP response
-            pass  # Don't break response if logging fails
-    return response
+# Request timing and logging (routine reads at DEBUG; see request_logging)
+from web_interface import request_logging
+request_logging.init_app(app)
 
 # Global error handlers
 @app.errorhandler(404)
