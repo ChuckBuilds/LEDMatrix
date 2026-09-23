@@ -359,22 +359,6 @@
     ]
   ],
   [
-    "/api/v3/plugins/authenticate/spotify",
-    "api_v3.authenticate_spotify",
-    [
-      "OPTIONS",
-      "POST"
-    ]
-  ],
-  [
-    "/api/v3/plugins/authenticate/ytm",
-    "api_v3.authenticate_ytm",
-    [
-      "OPTIONS",
-      "POST"
-    ]
-  ],
-  [
     "/api/v3/plugins/calendar/authenticate",
     "api_v3.authenticate_calendar",
     [
@@ -506,22 +490,6 @@
   [
     "/api/v3/plugins/metrics/<plugin_id>/reset",
     "api_v3.reset_plugin_metrics",
-    [
-      "OPTIONS",
-      "POST"
-    ]
-  ],
-  [
-    "/api/v3/plugins/of-the-day/json/delete",
-    "api_v3.delete_of_the_day_json",
-    [
-      "OPTIONS",
-      "POST"
-    ]
-  ],
-  [
-    "/api/v3/plugins/of-the-day/json/upload",
-    "api_v3.upload_of_the_day_json",
     [
       "OPTIONS",
       "POST"

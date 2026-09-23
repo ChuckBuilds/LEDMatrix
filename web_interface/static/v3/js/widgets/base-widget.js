@@ -201,6 +201,4 @@
     if (typeof window !== 'undefined') {
         window.BaseWidget = BaseWidget;
     }
-    
-    console.log('[BaseWidget] Base widget class loaded');
 })();

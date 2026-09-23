@@ -99,20 +99,13 @@ class MyPlugin(BasePlugin):
 
 ### 3. Publishing
 
-```bash
-# Create repo
-git init
-git add .
-git commit -m "Initial commit"
-git remote add origin https://github.com/YourName/ledmatrix-my-plugin
-git push -u origin main
-
-# Tag release
-git tag v1.0.0
-git push origin v1.0.0
-
-# Submit to registry (PR to ChuckBuilds/ledmatrix-plugins)
-```
+Official plugins live in the
+[ledmatrix-plugins](https://github.com/ChuckBuilds/ledmatrix-plugins)
+monorepo: add `plugins/<your-plugin-id>/`, bump `version` in its
+`manifest.json` on every change, run `python update_registry.py` there and
+open a pull request. A third-party plugin can stay in its own repository and
+be installed by URL. Git tags and releases are not read by the store; see
+[PLUGIN_REGISTRY_SETUP_GUIDE.md](PLUGIN_REGISTRY_SETUP_GUIDE.md).
 
 ## Using Plugins
 
@@ -166,19 +159,19 @@ follows this shape:
       "name": "Simple Clock",
       "author": "ChuckBuilds",
       "category": "time",
-      "repo": "https://github.com/ChuckBuilds/ledmatrix-clock-simple",
-      "versions": [
-        {
-          "version": "1.0.0",
-          "ledmatrix_min_version": "2.0.0",
-          "download_url": "https://github.com/.../v1.0.0.zip"
-        }
-      ],
+      "repo": "https://github.com/ChuckBuilds/ledmatrix-plugins",
+      "branch": "main",
+      "plugin_path": "plugins/clock-simple",
+      "latest_version": "1.0.0",
       "verified": true
     }
   ]
 }
 ```
+
+`plugin_path` is empty for a third-party plugin in its own repository. The
+store offers an update when the installed manifest's `version` is older
+than `latest_version`.
 
 ## Benefits
 
@@ -212,8 +205,11 @@ intentionally simple:
    slow plugins, but no hard CPU/memory caps.
 3. **Plugin ratings**: not yet — the Plugin Store shows version,
    author, and category but no community rating system.
-4. **Auto-updates**: manual via the Plugin Manager tab; no automatic
-   background updates.
+4. **Auto-updates**: off by default. Update from the Plugin Manager tab
+   (per plugin, or **Check & Update All**), or turn on weekly automatic
+   updates in the General tab (`auto_update.enabled`,
+   `web_interface/auto_update.py`), which update LEDMatrix and then the
+   installed plugins.
 5. **Dependency conflicts**: each plugin's `requirements.txt` is
    installed via pip; conflicting versions across plugins are not
    resolved automatically.

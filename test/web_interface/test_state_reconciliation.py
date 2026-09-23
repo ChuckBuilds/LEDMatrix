@@ -366,7 +366,6 @@ class TestStateReconciliationUnrecoverable(unittest.TestCase):
         self.store_manager = Mock()
         self.store_manager.fetch_registry.return_value = {"plugins": []}
         self.store_manager.install_plugin.return_value = False
-        self.store_manager.was_recently_uninstalled.return_value = False
         # A bare Mock() returns a truthy Mock for is_plugin_uninstalled(),
         # which reads as "persistently uninstalled" and skips auto-repair
         # entirely — these tests need the repair path to run.
@@ -441,9 +440,9 @@ class TestStateReconciliationUnrecoverable(unittest.TestCase):
         self.assertNotIn("ghost", self.reconciler._unrecoverable_missing_on_disk)
         self.store_manager.install_plugin.assert_not_called()
 
-    def test_recently_uninstalled_skips_auto_repair(self):
-        """A freshly-uninstalled plugin must not be resurrected by the reconciler."""
-        self.store_manager.was_recently_uninstalled.return_value = True
+    def test_persistently_uninstalled_skips_auto_repair(self):
+        """A plugin the user uninstalled must not be resurrected by the reconciler."""
+        self.store_manager.is_plugin_uninstalled.return_value = True
         self.store_manager.fetch_registry.return_value = {
             "plugins": [{"id": "ghost"}]
         }

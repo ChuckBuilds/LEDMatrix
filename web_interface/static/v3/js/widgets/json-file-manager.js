@@ -828,8 +828,5 @@
             getValue() { return null; },
             setValue() {}
         });
-        console.log('[JsonFileManager] Registered with LEDMatrixWidgets');
-    } else {
-        console.log('[JsonFileManager] Loaded (LEDMatrixWidgets registry not available)');
     }
 })();

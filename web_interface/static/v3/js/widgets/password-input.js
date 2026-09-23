@@ -316,6 +316,4 @@
             }
         }
     });
-
-    console.log('[PasswordInputWidget] Password input widget registered');
 })();

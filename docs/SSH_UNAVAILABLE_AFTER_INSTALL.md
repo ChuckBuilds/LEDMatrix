@@ -8,7 +8,7 @@ After running `first_time_install.sh`, SSH may become unavailable for the follow
 
 **Primary Cause**: The WiFi monitor service (`ledmatrix-wifi-monitor`) automatically enables Access Point (AP) mode when it detects that the Raspberry Pi is not connected to WiFi. When AP mode is active:
 
-- The Pi creates its own WiFi network: **LEDMatrix-Setup** (password: `ledmatrix123`)
+- The Pi creates its own WiFi network: **LEDMatrix-Setup** (open, no password)
 - The Pi's WiFi interface (`wlan0`) switches from client mode to AP mode
 - **This disconnects the Pi from your original WiFi network**
 - SSH becomes unavailable because the Pi is no longer on your network
@@ -45,7 +45,7 @@ If the script reboots the Pi (which it recommends), network services may restart
 
 1. **Find the AP Network**:
    - Look for a WiFi network named **LEDMatrix-Setup** on your phone/computer
-   - Default password: `ledmatrix123`
+   - It is an open network: no password
 
 2. **Connect to the AP**:
    - Connect your device to the **LEDMatrix-Setup** network
@@ -53,7 +53,7 @@ If the script reboots the Pi (which it recommends), network services may restart
 
 3. **SSH via AP Mode**:
    ```bash
-   ssh devpi@192.168.4.1
+   ssh ledpi@192.168.4.1
    ```
 
 4. **Disable AP Mode and Reconnect to WiFi**:
@@ -96,7 +96,7 @@ sudo nmcli device wifi connect "YourWiFiSSID" password "YourPassword"
 
 If your Pi is connected via Ethernet:
 - SSH should remain available via Ethernet even if WiFi is in AP mode
-- Connect via: `ssh devpi@<pi-ip-address>`
+- Connect via: `ssh ledpi@<pi-ip-address>`
 
 ### Option 4: Physical Access
 
@@ -134,14 +134,22 @@ sudo systemctl disable ledmatrix-wifi-monitor
 
 ### Method 3: Configure WiFi Monitor to Not Auto-Enable AP
 
-Edit the WiFi monitor configuration to prevent automatic AP mode:
+Turn off `auto_enable_ap_mode` so the monitor never starts AP mode on its
+own (you can still enable AP mode by hand). Either switch off
+**Auto-Enable AP Mode** in the web interface's **WiFi** tab, or use the API:
 
 ```bash
-# Edit the WiFi config (if it exists)
-nano /home/devpi/LEDMatrix/config/wifi_config.json
+curl -X POST http://<pi-ip-address>:5000/api/v3/wifi/ap/auto-enable \
+  -H "Content-Type: application/json" \
+  -d '{"auto_enable_ap_mode": false}'
+```
 
-# Or modify the WiFi monitor daemon behavior
-# (requires code changes to wifi_monitor_daemon.py)
+Or set `"auto_enable_ap_mode": false` in `config/wifi_config.json` by hand.
+The monitor daemon reads `wifi_config.json` when it starts, so whichever way
+you change the setting, restart it afterwards:
+
+```bash
+sudo systemctl restart ledmatrix-wifi-monitor
 ```
 
 ## Verification Steps
@@ -149,7 +157,7 @@ nano /home/devpi/LEDMatrix/config/wifi_config.json
 After regaining SSH access, verify your installation:
 
 ```bash
-cd /home/devpi/LEDMatrix
+cd ~/LEDMatrix   # wherever you installed LEDMatrix
 ./scripts/verify_installation.sh
 ```
 
@@ -225,7 +233,7 @@ different responses:
 - Prevention and tuning: [LOW_MEMORY_BOARDS.md](LOW_MEMORY_BOARDS.md)
 
 **To regain SSH**:
-1. Connect to **LEDMatrix-Setup** AP network (password: `ledmatrix123`)
+1. Connect to **LEDMatrix-Setup** AP network (open, no password)
 2. SSH to `192.168.4.1`
 3. Disable AP mode and reconnect to your WiFi network
 4. Or disable the WiFi monitor service if not needed

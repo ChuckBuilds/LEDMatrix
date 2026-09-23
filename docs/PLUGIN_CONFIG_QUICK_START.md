@@ -10,8 +10,8 @@
    and click **Install**
 4. Notice a new tab appears in the second nav row with the plugin's name
 5. Click that tab to configure the plugin
-6. Modify settings and click **Save**
-7. From **Overview**, click **Restart Display Service** to see changes
+6. Modify settings and click **Save Configuration**. The running display
+   picks the change up by itself; no restart is needed
 
 That's it! Each installed plugin automatically gets its own configuration tab.
 
@@ -29,7 +29,6 @@ That's it! Each installed plugin automatically gets its own configuration tab.
 - ✅ Proper input types (toggles, numbers, dropdowns)
 - ✅ Help text explaining each setting
 - ✅ Input validation (min/max, length, etc.)
-- ✅ One-click reset to defaults
 
 ## 📋 Example Walkthrough
 
@@ -40,7 +39,7 @@ Let's configure the "Hello World" plugin:
 After installing the plugin, you'll see a new tab:
 
 ```
-[Overview] [General] [...] [Plugins] [Hello World] ← New tab!
+[Plugin Manager] [Hello World] ← New tab! (second nav row)
 ```
 
 ### Step 2: Configure Settings
@@ -70,15 +69,16 @@ Display Duration
 How long to display in seconds
   [10                   ]
 
-[Save Configuration] [Back] [Reset to Defaults]
+[Refresh] [Update] [Uninstall] [Save Configuration]
 ```
 
 ### Step 3: Save and Apply
 
 1. Modify any settings
 2. Click **Save Configuration**
-3. See confirmation: "Configuration saved for hello-world. Restart display to apply changes."
-4. Restart the display service
+3. See the confirmation notification. Plugin settings apply live: the
+   display service reloads `config.json` when it changes and passes the new
+   settings to the plugin's `on_config_change()`
 
 ## 🛠️ For Plugin Developers
 
@@ -105,19 +105,14 @@ Create `config_schema.json` in your plugin directory:
 }
 ```
 
-Reference it in `manifest.json`:
+**Done!** The file name is fixed: the web interface looks for
+`config_schema.json` in the plugin's directory; there is no manifest field
+for it. Every installed plugin gets a tab; the schema is what turns it into a
+form.
 
-```json
-{
-  "id": "my-plugin",
-  "icon": "fas fa-star",              // Optional: add a custom icon!
-  "config_schema": "config_schema.json"
-}
-```
-
-**Done!** Your plugin now has a configuration tab.
-
-**Bonus:** Add an `icon` field for a custom tab icon! Use Font Awesome icons (`fas fa-star`), emoji (⭐), or custom images. See [PLUGIN_CUSTOM_ICONS.md](PLUGIN_CUSTOM_ICONS.md) for the full guide.
+**Bonus:** an `icon` field in `manifest.json` names a Font Awesome class for
+the tab (`"icon": "fas fa-star"`). See
+[PLUGIN_CUSTOM_ICONS.md](PLUGIN_CUSTOM_ICONS.md).
 
 ## 🎨 Supported Input Types
 
@@ -171,12 +166,10 @@ User enters: `255, 0, 0`
 
 ### For Users
 
-1. **Reset Anytime**: Use "Reset to Defaults" to restore original settings
-2. **Navigate Back**: Switch to the **Plugin Manager** tab to see the
+1. **Navigate Back**: Switch to the **Plugin Manager** tab to see the
    full list of installed plugins
-3. **Check Help Text**: Each field has a description explaining what it does
-4. **Restart Required**: Remember to restart the display service from
-   **Overview** after saving
+2. **Check Help Text**: Each field has a description explaining what it does
+3. **No Restart Needed**: Saved plugin settings apply to the running display
 
 ### For Developers
 
@@ -189,18 +182,17 @@ User enters: `255, 0, 0`
 ## 🔧 Troubleshooting
 
 ### Tab Not Showing
-- Check that `config_schema.json` exists
-- Verify `config_schema` is in `manifest.json`
+- Check that the plugin is installed and listed under **Plugin Manager**
 - Refresh the page
 - Check browser console for errors
 
 ### Settings Not Saving
 - Ensure plugin is properly installed
-- Restart the display service after saving
 - Check that all required fields are filled
 - Look for validation errors in browser console
 
 ### Form Looks Wrong
+- Check that `config_schema.json` is in the plugin's directory
 - Validate your JSON Schema
 - Check that types match your defaults
 - Ensure descriptions are strings

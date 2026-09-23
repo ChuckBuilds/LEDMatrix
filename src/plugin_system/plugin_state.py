@@ -6,38 +6,12 @@ with state transitions and queries.
 """
 
 import threading
-import time
-from collections import deque
 from enum import Enum
-from typing import Optional, Dict, Any, Deque, List, Tuple
+from typing import Optional, Dict, Any
 from datetime import datetime
 import logging
 
 from src.logging_config import get_logger
-
-
-# The history is diagnostic only -- nothing reads the entries themselves, just
-# their count -- but it is appended to on the hot scheduling path: every update
-# cycle records RUNNING on reserve and ENABLED on finish. Unbounded, that is
-# 2,880 entries per plugin per day at the default 60s interval, which on a 1 GB
-# Pi exhausts memory in weeks.
-#
-# Two limits, because a single entry count answers the wrong question. What a
-# reader wants is "the last couple of hours", and how many transitions that is
-# depends entirely on the plugin's update interval -- which on a real board
-# spans 2s to 3600s. A flat 200 entries is 4.2 days for the slowest plugin and
-# 3.3 minutes for the fastest, so the plugin churning hardest, the one worth
-# looking at, keeps the least history.
-#
-# So: trim by AGE first, which makes the retained window comparable across
-# plugins whatever their cadence...
-STATE_HISTORY_MAX_AGE_SECONDS = 2 * 60 * 60
-
-# ...and cap by COUNT second, purely as a memory ceiling for the fast pollers
-# whose age window would otherwise run to thousands of entries. At ~230 bytes
-# an entry this is ~0.5 MB per plugin worst case, and only plugins updating
-# faster than roughly every 4s can reach it.
-MAX_STATE_HISTORY_PER_PLUGIN = 2000
 
 
 class PluginState(Enum):
@@ -63,39 +37,14 @@ class PluginStateManager:
         self.logger = logger or get_logger(__name__)
         self._lock = threading.RLock()
         self._states: Dict[str, PluginState] = {}
-        # (monotonic timestamp, transition). The clock is monotonic so a DST
-        # shift or an NTP step cannot make entries look old and flush the
-        # history; the human-readable timestamp lives inside the transition.
-        self._state_history: Dict[str, Deque[Tuple[float, Dict[str, Any]]]] = {}
-        # Lifetime transition totals, kept separately so the count reported by
-        # get_state_info() stays truthful once the history above starts rolling.
+        # Lifetime transition totals, reported by get_state_info().
         self._state_transition_counts: Dict[str, int] = {}
         self._error_info: Dict[str, Dict[str, Any]] = {}
         self._last_update: Dict[str, datetime] = {}
         self._last_display: Dict[str, datetime] = {}
     
-    def _record_transition(
-        self,
-        plugin_id: str,
-        transition: Dict[str, Any]
-    ) -> None:
-        """Append a transition to the plugin's bounded history.
-
-        Callers must already hold ``_lock``. The deque discards its oldest
-        entry once it is full, so the history cannot grow without bound; the
-        lifetime total is tracked separately for get_state_info().
-        """
-        history = self._state_history.get(plugin_id)
-        if history is None:
-            history = deque(maxlen=MAX_STATE_HISTORY_PER_PLUGIN)
-            self._state_history[plugin_id] = history
-        now = time.monotonic()
-        history.append((now, transition))
-        # Age out first; the deque's maxlen is the backstop for plugins that
-        # produce more than the ceiling within the window.
-        cutoff = now - STATE_HISTORY_MAX_AGE_SECONDS
-        while history and history[0][0] < cutoff:
-            history.popleft()
+    def _record_transition(self, plugin_id: str) -> None:
+        """Count a state transition. Callers must already hold ``_lock``."""
         self._state_transition_counts[plugin_id] = (
             self._state_transition_counts.get(plugin_id, 0) + 1
         )
@@ -117,14 +66,7 @@ class PluginStateManager:
         with self._lock:
             old_state = self._states.get(plugin_id, PluginState.UNLOADED)
             self._states[plugin_id] = state
-
-            transition = {
-                'timestamp': datetime.now(),
-                'from': old_state.value,
-                'to': state.value,
-                'error': str(error) if error else None
-            }
-            self._record_transition(plugin_id, transition)
+            self._record_transition(plugin_id)
 
             # Store error info if transitioning to ERROR state
             if state == PluginState.ERROR and error:
@@ -181,56 +123,16 @@ class PluginStateManager:
         state = self.get_state(plugin_id)
         return state == PluginState.ENABLED
     
-    def get_state_history(self, plugin_id: str) -> List[Dict[str, Any]]:
-        """
-        Get state transition history for a plugin.
-
-        Retention is by age first -- transitions older than
-        STATE_HISTORY_MAX_AGE_SECONDS are dropped -- and by count second, at
-        MAX_STATE_HISTORY_PER_PLUGIN, which only binds for plugins updating
-        fast enough to exceed it inside that window.
-
-        Args:
-            plugin_id: Plugin identifier
-
-        Returns:
-            List of recent state transitions, oldest first. Both the list and
-            the transition dicts are copies, so callers cannot mutate the
-            manager's own history. The values inside a transition are all
-            immutable, so a shallow copy per entry is enough.
-        """
-        with self._lock:
-            return [
-                dict(transition)
-                for _stamp, transition in self._state_history.get(plugin_id, ())
-            ]
-    
-    def set_error_info(self, plugin_id: str, error_info: Dict[str, Any]) -> None:
-        """
-        Persist structured error context without changing plugin state.
-
-        Used for recoverable failures (e.g. update timeout) where the plugin
-        stays ENABLED but the error details should remain queryable.
-
-        Args:
-            plugin_id: Plugin identifier
-            error_info: Arbitrary dict describing the error
-        """
-        with self._lock:
-            self._error_info[plugin_id] = dict(error_info)
-
     def set_state_with_error(
         self,
         plugin_id: str,
         state: PluginState,
         error_info: Dict[str, Any],
-        error: Optional[Exception] = None,
     ) -> None:
         """Set plugin state and persist error context atomically.
 
-        Unlike calling set_state() then set_error_info() separately, this
-        method holds ``_lock`` for both writes so no reader can observe the
-        new state without the accompanying error context.
+        Holds ``_lock`` for both writes so no reader can observe the new
+        state without the accompanying error context.
 
         Intentionally does not clear ``_error_info`` the way set_state() does
         for non-ERROR transitions — this is the recoverable-failure path where
@@ -240,19 +142,11 @@ class PluginStateManager:
             plugin_id: Plugin identifier
             state: New state
             error_info: Structured error dict to persist alongside the state
-            error: Optional exception recorded in the transition history
         """
         with self._lock:
             old_state = self._states.get(plugin_id, PluginState.UNLOADED)
             self._states[plugin_id] = state
-
-            self._record_transition(plugin_id, {
-                'timestamp': datetime.now(),
-                'from': old_state.value,
-                'to': state.value,
-                'error': str(error) if error else None,
-            })
-
+            self._record_transition(plugin_id)
             self._error_info[plugin_id] = dict(error_info)
 
             self.logger.debug(
@@ -283,10 +177,6 @@ class PluginStateManager:
     def record_update(self, plugin_id: str) -> None:
         """Record that plugin update() was called."""
         self._last_update[plugin_id] = datetime.now()
-    
-    def record_display(self, plugin_id: str) -> None:
-        """Record that plugin display() was called."""
-        self._last_display[plugin_id] = datetime.now()
     
     def get_last_update(self, plugin_id: str) -> Optional[datetime]:
         """Get timestamp of last update() call."""
@@ -331,13 +221,13 @@ class PluginStateManager:
     def clear_state(self, plugin_id: str) -> None:
         """Clear all state information for a plugin.
 
-        Held under ``_lock`` so the five dicts are dropped as one unit: every
+        Held under ``_lock`` so the dicts are dropped as one unit: every
         other mutator takes the lock, and without it a concurrent set_state()
-        could interleave and leave a plugin with history but no state.
+        could interleave and leave a plugin with a transition count but no
+        state.
         """
         with self._lock:
             self._states.pop(plugin_id, None)
-            self._state_history.pop(plugin_id, None)
             self._state_transition_counts.pop(plugin_id, None)
             self._error_info.pop(plugin_id, None)
             self._last_update.pop(plugin_id, None)

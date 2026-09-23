@@ -152,7 +152,7 @@ function initializeFontsTab() {
             console.error('Fonts tab elements not found after max retries, giving up');
             return;
         }
-        console.log('Fonts tab elements not found, retrying...', {
+        debugLog('Fonts tab elements not found, retrying...', {
             availableFonts: !!availableEl,
             attempt: initRetryCount
         });
@@ -178,7 +178,7 @@ function initializeFontsTab() {
         };
     }
 
-    console.log('Initializing font management...');
+    debugLog('Initializing font management...');
     initializeFontManagement();
 
     // Event listeners (use event delegation or ensure elements exist)
@@ -229,7 +229,7 @@ function initializeFontsTab() {
         });
     }
 
-    console.log('Fonts tab initialized successfully');
+    debugLog('Fonts tab initialized successfully');
 }
 
 // Expose initializeFontsTab to window for re-initialization after HTMX reload
@@ -244,7 +244,7 @@ window.initializeFontsTab = initializeFontsTab;
         const fontsContent = document.getElementById('fonts-content');
         
         if (fontsContent) {
-            console.log('Fonts content detected, initializing...');
+            debugLog('Fonts content detected, initializing...');
             setTimeout(() => {
                 initializeFontsTab();
             }, 50);
@@ -257,7 +257,7 @@ window.initializeFontsTab = initializeFontsTab;
             // Check if the event target is the fonts-content container or contains it
             const target = event.target;
             if (target && (target.id === 'fonts-content' || target.querySelector && target.querySelector('#fonts-content'))) {
-                console.log('HTMX loaded fonts content, initializing...', target.id);
+                debugLog('HTMX loaded fonts content, initializing...', target.id);
                 tryInitializeFontsTab();
             }
         });
@@ -334,7 +334,7 @@ async function loadFontData() {
         // Update displays
         updateAvailableFontsDisplay();
         
-        console.log('Font data loaded successfully', {
+        debugLog('Font data loaded successfully', {
             catalogSize: Object.keys(fontCatalog).length,
             tokensSize: Object.keys(fontTokens).length
         });
@@ -490,7 +490,7 @@ function populateFontSelects() {
         previewSelect.value = fontEntries[0].filename;
     }
 
-    console.log(`Populated font selects with ${fontEntries.length} fonts`);
+    debugLog(`Populated font selects with ${fontEntries.length} fonts`);
 }
 
 async function updateFontPreview() {

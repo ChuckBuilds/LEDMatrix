@@ -9,7 +9,7 @@ The LEDMatrix system uses a plugin-based architecture where each plugin manages 
 1. **Install a plugin** from the Plugin Store in the web interface
 2. **Navigate to the plugin's configuration tab** (automatically created when installed)
 3. **Configure settings** using the auto-generated form
-4. **Save configuration** and restart the display service
+4. **Save configuration**; the running display applies it without a restart
 
 For detailed information, see the sections below.
 
@@ -189,19 +189,20 @@ plugin-repos/
     "author": "Your Name",
     "entry_point": "manager.py",
     "class_name": "MyPlugin",
-    "display_modes": ["my_plugin"],
-    "config_schema": "config_schema.json"
+    "display_modes": ["my_plugin"]
 }
 ```
 
-The required fields the plugin loader will check for are `id`,
-`name`, `version`, `class_name`, and `display_modes`. `entry_point`
-defaults to `manager.py` if omitted. `config_schema` must be a
-**file path** (relative to the plugin directory) — the schema itself
-lives in a separate JSON file, not inline in the manifest. The
-`class_name` value must match the actual class defined in the entry
-point file **exactly** (case-sensitive, no spaces); otherwise the
-loader fails with `AttributeError` at load time.
+The Plugin Store refuses a manifest that lacks any of `id`, `name`,
+`class_name` or `display_modes` (`store_manager.py`); the loader itself
+needs `class_name`. `version` is not required, but the store compares it
+with the registry's `latest_version` to offer updates, so set it.
+`entry_point` defaults to `manager.py` if omitted. The config schema is not
+named in the manifest: it is always the file `config_schema.json` in the
+plugin directory. The `class_name` value must match the actual class
+defined in the entry point file **exactly** (case-sensitive, no spaces);
+otherwise the loader fails with a `PluginError` ("Class ... not found in
+module") at load time.
 
 ### Plugin Manager Class
 
@@ -223,9 +224,11 @@ class MyPlugin(BasePlugin):
         """Render plugin content to the LED matrix."""
         pass
     
-    def get_duration(self):
-        """Get display duration for this plugin"""
-        return self.config.get('duration', 30)
+    # BasePlugin.get_display_duration() already returns
+    # self.config['display_duration'] (default 15s); override it only to
+    # vary the duration with the content.
+    def get_display_duration(self):
+        return self.config.get('display_duration', 30)
 ```
 
 ### Dynamic Duration Configuration
@@ -259,7 +262,7 @@ Each installed plugin automatically gets its own dedicated configuration tab in 
 
 ### Accessing Plugin Configuration
 
-1. Navigate to the **Plugins** tab to see all installed plugins
+1. Navigate to the **Plugin Manager** tab to see all installed plugins
 2. Click the **Configure** button on any plugin card, or
 3. Click directly on the plugin's tab button in the navigation bar
 
@@ -278,7 +281,6 @@ Configuration forms are automatically generated from each plugin's `config_schem
 - **Type-safe inputs**: Form inputs match JSON Schema types
 - **Default values**: Fields show current values or schema defaults
 - **Real-time validation**: Input constraints enforced (min, max, maxLength, etc.)
-- **Reset to defaults**: One-click reset to restore original settings
 - **Help text**: Each field shows description from schema
 
 For more details, see [Plugin Configuration Tabs](PLUGIN_CONFIGURATION_TABS.md).
@@ -337,20 +339,16 @@ The configuration system uses JSON Schema Draft-07 for validation:
 2. **Configuration errors**: Validate plugin configuration against schema
 3. **Display issues**: Check display durations and plugin display methods
 4. **Performance**: Monitor plugin update intervals and resource usage
-5. **Tab not showing**: Verify `config_schema.json` exists and is referenced in manifest
+5. **Form missing or wrong**: Verify `config_schema.json` exists in the plugin directory and is valid JSON Schema
 6. **Settings not saving**: Check validation errors and ensure all required fields are filled
 
 ### Debug Mode
 
-Enable debug logging to troubleshoot plugin issues:
+There is no config key for debug logging. Run the display with debug
+logging instead:
 
-```json
-{
-    "plugin_system": {
-        "debug": true,
-        "log_level": "debug"
-    }
-}
+```bash
+python3 run.py -d            # or: LEDMATRIX_DEBUG=true python3 run.py
 ```
 
 ## See Also

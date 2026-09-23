@@ -23,7 +23,7 @@ def two_processes(tmp_path, monkeypatch):
     monkeypatch.setattr(CacheManager, '_get_writable_cache_dir', lambda self: str(tmp_path))
     monkeypatch.setattr(CacheManager, 'start_cleanup_thread', lambda self: None)
     display, web = CacheManager(), CacheManager()
-    monkeypatch.setattr(api_pkg, 'cache_manager', web)
+    monkeypatch.setattr(api_pkg.api_v3, 'cache_manager', web, raising=False)
     monkeypatch.setattr(api_pkg, '_get_display_service_status', lambda: {'active': True})
     return display
 

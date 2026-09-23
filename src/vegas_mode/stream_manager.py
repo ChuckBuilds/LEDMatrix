@@ -685,24 +685,6 @@ class StreamManager:
             self.stats['fetch_errors'] += 1
             return None
 
-    def _refresh_plugin_content(self, plugin_id: str) -> None:
-        """
-        Refresh content for a specific plugin into staging buffer.
-
-        Args:
-            plugin_id: Plugin to refresh
-        """
-        # Invalidate cached content
-        self.plugin_adapter.invalidate_cache(plugin_id)
-
-        # Fetch fresh content
-        segment = self._fetch_plugin_content(plugin_id)
-
-        if segment:
-            with self._buffer_lock:
-                self._staging_buffer.append(segment)
-            logger.debug("Refreshed content for %s in staging buffer", plugin_id)
-
     def _ensure_buffer_filled(self) -> None:
         """
         Top the buffer back up after segments have been served.

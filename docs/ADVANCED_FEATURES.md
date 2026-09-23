@@ -886,7 +886,13 @@ Cache Check → Background Fetch → Partial Data → Completion → Cache
 
 ### Configuration
 
-Enable background service per plugin in `config/config.json`:
+Core does not read a `background_service` config block: the service itself
+(`src/background_data_service.py`) is a process-wide singleton, and its
+worker count is whatever the first caller of `get_background_service()`
+passes. The sports scoreboard plugins read their own
+`background_service` settings and pass them to it, so the exact keys and
+where they sit (top level or per league) are defined by each plugin's
+`config_schema.json`. A typical block looks like:
 
 ```json
 {
@@ -907,11 +913,11 @@ Enable background service per plugin in `config/config.json`:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `enabled` | `false` | Enable background service for this plugin |
+| `enabled` | plugin-defined | Use the background service for this plugin's fetches |
 | `max_workers` | `3` | Max concurrent background tasks |
 | `request_timeout` | `30` | Timeout per API request (seconds) |
 | `max_retries` | `3` | Retry attempts on failure |
-| `priority` | `1` | Task priority (1=highest, 10=lowest) |
+| `priority` | `1` | Stored on each request (higher number = higher priority, per `FetchRequest`), but the service runs requests in submission order; it does not reorder by priority |
 
 ### Performance Impact
 
@@ -928,9 +934,9 @@ Enable background service per plugin in `config/config.json`:
 
 The background data service is used by all of the sports scoreboard
 plugins (football, hockey, baseball/MLB, basketball, soccer, lacrosse,
-F1, UFC), the odds ticker, and the leaderboard plugin. Each plugin's
-`background_service` block (under its own config namespace) follows the
-same shape as the example above.
+F1, UFC), the odds ticker, and the leaderboard plugin. Each plugin reads
+its own `background_service` block (under its own config namespace); check
+that plugin's `config_schema.json` for the keys it accepts.
 
 ### Error Handling & Fallback
 

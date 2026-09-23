@@ -85,20 +85,12 @@ def _scrub_git_remote_url(url: str) -> str:
     except Exception:
         pass
     return url
-# Will be initialized when blueprint is registered
 # NOTE: the managers live on the blueprint object (app.py sets
-# api_v3.config_manager / api_v3.plugin_manager). Deliberately not
-# mirrored as module globals: a bare `config_manager` used to resolve to
-# a None that was never assigned, which silently disabled the /health
-# checks and made /display/current fall back to a hardcoded 128x64.
-plugin_store_manager = None
-saved_repositories_manager = None
-cache_manager = None
-schema_manager = None
-operation_queue = None
-plugin_state_manager = None
-operation_history = None
-sync_manager = None  # Optional DisplaySyncManager instance (set by app.py if available)
+# api_v3.config_manager, api_v3.plugin_manager, api_v3.cache_manager and
+# the rest). Deliberately not mirrored as module globals: a bare
+# `config_manager` used to resolve to a None that was never assigned, which
+# silently disabled the /health checks and made /display/current fall back
+# to a hardcoded 128x64.
 # Get project root directory (web_interface/../..)
 # web_interface/blueprints/api_v3/_common.py -> up four to the project root.
 # This was three levels when everything lived in web_interface/blueprints/api_v3.py;
@@ -156,13 +148,6 @@ def _is_plugin_update_available(installed_version: str, latest_version: str) -> 
     """
     from src.plugin_system.compatibility import is_update_available
     return is_update_available(installed_version, latest_version)
-def _ensure_cache_manager():
-    """Ensure cache manager is initialized."""
-    global cache_manager
-    if cache_manager is None:
-        from src.cache_manager import CacheManager
-        cache_manager = CacheManager()
-    return cache_manager
 def _save_config_atomic(config_manager, config_data, create_backup=True):
     """
     Save configuration using atomic save if available, fallback to regular save.

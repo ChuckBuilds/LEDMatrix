@@ -618,7 +618,7 @@ The Display Manager provides several pre-loaded fonts:
 display_manager.regular_font      # Press Start 2P, size 8
 display_manager.small_font        # Press Start 2P, size 8
 display_manager.calendar_font     # 5x7 BDF font
-display_manager.extra_small_font  # 4x6 TTF font, size 6
+display_manager.extra_small_font  # 4x6 TTF font, size 7 (6 snapped to its pixel grid)
 display_manager.bdf_5x7_font     # Alias for calendar_font
 ```
 
@@ -852,12 +852,12 @@ for file_info in files:
 
 Get cache performance metrics.
 
-**Returns**: Dictionary with cache statistics (hits, misses, hit rate, etc.)
+**Returns**: Dictionary with cache statistics (`total_requests`, `cache_hit_rate`, `background_hit_rate`, `api_calls_saved`, `average_fetch_time`, etc.)
 
 **Example**:
 ```python
 metrics = self.cache_manager.get_cache_metrics()
-self.logger.info(f"Cache hit rate: {metrics['hit_rate']:.2%}")
+self.logger.info(f"Cache hit rate: {metrics['cache_hit_rate']:.2%}")
 ```
 
 #### `get_memory_cache_stats() -> Dict[str, Any]`

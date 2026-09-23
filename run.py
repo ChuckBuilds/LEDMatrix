@@ -41,23 +41,6 @@ if debug_mode:
     print(f"DEBUG: Current working directory: {os.getcwd()}", flush=True)
     print(f"DEBUG: EMULATOR mode: {os.environ.get('EMULATOR', 'false')}", flush=True)
 
-# Additional debugging for plugin system (only in debug mode)
-if debug_mode:
-    try:
-        plugin_system_path = os.path.join(project_dir, 'src', 'plugin_system')
-        if plugin_system_path not in sys.path:
-            sys.path.insert(0, plugin_system_path)
-            print(f"DEBUG: Added plugin_system path to sys.path: {plugin_system_path}", flush=True)
-
-        # Try to import the plugin system directly to get better error info
-        print("DEBUG: Attempting to import src.plugin_system...", flush=True)
-        print("DEBUG: Plugin system import successful", flush=True)
-    except ImportError as e:
-        print(f"DEBUG: Plugin system import failed: {e}", flush=True)
-        print(f"DEBUG: Import error details: {type(e).__name__}", flush=True)
-    except Exception as e:
-        print(f"DEBUG: Unexpected error during plugin system import: {e}", flush=True)
-
 # Configure logging before importing any other modules
 # Use centralized logging configuration
 from src.logging_config import setup_logging
