@@ -472,6 +472,4 @@
     } else {
         flushPending();
     }
-
-    console.log('[NotificationWidget] Notification widget registered');
 })();

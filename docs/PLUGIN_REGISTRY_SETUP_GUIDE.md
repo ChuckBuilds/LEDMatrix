@@ -1,415 +1,109 @@
 # Plugin Registry Setup Guide
 
-This guide explains how to set up and maintain your official plugin registry at [https://github.com/ChuckBuilds/ledmatrix-plugins](https://github.com/ChuckBuilds/ledmatrix-plugins).
+This page explains how the official plugin registry works and how a plugin
+gets into it. The registry and the official plugins both live in one
+repository, [ledmatrix-plugins](https://github.com/ChuckBuilds/ledmatrix-plugins);
+its `SUBMISSION.md`, `VERIFICATION.md` and `docs/` are the authoritative
+contributor guides.
 
-## Overview
+## How it fits together
 
-Your plugin registry serves as a **central directory** that lists all official, verified plugins. The registry is just a JSON file; the actual plugins live in their own repositories.
-
-## Repository Structure
-
-```
+```text
 ledmatrix-plugins/
-├── README.md              # Main documentation
-├── LICENSE               # GPL-3.0
-├── plugins.json          # The registry file (main file!)
-├── SUBMISSION.md         # Guidelines for submitting plugins
-├── VERIFICATION.md       # Verification checklist
-└── assets/               # Optional: screenshots, badges
-    └── screenshots/
+├── plugins/
+│   ├── clock-simple/        # one directory per official plugin
+│   │   ├── manifest.json    # source of truth for the plugin's version
+│   │   ├── manager.py
+│   │   ├── config_schema.json
+│   │   └── requirements.txt
+│   └── ...
+├── plugins.json             # the registry the Plugin Store reads
+└── update_registry.py       # regenerates plugins.json from the manifests
 ```
 
-## Step 1: Create plugins.json
+- **Registry.** The Plugin Store fetches
+  `https://raw.githubusercontent.com/ChuckBuilds/ledmatrix-plugins/main/plugins.json`
+  (`PluginStoreManager.REGISTRY_URL` in `src/plugin_system/store_manager.py`)
+  and caches it for 15 minutes.
+- **Monorepo plugins** have `repo` set to the ledmatrix-plugins URL and
+  `plugin_path` set to their directory (`plugins/<id>`). The store downloads
+  just that directory (GitHub API, falling back to the repository ZIP), so
+  installed copies have no `.git` directory.
+- **Third-party plugins** keep their own repository: `repo` points at it and
+  `plugin_path` is empty. The store installs them with `git clone`, falling
+  back to an archive download.
+- **Updates.** For registry plugins the store compares the installed
+  manifest's `version` with the entry's `latest_version`. Git tags and GitHub
+  releases are not read.
 
-This is the **core file** that the Plugin Store reads from.
-
-**Important**: The registry stores **metadata only** (name, description, repo URL, etc.). 
-The plugin store always pulls the latest commit information directly from GitHub, so you never manage semantic versions here.
-
-**File**: `plugins.json`
+## A registry entry
 
 ```json
 {
-  "last_updated": "2025-01-09T12:00:00Z",
-  "plugins": [
-    {
-      "id": "clock-simple",
-      "name": "Simple Clock",
-      "description": "A clean, simple clock display with date and time",
-      "author": "ChuckBuilds",
-      "category": "time",
-      "tags": ["clock", "time", "date"],
-      "repo": "https://github.com/ChuckBuilds/ledmatrix-clock-simple",
-      "branch": "main",
-      "stars": 12,
-      "downloads": 156,
-      "last_updated": "2025-01-09",
-      "last_commit": "abc1234",
-      "verified": true,
-      "screenshot": "https://raw.githubusercontent.com/ChuckBuilds/ledmatrix-plugins/main/assets/screenshots/clock-simple.png"
-    }
-  ]
+  "id": "clock-simple",
+  "name": "Simple Clock",
+  "description": "A clean, simple clock display with date and time",
+  "author": "ChuckBuilds",
+  "category": "time",
+  "tags": ["clock", "time", "date"],
+  "repo": "https://github.com/ChuckBuilds/ledmatrix-plugins",
+  "branch": "main",
+  "plugin_path": "plugins/clock-simple",
+  "stars": 0,
+  "downloads": 0,
+  "last_updated": "2026-09-03",
+  "verified": true,
+  "screenshot": "",
+  "latest_version": "1.0.0"
 }
 ```
 
-**Note**: There's no need for version arrays or release tracking. The store queries GitHub for the latest commit details (date, branch, and short SHA) whenever metadata is requested.
+[plugin_registry_template.json](plugin_registry_template.json) shows a
+monorepo entry and a third-party entry.
 
-## Step 2: Create Plugin Repositories
+Don't edit `latest_version` or `last_updated` by hand for monorepo plugins:
+`update_registry.py` in ledmatrix-plugins writes them from each plugin's
+`manifest.json`.
 
-Each plugin should have its own repository:
+## Adding or changing an official plugin
 
-### Example: Creating clock-simple Plugin
+1. Add or edit `plugins/<your-plugin-id>/` in the monorepo. The store refuses
+   a manifest without `id`, `name`, `class_name` and `display_modes`; also
+   set `version`.
+2. Bump `version` in the plugin's `manifest.json` for every change, or users
+   won't be offered the update.
+3. Run `python update_registry.py` in ledmatrix-plugins and commit the
+   updated `plugins.json` with the plugin change.
+4. Open a pull request. The monorepo's CI and review steps are described in
+   its `SUBMISSION.md`.
 
-1. **Create new repo**: `ledmatrix-clock-simple`
-2. **Add plugin files**:
-   ```
-   ledmatrix-clock-simple/
-   ├── manifest.json
-   ├── manager.py
-   ├── requirements.txt
-   ├── config_schema.json
-   ├── README.md
-   └── assets/
-   ```
-3. **Add to registry**: Update `plugins.json` in ledmatrix-plugins repo
+## Adding a third-party plugin
 
-## Step 3: Update README.md
+Test it with **Plugin Manager → Install from GitHub → Install Single Plugin**
+(or `POST /api/v3/plugins/install-from-url`), then follow the "own
+repository" option in the monorepo's `SUBMISSION.md` to request a registry
+entry.
 
-Create a comprehensive README for your plugin registry:
-
-```markdown
-# LEDMatrix Official Plugins
-
-Official plugin registry for [LEDMatrix](https://github.com/ChuckBuilds/LEDMatrix).
-
-## Available Plugins
-
-<!-- This table is auto-generated from plugins.json -->
-
-| Plugin | Description | Category | Last Updated |
-|--------|-------------|----------|--------------|
-| [Simple Clock](https://github.com/ChuckBuilds/ledmatrix-clock-simple) | Clean clock display | Time | 2025-01-09 |
-| [NHL Scores](https://github.com/ChuckBuilds/ledmatrix-nhl-scores) | Live NHL scores | Sports | 2025-01-07 |
-
-## Installation
-
-All plugins can be installed through the LEDMatrix web interface:
-
-1. Open web interface (http://your-pi-ip:5000)
-2. Open the **Plugin Manager** tab
-3. Browse or search the **Plugin Store** section
-4. Click **Install**
-
-Or via API:
-```bash
-curl -X POST http://your-pi-ip:5000/api/v3/plugins/install \
-  -H "Content-Type: application/json" \
-  -d '{"plugin_id": "clock-simple"}'
-```
-
-## Submitting Plugins
-
-See [SUBMISSION.md](SUBMISSION.md) for guidelines on submitting your plugin.
-
-## Creating Plugins
-
-See the main [LEDMatrix Plugin Developer Guide](https://github.com/ChuckBuilds/LEDMatrix/wiki/Plugin-Development).
-
-## Plugin Categories
-
-- **Time**: Clocks, timers, countdowns
-- **Sports**: Scoreboards, schedules, stats
-- **Weather**: Forecasts, current conditions
-- **Finance**: Stocks, crypto, market data
-- **Entertainment**: Games, animations, media
-- **Custom**: Unique displays
-```
-
-## Step 4: Create SUBMISSION.md
-
-Guidelines for community plugin submissions:
-
-```markdown
-# Plugin Submission Guidelines
-
-Want to add your plugin to the official registry? Follow these steps!
-
-## Requirements
-
-Before submitting, ensure your plugin:
-
-- ✅ Has a complete `manifest.json` with all required fields
-- ✅ Follows the plugin architecture specification
-- ✅ Has comprehensive README documentation
-- ✅ Includes example configuration
-- ✅ Has been tested on Raspberry Pi hardware
-- ✅ Follows coding standards (PEP 8)
-- ✅ Has proper error handling
-- ✅ Uses logging appropriately
-- ✅ Has no hardcoded API keys or secrets
-
-## Submission Process
-
-1. **Test Your Plugin**
-   ```bash
-   # Install via URL on your Pi
-   curl -X POST http://your-pi:5000/api/v3/plugins/install-from-url \
-     -H "Content-Type: application/json" \
-     -d '{"repo_url": "https://github.com/you/ledmatrix-your-plugin"}'
-   ```
-
-2. **Fork This Repo**
-   Fork [ledmatrix-plugins](https://github.com/ChuckBuilds/ledmatrix-plugins)
-
-4. **Update plugins.json**
-   Add your plugin entry (metadata only - no versions needed):
-   ```json
-   {
-     "id": "your-plugin",
-     "name": "Your Plugin Name",
-     "description": "What it does",
-     "author": "YourName",
-     "category": "custom",
-     "tags": ["tag1", "tag2"],
-     "repo": "https://github.com/you/ledmatrix-your-plugin",
-     "branch": "main",
-     "verified": false
-   }
-   ```
-
-5. **Submit Pull Request**
-   Create PR with title: "Add plugin: your-plugin-name"
-
-## Review Process
-
-1. **Automated Checks**: Manifest validation, structure check
-2. **Code Review**: Manual review of plugin code
-3. **Testing**: Test installation and basic functionality
-4. **Approval**: If accepted, merged and marked as verified
-
-## After Approval
-
-- Plugin appears in official store
-- `verified: true` badge shown
-- Included in plugin count
-- Featured in README
-
-## Updating Your Plugin
-
-Whenever you push new commits to your plugin repository's default branch, the store will automatically surface the latest commit timestamp and short SHA. No release tagging or manifest version bumps are required.
-
-You only need to update the registry if:
-- Plugin metadata changes (name, description, category, etc.)
-- Repository URL changes
-- You want to update the verified status
-
-To update metadata:
-1. Fork the registry repo
-2. Update plugins.json with new metadata
-3. Submit PR with changes
-4. We'll review and merge
-
-## Questions?
-
-Open an issue in this repo or the main LEDMatrix repo.
-```
-
-## Step 5: Create VERIFICATION.md
-
-Checklist for verifying plugins:
-
-```markdown
-# Plugin Verification Checklist
-
-Use this checklist when reviewing plugin submissions.
-
-## Code Review
-
-- [ ] Follows BasePlugin interface
-- [ ] Has proper error handling
-- [ ] Uses logging appropriately
-- [ ] No hardcoded secrets/API keys
-- [ ] Follows Python coding standards
-- [ ] Has type hints where appropriate
-- [ ] Has docstrings for classes/methods
-
-## Manifest Validation
-
-- [ ] All required fields present
-- [ ] Valid JSON syntax
-- [ ] Last updated metadata present when available
-- [ ] Category is valid
-- [ ] Tags are descriptive
-
-## Functionality
-
-- [ ] Installs successfully via URL
-- [ ] Dependencies install correctly
-- [ ] Plugin loads without errors
-- [ ] Display output works correctly
-- [ ] Configuration schema validates
-- [ ] Example config provided
-
-## Documentation
-
-- [ ] README.md exists and is comprehensive
-- [ ] Installation instructions clear
-- [ ] Configuration options documented
-- [ ] Examples provided
-- [ ] License specified
-
-## Security
-
-- [ ] No malicious code
-- [ ] Safe dependency versions
-- [ ] Appropriate permissions
-- [ ] No network access without disclosure
-- [ ] No file system access outside plugin dir
-
-## Testing
-
-- [ ] Tested on Raspberry Pi
-- [ ] Works with 64x32 matrix (minimum)
-- [ ] No excessive CPU/memory usage
-- [ ] No crashes or freezes
-
-## Approval
-
-Once all checks pass:
-- [ ] Set `verified: true` in plugins.json
-- [ ] Merge PR
-- [ ] Welcome plugin author
-- [ ] Update stats (downloads, stars)
-```
-
-## Step 6: Workflow for Adding Plugins
-
-### For Your Own Plugins
+## Testing locally
 
 ```bash
-# 1. Create plugin in separate repo
-mkdir ledmatrix-clock-simple
-cd ledmatrix-clock-simple
-# ... create plugin files ...
+# Validate a plugin headlessly (from LEDMatrix)
+python3 scripts/check_plugin.py --plugin <id>
 
-# 2. Push to GitHub
-git init
-git add .
-git commit -m "Initial commit"
-git remote add origin https://github.com/ChuckBuilds/ledmatrix-clock-simple
-git push -u origin main
-
-# 3. Update registry
-cd ../ledmatrix-plugins
-# Edit plugins.json to add new entry
-git add plugins.json
-git commit -m "Add clock-simple plugin"
-git push
-```
-
-### For Community Submissions
-
-```bash
-# 1. Receive PR on ledmatrix-plugins repo
-# 2. Review using VERIFICATION.md checklist
-# 3. Test installation:
-curl -X POST http://pi:5000/api/v3/plugins/install-from-url \
-  -H "Content-Type: application/json" \
-  -d '{"repo_url": "https://github.com/contributor/plugin"}'
-
-# 4. If approved, merge PR
-# 5. Set verified: true in plugins.json
-```
-
-## Step 7: Maintaining the Registry
-
-### Regular Updates
-
-```bash
-# Refresh local clones of all plugin repos
-python3 scripts/update_plugin_repos.py
-
-# (Re-)create local plugin repo checkouts from the registry
-python3 scripts/setup_plugin_repos.py
-
-# Audit installed plugins for manifest/schema problems
-python3 scripts/audit_plugins.py
-
-# Validate a single plugin
-python3 scripts/check_plugin.py --plugin <plugin-id>
-```
-
-Registry regeneration (`update_registry.py`) lives in the
-`ledmatrix-plugins` monorepo, not in this repo.
-
-## Converting Existing Plugins
-
-To convert your existing plugins (hello-world, clock-simple) to this system:
-
-### 1. Move to Separate Repos
-
-```bash
-# For each plugin in plugins/
-cd plugins/clock-simple
-
-# Create new repo
-git init
-git add .
-git commit -m "Extract clock-simple plugin"
-git remote add origin https://github.com/ChuckBuilds/ledmatrix-clock-simple
-git push -u origin main
-git tag v1.0.0
-git push origin v1.0.0
-```
-
-### 2. Add to Registry
-
-Update `plugins.json` in ledmatrix-plugins repo.
-
-### 3. Keep or Remove from Main Repo
-
-Decision:
-- **Keep**: Leave in main repo for backward compatibility
-- **Remove**: Delete from main repo, users install via store
-
-## Testing the Registry
-
-After setting up:
-
-```bash
-# Test registry fetch
-curl https://raw.githubusercontent.com/ChuckBuilds/ledmatrix-plugins/main/plugins.json
-
-# Test plugin installation
+# Fetch the registry the way the store does
 python3 -c "
 from src.plugin_system.store_manager import PluginStoreManager
-store = PluginStoreManager()
-registry = store.fetch_registry()
-print(f'Found {len(registry[\"plugins\"])} plugins')
+store = PluginStoreManager(plugins_dir='plugin-repos')
+print(len(store.fetch_registry(force_refresh=True).get('plugins', [])), 'plugins')
 "
 ```
 
-## Benefits of This Setup
-
-✅ **Centralized Discovery**: One place to find all official plugins  
-✅ **Decentralized Storage**: Each plugin in its own repo  
-✅ **Easy Maintenance**: Update registry without touching plugin code  
-✅ **Community Friendly**: Anyone can submit via PR  
-✅ **Version Control**: Track plugin versions and updates  
-✅ **Verified Badge**: Show trust with verified plugins  
-
-## Next Steps
-
-1. Create `plugins.json` in your repo
-2. Update the registry URL in LEDMatrix code (already done)
-3. Create SUBMISSION.md and README.md
-4. Move existing plugins to separate repos
-5. Add them to the registry
-6. Announce the plugin store!
+To work on monorepo plugins against a LEDMatrix checkout, see
+[MULTI_ROOT_WORKSPACE_SETUP.md](MULTI_ROOT_WORKSPACE_SETUP.md) and the
+[Plugin Development Guide](PLUGIN_DEVELOPMENT_GUIDE.md).
 
 ## References
 
-- Plugin Store Implementation: See `PLUGIN_IMPLEMENTATION_SUMMARY.md`
-- User Guide: See `PLUGIN_STORE_GUIDE.md`
-- Architecture: See `PLUGIN_ARCHITECTURE_SPEC.md`
-
+- Plugin Store user guide: [PLUGIN_STORE_GUIDE.md](PLUGIN_STORE_GUIDE.md)
+- Plugin architecture (historical): [PLUGIN_ARCHITECTURE_SPEC.md](PLUGIN_ARCHITECTURE_SPEC.md)
+- [ledmatrix-plugins](https://github.com/ChuckBuilds/ledmatrix-plugins)

@@ -97,31 +97,53 @@ For plugins that scroll content (tickers, news feeds, etc.), use scrolling state
 
 ### Basic Scrolling Implementation
 
+Scroll with `ScrollHelper`, configured by `src.common.scroll_config`, and
+render one frame per `display()` call. Don't pace the scroll with
+`time.sleep()`: `update_display()` blocks on the panel's
+vsync, which is what paces a scroll. Pass the `frame_hold` that
+`scroll_config.configure()` returned to `set_scrolling_state()`, or the
+scroll runs faster than the configured speed (see
+`set_scrolling_state()` in [PLUGIN_API_REFERENCE.md](PLUGIN_API_REFERENCE.md)).
+
 ```python
+from PIL import Image, ImageDraw
+
+from src.common import scroll_config
+from src.common.scroll_helper import ScrollHelper
+
+def __init__(self, *args, **kwargs):
+    super().__init__(*args, **kwargs)
+    self.scroll_helper = ScrollHelper(
+        self.display_manager.width, self.display_manager.height, self.logger)
+    self.scroll_settings = scroll_config.configure(
+        self.scroll_helper,
+        plugin_config=self.config,
+        global_config=self.global_config,
+        display_manager=self.display_manager,
+        plugin_logger=self.logger,
+    )
+
+def _build_scroll_image(self, text):
+    font = self.display_manager.regular_font
+    width = self.display_manager.get_text_width(text, font)
+    img = Image.new("RGB", (width, self.display_manager.height))
+    ImageDraw.Draw(img).text((0, 0), text, font=font, fill=(255, 255, 255))
+    self.scroll_helper.set_scrolling_image(img)
+
 def display(self, force_clear=False):
-    if force_clear:
-        self.display_manager.clear()
-    
-    # Mark as scrolling
-    self.display_manager.set_scrolling_state(True)
-    
-    try:
-        # Scroll content
-        text = "This is a long scrolling message that needs to scroll across the display..."
-        text_width = self.display_manager.get_text_width(text, self.display_manager.regular_font)
-        display_width = self.display_manager.width
-        
-        # Scroll from right to left
-        for x in range(display_width, -text_width, -2):
-            self.display_manager.clear()
-            self.display_manager.draw_text(text, x=x, y=16, color=(255, 255, 255))
-            self.display_manager.update_display()
-            time.sleep(0.05)
-            
-            # Update scroll activity timestamp
-            self.display_manager.set_scrolling_state(True)
-    finally:
-        # Always mark as not scrolling when done
+    if force_clear or self.scroll_helper.cached_image is None:
+        self._build_scroll_image(
+            "This is a long scrolling message that needs to scroll across the display...")
+
+    # Mark as scrolling (calling it every frame is fine)
+    self.display_manager.set_scrolling_state(
+        True, frame_hold=self.scroll_settings.frame_hold)
+    self.scroll_helper.update_scroll_position()
+    self.display_manager.image = self.scroll_helper.get_visible_portion()
+    self.display_manager.update_display()
+
+    if self.scroll_helper.is_scroll_complete():
+        # Mark as not scrolling when done
         self.display_manager.set_scrolling_state(False)
 ```
 

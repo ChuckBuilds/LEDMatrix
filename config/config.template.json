@@ -133,9 +133,9 @@
         "plugin_rotation_order": [],
         "use_short_date_format": true,
         "vegas_scroll": {
-      "live_in_ticker": false,
-      "live_weight": 3,
-      "favorite_live_weight": 5,
+            "live_in_ticker": false,
+            "live_weight": 3,
+            "favorite_live_weight": 5,
             "enabled": false,
             "scroll_speed": 50,
             "separator_width": 32,
@@ -171,10 +171,7 @@
         "follower_position": "left"
     },
     "plugin_system": {
-        "plugins_directory": "plugin-repos",
-        "auto_discover": true,
-        "auto_load_enabled": true,
-        "development_mode": false
+        "plugins_directory": "plugin-repos"
     },
     "web-ui-info": {
         "enabled": true,

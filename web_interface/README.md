@@ -17,7 +17,6 @@ This directory contains the active V3 web interface with the following features:
 web_interface/
 ├── app.py                    # Main Flask application
 ├── start.py                  # Startup script
-├── run.sh                    # Shell runner script
 ├── requirements.txt          # Python dependencies
 ├── blueprints/               # Flask blueprints
 │   ├── api_v3/              # API endpoints (package: config, display,
@@ -27,7 +26,6 @@ web_interface/
 ├── templates/                # HTML templates
 │   └── v3/
 │       ├── base.html
-│       ├── index.html
 │       └── partials/
 └── static/                   # CSS/JS assets
     └── v3/
@@ -47,11 +45,6 @@ web_interface/
 From the project root:
 ```bash
 python3 web_interface/start.py
-```
-
-Or using the shell script:
-```bash
-./web_interface/run.sh
 ```
 
 ### As a Service (Production)

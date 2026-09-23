@@ -140,8 +140,7 @@ The system supports live, recent, and upcoming game information for multiple spo
 | This project can be finnicky! RGB LED Matrix displays are not built the same or to a high-quality standard. We have seen many displays arrive dead or partially working in our discord. Please purchase from a reputable vendor. |
 
 ### Raspberry Pi
-- Raspberry Pi Zero's don't have enough processing power for this project.
-- **Raspberry Pi 3B, 4, or 5**
+- **Raspberry Pi 3B, 4, or 5** (a Pi Zero 2 W also works, with the limits described under the 1GB/low-memory bullet below; the original Pi Zero / Zero W doesn't have enough processing power for this project)
   [Amazon Affiliate Link – Raspberry Pi 4 4GB RAM](https://amzn.to/4dJixuX)
   [Amazon Affiliate Link – Raspberry Pi 4 8GB RAM](https://amzn.to/4qbqY7F)
   - **Pi 5 users**: the installer automatically detects Pi 5 and builds the `rpi-rgb-led-matrix` library with RP1 support. If you previously installed on a Pi 4 and migrated the SD card, or if you see `mmap` errors in the logs, force a fresh library build:
@@ -149,12 +148,12 @@ The system supports live, recent, and upcoming game information for multiple spo
     sudo RPI_RGB_FORCE_REBUILD=1 ./first_time_install.sh
     ```
   - Pi 5 config: leave `rp1_rio` at `0` (PIO mode, default) and start `gpio_slowdown` at `1`, raising it a step at a time if the image flickers or shows garbage (see `gpio_slowdown` under Display Settings).
-  - **1GB models (Pi 3B / 3B+) and other low-memory boards**: supported, but the `rpi-rgb-led-matrix` C++ build needs more memory than the Pi has. The installer detects this automatically, compiles with fewer parallel jobs, and adds a temporary swapfile for the build which it removes afterwards. Expect that step to take 15-25 minutes instead of 2-5, and leave at least **3GB free** on the SD card. If you manage swap yourself, opt out with `--skip-swap`. To pin the compiler down further, use `--build-jobs 1`.
+  - **1GB models (Pi 3B / 3B+), the 512MB Pi Zero 2 W and other low-memory boards**: supported, but the `rpi-rgb-led-matrix` C++ build needs more memory than the Pi has. The installer detects this automatically, compiles with fewer parallel jobs, and adds a temporary swapfile for the build which it removes afterwards. Expect that step to take 15-25 minutes instead of 2-5, and leave at least **3GB free** on the SD card. If you manage swap yourself, opt out with `--skip-swap`. To pin the compiler down further, use `--build-jobs 1`. Once running, keep an eye on memory: see [docs/LOW_MEMORY_BOARDS.md](docs/LOW_MEMORY_BOARDS.md).
 
 
 ### RGB Matrix Bonnet / HAT
 - [Adafruit RGB Matrix Bonnet/HAT](https://www.adafruit.com/product/3211) – supports one “chain” of horizontally connected displays  
-- [Adafruit Triple LED Matrix Bonnet](https://www.adafruit.com/product/6358) – supports up to 3 vertical “chains” of horizontally connected displays *(use `regular-pi1` as hardware mapping)*  
+- [Adafruit Triple LED Matrix Bonnet](https://www.adafruit.com/product/6358) – supports up to 3 vertical “chains” of horizontally connected displays *(use `regular` as hardware mapping)*  
 - [Electrodragon RGB HAT](https://www.electrodragon.com/product/rgb-matrix-panel-drive-board-raspberry-pi/) – supports up to 3 vertical “chains”  
 - [Seengreat Matrix Adapter Board](https://amzn.to/3KsnT3j) – single-chain LED Matrix *(use `regular` as hardware mapping)*  
 
@@ -173,7 +172,7 @@ The system supports live, recent, and upcoming game information for multiple spo
 
 ## Optional but recommended mod for Adafruit RGB Matrix Bonnet
 - By soldering a jumper between pins 4 and 18, you can run a specialized command for polling the matrix display. This provides better brightness, less flicker, and better color.
-- If you do the mod, we will use the default config with led-gpio-mapping=adafruit-hat-pwm, otherwise just adjust your mapping in config.json to adafruit-hat
+- The default config uses `hardware_mapping` `adafruit-hat`. If you do the mod, change it to `adafruit-hat-pwm` (Display settings in the web interface, or `config.json`)
 - More information available: https://github.com/hzeller/rpi-rgb-led-matrix/tree/master?tab=readme-ov-file
 ![DSC00079](https://github.com/user-attachments/assets/4282d07d-dfa2-4546-8422-ff1f3a9c0703)
 
@@ -347,10 +346,10 @@ If you prefer to install manually or the one-shot installer doesn't work for you
 ssh ledpi@ledpi
 ```
 
-2. Update repositories, upgrade Raspberry Pi OS, and install prerequisites:
+2. Update repositories, upgrade Raspberry Pi OS, and install git (`first_time_install.sh` installs the build dependencies itself: `python3-pip`, `python-dev-is-python3`, `build-essential`, `cmake`, `ninja-build` and the rest):
 ```bash
 sudo apt update && sudo apt upgrade -y
-sudo apt install -y git python3-pip cython3 build-essential python3-dev python3-pillow scons
+sudo apt install -y git
 ```
 
 3. Clone this repository:
@@ -400,7 +399,7 @@ If you need to manually edit your config file, you can follow the steps below:
 <summary>Manual Config.json editing </summary>
 
   1. **First-time setup**:
-     The previous "First_time_install.sh" script should've already copied the template to create your config.json:
+     The previous `first_time_install.sh` script should've already copied the template to create your config.json:
 
   2. **Edit your configuration**: 
    ```bash
@@ -459,7 +458,7 @@ You can also install plugins directly from GitHub repositories:
 
 See the [Plugin Store documentation](https://github.com/ChuckBuilds/ledmatrix-plugins) for detailed installation instructions.
 
-For plugin development, check out the [Hello World Plugin](https://github.com/ChuckBuilds/ledmatrix-hello-world) repository as a starter template.
+For plugin development, the `plugins/hello-world/` plugin in the [ledmatrix-plugins](https://github.com/ChuckBuilds/ledmatrix-plugins) repository is a starter template.
 
 ### Visual Skins for Scoreboards
 
@@ -470,7 +469,7 @@ UI doesn't offer skin install or selection for that reason. The skin system
 and its docs stay in place for when scoreboards adopt it; see
 [docs/SKIN_SYSTEM.md](docs/SKIN_SYSTEM.md) for why.
 
-2. **Built-in Managers Deprecated**: The built-in managers (hockey, football, stocks, etc.) are now deprecated and have been moved to the plugin system. **You must install replacement plugins from the Plugin Store** in the web interface instead. The plugin system provides the same functionality with better maintainability and extensibility.
+**Built-in Managers Deprecated**: The built-in managers (hockey, football, stocks, etc.) are now deprecated and have been moved to the plugin system. **You must install replacement plugins from the Plugin Store** in the web interface instead. The plugin system provides the same functionality with better maintainability and extensibility.
 </details>
 
 ## Detailed Information

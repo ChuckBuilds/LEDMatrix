@@ -6,7 +6,6 @@ This directory contains scripts and utilities for development and testing.
 
 - **`dev_plugin_setup.sh`** - Sets up plugin development environment by linking plugin repositories
 - **`run_emulator.sh`** - Runs the LED Matrix display in emulator mode (for development without hardware)
-- **`validate_python.py`** - Validates Python files for common formatting and syntax errors
 
 ## Usage
 
@@ -28,10 +27,5 @@ links. To use a fork or another clone location, copy
 ### Running Emulator
 ```bash
 ./scripts/dev/run_emulator.sh
-```
-
-### Validating Python Files
-```bash
-python3 scripts/dev/validate_python.py <file.py>
 ```
 

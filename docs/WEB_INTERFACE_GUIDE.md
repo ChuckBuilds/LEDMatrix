@@ -95,7 +95,8 @@ Configure basic system settings:
   plugins
 - **Plugin System Settings** — including the `plugins_directory` (default
   `plugin-repos/`) used by the plugin loader
-- **Autostart** options for the display service
+- **Web Display Autostart** — whether the web interface service starts
+  with the system (`web_display_autostart`)
 - **Automatic updates** — once a week, update LEDMatrix and every installed
   plugin with a newer version. Off by default. Runs 2–5 AM local time when
   possible, otherwise within a day of being due. The last result and next
@@ -246,7 +247,7 @@ View real-time system logs:
 ### Changing Display Brightness
 
 1. Open the **Display** tab
-2. Adjust the **Brightness** slider (0–100)
+2. Adjust the **Brightness** slider (1–100)
 3. Click **Save**
 4. Click **Restart Display Service** on the **Overview** tab
 
@@ -428,10 +429,10 @@ The web interface uses modern web technologies:
 
 ### File Locations
 
-**Configuration:**
-- Main config: `/config/config.json`
-- Secrets: `/config/config_secrets.json`
-- WiFi config: `/config/wifi_config.json`
+**Configuration** (relative to the LEDMatrix folder, e.g. `~/LEDMatrix`):
+- Main config: `config/config.json`
+- Secrets: `config/config_secrets.json`
+- WiFi config: `config/wifi_config.json`
 
 **Logs:**
 - Display service: `sudo journalctl -u ledmatrix -f`
@@ -444,7 +445,7 @@ The web interface uses modern web technologies:
   the Plugin Store install flow and the schema loader additionally
   probe `plugins/` so dev symlinks created by
   `scripts/dev/dev_plugin_setup.sh` keep working.
-- Plugin config: `/config/config.json` (per-plugin sections)
+- Plugin config: `config/config.json` (per-plugin sections)
 
 ---
 

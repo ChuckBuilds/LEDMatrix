@@ -10,6 +10,7 @@ Scenarios covered:
 3. iptables rules and ip_forward are reverted when the AP is torn down.
 4. LED matrix message includes the SSID, 'No password', and the setup URL.
 5. Known AP profile names are deleted before the new profile is created.
+6. Wi-Fi passwords are not written to wifi_config.json, and old ones are scrubbed.
 """
 from __future__ import annotations
 
@@ -62,7 +63,6 @@ def wifi_config(tmp_path: Path) -> Path:
         "ap_ssid": "LEDMatrix-Setup",
         "ap_channel": 7,
         "auto_enable_ap_mode": True,
-        "saved_networks": [],
     }
     p = cfg_dir / "wifi_config.json"
     p.write_text(json.dumps(cfg))
@@ -75,8 +75,7 @@ def manager(wifi_config: Path, tmp_path: Path) -> WiFiManager:
     WiFiManager with all system calls stubbed out during construction and the
     ip_forward save file redirected to a per-test temporary path.
     """
-    with patch("src.wifi_manager.subprocess.run", return_value=_ok(stdout="wlan0\n")), \
-         patch.object(WiFiManager, "_detect_trixie", return_value=False):
+    with patch("src.wifi_manager.subprocess.run", return_value=_ok(stdout="wlan0\n")):
         mgr = WiFiManager(config_path=wifi_config)
 
     # Force clean, deterministic state regardless of what __init__ inferred
@@ -85,7 +84,6 @@ def manager(wifi_config: Path, tmp_path: Path) -> WiFiManager:
     mgr.has_hostapd = False
     mgr.has_dnsmasq = False
     mgr.has_iwlist = False
-    mgr._is_trixie = False
     # Redirect the ip_forward save file to tmp so tests never share state
     mgr._IP_FORWARD_SAVE_PATH = tmp_path / "ip_fwd_saved"
     return mgr
@@ -332,3 +330,62 @@ def test_existing_ap_profiles_deleted_before_new_profile_created(manager: WiFiMa
     assert del_indices, "Expected 'nmcli connection delete' calls"
     assert max(del_indices) < min(add_indices), \
         "All connection deletions must complete before the new profile is created"
+
+
+# ---------------------------------------------------------------------------
+# 6. Wi-Fi passwords are not kept in wifi_config.json
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+def test_loading_scrubs_plaintext_saved_networks(wifi_config: Path) -> None:
+    """Older versions wrote every joined network's password to the config in
+    plaintext and never read it back. Loading must remove it from disk."""
+    cfg = json.loads(wifi_config.read_text())
+    cfg["saved_networks"] = [
+        {"ssid": "HomeNet", "password": "hunter22", "saved_at": 0},
+    ]
+    wifi_config.write_text(json.dumps(cfg))
+
+    with patch("src.wifi_manager.subprocess.run", return_value=_ok(stdout="wlan0\n")):
+        mgr = WiFiManager(config_path=wifi_config)
+
+    assert "saved_networks" not in mgr.config
+    assert "hunter22" not in wifi_config.read_text()
+    on_disk = json.loads(wifi_config.read_text())
+    assert "saved_networks" not in on_disk
+    # Everything else survives the scrub.
+    assert on_disk["ap_ssid"] == "LEDMatrix-Setup"
+    assert on_disk["auto_enable_ap_mode"] is True
+
+
+@pytest.mark.unit
+def test_default_config_has_no_saved_networks(tmp_path: Path) -> None:
+    config_path = tmp_path / "config" / "wifi_config.json"
+    config_path.parent.mkdir()
+
+    with patch("src.wifi_manager.subprocess.run", return_value=_ok(stdout="wlan0\n")):
+        WiFiManager(config_path=config_path)
+
+    assert "saved_networks" not in json.loads(config_path.read_text())
+
+
+@pytest.mark.unit
+def test_connecting_does_not_store_the_password(manager: WiFiManager) -> None:
+    commands = []
+
+    def fake_run(cmd, *args, **kwargs):
+        commands.append(cmd)
+        # No existing profile for the SSID, so a new connection is created.
+        if cmd[:3] == ["nmcli", "connection", "show"] and "HomeNet" in cmd:
+            return _fail()
+        return _ok(stdout="")
+
+    with patch("src.wifi_manager.subprocess.run", side_effect=fake_run), \
+         patch("src.wifi_manager.time.sleep"), \
+         patch.object(manager, "_show_led_message"):
+        manager._connect_nmcli("HomeNet", "hunter22")
+
+    assert ["nmcli", "device", "wifi", "connect", "HomeNet", "password", "hunter22"] in commands, \
+        "the new-connection path was not reached"
+    assert "hunter22" not in json.dumps(manager.config)
+    assert "hunter22" not in manager.config_path.read_text()

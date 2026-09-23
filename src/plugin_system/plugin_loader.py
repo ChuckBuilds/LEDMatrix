@@ -752,21 +752,6 @@ class PluginLoader:
             self.logger.error(error_msg, exc_info=True)
             raise PluginError(error_msg, plugin_id=plugin_id) from e
     
-    @staticmethod
-    def _parse_semver(value: Any) -> Optional[Tuple[int, int, int]]:
-        """Parse 'X.Y.Z' (extra parts/suffixes ignored) into a comparable
-        3-tuple, or None when unparseable."""
-        if not isinstance(value, str):
-            return None
-        parts = value.strip().lstrip('v').split('.')
-        try:
-            nums = [int(''.join(ch for ch in p if ch.isdigit()) or 0) for p in parts[:3]]
-        except ValueError:
-            return None
-        while len(nums) < 3:
-            nums.append(0)
-        return tuple(nums)  # type: ignore[return-value]
-
     def _warn_if_incompatible(self, plugin_id: str, manifest: Dict[str, Any]) -> None:
         """Log one warning when a plugin declares a minimum LEDMatrix version
         newer than the running core. Advisory only — never raises — so a

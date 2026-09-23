@@ -1,12 +1,11 @@
 """
 Configuration Service
 
-Provides centralized configuration management with hot-reload support,
-versioning, and change notifications.
+Provides centralized configuration management with hot-reload support
+and change notifications.
 
 This service wraps ConfigManager and adds:
 - File watching for automatic reload
-- Configuration versioning
 - Change notifications to subscribers
 - Thread-safe configuration access
 """
@@ -16,7 +15,6 @@ import time
 import threading
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Callable
-from datetime import datetime
 from collections import defaultdict
 import logging
 import hashlib
@@ -26,51 +24,20 @@ from src.logging_config import get_logger
 from src.config_manager import ConfigManager
 
 
-class ConfigVersion:
-    """Represents a configuration version snapshot."""
-    
-    def __init__(self, config: Dict[str, Any], version: int, timestamp: datetime, checksum: str):
-        """
-        Initialize a configuration version.
-        
-        Args:
-            config: Configuration dictionary
-            version: Version number
-            timestamp: When this version was created
-            checksum: SHA-256 hex digest of the config (for change detection)
-        """
-        self.config: Dict[str, Any] = config
-        self.version: int = version
-        self.timestamp: datetime = timestamp
-        self.checksum: str = checksum
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert version to dictionary."""
-        return {
-            'version': self.version,
-            'timestamp': self.timestamp.isoformat(),
-            'checksum': self.checksum,
-            'config_size': len(json.dumps(self.config))
-        }
-
-
 class ConfigService:
     """
-    Centralized configuration service with hot-reload and versioning.
+    Centralized configuration service with hot-reload.
     
     Features:
     - Automatic file watching and reload
-    - Configuration versioning with history
     - Change notifications to subscribers
     - Thread-safe access
-    - Backward compatible with ConfigManager
     """
     
     def __init__(
         self,
         config_manager: Optional[ConfigManager] = None,
-        enable_hot_reload: bool = True,
-        max_versions: int = 10
+        enable_hot_reload: bool = True
     ) -> None:
         """
         Initialize the configuration service.
@@ -78,23 +45,18 @@ class ConfigService:
         Args:
             config_manager: Optional ConfigManager instance (creates new if None)
             enable_hot_reload: Whether to enable automatic file watching
-            max_versions: Maximum number of versions to keep in history
         """
         self.logger: logging.Logger = get_logger(__name__)
         self.config_manager: ConfigManager = config_manager or ConfigManager()
         self.enable_hot_reload: bool = enable_hot_reload
-        self.max_versions: int = max_versions
         
         # Thread safety
         self._lock: threading.RLock = threading.RLock()
         
         # Current configuration
         self._current_config: Dict[str, Any] = {}
-        self._current_version: int = 0
+        self._current_checksum: Optional[str] = None
         self._last_modified: Dict[str, float] = {}
-        
-        # Version history
-        self._versions: List[ConfigVersion] = []
         
         # Subscribers for change notifications
         # Format: {plugin_id or component_name: [callbacks]}
@@ -130,40 +92,22 @@ class ConfigService:
             
             with self._lock:
                 # Check if config actually changed
-                if self._current_version > 0:
-                    old_checksum = self._versions[-1].checksum if self._versions else ""
-                    if new_checksum == old_checksum:
-                        self.logger.debug("Configuration unchanged, skipping reload")
-                        return False
+                if new_checksum == self._current_checksum:
+                    self.logger.debug("Configuration unchanged, skipping reload")
+                    return False
                 
                 # Store old config for change detection
                 old_config = self._current_config.copy()
                 
-                # Create new version
-                self._current_version += 1
-                version = ConfigVersion(
-                    config=new_config.copy(),
-                    version=self._current_version,
-                    timestamp=datetime.now(),
-                    checksum=new_checksum
-                )
-                
-                # Add to history
-                self._versions.append(version)
-                
-                # Trim history if needed
-                if len(self._versions) > self.max_versions:
-                    self._versions.pop(0)
-                
                 # Update current config
                 self._current_config = new_config
+                self._current_checksum = new_checksum
                 
                 # Notify subscribers
                 self._notify_subscribers(old_config, new_config)
                 
                 self.logger.info(
-                    "Configuration reloaded (version %d, checksum: %s)",
-                    self._current_version,
+                    "Configuration reloaded (checksum: %s)",
                     new_checksum[:8]
                 )
                 
@@ -303,19 +247,6 @@ class ConfigService:
         with self._lock:
             return self._current_config.copy()
     
-    def get_plugin_config(self, plugin_id: str) -> Dict[str, Any]:
-        """
-        Get configuration for a specific plugin.
-        
-        Args:
-            plugin_id: Plugin identifier
-            
-        Returns:
-            Plugin configuration dictionary
-        """
-        config = self.get_config()
-        return config.get(plugin_id, {})
-    
     def subscribe(
         self,
         callback: Callable[[Dict[str, Any], Dict[str, Any]], None],
@@ -354,95 +285,6 @@ class ConfigService:
                 self._subscribers[key].remove(callback)
                 self.logger.debug("Unsubscribed from config changes for %s", key)
     
-    def reload(self) -> bool:
-        """
-        Manually reload configuration.
-        
-        Returns:
-            True if reloaded successfully, False otherwise
-        """
-        self.logger.info("Manual configuration reload requested")
-        return self._load_config()
-    
-    def get_version(self) -> int:
-        """
-        Get current configuration version.
-        
-        Returns:
-            Current version number
-        """
-        with self._lock:
-            return self._current_version
-    
-    def get_version_history(self) -> List[Dict[str, Any]]:
-        """
-        Get configuration version history.
-        
-        Returns:
-            List of version dictionaries
-        """
-        with self._lock:
-            return [v.to_dict() for v in self._versions]
-    
-    def get_version_config(self, version: int) -> Optional[Dict[str, Any]]:
-        """
-        Get configuration for a specific version.
-        
-        Args:
-            version: Version number
-            
-        Returns:
-            Configuration dictionary or None if version not found
-        """
-        with self._lock:
-            for v in self._versions:
-                if v.version == version:
-                    return v.config.copy()
-            return None
-    
-    def rollback(self, version: int) -> bool:
-        """
-        Rollback to a previous configuration version.
-        
-        Args:
-            version: Version number to rollback to
-            
-        Returns:
-            True if rollback successful, False otherwise
-        """
-        config = self.get_version_config(version)
-        if config is None:
-            self.logger.error("Version %d not found in history", version)
-            return False
-        
-        try:
-            # Save the rolled-back config
-            self.config_manager.save_config(config)
-            
-            # Reload
-            return self._load_config()
-            
-        except Exception as e:
-            self.logger.error("Error rolling back to version %d: %s", version, e, exc_info=True)
-            return False
-    
-    def save_config(self, new_config: Dict[str, Any]) -> bool:
-        """
-        Save new configuration.
-        
-        Args:
-            new_config: New configuration dictionary
-            
-        Returns:
-            True if saved successfully, False otherwise
-        """
-        try:
-            self.config_manager.save_config(new_config)
-            return self._load_config()
-        except Exception as e:
-            self.logger.error("Error saving configuration: %s", e, exc_info=True)
-            return False
-    
     def shutdown(self) -> None:
         """Shutdown the configuration service."""
         self.logger.info("Shutting down configuration service")
@@ -450,22 +292,3 @@ class ConfigService:
         
         with self._lock:
             self._subscribers.clear()
-    
-    # Backward compatibility methods
-    def load_config(self) -> Dict[str, Any]:
-        """
-        Load configuration (backward compatibility with ConfigManager).
-        
-        Returns:
-            Current configuration dictionary
-        """
-        return self.get_config()
-    
-    def get_config_path(self) -> str:
-        """Get config file path (backward compatibility)."""
-        return self.config_manager.get_config_path()
-    
-    def get_secrets_path(self) -> str:
-        """Get secrets file path (backward compatibility)."""
-        return self.config_manager.get_secrets_path()
-

@@ -311,6 +311,4 @@
             generateDisplayName: generateDisplayName
         }
     });
-
-    console.log('[FontSelectorWidget] Font selector widget registered');
 })();

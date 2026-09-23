@@ -403,8 +403,6 @@ class DisplayController:
         # Display rotation state
         self.current_mode_index = 0
         self.current_display_mode = None
-        self.last_mode_change = time.time()
-        self.mode_duration = 30  # Default duration
         self.global_dynamic_config = (
             self.config.get("display", {}).get("dynamic_duration", {}) or {}
         )
@@ -831,7 +829,7 @@ class DisplayController:
             return
 
         # Update all loaded plugins
-        plugins_dict = getattr(self.plugin_manager, 'loaded_plugins', None) or getattr(self.plugin_manager, 'plugins', {})
+        plugins_dict = self.plugin_manager.plugins
         deferred = []
         for plugin_id, plugin_instance in plugins_dict.items():
             update_timeout = None
@@ -962,37 +960,6 @@ class DisplayController:
             lock.release()
 
     _FOLLOWER_SEND_INTERVAL = 1.0 / 90  # raw bytes are cheap; 90fps > follower render rate
-
-    def _follower_rebuild_scroll_image(self) -> None:
-        """Follower: rebuild the local Vegas scroll image so both Pis render from
-        the same fresh plugin data. Called at startup (after Vegas initializes)
-        and each time the leader broadcasts a new-cycle signal. Runs in a daemon
-        thread so it never blocks the 60fps render loop.
-        """
-        try:
-            vc = getattr(self, 'vegas_coordinator', None)
-            if not vc:
-                logger.warning("Sync: follower has no vegas_coordinator — cannot build scroll image")
-                return
-            rp = vc.render_pipeline
-            if not rp:
-                logger.warning("Sync: follower vegas_coordinator has no render_pipeline")
-                return
-            logger.info("Sync: follower starting scroll image rebuild")
-            ok = rp.start_new_cycle()
-            if ok and rp.scroll_helper.cached_image is not None:
-                logger.info(
-                    "Sync: follower scroll image ready — %dx%d",
-                    rp.scroll_helper.cached_image.width,
-                    rp.scroll_helper.cached_image.height,
-                )
-            else:
-                logger.warning(
-                    "Sync: follower scroll image rebuild FAILED (ok=%s, cached=%s)",
-                    ok, rp.scroll_helper.cached_image is not None,
-                )
-        except Exception as exc:
-            logger.warning("Sync: follower scroll image rebuild error: %s", exc, exc_info=True)
 
     def _send_follower_frame(self, plugin_instance) -> None:
         """Leader: generate and send the follower's portion of the current frame.
@@ -2092,9 +2059,6 @@ class DisplayController:
                             should_skip = self.plugin_manager.health_tracker.should_skip_plugin(plugin_id)
                             if should_skip:
                                 logger.info("Skipping plugin %s due to circuit breaker (mode: %s)", plugin_id, active_mode)
-                                display_result = False
-                                # Skip to next mode - let existing logic handle it
-                                manager_to_display = None
                         
                         if not should_skip:
                             manager_to_display = plugin_instance
@@ -2190,11 +2154,6 @@ class DisplayController:
                                     # slips through.
                                     _release_display_lock()
                                     raise
-                                # execute_display returns bool, convert to expected format
-                                if result:
-                                    result = True  # Success
-                                else:
-                                    result = False  # Failed
                             else:
                                 # Fallback to direct call if executor not available
                                 try:
@@ -2284,7 +2243,6 @@ class DisplayController:
                                     if next_plugin_id != current_plugin_id:
                                         self.current_mode_index = next_index
                                         self.current_display_mode = next_mode
-                                        self.last_mode_change = time.time()
                                         self.force_change = True
                                         logger.info("Switching to mode: %s (skipped plugin %s due to exception)", 
                                                   self.current_display_mode, current_plugin_id)
@@ -2368,15 +2326,6 @@ class DisplayController:
                             )
                             min_duration = 15.0
                         
-                        if chosen_cap <= 0:
-                            logger.warning(
-                                "Invalid dynamic duration cap %s for mode %s, using default %ds",
-                                chosen_cap,
-                                active_mode,
-                                DEFAULT_DYNAMIC_DURATION_CAP,
-                            )
-                            chosen_cap = DEFAULT_DYNAMIC_DURATION_CAP
-                        
                         # Use plugin-calculated duration if available, capped by max
                         if plugin_cycle_duration is not None and plugin_cycle_duration > 0:
                             # Plugin provided a calculated duration - use it but respect cap
@@ -2394,15 +2343,6 @@ class DisplayController:
                         
                         # Ensure max_duration >= min_duration
                         max_duration = max(min_duration, max_duration)
-                        
-                        if max_duration < min_duration:
-                            logger.warning(
-                                "max_duration (%s) < min_duration (%s) for mode %s, adjusting max to min",
-                                max_duration,
-                                min_duration,
-                                active_mode,
-                            )
-                            max_duration = min_duration
                     else:
                         max_duration = base_duration
                         
@@ -2744,7 +2684,6 @@ class DisplayController:
                 if should_rotate and self.available_modes:
                     self.current_mode_index = (self.current_mode_index + 1) % len(self.available_modes)
                     self.current_display_mode = self.available_modes[self.current_mode_index]
-                    self.last_mode_change = time.time()
                     self.force_change = True
                     
                     logger.info("Switching to mode: %s", self.current_display_mode)

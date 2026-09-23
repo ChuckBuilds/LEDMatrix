@@ -1117,39 +1117,6 @@ List uploaded images for a plugin.
 }
 ```
 
-### Authenticate Spotify
-
-**POST** `/api/v3/plugins/authenticate/spotify`
-
-Spotify OAuth for the music plugin (`ledmatrix-music`; the plugin is fixed,
-not taken from the body). Two steps: call with an empty body to get the
-authorization URL, then call again with the URL Spotify redirected to.
-
-**Request Body** (step 2):
-```json
-{
-  "redirect_url": "http://127.0.0.1:8888/callback?code=..."
-}
-```
-
-**Response** (step 1, fields at the top level):
-```json
-{
-  "status": "success",
-  "message": "Authorization URL generated",
-  "auth_url": "https://accounts.spotify.com/authorize?..."
-}
-```
-
-Step 2 returns `status`, `message` and the script's `output`.
-
-### Authenticate YouTube Music
-
-**POST** `/api/v3/plugins/authenticate/ytm`
-
-Run the music plugin's YouTube Music authentication script. No body. Returns
-`status`, `message` and the script's `output`.
-
 ### Upload Calendar Credentials
 
 **POST** `/api/v3/plugins/calendar/upload-credentials`
@@ -2041,7 +2008,10 @@ restarted to pick up changes). See
 
 ## Plugin-specific endpoints
 
-A handful of endpoints belong to individual plugins.
+A handful of endpoints belong to individual plugins. The music plugin's
+Spotify and YouTube Music sign-in and the Of-The-Day data files go through the
+plugin's own web UI actions ([Execute Plugin Action](#execute-plugin-action))
+rather than dedicated routes.
 
 ### Calendar
 
@@ -2050,23 +2020,6 @@ A handful of endpoints belong to individual plugins.
 List the calendars on the authenticated Google account. Used by the calendar
 plugin's config UI. Returns `calendars` at the top level. The upload and
 authenticate endpoints are under [Plugins](#upload-calendar-credentials).
-
-### Of The Day
-
-**POST** `/api/v3/plugins/of-the-day/json/upload`
-
-Upload JSON data files (multipart field `files`) as Of-The-Day categories.
-Returns `uploaded_files` and `total_files` at the top level.
-
-**POST** `/api/v3/plugins/of-the-day/json/delete`
-
-Delete an uploaded data file.
-
-```json
-{
-  "file_id": "category_name"
-}
-```
 
 ### Plugin Static Assets
 

@@ -108,29 +108,3 @@ def log_api_request(method: str, path: str, status_code: int, duration_ms: float
         logger.warning(f"{method} {path} - {status_code} ({duration_ms}ms)", extra=extra)
     else:
         logger.info(f"{method} {path} - {status_code} ({duration_ms}ms)", extra=extra)
-
-
-def log_config_change(change_type: str, target: str, success: bool, **kwargs):
-    """
-    Log a configuration change.
-    
-    Args:
-        change_type: Type of change (save, delete, update)
-        target: What was changed (e.g., 'main_config', 'plugin_config:football-scoreboard')
-        success: Whether the change was successful
-        **kwargs: Additional context
-    """
-    logger = logging.getLogger('web_interface.config')
-    
-    extra = {
-        'change_type': change_type,
-        'target': target,
-        'success': success,
-        **kwargs
-    }
-    
-    if success:
-        logger.info(f"Config {change_type}: {target}", extra=extra)
-    else:
-        logger.error(f"Config {change_type} failed: {target}", extra=extra)
-
