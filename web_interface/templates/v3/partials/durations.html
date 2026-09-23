@@ -36,7 +36,7 @@
         <div class="bg-gray-50 rounded-lg p-4 space-y-5">
             <div>
                 <h3 class="text-md font-medium text-gray-900 mb-1">Screen Durations</h3>
-                <p class="text-sm text-gray-600">How long each screen stays on before rotating to the next one, in seconds (5&ndash;600, default 30).</p>
+                <p class="text-sm text-gray-600">How long each screen stays on before rotating to the next one, in seconds (5&ndash;600). Leave a screen blank to use its plugin's own duration, shown greyed out.</p>
             </div>
             {% for group in duration_groups %}
             <div>
@@ -45,12 +45,13 @@
                     {% for mode in group.modes %}
                     <div class="form-group" id="setting-durations-{{ mode.key }}" data-setting-key="display.display_durations.{{ mode.key }}">
                         <label for="duration__{{ mode.key }}" class="block text-sm font-medium text-gray-700">
-                            {{ mode.key | replace('_', ' ') | title }}{{ ui.help_tip('How long the ' ~ (mode.key | replace('_', ' ')) ~ ' screen stays on before rotating to the next one, in seconds.\nRange: 5–600. Currently ' ~ mode.value ~ 's.', mode.key | replace('_', ' ') | title) }}
+                            {{ mode.key | replace('_', ' ') | title }}{{ ui.help_tip('How long the ' ~ (mode.key | replace('_', ' ')) ~ ' screen stays on before rotating to the next one, in seconds.\nRange: 5–600.' ~ (' Blank uses the plugin\'s own ' ~ mode.default ~ 's.' if mode.default else ''), mode.key | replace('_', ' ') | title) }}
                         </label>
                         <input type="number"
                                id="duration__{{ mode.key }}"
                                name="duration__{{ mode.key }}"
                                value="{{ mode.value }}"
+                               {% if mode.default %}placeholder="{{ mode.default }}"{% endif %}
                                min="5"
                                max="600"
                                class="form-control">
