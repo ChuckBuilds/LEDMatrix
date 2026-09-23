@@ -421,7 +421,5 @@ self.font = self.font_manager.resolve_font(
 ## Example: Complete Manager Implementation
 
 For a working example of the font manager API in use, see
-`src/font_manager.py` itself and the bundled scoreboard base classes
-in `src/base_classes/` (e.g., `hockey.py`, `football.py`) which
-register and resolve fonts via the patterns documented above.
+`src/font_manager.py` itself.
 

@@ -25,6 +25,15 @@ accepts both, but the store flags the old spelling as deprecated
   that will now render the font it asked for.
 - `src.wifi_manager.get_wifi_status_path()` — where WiFi status messages for
   the display are written (`config/wifi_status.json`).
+- `src.device_location` — a blank `Location` field on a Starlark (Tidbyt) app
+  now renders at the device's City / State / Country (geocoded once via
+  Open-Meteo and cached) instead of the app author's hard-coded default,
+  usually San Francisco. A location saved on the app still wins. With no
+  device city set, or when the lookup fails or finds no match, the app keeps
+  its own default (a failed lookup is retried after 30 minutes). Clearing an
+  app's location in the web UI now actually clears it; the save used to drop
+  the blank field, so the old value stayed.
+
 - The web UI's Fonts tab has a **Used by** column: the loaded plugins that
   registered each font with `FontManager.register_manager_font()`, published
   by the display service to the shared cache (`src/font_usage.py`) and merged
@@ -94,6 +103,38 @@ floor on the release that ships them):
   instead of a `yourusername` / `contact@example.com` placeholder, and no
   longer set `Accept-Encoding: ... br` by hand (brotli is not installed, so a
   `br` response could not be decoded); requests picks the encodings.
+
+### Plugin error reporting
+
+- `/api/v3/errors/summary` and `/api/v3/errors/plugin/<id>` report the errors
+  the display service recorded. They used to read the web process's own error
+  aggregator, which never records anything, so they always answered "no
+  errors". The display service now publishes a bounded snapshot to the shared
+  cache (`plugin_error_snapshot`, at most every 10 seconds and only on change;
+  `src/error_aggregator.py`, started from `DisplayController.__init__`).
+  Responses keep their shape and add `snapshot_available`, `generated_at` and
+  `clear_pending`; exception text has credentials redacted.
+- `POST /api/v3/errors/clear` records a request (`plugin_error_clear_request`)
+  the display service applies within about 5 seconds; reads hide the cleared
+  errors at once. It accepts `"all": true`, and `cleared_count` can be `null`
+  when the count is only known to the display service.
+- The Logs tab has a **Plugin errors** panel: per-plugin counts, repeating
+  errors and a Clear button.
+
+### Removed
+
+- **The skin system.** Skins never rendered with the current scoreboard
+  plugins, so they are gone rather than "not supported yet": `src/skin_system/`,
+  `skins/`, `scripts/validate_skin.py`, `GET /api/v3/skins`, the store's
+  `"type": "skin"` handling and `docs/SKIN_SYSTEM.md` / `docs/CREATING_SKINS.md`.
+  A `skin` or `skin_options` key left in a plugin's saved config still loads
+  and saves without a validation error; it is ignored, and the next save of
+  that plugin's settings removes it (unless the plugin's own schema declares
+  the key).
+- **`src/base_classes/`** (`SportsCore`, the sport and mode classes,
+  `CelebrationMixin`, the rotation strategies, `data_sources`,
+  `api_extractors`). No known plugin imports it. A plugin that does must use
+  `src.common` or its own copy of the code.
 
 ## 3.5.0
 

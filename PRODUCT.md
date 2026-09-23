@@ -44,7 +44,7 @@ Four strengths define LEDMatrix, and future work must protect all of them:
 - **Hard constraint: plugin UI compatibility.** Third-party plugins rely on JSON Schema (Draft-7) generated config forms, the widget registry (`static/v3/js/widgets/`), `x-secret` fields, and plugin web-UI actions. UI changes must keep these working.
 - **Config storage.** Plugin configuration lives in `config/config.json` and secrets in `config/config_secrets.json`, never in plugin directories, so configs survive reinstalls.
 - **Stack.** An existing Flask + HTMX + Alpine.js app with Jinja templates (`web_interface/templates/v3/`) and static JS/CSS (`web_interface/static/v3/`), with self-hosted vendor assets.
-- **Terminology.** Plugin, Plugin Store, Starlark app, rotation, display duration, Vegas Scroll Mode, skin, on-demand, AP mode.
+- **Terminology.** Plugin, Plugin Store, Starlark app, rotation, display duration, Vegas Scroll Mode, on-demand, AP mode.
 - **Open decisions** (offered during init, not adopted as constraints):
   - Whether the UI must work fully offline, with no CDN fallbacks at runtime.
   - Whether a Node/CSS build step is acceptable for contributors.

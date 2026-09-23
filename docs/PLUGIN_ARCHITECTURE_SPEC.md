@@ -12,9 +12,9 @@
 >   in `web_interface/app.py`.
 > - The default plugin location is `plugin-repos/` (configurable via
 >   `plugin_system.plugins_directory`), not `./plugins/`.
-> - Example imports use `src/plugin_system/base_classes/*_plugin.py`;
->   the shipped base classes live in `src/base_classes/` (e.g.
->   `src.base_classes.sports.SportsCore`, `src.base_classes.hockey.Hockey`).
+> - Example imports use `src/plugin_system/base_classes/*_plugin.py`,
+>   which do not exist. The old `src/base_classes/` package has been
+>   removed; shared sports code lives in `src/common/`.
 > - The "Migration Strategy" and "Implementation Roadmap" sections
 >   describe work that has now shipped.
 >

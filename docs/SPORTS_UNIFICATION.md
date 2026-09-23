@@ -7,9 +7,9 @@ becoming nine clients of a god class.
 
 Nine plugins (`afl`, `baseball`, `basketball`, `football`, `hockey`, `lacrosse`,
 `nrl`, `soccer`, `ufc`) each ship a ~3,000-line `sports.py` descended from this
-repo's `src/base_classes/sports.py`. They have drifted into three lineages, and
-only 28 of the 66 methods appearing across them are present in all nine. One
-logical fix (the UTC start-time bug) cost 75 files.
+repo's former `src/base_classes/sports.py` (since removed). They have drifted
+into three lineages, and only 28 of the 66 methods appearing across them are
+present in all nine. One logical fix (the UTC start-time bug) cost 75 files.
 
 Merging everything into one base class would fix the duplication and create a
 worse problem: a single 2,500-line class that all nine plugins inherit, where any
@@ -26,7 +26,7 @@ These are independent concerns. Conflating them is what produces god classes.
 |---|---|
 | Plugin loads on a core that predates a module | Guarded import with a bundled fallback (`try: from src.X import Y / except ModuleNotFoundError: from y import Y`) |
 | Plugin loads on a core that predates a *method* | Capability probing — `hasattr(SportsCore, "_detect_stale_games")` — never a version comparison. The loader's compat check is advisory-only (it logs and continues), so probing is the real protection. |
-| Core changes never break a plugin's rendering | The **view-model contract**: `_extract_game_details_common` returns a dict whose `GUARANTEED_KEYS` are frozen by `test/test_skin_system.py::TestViewModelContract`. Keys may be added, never renamed or removed. |
+| Core changes never break a plugin's rendering | The **view-model contract**: the game dict each plugin's `_extract_game_details_common` builds is read by the shared `src/common` renderers, so its keys may be added, never renamed or removed. |
 | A plugin can drop its bundled copy safely | The **sunset rule**: its manifest must floor `ledmatrix_min_version` at the first core release shipping the module (recorded in `CHANGELOG.md`) — *necessary but not sufficient*. The store enforces that floor on every registry-managed install and on both supported update paths (sideloading via `install_from_url` is not gated), but a floor cannot reach a user who never updates, so the copy also waits for the B6 gate below. |
 
 The core API is **additive-only**. A method the plugins call is never removed or
@@ -67,16 +67,13 @@ This is the property the naive merge destroys, and it is enforced structurally:
 
 ## Layering
 
-```
-src/base_classes/sports/
-  __init__.py            re-exports the public API (import path unchanged)
-  core.py                SportsCore — fetch, cache, config, logos, fonts, odds,
-                         view-model extraction, the skin seam
-  modes.py               SportsUpcoming / SportsRecent / SportsLive
-  capabilities/
-    celebrations.py      CelebrationMixin        (opt-in: 4 of 9 plugins)
-    rotation.py          RotationStrategy + registry
+`src/base_classes/` has been removed: no scoreboard plugin built on it. B1 and
+B2 below promoted code into it (`SportsCore`, the mode classes,
+`CelebrationMixin`, the rotation strategies); the override points and
+capabilities sections record that design, but none of it ships in core any
+more. Shared sports code lives in `src/common`:
 
+```
 src/common/
   sports_scroll.py       SportsScrollDisplay / …Manager — scroll orchestration
                          (content building stays in the plugins)
@@ -85,13 +82,10 @@ src/common/
                          plugins' sports.py, and the _favorite_key seam
 ```
 
-`from src.base_classes.sports import SportsCore` keeps working — the package
-`__init__` re-exports, so the conversion is invisible to every existing importer.
-
 ### Converging on `src/common`
 
-The scoreboards do not build on `src/base_classes`; their own `sports.py` copies
-have moved past it. So shared code now lands in hardware-free `src/common`
+The scoreboards never built on `src/base_classes` (now removed); their own
+`sports.py` copies had moved past it. So shared code now lands in hardware-free `src/common`
 modules taken from the plugin copies, each a **new module** rather than growth
 on an existing one: a plugin that deletes a method copy and relies on an older
 module having gained it fails at runtime with an `AttributeError`, while a
@@ -100,7 +94,7 @@ missing module fails at load, where the version checks can see it.
 listed below, for later phases); its parity test compares every body against
 the plugin copies when `LEDMATRIX_PLUGINS` points at a checkout, and
 `test/test_common_is_hardware_free.py` keeps `src/common` free of
-`rgbmatrix`, `src.base_classes` and `src.plugin_system`. How a plugin adopts a
+`rgbmatrix`, `src.display_manager` and `src.plugin_system`. How a plugin adopts a
 module and drops its copy is documented in the plugins repo's
 `docs/plugin-development/08-shared-sports-code.md`.
 
@@ -116,7 +110,6 @@ deprecation cycle.
 | `_extract_game_details(event)` | Sport-specific view-model fields on top of the common ones | delegates to `_extract_game_details_common` |
 | `_draw_scorebug_layout(game, force_clear)` | Sport's card rendering | base layout |
 | `_custom_scorebug_layout(game, draw)` | Per-sport overlay on the base layout | no-op |
-| `render_skin_card(game, size)` | Skin-system entry point | built-in fallback |
 | `score_phrase(points, team_abbr)` | Celebration wording (`"GOOOOAAALLL!"` vs `"TOUCHDOWN!"`). `points` is the score delta, which sports with variable-value scores use to name the play | `"<abbr> SCORES!"` — only consulted when `CelebrationMixin` is present |
 | `win_phrase(team_abbr)` | Win-celebration wording | `"<abbr> WINS!"` — mixin only |
 | `_favorite_key(game, side)` | Which view-model field identifies a team for favorites matching | `game["<side>_abbr"]` |
@@ -189,9 +182,9 @@ and a typo should cost the boost, not the scoreboard. When a plugin needs an
 ordering that core does not ship, it calls `register_rotation_strategy` to add
 its own — rather than core growing a branch for it.
 
-`test_sports_capabilities.py` checks each strategy against a **verbatim
-transcription** of the plugin code it replaces, over every live-game shape up to
-four games. That differential is what B5 deletes the bundled copies on the
+`test_sports_capabilities.py` (removed with `src/base_classes`) checked each
+strategy against a **verbatim transcription** of the plugin code it replaces,
+over every live-game shape up to four games. That differential is what B5 deletes the bundled copies on the
 strength of.
 
 ## Scroll display — where the promotion line falls
@@ -507,9 +500,9 @@ What actually remains, smallest first:
 3. **Reconsider the held modules** (`data_sources.py`, `game_renderer.py`,
    `base_odds_manager.py`) now that the sunset has closed. `game_renderer.py` is
    the largest single duplication left: ~11,500 lines across eight plugins, with
-   ~36,500 more in the eight `sports.py`. Note that core already ships
-   `src/base_classes/sports/` (~143KB, promoted in B1/B2) that **no plugin
-   imports** — check whether it has drifted before treating it as the target.
+   ~36,500 more in the eight `sports.py`. The `src/base_classes/sports/`
+   package promoted in B1/B2 was never imported by a plugin and has been
+   removed, so the plugin copies are the only starting point.
 
 ## How to keep this project healthy
 
@@ -542,6 +535,7 @@ Lessons this migration paid for, worth applying beyond it:
 - **A capability that is not opted into must not execute.** If you find yourself
   writing `if self.<capability>_enabled` inside a base class, it belongs in a
   mixin.
-- **Touch the view-model keys only additively.** Published skins depend on them.
+- **Touch the view-model keys only additively.** The shared `src/common`
+  renderers read them.
 - **Every promotion lands with the characterization suite green**, and every
   pilot adoption lands with that plugin's harness and golden suites green.

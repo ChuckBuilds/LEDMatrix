@@ -99,8 +99,7 @@ def normalize_legacy_booleans(config: Any, schema: Any,
 #: config section, so they are allowed in every plugin's config whether or not
 #: the plugin's schema declares them. The one list for validation, for the web
 #: save filter and for the load-time checks -- a private copy is how JSON saves
-#: came to drop ``skin`` and the ``vegas_*`` keys while the validator accepted
-#: them.
+#: came to drop the ``vegas_*`` keys while the validator accepted them.
 #:
 #: Values are the schema used when the plugin does not declare the property.
 CORE_PLUGIN_PROPERTIES: Dict[str, Dict[str, Any]] = {
@@ -123,19 +122,6 @@ CORE_PLUGIN_PROPERTIES: Dict[str, Dict[str, Any]] = {
         "default": False,
         "description": "Enable live priority takeover when plugin has live content"
     },
-    # Skin selection (docs/SKIN_SYSTEM.md). Deliberately NOT an enum here:
-    # validation must keep passing when a configured skin gets uninstalled
-    # (rendering falls back to built-in). The install-dependent enum is
-    # injected only at serve time (inject_skin_selector) for the web UI
-    # dropdown.
-    "skin": {
-        "type": ["string", "object", "null"],
-        "description": "Visual skin id, or a per-mode mapping like {\"live\": \"my-skin\"}"
-    },
-    "skin_options": {
-        "type": "object",
-        "description": "Options passed through to the selected skin"
-    },
     # Vegas tuning read by vegas_mode/plugin_adapter.py and base_plugin.py.
     # Left untyped: the adapter validates them itself and ignores a bad
     # value with a log line, so a stored one must never block a save.
@@ -156,6 +142,32 @@ CORE_PLUGIN_PROPERTIES: Dict[str, Dict[str, Any]] = {
 CORE_VEGAS_TUNING_KEYS = frozenset({
     'vegas_width_pct', 'vegas_overflow', 'vegas_max_width_screens',
 })
+
+
+#: Per-plugin keys the core used to own and no longer reads. ``skin`` and
+#: ``skin_options`` belonged to the skin system, which was removed; a
+#: config.json written before then can still carry them in any plugin section,
+#: and most plugin schemas set ``additionalProperties: false``. They are
+#: dropped wherever a section is prepared (prepare_plugin_config) or validated,
+#: and the web saves drop them from the stored section, so an old config loads
+#: and saves without a validation error and loses them on its next save.
+RETIRED_PLUGIN_KEYS = frozenset({'skin', 'skin_options'})
+
+
+def drop_retired_plugin_keys(config: Any, schema: Any) -> Any:
+    """``config`` without the RETIRED_PLUGIN_KEYS its plugin's schema leaves undeclared.
+
+    A plugin whose schema declares one of these names owns it and keeps it;
+    without a schema nothing is dropped. Never mutates ``config``, and returns
+    it unchanged when there is nothing to drop.
+    """
+    if not isinstance(config, dict) or not isinstance(schema, dict) \
+            or RETIRED_PLUGIN_KEYS.isdisjoint(config):
+        return config
+    declared = schema.get('properties')
+    declared = declared if isinstance(declared, dict) else {}
+    return {key: value for key, value in config.items()
+            if key not in RETIRED_PLUGIN_KEYS or key in declared}
 
 
 def with_core_plugin_properties(schema: Dict[str, Any]) -> Dict[str, Any]:
@@ -299,14 +311,15 @@ def prepare_plugin_config(config: Any, schema: Optional[Dict[str, Any]],
                           changed_paths: Optional[List[str]] = None) -> Dict[str, Any]:
     """The config a plugin runs with, from its stored (or submitted) section.
 
-    Legacy booleans are read as ``{"enabled": ...}`` objects
-    (normalize_legacy_booleans), then schema defaults fill in whatever is
-    missing. Loading a plugin, both config saves, GET /plugins/config, hot
-    reload and the dev tools all go through this, so a plugin sees the same
-    shape however its config reached it.
+    Retired core keys are dropped (drop_retired_plugin_keys), legacy booleans
+    are read as ``{"enabled": ...}`` objects (normalize_legacy_booleans), then
+    schema defaults fill in whatever is missing. Loading a plugin, both config
+    saves, GET /plugins/config, hot reload and the dev tools all go through
+    this, so a plugin sees the same shape however its config reached it.
     """
     config = config if isinstance(config, dict) else {}
     if schema:
+        config = drop_retired_plugin_keys(config, schema)
         config = normalize_legacy_booleans(config, schema, changed_paths)
     return merge_config_defaults(config, defaults)
 
@@ -620,7 +633,8 @@ class SchemaManager:
             # Core plugin properties (CORE_PLUGIN_PROPERTIES) are handled by
             # the base plugin system and should not cause validation failures:
             # they are allowed even when the plugin's schema doesn't declare
-            # them, and never required.
+            # them, and never required. Retired ones are ignored.
+            config = drop_retired_plugin_keys(config, schema)
             enhanced_schema = with_core_plugin_properties(schema)
             if plugin_id:
                 declared = schema.get("properties", {}) if isinstance(schema, dict) else {}
@@ -658,53 +672,6 @@ class SchemaManager:
             self.logger.error(error_msg)
             return False, [error_msg]
     
-    def inject_skin_selector(self, schema: Dict[str, Any], plugin_id: str,
-                             current_value: Any = None) -> Dict[str, Any]:
-        """Return a copy of a plugin's schema with a "skin" dropdown added
-        when installed skins target this plugin (docs/SKIN_SYSTEM.md).
-
-        Serve-time only — validation never sees this enum, so a config
-        referencing an uninstalled skin stays valid (rendering falls back
-        to the built-in layout). The currently-configured value is always
-        included in the enum for the same reason: the dropdown must be able
-        to display a selection whose skin was removed.
-        """
-        # A per-mode mapping ({"live": ..., "recent": ...}) can't be edited
-        # through a string dropdown — injecting one would let the form save
-        # a string over the mapping. Leave the schema alone; per-mode users
-        # edit via the raw JSON config editor.
-        if isinstance(current_value, dict):
-            return schema
-
-        try:
-            from src.skin_system import skin_runtime
-            matching = skin_runtime.skins_for_plugin(plugin_id)
-        except Exception as e:
-            self.logger.debug(f"Skin discovery failed for {plugin_id}: {e}")
-            return schema
-
-        choices = sorted(matching.keys())
-        if isinstance(current_value, str) and current_value and \
-                current_value != "built-in" and current_value not in choices:
-            choices.append(current_value)
-        if not choices:
-            return schema
-
-        enhanced = copy.deepcopy(schema)
-        enhanced.setdefault("properties", {})
-        if "skin" not in enhanced["properties"]:
-            names = {sid: (matching.get(sid, {}).get("name") or sid) for sid in choices}
-            enhanced["properties"]["skin"] = {
-                "type": "string",
-                "title": "Visual Skin",
-                "description": "Replace this scoreboard's look with an installed skin "
-                               "(data, scheduling, and vegas mode are unaffected)",
-                "enum": ["built-in", *choices],
-                "enumNames": ["Built-in", *(names[sid] for sid in choices)],
-                "default": "built-in"
-            }
-        return enhanced
-
     def _format_validation_error(self, error: ValidationError, plugin_id: Optional[str] = None) -> str:
         """
         Format a validation error into a readable message.

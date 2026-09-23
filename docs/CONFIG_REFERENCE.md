@@ -19,7 +19,7 @@ tooling against it.
 | `auto_update.enabled` | bool, `false` | Weekly automatic updates: LEDMatrix code first (health-checked, rolled back on failure), then installed plugins. Toggle in the General tab or install with `first_time_install.sh --enable-auto-update` | `web_interface/auto_update.py`, `src/auto_update_setup.py` (`is_enabled()`) |
 | `timezone` | string, `"America/New_York"` | IANA timezone for schedules and displays | `ConfigManager.get_timezone()` |
 | `target_fps` | int, `100` | Legacy "Scroll Frame Rate". Core scrolling no longer reads it: scroll frames are presented at `display.hardware.limit_refresh_rate_hz` divided by each scroll's frame hold, and speed comes from each plugin's scroll settings. Still exposed to plugins via `BasePlugin.global_config` | `src/plugin_system/base_plugin.py` |
-| `location` | object | `city` / `state` / `country`. Supplies the **default** for a plugin's own `location_city` / `location_state` / `location_country` setting, so weather, radar and friends follow this device without being configured twice. A value saved on the plugin itself still overrides it. | `SchemaManager.apply_device_location()`, then plugins via merged config |
+| `location` | object | `city` / `state` / `country`. Supplies the **default** for a plugin's own `location_city` / `location_state` / `location_country` setting, so weather, radar and friends follow this device without being configured twice. A value saved on the plugin itself still overrides it. Starlark (Tidbyt) apps get the same treatment: a `Location` field left blank on the app renders at this city (geocoded once via Open-Meteo, coordinates cached permanently) instead of the app author's default, which is usually San Francisco. If the city can't be looked up (no match, or the geocoder is unreachable; retried after 30 minutes), the app keeps its own default. | `SchemaManager.apply_device_location()`, then plugins via merged config; `src/device_location.py` for Starlark apps |
 
 ## `schedule` — display on/off hours
 
@@ -104,7 +104,7 @@ logical image to multiple chained physical panels.
 |---|---|---|---|
 | `display_durations` | object, `{}` | Per-plugin display duration in seconds, keyed by plugin id (e.g. `"clock": 15`) | `DisplayController._get_display_duration()` (`src/display_controller.py`) |
 | `plugin_rotation_order` | array, `[]` | Explicit rotation order of plugin ids; empty = all enabled plugins in discovery order | `DisplayController._apply_plugin_rotation_order()` (`src/display_controller.py`) |
-| `use_short_date_format` | bool, `true` | Compact date rendering in sports scoreboards | `src/base_classes/sports/core.py` |
+| `use_short_date_format` | bool, `true` | Compact date rendering in sports scoreboards | Nothing since `src/base_classes` was removed; scoreboards read `display.use_short_date_format` from their own plugin config |
 | `dynamic_duration.max_duration_seconds` | int, optional | Cap for plugins that request dynamic display time | `DisplayController._get_global_dynamic_cap()` (`src/display_controller.py`) |
 
 ## `display.vegas_scroll` — continuous scroll mode
