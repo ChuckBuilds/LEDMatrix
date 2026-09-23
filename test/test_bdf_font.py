@@ -263,6 +263,20 @@ def test_cache_is_bounded(monkeypatch):
     bdf_font.clear_face_cache()
 
 
+def test_each_thread_gets_its_own_face():
+    # FreeType forbids two threads using one face at once: load_char rewrites
+    # the face's glyph slot. Within a thread the face is shared.
+    import threading
+    path = str(FONTS_DIR / "5x7.bdf")
+    here, _ = load_bdf_face(path, 7)
+    assert load_bdf_face(path, 7)[0] is here
+    other = []
+    worker = threading.Thread(target=lambda: other.append(load_bdf_face(path, 7)[0]))
+    worker.start()
+    worker.join()
+    assert other and other[0] is not here
+
+
 def test_native_size_prefers_pixel_size_over_point_size():
     # 6x13.bdf is defined at 75dpi: SIZE says 12 (points), PIXEL_SIZE 13.
     assert read_bdf_native_size(str(FONTS_DIR / "6x13.bdf")) == 13

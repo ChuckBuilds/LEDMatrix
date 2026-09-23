@@ -101,9 +101,12 @@ def load_bdf_face(path: str, size_px: int) -> Tuple[Any, int]:
     font that was asked for at the size it can do. Callers that lay out by
     size need ``realised_px``, not the size they asked for.
 
-    Faces are cached and shared: a ``freetype.Face`` holds per-glyph state,
-    so treat one as owned by the thread that draws. Raises if the file can't
-    be loaded at either size.
+    Faces are cached per thread. A ``freetype.Face`` holds per-glyph state
+    (``load_char`` rewrites its glyph slot), and FreeType does not allow two
+    threads to use one face at once, so the display thread and a plugin's
+    update thread must never be handed the same object. Within a thread the
+    face is shared by every caller. Raises if the file can't be loaded at
+    either size.
     """
     if freetype is None:
         raise RuntimeError("freetype-py is not installed; BDF fonts need it")
@@ -111,7 +114,8 @@ def load_bdf_face(path: str, size_px: int) -> Tuple[Any, int]:
     abs_path = os.path.abspath(path)
     try:
         st = os.stat(abs_path)
-        key = (abs_path, size_px, st.st_mtime_ns, st.st_size)
+        key = (threading.get_ident(), abs_path, size_px,
+               st.st_mtime_ns, st.st_size)
     except OSError:
         key = None  # let freetype raise its own error below
 
