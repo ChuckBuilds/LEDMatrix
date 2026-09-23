@@ -175,3 +175,47 @@ class TestInTheRealApp:
             'details': describe_exception(FORCED),
         }
         assert "SECRET123" not in body["details"]
+
+
+class TestPluginActionStep1:
+    """execute_plugin_action's OAuth step-1 handler reports the script's error.
+
+    The route bound a local `logger` in its JSON-parsing arm, which made
+    `logger` local to the whole function; every other `logger.error` in it
+    then raised UnboundLocalError. The step-1 handler therefore answered
+    "UnboundLocalError: cannot access local variable 'logger'" instead of
+    whatever the plugin's auth script actually raised.
+    """
+
+    @pytest.fixture
+    def plugin_dir(self, tmp_path):
+        import json
+        d = tmp_path / "demo-plugin"
+        d.mkdir()
+        (d / "manifest.json").write_text(json.dumps({
+            "id": "demo-plugin",
+            "web_ui_actions": [{"id": "auth", "type": "script",
+                                "script": "auth.py", "oauth_flow": True}],
+        }), encoding="utf-8")
+        (d / "auth.py").write_text(
+            "def get_auth_url():\n"
+            "    raise RuntimeError('the auth script failed')\n",
+            encoding="utf-8")
+        return d
+
+    def test_the_script_error_reaches_the_response(self, plugin_dir, monkeypatch):
+        from unittest.mock import MagicMock
+        manager = MagicMock()
+        manager.get_plugin_directory.return_value = str(plugin_dir)
+        monkeypatch.setattr(api_v3, "plugin_manager", manager, raising=False)
+        app = Flask(__name__)
+        app.register_blueprint(api_v3, url_prefix="/api/v3")
+
+        resp = app.test_client().post(
+            "/api/v3/plugins/action",
+            json={"plugin_id": "demo-plugin", "action_id": "auth"})
+
+        assert resp.status_code == 500
+        body = resp.get_json()
+        assert body["details"] == "RuntimeError: the auth script failed"
+        assert body["message"] == 'An error occurred; see logs for details'

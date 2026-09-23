@@ -2792,8 +2792,10 @@ def execute_plugin_action():
         try:
             data = request.get_json(force=True) or {}
         except Exception as e:
-            import logging
-            logger = logging.getLogger(__name__)
+            # The module logger, not a local one: binding `logger` anywhere in
+            # this function made every other `logger.error` here raise
+            # UnboundLocalError, so the step-1 handler below reported that
+            # instead of the plugin script's real failure.
             logger.error(f"Error parsing JSON in execute_plugin_action: {e}")
             return jsonify({
                 'status': 'error', 
