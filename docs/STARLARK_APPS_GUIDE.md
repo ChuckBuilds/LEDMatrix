@@ -139,9 +139,10 @@ Each app may have different configuration options:
 
 - **Location** (lat/lng/timezone): For weather, clocks, transit. Left blank,
   the app renders at this device's location (City / State / Country under
-  General settings). Without that, most community apps fall back to their
-  author's hard-coded default, usually San Francisco. Fill it in only to
-  point one app somewhere else.
+  General settings). If no city is set there, or the city can't be looked up
+  (no match, or the geocoder is unreachable -- retried after 30 minutes), the
+  app gets no location and falls back to its author's hard-coded default,
+  usually San Francisco. Fill it in only to point one app somewhere else.
 - **API Keys**: For services like weather, stocks, sports scores
 - **Display Preferences**: Colors, units, layouts
 - **Dropdown Options**: Team selections, language, themes

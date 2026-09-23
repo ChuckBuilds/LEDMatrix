@@ -28,7 +28,9 @@ accepts both, but the store flags the old spelling as deprecated
 - `src.device_location` — a blank `Location` field on a Starlark (Tidbyt) app
   now renders at the device's City / State / Country (geocoded once via
   Open-Meteo and cached) instead of the app author's hard-coded default,
-  usually San Francisco. A location saved on the app still wins. Clearing an
+  usually San Francisco. A location saved on the app still wins. With no
+  device city set, or when the lookup fails or finds no match, the app keeps
+  its own default (a failed lookup is retried after 30 minutes). Clearing an
   app's location in the web UI now actually clears it; the save used to drop
   the blank field, so the old value stayed.
 
