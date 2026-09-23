@@ -173,8 +173,10 @@ font = self.font_manager.resolve_font(
 > install directory.
 >
 > The web UI's **Fonts** tab lists, uploads, previews and deletes the
-> font files in `assets/fonts/`. It does not show fonts registered
-> through `register_manager_font()` and has no override editor (the
+> font files in `assets/fonts/`. Its **Used by** column shows which
+> loaded plugins registered each file through `register_manager_font()`
+> (see [Font usage in the web UI](#font-usage-in-the-web-ui)), and it
+> warns before deleting one of them. It has no override editor (the
 > override panels and `/api/v3/fonts/overrides` endpoints were removed).
 > The programmatic override workflow in
 > [Manual Font Overrides](#manual-font-overrides) below still works.
@@ -276,6 +278,31 @@ Place font files in `assets/fonts/` directory:
 - Font family name is derived from filename (without extension)
 - Will be automatically discovered on next initialization
 
+## Font usage in the web UI
+
+The web interface runs in its own process and has no FontManager, so the
+display service publishes which plugin uses which font
+(`src/font_usage.py`), and the Fonts tab's **Used by** column reads it:
+
+- **Source**: `register_manager_font()` registrations of the loaded
+  plugins. `get_font()` and `resolve_font()` do not know the calling plugin
+  and are not counted, and neither is a plugin that opens a font file
+  directly with PIL — register the fonts your plugin draws with if you want
+  them listed.
+- **Names**: a family, alias (`press_start`, `four_by_six`,
+  `five_by_seven`, `tom_thumb`) or path is resolved through
+  `font_catalog` to the file it loads and reported under that file's name
+  without extension (`PressStart2P-Regular`, `4x6-font`, `5x7`,
+  `tom-thumb`), which is how the Fonts tab keys its rows. Fonts outside
+  `assets/fonts/` (a plugin's own `plugin_id::family` fonts) and families
+  that resolve to nothing are left out.
+- **When**: a daemon thread started once plugins have loaded checks every
+  10 seconds and writes the `font_usage_snapshot` cache key only when the
+  usage changed (and once a day, so the cache's cleanup never expires it).
+  Unloading a plugin drops its registrations (`forget_manager_fonts`).
+- **Unknown**: until the display service has published, the column reads
+  "unknown" and `GET /api/v3/fonts/catalog` returns `used_by: null`.
+
 ## Performance Monitoring
 
 ```python
@@ -374,6 +401,7 @@ self.font = self.font_manager.resolve_font(
 ### FontManager Methods
 
 - `register_manager_font(manager_id, element_key, family, size_px, color=None)` - Register font usage
+- `forget_manager_fonts(manager_id)` - Drop a manager's registrations (core calls it when a plugin unloads)
 - `resolve_font(element_key, family, size_px, plugin_id=None)` - Get font with override support
 - `get_font(family, size_px)` - Get font directly (bypasses overrides)
 - `measure_text(text, font)` - Measure text dimensions

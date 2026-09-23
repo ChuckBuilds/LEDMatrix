@@ -34,6 +34,13 @@ accepts both, but the store flags the old spelling as deprecated
   app's location in the web UI now actually clears it; the save used to drop
   the blank field, so the old value stayed.
 
+- The web UI's Fonts tab has a **Used by** column: the loaded plugins that
+  registered each font with `FontManager.register_manager_font()`, published
+  by the display service to the shared cache (`src/font_usage.py`) and merged
+  into `GET /api/v3/fonts/catalog` as `used_by`. Deleting a font a plugin
+  uses now names those plugins in the confirmation (it is not blocked).
+  `FontManager.forget_manager_fonts()` is new; unloading a plugin calls it.
+
 Deprecated, removed in 3.7.0 (each logs a warning on first use; see
 `docs/PLUGIN_API_REFERENCE.md#deprecated-apis` for replacements). Nothing in
 core, the monorepo or the registry's third-party plugins calls them:

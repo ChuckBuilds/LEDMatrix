@@ -78,6 +78,10 @@ class FontManager:
         # Manager font registration - NEW for manager-centric model
         self.manager_fonts: Dict[str, Dict[str, Any]] = {}  # manager_id -> {element_key: {family, size_px, color}}
         self.detected_fonts: Dict[str, Dict[str, Any]] = {}  # element_key -> {family, size_px, color, manager_id, usage_count}
+        # Bumped when a manager's registered families change (not when one
+        # re-registers what it already had), so src/font_usage.py can tell
+        # "nothing new" without rebuilding its snapshot.
+        self.manager_fonts_version = 0
 
         # Dynamic font loading
         self.temp_font_dir = Path(tempfile.gettempdir()) / "ledmatrix_fonts"
@@ -156,7 +160,10 @@ class FontManager:
         }
         if color:
             font_spec["color"] = color
-        
+
+        previous = self.manager_fonts[manager_id].get(element_key)
+        if previous is None or previous.get("family") != family:
+            self.manager_fonts_version += 1
         self.manager_fonts[manager_id][element_key] = font_spec
         
         # Track usage in detected_fonts
@@ -167,6 +174,17 @@ class FontManager:
             self.detected_fonts[element_key]["usage_count"] += 1
         
         logger.debug(f"Registered font for {manager_id}.{element_key}: {family}@{size_px}px")
+
+    def forget_manager_fonts(self, manager_id: str) -> None:
+        """Drop every registration ``manager_id`` made. Called by core when a
+        plugin is unloaded, so a reloaded plugin starts from what its new
+        instance registers and the web UI's Fonts tab stops listing it."""
+        removed = self.manager_fonts.pop(manager_id, None)
+        for element_key, spec in list(self.detected_fonts.items()):
+            if spec.get("manager_id") == manager_id:
+                self.detected_fonts.pop(element_key, None)
+        if removed:
+            self.manager_fonts_version += 1
 
     @deprecated("3.7.0")
     def get_manager_fonts(self, manager_id: Optional[str] = None) -> Dict[str, Any]:
