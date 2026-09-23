@@ -25,7 +25,9 @@ from src.plugin_system.plugin_state import PluginStateManager, PluginState
 from src.plugin_system.schema_manager import (
     CORE_VEGAS_TUNING_KEYS, SchemaManager, normalize_legacy_booleans,
 )
-from src.common.path_safety import safe_path_component
+from src.plugin_system.plugin_dirs import (
+    ManifestStatus, PluginDirectoryIndex, resolve_plugin_dir,
+)
 from src.deprecation import deprecated
 from src.common.permission_utils import (
     ensure_directory_permissions,
@@ -175,9 +177,30 @@ class PluginManager:
             self.logger.error("Could not create plugins directory %s: %s", self.plugins_dir, e, exc_info=True)
             raise PluginError(f"Could not create plugins directory: {self.plugins_dir}", context={'error': str(e)}) from e
 
+    def _report_skip_once(self, key: str, message: str, *args: Any) -> None:
+        """Warn about a skipped directory once per process, not per scan.
+
+        Discovery runs on every web UI page load and every config reconcile,
+        so warning unconditionally would put a line in the journal each time
+        someone opened a page -- the same log-volume problem this is meant to
+        help diagnose.
+        """
+        reported = self.__dict__.setdefault('_skip_reported', set())
+        if key in reported:
+            return
+        reported.add(key)
+        self.logger.warning(message, *args)
+
     def _scan_directory_for_plugins(self, directory: Path) -> List[str]:
         """
         Scan a directory for plugins.
+
+        Which directories count and how an id maps to one is decided by
+        :class:`PluginDirectoryIndex` (``src/plugin_system/plugin_dirs.py``),
+        shared with the loader, the store and reconciliation. Only
+        ``directory`` is scanned: discovery has no fallback to ``plugins/``.
+        Directories set aside mid-install (``BACKUP_MARKER`` in the name) are
+        skipped so they don't overwrite live entries.
 
         Args:
             directory: Directory to scan
@@ -185,79 +208,57 @@ class PluginManager:
         Returns:
             List of plugin IDs found
         """
-        plugin_ids = []
-
         if not directory.exists():
-            return plugin_ids
+            return []
 
         # Build new state locally before acquiring lock
-        new_manifests: Dict[str, Dict[str, Any]] = {}
-        new_directories: Dict[str, Path] = {}
+        index = PluginDirectoryIndex.scan(directory)
+        if index.error is not None:
+            self.logger.error("Error scanning directory %s: %s", directory,
+                              index.error, exc_info=index.error)
 
-        try:
-            for item in directory.iterdir():
-                if not item.is_dir():
-                    continue
-                # Skip backup directories so they don't overwrite live entries
-                if '.standalone-backup-' in item.name:
-                    continue
-
-                manifest_path = item / "manifest.json"
-                if not manifest_path.exists():
-                    # Once per directory per process. Discovery runs on every
-                    # web UI page load and every config reconcile, so warning
-                    # unconditionally would put a line in the journal each
-                    # time someone opened a page -- the same log-volume
-                    # problem this is meant to help diagnose.
-                    # A directory here that carries no manifest is not a
-                    # plugin. Said once, because the alternative is a plugin
-                    # that is enabled in config, enabled in plugin state,
-                    # present on disk, and simply absent from the running
-                    # process with nothing anywhere to say why. Working that
-                    # out afterwards means reading cache-file mtimes.
-                    if item.name not in self._skip_reported:
-                        self._skip_reported.add(item.name)
-                        self.logger.warning(
-                            "Skipping %s: no manifest.json, so it cannot be "
-                            "loaded as a plugin", item.name)
-                    continue
-                try:
-                    with open(manifest_path, 'r', encoding='utf-8') as f:
-                        manifest = json.load(f)
-                except (json.JSONDecodeError, PermissionError, OSError) as e:
-                    self.logger.warning("Error reading manifest from %s: %s", manifest_path, e, exc_info=True)
-                    continue
-
+        for entry in index.entries:
+            if entry.status == ManifestStatus.MISSING:
+                # A directory here that carries no manifest is not a plugin.
+                # Said once, because the alternative is a plugin that is
+                # enabled in config, enabled in plugin state, present on disk,
+                # and simply absent from the running process with nothing
+                # anywhere to say why. Working that out afterwards means
+                # reading cache-file mtimes.
+                self._report_skip_once(
+                    entry.name, "Skipping %s: no manifest.json, so it cannot be "
+                    "loaded as a plugin", entry.name)
+            elif entry.status == ManifestStatus.UNREADABLE:
+                self.logger.warning("Error reading manifest from %s: %s",
+                                    entry.path / "manifest.json", entry.error,
+                                    exc_info=entry.error)
+            elif entry.status == ManifestStatus.NOT_OBJECT:
                 # json.load accepts any JSON value, so a manifest holding
-                # null, [] or "text" parses and then raises AttributeError on
-                # .get(). Nothing here catches that -- the outer handler takes
-                # OSError/PermissionError only -- so a single malformed
-                # manifest aborted the whole scan and every other plugin on
+                # null, [] or "text" parses. It once raised AttributeError on
+                # .get() and aborted the whole scan, so every other plugin on
                 # disk, however healthy, silently failed to register.
-                if not isinstance(manifest, dict):
-                    if item.name not in self._skip_reported:
-                        self._skip_reported.add(item.name)
-                        self.logger.warning(
-                            "Skipping %s: its manifest.json is %s, not a JSON "
-                            "object", item.name, type(manifest).__name__)
-                    continue
+                self._report_skip_once(
+                    entry.name, "Skipping %s: its manifest.json is %s, not a "
+                    "JSON object", entry.name, type(entry.manifest).__name__)
+            elif entry.status == ManifestStatus.NO_ID:
+                # Parsed but unusable. This was the quietest path of all: the
+                # manifest is read successfully and then dropped.
+                self._report_skip_once(
+                    entry.name, "Skipping %s: its manifest.json has no \"id\", "
+                    "so there is nothing to register it under", entry.name)
 
-                plugin_id = manifest.get('id')
-                if not plugin_id:
-                    # Parsed but unusable. This was the quietest path of all:
-                    # the manifest is read successfully and then dropped.
-                    if item.name not in self._skip_reported:
-                        self._skip_reported.add(item.name)
-                        self.logger.warning(
-                            "Skipping %s: its manifest.json has no \"id\", so "
-                            "there is nothing to register it under", item.name)
-                    continue
+        plugins = index.plugins()
+        for plugin_id, entries in index.duplicates().items():
+            self._report_skip_once(
+                "duplicate:" + plugin_id,
+                "Plugin id %r is declared by %d directories (%s); using %s",
+                plugin_id, len(entries), ", ".join(e.name for e in entries),
+                plugins[plugin_id].name)
 
-                plugin_ids.append(plugin_id)
-                new_manifests[plugin_id] = manifest
-                new_directories[plugin_id] = item
-        except (OSError, PermissionError) as e:
-            self.logger.error("Error scanning directory %s: %s", directory, e, exc_info=True)
+        new_manifests: Dict[str, Dict[str, Any]] = {
+            plugin_id: entry.manifest for plugin_id, entry in plugins.items()}
+        new_directories: Dict[str, Path] = {
+            plugin_id: entry.path for plugin_id, entry in plugins.items()}
 
         # Replace shared state under lock so uninstalled plugins don't linger
         with self._discovery_lock:
@@ -266,8 +267,8 @@ class PluginManager:
             self.plugin_directories.clear()
             self.plugin_directories.update(new_directories)
 
-        return plugin_ids
-    
+        return list(plugins)
+
     def discover_plugins(self) -> List[str]:
         """
         Discover all plugins in the plugins directory.
@@ -772,24 +773,20 @@ class PluginManager:
         not one plain path segment (``..``, ``a/b``, an absolute path) is
         refused instead of being joined onto ``plugins_dir``. The join is not
         resolved further: dev plugins are symlinks into ``plugins_dir``.
+
+        The discovery map is authoritative. For an id discovery has not seen,
+        only directory names are tried -- ``<id>`` then ``ledmatrix-<id>``,
+        in ``plugins_dir`` only -- so a miss on a web request never reads
+        every manifest on disk. Rules: ``src/plugin_system/plugin_dirs.py``.
         """
         with self._discovery_lock:
             if plugin_id in self.plugin_directories:
                 return str(self.plugin_directories[plugin_id])
 
-        plugin_id = safe_path_component(plugin_id)
-        if plugin_id is None:
-            return None
-
-        plugin_dir = self.plugins_dir / plugin_id
-        if plugin_dir.exists():
-            return str(plugin_dir)
-        
-        plugin_dir = self.plugins_dir / f"ledmatrix-{plugin_id}"
-        if plugin_dir.exists():
-            return str(plugin_dir)
-        
-        return None
+        plugin_dir = resolve_plugin_dir(
+            plugin_id, [self.plugins_dir], prefix=True, case_insensitive=False,
+            by_manifest=False)
+        return str(plugin_dir) if plugin_dir is not None else None
     
     def get_plugin_display_modes(self, plugin_id: str) -> List[str]:
         """
