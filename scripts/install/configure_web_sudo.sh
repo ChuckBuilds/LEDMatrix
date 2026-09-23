@@ -111,13 +111,6 @@ TEMP_SUDOERS="/tmp/ledmatrix_web_sudoers_$$"
         echo "$WEB_USER ALL=(ALL) NOPASSWD:NOEXEC: $JOURNALCTL_PATH -t ledmatrix *"
     fi
 
-    # Required: python3, bash
-    # NOTE: display_controller.py/start_display.sh/stop_display.sh live at the
-    # project root, not under scripts/install/ (where this script lives) —
-    # must use PROJECT_ROOT here, not PROJECT_DIR.
-    echo "$WEB_USER ALL=(ALL) NOPASSWD: $PYTHON_PATH $PROJECT_ROOT/display_controller.py"
-    echo "$WEB_USER ALL=(ALL) NOPASSWD: $BASH_PATH $PROJECT_ROOT/start_display.sh"
-    echo "$WEB_USER ALL=(ALL) NOPASSWD: $BASH_PATH $PROJECT_ROOT/stop_display.sh"
     echo ""
     echo "# Allow web user to remove plugin directories via vetted helper script"
     echo "# The helper validates that the target path resolves inside plugin-repos/ or plugins/"
@@ -155,8 +148,6 @@ echo "- Start/stop/restart the ledmatrix service"
 echo "- Enable/disable the ledmatrix service"
 echo "- Check service status"
 echo "- View system logs via journalctl"
-echo "- Run display_controller.py directly"
-echo "- Execute start_display.sh and stop_display.sh"
 echo "- Reboot and shutdown the system"
 echo "- Remove plugin directories (for update/uninstall when root-owned files block deletion)"
 echo "- Install plugin/base requirements.txt as root (so ledmatrix.service can see them)"
