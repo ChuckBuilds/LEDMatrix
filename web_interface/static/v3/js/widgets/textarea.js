@@ -175,6 +175,4 @@
             }
         }
     });
-
-    console.log('[TextareaWidget] Textarea widget registered');
 })();

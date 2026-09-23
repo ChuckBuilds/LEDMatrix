@@ -43,16 +43,21 @@ git submodule update --init --recursive rpi-rgb-led-matrix-master
 
 #### Building the Submodule
 
-After initializing the submodule, you need to build the Python bindings:
+After initializing the submodule, build and install the `rgbmatrix` Python
+package from the submodule root. Upstream's `pyproject.toml` builds it with
+scikit-build-core, CMake and Ninja; there is no separate `make` step:
 
 ```bash
 cd rpi-rgb-led-matrix-master
-make build-python
-cd bindings/python
 python3 -m pip install --break-system-packages .
 ```
 
-**Note:** The `first_time_install.sh` script automates this process during installation.
+On a board with 1 GB of RAM or less, cap the compile so it doesn't run out of
+memory: `CMAKE_BUILD_PARALLEL_LEVEL=1 python3 -m pip install --break-system-packages .`
+
+**Note:** The `first_time_install.sh` script automates this process during
+installation, including the parallelism cap and a temporary swapfile on
+low-memory boards.
 
 #### Troubleshooting
 
@@ -69,7 +74,7 @@ git submodule update --init --recursive rpi-rgb-led-matrix-master
 **Build fails:**
 Ensure you have the required build dependencies installed:
 ```bash
-sudo apt install -y build-essential python3-dev cython3 scons
+sudo apt install -y build-essential python-dev-is-python3 cmake ninja-build
 ```
 
 **Import error for `rgbmatrix` module:**
@@ -97,8 +102,6 @@ When setting up CI/CD pipelines, ensure submodules are initialized before buildi
 - name: Build rpi-rgb-led-matrix
   run: |
     cd rpi-rgb-led-matrix-master
-    make build-python
-    cd bindings/python
     pip install .
 ```
 
@@ -110,8 +113,6 @@ variables:
 build:
   script:
     - cd rpi-rgb-led-matrix-master
-    - make build-python
-    - cd bindings/python
     - pip install .
 ```
 

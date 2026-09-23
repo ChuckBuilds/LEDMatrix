@@ -239,6 +239,4 @@
             }
         }
     });
-
-    console.log('[NumberInputWidget] Number input widget registered');
 })();

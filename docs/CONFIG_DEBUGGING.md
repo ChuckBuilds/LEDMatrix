@@ -292,9 +292,12 @@ cp config/config.json config/config.backup.json
 
 ### Automatic Backups
 
-LEDMatrix creates backups before saves:
+LEDMatrix creates backups before saves (`src/config_manager_atomic.py`):
 - Location: `config/backups/`
-- Format: `config_YYYYMMDD_HHMMSS.json`
+- Format: `config.json.backup.YYYYMMDD_HHMMSS_ffffff` (microseconds last),
+  plus a matching `config_secrets.json.backup.<timestamp>` when a secrets
+  file exists
+- The five most recent are kept
 
 ### Recovery
 
@@ -303,7 +306,7 @@ LEDMatrix creates backups before saves:
 ls -la config/backups/
 
 # Restore from backup
-cp config/backups/config_20240115_120000.json config/config.json
+cp config/backups/config.json.backup.20240115_120000_000000 config/config.json
 ```
 
 ## Troubleshooting Checklist

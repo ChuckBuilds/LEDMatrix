@@ -5,8 +5,7 @@ endpoint names are unchanged by living here.
 """
 from web_interface.blueprints.api_v3 import (
     PROJECT_ROOT, Path, _coerce_to_bool, _safe_backup_path, api_v3,
-    datetime, json, jsonify, logger, os, plugin_store_manager, request,
-    tempfile,
+    datetime, json, jsonify, logger, os, request, tempfile,
 )
 import web_interface.blueprints.api_v3 as _pkg
 # Read through the module rather than bound by value: tests patch these
@@ -151,7 +150,7 @@ def backup_restore():
 
         # Reinstall plugins if requested and store manager available
         if options.reinstall_plugins and result.plugins_to_install:
-            psm = getattr(api_v3, 'plugin_store_manager', None) or plugin_store_manager
+            psm = getattr(api_v3, 'plugin_store_manager', None)
             for plug in result.plugins_to_install:
                 pid = plug.get('plugin_id')
                 if not pid:

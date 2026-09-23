@@ -768,6 +768,4 @@
             return null;
         }
     });
-
-    console.log('[StyleEditor] widget registered');
 })();

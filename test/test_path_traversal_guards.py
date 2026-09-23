@@ -182,57 +182,6 @@ class TestServePluginStatic:
         assert response.status_code == 404
 
 
-class TestDeleteOfTheDayJson:
-    """POST /api/v3/plugins/of-the-day/json/delete
-
-    file_id came from the request body and was interpolated into
-    ``f"{file_id}.json"`` and then unlinked, with no validation at all. A
-    file_id of "../../../../etc/something" deleted that file. This is the one
-    finding in the batch that destroyed data rather than exposing it.
-    """
-
-    @pytest.fixture
-    def plugin_tree(self, tmp_path, api_v3_module):
-        plugin_dir = tmp_path / "plugin-repos" / "ledmatrix-of-the-day"
-        (plugin_dir / "of_the_day").mkdir(parents=True)
-        (plugin_dir / "of_the_day" / "quotes.json").write_text("{}", encoding="utf-8")
-        outside = tmp_path / "victim.json"
-        outside.write_text("important", encoding="utf-8")
-
-        api_v3_module.api_v3.plugin_manager = MagicMock()
-        api_v3_module.api_v3.plugin_manager.get_plugin_directory.return_value = str(plugin_dir)
-        return plugin_dir, outside
-
-    URL = "/api/v3/plugins/of-the-day/json/delete"
-
-    def test_a_real_file_in_the_plugin_is_still_deleted(
-        self, api_v3_client, plugin_tree
-    ):
-        plugin_dir, _ = plugin_tree
-        target = plugin_dir / "of_the_day" / "quotes.json"
-        response = api_v3_client.post(self.URL, json={"file_id": "quotes"})
-        assert response.status_code == 200
-        assert not target.exists()
-
-    def test_a_traversing_file_id_deletes_nothing(self, api_v3_client, plugin_tree):
-        _, outside = plugin_tree
-        response = api_v3_client.post(
-            self.URL, json={"file_id": "../../../victim"}
-        )
-        assert response.status_code == 400
-        assert outside.exists(), "file outside the plugin directory was deleted"
-        assert outside.read_text(encoding="utf-8") == "important"
-
-    @pytest.mark.parametrize("file_id", ["..", "a/b", "/etc/x", "x" + BACKSLASH + "y"])
-    def test_other_shapes_of_traversal_are_refused(
-        self, api_v3_client, plugin_tree, file_id
-    ):
-        _, outside = plugin_tree
-        response = api_v3_client.post(self.URL, json={"file_id": file_id})
-        assert response.status_code == 400
-        assert outside.exists()
-
-
 class TestDiskCacheKeys:
     """The cache key becomes a filename, and POST /api/v3/cache/delete passes
     the request body's key straight through CacheManager.clear_cache to

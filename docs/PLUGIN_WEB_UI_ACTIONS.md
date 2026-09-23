@@ -25,9 +25,6 @@ Add a `web_ui_actions` array to your plugin's `manifest.json`:
       "script": "path/to/script.py",
       "oauth_flow": false,
       "section_description": "Optional section description",
-      "success_message": "Action completed successfully",
-      "error_message": "Action failed",
-      "step1_message": "Authorization URL generated",
       "step2_prompt": "Please paste the full redirect URL:",
       "step2_button_text": "Complete Authentication"
     }
@@ -52,11 +49,12 @@ Add a `web_ui_actions` array to your plugin's `manifest.json`:
 - **`color`**: Color theme - `"blue"`, `"green"`, `"red"`, `"yellow"`, `"purple"`, etc. (defaults to `"blue"`)
 - **`oauth_flow`**: Set to `true` for OAuth-style two-step authentication flows
 - **`section_description`**: Description shown at the top of the actions section
-- **`success_message`**: Message shown on successful completion
-- **`error_message`**: Message shown on failure
-- **`step1_message`**: Message shown after step 1 (for OAuth flows)
 - **`step2_prompt`**: Prompt text for step 2 redirect URL input
 - **`step2_button_text`**: Button text for step 2 (defaults to "Complete Authentication")
+
+The status messages shown after an action runs come from the action's
+response (`message`), with built-in fallbacks such as "Action completed
+successfully"; there are no manifest fields for them.
 
 ## Action Types
 
@@ -98,7 +96,6 @@ For two-step OAuth flows (e.g., Spotify):
   "color": "green",
   "script": "authenticate_spotify.py",
   "oauth_flow": true,
-  "step1_message": "Authorization URL generated",
   "step2_prompt": "Please paste the full redirect URL from Spotify after authorization:",
   "step2_button_text": "Complete Authentication"
 }
@@ -131,9 +128,6 @@ Here's a complete example for the `ledmatrix-music` plugin:
       "script": "authenticate_spotify.py",
       "oauth_flow": true,
       "section_description": "Authenticate with Spotify or YouTube Music to enable music playback display.",
-      "success_message": "Spotify authentication completed successfully",
-      "error_message": "Spotify authentication failed",
-      "step1_message": "Authorization URL generated",
       "step2_prompt": "Please paste the full redirect URL from Spotify after authorization:",
       "step2_button_text": "Complete Authentication"
     },
@@ -145,9 +139,7 @@ Here's a complete example for the `ledmatrix-music` plugin:
       "button_text": "Authenticate YTM",
       "icon": "fab fa-youtube",
       "color": "red",
-      "script": "authenticate_ytm.py",
-      "success_message": "YouTube Music authentication completed successfully",
-      "error_message": "YouTube Music authentication failed"
+      "script": "authenticate_ytm.py"
     }
   ]
 }
