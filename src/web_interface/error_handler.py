@@ -72,6 +72,39 @@ def redact_text(text: str, max_length: int = _MAX_DETAIL_LENGTH) -> str:
     return text
 
 
+# What a failure nothing anticipated says. The detail beside it carries the
+# actual diagnosis; this sentence only points at where the traceback went.
+UNHANDLED_ERROR_MESSAGE = 'An error occurred; see logs for details'
+
+
+def unhandled_exception_payload(exc: BaseException) -> dict:
+    """JSON body for an exception no route handled: status, message, details.
+
+    Deliberately no `error_code`. The plugin API client (api_client.js) passes
+    a body that has one straight to the rich error modal, and wraps one that
+    has none as a plain API_ERROR toast; the api_v3 routes answered this shape
+    from their own catch-alls for years, so the UI is built around it.
+    """
+    return {
+        'status': 'error',
+        'message': UNHANDLED_ERROR_MESSAGE,
+        'details': describe_exception(exc),
+    }
+
+
+def http_exception_payload(error) -> dict:
+    """JSON body for a werkzeug HTTPException (405, 400, 415, 413...).
+
+    Same shape web_interface/app.py's global handler returns, so a 4xx raised
+    inside an api_v3 route reads the same as one raised anywhere else.
+    """
+    return {
+        'status': 'error',
+        'error_code': (error.name or 'HTTP_ERROR').upper().replace(' ', '_'),
+        'message': error.description,
+    }
+
+
 def create_error_response(
     error_code: ErrorCode,
     message: str,
