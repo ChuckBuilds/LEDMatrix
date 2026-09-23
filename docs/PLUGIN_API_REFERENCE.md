@@ -430,9 +430,7 @@ self.display_manager.image.paste(icon, (5, 5), icon)
 self.display_manager.update_display()
 ```
 
-This is the same pattern the bundled scoreboard base classes
-(`src/base_classes/baseball.py`, `basketball.py`, `football.py`,
-`hockey.py`) use, so it's the canonical way to render arbitrary images.
+This is the canonical way to render arbitrary images.
 
 ### Weather Icons
 

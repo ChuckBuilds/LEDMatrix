@@ -1,9 +1,8 @@
 """src/common must stay importable without display hardware.
 
 Plugins import src.common.sports_* in place of their bundled copies. If any of
-those modules reaches src.display_manager (and through it rgbmatrix) or the
-src.base_classes package (whose core.py imports DisplayManager), a scoreboard
-adopting it acquires a hardware dependency it never had, and the headless
+those modules reaches src.display_manager (and through it rgbmatrix), a
+scoreboard adopting it acquires a hardware dependency it never had, and the headless
 tooling -- the web preview, check_plugin.py, these tests on a laptop -- stops
 being able to load it.
 
@@ -26,7 +25,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 COMMON = REPO_ROOT / "src" / "common"
 
-FORBIDDEN = ("src.base_classes", "src.display_manager", "src.plugin_system")
+FORBIDDEN = ("src.display_manager", "src.plugin_system")
 
 #: Existing module-level violations, by file name, each with the reason it is
 #: tolerated. Empty when this test was added (core 3.4.0 + sports_helpers):
@@ -124,13 +123,13 @@ def test_the_scan_sees_a_direct_import(tmp_path):
         except ImportError:
             pass
         if True:
-            import src.base_classes.sports
+            import src.plugin_system.plugin_manager
         from src import plugin_system
         def later():
             from src.display_manager import DisplayManager
     """))
     targets = {t for n in _module_level_imports(tree) for t in _targets(n)}
-    assert {"src.base_classes.sports", "src.display_manager",
+    assert {"src.plugin_system.plugin_manager", "src.display_manager",
             "src.plugin_system"} <= targets
 
 

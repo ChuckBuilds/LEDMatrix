@@ -1,5 +1,5 @@
 """Routes with no larger group of their own: errors, integrations,
-cache, sync, skins, logs, health and hardware.
+cache, sync, logs, health and hardware.
 
 Routes decorate the shared `api_v3` Blueprint from ._common, so their
 endpoint names are unchanged by living here.
@@ -150,51 +150,6 @@ def get_hardware_status():
     except Exception:
         logger.error("Unexpected error reading hardware status", exc_info=True)
         return jsonify({"status": "error", "message": "Unable to read hardware status"}), 500
-@api_v3.route('/skins', methods=['GET'])
-def list_skins():
-    """List installed visual skins (docs/SKIN_SYSTEM.md).
-
-    Optional ?plugin_id=... filters to skins matching that plugin.
-
-    The response carries ``supported: false`` and a ``message``: the current
-    scoreboard plugins don't render skins, so a client must not present
-    these as selectable.
-    """
-    try:
-        from src.skin_system import (
-            SKINS_RENDER_SUPPORTED, SKINS_UNSUPPORTED_MESSAGE, skin_runtime,
-        )
-
-        plugin_id = request.args.get('plugin_id')
-        if plugin_id:
-            skins = skin_runtime.skins_for_plugin(plugin_id)
-        else:
-            # The discovery cache self-invalidates on directory/manifest
-            # mtime changes, so no force_refresh — keeps Pi disk I/O down.
-            skins = skin_runtime.discover_skins()
-
-        payload = []
-        for skin_id, manifest in sorted(skins.items()):
-            skin_dir = Path(manifest['_skin_dir'])
-            preview = manifest.get('preview')
-            payload.append({
-                'id': skin_id,
-                'name': manifest.get('name', skin_id),
-                'version': manifest.get('version'),
-                'author': manifest.get('author'),
-                'description': manifest.get('description', ''),
-                'skin_api_version': manifest.get('skin_api_version'),
-                'targets': manifest.get('targets', {}),
-                'modes': manifest.get('modes', []),
-                'has_preview': bool(preview and (skin_dir / preview).is_file()),
-            })
-        data = {'skins': payload, 'supported': SKINS_RENDER_SUPPORTED}
-        if not SKINS_RENDER_SUPPORTED:
-            data['message'] = SKINS_UNSUPPORTED_MESSAGE
-        return jsonify({'status': 'success', 'data': data})
-    except Exception as e:
-        logger.error('Error in list_skins', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 @api_v3.route('/logs', methods=['GET'])
 def get_logs():
     """Get system logs from journalctl"""

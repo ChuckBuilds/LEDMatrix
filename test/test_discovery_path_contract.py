@@ -209,30 +209,3 @@ class TestStandaloneBackupContract:
         assert "'.standalone-backup-'" in pm_text.replace('"', "'")
         assert ".standalone-backup-" in sm_text
 
-
-class TestSkinTargetResolution:
-    def _store(self, tmp_path):
-        return PluginStoreManager(
-            plugins_dir=str(tmp_path / "plugins"),
-            uninstalled_registry_path=str(tmp_path / "uninstalled.json"))
-
-    def test_valid_skin_id_resolves_inside_skins_dir(self, tmp_path):
-        from src.skin_system import skin_runtime
-        store = self._store(tmp_path)
-        target = store._resolve_skin_target("my-skin")
-        assert target is not None
-        assert target.parent == skin_runtime.get_skins_directory().resolve()
-
-    @pytest.mark.parametrize("bad_id", [
-        "../evil",
-        "..",
-        "a/../../etc",
-        "/etc/passwd",
-        "skin/../../outside",
-        "",
-        None,
-        123,
-    ])
-    def test_traversal_and_malformed_ids_rejected(self, tmp_path, bad_id):
-        store = self._store(tmp_path)
-        assert store._resolve_skin_target(bad_id) is None

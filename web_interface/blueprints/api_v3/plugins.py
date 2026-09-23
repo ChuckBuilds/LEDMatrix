@@ -1296,15 +1296,16 @@ def install_plugin():
         plugin_id = data['plugin_id']
         branch = data.get('branch')  # Optional branch parameter
 
-        # A registry skin would install but never render with the current
-        # scoreboards; refuse it with the reason rather than a generic failure
+        # A registry entry that isn't a plugin (a custom registry can still
+        # list old "type": "skin" entries) gets a clear refusal, not a failed
+        # install.
         try:
             registry_entry = api_v3.plugin_store_manager.get_registry_info(plugin_id)
         except Exception:
             registry_entry = None
-        if isinstance(registry_entry, dict) and (registry_entry.get('type') or 'plugin') == 'skin':
-            from src.skin_system import SKINS_UNSUPPORTED_MESSAGE
-            return jsonify({'status': 'error', 'message': SKINS_UNSUPPORTED_MESSAGE}), 400
+        if isinstance(registry_entry, dict) and not api_v3.plugin_store_manager.is_plugin_entry(registry_entry):
+            return jsonify({'status': 'error',
+                            'message': f"{plugin_id} is a {registry_entry.get('type')!r} entry, not a plugin"}), 400
 
         # Install the plugin
         # Log the plugins directory being used for debugging
@@ -1506,13 +1507,10 @@ def get_registry_from_url():
         registry = api_v3.plugin_store_manager.fetch_registry_from_url(repo_url)
 
         if registry:
-            # Skins aren't offered: current scoreboards don't render them
             return jsonify({
                 'status': 'success',
-                'plugins': [
-                    p for p in registry.get('plugins', [])
-                    if not (isinstance(p, dict) and (p.get('type') or 'plugin') == 'skin')
-                ],
+                'plugins': [p for p in registry.get('plugins', [])
+                            if api_v3.plugin_store_manager.is_plugin_entry(p)],
                 'registry_url': repo_url
             })
         else:
@@ -1627,9 +1625,7 @@ def list_plugin_store():
         # Format plugins for the web interface
         formatted_plugins = []
         for plugin in plugins:
-            # Registry skins install but never render with the current
-            # scoreboards, so the store doesn't offer them
-            if (plugin.get('type') or 'plugin') == 'skin':
+            if not api_v3.plugin_store_manager.is_plugin_entry(plugin):
                 continue
             formatted_plugins.append({
                 'id': plugin.get('id'),
@@ -2210,7 +2206,10 @@ def save_plugin_config():
         if plugin_id not in current_config:
             current_config[plugin_id] = {}
 
-        current_config[plugin_id] = deep_merge(current_config[plugin_id], regular_config)
+        # Retired core keys (skin, skin_options) leave the stored section here
+        from src.plugin_system.schema_manager import drop_retired_plugin_keys
+        current_config[plugin_id] = deep_merge(
+            drop_retired_plugin_keys(current_config[plugin_id], schema), regular_config)
 
         # Deep merge plugin secrets in secrets config
         if secrets_config:
@@ -2755,11 +2754,6 @@ def get_plugin_schema():
         schema = schema_mgr.load_schema(plugin_id, use_cache=True)
 
         if schema:
-            # No "Visual Skin" dropdown: the current scoreboard plugins don't
-            # render skins (src.skin_system.SKINS_UNSUPPORTED_MESSAGE), so
-            # schema_mgr.inject_skin_selector is deliberately not called. A
-            # stored "skin" value is unaffected: validation still allows it
-            # and a form save deep-merges over the stored section, keeping it.
             return jsonify({'status': 'success', 'data': {'schema': schema}})
 
         # Return a simple default schema if file not found

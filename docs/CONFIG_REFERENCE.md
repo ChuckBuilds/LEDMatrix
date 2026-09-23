@@ -104,7 +104,7 @@ logical image to multiple chained physical panels.
 |---|---|---|---|
 | `display_durations` | object, `{}` | Per-plugin display duration in seconds, keyed by plugin id (e.g. `"clock": 15`) | `DisplayController._get_display_duration()` (`src/display_controller.py`) |
 | `plugin_rotation_order` | array, `[]` | Explicit rotation order of plugin ids; empty = all enabled plugins in discovery order | `DisplayController._apply_plugin_rotation_order()` (`src/display_controller.py`) |
-| `use_short_date_format` | bool, `true` | Compact date rendering in sports scoreboards | `src/base_classes/sports/core.py` |
+| `use_short_date_format` | bool, `true` | Compact date rendering in sports scoreboards | Nothing since `src/base_classes` was removed; scoreboards read `display.use_short_date_format` from their own plugin config |
 | `dynamic_duration.max_duration_seconds` | int, optional | Cap for plugins that request dynamic display time | `DisplayController._get_global_dynamic_cap()` (`src/display_controller.py`) |
 
 ## `display.vegas_scroll` — continuous scroll mode
