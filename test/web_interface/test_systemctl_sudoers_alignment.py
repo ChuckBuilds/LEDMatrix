@@ -1,5 +1,6 @@
 """Guards that every privileged systemctl call the web interface makes is
-covered by a passwordless-sudo grant in configure_web_sudo.sh.
+covered by a passwordless-sudo grant in scripts/install/lib_sudoers.sh, which
+both first_time_install.sh and configure_web_sudo.sh write the rules from.
 
 The web interface runs headless (no TTY), so any `sudo` call that is not
 matched by a NOPASSWD rule in /etc/sudoers.d/ledmatrix_web falls back to a
@@ -25,7 +26,7 @@ API_V3_PKG = PROJECT_ROOT / "web_interface" / "blueprints" / "api_v3"
 
 def _api_v3_source() -> str:
     return "\n".join(p.read_text() for p in sorted(API_V3_PKG.glob("*.py")))
-SUDOERS_SCRIPT = PROJECT_ROOT / "scripts" / "install" / "configure_web_sudo.sh"
+SUDOERS_SCRIPT = PROJECT_ROOT / "scripts" / "install" / "lib_sudoers.sh"
 
 
 def _sudo_systemctl_calls(source: str) -> set[tuple[str, str]]:
@@ -64,7 +65,7 @@ def test_every_sudo_systemctl_call_is_granted() -> None:
     uncovered = {c for c in calls if c not in rules}
     assert not uncovered, (
         "These sudo systemctl calls have no matching NOPASSWD grant in "
-        "configure_web_sudo.sh; they will fail headless with "
+        "lib_sudoers.sh; they will fail headless with "
         "'sudo: a terminal is required to read the password': "
         + ", ".join(f"systemctl {v} {u}" for v, u in sorted(uncovered))
     )

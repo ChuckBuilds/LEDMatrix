@@ -1516,51 +1516,31 @@ POWEROFF_PATH=$(which poweroff)
 BASH_PATH=$(which bash)
 JOURNALCTL_PATH=$(which journalctl 2>/dev/null || true)
 
-# Create sudoers content
-cat > "$SUDOERS_TMP" << EOF
-# LED Matrix Web Interface passwordless sudo configuration
-# This allows the web interface user to run specific commands without a password
-
-# Allow $ACTUAL_USER to run specific commands without a password for the LED Matrix web interface
-$ACTUAL_USER ALL=(ALL) NOPASSWD: $REBOOT_PATH
-$ACTUAL_USER ALL=(ALL) NOPASSWD: $POWEROFF_PATH
-$ACTUAL_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH start ledmatrix.service
-$ACTUAL_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH stop ledmatrix.service
-$ACTUAL_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH restart ledmatrix.service
-$ACTUAL_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH enable ledmatrix.service
-$ACTUAL_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH disable ledmatrix.service
-$ACTUAL_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH status ledmatrix.service
-$ACTUAL_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH is-active ledmatrix
-$ACTUAL_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH is-active ledmatrix.service
-$ACTUAL_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH start ledmatrix-web.service
-$ACTUAL_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH stop ledmatrix-web.service
-$ACTUAL_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH restart ledmatrix-web.service
-$ACTUAL_USER ALL=(ALL) NOPASSWD: $BASH_PATH $PROJECT_ROOT_DIR/scripts/fix_perms/safe_plugin_rm.sh *
-# Install a requirements.txt as root via vetted helper, so packages are visible
-# to root-run ledmatrix.service (not just the web interface's own user).
-$ACTUAL_USER ALL=(ALL) NOPASSWD: $BASH_PATH $PROJECT_ROOT_DIR/scripts/fix_perms/safe_pip_install.sh *
-EOF
-if [ -n "$JOURNALCTL_PATH" ]; then
-    cat >> "$SUDOERS_TMP" << EOF
-# NOEXEC, because these rules end in a wildcard and journalctl starts a pager
-# when its output is a terminal. From that pager (less) a "!sh" is a root
-# shell -- the standard journalctl escalation. The web interface always passes
-# --no-pager, so nothing here needs it, but the rule cannot require a flag that
-# sits in the middle of the command line. NOEXEC stops the command executing
-# another program at all, which closes the hole without depending on wildcard
-# matching subtleties.
-$ACTUAL_USER ALL=(ALL) NOPASSWD:NOEXEC: $JOURNALCTL_PATH -u ledmatrix.service *
-$ACTUAL_USER ALL=(ALL) NOPASSWD:NOEXEC: $JOURNALCTL_PATH -u ledmatrix *
-$ACTUAL_USER ALL=(ALL) NOPASSWD:NOEXEC: $JOURNALCTL_PATH -t ledmatrix *
-EOF
+# The rules themselves live in scripts/install/lib_sudoers.sh, shared with
+# scripts/install/configure_web_sudo.sh so the two cannot drift apart again.
+# If it is missing (a damaged checkout), keep whatever is already installed
+# rather than failing the whole install; the gate below skips the install.
+SUDOERS_VALID=1
+SUDOERS_LIB="$PROJECT_ROOT_DIR/scripts/install/lib_sudoers.sh"
+if [ -f "$SUDOERS_LIB" ]; then
+    # shellcheck source=scripts/install/lib_sudoers.sh
+    . "$SUDOERS_LIB"
+    web_sudoers_rules "$ACTUAL_USER" "$PROJECT_ROOT_DIR" "$SYSTEMCTL_PATH" "$BASH_PATH" \
+        "$REBOOT_PATH" "$POWEROFF_PATH" "$JOURNALCTL_PATH" > "$SUDOERS_TMP"
+else
+    SUDOERS_VALID=0
+    echo "⚠ $SUDOERS_LIB not found; cannot generate the sudoers rules." >&2
+    echo "⚠ Leaving $SUDOERS_FILE unchanged. The web interface cannot control" >&2
+    echo "  the display service until this is fixed." >&2
 fi
 
 # Never install rules we have not parsed. A malformed drop-in in
 # /etc/sudoers.d makes sudo refuse every command for every user, which on a
 # headless Pi leaves no way in at all. If the rules do not parse, say so and
 # keep whatever is already installed.
-SUDOERS_VALID=1
-if command -v visudo >/dev/null 2>&1; then
+if [ "$SUDOERS_VALID" = "0" ]; then
+    :  # nothing was generated; already reported above
+elif command -v visudo >/dev/null 2>&1; then
     if ! visudo -c -f "$SUDOERS_TMP" >/dev/null 2>&1; then
         SUDOERS_VALID=0
         echo "⚠ The generated sudoers rules did not parse:" >&2
