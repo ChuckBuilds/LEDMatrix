@@ -969,3 +969,59 @@ class TestPixletEditorHostDefaultsButDoesNotOverride:
     def test_keeps_an_operator_configured_loopback_host(self, client, app_dir, tmp_path):
         env = self._start(client, app_dir, tmp_path, operator_host='127.0.0.1')
         assert env['PIXLET_EDITOR_HOST'] == '127.0.0.1'
+
+
+class TestStandaloneRenderUsesTheDeviceLocation:
+    """The web-service render (plugin not loaded) fills a blank Location field
+    the same way the display plugin does -- see test/test_device_location.py.
+    """
+
+    SCHEMA = {"schema": [{"typeOf": "location", "id": "location"}]}
+
+    @pytest.fixture
+    def app_dir(self, tmp_path, monkeypatch):
+        from web_interface.blueprints import api_v3 as module
+        apps_dir = tmp_path / "starlark-apps"
+        app_dir = apps_dir / "weather"
+        app_dir.mkdir(parents=True)
+        (app_dir / "weather.star").write_text("# app")
+        (app_dir / "schema.json").write_text(json.dumps(self.SCHEMA))
+        monkeypatch.setattr(module, '_STARLARK_APPS_DIR', apps_dir)
+        monkeypatch.setattr(module, '_STARLARK_MANIFEST_FILE', apps_dir / 'manifest.json')
+        (apps_dir / 'manifest.json').write_text(json.dumps(
+            {'apps': {'weather': {'star_file': 'weather.star'}}}))
+        config_manager = MagicMock()
+        config_manager.load_config.return_value = {
+            'timezone': 'America/New_York',
+            'location': {'city': 'Charlotte', 'state': 'North Carolina', 'country': 'US'},
+        }
+        monkeypatch.setattr(module.api_v3, 'config_manager', config_manager, raising=False)
+        monkeypatch.setattr(module, '_find_pixlet_binary', lambda _p=None: '/usr/bin/pixlet')
+        from src.device_location import DeviceLocationResolver
+        geocoder = MagicMock(return_value={'lat': 35.22709, 'lng': -80.84313,
+                                           'timezone': 'America/New_York'})
+        monkeypatch.setattr(module, '_starlark_device_location',
+                            DeviceLocationResolver(None, MagicMock(), geocoder))
+        return app_dir
+
+    def _render_args(self, app_dir):
+        from web_interface.blueprints import api_v3 as module
+
+        def fake_run(cmd, **kwargs):
+            (app_dir / 'cached_render.webp').write_bytes(b'webp')
+            return MagicMock(returncode=0, stderr='')
+
+        with patch.object(module.subprocess, 'run', side_effect=fake_run) as run:
+            ok, status, err = module._standalone_render_starlark_app('weather')
+        assert ok, err
+        return [a for a in run.call_args.args[0] if a.startswith('location=')]
+
+    def test_a_blank_location_renders_at_the_device_city(self, app_dir):
+        (app_dir / 'config.json').write_text(json.dumps({'location': ''}))
+        [arg] = self._render_args(app_dir)
+        assert json.loads(arg[len('location='):])['lat'] == '35.2271'
+
+    def test_a_saved_location_wins(self, app_dir):
+        saved = json.dumps({'lat': '40.6782', 'lng': '-73.9442'})
+        (app_dir / 'config.json').write_text(json.dumps({'location': saved}))
+        assert self._render_args(app_dir) == [f'location={saved}']

@@ -221,6 +221,7 @@
                                    data-starlark-location-key="timezone">
                         </div>
                     </div>
+                    <p class="text-xs text-gray-500 mt-1">Leave latitude and longitude blank to use this device's location (City / State / Country in General settings). If no city is set there, or it can't be looked up, the app uses its own default.</p>
                     {% if field_desc %}
                     <p class="text-xs text-gray-400 mt-1">{{ field_desc }}</p>
                     {% endif %}
@@ -421,9 +422,10 @@ function saveStarlarkConfig(appId) {
             var locKey = sub.getAttribute('data-starlark-location-key');
             if (sub.value) loc[locKey] = sub.value;
         });
-        if (Object.keys(loc).length > 0) {
-            config[fieldId] = JSON.stringify(loc);
-        }
+        // Blank still has to be sent: the save merges into the stored config,
+        // so leaving the key out kept the old location with no way to clear
+        // it back to the device's.
+        config[fieldId] = Object.keys(loc).length > 0 ? JSON.stringify(loc) : '';
     });
 
     fetch('/api/v3/starlark/apps/' + encodeURIComponent(appId) + '/config', {

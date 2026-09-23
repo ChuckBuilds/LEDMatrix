@@ -19,6 +19,7 @@ from PIL import Image
 
 from src.plugin_system.base_plugin import BasePlugin, VegasDisplayMode
 from src.logging_config import get_logger
+from src.device_location import DeviceLocationResolver, apply_device_location
 from pixlet_renderer import PixletRenderer
 from frame_extractor import FrameExtractor
 
@@ -228,6 +229,10 @@ class StarlarkAppsPlugin(BasePlugin):
         # Display state
         self.current_app: Optional[StarlarkApp] = None
         self.last_update_check = 0
+
+        # Unset location fields render at the device's location, not the
+        # app author's default (usually San Francisco).
+        self.device_location = DeviceLocationResolver(cache_manager, self.logger)
 
         # Check Pixlet availability
         if not self.pixlet.is_available():
@@ -882,6 +887,10 @@ class StarlarkAppsPlugin(BasePlugin):
             # Filter out LEDMatrix-internal timing/sizing keys before passing to pixlet
             INTERNAL_KEYS = {'render_interval', 'display_duration', 'render_width', 'render_height'}
             pixlet_config = {k: v for k, v in app.config.items() if k not in INTERNAL_KEYS}
+            # Applied here rather than saved into config.json, so a later
+            # change to the device location reaches the next render.
+            pixlet_config = apply_device_location(
+                pixlet_config, app.schema, self.device_location, self.global_config)
 
             success, error = self.pixlet.render(
                 star_file=str(app.star_file),

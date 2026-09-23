@@ -127,7 +127,7 @@ Verify installation:
 3. Filter by category: Weather, Sports, Finance, Games, Clocks, etc.
 4. Click **Install** on desired apps
 5. Configure each app:
-   - Set location/timezone
+   - Set location/timezone (optional: blank uses this device's location)
    - Enter API keys if required
    - Customize display preferences
 
@@ -137,7 +137,12 @@ Each app may have different configuration options:
 
 #### Common Configuration Types
 
-- **Location** (lat/lng/timezone): For weather, clocks, transit
+- **Location** (lat/lng/timezone): For weather, clocks, transit. Left blank,
+  the app renders at this device's location (City / State / Country under
+  General settings). If no city is set there, or the city can't be looked up
+  (no match, or the geocoder is unreachable -- retried after 30 minutes), the
+  app gets no location and falls back to its author's hard-coded default,
+  usually San Francisco. Fill it in only to point one app somewhere else.
 - **API Keys**: For services like weather, stocks, sports scores
 - **Display Preferences**: Colors, units, layouts
 - **Dropdown Options**: Team selections, language, themes
