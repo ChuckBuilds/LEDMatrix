@@ -9,9 +9,9 @@ can never disagree. (Historically the store used raw string equality, which
 reinstalled over cosmetic differences like "v1.2.0" vs "1.2.0" and even
 DOWNGRADED locally-ahead plugins; this file's tests killed that.)
 
-Two other version parsers legitimately remain and are pinned here so they
-don't drift: `compatibility.parse_semver` (the install-compatibility gate,
-range-spec oriented) and `skin_runtime._major` (skin API major gate).
+One other version parser legitimately remains and is pinned here so it
+doesn't drift: `compatibility.parse_semver` (the install-compatibility gate,
+range-spec oriented).
 """
 
 import json
@@ -21,7 +21,6 @@ import pytest
 from packaging.version import parse as pkg_parse
 
 from src.plugin_system.compatibility import is_update_available, parse_semver
-from src.skin_system.skin_runtime import _major
 from src.plugin_system.store_manager import PluginStoreManager
 from web_interface.blueprints.api_v3 import _is_plugin_update_available
 
@@ -140,25 +139,6 @@ class TestStoreManagerUsesSharedComparator:
         result, reinstall = self._run_update(store, info)
         assert result is True
         reinstall.assert_not_called()
-
-
-class TestSkinRuntimeMajor:
-    def test_plain_versions(self):
-        assert _major("1.0.0") == 1
-        assert _major("2.1") == 2
-
-    def test_int_input_tolerated(self):
-        assert _major(2) == 2
-
-    def test_garbage_returns_none(self):
-        assert _major("garbage") is None
-        assert _major(None) is None
-
-    def test_v_prefix_not_tolerated(self):
-        # Unlike parse_semver, _major does NOT strip a leading 'v' —
-        # a skin.json declaring "v1.0.0" fails the API gate. Characterized
-        # so a manifest-format loosening elsewhere doesn't silently diverge.
-        assert _major("v1.0.0") is None
 
 
 class TestParseSemverAgreesWithPackaging:

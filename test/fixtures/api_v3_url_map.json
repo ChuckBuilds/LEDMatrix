@@ -672,15 +672,6 @@
     ]
   ],
   [
-    "/api/v3/skins",
-    "api_v3.list_skins",
-    [
-      "GET",
-      "HEAD",
-      "OPTIONS"
-    ]
-  ],
-  [
     "/api/v3/starlark/apps",
     "api_v3.get_starlark_apps",
     [
