@@ -42,6 +42,12 @@ _FPS_HEALTHY_FRACTION = 0.9
 #: rather than fine.
 _FPS_HEARTBEAT_INTERVAL = 300.0
 
+#: Seconds between live-priority scans while scrolling. The scan asks every
+#: plugin mode has_live_priority() / has_live_content(): 139us per call on a
+#: Pi 4 with two scoreboards (9 modes), 1.7% of a 125fps frame, growing with
+#: every plugin. Game state doesn't change within a quarter second.
+_LIVE_PRIORITY_CHECK_INTERVAL = 0.25
+
 
 def _percentile(ordered: List[float], fraction: float) -> float:
     """Nearest-rank percentile of an already-sorted list.
@@ -69,6 +75,9 @@ class VegasModeCoordinator:
     - Process config updates
     - Provide status and control interface
     """
+
+    # Class-level so coordinators built without __init__ (tests) have it.
+    _last_live_check: float = float('-inf')
 
     def __init__(
         self,
@@ -336,9 +345,14 @@ class VegasModeCoordinator:
             # Check for config updates (synchronized access)
             has_pending_update = self._pending_config_update
 
-        # Check for live priority
-        if self._check_live_priority():
-            return False
+        # Check for live priority (throttled; see _LIVE_PRIORITY_CHECK_INTERVAL).
+        # Only a negative result is ever reused: a positive one pauses Vegas,
+        # and run_frame() returns early while paused.
+        now = time.monotonic()
+        if now - self._last_live_check >= _LIVE_PRIORITY_CHECK_INTERVAL:
+            self._last_live_check = now
+            if self._check_live_priority():
+                return False
 
         # Apply pending config update outside lock
         if has_pending_update:
@@ -632,6 +646,18 @@ class VegasModeCoordinator:
             self.stats['config_updates'] += 1
 
         logger.debug("Config update queued (version %d)", self._config_version)
+
+    def apply_pending_config_if_idle(self) -> None:
+        """Apply a queued config update while Vegas isn't running.
+
+        run_frame() applies updates between frames but returns early once
+        Vegas has stopped, so without this a disable followed by a re-enable
+        would never take effect. Call from the display thread only.
+        """
+        with self._state_lock:
+            if self._is_active or not self._pending_config_update:
+                return
+        self._apply_pending_config()
 
     def _apply_pending_config(self) -> None:
         """Apply pending configuration update."""

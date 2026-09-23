@@ -186,6 +186,28 @@ def test_durations_page_groups_by_plugin(client):
     assert "Other saved entries" in body
 
 
+def test_durations_page_leaves_unsaved_modes_blank(client):
+    """A saved duration overrides the plugin's own, so the page must not
+    pre-fill one for every mode: the first save would pin them all. Unsaved
+    modes are blank, with the plugin's duration as the placeholder."""
+    import copy
+    from web_interface.blueprints import pages_v3 as pv
+    config = copy.deepcopy(SMOKE_CONFIG)
+    config["clock"]["display_duration"] = 20
+    config["display"]["display_durations"] = {"weather_current": 40}
+    pv.pages_v3.config_manager.load_config.return_value = config
+    body = client.get("/partials/durations").get_data(as_text=True)
+
+    def field(mode):
+        start = body.index(f'id="duration__{mode}"')
+        return body[start:body.index(">", start)]
+
+    assert 'value=""' in field("clock") and 'placeholder="20"' in field("clock")
+    assert 'value="40"' in field("weather_current")
+    assert 'value=""' in field("weather_daily")
+    assert 'placeholder="15"' in field("weather_daily")
+
+
 def test_display_advanced_section_contains_tuning_fields(client):
     body = client.get("/partials/display").get_data(as_text=True)
     adv = body.find('id="display-section-advanced-hardware"')
