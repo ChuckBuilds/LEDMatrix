@@ -502,6 +502,41 @@ print_rgbmatrix_build_failure() {
     fi
 }
 
+# Set WEB_SERVICE_USER to the account ledmatrix-web.service runs as, or "root"
+# when it cannot tell. Steps 3.1 and 11 choose plugin-directory ownership from
+# it. The logic was pasted three times, identically, and is kept verbatim here.
+# Note: install_web_service.sh and install_service.sh no longer contain the
+# "User=root" / "User=${ACTUAL_USER}" strings grepped for below (the units come
+# from systemd/*.service templates with User=__USER__), so until Step 8 has
+# installed the unit this yields "root".
+detect_web_service_user() {
+    WEB_SERVICE_USER="root"
+    if [ -f "/etc/systemd/system/ledmatrix-web.service" ]; then
+        # Check actual installed service file (most accurate)
+        WEB_SERVICE_USER=$(grep "^User=" /etc/systemd/system/ledmatrix-web.service | cut -d'=' -f2 || echo "root")
+    elif [ -f "$PROJECT_ROOT_DIR/scripts/install/install_web_service.sh" ]; then
+        # Check install_web_service.sh (used by first_time_install.sh)
+        if grep -q "User=root" "$PROJECT_ROOT_DIR/scripts/install/install_web_service.sh"; then
+            WEB_SERVICE_USER="root"
+        elif grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/scripts/install/install_web_service.sh"; then
+            WEB_SERVICE_USER="$ACTUAL_USER"
+        fi
+    elif [ -f "$PROJECT_ROOT_DIR/systemd/ledmatrix-web.service" ]; then
+        # Check template file (may have placeholder)
+        WEB_SERVICE_USER=$(grep "^User=" "$PROJECT_ROOT_DIR/systemd/ledmatrix-web.service" | cut -d'=' -f2 || echo "root")
+        # If template has placeholder, check install script
+        if [ "$WEB_SERVICE_USER" = "__USER__" ] || [ -z "$WEB_SERVICE_USER" ]; then
+            # Check install_service.sh to see what user it uses
+            if [ -f "$PROJECT_ROOT_DIR/scripts/install/install_service.sh" ] && grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/scripts/install/install_service.sh"; then
+                WEB_SERVICE_USER="$ACTUAL_USER"
+            fi
+        fi
+    elif [ -f "$PROJECT_ROOT_DIR/scripts/install/install_service.sh" ] && grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/scripts/install/install_service.sh"; then
+        # Web service will be installed by install_service.sh as ACTUAL_USER
+        WEB_SERVICE_USER="$ACTUAL_USER"
+    fi
+}
+
 echo ""
 echo "This script will perform the following steps:"
 echo "1. Check prerequisites (network, disk, memory) and install system dependencies"
@@ -699,32 +734,7 @@ else
     fi
     
     # Determine ownership based on web service user
-    # Check if web service file exists and what user it runs as
-    WEB_SERVICE_USER="root"
-    if [ -f "/etc/systemd/system/ledmatrix-web.service" ]; then
-        # Check actual installed service file (most accurate)
-        WEB_SERVICE_USER=$(grep "^User=" /etc/systemd/system/ledmatrix-web.service | cut -d'=' -f2 || echo "root")
-    elif [ -f "$PROJECT_ROOT_DIR/scripts/install/install_web_service.sh" ]; then
-        # Check install_web_service.sh (used by first_time_install.sh)
-        if grep -q "User=root" "$PROJECT_ROOT_DIR/scripts/install/install_web_service.sh"; then
-            WEB_SERVICE_USER="root"
-        elif grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/scripts/install/install_web_service.sh"; then
-            WEB_SERVICE_USER="$ACTUAL_USER"
-        fi
-    elif [ -f "$PROJECT_ROOT_DIR/systemd/ledmatrix-web.service" ]; then
-        # Check template file (may have placeholder)
-        WEB_SERVICE_USER=$(grep "^User=" "$PROJECT_ROOT_DIR/systemd/ledmatrix-web.service" | cut -d'=' -f2 || echo "root")
-        # If template has placeholder, check install script
-        if [ "$WEB_SERVICE_USER" = "__USER__" ] || [ -z "$WEB_SERVICE_USER" ]; then
-            # Check install_service.sh to see what user it uses
-            if [ -f "$PROJECT_ROOT_DIR/scripts/install/install_service.sh" ] && grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/scripts/install/install_service.sh"; then
-                WEB_SERVICE_USER="$ACTUAL_USER"
-            fi
-        fi
-    elif [ -f "$PROJECT_ROOT_DIR/scripts/install/install_service.sh" ] && grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/scripts/install/install_service.sh"; then
-        # Web service will be installed by install_service.sh as ACTUAL_USER
-        WEB_SERVICE_USER="$ACTUAL_USER"
-    fi
+    detect_web_service_user
     
     # If web service runs as ACTUAL_USER (not root), set ownership to ACTUAL_USER
     # so the web service can change permissions. Root service can still access via group (775).
@@ -758,32 +768,7 @@ if [ ! -d "$PLUGIN_REPOS_DIR" ]; then
 fi
 
 # Determine ownership based on web service user
-# Check if web service file exists and what user it runs as
-WEB_SERVICE_USER="root"
-if [ -f "/etc/systemd/system/ledmatrix-web.service" ]; then
-    # Check actual installed service file (most accurate)
-    WEB_SERVICE_USER=$(grep "^User=" /etc/systemd/system/ledmatrix-web.service | cut -d'=' -f2 || echo "root")
-elif [ -f "$PROJECT_ROOT_DIR/scripts/install/install_web_service.sh" ]; then
-    # Check install_web_service.sh (used by first_time_install.sh)
-    if grep -q "User=root" "$PROJECT_ROOT_DIR/scripts/install/install_web_service.sh"; then
-        WEB_SERVICE_USER="root"
-    elif grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/scripts/install/install_web_service.sh"; then
-        WEB_SERVICE_USER="$ACTUAL_USER"
-    fi
-elif [ -f "$PROJECT_ROOT_DIR/systemd/ledmatrix-web.service" ]; then
-    # Check template file (may have placeholder)
-    WEB_SERVICE_USER=$(grep "^User=" "$PROJECT_ROOT_DIR/systemd/ledmatrix-web.service" | cut -d'=' -f2 || echo "root")
-    # If template has placeholder, check install script
-    if [ "$WEB_SERVICE_USER" = "__USER__" ] || [ -z "$WEB_SERVICE_USER" ]; then
-        # Check install_service.sh to see what user it uses
-        if [ -f "$PROJECT_ROOT_DIR/scripts/install/install_service.sh" ] && grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/scripts/install/install_service.sh"; then
-            WEB_SERVICE_USER="$ACTUAL_USER"
-        fi
-    fi
-elif [ -f "$PROJECT_ROOT_DIR/scripts/install/install_service.sh" ] && grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/scripts/install/install_service.sh"; then
-    # Web service will be installed by install_service.sh as ACTUAL_USER
-    WEB_SERVICE_USER="$ACTUAL_USER"
-fi
+detect_web_service_user
 
 # If web service runs as ACTUAL_USER (not root), set ownership to ACTUAL_USER
 # so the web service can change permissions. Root service can still access via group (775).
@@ -1670,28 +1655,8 @@ fi
 
 # Re-apply plugin directory permissions based on web service user
 echo "Re-applying plugin directory permissions..."
-# Determine web service user (check installed service, install scripts, or template)
-WEB_SERVICE_USER="root"
-if [ -f "/etc/systemd/system/ledmatrix-web.service" ]; then
-    # Check actual installed service file (most accurate)
-    WEB_SERVICE_USER=$(grep "^User=" /etc/systemd/system/ledmatrix-web.service | cut -d'=' -f2 || echo "root")
-elif [ -f "$PROJECT_ROOT_DIR/scripts/install/install_web_service.sh" ]; then
-    # Check install_web_service.sh (used by first_time_install.sh)
-    if grep -q "User=root" "$PROJECT_ROOT_DIR/scripts/install/install_web_service.sh"; then
-        WEB_SERVICE_USER="root"
-    elif grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/scripts/install/install_web_service.sh"; then
-        WEB_SERVICE_USER="$ACTUAL_USER"
-    fi
-elif [ -f "$PROJECT_ROOT_DIR/systemd/ledmatrix-web.service" ]; then
-    WEB_SERVICE_USER=$(grep "^User=" "$PROJECT_ROOT_DIR/systemd/ledmatrix-web.service" | cut -d'=' -f2 || echo "root")
-    if [ "$WEB_SERVICE_USER" = "__USER__" ] || [ -z "$WEB_SERVICE_USER" ]; then
-        if [ -f "$PROJECT_ROOT_DIR/scripts/install/install_service.sh" ] && grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/scripts/install/install_service.sh"; then
-            WEB_SERVICE_USER="$ACTUAL_USER"
-        fi
-    fi
-elif [ -f "$PROJECT_ROOT_DIR/scripts/install/install_service.sh" ] && grep -q "User=\${ACTUAL_USER}" "$PROJECT_ROOT_DIR/scripts/install/install_service.sh"; then
-    WEB_SERVICE_USER="$ACTUAL_USER"
-fi
+# Determine ownership based on web service user
+detect_web_service_user
 
 # Set ownership based on web service user
 if [ "$WEB_SERVICE_USER" = "$ACTUAL_USER" ] || [ "$WEB_SERVICE_USER" != "root" ]; then
