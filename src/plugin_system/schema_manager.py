@@ -99,8 +99,7 @@ def normalize_legacy_booleans(config: Any, schema: Any,
 #: config section, so they are allowed in every plugin's config whether or not
 #: the plugin's schema declares them. The one list for validation, for the web
 #: save filter and for the load-time checks -- a private copy is how JSON saves
-#: came to drop ``skin`` and the ``vegas_*`` keys while the validator accepted
-#: them.
+#: came to drop the ``vegas_*`` keys while the validator accepted them.
 #:
 #: Values are the schema used when the plugin does not declare the property.
 CORE_PLUGIN_PROPERTIES: Dict[str, Dict[str, Any]] = {
@@ -123,19 +122,6 @@ CORE_PLUGIN_PROPERTIES: Dict[str, Dict[str, Any]] = {
         "default": False,
         "description": "Enable live priority takeover when plugin has live content"
     },
-    # Skin selection (docs/SKIN_SYSTEM.md). Deliberately NOT an enum here:
-    # validation must keep passing when a configured skin gets uninstalled
-    # (rendering falls back to built-in). The install-dependent enum is
-    # injected only at serve time (inject_skin_selector) for the web UI
-    # dropdown.
-    "skin": {
-        "type": ["string", "object", "null"],
-        "description": "Visual skin id, or a per-mode mapping like {\"live\": \"my-skin\"}"
-    },
-    "skin_options": {
-        "type": "object",
-        "description": "Options passed through to the selected skin"
-    },
     # Vegas tuning read by vegas_mode/plugin_adapter.py and base_plugin.py.
     # Left untyped: the adapter validates them itself and ignores a bad
     # value with a log line, so a stored one must never block a save.
@@ -156,6 +142,32 @@ CORE_PLUGIN_PROPERTIES: Dict[str, Dict[str, Any]] = {
 CORE_VEGAS_TUNING_KEYS = frozenset({
     'vegas_width_pct', 'vegas_overflow', 'vegas_max_width_screens',
 })
+
+
+#: Per-plugin keys the core used to own and no longer reads. ``skin`` and
+#: ``skin_options`` belonged to the skin system, which was removed; a
+#: config.json written before then can still carry them in any plugin section,
+#: and most plugin schemas set ``additionalProperties: false``. They are
+#: dropped wherever a section is prepared (prepare_plugin_config) or validated,
+#: and the web saves drop them from the stored section, so an old config loads
+#: and saves without a validation error and loses them on its next save.
+RETIRED_PLUGIN_KEYS = frozenset({'skin', 'skin_options'})
+
+
+def drop_retired_plugin_keys(config: Any, schema: Any) -> Any:
+    """``config`` without the RETIRED_PLUGIN_KEYS its plugin's schema leaves undeclared.
+
+    A plugin whose schema declares one of these names owns it and keeps it;
+    without a schema nothing is dropped. Never mutates ``config``, and returns
+    it unchanged when there is nothing to drop.
+    """
+    if not isinstance(config, dict) or not isinstance(schema, dict) \
+            or RETIRED_PLUGIN_KEYS.isdisjoint(config):
+        return config
+    declared = schema.get('properties')
+    declared = declared if isinstance(declared, dict) else {}
+    return {key: value for key, value in config.items()
+            if key not in RETIRED_PLUGIN_KEYS or key in declared}
 
 
 def with_core_plugin_properties(schema: Dict[str, Any]) -> Dict[str, Any]:
@@ -299,14 +311,15 @@ def prepare_plugin_config(config: Any, schema: Optional[Dict[str, Any]],
                           changed_paths: Optional[List[str]] = None) -> Dict[str, Any]:
     """The config a plugin runs with, from its stored (or submitted) section.
 
-    Legacy booleans are read as ``{"enabled": ...}`` objects
-    (normalize_legacy_booleans), then schema defaults fill in whatever is
-    missing. Loading a plugin, both config saves, GET /plugins/config, hot
-    reload and the dev tools all go through this, so a plugin sees the same
-    shape however its config reached it.
+    Retired core keys are dropped (drop_retired_plugin_keys), legacy booleans
+    are read as ``{"enabled": ...}`` objects (normalize_legacy_booleans), then
+    schema defaults fill in whatever is missing. Loading a plugin, both config
+    saves, GET /plugins/config, hot reload and the dev tools all go through
+    this, so a plugin sees the same shape however its config reached it.
     """
     config = config if isinstance(config, dict) else {}
     if schema:
+        config = drop_retired_plugin_keys(config, schema)
         config = normalize_legacy_booleans(config, schema, changed_paths)
     return merge_config_defaults(config, defaults)
 
@@ -620,7 +633,8 @@ class SchemaManager:
             # Core plugin properties (CORE_PLUGIN_PROPERTIES) are handled by
             # the base plugin system and should not cause validation failures:
             # they are allowed even when the plugin's schema doesn't declare
-            # them, and never required.
+            # them, and never required. Retired ones are ignored.
+            config = drop_retired_plugin_keys(config, schema)
             enhanced_schema = with_core_plugin_properties(schema)
             if plugin_id:
                 declared = schema.get("properties", {}) if isinstance(schema, dict) else {}

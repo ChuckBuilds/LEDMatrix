@@ -8,7 +8,9 @@ test_api_v3_secret_roundtrip.py, so assertions are on config.json itself.
 - Legacy booleans (#588) were normalized only at load, so posting back what
   GET /plugins/config returned failed validation.
 - The JSON save's filter kept only enabled/display_duration/live_priority, so
-  a submitted skin, skin_options or vegas_* tuning key was silently dropped.
+  a submitted vegas_* tuning key was silently dropped.
+- ``skin`` and ``skin_options`` outlived the skin system in stored configs:
+  every save path must accept a section carrying them, and drop them.
 - Plugin sections posted to /config/main skipped all of that and were stored
   verbatim, including values /plugins/config rejects.
 """
@@ -65,7 +67,9 @@ STORED = {
     "display": {"brightness": 80, "show_icons": False},
     "global": {"dynamic_duration": {"enabled": False, "min_duration_seconds": 45}},
     "vegas_width_pct": 60,
+    # Written by a release that still had the skin system
     "skin": "neon",
+    "skin_options": {"accent": "#00ff00"},
 }
 
 _ATTRS = ('config_manager', 'plugin_manager', 'plugin_store_manager',
@@ -174,26 +178,62 @@ class TestCoreOwnedKeysSurviveTheFilter:
         env.store({"enabled": True, "city": "Paris"})
         resp = env.save({
             "vegas_width_pct": 50, "vegas_overflow": "truncate",
-            "vegas_max_width_screens": 2, "skin": "retro",
-            "skin_options": {"accent": "#ff0000"}, "live_priority": True,
+            "vegas_max_width_screens": 2, "live_priority": True,
         })
         assert resp.status_code == 200, resp.get_json()
         stored = env.stored()
         assert stored["vegas_width_pct"] == 50
         assert stored["vegas_overflow"] == "truncate"
         assert stored["vegas_max_width_screens"] == 2
-        assert stored["skin"] == "retro"
-        assert stored["skin_options"] == {"accent": "#ff0000"}
         assert stored["live_priority"] is True
 
     def test_stored_core_keys_survive_an_unrelated_save(self, env):
         assert env.save({"city": "Nice"}).status_code == 200
         stored = env.stored()
-        assert stored["vegas_width_pct"] == 60 and stored["skin"] == "neon"
+        assert stored["vegas_width_pct"] == 60
 
     def test_a_non_core_unknown_key_is_still_filtered(self, env):
         assert env.save({"not_in_schema": 1}).status_code == 200
         assert "not_in_schema" not in env.stored()
+
+
+class TestRetiredSkinKeys:
+    """STORED carries skin/skin_options, and SCHEMA sets
+    additionalProperties: false without declaring them."""
+
+    @staticmethod
+    def _assert_dropped(stored):
+        assert "skin" not in stored and "skin_options" not in stored
+        assert stored["vegas_width_pct"] == 60  # still a core-owned key
+
+    def test_json_save_accepts_and_drops_them(self, env):
+        resp = env.save({"city": "Nice"})
+        assert resp.status_code == 200, resp.get_json()
+        assert env.stored()["city"] == "Nice"
+        self._assert_dropped(env.stored())
+
+    def test_form_save_accepts_and_drops_them(self, env):
+        resp = env.client.post(f"/api/v3/plugins/config?plugin_id={PLUGIN_ID}",
+                               data={"city": "Nice"})
+        assert resp.status_code == 200, resp.get_json()
+        assert env.stored()["city"] == "Nice"
+        self._assert_dropped(env.stored())
+
+    def test_config_main_accepts_and_drops_them(self, env):
+        resp = env.client.post("/api/v3/config/main", json={PLUGIN_ID: {"city": "Nice"}})
+        assert resp.status_code == 200, resp.get_json()
+        self._assert_dropped(env.stored())
+
+    def test_submitted_ones_are_not_stored(self, env):
+        env.store({"enabled": True, "city": "Paris", "vegas_width_pct": 60})
+        resp = env.save({"skin": "retro", "skin_options": {"accent": "#ff0000"}})
+        assert resp.status_code == 200, resp.get_json()
+        self._assert_dropped(env.stored())
+
+    def test_get_config_leaves_them_out(self, env):
+        data = env.client.get(f"/api/v3/plugins/config?plugin_id={PLUGIN_ID}").get_json()["data"]
+        assert data["city"] == "Paris"
+        assert "skin" not in data and "skin_options" not in data
 
 
 class TestLegacyBooleans:
@@ -246,7 +286,7 @@ class TestPluginSectionsInConfigMain:
         assert stored["city"] == "Lyon"
         assert stored["display"] == {"brightness": 80, "show_icons": False}
         assert stored["vegas_overflow"] == "rotate"
-        assert stored["vegas_width_pct"] == 60 and stored["skin"] == "neon"
+        assert stored["vegas_width_pct"] == 60
 
     def test_secrets_still_go_to_the_secrets_file(self, env):
         resp = self._post(env, {PLUGIN_ID: {"api_key": "s3cret"}})

@@ -2190,7 +2190,10 @@ def save_plugin_config():
         if plugin_id not in current_config:
             current_config[plugin_id] = {}
 
-        current_config[plugin_id] = deep_merge(current_config[plugin_id], regular_config)
+        # Retired core keys (skin, skin_options) leave the stored section here
+        from src.plugin_system.schema_manager import drop_retired_plugin_keys
+        current_config[plugin_id] = deep_merge(
+            drop_retired_plugin_keys(current_config[plugin_id], schema), regular_config)
 
         # Deep merge plugin secrets in secrets config
         if secrets_config:

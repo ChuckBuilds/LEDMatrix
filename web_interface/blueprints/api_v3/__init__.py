@@ -1276,9 +1276,8 @@ def _enhance_schema_with_core_properties(schema):
     """
     Enhance schema with the core-owned per-plugin properties.
 
-    ``enabled``, ``display_duration``, ``live_priority``, ``skin``,
-    ``skin_options`` and the ``vegas_*`` tuning keys are system-managed and
-    always allowed, even when the plugin's schema doesn't declare them. The
+    ``enabled``, ``display_duration``, ``live_priority`` and the ``vegas_*``
+    tuning keys are system-managed and always allowed, even when the plugin's schema doesn't declare them. The
     list is ``schema_manager.CORE_PLUGIN_PROPERTIES``, the one validation uses,
     so the save filter keeps exactly what validation accepts.
 

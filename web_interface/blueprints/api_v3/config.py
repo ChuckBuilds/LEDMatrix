@@ -1052,10 +1052,14 @@ def save_main_config():
                 if error:
                     return error
 
-                # Deep merge regular config into main config
+                # Deep merge regular config into main config, dropping
+                # retired core keys (skin, skin_options) from the stored section
+                from src.plugin_system.schema_manager import drop_retired_plugin_keys
                 stored_section = current_config.get(plugin_id)
                 current_config[plugin_id] = deep_merge(
-                    stored_section if isinstance(stored_section, dict) else {}, regular_config)
+                    drop_retired_plugin_keys(
+                        stored_section if isinstance(stored_section, dict) else {}, schema),
+                    regular_config)
                 if secrets_config:
                     plugin_secrets_updates[plugin_id] = secrets_config
 
