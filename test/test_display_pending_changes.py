@@ -496,6 +496,49 @@ class TestRunLoopBlanksWhenVegasHandsBack:
         assert shown == [], f"rendered {shown} after the display was scheduled off"
         c.display_manager.clear.assert_called()
 
+    @pytest.mark.parametrize('needs_high_fps', [True, False])
+    def test_a_screen_scheduled_off_midway_stops_rendering(self, controller, clock,
+                                                           needs_high_fps):
+        c = controller
+        shown_at = []
+        plugin = _Plugin('ticker', 'ticker', [])
+        plugin.needs_high_fps = needs_high_fps
+        plugin.display = lambda force_clear=False: shown_at.append(clock.t) or True
+        c.plugin_modes.clear()
+        c.mode_to_plugin_id.clear()
+        c.plugin_display_modes.clear()
+        c.plugin_modes['ticker'] = plugin
+        c.mode_to_plugin_id['ticker'] = 'ticker'
+        c.plugin_display_modes['ticker'] = ['ticker']
+        c.available_modes = ['ticker']
+        c.current_mode_index = 0
+        c._cleanup_expired_wifi_status = MagicMock()
+        c._refresh_config_cache({
+            'display': {'hardware': {'brightness': 90},
+                        'display_durations': {'ticker': 120}},
+            'schedule': {'enabled': True, 'start_time': '07:00', 'end_time': '22:59'},
+        })
+        c.plugin_manager.plugin_executor.execute_display.side_effect = (
+            lambda target, plugin_id, force_clear=False, display_mode=None, **kw:
+            target.display(force_clear=force_clear))
+
+        def stop():
+            raise _Stop()
+
+        wall_start = datetime(2026, 9, 21, 22, 59, 0)
+        t0 = clock.t
+        clock.after(150, stop)
+        with patch('src.display_controller.datetime') as mock_dt:
+            mock_dt.strptime = datetime.strptime
+            mock_dt.now.side_effect = lambda tz=None: wall_start + timedelta(seconds=clock.t - t0)
+            c.run()
+
+        off_at = t0 + 60  # 23:00:00, halfway through a 120s screen
+        assert shown_at and shown_at[0] < off_at
+        assert shown_at[-1] - off_at <= 1.0 + c.PENDING_CHANGES_INTERVAL, (
+            f"kept rendering {shown_at[-1] - off_at:.1f}s after the display was scheduled off")
+        assert not c.is_display_active
+
 
 class TestRunLoopAppliesBrightnessMidScreen:
     """The render loops of run() itself, not just the helpers they call."""
