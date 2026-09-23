@@ -7,9 +7,7 @@ Provides helpers for consistent error responses across API endpoints.
 from typing import Any, Optional
 from flask import jsonify
 
-from src.web_interface.errors import (
-    WebInterfaceError, ErrorCode, ErrorCategory
-)
+from src.web_interface.errors import WebInterfaceError, ErrorCode
 from src.logging_config import get_logger
 from src.redaction import redact_credentials
 

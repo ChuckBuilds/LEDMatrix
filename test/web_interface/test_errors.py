@@ -1,7 +1,7 @@
 """
 Tests for src/web_interface/errors.py — the structured error type behind
-every API error response (category inference, default suggestions, the
-JSON shape, and exception conversion).
+every API error response (default suggestions, the JSON shape, and
+exception conversion).
 
 Pure logic; no Flask context needed.
 
@@ -11,39 +11,7 @@ caller passing [] to mean "no suggestions" silently got the default list.
 
 import pytest
 
-from src.web_interface.errors import ErrorCategory, ErrorCode, WebInterfaceError
-
-
-class TestCategoryInference:
-    @pytest.mark.parametrize("code,expected", [
-        (ErrorCode.CONFIG_SAVE_FAILED, ErrorCategory.CONFIGURATION),
-        (ErrorCode.CONFIG_ROLLBACK_FAILED, ErrorCategory.CONFIGURATION),
-        (ErrorCode.PLUGIN_NOT_FOUND, ErrorCategory.PLUGIN),
-        (ErrorCode.PLUGIN_OPERATION_CONFLICT, ErrorCategory.PLUGIN),
-        (ErrorCode.VALIDATION_ERROR, ErrorCategory.VALIDATION),
-        (ErrorCode.SCHEMA_VALIDATION_FAILED, ErrorCategory.VALIDATION),
-        (ErrorCode.INVALID_INPUT, ErrorCategory.VALIDATION),
-        (ErrorCode.NETWORK_ERROR, ErrorCategory.NETWORK),
-        (ErrorCode.API_ERROR, ErrorCategory.NETWORK),
-        (ErrorCode.TIMEOUT, ErrorCategory.NETWORK),
-        (ErrorCode.PERMISSION_DENIED, ErrorCategory.PERMISSION),
-        (ErrorCode.FILE_PERMISSION_ERROR, ErrorCategory.PERMISSION),
-        (ErrorCode.SYSTEM_ERROR, ErrorCategory.SYSTEM),
-        (ErrorCode.SERVICE_UNAVAILABLE, ErrorCategory.SYSTEM),
-        (ErrorCode.UNKNOWN_ERROR, ErrorCategory.UNKNOWN),
-    ])
-    def test_every_code_prefix_maps_to_its_category(self, code, expected):
-        assert WebInterfaceError(code, "msg").category is expected
-
-    def test_explicit_category_overrides_inference(self):
-        error = WebInterfaceError(
-            ErrorCode.CONFIG_SAVE_FAILED, "msg", category=ErrorCategory.SYSTEM)
-        assert error.category is ErrorCategory.SYSTEM
-
-    def test_every_error_code_gets_a_category(self):
-        # No code may fall through uncategorized as the enum grows.
-        for code in ErrorCode:
-            assert isinstance(WebInterfaceError(code, "msg").category, ErrorCategory)
+from src.web_interface.errors import ErrorCode, WebInterfaceError
 
 
 class TestDefaultSuggestions:
@@ -79,8 +47,9 @@ class TestToDict:
         result = WebInterfaceError(ErrorCode.SYSTEM_ERROR, "boom").to_dict()
         assert result["status"] == "error"
         assert result["error_code"] == "SYSTEM_ERROR"
-        assert result["error_category"] == "system"
         assert result["message"] == "boom"
+        # No error_category: nothing in the UI, tests or plugins ever read it.
+        assert set(result) == {"status", "error_code", "message", "suggested_fixes"}
 
     def test_details_included_when_set(self):
         result = WebInterfaceError(
@@ -116,23 +85,7 @@ class TestToDict:
 
 
 class TestFromException:
-    @pytest.mark.parametrize("exc_name,expected", [
-        ("ConfigError", ErrorCode.CONFIG_LOAD_FAILED),
-        ("PluginError", ErrorCode.PLUGIN_LOAD_FAILED),
-        ("PermissionError", ErrorCode.PERMISSION_DENIED),
-        ("AccessDenied", ErrorCode.PERMISSION_DENIED),
-        ("ValidationError", ErrorCode.VALIDATION_ERROR),
-        ("SchemaError", ErrorCode.VALIDATION_ERROR),
-        ("NetworkError", ErrorCode.NETWORK_ERROR),
-        ("ConnectionError", ErrorCode.NETWORK_ERROR),
-        ("TimeoutError", ErrorCode.TIMEOUT),
-        ("SomethingElse", ErrorCode.UNKNOWN_ERROR),
-    ])
-    def test_code_inferred_from_exception_class_name(self, exc_name, expected):
-        exc = type(exc_name, (Exception,), {})("boom")
-        assert WebInterfaceError.from_exception(exc).error_code is expected
-
-    def test_explicit_code_skips_inference(self):
+    def test_the_given_code_is_reported(self):
         error = WebInterfaceError.from_exception(
             ValueError("boom"), error_code=ErrorCode.PLUGIN_NOT_FOUND)
         assert error.error_code is ErrorCode.PLUGIN_NOT_FOUND
@@ -140,28 +93,28 @@ class TestFromException:
     def test_message_is_the_safe_one_not_the_exception_text(self):
         # The raw exception text is not echoed into `message`; that field is
         # a fixed, user-facing string per code.
-        error = WebInterfaceError.from_exception(ValueError("secret-ish detail"))
+        error = WebInterfaceError.from_exception(ValueError("secret-ish detail"), ErrorCode.UNKNOWN_ERROR)
         assert error.message == "An unexpected error occurred"
         assert "secret-ish" not in error.message
 
     def test_exception_type_recorded_in_context(self):
-        error = WebInterfaceError.from_exception(ValueError("boom"))
+        error = WebInterfaceError.from_exception(ValueError("boom"), ErrorCode.UNKNOWN_ERROR)
         assert error.context["exception_type"] == "ValueError"
 
     def test_caller_context_is_preserved_alongside_type(self):
         error = WebInterfaceError.from_exception(
-            ValueError("boom"), context={"plugin_id": "clock"})
+            ValueError("boom"), ErrorCode.UNKNOWN_ERROR, context={"plugin_id": "clock"})
         assert error.context["plugin_id"] == "clock"
         assert error.context["exception_type"] == "ValueError"
 
     def test_caller_supplied_exception_type_is_overwritten(self):
         error = WebInterfaceError.from_exception(
-            ValueError("boom"), context={"exception_type": "Fake"})
+            ValueError("boom"), ErrorCode.UNKNOWN_ERROR, context={"exception_type": "Fake"})
         assert error.context["exception_type"] == "ValueError"
 
     def test_original_error_retained(self):
         exc = ValueError("boom")
-        assert WebInterfaceError.from_exception(exc).original_error is exc
+        assert WebInterfaceError.from_exception(exc, ErrorCode.UNKNOWN_ERROR).original_error is exc
 
     def test_every_code_has_a_safe_message(self):
         for code in ErrorCode:
@@ -205,4 +158,4 @@ class TestExceptionDetails:
     def test_details_flow_into_from_exception(self):
         exc = ValueError("boom")
         exc.context = {"config_path": "/etc/x.json"}
-        assert "config_path" in WebInterfaceError.from_exception(exc).details
+        assert "config_path" in WebInterfaceError.from_exception(exc, ErrorCode.UNKNOWN_ERROR).details
