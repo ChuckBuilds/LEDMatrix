@@ -104,6 +104,25 @@
         <div class="w-2 h-2 bg-green-500 rounded-full"></div>
         <span>Connected to log stream</span>
     </div>
+
+    <!-- Plugin errors, as recorded by the display service -->
+    <div id="plugin-errors-panel" class="mt-6 border-t border-gray-200 pt-4">
+        <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+            <div>
+                <h3 class="text-base font-semibold text-gray-900">Plugin errors</h3>
+                <p id="plugin-errors-meta" class="text-xs text-gray-600">Recorded by the display service</p>
+            </div>
+            <div class="flex items-center gap-2">
+                <button id="plugin-errors-refresh-btn" type="button" class="btn bg-gray-600 hover:bg-gray-700 text-white px-3 py-1 rounded text-sm">
+                    <i class="fas fa-sync-alt mr-1"></i>Refresh
+                </button>
+                <button id="plugin-errors-clear-btn" type="button" class="btn bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded text-sm">
+                    <i class="fas fa-eraser mr-1"></i>Clear
+                </button>
+            </div>
+        </div>
+        <div id="plugin-errors-body" class="text-sm text-gray-600" aria-live="polite">Loading...</div>
+    </div>
 </div>
 
 <script>
@@ -218,16 +237,28 @@ window._filteredLogs = [];
     // Current-plugin poll and the realtime log stream run only while the Logs
     // tab is active and the page is visible (both restart with an immediate
     // refresh). Re-registering on partial reload replaces the old one.
+    const pluginErrorsRefreshBtn = document.getElementById('plugin-errors-refresh-btn');
+    if (pluginErrorsRefreshBtn) pluginErrorsRefreshBtn.onclick = refreshPluginErrors;
+    const pluginErrorsClearBtn = document.getElementById('plugin-errors-clear-btn');
+    if (pluginErrorsClearBtn) pluginErrorsClearBtn.onclick = clearPluginErrors;
+
     function startLogsActivity() {
         refreshCurrentPluginStatus();
         if (window._currentPluginPollTimer) clearInterval(window._currentPluginPollTimer);
         window._currentPluginPollTimer = setInterval(refreshCurrentPluginStatus, 5000);
+        refreshPluginErrors();
+        if (window._pluginErrorsPollTimer) clearInterval(window._pluginErrorsPollTimer);
+        window._pluginErrorsPollTimer = setInterval(refreshPluginErrors, 15000);
         if (window._isRealtime && !window._logsEventSource) setupRealtimeLogs();
     }
     function stopLogsActivity() {
         if (window._currentPluginPollTimer) {
             clearInterval(window._currentPluginPollTimer);
             window._currentPluginPollTimer = null;
+        }
+        if (window._pluginErrorsPollTimer) {
+            clearInterval(window._pluginErrorsPollTimer);
+            window._pluginErrorsPollTimer = null;
         }
         stopRealtimeLogs();
     }
@@ -787,6 +818,120 @@ function refreshCurrentPluginStatus() {
         });
 }
 
+// Plugin errors panel. The display service records them and publishes a
+// snapshot every few seconds; /api/v3/errors/summary serves that snapshot.
+// Plugin ids and messages come from plugins: everything goes through escapeHtml.
+function formatErrorTime(iso) {
+    return iso ? String(iso).replace('T', ' ').slice(0, 19) : '';
+}
+
+function renderPluginErrors(summary) {
+    const body = document.getElementById('plugin-errors-body');
+    const meta = document.getElementById('plugin-errors-meta');
+    if (!body) return;
+
+    if (meta) {
+        let text = 'Recorded by the display service';
+        if (summary.generated_at) text += ' · updated ' + formatErrorTime(summary.generated_at);
+        if (summary.clear_pending) text += ' · clearing…';
+        meta.textContent = text;
+    }
+
+    if (!summary.snapshot_available) {
+        body.innerHTML = '<p class="text-gray-600"><i class="fas fa-hourglass-half mr-1"></i>' +
+            'Display service hasn’t reported yet. Errors appear here once it is running.</p>';
+        return;
+    }
+    const plugins = Object.entries(summary.plugin_error_counts || {}).map(([id, types]) => {
+        const total = Object.values(types || {}).reduce((sum, n) => sum + (Number(n) || 0), 0);
+        return { id, types: types || {}, total };
+    }).sort((a, b) => b.total - a.total);
+    const patterns = Object.values(summary.active_patterns || {});
+
+    if (!Number(summary.total_errors) && plugins.length === 0 && patterns.length === 0) {
+        body.innerHTML = '<p class="text-gray-600"><i class="fas fa-check-circle text-green-600 mr-1"></i>' +
+            'No plugin errors recorded</p>';
+        return;
+    }
+
+    let html = '';
+    if (plugins.length) {
+        html += '<div class="overflow-x-auto"><table class="min-w-full text-sm">' +
+            '<thead><tr class="text-left text-xs uppercase text-gray-500 border-b border-gray-200">' +
+            '<th class="py-1 pr-4 font-medium">Plugin</th><th class="py-1 pr-4 font-medium">Errors</th>' +
+            '<th class="py-1 font-medium">Types</th></tr></thead><tbody>';
+        plugins.forEach(p => {
+            const types = Object.entries(p.types)
+                .map(([type, n]) => `${escapeHtml(type)} ×${escapeHtml(String(Number(n) || 0))}`)
+                .join(', ');
+            html += '<tr class="border-b border-gray-100">' +
+                `<td class="py-1 pr-4"><code class="bg-gray-100 px-1 rounded">${escapeHtml(p.id)}</code></td>` +
+                `<td class="py-1 pr-4 font-semibold text-gray-900">${escapeHtml(String(p.total))}</td>` +
+                `<td class="py-1 text-gray-700 break-words">${types}</td></tr>`;
+        });
+        html += '</tbody></table></div>';
+    }
+
+    if (patterns.length) {
+        const badge = {
+            critical: 'bg-red-100 text-red-800',
+            error: 'bg-amber-100 text-amber-800',
+            warning: 'bg-yellow-100 text-yellow-800'
+        };
+        html += '<h4 class="mt-4 mb-2 text-sm font-semibold text-gray-900">Repeating errors</h4><ul class="list-none pl-0 space-y-2">';
+        patterns.forEach(p => {
+            const severity = String(p.severity || 'warning');
+            const affected = (p.affected_plugins || []).map(id => escapeHtml(id)).join(', ') || 'unknown';
+            const sample = (p.sample_messages || [])[0];
+            html += '<li class="border border-gray-200 rounded-lg px-3 py-2">' +
+                '<div class="flex flex-wrap items-center gap-2">' +
+                `<span class="px-2 py-0.5 rounded text-xs font-semibold ${badge[severity] || badge.warning}">${escapeHtml(severity)}</span>` +
+                `<code class="font-semibold text-gray-900">${escapeHtml(p.error_type || '')}</code>` +
+                `<span class="text-gray-700">×${escapeHtml(String(Number(p.count) || 0))}</span>` +
+                `<span class="text-xs text-gray-500 ml-auto">last seen ${escapeHtml(formatErrorTime(p.last_seen))}</span></div>` +
+                `<div class="mt-1 text-xs text-gray-600">Plugins: ${affected}</div>` +
+                (sample ? `<div class="mt-1 text-xs font-mono text-gray-700 break-words">${escapeHtml(sample)}</div>` : '') +
+                '</li>';
+        });
+        html += '</ul>';
+    }
+    body.innerHTML = html;
+}
+
+function refreshPluginErrors() {
+    fetch('/api/v3/errors/summary')
+        .then(response => response.json())
+        .then(data => {
+            if (data.status !== 'success' || !data.data) throw new Error(data.message || 'Request failed');
+            renderPluginErrors(data.data);
+        })
+        .catch(() => {
+            const body = document.getElementById('plugin-errors-body');
+            if (body) body.textContent = 'Could not load plugin errors.';
+        });
+}
+
+function clearPluginErrors() {
+    if (!confirm('Clear all recorded plugin errors?')) return;
+    fetch('/api/v3/errors/clear', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ all: true })
+    })
+        .then(response => response.json())
+        .then(data => {
+            if (typeof showNotification !== 'undefined') {
+                showNotification(data.status === 'success' ? 'Plugin errors cleared'
+                    : (data.message || 'Could not clear plugin errors'),
+                    data.status === 'success' ? 'success' : 'error');
+            }
+            refreshPluginErrors();
+        })
+        .catch(() => {
+            if (typeof showNotification !== 'undefined') showNotification('Could not clear plugin errors', 'error');
+        });
+}
+
 // Cleanup on page unload
 window.addEventListener('beforeunload', function() {
     if (window._logsEventSource) {
@@ -795,6 +940,10 @@ window.addEventListener('beforeunload', function() {
     if (window._currentPluginPollTimer) {
         clearInterval(window._currentPluginPollTimer);
         window._currentPluginPollTimer = null;
+    }
+    if (window._pluginErrorsPollTimer) {
+        clearInterval(window._pluginErrorsPollTimer);
+        window._pluginErrorsPollTimer = null;
     }
 });
 </script>
