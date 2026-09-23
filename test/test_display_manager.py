@@ -1,7 +1,6 @@
 import os
 import pytest
 from unittest.mock import MagicMock, patch
-from PIL import ImageDraw
 
 # display_manager imports the hardware rgbmatrix module at import time unless
 # EMULATOR=true. Use the emulator (same convention as
@@ -106,22 +105,6 @@ class TestDisplayManagerDrawing:
 
             assert dm.image.convert("L").getbbox() is not None, \
                 "draw_text lit no pixels"
-            
-    def test_draw_image(self, test_config, mock_rgb_matrix):
-        """Test image drawing."""
-        with patch.dict('os.environ', {'EMULATOR': 'false'}):
-            dm = DisplayManager(test_config)
-            
-            # DisplayManager doesn't have draw_image method
-            # It uses SetImage on canvas in update_display()
-            # Just verify DisplayManager can handle image operations
-            from PIL import Image
-            test_image = Image.new('RGB', (64, 32))
-            dm.image = test_image
-            dm.draw = ImageDraw.Draw(dm.image)
-            
-            # Verify image was set
-            assert dm.image is not None
 
 
 class TestDisplayManagerResourceManagement:

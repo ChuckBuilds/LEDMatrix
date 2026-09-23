@@ -52,6 +52,7 @@ import zlib
 import freetype
 
 from src.common import snapshot_policy
+from src.deprecation import deprecated
 from src.common.permission_utils import (
     ensure_directory_permissions,
     ensure_file_permissions,
@@ -1139,6 +1140,7 @@ class DisplayManager:
         except Exception as e:
             logger.error(f"Error drawing text: {e}", exc_info=True)
 
+    @deprecated("3.7.0")
     def draw_sun(self, x: int, y: int, size: int = 16):
         """Draw a sun icon using yellow circles and lines."""
         center = (x + size//2, y + size//2)
@@ -1159,6 +1161,7 @@ class DisplayManager:
             end_y = center[1] + ((radius + ray_length) * math.sin(rad))
             self.draw.line([start_x, start_y, end_x, end_y], fill=(255, 255, 0), width=2)
 
+    @deprecated("3.7.0")
     def draw_cloud(self, x: int, y: int, size: int = 16, color=(200, 200, 200)):
         """Draw a cloud icon."""
         # Draw multiple circles to form a cloud shape
@@ -1166,6 +1169,7 @@ class DisplayManager:
         self.draw.ellipse([x+size//2, y+size//3, x+size//2+size//2, y+size//3+size//2], fill=color)
         self.draw.ellipse([x+size//3, y+size//6, x+size//3+size//2, y+size//6+size//2], fill=color)
 
+    @deprecated("3.7.0")
     def draw_rain(self, x: int, y: int, size: int = 16):
         """Draw rain icon with cloud and droplets."""
         # Draw cloud
@@ -1180,6 +1184,7 @@ class DisplayManager:
             self.draw.line([drop_x, drop_y, drop_x, drop_y+drop_size], 
                           fill=drop_color, width=2)
 
+    @deprecated("3.7.0")
     def draw_snow(self, x: int, y: int, size: int = 16):
         """Draw snow icon with cloud and snowflakes."""
         # Draw cloud
@@ -1300,6 +1305,7 @@ class DisplayManager:
         ]
         self.draw.polygon(bolt_points, fill=bolt_color)
 
+    @deprecated("3.7.0")
     def draw_weather_icon(self, condition: str, x: int, y: int, size: int = 16) -> None:
         """Draw a weather icon based on the condition."""
         if condition.lower() in ['clear', 'sunny']:
@@ -1316,6 +1322,7 @@ class DisplayManager:
             self._draw_sun(x, y, size)
         # Note: No update_display() here - let the caller handle the update
 
+    @deprecated("3.7.0")
     def draw_text_with_icons(self, text: str, icons: List[tuple] = None, x: int = None, y: int = None, 
                             color: tuple = (255, 255, 255)):
         """Draw text with weather icons at specified positions."""
@@ -1600,6 +1607,7 @@ class DisplayManager:
         if removed_count > 0:
             logger.debug(f"Cleaned up {removed_count} expired deferred updates")
 
+    @deprecated("3.7.0")
     def get_scrolling_stats(self) -> dict:
         """Get current scrolling statistics for debugging."""
         return {

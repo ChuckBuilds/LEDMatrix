@@ -45,6 +45,14 @@ class TestGetFont:
         font = fm.get_font("five_by_seven", 7)
         assert isinstance(font, freetype.Face)
 
+    def test_bdf_at_a_size_it_lacks_uses_its_native_strike(self, fm):
+        # FreeType rejects any size but the strike's own. This used to hand
+        # back PIL's default font, a different typeface, for 5x7 at 8 or 10.
+        for size in (8, 10):
+            font = fm.get_font("five_by_seven", size)
+            assert isinstance(font, freetype.Face), size
+            assert font.size.y_ppem == 7
+
     def test_repeat_call_returns_cached_identity(self, fm):
         first = fm.get_font("press_start", 8)
         hits_before = fm.performance_stats["cache_hits"]

@@ -866,6 +866,4 @@
         getValue: function () { return null; }, // file ops are immediate; nothing to submit
         setValue: function (fieldId) { loadFiles(fieldId); }
     });
-
-    console.log('[PluginFileManager] plugin-file-manager widget registered');
 })();

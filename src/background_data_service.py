@@ -16,14 +16,15 @@ Key Features:
 
 import itertools
 import time
+from datetime import datetime
 import logging
 import threading
 import requests
 from typing import Dict, Any, Optional, Callable, List
 from dataclasses import dataclass, field
 from enum import Enum
-import queue
 from concurrent.futures import ThreadPoolExecutor
+import pytz
 from src.cache_manager import CacheManager
 from src.common.espn_dates import (
     RANGE_RETRY_SECONDS,
@@ -57,7 +58,9 @@ class FetchRequest:
     timeout: int = 30
     retry_count: int = 0
     max_retries: int = 3
-    priority: int = 1  # Higher number = higher priority
+    # Recorded but not acted on: requests go straight to the thread pool in
+    # submission order. Kept because plugins pass it through.
+    priority: int = 1
     callback: Optional[Callable] = None
     # Callbacks from submitters that JOINED this fetch instead of starting a
     # duplicate one. The primary `callback` above belongs to whoever created
@@ -143,7 +146,6 @@ class BackgroundDataService:
         self._request_seq = itertools.count()
         self.active_requests: Dict[str, FetchRequest] = {}
         self.completed_requests: Dict[str, FetchResult] = {}
-        self.request_queue = queue.PriorityQueue()
         
         # Thread safety
         self._lock = threading.RLock()
@@ -170,14 +172,10 @@ class BackgroundDataService:
         self.session.mount('http://', requests.adapters.HTTPAdapter(max_retries=3))
         self.session.mount('https://', requests.adapters.HTTPAdapter(max_retries=3))
         
-        # Default headers
-        self.default_headers = {
-            'User-Agent': 'LEDMatrix/1.0 (https://github.com/yourusername/LEDMatrix)',
-            'Accept': 'application/json',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Connection': 'keep-alive'
-        }
+        # Default headers: core's shared set (real User-Agent, no hand-set
+        # Accept-Encoding) -- see src/common/api_helper.py.
+        from src.common.api_helper import DEFAULT_HTTP_HEADERS
+        self.default_headers = dict(DEFAULT_HTTP_HEADERS)
         
         logger.info(f"BackgroundDataService initialized with {max_workers} workers")
     
@@ -187,10 +185,12 @@ class BackgroundDataService:
         This ensures Recent/Upcoming managers and background service
         use the same cache keys.
         """
-        # Use the centralized cache key generation from CacheManager
-        from src.cache_manager import CacheManager
-        cache_manager = CacheManager()
-        return cache_manager.generate_sport_cache_key(sport, date_str)
+        # Same format as CacheManager.generate_sport_cache_key(). This used to
+        # build a whole CacheManager to call it -- config load, cache-dir
+        # probing with test writes -- on every submit without a cache_key.
+        if date_str is None:
+            date_str = datetime.now(pytz.utc).strftime('%Y%m%d')
+        return f"{sport}_{date_str}"
 
     def submit_fetch_request(self, 
                            sport: str, 
@@ -215,7 +215,8 @@ class BackgroundDataService:
             headers: HTTP headers
             timeout: Request timeout
             max_retries: Maximum number of retries
-            priority: Request priority (higher = more important)
+            priority: Accepted for compatibility and ignored; requests run in
+                submission order.
             callback: Optional callback function when request completes
             
         Returns:
@@ -719,7 +720,9 @@ class BackgroundDataService:
                 'completed_requests_count': len(self.completed_requests),
                 'max_completed_requests': self._max_completed_requests,
                 'completed_requests_usage_percent': (len(self.completed_requests) / self._max_completed_requests * 100) if self._max_completed_requests > 0 else 0,
-                'queue_size': self.request_queue.qsize(),
+                # Nothing is queued outside the executor; kept for callers
+                # that read the key.
+                'queue_size': 0,
                 'last_cleanup': self._last_completed_requests_cleanup,
                 'cleanup_interval': self._completed_requests_cleanup_interval
             }

@@ -7,8 +7,6 @@ This directory contains utility scripts for maintenance and system operations.
 - **`clear_cache.py`** - Clears LEDMatrix cache data (specific keys or all cache)
 - **`start_web_conditionally.py`** - Conditionally starts the web interface based on config settings
 - **`wifi_monitor_daemon.py`** - Background daemon that monitors WiFi/Ethernet connection and manages access point mode
-- **`cleanup_venv.sh`** - Cleans up Python virtual environment files
-- **`clear_python_cache.sh`** - Clears Python cache files (__pycache__, *.pyc, etc.)
 - **`pixlet_config_editor.sh`** - Opens Pixlet's own config UI for one installed Starlark app
 - **`apply_dns_single_request.sh`** - Adds `options single-request` to the resolver (run by `ledmatrix-dns-fix.service`)
 

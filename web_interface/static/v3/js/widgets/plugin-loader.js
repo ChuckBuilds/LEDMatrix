@@ -29,7 +29,7 @@
 
         // Check if widget is already registered
         if (this.has(widgetName)) {
-            console.log(`[PluginWidgetLoader] Widget ${widgetName} already registered`);
+            if (window.debugLog) window.debugLog(`[PluginWidgetLoader] Widget ${widgetName} already registered`);
             return;
         }
 
@@ -45,7 +45,7 @@
             try {
                 // Dynamic import of plugin widget
                 await import(widgetPath);
-                console.log(`[PluginWidgetLoader] Loaded plugin widget: ${pluginId}/${widgetName} from ${widgetPath}`);
+                if (window.debugLog) window.debugLog(`[PluginWidgetLoader] Loaded plugin widget: ${pluginId}/${widgetName} from ${widgetPath}`);
                 
                 // Verify widget was registered
                 if (this.has(widgetName)) {
@@ -124,6 +124,4 @@
 
         return loadedWidgets;
     };
-
-    console.log('[PluginWidgetLoader] Plugin widget loader initialized');
 })();

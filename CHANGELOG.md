@@ -19,6 +19,93 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+- `FontManager.get_font()` returns a BDF font at its native size when asked for
+  a size the file doesn't contain (5x7.bdf at 8 or 10px, say). It used to
+  return PIL's default font, a different typeface, so a plugin that relied on
+  that will now render the font it asked for.
+- `src.wifi_manager.get_wifi_status_path()` — where WiFi status messages for
+  the display are written (`config/wifi_status.json`).
+
+Deprecated, removed in 3.7.0 (each logs a warning on first use; see
+`docs/PLUGIN_API_REFERENCE.md#deprecated-apis` for replacements). Nothing in
+core, the monorepo or the registry's third-party plugins calls them:
+
+- `CacheManager`: `has_data_changed`, `update_cache`, `setup_persistent_cache`,
+  `get_sport_live_interval`, `get_sport_key_from_cache_key`,
+  `get_background_cached_data`, `is_background_data_available`,
+  `record_cache_hit`, `record_cache_miss`, `record_fetch_time`,
+  `get_cache_metrics`, `log_cache_metrics`, `get_memory_cache_stats`.
+- `DisplayManager`: `draw_weather_icon`, `draw_sun`, `draw_cloud`, `draw_rain`,
+  `draw_snow`, `draw_text_with_icons`, `get_scrolling_stats`.
+- `FontManager`: `set_override`, `remove_override`, `get_overrides`,
+  `add_font`, `remove_font`, `validate_font`, `get_font_catalog`,
+  `get_available_fonts`, `get_size_tokens`, `get_performance_stats`,
+  `get_manager_fonts`, `get_detected_fonts`, `get_plugin_fonts`,
+  `unregister_plugin_fonts`.
+- `PluginManager.get_enabled_plugins`.
+
+### Config writes
+
+- A power cut or crash mid-save can no longer leave `config/config.json`
+  truncated. `ConfigManager.save_config()` wrote the file in place; it,
+  `save_config_atomic()`, `save_raw_file_content()` and backup rollback now
+  share one writer (`atomic_write_text` in `src/config_manager_atomic.py`)
+  that fsyncs a temp file, renames it into place and fsyncs the directory.
+- `save_config_atomic()` no longer rewrites `config_secrets.json` on every
+  save, only when its content changes, and rotating backups no longer re-reads
+  every backup. The backups themselves are unchanged:
+  `config/backups/config.json.backup.<version>` plus its paired secrets
+  backup, five newest kept.
+- A save by the root-run display service keeps the file's previous owner
+  instead of handing `config.json` to root, and an install path with
+  "secrets" in a directory name no longer makes `config.json` mode 0640.
+
+New names in existing modules (no new modules; a plugin importing these must
+floor on the release that ships them):
+
+- `src.common.api_helper`: `USER_AGENT`, `DEFAULT_HTTP_HEADERS` (read-only).
+- `src.logo_downloader`: `fetch_logo`, `save_png_atomically`,
+  `shared_downloader`.
+
+### Logo downloads
+
+- `download_missing_logo` / `LogoDownloader.download_logo` (the path the
+  scoreboard plugins use) now stream the logo with a 10 MB cap, accept only an
+  `image/*` response that Pillow can decode, and move the finished RGBA PNG
+  into place atomically. A failed, oversized or non-image download no longer
+  leaves a partial file behind, and no longer replaces a logo already on disk.
+  `LogoHelper._download_logo` goes through the same code. Signatures and return
+  values are unchanged; saved files are pixel-identical to before.
+- `download_missing_logo` reuses one downloader (one `requests.Session`) per
+  thread instead of building a new one for every logo.
+- Placeholder logos are written atomically, without the `test_write.tmp`
+  probe file.
+
+### HTTP headers
+
+- The logo downloader and the background data service send the real
+  `LEDMatrix/1.0 (+https://github.com/ChuckBuilds/LEDMatrix)` User-Agent
+  instead of a `yourusername` / `contact@example.com` placeholder, and no
+  longer set `Accept-Encoding: ... br` by hand (brotli is not installed, so a
+  `br` response could not be decoded); requests picks the encodings.
+
+### Plugin error reporting
+
+- `/api/v3/errors/summary` and `/api/v3/errors/plugin/<id>` report the errors
+  the display service recorded. They used to read the web process's own error
+  aggregator, which never records anything, so they always answered "no
+  errors". The display service now publishes a bounded snapshot to the shared
+  cache (`plugin_error_snapshot`, at most every 10 seconds and only on change;
+  `src/error_aggregator.py`, started from `DisplayController.__init__`).
+  Responses keep their shape and add `snapshot_available`, `generated_at` and
+  `clear_pending`; exception text has credentials redacted.
+- `POST /api/v3/errors/clear` records a request (`plugin_error_clear_request`)
+  the display service applies within about 5 seconds; reads hide the cleared
+  errors at once. It accepts `"all": true`, and `cleared_count` can be `null`
+  when the count is only known to the display service.
+- The Logs tab has a **Plugin errors** panel: per-plugin counts, repeating
+  errors and a Clear button.
+
 ## 3.5.0
 
 New modules a plugin may import via `src.*` (floor on 3.5.0):
@@ -125,6 +212,19 @@ New modules a plugin may import via `src.*` (floor on 3.5.0):
   fetched, which keeps the peak memory of a four-capped-month fetch to about
   16 MB over the sequential path rather than 43 MB — `docs/LOW_MEMORY_BOARDS.md`
   puts a 1 GB Pi 3B+ at under 200 MB of headroom.
+- `ESPNDataSource.fetch_standings` asks each league the endpoint that league
+  actually publishes. It tried `/standings` first whatever the league and fell
+  back to `/rankings` only on a 404, but college leagues answer `/standings`
+  with a 200 that carries no poll, so the fallback never fired: the rank badge
+  simply never appeared and anything keyed off rankings quietly did nothing.
+  Endpoints are now ordered by whether the league publishes a poll, and a 200
+  that lacks the key counts as a miss, so a league answering both still ends up
+  with whichever carries the poll. Only a 404 is routine — that is how a league
+  says it has none; a connection error, a timeout or an unparseable body is
+  logged as an error again, and a bug raised while inspecting the payload is no
+  longer swallowed as a missing poll. This is the implementation the football,
+  baseball and hockey boards already ship; core was the last copy on the old
+  one.
 
 ### Scrolling
 
@@ -353,6 +453,19 @@ New modules a plugin may import via `src.*` (floor on 3.5.0):
   timeouts with a second bash path, and all reinstalls share a 10-minute
   budget, so a rollback finishes inside the unit's 30-minute limit instead of
   being killed mid-way.
+
+### Installers
+
+- The generated `ledmatrix_web` sudoers rules are parsed before they are
+  installed. Both installers built the drop-in from `which` lookups and copied
+  it into `/etc/sudoers.d` without ever checking it, and a malformed file there
+  makes sudo refuse every command for every user — on a headless Pi, that is
+  unrecoverable over SSH. `first_time_install.sh` now runs `visudo -c` on the
+  generated file and, if it does not parse, prints what visudo said and leaves
+  the installed file untouched instead of replacing it with a broken one;
+  `configure_web_sudo.sh` does the same before offering the rules for
+  confirmation. `first_time_install.sh` also built that file at a fixed `/tmp`
+  path as root; `mktemp` now picks the name.
 
 ### Small fixes (update-all, plugin system settings, scripts)
 

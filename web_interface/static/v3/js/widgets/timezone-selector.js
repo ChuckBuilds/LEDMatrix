@@ -414,6 +414,4 @@
             }, 50);
         });
     })();
-
-    console.log('[TimezoneSelectorWidget] Timezone selector widget registered');
 })();

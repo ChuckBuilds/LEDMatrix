@@ -4,7 +4,7 @@ Routes decorate the shared `api_v3` Blueprint from ._common, so their
 endpoint names are unchanged by living here.
 """
 from web_interface.blueprints.api_v3 import (
-    _ensure_cache_manager, _ensure_display_service_running,
+    _ensure_display_service_running,
     _get_display_service_status, _stop_display_service, api_v3,
     describe_exception, jsonify, logger, os, request, uuid,
 )
@@ -13,6 +13,19 @@ import web_interface.blueprints.api_v3 as _pkg
 # as module attributes, and a value binding would not see the patch.
 # Several are also called from helpers that live in __init__, so the
 # package is the only patch point that covers every caller.
+
+
+def _cache_manager():
+    """The web process's CacheManager, the one app.py puts on the blueprint.
+
+    Created on first use when nothing set it (a test app, an embedder), and
+    stored back on the blueprint so every route shares that one instance.
+    """
+    cache = getattr(api_v3, 'cache_manager', None)
+    if cache is None:
+        from src.cache_manager import CacheManager
+        cache = api_v3.cache_manager = CacheManager()
+    return cache
 
 
 @api_v3.route('/display/current', methods=['GET'])
@@ -137,7 +150,7 @@ def get_display_modes():
 def get_on_demand_status():
     """Return the current on-demand display state."""
     try:
-        cache = _ensure_cache_manager()
+        cache = _cache_manager()
         # memory_ttl=0: the display service writes this key, so only the file
         # is current. This process's memory tier would keep serving the first
         # copy it read for the full max_age -- "active" for two minutes after
@@ -209,7 +222,7 @@ def start_on_demand_display():
 
         # Set the on-demand request in cache FIRST (before starting service)
         # This ensures the request is available when the service starts/restarts
-        cache = _ensure_cache_manager()
+        cache = _cache_manager()
         request_id = data.get('request_id') or str(uuid.uuid4())
         request_payload = {
             'request_id': request_id,
@@ -277,7 +290,7 @@ def stop_on_demand_display():
 
         # Set the stop request in cache FIRST
         # The display controller will poll this and restart without the on-demand filter
-        cache = _ensure_cache_manager()
+        cache = _cache_manager()
         request_id = data.get('request_id') or str(uuid.uuid4())
         request_payload = {
             'request_id': request_id,
@@ -313,7 +326,7 @@ def get_current_display_status():
     process directly.
     """
     try:
-        cache = _ensure_cache_manager()
+        cache = _cache_manager()
         # memory_ttl=0: written by the display service; see get_on_demand_status.
         state = cache.get('display_current_state', max_age=120, memory_ttl=0)
         if state is None:

@@ -985,6 +985,10 @@ def save_main_config():
                 mode_key = field[len('duration__'):]
                 if not mode_key:
                     continue
+                if raw_value is None or str(raw_value).strip() == '':
+                    # Blank means "use the plugin's own duration".
+                    current_config['display']['display_durations'].pop(mode_key, None)
+                    continue
                 try:
                     int_value = int(raw_value)
                 except (ValueError, TypeError, OverflowError):

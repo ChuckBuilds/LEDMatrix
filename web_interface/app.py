@@ -30,7 +30,6 @@ from src.plugin_system.schema_manager import SchemaManager
 from src.plugin_system.operation_queue import PluginOperationQueue
 from src.plugin_system.state_manager import PluginStateManager
 from src.plugin_system.operation_history import OperationHistory
-from src.plugin_system.health_monitor import PluginHealthMonitor
 
 _JOURNALCTL = shutil.which('journalctl')
 _SYSTEMCTL = shutil.which('systemctl')
@@ -90,12 +89,15 @@ config = config_manager.load_config()
 plugin_system_config = config.get('plugin_system', {})
 plugins_dir_name = plugin_system_config.get('plugins_directory', 'plugin-repos')
 
+# Project root (LEDMatrix directory). Needed below for data/ and assets/ paths
+# whether or not the plugins directory is absolute.
+project_root = Path(__file__).parent.parent
+
 # Resolve plugin directory - handle both absolute and relative paths
 if os.path.isabs(plugins_dir_name):
     plugins_dir = Path(plugins_dir_name)
 else:
-    # If relative, resolve relative to the project root (LEDMatrix directory)
-    project_root = Path(__file__).parent.parent
+    # If relative, resolve relative to the project root
     plugins_dir = project_root / plugins_dir_name
 
 plugin_manager = PluginManager(
@@ -154,11 +156,6 @@ operation_history = OperationHistory(
     lazy_load=True
 )
 
-# Initialize health monitoring (if health tracker is available)
-# Deferred until first request to improve startup time
-health_monitor = None
-_health_monitor_initialized = False
-
 # Plugin discovery is deferred until first API request that needs it
 # This improves startup time - endpoints will call discover_plugins() when needed
 
@@ -181,7 +178,6 @@ api_v3.schema_manager = schema_manager
 api_v3.operation_queue = operation_queue
 api_v3.plugin_state_manager = plugin_state_manager
 api_v3.operation_history = operation_history
-api_v3.health_monitor = health_monitor
 # Initialize cache manager for API endpoints
 from src.cache_manager import CacheManager
 api_v3.cache_manager = CacheManager()
@@ -926,28 +922,6 @@ def favicon():
     """Return 204 No Content for favicon to avoid 404 errors"""
     return '', 204
 
-def _initialize_health_monitor():
-    """Initialize health monitoring after server is ready to accept requests."""
-    global health_monitor, _health_monitor_initialized
-    if _health_monitor_initialized:
-        return
-    
-    if health_monitor is None and hasattr(plugin_manager, 'health_tracker') and plugin_manager.health_tracker:
-        try:
-            health_monitor = PluginHealthMonitor(
-                health_tracker=plugin_manager.health_tracker,
-                check_interval=60.0,  # Check every minute
-                degraded_threshold=0.5,
-                unhealthy_threshold=0.8,
-                max_response_time=5.0
-            )
-            health_monitor.start_monitoring()
-            print("✓ Plugin health monitoring started")
-        except Exception as e:
-            print(f"⚠ Could not start health monitoring: {e}")
-    
-    _health_monitor_initialized = True
-
 _reconciliation_done = False
 _reconciliation_started = False
 import threading as _threading
@@ -1035,13 +1009,11 @@ def _run_startup_reconciliation() -> None:
         # retrigger reconciliation on every subsequent request.
         _reconciliation_done = True
 
-# Initialize health monitor and run reconciliation on first request
+# Run reconciliation in the background on first request
 @app.before_request
-def check_health_monitor():
-    """Ensure health monitor is initialized; launch reconciliation in background."""
+def start_startup_reconciliation():
+    """Launch startup reconciliation in the background once."""
     global _reconciliation_started
-    if not _health_monitor_initialized:
-        _initialize_health_monitor()
     with _reconciliation_lock:
         if not _reconciliation_started:
             _reconciliation_started = True

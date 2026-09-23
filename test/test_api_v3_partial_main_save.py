@@ -210,6 +210,19 @@ class TestVegasCycleDurations:
         assert resp.status_code == 200, resp.get_json()
         assert saved['config']['display']['display_durations']['clock_duration'] == 45
 
+    def test_per_mode_duration_saves_and_blank_clears_it(self, api_v3_client, saved, api_v3_module):
+        # The Rotation page leaves a mode blank to mean "the plugin's own
+        # duration"; a saved value overrides the plugin, so blank must remove
+        # it rather than 400 or pin a number.
+        stored = copy.deepcopy(STORED)
+        stored['display']['display_durations'] = {'weather_current': 40, 'clock': 20}
+        api_v3_module.api_v3.config_manager.load_config.side_effect =             lambda *a, **k: copy.deepcopy(stored)
+        resp = _post_json(api_v3_client, {'__form_section': 'durations',
+                                          'duration__clock': '45',
+                                          'duration__weather_current': ''})
+        assert resp.status_code == 200, resp.get_json()
+        assert saved['config']['display']['display_durations'] == {'clock': 45}
+
 
 class TestRawSaveStartsAutoUpdateSetup:
     @pytest.fixture

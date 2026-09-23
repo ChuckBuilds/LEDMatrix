@@ -425,18 +425,9 @@ class StateReconciliation:
             # error. The entry is still surfaced as MANUAL_FIX_REQUIRED so the
             # UI can show it, but no auto-repair will run.
             previously_unrecoverable = plugin_id in self._unrecoverable_missing_on_disk
-            # Also refuse to re-install a plugin that the user just uninstalled
-            # through the UI — prevents a race where the reconciler fires
-            # between file removal and config cleanup and resurrects the
-            # plugin the user just deleted.
-            recently_uninstalled = (
-                self.store_manager is not None
-                and hasattr(self.store_manager, 'was_recently_uninstalled')
-                and self.store_manager.was_recently_uninstalled(plugin_id)
-            )
             # Also refuse to resurrect a plugin the user has persistently
-            # uninstalled. Unlike the in-memory race guard above, this record
-            # survives restarts, so the user's removal sticks across updates.
+            # uninstalled. The record survives restarts, so the user's
+            # removal sticks across updates.
             persistently_uninstalled = (
                 self.store_manager is not None
                 and hasattr(self.store_manager, 'is_plugin_uninstalled')
@@ -445,7 +436,6 @@ class StateReconciliation:
             can_repair = (
                 self.store_manager is not None
                 and not previously_unrecoverable
-                and not recently_uninstalled
                 and not persistently_uninstalled
             )
             inconsistencies.append(Inconsistency(

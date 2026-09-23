@@ -1,4 +1,4 @@
-from flask import Blueprint, Response, render_template, flash, jsonify, url_for
+from flask import Blueprint, Response, render_template, jsonify, url_for
 from jinja2 import TemplateNotFound
 from markupsafe import escape
 from html.parser import HTMLParser
@@ -20,12 +20,8 @@ from web_interface import widget_bundle
 
 logger = logging.getLogger(__name__)
 
-# Will be initialized when blueprint is registered
-config_manager = None
-plugin_manager = None
-plugin_store_manager = None
-schema_manager = None
-
+# The managers live on the blueprint object: app.py sets
+# pages_v3.config_manager, pages_v3.plugin_manager and the rest.
 pages_v3 = Blueprint('pages_v3', __name__)
 
 
@@ -162,37 +158,8 @@ _SEARCH_INDEX_CACHE = {'sig': None, 'fields': None}
 
 @pages_v3.route('/')
 def index():
-    """Main v3 interface page"""
-    try:
-        if pages_v3.config_manager:
-            # Load configuration data
-            main_config = pages_v3.config_manager.load_config()
-            schedule_config = main_config.get('schedule', {})
-
-            # Get raw config files for JSON editor
-            main_config_data = pages_v3.config_manager.get_raw_file_content('main')
-            secrets_config_data = pages_v3.config_manager.get_raw_file_content('secrets')
-            main_config_json = json.dumps(main_config_data, indent=4)
-            secrets_config_json = json.dumps(secrets_config_data, indent=4)
-        else:
-            raise Exception("Config manager not initialized")
-
-    except Exception as e:
-        flash(f"Error loading configuration: {e}", "error")
-        schedule_config = {}
-        main_config_json = "{}"
-        secrets_config_json = "{}"
-        main_config_data = {}
-        secrets_config_data = {}
-
-    return render_template('v3/index.html',
-                           schedule_config=schedule_config,
-                           main_config_json=main_config_json,
-                           secrets_config_json=secrets_config_json,
-                           main_config_path=pages_v3.config_manager.get_config_path() if pages_v3.config_manager else "",
-                           secrets_config_path=pages_v3.config_manager.get_secrets_path() if pages_v3.config_manager else "",
-                           main_config=main_config_data,
-                           secrets_config=secrets_config_data)
+    """Main v3 interface page: the app shell. Every tab loads as a partial."""
+    return render_template('v3/base.html')
 
 @pages_v3.route('/partials/<partial_name>')
 def load_partial(partial_name):
@@ -552,14 +519,39 @@ def _load_display_partial():
         logger.error("Error loading partial", exc_info=True)
         return "Error loading partial", 500
 
+def _plugin_default_duration(plugin_id, plugin_config):
+    """Seconds a plugin shows each screen when the Rotation page sets none.
+
+    Mirrors BasePlugin.get_display_duration's config fallback: the plugin's
+    display_duration, else its schema default, else 15.
+    """
+    def _valid(v):
+        return isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0
+
+    value = plugin_config.get('display_duration')
+    if not _valid(value):
+        schema = None
+        schema_mgr = getattr(pages_v3, 'schema_manager', None)
+        if schema_mgr is not None:
+            try:
+                schema = schema_mgr.load_schema(plugin_id)
+            except Exception:
+                logger.debug("durations: no schema for %s", plugin_id, exc_info=True)
+        value = plugin_config_defaults(schema if isinstance(schema, dict) else None).get(
+            'display_duration')
+        if not _valid(value):
+            value = 15
+    return int(value) if float(value).is_integer() else value
+
+
 def _load_durations_partial():
     """Load rotation & durations partial.
 
-    Builds one duration entry per display mode of every enabled plugin
-    (falling back to the display controller's 30s default), overlaid with any
-    values saved in display.display_durations. Historically the template only
-    looped over saved keys, and nothing ever populated them, so the page
-    rendered empty.
+    Builds one duration entry per display mode of every enabled plugin. A mode
+    with a value saved in display.display_durations shows it; the rest are
+    blank, with the plugin's own duration as the placeholder, because a saved
+    value overrides the plugin (see DisplayController._get_display_duration).
+    Pre-filling every mode would pin them all on the first save.
     """
     try:
         if pages_v3.config_manager:
@@ -578,10 +570,12 @@ def _load_durations_partial():
                             continue
                         modes = pages_v3.plugin_manager.get_plugin_display_modes(pid) or [pid]
                         covered_keys.update(modes)
+                        default = _plugin_default_duration(pid, main_config.get(pid, {}) or {})
                         duration_groups.append({
                             'plugin_id': pid,
                             'plugin_name': info.get('name') or pid,
-                            'modes': [{'key': m, 'value': saved.get(m, 30)} for m in modes],
+                            'modes': [{'key': m, 'value': saved.get(m, ''), 'default': default}
+                                      for m in modes],
                         })
                     # Saved keys not owned by any enabled plugin (disabled or
                     # uninstalled plugins) stay visible rather than vanishing.

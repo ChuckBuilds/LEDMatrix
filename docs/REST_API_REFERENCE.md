@@ -1117,39 +1117,6 @@ List uploaded images for a plugin.
 }
 ```
 
-### Authenticate Spotify
-
-**POST** `/api/v3/plugins/authenticate/spotify`
-
-Spotify OAuth for the music plugin (`ledmatrix-music`; the plugin is fixed,
-not taken from the body). Two steps: call with an empty body to get the
-authorization URL, then call again with the URL Spotify redirected to.
-
-**Request Body** (step 2):
-```json
-{
-  "redirect_url": "http://127.0.0.1:8888/callback?code=..."
-}
-```
-
-**Response** (step 1, fields at the top level):
-```json
-{
-  "status": "success",
-  "message": "Authorization URL generated",
-  "auth_url": "https://accounts.spotify.com/authorize?..."
-}
-```
-
-Step 2 returns `status`, `message` and the script's `output`.
-
-### Authenticate YouTube Music
-
-**POST** `/api/v3/plugins/authenticate/ytm`
-
-Run the music plugin's YouTube Music authentication script. No body. Returns
-`status`, `message` and the script's `output`.
-
 ### Upload Calendar Credentials
 
 **POST** `/api/v3/plugins/calendar/upload-credentials`
@@ -1848,31 +1815,105 @@ The last 100 journal lines for `ledmatrix.service` and
 
 ## Error tracking
 
+Plugin errors are recorded by the display service (`ledmatrix.service`),
+which runs the plugins. It publishes a snapshot to the shared cache directory
+(`plugin_error_snapshot`) at most every 10 seconds, and only when something
+changed, so these endpoints lag the display by up to about 15 seconds. The
+counts cover the display service's current run: they start at zero when it
+restarts. Error messages and stack traces have credentials redacted, and
+messages, traces and context values are truncated in the snapshot.
+
+Every response below adds three fields to the shape it always had:
+
+| Field | Meaning |
+|---|---|
+| `snapshot_available` | `false` until the display service has reported (for example, it is not running). Counts are then zero. |
+| `generated_at` | When the display service produced the snapshot (ISO, the Pi's local time), or `null`. |
+| `clear_pending` | A clear has been requested and the display service has not applied it yet. |
+
 ### Get Error Summary
 
 **GET** `/api/v3/errors/summary`
 
-Aggregated counts, detected patterns and recent errors across plugins and
-core components.
+Aggregated counts, detected patterns and recent errors (the last 20).
+
+```json
+{
+  "status": "success",
+  "data": {
+    "session_start": "2026-09-23T09:40:02.118000",
+    "total_errors": 13,
+    "error_rate_per_hour": 41.2,
+    "error_counts_by_type": {"ConnectionError": 12, "ValueError": 1},
+    "plugin_error_counts": {"weather": {"ConnectionError": 12}, "stocks": {"ValueError": 1}},
+    "active_patterns": {
+      "ConnectionError": {
+        "error_type": "ConnectionError", "count": 12,
+        "first_seen": "2026-09-23T09:41:10.500000", "last_seen": "2026-09-23T09:58:36.020000",
+        "affected_plugins": ["weather"], "sample_messages": ["Read timed out."],
+        "severity": "error"
+      }
+    },
+    "recent_errors": [
+      {"error_type": "ValueError", "message": "could not parse price",
+       "timestamp": "2026-09-23T09:58:36.100000", "context": {},
+       "plugin_id": "stocks", "operation": "update", "stack_trace": "Traceback ..."}
+    ],
+    "generated_at": "2026-09-23T09:58:40.000000",
+    "snapshot_available": true,
+    "clear_pending": false
+  },
+  "message": "Error summary retrieved"
+}
+```
 
 ### Get Plugin Errors
 
 **GET** `/api/v3/errors/plugin/<plugin_id>`
 
-Error health and statistics for one plugin.
+Error health and statistics for one plugin: `plugin_id`, `status`
+(`healthy`, `degraded` or `unhealthy`), `total_errors`, `error_types`,
+`recent_error_count`, `last_error` (a `recent_errors` entry or `null`), plus
+the three fields above. A plugin with no recorded errors is `healthy`.
 
 ### Clear Errors
 
 **POST** `/api/v3/errors/clear`
 
-Clear error records older than `max_age_hours` (default 24, 1-8760).
-Returns `data.cleared_count`.
+Clear error records older than `max_age_hours` (default 24, 1-8760), or every
+error with `"all": true` (`max_age_hours` is then ignored).
 
 ```json
 {
   "max_age_hours": 24
 }
 ```
+
+The clear is asynchronous. The web interface records a request
+(`plugin_error_clear_request` in the shared cache), and the display service
+applies it within about 5 seconds, rebuilding its counts from the errors it
+keeps and republishing. Reads hide the cleared errors from the moment the
+request is recorded. Until the display service applies an age-based clear,
+`recent_errors` and `active_patterns` are already filtered but the counts
+are the old ones, and `clear_pending` is `true`.
+
+```json
+{
+  "status": "success",
+  "data": {
+    "cleared_count": 13,
+    "clear_requested": true,
+    "request_id": "5f0c1e...",
+    "cutoff": "2026-09-23T09:59:02.310000"
+  },
+  "message": "Clear of all errors requested; the display service applies it within about 5 seconds"
+}
+```
+
+`cleared_count` is how many of the reported errors the clear hides. It is
+`null` when that cannot be known before the display service applies it (an
+age-based clear over more errors than the report lists). A request that
+could not be written to the shared cache answers `500`.
 
 ---
 
@@ -1967,7 +2008,10 @@ restarted to pick up changes). See
 
 ## Plugin-specific endpoints
 
-A handful of endpoints belong to individual plugins.
+A handful of endpoints belong to individual plugins. The music plugin's
+Spotify and YouTube Music sign-in and the Of-The-Day data files go through the
+plugin's own web UI actions ([Execute Plugin Action](#execute-plugin-action))
+rather than dedicated routes.
 
 ### Calendar
 
@@ -1976,23 +2020,6 @@ A handful of endpoints belong to individual plugins.
 List the calendars on the authenticated Google account. Used by the calendar
 plugin's config UI. Returns `calendars` at the top level. The upload and
 authenticate endpoints are under [Plugins](#upload-calendar-credentials).
-
-### Of The Day
-
-**POST** `/api/v3/plugins/of-the-day/json/upload`
-
-Upload JSON data files (multipart field `files`) as Of-The-Day categories.
-Returns `uploaded_files` and `total_files` at the top level.
-
-**POST** `/api/v3/plugins/of-the-day/json/delete`
-
-Delete an uploaded data file.
-
-```json
-{
-  "file_id": "category_name"
-}
-```
 
 ### Plugin Static Assets
 

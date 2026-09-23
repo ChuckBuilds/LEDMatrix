@@ -2,12 +2,12 @@
 Centralized plugin state management.
 
 Provides a single source of truth for plugin state (installed, enabled, version, etc.)
-with state change events and persistence.
+with persistence.
 """
 
 import json
 import threading
-from typing import Dict, Any, Optional, List, Callable
+from typing import Dict, Any, Optional
 from pathlib import Path
 from datetime import datetime
 from dataclasses import dataclass, asdict
@@ -75,9 +75,7 @@ class PluginStateManager:
     
     Provides:
     - Single source of truth for plugin state
-    - State change events/notifications
     - State persistence
-    - State versioning
     """
     
     def __init__(
@@ -103,9 +101,6 @@ class PluginStateManager:
         # State storage
         self._states: Dict[str, PluginState] = {}
         self._state_version = 1
-        
-        # State change callbacks
-        self._callbacks: Dict[str, List[Callable[[str, PluginState, PluginState], None]]] = {}
         
         # Threading
         self._lock = threading.RLock()
@@ -149,8 +144,7 @@ class PluginStateManager:
     def update_plugin_state(
         self,
         plugin_id: str,
-        updates: Dict[str, Any],
-        notify: bool = True
+        updates: Dict[str, Any]
     ) -> bool:
         """
         Update plugin state.
@@ -158,7 +152,6 @@ class PluginStateManager:
         Args:
             plugin_id: Plugin identifier
             updates: Dictionary of state updates
-            notify: Whether to notify callbacks of changes
         
         Returns:
             True if update successful
@@ -173,18 +166,6 @@ class PluginStateManager:
                     status=PluginStateStatus.UNKNOWN,
                     enabled=False
                 )
-            
-            # Create new state with updates
-            old_state = PluginState(
-                plugin_id=current_state.plugin_id,
-                status=current_state.status,
-                enabled=current_state.enabled,
-                version=current_state.version,
-                installed_at=current_state.installed_at,
-                last_updated=current_state.last_updated,
-                config_version=current_state.config_version,
-                metadata=current_state.metadata.copy() if current_state.metadata else {}
-            )
             
             # Apply updates
             if 'status' in updates:
@@ -217,10 +198,6 @@ class PluginStateManager:
             
             # Store updated state
             self._states[plugin_id] = current_state
-            
-            # Notify callbacks
-            if notify:
-                self._notify_callbacks(plugin_id, old_state, current_state)
             
             # Auto-save if enabled
             if self.auto_save:
@@ -274,23 +251,6 @@ class PluginStateManager:
             }
         )
     
-    def set_plugin_error(self, plugin_id: str, error: Optional[str] = None) -> bool:
-        """
-        Mark plugin as having an error.
-        
-        Args:
-            plugin_id: Plugin identifier
-            error: Optional error message
-        
-        Returns:
-            True if update successful
-        """
-        updates = {'status': PluginStateStatus.ERROR}
-        if error:
-            updates['metadata'] = {'last_error': error}
-        
-        return self.update_plugin_state(plugin_id, updates)
-    
     def remove_plugin_state(self, plugin_id: str) -> bool:
         """
         Remove plugin state (e.g., after uninstall).
@@ -304,11 +264,7 @@ class PluginStateManager:
         self._ensure_loaded()
         with self._lock:
             if plugin_id in self._states:
-                old_state = self._states[plugin_id]
                 del self._states[plugin_id]
-                
-                # Notify callbacks
-                self._notify_callbacks(plugin_id, old_state, None)
                 
                 # Auto-save if enabled
                 if self.auto_save:
@@ -317,58 +273,6 @@ class PluginStateManager:
                 return True
         
         return False
-    
-    def subscribe_to_state_changes(
-        self,
-        callback: Callable[[str, PluginState, Optional[PluginState]], None],
-        plugin_id: Optional[str] = None
-    ) -> str:
-        """
-        Subscribe to state changes.
-        
-        Args:
-            callback: Callback function (plugin_id, old_state, new_state)
-            plugin_id: Optional plugin ID to filter on (None = all plugins)
-        
-        Returns:
-            Subscription ID
-        """
-        import uuid
-        subscription_id = str(uuid.uuid4())
-        
-        with self._lock:
-            key = plugin_id or '*'
-            if key not in self._callbacks:
-                self._callbacks[key] = []
-            self._callbacks[key].append(callback)
-        
-        return subscription_id
-    
-    def _notify_callbacks(
-        self,
-        plugin_id: str,
-        old_state: PluginState,
-        new_state: Optional[PluginState]
-    ) -> None:
-        """Notify all relevant callbacks of state change."""
-        # Get callbacks for this plugin and all plugins
-        callbacks_to_notify = []
-        
-        if plugin_id in self._callbacks:
-            callbacks_to_notify.extend(self._callbacks[plugin_id])
-        
-        if '*' in self._callbacks:
-            callbacks_to_notify.extend(self._callbacks['*'])
-        
-        # Call each callback
-        for callback in callbacks_to_notify:
-            try:
-                callback(plugin_id, old_state, new_state)
-            except Exception as e:
-                self.logger.error(
-                    f"Error in state change callback: {e}",
-                    exc_info=True
-                )
     
     def _save_state(self) -> None:
         """Save state to file."""
@@ -430,8 +334,3 @@ class PluginStateManager:
             
         except Exception as e:
             self.logger.error(f"Error loading plugin state: {e}", exc_info=True)
-    
-    def get_state_version(self) -> int:
-        """Get current state version (for detecting corruption)."""
-        return self._state_version
-

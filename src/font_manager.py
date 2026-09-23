@@ -40,6 +40,7 @@ from pathlib import Path
 from PIL import ImageFont
 from src.common.font_layout import load_truetype, resolve_asset_path
 from typing import Dict, Tuple, Optional, Union, Any, List
+from src.deprecation import deprecated
 
 logger = logging.getLogger(__name__)
 
@@ -167,6 +168,7 @@ class FontManager:
         
         logger.debug(f"Registered font for {manager_id}.{element_key}: {family}@{size_px}px")
 
+    @deprecated("3.7.0")
     def get_manager_fonts(self, manager_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Get registered fonts for a specific manager or all managers.
@@ -181,6 +183,7 @@ class FontManager:
             return self.manager_fonts.get(manager_id, {})
         return self.manager_fonts.copy()
 
+    @deprecated("3.7.0")
     def get_detected_fonts(self) -> Dict[str, Dict[str, Any]]:
         """Get all detected font usage across managers."""
         return self.detected_fonts.copy()
@@ -357,6 +360,7 @@ class FontManager:
         logger.error(f"Plugin font not found: {font_path}")
         return None
 
+    @deprecated("3.7.0")
     def unregister_plugin_fonts(self, plugin_id: str) -> bool:
         """Unregister all fonts for a plugin."""
         try:
@@ -393,6 +397,7 @@ class FontManager:
         for key in keys_to_remove:
             del self.font_cache[key]
 
+    @deprecated("3.7.0")
     def get_plugin_fonts(self, plugin_id: str) -> List[str]:
         """Get list of font families registered by a plugin."""
         if plugin_id in self.plugin_font_catalogs:
@@ -505,8 +510,17 @@ class FontManager:
                     "%spx", font_path, size_px, native_size
                 )
             face = freetype.Face(font_path)
-            # Set character size (width, height) in 1/64th of points
-            face.set_char_size(size_px * 64, size_px * 64, 72, 72)
+            try:
+                # Character size in 1/64th points at 72dpi == pixel size.
+                face.set_char_size(size_px * 64, size_px * 64, 72, 72)
+            except freetype.FT_Exception:
+                # FreeType rejects any size but the strike's own, and get_font
+                # used to answer that with PIL's default font -- a different
+                # typeface. Use the native strike, as element_style does.
+                if native_size is None or native_size == size_px:
+                    raise
+                face = freetype.Face(font_path)
+                face.set_char_size(native_size * 64, native_size * 64, 72, 72)
             return face
         except Exception as e:
             logger.error(f"Error loading BDF font {font_path}: {e}")
@@ -628,6 +642,7 @@ class FontManager:
 
     # ==================== Override Management ====================
 
+    @deprecated("3.7.0")
     def set_override(self, element_key: str, family: str = None, size_px: int = None):
         """Set font override for a specific element."""
         if element_key not in self.font_overrides:
@@ -647,6 +662,7 @@ class FontManager:
         self.clear_cache()
         logger.info(f"Font override set for {element_key}: {self.font_overrides.get(element_key, {})}")
 
+    @deprecated("3.7.0")
     def remove_override(self, element_key: str):
         """Remove font override for a specific element."""
         if element_key in self.font_overrides:
@@ -655,6 +671,7 @@ class FontManager:
             self.clear_cache()
             logger.info(f"Font override removed for {element_key}")
 
+    @deprecated("3.7.0")
     def get_overrides(self) -> Dict[str, Dict[str, str]]:
         """Get current font overrides."""
         return self.font_overrides.copy()
@@ -744,10 +761,12 @@ class FontManager:
         self.metrics_cache.clear()
         logger.info("Font cache cleared")
 
+    @deprecated("3.7.0", "read font_catalog")
     def get_available_fonts(self) -> Dict[str, str]:
         """Get dictionary of available font families and their paths."""
         return self.font_catalog.copy()
 
+    @deprecated("3.7.0")
     def get_size_tokens(self) -> Dict[str, int]:
         """Get available size tokens."""
         return self.size_tokens.copy()
@@ -758,6 +777,7 @@ class FontManager:
             self.performance_stats[operation] = {}
         self.performance_stats[operation][font_key] = duration
 
+    @deprecated("3.7.0")
     def get_performance_stats(self) -> Dict[str, Any]:
         """Get performance statistics."""
         uptime = time.time() - self.performance_stats["start_time"]
@@ -779,10 +799,12 @@ class FontManager:
             "detected_fonts": len(self.detected_fonts)
         }
 
+    @deprecated("3.7.0", "read font_catalog")
     def get_font_catalog(self) -> Dict[str, str]:
         """Get the current font catalog."""
         return self.font_catalog.copy()
 
+    @deprecated("3.7.0")
     def add_font(self, font_file_path: str, family_name: str) -> bool:
         """Add a new font to the catalog."""
         try:
@@ -815,6 +837,7 @@ class FontManager:
             logger.error(f"Error adding font {family_name}: {e}")
             return False
 
+    @deprecated("3.7.0")
     def remove_font(self, family_name: str) -> bool:
         """Remove a font from the catalog."""
         try:
@@ -842,6 +865,7 @@ class FontManager:
             logger.error(f"Error removing font {family_name}: {e}")
             return False
 
+    @deprecated("3.7.0")
     def validate_font(self, font_path: str) -> Dict[str, Any]:
         """Validate a font file."""
         try:

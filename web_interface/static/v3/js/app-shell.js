@@ -2572,23 +2572,6 @@
         // Assign to window for global access
         window.uninstallPlugin = uninstallPlugin;
 
-        async function refreshPlugin(pluginId) {
-            try {
-                // Switch to the plugin manager tab briefly to refresh
-                const originalTab = app.activeTab;
-                app.activeTab = 'plugins';
-
-                // Wait a moment then switch back
-                setTimeout(() => {
-                    app.activeTab = originalTab;
-                    app.showNotification(`Refreshed ${pluginId}`, 'success');
-                }, 100);
-
-            } catch (error) {
-                app.showNotification('Error refreshing plugin: ' + error.message, 'error');
-            }
-        }
-
         // Format commit information for display
         function formatCommitInfo(commit, branch) {
             if (!commit && !branch) return 'Unknown';

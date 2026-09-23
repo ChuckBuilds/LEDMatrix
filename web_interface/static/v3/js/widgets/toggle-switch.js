@@ -220,6 +220,4 @@
             }
         }
     });
-
-    console.log('[ToggleSwitchWidget] Toggle switch widget registered');
 })();
