@@ -2,9 +2,8 @@
 
 Ten helpers are byte-identical (executable AST, docstrings stripped) in the
 scoreboard plugins' ``sports.py`` and have no equivalent elsewhere in
-``src/common``. The bodies below were copied from those plugin copies -- not
-from ``src/base_classes`` -- at ledmatrix-plugins ``f09bff2`` (origin/main,
-2026-09-14):
+``src/common``. The bodies below were copied from those plugin copies at
+ledmatrix-plugins ``f09bff2`` (origin/main, 2026-09-14):
 
 - In all nine (afl, baseball, basketball, football, hockey, lacrosse, nrl,
   soccer, ufc): ``_clamp_window``, ``_clamp_seconds``, ``_logo_needs_refresh``
@@ -34,9 +33,9 @@ where both can. Plugins import this and floor ``ledmatrix_min_version`` on the
 first core release that ships it (see ``CHANGELOG.md``).
 
 ``_favorite_key`` is the one method not taken from the plugins: it is the
-override point from ``src/base_classes/sports/core.py``, carried here so later
-phases (shared celebrations and game selection) have a hardware-free home for
-the seam. No plugin defines it today and nothing in this module calls it.
+override point from the since-removed ``src/base_classes`` sports core,
+carried here so later phases (shared celebrations and game selection) have a
+hardware-free home for the seam. No plugin defines it today and nothing in this module calls it.
 
 WHAT A HOST MUST PROVIDE
 ------------------------
@@ -80,8 +79,8 @@ runs. By convention list it after ``SportsCoreSharedMixin``::
 
 HARDWARE-FREE
 -------------
-Nothing here may import ``src.display_manager``, ``src.base_classes``,
-``src.plugin_system`` or anything else that reaches ``rgbmatrix`` at module
+Nothing here may import ``src.display_manager``, ``src.plugin_system`` or
+anything else that reaches ``rgbmatrix`` at module
 level; ``test/test_common_is_hardware_free.py`` enforces that for all of
 ``src/common``. ``logo_needs_refresh`` imports ``src.logo_downloader`` lazily,
 exactly as the plugin copy does.
@@ -224,8 +223,8 @@ class SportsHelpersMixin:
         containing that string. The default returns ``None`` for a missing
         abbreviation, which never matches.
 
-        Carried from ``src/base_classes/sports/core.py`` for later phases;
-        nothing in this module calls it yet.
+        Carried from the since-removed ``src/base_classes`` sports core for
+        later phases; nothing in this module calls it yet.
         """
         return game.get(f"{side}_abbr")
 

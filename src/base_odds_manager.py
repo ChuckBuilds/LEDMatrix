@@ -50,8 +50,7 @@ class BaseOddsManager:
         # 2026-08-04 it began 403ing browser strings and bare custom tokens
         # alike; what it accepts is a token with a URL that says who is
         # calling. Every other ESPN caller in the tree already sends this
-        # (src/common/api_helper.py, src/base_classes/data_sources.py); the
-        # odds path was simply missed, and it is the one whose failures cost
+        # (src/common/api_helper.py); the odds path was simply missed, and it is the one whose failures cost
         # the caller its whole update budget.
         #
         # Deliberately no retry adapter, unlike api_helper: retries multiply
