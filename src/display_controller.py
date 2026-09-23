@@ -95,6 +95,9 @@ class DisplayController:
         self.config_manager = config_manager  # Keep for backward compatibility
         self.config = self.config_service.get_config()
         self.cache_manager = CacheManager()
+        # The web interface's /api/v3/errors/* read what this publishes.
+        from src.error_aggregator import start_error_snapshot_publisher
+        start_error_snapshot_publisher(self.cache_manager)
         logger.info("Config loaded in %.3f seconds (hot-reload: %s)", time.time() - start_time, enable_hot_reload)
         
         # Validate startup configuration

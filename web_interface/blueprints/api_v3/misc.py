@@ -10,10 +10,11 @@ from web_interface.blueprints.api_v3 import (
     _MQTT_BRIDGE_DIR, _SUDO, _coerce_mqtt_bridge_value,
     _get_display_service_status, _mqtt_bridge_service_state,
     _read_mqtt_bridge_config, api_v3, contextlib, describe_exception,
-    error_response, get_error_aggregator, json, jsonify, logger, os, request,
+    error_response, json, jsonify, logger, os, redact_text, request,
     subprocess, success_response, tempfile,
 )
 from src.common.path_safety import safe_path_component
+from src import error_aggregator as _errors
 import web_interface.blueprints.api_v3 as _pkg
 # Read through the module rather than bound by value: tests patch these
 # as module attributes, and a value binding would not see the patch.
@@ -281,17 +282,62 @@ def delete_cache_file():
     except Exception as e:
         logger.error('Error in delete_cache_file', exc_info=True)
         return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
+def _errors_cache():
+    """The shared cache the display service publishes its errors to."""
+    if not api_v3.cache_manager:
+        from src.cache_manager import CacheManager
+        api_v3.cache_manager = CacheManager()
+    return api_v3.cache_manager
+
+
+def _redact_error_text(text, keep_lines=False):
+    """Credentials out of plugin exception text, which can quote a URL with
+    an API key in it. Stack traces keep their line breaks and indentation."""
+    if not isinstance(text, str):
+        return text
+    if not keep_lines:
+        return redact_text(text, max_length=len(text) + 1)
+    return '\n'.join(
+        line[:len(line) - len(line.lstrip())] + redact_text(line, max_length=len(line) + 1)
+        for line in text.splitlines()
+    )
+
+
+def _redact_error_record(record):
+    if not isinstance(record, dict):
+        return record
+    record = dict(record)
+    record['message'] = _redact_error_text(record.get('message'))
+    record['stack_trace'] = _redact_error_text(record.get('stack_trace'), keep_lines=True)
+    if isinstance(record.get('context'), dict):
+        record['context'] = {k: _redact_error_text(v) for k, v in record['context'].items()}
+    return record
+
+
+def _read_errors():
+    snapshot, clear_request = _errors.read_error_report(_errors_cache())
+    return snapshot, clear_request
+
+
 @api_v3.route('/errors/summary', methods=['GET'])
 def get_error_summary():
     """
     Get summary of all errors for monitoring and debugging.
 
-    Returns error counts, detected patterns, and recent errors.
+    Returns error counts, detected patterns, and recent errors, as last
+    reported by the display service (which runs the plugins, so it is the
+    only process that records their errors). ``snapshot_available`` is false
+    until it has reported; ``generated_at`` says when it did.
     """
     try:
-        aggregator = get_error_aggregator()
-        summary = aggregator.get_error_summary()
-        return success_response(data=summary, message="Error summary retrieved")
+        summary = _errors.error_summary_from_report(*_read_errors())
+        summary['recent_errors'] = [_redact_error_record(r) for r in summary['recent_errors']]
+        for pattern in summary['active_patterns'].values():
+            if isinstance(pattern, dict) and isinstance(pattern.get('sample_messages'), list):
+                pattern['sample_messages'] = [_redact_error_text(m) for m in pattern['sample_messages']]
+        message = ("Error summary retrieved" if summary['snapshot_available']
+                   else "The display service has not reported any errors yet")
+        return success_response(data=summary, message=message)
     except Exception as e:
         logger.error(f"Error getting error summary: {e}", exc_info=True)
         return error_response(
@@ -307,11 +353,13 @@ def get_plugin_errors(plugin_id):
     Args:
         plugin_id: Plugin identifier
 
-    Returns health status and error statistics for the plugin.
+    Returns health status and error statistics for the plugin, from the
+    display service's last report (see get_error_summary). A plugin with no
+    recorded errors is "healthy".
     """
     try:
-        aggregator = get_error_aggregator()
-        health = aggregator.get_plugin_health(plugin_id)
+        health = _errors.plugin_health_from_report(*_read_errors(), plugin_id)
+        health['last_error'] = _redact_error_record(health['last_error'])
         return success_response(data=health, message="Plugin health retrieved")
     except Exception as e:
         logger.error(f"Error getting plugin health for {plugin_id}: {e}", exc_info=True)
@@ -327,42 +375,61 @@ def clear_old_errors():
 
     Request body (optional):
         max_age_hours: Maximum age in hours (default: 24, max: 8760 = 1 year)
+        all: true clears every error recorded so far (max_age_hours ignored)
+
+    The errors live in the display service, so this records a clear request
+    that it applies within a few seconds. Reads hide the cleared errors from
+    the moment the request is recorded.
     """
     try:
         data = request.get_json(silent=True) or {}
+        clear_all = _coerce_to_bool(data.get('all'))
         raw_max_age = data.get('max_age_hours', 24)
 
         # Validate and coerce max_age_hours
+        max_age_hours = None
+        if not clear_all:
+            try:
+                max_age_hours = int(raw_max_age)
+                if max_age_hours < 1:
+                    return error_response(
+                        error_code=ErrorCode.INVALID_INPUT,
+                        message="max_age_hours must be at least 1",
+                        context={'provided_value': raw_max_age},
+                        status_code=400
+                    )
+                if max_age_hours > 8760:  # 1 year max
+                    return error_response(
+                        error_code=ErrorCode.INVALID_INPUT,
+                        message="max_age_hours cannot exceed 8760 (1 year)",
+                        context={'provided_value': raw_max_age},
+                        status_code=400
+                    )
+            except (ValueError, TypeError, OverflowError):
+                return error_response(
+                    error_code=ErrorCode.INVALID_INPUT,
+                    message="max_age_hours must be a valid integer",
+                    context={'provided_value': str(raw_max_age)},
+                    status_code=400
+                )
+
+        now = _pkg.time.time()
+        cutoff = now if clear_all else now - max_age_hours * 3600
         try:
-            max_age_hours = int(raw_max_age)
-            if max_age_hours < 1:
-                return error_response(
-                    error_code=ErrorCode.INVALID_INPUT,
-                    message="max_age_hours must be at least 1",
-                    context={'provided_value': raw_max_age},
-                    status_code=400
-                )
-            if max_age_hours > 8760:  # 1 year max
-                return error_response(
-                    error_code=ErrorCode.INVALID_INPUT,
-                    message="max_age_hours cannot exceed 8760 (1 year)",
-                    context={'provided_value': raw_max_age},
-                    status_code=400
-                )
-        except (ValueError, TypeError, OverflowError):
+            result = _errors.request_error_clear(_errors_cache(), cutoff)
+        except OSError as e:
+            logger.error("Could not record an error clear request: %s", e)
             return error_response(
-                error_code=ErrorCode.INVALID_INPUT,
-                message="max_age_hours must be a valid integer",
-                context={'provided_value': str(raw_max_age)},
-                status_code=400
+                error_code=ErrorCode.SYSTEM_ERROR,
+                message="Could not record the clear request in the shared cache",
+                status_code=500
             )
 
-        aggregator = get_error_aggregator()
-        cleared_count = aggregator.clear_old_records(max_age_hours=max_age_hours)
-
+        scope = "all errors" if clear_all else f"errors older than {max_age_hours} hours"
         return success_response(
-            data={'cleared_count': cleared_count},
-            message=f"Cleared {cleared_count} error records older than {max_age_hours} hours"
+            data=result,
+            message=(f"Clear of {scope} requested; the display service applies it "
+                     f"within about {int(_errors.SNAPSHOT_TICK_INTERVAL)} seconds")
         )
     except Exception as e:
         logger.error(f"Error clearing old errors: {e}", exc_info=True)
