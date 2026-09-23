@@ -19,6 +19,21 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Removed
+
+- **The skin system.** Skins never rendered with the current scoreboard
+  plugins, so they are gone rather than "not supported yet": `src/skin_system/`,
+  `skins/`, `scripts/validate_skin.py`, `GET /api/v3/skins`, the store's
+  `"type": "skin"` handling and `docs/SKIN_SYSTEM.md` / `docs/CREATING_SKINS.md`.
+  A `skin` or `skin_options` key left in a plugin's saved config still loads
+  and saves without a validation error; it is ignored, and the next save of
+  that plugin's settings removes it (unless the plugin's own schema declares
+  the key).
+- **`src/base_classes/`** (`SportsCore`, the sport and mode classes,
+  `CelebrationMixin`, the rotation strategies, `data_sources`,
+  `api_extractors`). No known plugin imports it. A plugin that does must use
+  `src.common` or its own copy of the code.
+
 ## 3.5.0
 
 New modules a plugin may import via `src.*` (floor on 3.5.0):

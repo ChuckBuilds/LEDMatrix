@@ -37,7 +37,6 @@ the entry below says so.
 - [Integrations](#integrations)
 - [Plugin-specific endpoints](#plugin-specific-endpoints)
 - [Starlark Apps](#starlark-apps)
-- [Skins](#skins)
 
 > The API blueprint is the `api_v3` package in
 > `web_interface/blueprints/api_v3/` (one module per area: `config.py`,
@@ -2054,17 +2053,6 @@ runs.
 **GET** `/api/v3/starlark/editor/status` — `data.running`, plus `app_id`, `port`, `pid`, `started_at`, `timeout`, `seconds_remaining`, `host_bound` while running
 **POST** `/api/v3/starlark/editor/start` — `{"app_id": "...", "timeout": 1800, "port": 8080}` (`timeout` and `port` optional)
 **POST** `/api/v3/starlark/editor/stop` — end the session and restart the display
-
----
-
-## Skins
-
-**GET** `/api/v3/skins`
-
-Installed scoreboard skins (optional `?plugin_id=` filter). Skins are not
-supported by the current scoreboard plugins, so the response carries
-`data.supported: false` and a `data.message`; clients must not offer these
-as selectable. See [SKIN_SYSTEM.md](SKIN_SYSTEM.md).
 
 ---
 
