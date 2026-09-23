@@ -65,15 +65,14 @@ retry() {
     local delay_seconds=5
     local status
     while true; do
-        # Run command in a context that disables errexit so we can capture exit code
-        # This prevents errexit from triggering before status=$? runs
-        if ! "$@"; then
-            status=$?
-        else
-            status=0
-        fi
-        if [ $status -eq 0 ]; then
+        # The condition of an if doesn't trip errexit, and in the else branch
+        # $? is the command's own exit status. (This used to be `if ! "$@";
+        # then status=$?`, where $? is the status of the negation -- always 0 --
+        # so a failure never retried and was reported as success.)
+        if "$@"; then
             return 0
+        else
+            status=$?
         fi
         if [ $attempt -ge $max_attempts ]; then
             print_error "Command failed after $attempt attempts: $*"
@@ -259,22 +258,32 @@ main() {
     
     # Update package list first. first_time_install.sh is told the lists are
     # already fresh so it does not repeat this a minute later.
+    # A refresh that still fails after retries (say one unreachable mirror)
+    # only warns: that is what this step effectively did before retry()
+    # could report a failure, and making it fatal would stop installs that
+    # work today.
     if [ "$EUID" -eq 0 ]; then
-        retry apt-get update -qq
+        retry apt-get update -qq || print_warning "apt-get update failed; continuing with the existing package lists"
     else
-        retry sudo apt-get update -qq
+        retry sudo apt-get update -qq || print_warning "apt-get update failed; continuing with the existing package lists"
     fi
     export LEDMATRIX_APT_UPDATED=1
     
     # Install git and curl (needed for cloning and the script itself)
     if ! command -v git >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
         print_warning "git or curl not found, installing..."
+        # Not fatal here, for the same reason: without git the clone below
+        # fails and stops the install with its own error.
         if [ "$EUID" -eq 0 ]; then
-            retry apt-get install -y git curl
+            retry apt-get install -y git curl || true
         else
-            retry sudo apt-get install -y git curl
+            retry sudo apt-get install -y git curl || true
         fi
-        print_success "git and curl installed"
+        if command -v git >/dev/null 2>&1 && command -v curl >/dev/null 2>&1; then
+            print_success "git and curl installed"
+        else
+            print_warning "Could not install git and curl"
+        fi
     else
         print_success "git and curl already installed"
     fi

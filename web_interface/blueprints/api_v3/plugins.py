@@ -409,6 +409,8 @@ def manage_plugin_limits(plugin_id):
 @api_v3.route('/plugins/toggle', methods=['POST'])
 def toggle_plugin():
     """Toggle plugin enabled/disabled"""
+    plugin_id = None
+    enabled = None
     try:
         if not api_v3.plugin_manager or not api_v3.config_manager:
             return jsonify({'status': 'error', 'message': 'Plugin or config manager not initialized'}), 500
@@ -506,21 +508,21 @@ def toggle_plugin():
             message=f"Plugin {plugin_id} {'enabled' if enabled else 'disabled'} successfully"
         )
     except Exception as e:
-        from src.web_interface.errors import WebInterfaceError
-        error = WebInterfaceError.from_exception(e, ErrorCode.PLUGIN_OPERATION_CONFLICT)
+        # Not PLUGIN_OPERATION_CONFLICT: that told the user "an operation is
+        # already in progress" whatever actually went wrong.
+        logger.error('Error toggling plugin %s', plugin_id, exc_info=True)
         if api_v3.operation_history:
-            toggle_type = "enable" if ('data' in locals() and data.get('enabled')) else "disable"
             api_v3.operation_history.record_operation(
-                toggle_type,
-                plugin_id=data.get('plugin_id') if 'data' in locals() else None,
+                "enable" if enabled else "disable",
+                plugin_id=plugin_id,
                 status="failed",
                 error=str(e)
             )
+        action = 'enable' if enabled else 'disable' if enabled is not None else 'toggle'
         return error_response(
-            error.error_code,
-            error.message,
-            details=error.details,
-            context=error.context,
+            ErrorCode.UNKNOWN_ERROR,
+            f"Failed to {action} plugin {plugin_id or ''}".rstrip(),
+            details=describe_exception(e),
             status_code=500
         )
 @api_v3.route('/plugins/operation/<operation_id>', methods=['GET'])

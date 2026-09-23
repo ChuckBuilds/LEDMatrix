@@ -26,7 +26,6 @@ import json
 import threading
 import types
 from contextlib import contextmanager
-from pathlib import Path
 from typing import Dict, Any, List, Optional, Callable
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed  # pylint: disable=no-name-in-module
@@ -62,9 +61,6 @@ _MIN_INITIAL_UPDATE_TIMEOUT_SECONDS = 2.0
 _vegas_mode_imported = False
 VegasModeCoordinator = None
 DEFAULT_DYNAMIC_DURATION_CAP = 180.0
-
-# WiFi status message file path (same as used in wifi_manager.py)
-WIFI_STATUS_FILE = None  # Will be initialized in __init__
 
 class DisplayController:
     """
@@ -231,13 +227,11 @@ class DisplayController:
         # once live priority ends.
         self._live_resume_index: Optional[int] = None
 
-        # WiFi status message tracking
-        global WIFI_STATUS_FILE
-        if WIFI_STATUS_FILE is None:
-            # Resolve project root (same logic as wifi_manager.py)
-            project_root = Path(__file__).parent.parent.parent.resolve()
-            WIFI_STATUS_FILE = project_root / "config" / "wifi_status.json"
-        self.wifi_status_file = WIFI_STATUS_FILE
+        # WiFi status message tracking. The path comes from wifi_manager so
+        # reader and writer can't drift: this used to resolve three levels up
+        # from src/, one above the repo, and never saw a message.
+        from src.wifi_manager import get_wifi_status_path
+        self.wifi_status_file = get_wifi_status_path()
         self.wifi_status_active = False
         self.wifi_status_expires_at: Optional[float] = None
         # _check_wifi_status_message throttle state (checked at frame rate,
@@ -428,9 +422,7 @@ class DisplayController:
         self._normal_brightness: int = (
             self.config.get('display', {}).get('hardware', {}).get('brightness', 90)
         )
-        self._scroll_speed: float = (
-            self.config.get('display', {}).get('vegas_scroll', {}).get('scroll_speed', 75)
-        )
+        self._scroll_speed: float = self._vegas_scroll_speed(self.config)
 
         # Brightness state tracking for dim schedule
         self.current_brightness = self._normal_brightness
@@ -450,16 +442,7 @@ class DisplayController:
         # Register controller-level hot-reload callback so cached config values
         # (_normal_brightness, _scroll_speed, _tz, minute-gates) stay in sync
         # when the user saves settings via the web UI.
-        def _controller_config_change(old_config: Dict[str, Any], new_config: Dict[str, Any]) -> None:
-            self._refresh_config_cache(new_config)
-            # If a plugin was enabled/disabled, flag a reconcile for the main
-            # loop to apply (loading/unloading off the watcher thread is unsafe).
-            if (self._enabled_set_changed(old_config, new_config)
-                    or self._enabled_plugin_not_running(new_config)):
-                with self._reconcile_flag_lock:
-                    self._pending_plugin_reconcile = True
-
-        self.config_service.subscribe(_controller_config_change)
+        self.config_service.subscribe(self._controller_config_change)
 
         # Publish initial on-demand state
         try:
@@ -581,6 +564,9 @@ class DisplayController:
         """Check if Vegas mode should be running."""
         if not self.vegas_coordinator:
             return False
+        # A stopped coordinator never reaches run_frame(), where queued config
+        # is applied, so re-enabling Vegas from the web UI would never land.
+        self.vegas_coordinator.apply_pending_config_if_idle()
         if not self.vegas_coordinator.is_enabled:
             return False
         if self.on_demand_active:
@@ -1068,16 +1054,22 @@ class DisplayController:
             self._tick_plugin_updates()
 
     def _get_display_duration(self, mode_key):
-        """Get display duration for a mode."""
-        # Check plugin-specific duration first
-        if mode_key in self.plugin_modes:
-            plugin_instance = self.plugin_modes[mode_key]
-            if hasattr(plugin_instance, 'get_display_duration'):
-                return plugin_instance.get_display_duration()
-        
-        # Fall back to config
-        display_durations = self.config.get('display', {}).get('display_durations', {})
-        return display_durations.get(mode_key, 30)
+        """Seconds to show a mode: the Rotation & Durations page's value for it
+        (display.display_durations), else the plugin's own duration.
+
+        The saved value has to win. Every plugin inherits
+        get_display_duration(), so checking the plugin first meant the page's
+        values were never read.
+        """
+        display_durations = self.config.get('display', {}).get('display_durations', {}) or {}
+        override = display_durations.get(mode_key)
+        if isinstance(override, (int, float)) and not isinstance(override, bool) and override > 0:
+            return float(override)
+
+        plugin_instance = self.plugin_modes.get(mode_key)
+        if plugin_instance is not None and hasattr(plugin_instance, 'get_display_duration'):
+            return plugin_instance.get_display_duration()
+        return 30
 
     def _get_global_dynamic_cap(self) -> Optional[float]:
         """Return global fallback dynamic duration cap."""
@@ -2012,8 +2004,9 @@ class DisplayController:
                     if wifi_status_data:
                         # Display WiFi status message and skip normal rotation
                         if self._display_wifi_status_message(wifi_status_data):
-                            # Sleep for a short time to show the message
-                            # Use a short sleep to allow for quick updates
+                            # The plugin that resumes afterwards must redraw
+                            # the whole panel, not paint over the message.
+                            self.force_change = True
                             self._sleep_with_plugin_updates(0.5)
                             continue  # Skip to next iteration, don't rotate
                         else:
@@ -3226,6 +3219,24 @@ class DisplayController:
             self.current_mode_index %= len(self.available_modes)
             self.current_display_mode = self.available_modes[self.current_mode_index]
 
+    def _controller_config_change(self, old_config: Dict[str, Any], new_config: Dict[str, Any]) -> None:
+        """ConfigService subscriber: runs on the config-watcher thread."""
+        self._refresh_config_cache(new_config)
+        # Vegas keeps its own parsed copy of display.vegas_scroll. Queue the
+        # new one only when it changed: applying it rebuilds the strip.
+        # (getattr: this can fire before __init__ creates the coordinator.)
+        vegas = getattr(self, 'vegas_coordinator', None)
+        if vegas is not None and (
+                (old_config.get('display', {}) or {}).get('vegas_scroll')
+                != (new_config.get('display', {}) or {}).get('vegas_scroll')):
+            vegas.update_config(new_config)
+        # If a plugin was enabled/disabled, flag a reconcile for the main
+        # loop to apply (loading/unloading off the watcher thread is unsafe).
+        if (self._enabled_set_changed(old_config, new_config)
+                or self._enabled_plugin_not_running(new_config)):
+            with self._reconcile_flag_lock:
+                self._pending_plugin_reconcile = True
+
     def _refresh_config_cache(self, new_config: Dict[str, Any]) -> None:
         """Refresh all config-derived caches when a hot-reload fires.
 
@@ -3238,9 +3249,7 @@ class DisplayController:
         self._normal_brightness = (
             self.config.get('display', {}).get('hardware', {}).get('brightness', 90)
         )
-        self._scroll_speed = (
-            self.config.get('display', {}).get('vegas_scroll', {}).get('scroll_speed', 75)
-        )
+        self._scroll_speed = self._vegas_scroll_speed(self.config)
         # Force the timezone to be re-derived from the new config on next schedule check
         self._tz = None
         # Invalidate minute-gates so the new schedule/dim times take effect immediately
@@ -3249,6 +3258,14 @@ class DisplayController:
         self._cached_target_brightness = self._normal_brightness
         logger.debug("Config cache refreshed (brightness=%s, scroll_speed=%s)",
                      self._normal_brightness, self._scroll_speed)
+
+    @staticmethod
+    def _vegas_scroll_speed(config: Dict[str, Any]) -> float:
+        """Vegas scroll speed in px/s. The default must match VegasModeConfig's
+        (50): a follower dead-reckons with this value between the leader's
+        position packets, so a different default made it run 50% fast."""
+        vegas_cfg = (config.get('display', {}) or {}).get('vegas_scroll', {}) or {}
+        return float(vegas_cfg.get('scroll_speed', 50.0))
 
     def cleanup(self):
         """Clean up resources."""
