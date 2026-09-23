@@ -146,7 +146,10 @@ def display(self, force_clear: bool = False) -> bool:
 
 ## Error Aggregation
 
-LEDMatrix automatically tracks plugin errors. Access error data via the API:
+LEDMatrix automatically tracks plugin errors: every exception or timeout from
+a plugin's `update()` or `display()` is recorded by the display service,
+which runs the plugins. See them in the web interface under **Logs → Plugin
+errors**, or through the API:
 
 ```bash
 # Get error summary
@@ -155,9 +158,20 @@ curl http://localhost:5000/api/v3/errors/summary
 # Get plugin-specific health
 curl http://localhost:5000/api/v3/errors/plugin/my-plugin
 
-# Clear old errors
+# Clear errors older than 24 hours (the default), or all of them
 curl -X POST http://localhost:5000/api/v3/errors/clear
+curl -X POST -H 'Content-Type: application/json' -d '{"all": true}' \
+  http://localhost:5000/api/v3/errors/clear
 ```
+
+The web interface is a separate process, so it reads a snapshot the display
+service writes to the shared cache directory (`plugin_error_snapshot`): at most
+every 10 seconds, and only when something changed. Expect the numbers to lag
+by up to about 15 seconds, and to start from zero when the display service
+restarts. `snapshot_available` is `false` until the display service has
+reported. A clear is a request the display service applies within about 5
+seconds; the API hides the cleared errors immediately. Details and response
+shapes: [REST API reference](REST_API_REFERENCE.md#error-tracking).
 
 ### Error Patterns
 

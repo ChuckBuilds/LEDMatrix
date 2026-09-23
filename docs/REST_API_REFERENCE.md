@@ -1815,31 +1815,105 @@ The last 100 journal lines for `ledmatrix.service` and
 
 ## Error tracking
 
+Plugin errors are recorded by the display service (`ledmatrix.service`),
+which runs the plugins. It publishes a snapshot to the shared cache directory
+(`plugin_error_snapshot`) at most every 10 seconds, and only when something
+changed, so these endpoints lag the display by up to about 15 seconds. The
+counts cover the display service's current run: they start at zero when it
+restarts. Error messages and stack traces have credentials redacted, and
+messages, traces and context values are truncated in the snapshot.
+
+Every response below adds three fields to the shape it always had:
+
+| Field | Meaning |
+|---|---|
+| `snapshot_available` | `false` until the display service has reported (for example, it is not running). Counts are then zero. |
+| `generated_at` | When the display service produced the snapshot (ISO, the Pi's local time), or `null`. |
+| `clear_pending` | A clear has been requested and the display service has not applied it yet. |
+
 ### Get Error Summary
 
 **GET** `/api/v3/errors/summary`
 
-Aggregated counts, detected patterns and recent errors across plugins and
-core components.
+Aggregated counts, detected patterns and recent errors (the last 20).
+
+```json
+{
+  "status": "success",
+  "data": {
+    "session_start": "2026-09-23T09:40:02.118000",
+    "total_errors": 13,
+    "error_rate_per_hour": 41.2,
+    "error_counts_by_type": {"ConnectionError": 12, "ValueError": 1},
+    "plugin_error_counts": {"weather": {"ConnectionError": 12}, "stocks": {"ValueError": 1}},
+    "active_patterns": {
+      "ConnectionError": {
+        "error_type": "ConnectionError", "count": 12,
+        "first_seen": "2026-09-23T09:41:10.500000", "last_seen": "2026-09-23T09:58:36.020000",
+        "affected_plugins": ["weather"], "sample_messages": ["Read timed out."],
+        "severity": "error"
+      }
+    },
+    "recent_errors": [
+      {"error_type": "ValueError", "message": "could not parse price",
+       "timestamp": "2026-09-23T09:58:36.100000", "context": {},
+       "plugin_id": "stocks", "operation": "update", "stack_trace": "Traceback ..."}
+    ],
+    "generated_at": "2026-09-23T09:58:40.000000",
+    "snapshot_available": true,
+    "clear_pending": false
+  },
+  "message": "Error summary retrieved"
+}
+```
 
 ### Get Plugin Errors
 
 **GET** `/api/v3/errors/plugin/<plugin_id>`
 
-Error health and statistics for one plugin.
+Error health and statistics for one plugin: `plugin_id`, `status`
+(`healthy`, `degraded` or `unhealthy`), `total_errors`, `error_types`,
+`recent_error_count`, `last_error` (a `recent_errors` entry or `null`), plus
+the three fields above. A plugin with no recorded errors is `healthy`.
 
 ### Clear Errors
 
 **POST** `/api/v3/errors/clear`
 
-Clear error records older than `max_age_hours` (default 24, 1-8760).
-Returns `data.cleared_count`.
+Clear error records older than `max_age_hours` (default 24, 1-8760), or every
+error with `"all": true` (`max_age_hours` is then ignored).
 
 ```json
 {
   "max_age_hours": 24
 }
 ```
+
+The clear is asynchronous. The web interface records a request
+(`plugin_error_clear_request` in the shared cache), and the display service
+applies it within about 5 seconds, rebuilding its counts from the errors it
+keeps and republishing. Reads hide the cleared errors from the moment the
+request is recorded. Until the display service applies an age-based clear,
+`recent_errors` and `active_patterns` are already filtered but the counts
+are the old ones, and `clear_pending` is `true`.
+
+```json
+{
+  "status": "success",
+  "data": {
+    "cleared_count": 13,
+    "clear_requested": true,
+    "request_id": "5f0c1e...",
+    "cutoff": "2026-09-23T09:59:02.310000"
+  },
+  "message": "Clear of all errors requested; the display service applies it within about 5 seconds"
+}
+```
+
+`cleared_count` is how many of the reported errors the clear hides. It is
+`null` when that cannot be known before the display service applies it (an
+age-based clear over more errors than the report lists). A request that
+could not be written to the shared cache answers `500`.
 
 ---
 
