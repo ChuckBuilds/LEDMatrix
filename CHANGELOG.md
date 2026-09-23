@@ -19,6 +19,13 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+- `FontManager.get_font()` returns a BDF font at its native size when asked for
+  a size the file doesn't contain (5x7.bdf at 8 or 10px, say). It used to
+  return PIL's default font, a different typeface, so a plugin that relied on
+  that will now render the font it asked for.
+- `src.wifi_manager.get_wifi_status_path()` — where WiFi status messages for
+  the display are written (`config/wifi_status.json`).
+
 ### Config writes
 
 - A power cut or crash mid-save can no longer leave `config/config.json`
@@ -141,6 +148,19 @@ New modules a plugin may import via `src.*` (floor on 3.5.0):
   fetched, which keeps the peak memory of a four-capped-month fetch to about
   16 MB over the sequential path rather than 43 MB — `docs/LOW_MEMORY_BOARDS.md`
   puts a 1 GB Pi 3B+ at under 200 MB of headroom.
+- `ESPNDataSource.fetch_standings` asks each league the endpoint that league
+  actually publishes. It tried `/standings` first whatever the league and fell
+  back to `/rankings` only on a 404, but college leagues answer `/standings`
+  with a 200 that carries no poll, so the fallback never fired: the rank badge
+  simply never appeared and anything keyed off rankings quietly did nothing.
+  Endpoints are now ordered by whether the league publishes a poll, and a 200
+  that lacks the key counts as a miss, so a league answering both still ends up
+  with whichever carries the poll. Only a 404 is routine — that is how a league
+  says it has none; a connection error, a timeout or an unparseable body is
+  logged as an error again, and a bug raised while inspecting the payload is no
+  longer swallowed as a missing poll. This is the implementation the football,
+  baseball and hockey boards already ship; core was the last copy on the old
+  one.
 
 ### Scrolling
 
@@ -369,6 +389,19 @@ New modules a plugin may import via `src.*` (floor on 3.5.0):
   timeouts with a second bash path, and all reinstalls share a 10-minute
   budget, so a rollback finishes inside the unit's 30-minute limit instead of
   being killed mid-way.
+
+### Installers
+
+- The generated `ledmatrix_web` sudoers rules are parsed before they are
+  installed. Both installers built the drop-in from `which` lookups and copied
+  it into `/etc/sudoers.d` without ever checking it, and a malformed file there
+  makes sudo refuse every command for every user — on a headless Pi, that is
+  unrecoverable over SSH. `first_time_install.sh` now runs `visudo -c` on the
+  generated file and, if it does not parse, prints what visudo said and leaves
+  the installed file untouched instead of replacing it with a broken one;
+  `configure_web_sudo.sh` does the same before offering the rules for
+  confirmation. `first_time_install.sh` also built that file at a fixed `/tmp`
+  path as root; `mktemp` now picks the name.
 
 ### Small fixes (update-all, plugin system settings, scripts)
 
