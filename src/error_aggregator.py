@@ -23,6 +23,7 @@ from typing import Dict, List, Optional, Any, Callable, Tuple
 import logging
 
 from src.exceptions import LEDMatrixError
+from src.redaction import redact_credentials
 
 
 @dataclass
@@ -392,7 +393,7 @@ class ErrorAggregator:
                     _clip(p, _SNAPSHOT_ID_CHARS) for p in pattern.get("affected_plugins", [])
                 ][:_SNAPSHOT_MAX_AFFECTED_PLUGINS]
                 pattern["sample_messages"] = [
-                    _clip(m, _SNAPSHOT_SAMPLE_CHARS) for m in pattern.get("sample_messages", [])
+                    _redacted_clip(m, _SNAPSHOT_SAMPLE_CHARS) for m in pattern.get("sample_messages", [])
                 ][:3]
                 patterns[key] = pattern
             summary["active_patterns"] = patterns
@@ -559,22 +560,32 @@ def _clip(value: Any, limit: int) -> str:
     return text if len(text) <= limit else text[:limit - 3] + "..."
 
 
+def _redacted_clip(value: Any, limit: int) -> str:
+    """Redact, then clip. Clipping first could cut a ``token=`` marker off
+    while keeping the secret after it, and the web side's redaction would then
+    have nothing to match."""
+    return _clip(redact_credentials(value if isinstance(value, str) else str(value)), limit)
+
+
 def _compact_record(record: Dict[str, Any]) -> Dict[str, Any]:
-    """An ErrorRecord dict with every free-text field bounded."""
+    """An ErrorRecord dict with every free-text field redacted and bounded."""
     compact = dict(record)
-    compact["message"] = _clip(record.get("message") or "", _SNAPSHOT_MESSAGE_CHARS)
+    compact["message"] = _redacted_clip(record.get("message") or "", _SNAPSHOT_MESSAGE_CHARS)
     if record.get("plugin_id") is not None:
         compact["plugin_id"] = _clip(record["plugin_id"], _SNAPSHOT_ID_CHARS)
     trace = record.get("stack_trace")
-    if isinstance(trace, str) and len(trace) > _SNAPSHOT_TRACE_CHARS:
-        # The end of a traceback is the part that says what went wrong.
-        compact["stack_trace"] = "..." + trace[-(_SNAPSHOT_TRACE_CHARS - 3):]
+    if isinstance(trace, str):
+        trace = redact_credentials(trace)
+        if len(trace) > _SNAPSHOT_TRACE_CHARS:
+            # The end of a traceback is the part that says what went wrong.
+            trace = "..." + trace[-(_SNAPSHOT_TRACE_CHARS - 3):]
+        compact["stack_trace"] = trace
     context = record.get("context")
     if isinstance(context, dict):
         compact["context"] = {
             _clip(k, _SNAPSHOT_ID_CHARS): (
                 v if v is None or isinstance(v, (bool, int, float))
-                else _clip(v, _SNAPSHOT_CONTEXT_VALUE_CHARS)
+                else _redacted_clip(v, _SNAPSHOT_CONTEXT_VALUE_CHARS)
             )
             for k, v in list(context.items())[:_SNAPSHOT_CONTEXT_KEYS]
         }

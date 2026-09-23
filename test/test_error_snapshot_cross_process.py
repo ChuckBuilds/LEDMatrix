@@ -296,6 +296,23 @@ class TestRoutes:
         assert "SEKRIT123" not in body
         assert "api_key=<redacted>" in body
 
+    def test_snapshot_is_redacted_before_it_is_clipped(self, display):
+        """The display redacts what it publishes, before clipping: keeping
+        only a traceback's tail could cut ``api_key=`` off and leave the key
+        itself, which the web side's redaction would then not recognise."""
+        aggregator, _, _ = display
+        record = _fail(aggregator, message="GET /?token=MSGSECRET failed")
+        tail = errors._SNAPSHOT_TRACE_CHARS - 3
+        filler = "x" * (tail - len("TRACESECRET "))
+        record.stack_trace = "requests failed: api_key=TRACESECRET " + filler
+        assert record.stack_trace[-tail:].startswith("TRACESECRET")  # marker falls outside
+        record.context = {"url": "https://h/?password=CTXSECRET"}
+        for _ in range(5):
+            _fail(aggregator, message="GET /?token=SAMPLESECRET failed")
+        published = json.dumps(aggregator.build_snapshot())
+        for secret in ("MSGSECRET", "TRACESECRET", "CTXSECRET", "SAMPLESECRET"):
+            assert secret not in published, secret
+
 
 class TestClear:
     def test_clear_is_applied_by_the_display_and_republished(self, web, display):
