@@ -19,6 +19,23 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Plugin error reporting
+
+- `/api/v3/errors/summary` and `/api/v3/errors/plugin/<id>` report the errors
+  the display service recorded. They used to read the web process's own error
+  aggregator, which never records anything, so they always answered "no
+  errors". The display service now publishes a bounded snapshot to the shared
+  cache (`plugin_error_snapshot`, at most every 10 seconds and only on change;
+  `src/error_aggregator.py`, started from `DisplayController.__init__`).
+  Responses keep their shape and add `snapshot_available`, `generated_at` and
+  `clear_pending`; exception text has credentials redacted.
+- `POST /api/v3/errors/clear` records a request (`plugin_error_clear_request`)
+  the display service applies within about 5 seconds; reads hide the cleared
+  errors at once. It accepts `"all": true`, and `cleared_count` can be `null`
+  when the count is only known to the display service.
+- The Logs tab has a **Plugin errors** panel: per-plugin counts, repeating
+  errors and a Clear button.
+
 ## 3.5.0
 
 New modules a plugin may import via `src.*` (floor on 3.5.0):
