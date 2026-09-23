@@ -626,9 +626,8 @@ class PluginManager:
 
             # Its font registrations go with it (the Fonts tab's "Used by").
             try:
-                forget = getattr(self.font_manager, 'forget_manager_fonts', None)
-                if callable(forget):
-                    forget(plugin_id)
+                if self.font_manager is not None and hasattr(self.font_manager, 'forget_manager_fonts'):
+                    self.font_manager.forget_manager_fonts(plugin_id)
             except Exception as e:
                 self.logger.debug("Could not forget fonts of %s: %s", plugin_id, e)
 
