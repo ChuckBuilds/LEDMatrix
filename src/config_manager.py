@@ -7,9 +7,11 @@ files:
 * ``config/config.json``         — main user-editable configuration.
 * ``config/config_secrets.json`` — sensitive values (API keys, tokens).
 
-All writes go through :class:`~src.config_manager_atomic.AtomicConfigManager`
-which performs a backup before overwriting, validates the result, and rolls
-back on error.  This makes config corruption essentially impossible.
+Every write of either file goes through
+:func:`~src.config_manager_atomic.atomic_write_text`: temp file, fsync,
+rename, directory fsync. A crash or power cut mid-save leaves the old file or
+the new one, never a truncated one. :meth:`ConfigManager.save_config_atomic`
+additionally keeps rotating backups in ``config/backups/``.
 
 Plugin configuration
 --------------------
@@ -34,13 +36,11 @@ from src.exceptions import ConfigError
 from src.logging_config import get_logger
 from src.config_manager_atomic import (
     AtomicConfigManager, SaveResult, SaveResultStatus,
-    BackupInfo, ValidationResult
+    BackupInfo, ValidationResult, atomic_write_json
 )
 from src.common.permission_utils import (
     ensure_directory_permissions,
-    ensure_file_permissions,
     ensure_shared_group_ownership,
-    get_config_file_mode,
     get_config_dir_mode
 )
 
@@ -114,11 +114,12 @@ class ConfigManager:
         # Strip secrets from main config before saving
         config_to_write = self._strip_secrets_recursive(new_config_data, secrets_content)
 
-        # Use atomic manager to save
+        # The secrets file is only read here, never changed, so it is not
+        # handed over for rewriting.
         atomic_mgr = self._get_atomic_manager()
         result = atomic_mgr.save_config_atomic(
             new_config=config_to_write,
-            new_secrets=secrets_content if secrets_content else None,
+            new_secrets=None,
             create_backup=create_backup,
             validate_after_write=validate_after_write
         )
@@ -354,9 +355,8 @@ class ConfigManager:
         config_to_write = self._strip_secrets_recursive(new_config_data, secrets_content)
 
         try:
-            with open(self.config_path, 'w') as f:
-                json.dump(config_to_write, f, indent=4)
-            
+            atomic_write_json(self.config_path, config_to_write)
+
             # Update the in-memory config to the new state (which includes secrets for runtime)
             self.config = new_config_data
             self._loaded_sig = self._files_signature()
@@ -438,14 +438,8 @@ class ConfigManager:
         with open(self.template_path, 'r') as template_file:
             template_data = json.load(template_file)
         
-        with open(self.config_path, 'w') as config_file:
-            json.dump(template_data, config_file, indent=4)
-        
-        # Set proper file permissions after creation
-        config_path_obj = Path(self.config_path)
-        ensure_file_permissions(config_path_obj, get_config_file_mode(config_path_obj))
-        ensure_shared_group_ownership(config_path_obj)
-        
+        atomic_write_json(self.config_path, template_data)
+
         self.logger.info(f"Created config.json from template at {os.path.abspath(self.config_path)}")
 
     def _migrate_config(self) -> None:
@@ -600,54 +594,10 @@ class ConfigManager:
             path_obj = Path(path_to_save)
             ensure_directory_permissions(path_obj.parent, get_config_dir_mode())
             
-            # Use atomic write: write to temp file first, then move atomically
-            # This works even if the existing file isn't writable (as long as directory is writable)
-            import tempfile
-            file_mode = get_config_file_mode(path_obj)
-            
-            # Create temp file in same directory to ensure atomic move works
-            temp_fd, temp_path = tempfile.mkstemp(
-                suffix='.json',
-                dir=str(path_obj.parent),
-                text=True
-            )
-            
-            try:
-                # Write to temp file
-                with os.fdopen(temp_fd, 'w', encoding='utf-8') as f:
-                    json.dump(data, f, indent=4)
-                    f.flush()
-                    os.fsync(f.fileno())
-                
-                # Set permissions on temp file before moving
-                try:
-                    os.chmod(temp_path, file_mode)
-                except OSError:
-                    pass  # Non-critical if chmod fails
-                
-                # Atomically move temp file to final location
-                # This works even if target file exists and isn't writable
-                os.replace(temp_path, str(path_obj))
-                temp_path = None  # Mark as moved so we don't try to clean it up
-                
-                # Ensure final file has correct permissions
-                try:
-                    ensure_file_permissions(path_obj, file_mode)
-                    ensure_shared_group_ownership(path_obj)
-                except OSError as perm_error:
-                    # If we can't set permissions but file was written, log warning but don't fail
-                    self.logger.warning(
-                        f"File {path_to_save} was written successfully but could not set permissions: {perm_error}. "
-                        f"This may cause issues if the file needs to be accessible by other users."
-                    )
-            finally:
-                # Clean up temp file if it still exists (move failed)
-                if temp_path and os.path.exists(temp_path):
-                    try:
-                        os.remove(temp_path)
-                    except OSError:
-                        pass
-            
+            # A rename, not an in-place write, so this works even when the
+            # existing file isn't writable (as long as the directory is).
+            atomic_write_json(path_obj, data)
+
             self.logger.info(f"{file_type.capitalize()} configuration successfully saved to {os.path.abspath(path_to_save)}")
             
             # If we just saved the main config or secrets, the merged self.config might be stale.
