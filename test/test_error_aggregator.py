@@ -154,6 +154,16 @@ class TestPatternDetection:
 
         assert "ValueError" not in aggregator._patterns
 
+    def test_affected_plugins_stays_bounded(self):
+        """Each repeat used to append every plugin in the window again, so a
+        plugin failing in a loop grew this list without limit (3,000 errors
+        from three plugins reached 2.5 million entries)."""
+        aggregator = ErrorAggregator(pattern_threshold=2, pattern_window_minutes=60)
+        for i in range(300):
+            aggregator.record_error(error=ValueError("loop"), plugin_id=f"p{i % 3}")
+        assert aggregator._patterns["ValueError"].affected_plugins == ["p0", "p1", "p2"]
+        assert aggregator._patterns["ValueError"].to_dict()["affected_plugins"] == ["p0", "p1", "p2"]
+
     def test_pattern_severity_increases_with_count(self):
         """Pattern severity should increase with more occurrences."""
         aggregator = ErrorAggregator(
