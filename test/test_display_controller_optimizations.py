@@ -110,12 +110,14 @@ class TestCachedConfigValues:
         assert controller._normal_brightness == expected
 
     def test_scroll_speed_cached(self, controller):
-        """_scroll_speed must equal what the config says."""
+        """_scroll_speed must equal what the config says, defaulting to Vegas's
+        own default so a follower dead-reckons at the leader's speed."""
+        from src.vegas_mode.config import VegasModeConfig
         expected = (
             controller.config
             .get("display", {})
             .get("vegas_scroll", {})
-            .get("scroll_speed", 75)
+            .get("scroll_speed", VegasModeConfig.from_config({}).scroll_speed)
         )
         assert controller._scroll_speed == expected
 

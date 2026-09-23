@@ -129,3 +129,18 @@ def test_every_granted_helper_is_hardened_in_first_time_install_after_chown():
     assert loop.start() > project_chown, (
         "helper hardening runs before Step 11's project-wide chown, which undoes it")
     assert _granted_helpers() <= set(loop.group(1).split())
+
+
+def test_no_grant_runs_a_file_the_web_user_can_edit():
+    """Every project file granted as root must be a fix_perms helper, which
+    both installers chown root:root (checked above). Anything else under the
+    project root is owned by the user after Step 11's chown, so a NOPASSWD
+    rule for it lets the web user rewrite the file and run it as root. The
+    grants for display_controller.py, start_display.sh and stop_display.sh
+    were exactly that, and nothing ever ran them through sudo."""
+    for installer in (FIRST_TIME, CONFIGURE):
+        for _, command in _grants(installer):
+            for token in command.split():
+                if token.startswith("$PROJECT_ROOT/"):
+                    assert token.startswith("$PROJECT_ROOT/scripts/fix_perms/"), (
+                        f"{installer.name} grants root on a user-owned file: {command}")

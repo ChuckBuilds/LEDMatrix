@@ -58,6 +58,12 @@ def get_wifi_config_path():
     
     return Path(project_root) / "config" / "wifi_config.json"
 
+
+def get_wifi_status_path() -> Path:
+    """The status-message file WiFiManager writes and the display controller
+    reads (config/wifi_status.json, next to wifi_config.json)."""
+    return get_wifi_config_path().parent / "wifi_status.json"
+
 HOSTAPD_CONFIG_PATH = Path("/etc/hostapd/hostapd.conf")
 DNSMASQ_CONFIG_PATH = Path("/etc/dnsmasq.d/ledmatrix-captive.conf")
 # Drop-in config for NetworkManager's built-in dnsmasq (ipv4.method=shared).
@@ -182,8 +188,12 @@ class WiFiManager:
                 'duration': duration
             }
             LED_STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
-            with open(LED_STATUS_FILE, 'w') as f:
+            # Write-then-rename: the display reads this at ~1 Hz and deletes
+            # a file it can't parse, so a half-written one would lose the message.
+            tmp_path = LED_STATUS_FILE.with_name(LED_STATUS_FILE.name + '.tmp')
+            with open(tmp_path, 'w') as f:
                 json.dump(status, f)
+            os.replace(tmp_path, LED_STATUS_FILE)
             logger.info(f"LED message: {message}")
         except Exception as e:
             logger.debug(f"Could not write LED status message: {e}")

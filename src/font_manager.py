@@ -510,8 +510,17 @@ class FontManager:
                     "%spx", font_path, size_px, native_size
                 )
             face = freetype.Face(font_path)
-            # Set character size (width, height) in 1/64th of points
-            face.set_char_size(size_px * 64, size_px * 64, 72, 72)
+            try:
+                # Character size in 1/64th points at 72dpi == pixel size.
+                face.set_char_size(size_px * 64, size_px * 64, 72, 72)
+            except freetype.FT_Exception:
+                # FreeType rejects any size but the strike's own, and get_font
+                # used to answer that with PIL's default font -- a different
+                # typeface. Use the native strike, as element_style does.
+                if native_size is None or native_size == size_px:
+                    raise
+                face = freetype.Face(font_path)
+                face.set_char_size(native_size * 64, native_size * 64, 72, 72)
             return face
         except Exception as e:
             logger.error(f"Error loading BDF font {font_path}: {e}")
