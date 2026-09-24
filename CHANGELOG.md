@@ -19,6 +19,14 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+- The web service (`ledmatrix-web`) logs through `src.logging_config` like the
+  display service, so `journalctl -p err -u ledmatrix-web` works. Successful
+  GET/HEAD/OPTIONS requests (the UI's polling) are logged at DEBUG instead of
+  INFO; 4xx at WARNING, 5xx at ERROR. `LEDMATRIX_DEBUG=true` shows them again.
+  `web_interface/logging_config.py` is removed. The web cache
+  (`web_interface/cache.py`) now honours the TTL a value was stored with and is
+  thread-safe.
+
 - `FontManager.get_font()` returns a BDF font at its native size when asked for
   a size the file doesn't contain (5x7.bdf at 8 or 10px, say). It used to
   return PIL's default font, a different typeface, so a plugin that relied on

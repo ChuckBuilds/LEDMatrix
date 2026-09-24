@@ -34,7 +34,8 @@ def success_response(
     # metadata block for responses that have neither.
     enriched = dict(metadata) if metadata is not None else {}
     if hasattr(request, 'start_time'):
-        enriched['response_time_ms'] = int((time.time() - request.start_time) * 1000)
+        # request_logging stamps start_time from perf_counter, not the wall clock.
+        enriched['response_time_ms'] = int((time.perf_counter() - request.start_time) * 1000)
 
     if metadata is not None or enriched:
         response_data['metadata'] = enriched
