@@ -40,24 +40,48 @@ def _aggregate(recorder):
     return recorder.totals
 
 
-def _recorder(tmp_path):
+def _recorder(tmp_path, **kwargs):
     # A flush interval nothing in these tests reaches, so aggregation is
     # driven explicitly and no worker thread starts.
     return FrameTimingRecorder(path=str(tmp_path / "stats.json"),
-                               flush_interval=1e9)
+                               flush_interval=1e9, **kwargs)
+
+
+def _settle(recorder, interval=PERIOD, hold=1, start=0.0):
+    """Two agreeing windows: the refresh period is adopted from the second."""
+    for offset in (0.0, 50.0):
+        _feed(recorder, [interval] * 200, hold=hold, start=start + offset)
+        _aggregate(recorder)
 
 
 def test_steady_frames_are_on_time_and_give_the_refresh(tmp_path):
     r = _recorder(tmp_path)
     _feed(r, [PERIOD] * 200)
+    _aggregate(r)
+    assert r.refresh_period is None       # one window proves nothing yet
+    _feed(r, [PERIOD] * 200, start=500.0)
     totals = _aggregate(r)
-    assert totals["scroll_frames"] == 200
+    assert totals["scroll_frames"] == 400
+    assert totals["timed_frames"] == 200  # the second window, judged
     assert totals["late_frames"] == 0
     assert abs(1.0 / r.refresh_period - 100.0) < 0.5
 
 
-def test_a_frame_a_refresh_late_is_counted(tmp_path):
+def test_a_bad_first_window_does_not_fix_the_period(tmp_path):
+    # Startup: nine frames in ten a refresh late, so that window's low end is
+    # two periods. Adopted outright, every later window (a 50% "drop") would
+    # be refused and one-refresh-late frames would read as on time for good.
     r = _recorder(tmp_path)
+    _feed(r, [2 * PERIOD if i % 10 else PERIOD for i in range(200)])
+    _aggregate(r)
+    for start in (500.0, 1000.0):
+        _feed(r, [PERIOD] * 200, start=start)
+        _aggregate(r)
+    assert abs(1.0 / r.refresh_period - 100.0) < 0.5
+
+
+def test_a_frame_a_refresh_late_is_counted(tmp_path):
+    r = _recorder(tmp_path, refresh_hz=100.0)
     intervals = [PERIOD] * 200
     intervals[50] = 2 * PERIOD      # one refresh late
     intervals[120] = 4 * PERIOD     # three refreshes late
@@ -71,9 +95,8 @@ def test_a_frame_a_refresh_late_is_counted(tmp_path):
 def test_a_held_frame_is_not_late(tmp_path):
     # 50px/s on a 100Hz panel is 1px every 2 refreshes: 20ms is on time.
     r = _recorder(tmp_path)
-    _feed(r, [2 * PERIOD] * 200, hold=2)
-    totals = _aggregate(r)
-    assert totals["late_frames"] == 0
+    _settle(r, 2 * PERIOD, hold=2)
+    assert r.totals["late_frames"] == 0
     assert abs(1.0 / r.refresh_period - 100.0) < 0.5
 
 
@@ -204,8 +227,7 @@ def test_early_frames_are_counted(tmp_path):
 
 def test_refresh_estimate_survives_a_window_full_of_misses(tmp_path):
     r = _recorder(tmp_path)
-    _feed(r, [PERIOD] * 200)
-    _aggregate(r)
+    _settle(r)
     # A bad window where every frame is late must not redefine the refresh.
     _feed(r, [2 * PERIOD] * 200, start=1000.0)
     totals = _aggregate(r)
@@ -249,8 +271,7 @@ def test_soak_report_is_the_difference_between_snapshots(tmp_path):
 
 def test_soak_fails_a_run_that_was_not_locked(tmp_path):
     r = _recorder(tmp_path)
-    _feed(r, [2 * PERIOD] * 200, hold=2)
-    _aggregate(r)
+    _settle(r, 2 * PERIOD, hold=2)
     before = json.loads(json.dumps(r.snapshot()))
     _feed(r, [PERIOD] * 1000, hold=2, start=500.0)   # never waited out the hold
     _aggregate(r)
@@ -262,6 +283,50 @@ def test_soak_fails_a_run_that_was_not_locked(tmp_path):
     assert not frame_soak.passed(report, 0.1)
 
 
+def test_frames_before_the_period_is_known_do_not_make_a_verdict(tmp_path):
+    # With no period, nothing was judged: 0 late of 200 is not a pass.
+    r = _recorder(tmp_path)
+    before = json.loads(json.dumps(r.snapshot()))
+    _feed(r, [PERIOD] * 200)
+    _aggregate(r)
+    after = json.loads(json.dumps(r.snapshot()))
+    after["updated"] = before["updated"] + 10.0
+    report = frame_soak.build_report(before, after, preview=False)
+    assert report["scroll_frames"] == 200
+    assert report["timed_frames"] == 0
+    assert report["late_pct"] is None
+    assert not frame_soak.passed(report, 0.1)
+
+
+def test_a_snapshot_is_not_changed_by_what_comes_after_it(tmp_path):
+    # render_bench keeps the snapshot object itself, no JSON round trip; it
+    # used to share the live totals, so every graded run differenced to zero.
+    r = _recorder(tmp_path, refresh_hz=100.0)
+    _feed(r, [PERIOD] * 100)
+    _aggregate(r)
+    before = r.snapshot()
+    _feed(r, [PERIOD] * 300, start=500.0)
+    _aggregate(r)
+    after = r.snapshot()
+    after["updated"] = before["updated"] + 10.0
+    report = frame_soak.build_report(before, after, preview=False)
+    assert report["scroll_frames"] == 300
+    assert report["late_pct"] == 0.0
+
+
+def test_the_held_rate_is_read_from_the_bucket_midpoint(tmp_path):
+    # percentiles() gives a bucket's upper edge. At the midpoint of the
+    # [10.0, 10.25)ms bucket the upper edge would say 97.6Hz.
+    r = _recorder(tmp_path, refresh_hz=100.0)
+    before = json.loads(json.dumps(r.snapshot()))
+    _feed(r, [0.010125] * 300)
+    _aggregate(r)
+    after = json.loads(json.dumps(r.snapshot()))
+    after["updated"] = before["updated"] + 10.0
+    report = frame_soak.build_report(before, after, preview=False)
+    assert report["held_refresh_hz"] == round(1000.0 / 10.125, 1)
+
+
 def test_soak_percentiles_mark_the_overflow_bucket():
     top = frame_timing.BUCKET_COUNT - 1
     result = frame_soak.percentiles({0: 98, top: 2}, 0.25)
@@ -269,10 +334,9 @@ def test_soak_percentiles_mark_the_overflow_bucket():
     assert str(result["max"]).startswith(">=")
 
 
-def test_display_manager_records_every_presented_frame():
+def test_display_manager_records_every_presented_frame(monkeypatch):
     """The hook sits in update_display, so every source is covered."""
-    import os
-    os.environ["EMULATOR"] = "true"
+    monkeypatch.setenv("EMULATOR", "true")
     from src.display_manager import DisplayManager
     DisplayManager._instance = None
     DisplayManager._initialized = False
@@ -369,6 +433,36 @@ def test_watchdog_rate_limits_its_dumps(caplog):
     dumps = [r for r in caplog.records if r.getMessage().startswith("Render stall:")]
     assert len(dumps) == 1
     assert dog.stalls == 2
+
+
+def test_watchdog_reports_the_end_of_a_stall_that_outlasts_the_scroll_state(caplog):
+    # The scroll state expires after 2s without activity; a stall longer than
+    # that must still have its end reported.
+    rec = _FakeRecorder()
+    dog = frame_timing.StallWatchdog(rec, threshold=0.25, log_interval=0.0)
+    rec.last_frame = (10.0, True, 1)
+    with caplog.at_level("WARNING", logger="src.common.frame_timing"):
+        state = dog.check(10.3, 0.0, None, False)          # dumped
+        rec.scrolling = False                               # state expired at 12.0
+        state = dog.check(12.5, 0.0, *state)
+        rec.last_frame = (13.0, True, 1)                    # the frame arrives
+        dog.check(13.05, 0.0, *state)
+    over = [r.getMessage() for r in caplog.records
+            if r.getMessage().startswith("Render stall over")]
+    assert over == ["Render stall over: no frame for 3000ms"]
+
+
+def test_closing_the_recorder_stops_its_watchdog(tmp_path, monkeypatch):
+    monkeypatch.delenv("LEDMATRIX_STALL_WATCHDOG", raising=False)
+    r = _recorder(tmp_path)
+    r.scrolling_now = lambda: True
+    r.record(0.001, 0.009, 1, True, 1.0)
+    thread = r.watchdog._thread
+    assert thread.is_alive()
+    r.close()
+    thread.join(2)
+    assert not thread.is_alive()
+    assert r.watchdog is None
 
 
 def test_watchdog_threshold_can_be_lowered_for_a_diagnostic_run(monkeypatch):
@@ -469,6 +563,8 @@ def test_soak_calls_a_rate_faster_than_the_panel_not_locked(tmp_path):
     r.info = {"limit_refresh_rate_hz": 100}
     before = json.loads(json.dumps(r.snapshot()))
     _feed(r, [0.0012] * 500)           # unseeded: nothing looks early...
+    r.drain()
+    _feed(r, [0.0012] * 500, start=500.0)
     r.drain()
     after = json.loads(json.dumps(r.snapshot()))
     after["updated"] = before["updated"] + 10.0

@@ -1326,6 +1326,8 @@ class DisplayManager:
 
     def cleanup(self):
         """Clean up resources."""
+        if getattr(self, 'frame_timing', None) is not None:
+            self.frame_timing.close()
         if hasattr(self, 'matrix') and self.matrix is not None:
             try:
                 self.matrix.Clear()
