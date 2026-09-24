@@ -83,6 +83,7 @@ three times per threshold, so keep it to diagnostic runs, not soaks.
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import os
@@ -263,6 +264,8 @@ class FrameTimingRecorder:
         self.started = time.time()
         self.refresh_period: Optional[float] = (
             1.0 / refresh_hz if refresh_hz and refresh_hz > 0 else None)
+        # The first estimate, until a second window agrees with it.
+        self._refresh_candidate: Optional[float] = None
         self.totals: Dict[str, Any] = {
             "static_frames": 0,
             "scroll_frames": 0,
@@ -270,6 +273,10 @@ class FrameTimingRecorder:
             "missed_refreshes": 0,
             "late_by": {"1": 0, "2": 0, "3-5": 0, "6+": 0},
             "early_frames": 0,
+            # Frames judged against a known refresh period: the denominator
+            # for the late and early rates. Frames before the period is known
+            # are neither, and must not dilute them.
+            "timed_frames": 0,
             "freezes": 0,
             "freeze_seconds": 0.0,
             "freeze_by": {label: 0 for _, label in FREEZE_BUCKETS},
@@ -289,6 +296,12 @@ class FrameTimingRecorder:
         #: stall.
         self.scrolling_now: Optional[Callable[[], bool]] = None
         self.watchdog: Optional["StallWatchdog"] = None
+
+    def close(self) -> None:
+        """Stop the stall watchdog, if one was started."""
+        watchdog, self.watchdog = self.watchdog, None
+        if watchdog is not None:
+            watchdog.stop()
 
     # -- render thread ------------------------------------------------------
 
@@ -381,9 +394,20 @@ class FrameTimingRecorder:
         if len(per_hold) >= MIN_FRAMES_FOR_REFRESH:
             estimate = per_hold[len(per_hold) // 10]
             current = self.refresh_period
-            if estimate > 0 and (
-                    current is None
-                    or current * (1.0 - MAX_REFRESH_DROP) <= estimate < current):
+            if estimate <= 0:
+                pass
+            elif current is None:
+                # Adopt the first period only once two windows in a row agree:
+                # one loaded window at startup, most of its frames a refresh
+                # late, would otherwise fix a period twice the real one for
+                # the life of the process, since later windows may only lower
+                # it by MAX_REFRESH_DROP.
+                candidate = self._refresh_candidate
+                if candidate and abs(estimate - candidate) <= candidate * MAX_REFRESH_DROP:
+                    self.refresh_period = min(candidate, estimate)
+                else:
+                    self._refresh_candidate = estimate
+            elif current * (1.0 - MAX_REFRESH_DROP) <= estimate < current:
                 self.refresh_period = estimate
         period = self.refresh_period
 
@@ -406,6 +430,7 @@ class FrameTimingRecorder:
                 histogram = histograms[name]
                 histogram[bucket] = histogram.get(bucket, 0) + 1
             if period:
+                totals["timed_frames"] += 1
                 missed = round(interval / period) - hold
                 if missed >= 1:
                     totals["late_frames"] += 1
@@ -434,7 +459,7 @@ class FrameTimingRecorder:
             "measured_refresh_hz": round(1.0 / period, 2) if period else None,
             "binding_releases_gil": self._binding_gil,
             "info": info,
-            "totals": self.totals,
+            "totals": copy.deepcopy(self.totals),
             # JSON keys are strings; readers convert back.
             "histograms": {name: {str(k): v for k, v in sorted(h.items())}
                            for name, h in self.histograms.items()},
@@ -497,18 +522,25 @@ class StallWatchdog:
         self.stalls = 0
         self._last_dump: Optional[float] = None
         self._thread: Optional[threading.Thread] = None
+        self._stop = threading.Event()
 
     def start(self) -> None:
         self._thread = threading.Thread(
             target=self._run, daemon=True, name="stall-watchdog")
         self._thread.start()
 
+    def stop(self, timeout: float = 1.0) -> None:
+        """End the polling thread (DisplayManager.cleanup calls this)."""
+        self._stop.set()
+        thread = self._thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout)
+
     def _run(self) -> None:
         last_wake = self.clock()
         stall_from: Optional[float] = None   # presented_at of the stalled frame
         dumped = False
-        while True:
-            time.sleep(self.poll)
+        while not self._stop.wait(self.poll):
             now = self.clock()
             late = max(0.0, now - last_wake - self.poll)
             last_wake = now
@@ -534,8 +566,11 @@ class StallWatchdog:
             return None, False
 
         scrolling_now = self.recorder.scrolling_now
-        if stall_from is not None and (scrolling_now is None or not scrolling_now()):
+        if (stall_from is not None and now - stall_from >= GAP_SECONDS
+                and (scrolling_now is None or not scrolling_now())):
             # The scroll ended without another frame: nothing more to time.
+            # Only past GAP_SECONDS: the scroll state expires after 2s without
+            # activity, which a stall outlasts, and its end still wants saying.
             return None, False
         age = now - presented_at
         if (stall_from is None and scrolling and age >= self.threshold

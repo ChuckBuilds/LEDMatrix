@@ -130,6 +130,9 @@ def build_report(before, after, preview: bool) -> Dict[str, Any]:
     delta = diff(before, after)
     totals = delta["totals"]
     frames = totals["scroll_frames"]
+    # The rates are over frames judged against a known refresh period. Stats
+    # from a recorder that predates the count fall back to every frame.
+    timed = totals.get("timed_frames", frames) if "timed_frames" in totals else frames
     hours = delta["seconds"] / 3600.0 if delta["seconds"] > 0 else 0.0
     bucket_ms = after.get("bucket_ms", 0.25)
     report = {
@@ -141,12 +144,13 @@ def build_report(before, after, preview: bool) -> Dict[str, Any]:
         "scroll_frames": frames,
         "static_frames": totals["static_frames"],
         "late_frames": totals["late_frames"],
-        "late_pct": round(100.0 * totals["late_frames"] / frames, 3) if frames else None,
+        "timed_frames": timed,
+        "late_pct": round(100.0 * totals["late_frames"] / timed, 3) if timed else None,
         "missed_refreshes": totals["missed_refreshes"],
         "late_by": totals["late_by"],
         "early_frames": totals.get("early_frames", 0),
-        "early_pct": (round(100.0 * totals.get("early_frames", 0) / frames, 3)
-                      if frames else None),
+        "early_pct": (round(100.0 * totals.get("early_frames", 0) / timed, 3)
+                      if timed else None),
         "freeze_by": totals.get("freeze_by", {}),
         "freezes": totals["freezes"],
         "freezes_per_hour": round(totals["freezes"] / hours, 1) if hours else None,
@@ -161,8 +165,13 @@ def build_report(before, after, preview: bool) -> Dict[str, Any]:
     # bit-banging the panel and pushing frames at once); a widening gap between
     # the two is a render-cost regression even when nothing is late.
     typical = (report["timing_ms"].get("interval_per_hold") or {}).get("p50")
-    report["held_refresh_hz"] = (round(1000.0 / typical, 1)
-                                 if isinstance(typical, (int, float)) and typical else None)
+    # percentiles() reports a bucket's upper edge; the midpoint is the better
+    # estimate, and half a 0.25ms bucket is already ~1% at 100Hz -- the size
+    # of the idle-vs-held gap this number exists to show.
+    if isinstance(typical, (int, float)) and typical > bucket_ms / 2:
+        report["held_refresh_hz"] = round(1000.0 / (typical - bucket_ms / 2), 1)
+    else:
+        report["held_refresh_hz"] = None
     return report
 
 
