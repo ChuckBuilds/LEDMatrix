@@ -1304,8 +1304,7 @@ class PluginStoreManager:
                     return False
             else:
                 branch_used = self._install_via_git(repo_url, plugin_path, branch_candidates)
-                if branch_used is None and not plugin_path.exists():
-                    # Git failed entirely; fall back to zip download
+                if branch_used is None:
                     self.logger.info("Git not available or clone failed, attempting archive download...")
                     for candidate in branch_candidates:
                         download_url = f"{repo_url}/archive/refs/heads/{candidate}.zip"
@@ -1313,7 +1312,7 @@ class PluginStoreManager:
                             branch_used = candidate
                             break
 
-                if branch_used is None and not plugin_path.exists():
+                if branch_used is None:
                     self.logger.error(f"Failed to install plugin {plugin_id} via git or archive download")
                     return False
 
@@ -1477,24 +1476,22 @@ class PluginStoreManager:
                         'error': f'Failed to download or extract plugin from monorepo subdirectory: {plugin_path}'
                     }
             else:
-                # Try git clone for direct plugin repos
                 branch_used = self._install_via_git(repo_url, temp_dir, branch_candidates)
-                if branch_used:
+                if branch_used is not None:
                     self.logger.info(f"Cloned via git (branch: {branch_used})")
                 else:
-                    # Git failed; try downloading as zip
-                    branch_used = None
+                    self.logger.info("Git not available or clone failed, attempting archive download...")
                     for candidate in branch_candidates:
                         download_url = f"{repo_url}/archive/refs/heads/{candidate}.zip"
                         if self._install_via_download(download_url, temp_dir):
                             branch_used = candidate
                             break
-                    
-                    if branch_used is None:
-                        return {
-                            'success': False,
-                            'error': 'Failed to clone or download repository'
-                        }
+
+                if branch_used is None:
+                    return {
+                        'success': False,
+                        'error': 'Failed to clone or download repository'
+                    }
             
             # Read manifest to get plugin ID
             manifest_path = temp_dir / "manifest.json"
@@ -1651,7 +1648,18 @@ class PluginStoreManager:
             return None
     
     def _install_via_git(self, repo_url: str, target_path: Path, branches: Optional[List[str]] = None) -> Optional[str]:
-        """Clone a repository into ``target_path``. Returns the branch name on success."""
+        """Clone a repository into ``target_path``.
+
+        Tries each of ``branches`` (default ``main``, ``master``), then the
+        repository's own default branch, so a repository whose only branch
+        is e.g. ``develop`` still installs.
+
+        Returns:
+            The branch that was cloned, or None when every clone failed and
+            ``target_path`` has been removed. After a default-branch clone
+            this is the branch the clone checked out (``'HEAD'`` if the
+            remote's HEAD is detached), never None.
+        """
         branches_to_try = self._distinct_sequence(branches or [])
         if not branches_to_try:
             branches_to_try = ['main', 'master']
@@ -1686,7 +1694,7 @@ class PluginStoreManager:
                 timeout=60
             )
             self.logger.debug(f"Successfully cloned {repo_url} (git default branch) to {target_path}")
-            return None  # Unknown branch name, git default used
+            return self._checked_out_branch(target_path)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as e:
             last_error = e
             if target_path.exists():
@@ -1694,7 +1702,20 @@ class PluginStoreManager:
 
         self.logger.error(f"Git clone failed for all attempted branches: {last_error}")
         return None
-    
+
+    @staticmethod
+    def _checked_out_branch(checkout: Path) -> str:
+        """The branch a fresh clone has checked out, read from ``.git/HEAD``.
+
+        ``'HEAD'`` when HEAD is detached or unreadable.
+        """
+        try:
+            head = (checkout / '.git' / 'HEAD').read_text(encoding='utf-8').strip()
+        except OSError:
+            return 'HEAD'
+        prefix = 'ref: refs/heads/'
+        return head[len(prefix):] if head.startswith(prefix) else 'HEAD'
+
     def _install_from_monorepo(self, download_url: str, plugin_subpath: str, target_path: Path) -> bool:
         """
         Install a plugin from a monorepo by downloading only the target subdirectory.
