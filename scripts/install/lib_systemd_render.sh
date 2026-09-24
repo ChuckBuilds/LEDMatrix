@@ -2,9 +2,10 @@
 #
 # Shared helper for rendering systemd unit templates via sed.
 #
-# Sourced by install_service.sh, install_web_service.sh and
-# install_wifi_monitor.sh so all three escape sed replacement text the same
-# way instead of carrying three copies of the same fix.
+# Sourced by install_service.sh, install_web_service.sh,
+# install_wifi_monitor.sh, install_dns_fix.sh and install_mqtt_bridge.sh so
+# every unit renderer escapes sed replacement text the same way instead of
+# carrying its own copy of the fix.
 
 # sed_escape_replacement VALUE
 #

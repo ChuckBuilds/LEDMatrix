@@ -28,12 +28,12 @@ print_success() {
 
 print_warning() {
     echo -e "${YELLOW}⚠${NC} $1"
-    ((WARNINGS++))
+    WARNINGS=$((WARNINGS + 1))
 }
 
 print_error() {
     echo -e "${RED}✗${NC} $1"
-    ((COMPATIBILITY_ISSUES++))
+    COMPATIBILITY_ISSUES=$((COMPATIBILITY_ISSUES + 1))
 }
 
 # Check if running on Raspberry Pi
@@ -61,20 +61,18 @@ if [ -f /etc/os-release ]; then
     echo "OS: $PRETTY_NAME"
     echo "Version ID: ${VERSION_ID:-unknown}"
     
+    # first_time_install.sh refuses anything but Raspberry Pi OS / Debian 13
+    # (Trixie), so anything else is an error here too, not a warning.
     if [[ "$ID" == "raspbian" ]] || [[ "$ID" == "debian" ]]; then
-        if [ "${VERSION_ID:-0}" -ge "12" ]; then
-            print_success "Running compatible Debian/Raspbian version (${VERSION_ID})"
-            
-            if [ "${VERSION_ID:-0}" -eq "13" ]; then
-                print_success "Detected Debian 13 Trixie - full compatibility expected"
-            elif [ "${VERSION_ID:-0}" -eq "12" ]; then
-                print_success "Detected Debian 12 Bookworm - full compatibility confirmed"
-            fi
+        if [ "${VERSION_ID:-0}" = "13" ]; then
+            print_success "Detected Debian 13 Trixie - supported"
+        elif [ "${VERSION_ID:-0}" = "12" ]; then
+            print_error "Debian 12 Bookworm is not supported - the installer requires Raspberry Pi OS Lite (Trixie), Debian 13"
         else
-            print_warning "Old Debian/Raspbian version (${VERSION_ID}) - upgrade recommended"
+            print_error "Debian/Raspbian ${VERSION_ID:-unknown} is not supported - the installer requires Raspberry Pi OS Lite (Trixie), Debian 13"
         fi
     else
-        print_warning "Not running Debian/Raspbian - compatibility not guaranteed"
+        print_error "${ID:-unknown} is not supported - the installer requires Raspberry Pi OS Lite (Trixie), Debian 13"
     fi
 else
     print_error "Could not detect OS version"

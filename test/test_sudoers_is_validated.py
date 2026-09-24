@@ -19,6 +19,7 @@ import pytest
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIRST_TIME = os.path.join(REPO_ROOT, "first_time_install.sh")
 CONFIGURE = os.path.join(REPO_ROOT, "scripts", "install", "configure_web_sudo.sh")
+WIFI = os.path.join(REPO_ROOT, "scripts", "install", "configure_wifi_permissions.sh")
 
 VISUDO = shutil.which("visudo") or (
     "/usr/sbin/visudo" if os.path.exists("/usr/sbin/visudo") else None
@@ -60,6 +61,54 @@ def test_configure_web_sudo_validates_before_installing():
     install = body.index('cp "$TEMP_SUDOERS" /etc/sudoers.d/ledmatrix_web')
     validate = body.index('visudo -c -f "$TEMP_SUDOERS"')
     assert validate < install, "the rules must be checked before they are installed"
+
+
+def test_configure_web_sudo_does_not_use_a_predictable_temp_file():
+    body = _read(CONFIGURE)
+    assert 'TEMP_SUDOERS=$(mktemp' in body
+    assert "/tmp/ledmatrix_web_sudoers_$$" not in body
+    assert "trap 'rm -f \"$TEMP_SUDOERS\"' EXIT" in body
+
+
+def test_configure_web_sudo_installs_mode_440():
+    body = _read(CONFIGURE)
+    install = body.index('cp "$TEMP_SUDOERS" /etc/sudoers.d/ledmatrix_web')
+    assert body.index("chmod 440 /etc/sudoers.d/ledmatrix_web") > install
+
+
+def test_configure_wifi_permissions_validates_before_installing():
+    """The third sudoers writer. It installed its rules unchecked."""
+    body = _read(WIFI)
+    # The check itself, as a condition -- not merely the command appearing in
+    # the error report that follows it.
+    validate = body.index('if ! visudo -c -f "$TEMP_SUDOERS"')
+    install = body.index('sudo cp "$TEMP_SUDOERS" "$SUDOERS_FILE"')
+    assert validate < install, "the rules must be checked before they are installed"
+    # ...and a failed check stops the script before the copy.
+    assert "exit 1" in body[validate:install]
+    assert "TEMP_SUDOERS=$(mktemp" in body
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="visudo is POSIX only")
+@pytest.mark.skipif(VISUDO is None, reason="visudo not installed")
+def test_the_wifi_rules_actually_parse(tmp_path):
+    """Render configure_wifi_permissions.sh's heredoc with realistic paths."""
+    body = _read(WIFI)
+    opener = 'cat > "$TEMP_SUDOERS" << EOF\n'
+    start = body.index(opener) + len(opener)
+    end = body.index("\nEOF\n", start)
+    out = tmp_path / "wifi"
+    script = "\n".join([
+        "WEB_USER=ledmatrix", "NMCLI_PATH=/usr/bin/nmcli",
+        "SYSTEMCTL_PATH=/usr/bin/systemctl", "SYSCTL_PATH=/usr/sbin/sysctl",
+        "NFT_PATH=/usr/sbin/nft", "RFKILL_PATH=/usr/sbin/rfkill",
+        "MKDIR_PATH=/usr/bin/mkdir",
+        f"cat > '{out}' << EOF", body[start:end], "EOF",
+    ])
+    subprocess.run(["bash", "-c", script], check=True)
+    os.chmod(out, 0o440)
+    result = subprocess.run([VISUDO, "-c", "-f", str(out)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_a_missing_rules_library_installs_nothing():
