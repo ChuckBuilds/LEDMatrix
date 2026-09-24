@@ -32,7 +32,7 @@ from typing import Callable, Optional
 import numpy as np
 from PIL import Image
 
-from src.display_geometry import DEFAULT_CHAIN_LENGTH
+from src.display_geometry import DEFAULT_CHAIN_LENGTH, DEFAULT_COLS, DEFAULT_ROWS
 
 # Raw-frame wire format: 8-byte magic + 4-byte header + raw RGB pixels
 # Much faster than PNG: no encode/decode, negligible CPU, same UDP packet size
@@ -75,9 +75,12 @@ class FollowerState(Enum):
 class DisplaySyncManager:
     """
     Core sync manager.  Instantiated by DisplayController based on config['sync'].
-    Leader sends compressed PNG frames to the follower after each render cycle.
-    Follower renders received frames; returns to own plugin stack when leader
-    goes offline.
+
+    The leader sends each rendered frame to the follower over UDP as raw RGB
+    bytes (send_frame), and for Vegas scrolling sends the whole scroll image
+    once per cycle as a PNG over TCP on port + 1 (send_scroll_image), then
+    only the scroll position. The follower draws what it receives and goes
+    back to its own plugins when the leader stops sending.
     """
 
     def __init__(
@@ -192,8 +195,8 @@ class DisplaySyncManager:
 
     def _handle_hello(self, msg: dict, sender_ip: str) -> None:
         hw = self._hw_config
-        local_rows = hw.get("rows", 32)
-        local_cols = hw.get("cols", 64)
+        local_rows = hw.get("rows", DEFAULT_ROWS)
+        local_cols = hw.get("cols", DEFAULT_COLS)
         peer_rows = int(msg.get("rows", 0))
         peer_cols = int(msg.get("cols", 0))
         peer_chain = int(msg.get("chain", DEFAULT_CHAIN_LENGTH))
@@ -469,16 +472,23 @@ class DisplaySyncManager:
         """Record a decoded leader frame and enter follower mode if needed."""
         with self._frame_lock:
             self._latest_frame = img
+        self._enter_follower_mode(sender_ip)
+
+    def _enter_follower_mode(self, sender_ip: str) -> bool:
+        """Note that the leader at ``sender_ip`` just sent something, and
+        switch from standalone to follower mode if not already following.
+        Returns True if this call made the switch."""
         self._last_leader_frame_time = time.time()
         self._leader_ip = sender_ip
-
-        if self._follower_state == FollowerState.STANDALONE:
-            self._follower_state = FollowerState.FOLLOWER
-            self.logger.info(
-                "Sync: leader active at %s — switching to follower mode",
-                sender_ip,
-            )
-            self.write_status_file()
+        if self._follower_state != FollowerState.STANDALONE:
+            return False
+        self._follower_state = FollowerState.FOLLOWER
+        self.logger.info(
+            "Sync: leader active at %s — switching to follower mode",
+            sender_ip,
+        )
+        self.write_status_file()
+        return True
 
     def _follower_recv_loop(self) -> None:
         while self._running:
@@ -559,15 +569,7 @@ class DisplaySyncManager:
                                 # back from. Treat it as malformed.
                                 raise ValueError(f"non-finite scroll x: {msg['x']!r}")
                             self._latest_scroll_x = scroll_x
-                            self._last_leader_frame_time = time.time()
-                            self._leader_ip = sender_ip
-                            if self._follower_state == FollowerState.STANDALONE:
-                                self._follower_state = FollowerState.FOLLOWER
-                                self.logger.info(
-                                    "Sync: leader active at %s — switching to follower mode",
-                                    sender_ip,
-                                )
-                                self.write_status_file()
+                            if self._enter_follower_mode(sender_ip):
                                 fire_new_cycle = True  # build initial scroll image
                         elif t == "nc":
                             # Leader started a new scroll cycle — rebuild local image
@@ -589,8 +591,8 @@ class DisplaySyncManager:
         hw = self._hw_config
         hello = json.dumps({
             "t": "hello",
-            "rows": hw.get("rows", 32),
-            "cols": hw.get("cols", 64),
+            "rows": hw.get("rows", DEFAULT_ROWS),
+            "cols": hw.get("cols", DEFAULT_COLS),
             "chain": hw.get("chain_length", DEFAULT_CHAIN_LENGTH),
         }).encode("utf-8")
         heartbeat = json.dumps({"t": "hb"}).encode("utf-8")
@@ -660,8 +662,8 @@ class DisplaySyncManager:
         base = {
             "role": self.role.value,
             "port": self.port,
-            "local_rows": hw.get("rows", 32),
-            "local_cols": hw.get("cols", 64),
+            "local_rows": hw.get("rows", DEFAULT_ROWS),
+            "local_cols": hw.get("cols", DEFAULT_COLS),
             "local_chain": hw.get("chain_length", DEFAULT_CHAIN_LENGTH),
         }
 

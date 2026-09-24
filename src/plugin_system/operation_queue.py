@@ -9,8 +9,6 @@ import threading
 import queue
 from typing import Dict, Optional, List, Callable, Any
 from datetime import datetime
-from pathlib import Path
-import json
 
 from src.plugin_system.operation_types import (
     PluginOperation, OperationType, OperationStatus
@@ -28,28 +26,22 @@ class PluginOperationQueue:
     - Prevents concurrent operations on same plugin
     - Operation status tracking
     - Operation cancellation
-    - Operation history
+    - In-memory history of finished operations
+
+    The history is not persisted. The web UI's operation history comes from
+    OperationHistory (operation_history.py), which has its own file; a copy
+    written here was never read back by anything.
     """
-    
-    def __init__(
-        self,
-        history_file: Optional[str] = None,
-        max_history: int = 100,
-        lazy_load: bool = False
-    ):
+
+    def __init__(self, max_history: int = 100):
         """
         Initialize operation queue.
-        
+
         Args:
-            history_file: Optional path to file for persisting operation history
             max_history: Maximum number of operations to keep in history
-            lazy_load: If True, defer loading history file until first access
         """
         self.logger = get_logger(__name__)
-        self.history_file = Path(history_file) if history_file else None
         self.max_history = max_history
-        self._lazy_load = lazy_load
-        self._history_loaded = False
         
         # Operation tracking
         self._operations: Dict[str, PluginOperation] = {}
@@ -62,20 +54,8 @@ class PluginOperationQueue:
         self._worker_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         
-        # Load history from file if it exists (unless lazy loading)
-        if not self._lazy_load and self.history_file and self.history_file.exists():
-            self._load_history()
-            self._history_loaded = True
-        
-        # Start worker thread
         self._start_worker()
-    
-    def _ensure_loaded(self) -> None:
-        """Ensure history is loaded (for lazy loading)."""
-        if not self._history_loaded and self.history_file and self.history_file.exists():
-            self._load_history()
-            self._history_loaded = True
-    
+
     def enqueue_operation(
         self,
         operation_type: OperationType,
@@ -139,7 +119,6 @@ class PluginOperationQueue:
         Returns:
             PluginOperation if found, None otherwise
         """
-        self._ensure_loaded()
         with self._lock:
             return self._operations.get(operation_id)
     
@@ -184,7 +163,6 @@ class PluginOperationQueue:
         Returns:
             List of operations, sorted by creation time (newest first)
         """
-        self._ensure_loaded()
         with self._lock:
             # Sort by creation time (newest first)
             history = sorted(
@@ -314,11 +292,7 @@ class PluginOperationQueue:
                     if self._active_operations[operation.plugin_id].operation_id == operation.operation_id:
                         del self._active_operations[operation.plugin_id]
                 
-                # Add to history
                 self._add_to_history(operation)
-                
-                # Save history to file
-                self._save_history()
     
     def _add_to_history(self, operation: PluginOperation) -> None:
         """Add operation to history, maintaining max_history limit."""
@@ -330,46 +304,6 @@ class PluginOperationQueue:
             self._operation_history.sort(key=lambda op: op.created_at)
             self._operation_history = self._operation_history[-self.max_history:]
     
-    def _save_history(self) -> None:
-        """Save operation history to file."""
-        if not self.history_file:
-            return
-        
-        try:
-            with self._lock:
-                # Convert operations to dicts
-                history_data = [op.to_dict() for op in self._operation_history]
-            
-            # Ensure directory exists
-            self.history_file.parent.mkdir(parents=True, exist_ok=True)
-            
-            # Write to file
-            with open(self.history_file, 'w') as f:
-                json.dump(history_data, f, indent=2)
-            
-        except Exception as e:
-            self.logger.warning(f"Error saving operation history: {e}")
-    
-    def _load_history(self) -> None:
-        """Load operation history from file."""
-        if not self.history_file or not self.history_file.exists():
-            return
-        
-        try:
-            with open(self.history_file, 'r') as f:
-                history_data = json.load(f)
-            
-            with self._lock:
-                self._operation_history = [
-                    PluginOperation.from_dict(op_data)
-                    for op_data in history_data
-                ]
-            
-            self.logger.info(f"Loaded {len(self._operation_history)} operations from history")
-            
-        except Exception as e:
-            self.logger.warning(f"Error loading operation history: {e}")
-    
     def shutdown(self) -> None:
         """Shutdown the operation queue and worker thread."""
         self.logger.info("Shutting down plugin operation queue")
@@ -377,7 +311,4 @@ class PluginOperationQueue:
         
         if self._worker_thread and self._worker_thread.is_alive():
             self._worker_thread.join(timeout=5.0)
-        
-        # Save history one last time
-        self._save_history()
 

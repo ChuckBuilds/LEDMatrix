@@ -185,62 +185,52 @@ their config section to control how oversized content is handled (see
 
 ### Plugin Integration (Developer Guide)
 
+All of these have defaults in
+[`BasePlugin`](../src/plugin_system/base_plugin.py); override only what you
+need.
+
 **1. Implement Content Method:**
 
 ```python
 def get_vegas_content(self):
-    """
-    Return PIL Image or list of Images for Vegas mode.
-
-    Returns:
-        PIL.Image or list[PIL.Image]: Content to display
-        - Single image: fixed-width content
-        - List of images: multiple segments
-        - None: skip this cycle
-    """
-    # Example: Return single wide image
-    img = Image.new('RGB', (256, 32))
-    # ... render your content ...
-    return img
-
-    # Example: Return multiple segments
-    return [image1, image2, image3]
+    # Return a PIL Image, a list of Images, or None.
+    # A single image is one block; a list becomes one item per image.
+    return [self._render_game(game) for game in self.games]
 ```
+
+If it returns `None` (the default), Vegas falls back to the plugin's
+`scroll_helper` image, then to capturing `display()` output
+(`PluginAdapter.get_content()` in
+[`src/vegas_mode/plugin_adapter.py`](../src/vegas_mode/plugin_adapter.py)).
 
 **2. Specify Content Type:**
 
 ```python
 def get_vegas_content_type(self):
-    """
-    Specify how content should be handled.
-
-    Returns:
-        str: 'multi' | 'static' | 'none'
-    """
-    return 'multi'  # Default for most plugins
+    # 'multi' | 'static' | 'none'  -- default is 'static'
+    return 'multi'
 ```
+
+`'none'` excludes the plugin from Vegas mode.
 
 **3. Optionally Specify Display Mode:**
 
-```python
-def get_vegas_display_mode(self):
-    """
-    Preferred display mode for this plugin.
+These return `VegasDisplayMode` members, not strings:
 
-    Returns:
-        str: 'scroll' | 'fixed' | 'static'
-    """
-    return 'scroll'
+```python
+from src.plugin_system.base_plugin import VegasDisplayMode
+
+def get_vegas_display_mode(self):
+    return VegasDisplayMode.SCROLL
 
 def get_supported_vegas_modes(self):
-    """
-    List of supported modes.
-
-    Returns:
-        list: ['scroll', 'fixed', 'static']
-    """
-    return ['scroll', 'static']
+    return [VegasDisplayMode.SCROLL, VegasDisplayMode.STATIC]
 ```
+
+`VegasDisplayMode` has `SCROLL` (`"scroll"`), `FIXED_SEGMENT` (`"fixed"`) and
+`STATIC` (`"static"`). The default `get_vegas_display_mode()` uses the
+plugin's `vegas_mode` config value if set, otherwise maps the content type
+(`multi` to `SCROLL`, anything else to `FIXED_SEGMENT`).
 
 ### Content Rendering Guidelines
 
@@ -966,10 +956,15 @@ from src.cache_manager import CacheManager
 
 service = get_background_service(CacheManager())
 stats = service.get_statistics()
-print(f"Active tasks: {stats['active_tasks']}")
-print(f"Completed: {stats['completed']}")
-print(f"Failed: {stats['failed']}")
+print(f"Active: {stats['active_requests']}")
+print(f"Completed: {stats['completed_requests']}")
+print(f"Failed: {stats['failed_requests']}")
 ```
+
+Other keys: `total_requests`, `cached_hits`, `cache_misses`,
+`average_fetch_time`, `completed_requests_count` (results currently held in
+memory) — see `BackgroundDataService.get_statistics()` in
+[`src/background_data_service.py`](../src/background_data_service.py).
 
 **Enable Debug Logging:**
 ```python
@@ -980,6 +975,10 @@ logging.getLogger('src.background_data_service').setLevel(logging.DEBUG)
 ---
 
 ## 5. Permission Management
+
+Ownership, modes, sudo rules and the repair scripts are listed in
+[PERMISSIONS.md](PERMISSIONS.md). This section covers the helpers code uses
+to keep files shareable.
 
 ### Overview
 
@@ -1044,7 +1043,7 @@ ensure_file_permissions(config_path, get_config_file_mode(config_path))
 | Config (secrets) | `rw-r-----` | `0o640` | Owner write, group read |
 | Assets | `rw-rw-r--` | `0o664` | Owner/group write, all read |
 | Plugins | `rw-rw-r--` | `0o664` | Owner/group write, all read |
-| Cache files | `rw-rw-r--` | `0o664` | Owner/group write, all read |
+| Cache files | `rw-rw----` | `0o660` | Owner/group write, no world access (`_CACHE_FILE_MODE` in `src/cache/disk_cache.py`) |
 
 **Directory Permissions:**
 
@@ -1115,40 +1114,22 @@ These core utilities **already handle permissions** - you don't need to call per
 
 ### Manual Fixes
 
-If you encounter permission issues:
+[PERMISSIONS.md](PERMISSIONS.md) lists who owns what on an installed system,
+the expected modes, and which `scripts/fix_perms/` script to run as which
+user. In short:
 
-```bash
-# Targeted permission fixes (see scripts/fix_perms/README.md)
-sudo ./scripts/fix_perms/fix_assets_permissions.sh   # assets/ tree (logos, fonts)
-sudo ./scripts/fix_perms/fix_cache_permissions.sh    # all cache directories
-sudo ./scripts/fix_perms/fix_plugin_permissions.sh   # plugin directories
-sudo ./scripts/fix_perms/fix_web_permissions.sh      # web interface files
+- `fix_assets_permissions.sh`, `fix_cache_permissions.sh` and
+  `fix_plugin_permissions.sh` are run with `sudo`.
+- `fix_web_permissions.sh` is run as the web interface user, without
+  `sudo` (it refuses to run as root and calls `sudo` itself where needed).
+  It resets project file ownership for that user, then makes the two
+  helper scripts the web user may run as root (`safe_plugin_rm.sh`,
+  `safe_pip_install.sh`) root-owned again and restores `config_secrets.json`
+  to its owner, the `ledmatrix` group and mode `640`. It does not write
+  sudoers rules; `scripts/install/configure_web_sudo.sh` does that.
 
-# Fix specific directory
-sudo chown -R ledpi:ledpi /home/ledpi/LEDMatrix/config
-sudo chmod -R 2775 /home/ledpi/LEDMatrix/config
-sudo find /home/ledpi/LEDMatrix/config -type f -exec chmod 664 {} \;
-
-# Verify permissions
-ls -la config/
-ls -la assets/
-```
-
-### Verification
-
-```bash
-# Check directory has setgid bit
-ls -ld assets/
-# Should show: drwxrwsr-x (note the 's')
-
-# Check file has correct group
-ls -l assets/logo.png
-# Should show group 'ledpi'
-
-# Check file permissions
-stat -c "%a %n" config/config.json
-# Should show: 644 config/config.json
-```
+Do not `chmod` the whole `config/` directory: `config_secrets.json` must stay
+`640`.
 
 ---
 

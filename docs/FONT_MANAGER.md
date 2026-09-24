@@ -9,12 +9,14 @@
 
 ## Overview
 
-The enhanced FontManager provides comprehensive font management for the LEDMatrix application with support for:
-- Manager font registration and detection
-- Plugin font management
-- Programmatic per-element font overrides
-- Performance monitoring and caching
-- Dynamic font discovery
+[`src/font_manager.py`](../src/font_manager.py) loads and caches the TTF and
+BDF fonts in `assets/fonts/`, registers fonts that plugins ship, and records
+which plugin uses which font so the web UI can show it.
+
+Several methods are deprecated and will be removed in LEDMatrix 3.7.0; they
+log a warning on first call. They are listed in
+[Deprecated methods](#deprecated-methods) below, and the full set is pinned in
+[`test/test_deprecation.py`](../test/test_deprecation.py).
 
 ## Getting the FontManager
 
@@ -34,157 +36,60 @@ standalone FontManager when none is available (test harnesses, mocks).
 `DisplayManager` has **no** `font_manager` attribute —
 `display_manager.font_manager` raises `AttributeError`.
 
-## Architecture
-
-### Manager-Centric Design
-
-Managers define their own fonts, but the FontManager:
-1. **Loads and caches fonts** for performance
-2. **Detects font usage** for visibility
-3. **Allows manual overrides** when needed
-4. **Supports plugin fonts** with namespacing
-
-### Font Resolution Flow
-
-```
-Manager requests font → Check manual overrides → Apply manager choice → Cache & return
-```
-
-## For Manager Developers
-
-### Basic Font Usage
+## Resolving a font
 
 ```python
-from src.font_manager import FontManager
+element_key = f"{self.plugin_id}.title"
 
-class MyManager:
-    def __init__(self, config, display_manager, cache_manager, plugin_manager):
-        self.display_manager = display_manager
-        self.font_manager = plugin_manager.font_manager  # Shared FontManager
-        self.manager_id = "my_manager"
-        
-    def display(self):
-        # Define your font choices
-        element_key = "my_manager.title"
-        font_family = "press_start"
-        font_size_px = 10
-        color = (255, 255, 255)  # RGB white
-        
-        # Register your font choice (for detection and future overrides)
-        self.font_manager.register_manager_font(
-            manager_id=self.manager_id,
-            element_key=element_key,
-            family=font_family,
-            size_px=font_size_px,
-            color=color
-        )
-        
-        # Get the font (checks for manual overrides automatically)
-        font = self.font_manager.resolve_font(
-            element_key=element_key,
-            family=font_family,
-            size_px=font_size_px
-        )
-        
-        # Use the font for rendering
-        self.display_manager.draw_text(
-            "Hello World",
-            x=10, y=10,
-            color=color,
-            font=font
-        )
-```
-
-### Advanced Font Usage
-
-```python
-class AdvancedManager:
-    def __init__(self, config, display_manager, cache_manager, plugin_manager):
-        self.display_manager = display_manager
-        self.font_manager = plugin_manager.font_manager
-        self.manager_id = "advanced_manager"
-        
-        # Define your font specifications
-        self.font_specs = {
-            "title": {"family": "press_start", "size_px": 12, "color": (255, 255, 0)},
-            "body": {"family": "four_by_six", "size_px": 8, "color": (255, 255, 255)},
-            "footer": {"family": "five_by_seven", "size_px": 7, "color": (128, 128, 128)}
-        }
-        
-        # Register all font specs
-        for element_type, spec in self.font_specs.items():
-            element_key = f"{self.manager_id}.{element_type}"
-            self.font_manager.register_manager_font(
-                manager_id=self.manager_id,
-                element_key=element_key,
-                family=spec["family"],
-                size_px=spec["size_px"],
-                color=spec["color"]
-            )
-    
-    def get_font(self, element_type: str):
-        """Helper method to get fonts with override support."""
-        spec = self.font_specs[element_type]
-        element_key = f"{self.manager_id}.{element_type}"
-        
-        return self.font_manager.resolve_font(
-            element_key=element_key,
-            family=spec["family"],
-            size_px=spec["size_px"]
-        )
-    
-    def display(self):
-        # Get fonts (automatically checks for overrides)
-        title_font = self.get_font("title")
-        body_font = self.get_font("body")
-        footer_font = self.get_font("footer")
-        
-        # Render with fonts
-        self.display_manager.draw_text("Title", font=title_font, color=self.font_specs["title"]["color"])
-        self.display_manager.draw_text("Body Text", font=body_font, color=self.font_specs["body"]["color"])
-        self.display_manager.draw_text("Footer", font=footer_font, color=self.font_specs["footer"]["color"])
-```
-
-### Using Size Tokens
-
-```python
-# Get available size tokens
-tokens = self.font_manager.get_size_tokens()
-# Returns: {'xs': 6, 'sm': 8, 'md': 10, 'lg': 12, 'xl': 14, 'xxl': 16}
-
-# Use token to get size
-size_px = tokens.get('md', 10)  # 10px
-
-# Then use in font resolution
-font = self.font_manager.resolve_font(
-    element_key="my_manager.text",
+# Register the choice so the web UI's Fonts tab can list it.
+self.font_manager.register_manager_font(
+    manager_id=self.plugin_id,
+    element_key=element_key,
     family="press_start",
-    size_px=size_px
+    size_px=10,
+    color=(255, 255, 255),
 )
+
+font = self.font_manager.resolve_font(
+    element_key=element_key,
+    family="press_start",
+    size_px=10,
+)
+self.display_manager.draw_text("Hello", x=10, y=10, font=font)
 ```
 
-## For Plugin Developers
+`resolve_font()` applies any entry for `element_key` in
+`config/font_overrides.json`, maps a plugin-local family to its namespaced
+name when `plugin_id` is passed, and then calls `get_font(family, size_px)`.
+On error it returns a fallback font rather than raising.
 
-> **Note**: plugins that ship their own fonts via a `"fonts"` block
-> in `manifest.json` are registered automatically during plugin load
-> (`src/plugin_system/plugin_manager.py` calls
-> `FontManager.register_plugin_fonts()`). The `plugin://…` source
-> URIs documented below are resolved relative to the plugin's
-> install directory.
->
-> The web UI's **Fonts** tab lists, uploads, previews and deletes the
-> font files in `assets/fonts/`. Its **Used by** column shows which
-> loaded plugins registered each file through `register_manager_font()`
-> (see [Font usage in the web UI](#font-usage-in-the-web-ui)), and it
-> warns before deleting one of them. It has no override editor (the
-> override panels and `/api/v3/fonts/overrides` endpoints were removed).
-> The programmatic override workflow in
-> [Manual Font Overrides](#manual-font-overrides) below still works.
-> Let users pick fonts through your plugin's own config schema.
+`get_font(family, size_px)` looks the family up in `font_catalog` and loads
+it (cached per family and size).
 
-### Plugin Font Registration
+## Font families
 
-In your plugin's `manifest.json`:
+At start-up the FontManager scans `assets/fonts/` for `.ttf` and `.bdf`
+files. Each becomes a family named after the file, lower-cased and without
+the extension (`PressStart2P-Regular.ttf` → `pressstart2p-regular`). Four
+aliases are added on top:
+
+| Alias | File |
+|---|---|
+| `press_start` | `assets/fonts/PressStart2P-Regular.ttf` |
+| `four_by_six` | `assets/fonts/4x6-font.ttf` |
+| `five_by_seven` | `assets/fonts/5x7.bdf` |
+| `tom_thumb` | `assets/fonts/tom-thumb.bdf` |
+
+Read the catalog directly: `font_manager.font_catalog` is a dict of family
+name to file path. Files added later are picked up on the next start of the
+display service.
+
+## Plugin fonts
+
+Plugins that ship their own fonts declare them in a `"fonts"` block in
+`manifest.json`. The plugin manager calls
+`FontManager.register_plugin_fonts()` during plugin load. `plugin://…`
+sources are resolved relative to the plugin's install directory.
 
 ```json
 {
@@ -195,231 +100,123 @@ In your plugin's `manifest.json`:
       {
         "family": "custom_font",
         "source": "plugin://fonts/custom.ttf",
-        "metadata": {
-          "description": "Custom plugin font",
-          "license": "MIT"
-        }
+        "metadata": {"description": "Custom plugin font", "license": "MIT"}
       },
       {
         "family": "web_font",
         "source": "https://example.com/fonts/font.ttf",
-        "metadata": {
-          "description": "Downloaded font",
-          "checksum": "sha256:abc123..."
-        }
+        "metadata": {"checksum": "sha256:abc123..."}
       }
     ]
   }
 }
 ```
 
-### Using Plugin Fonts
+Registered families are namespaced as `<plugin_id>::<family>`. Pass
+`plugin_id` to `resolve_font()` to use the short name:
 
 ```python
-class MyPlugin(BasePlugin):
-    def __init__(self, plugin_id, config, display_manager, cache_manager, plugin_manager):
-        super().__init__(plugin_id, config, display_manager, cache_manager, plugin_manager)
-        self.font_manager = self._get_font_manager()
-        
-    def display(self):
-        # Use plugin font (automatically namespaced)
-        font = self.font_manager.resolve_font(
-            element_key=f"{self.plugin_id}.text",
-            family="custom_font",  # Will be resolved as "my-plugin::custom_font"
-            size_px=10,
-            plugin_id=self.plugin_id
-        )
-        
-        self.display_manager.draw_text("Plugin Text", font=font)
-```
-
-## Manual Font Overrides
-
-Overrides are set in code (there is no web UI or REST endpoint for them).
-They are stored in `config/font_overrides.json` and persist across restarts.
-
-### Programmatic Overrides
-
-```python
-# Set override
-font_manager.set_override(
-    element_key="nfl.live.score",
-    family="four_by_six",
-    size_px=8
+font = self.font_manager.resolve_font(
+    element_key=f"{self.plugin_id}.text",
+    family="custom_font",          # resolved as "my-plugin::custom_font"
+    size_px=10,
+    plugin_id=self.plugin_id,
 )
-
-# Remove override
-font_manager.remove_override("nfl.live.score")
-
-# Get all overrides
-overrides = font_manager.get_overrides()
 ```
 
-## Font Discovery
+## Overrides
 
-### Available Fonts
-
-The FontManager automatically scans `assets/fonts/` for TTF and BDF fonts:
-
-```python
-# Get all available fonts
-fonts = font_manager.get_available_fonts()
-# Returns: {'press_start': 'assets/fonts/PressStart2P-Regular.ttf', ...}
-
-# Check if font exists
-if "my_font" in fonts:
-    font = font_manager.get_font("my_font", 10)
-```
-
-### Adding Custom Fonts
-
-Place font files in `assets/fonts/` directory:
-- Supported formats: `.ttf`, `.bdf`
-- Font family name is derived from filename (without extension)
-- Will be automatically discovered on next initialization
+`resolve_font()` still honours `config/font_overrides.json` (a map of
+element key to `family` and/or `size_px`), which is read once at start-up.
+The methods that edit it — `set_override()`, `remove_override()`,
+`get_overrides()` — are deprecated, and there is no web UI or REST endpoint
+for overrides (the override editor and `/api/v3/fonts/overrides` were
+removed). To let users choose a font, add a field to your plugin's config
+schema.
 
 ## Font usage in the web UI
 
-The web interface runs in its own process and has no FontManager, so the
-display service publishes which plugin uses which font
-(`src/font_usage.py`), and the Fonts tab's **Used by** column reads it:
+The web UI's **Fonts** tab lists, uploads, previews and deletes the font
+files in `assets/fonts/`. The web interface runs in its own process and has
+no FontManager, so the display service publishes which plugin uses which
+font ([`src/font_usage.py`](../src/font_usage.py)), and the tab's **Used by**
+column reads it:
 
 - **Source**: `register_manager_font()` registrations of the loaded
   plugins. `get_font()` and `resolve_font()` do not know the calling plugin
   and are not counted, and neither is a plugin that opens a font file
   directly with PIL — register the fonts your plugin draws with if you want
   them listed.
-- **Names**: a family, alias (`press_start`, `four_by_six`,
-  `five_by_seven`, `tom_thumb`) or path is resolved through
-  `font_catalog` to the file it loads and reported under that file's name
-  without extension (`PressStart2P-Regular`, `4x6-font`, `5x7`,
-  `tom-thumb`), which is how the Fonts tab keys its rows. Fonts outside
-  `assets/fonts/` (a plugin's own `plugin_id::family` fonts) and families
-  that resolve to nothing are left out.
+- **Names**: a family, alias or path is resolved through `font_catalog` to
+  the file it loads and reported under that file's name without extension
+  (`PressStart2P-Regular`, `4x6-font`, `5x7`, `tom-thumb`), which is how the
+  Fonts tab keys its rows. Fonts outside `assets/fonts/` (a plugin's own
+  `plugin_id::family` fonts) and families that resolve to nothing are left
+  out.
 - **When**: a daemon thread started once plugins have loaded checks every
   10 seconds and writes the `font_usage_snapshot` cache key only when the
   usage changed (and once a day, so the cache's cleanup never expires it).
   Unloading a plugin drops its registrations (`forget_manager_fonts`).
 - **Unknown**: until the display service has published, the column reads
   "unknown" and `GET /api/v3/fonts/catalog` returns `used_by: null`.
+- The tab warns before deleting a font that a loaded plugin registered.
 
-## Performance Monitoring
-
-```python
-# Get performance stats
-stats = font_manager.get_performance_stats()
-
-print(f"Cache hit rate: {stats['cache_hit_rate']*100:.1f}%")
-print(f"Total fonts cached: {stats['total_fonts_cached']}")
-print(f"Failed loads: {stats['failed_loads']}")
-print(f"Manager fonts: {stats['manager_fonts']}")
-print(f"Plugin fonts: {stats['plugin_fonts']}")
-```
-
-## Text Measurement
+## Text measurement
 
 ```python
-# Measure text dimensions
 width, height, baseline = font_manager.measure_text("Hello", font)
-
-# Get font height
 font_height = font_manager.get_font_height(font)
 ```
 
-## Best Practices
+## Tips
 
-### For Managers
-
-1. **Register all fonts** you use for visibility
-2. **Use consistent element keys** (e.g., `{manager_id}.{element_type}`)
-3. **Cache font references** if using same font multiple times
-4. **Use `resolve_font()`** not `get_font()` directly to support overrides
-5. **Define sensible defaults** that work well on LED matrix
-
-### For Plugins
-
-1. **Use plugin-relative paths** (`plugin://fonts/...`)
-2. **Include font metadata** (license, description)
-3. **Provide fallback** fonts if custom fonts fail to load
-4. **Test with different display sizes**
-
-### General
-
-1. **BDF fonts** are often better for small sizes on LED matrices
-2. **TTF fonts** work well for larger sizes
-3. **Monospace fonts** are easier to align
-4. **Test on actual hardware** - what looks good on screen may not work on LED matrix
-
-## Migration from Old System
-
-### Old Way (Direct Font Loading)
-```python
-self.font = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 8)
-```
-
-### New Way (FontManager)
-```python
-element_key = f"{self.manager_id}.text"
-self.font_manager.register_manager_font(
-    manager_id=self.manager_id,
-    element_key=element_key,
-    family="pressstart2p-regular",
-    size_px=8
-)
-self.font = self.font_manager.resolve_font(
-    element_key=element_key,
-    family="pressstart2p-regular",
-    size_px=8
-)
-```
+- BDF fonts usually look better than TTF at small sizes on LED panels.
+- Use `{plugin_id}.{element}` element keys.
+- Register the fonts you draw with, so the Fonts tab can warn before one is
+  deleted.
+- Replace direct `ImageFont.truetype("assets/fonts/...", 8)` calls with
+  `resolve_font()`: it caches, resolves paths against the install directory,
+  and handles BDF files.
 
 ## Troubleshooting
 
-### Font Not Found
-- Check font file exists in `assets/fonts/`
-- Verify font family name matches filename (without extension, lowercase)
-- Check logs for font discovery errors
+**Font not found**
+- Check the file exists in `assets/fonts/`.
+- The family name is the filename without extension, lower-cased.
+- Check the display service log for font discovery errors.
 
-### Override Not Working
-- Verify element key matches exactly what manager registered
-- Check `config/font_overrides.json` for correct syntax
-- Restart application to ensure overrides are loaded
+**Plugin fonts not loading**
+- Check the manifest's `"fonts"` block.
+- Check the log for download or registration errors, and that font URLs are
+  reachable.
 
-### Performance Issues
-- Check cache hit rate in performance stats
-- Reduce number of unique font/size combinations
-- Clear cache if it grows too large: `font_manager.clear_cache()`
+## API reference
 
-### Plugin Fonts Not Loading
-- Verify plugin manifest syntax
-- Check plugin directory structure
-- Review logs for download/registration errors
-- Ensure font URLs are accessible
+Current methods:
 
-## API Reference
+| Method | Purpose |
+|---|---|
+| `register_manager_font(manager_id, element_key, family, size_px, color=None)` | Record a font choice (feeds the Fonts tab) |
+| `forget_manager_fonts(manager_id)` | Drop a manager's registrations (core calls it when a plugin unloads) |
+| `resolve_font(element_key, family, size_px, plugin_id=None)` | Get a font, applying overrides and plugin namespacing |
+| `get_font(family, size_px)` | Get a font directly |
+| `get_native_bdf_size(family)` | Native pixel size of a BDF family, or `None` |
+| `measure_text(text, font)` | `(width, height, baseline)` |
+| `get_font_height(font)` | Line height |
+| `register_plugin_fonts(plugin_id, font_manifest)` | Register a plugin's fonts (core calls it at load) |
+| `clear_cache()` | Drop cached fonts and metrics |
+| `font_catalog` (attribute) | Family name → file path |
 
-### FontManager Methods
+### Deprecated methods
 
-- `register_manager_font(manager_id, element_key, family, size_px, color=None)` - Register font usage
-- `forget_manager_fonts(manager_id)` - Drop a manager's registrations (core calls it when a plugin unloads)
-- `resolve_font(element_key, family, size_px, plugin_id=None)` - Get font with override support
-- `get_font(family, size_px)` - Get font directly (bypasses overrides)
-- `measure_text(text, font)` - Measure text dimensions
-- `get_font_height(font)` - Get font height
-- `set_override(element_key, family=None, size_px=None)` - Set manual override
-- `remove_override(element_key)` - Remove override
-- `get_overrides()` - Get all overrides
-- `get_detected_fonts()` - Get all detected font usage
-- `get_manager_fonts(manager_id=None)` - Get fonts by manager
-- `get_available_fonts()` - Get font catalog
-- `get_size_tokens()` - Get size token definitions
-- `get_performance_stats()` - Get performance metrics
-- `clear_cache()` - Clear font cache
-- `register_plugin_fonts(plugin_id, font_manifest)` - Register plugin fonts
-- `unregister_plugin_fonts(plugin_id)` - Unregister plugin fonts
+Removed in 3.7.0. Each logs a warning on first call.
 
-## Example: Complete Manager Implementation
-
-For a working example of the font manager API in use, see
-`src/font_manager.py` itself.
-
+| Method | Use instead |
+|---|---|
+| `get_available_fonts()`, `get_font_catalog()` | read `font_catalog` |
+| `get_size_tokens()` | pass a pixel size |
+| `get_performance_stats()` | — |
+| `set_override()`, `remove_override()`, `get_overrides()` | a font field in your plugin's config schema |
+| `get_manager_fonts()`, `get_detected_fonts()` | — |
+| `get_plugin_fonts()`, `unregister_plugin_fonts()` | — |
+| `add_font()`, `remove_font()`, `validate_font()` | the web UI's Fonts tab |

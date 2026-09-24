@@ -66,12 +66,16 @@ class TestRefreshPluginStore:
         assert response.status_code == 200
 
     @pytest.mark.parametrize("key", ["fetch_commit_info", "fetch_latest_versions"])
-    def test_either_commit_info_key_extends_the_message(
+    def test_commit_info_flag_claims_no_refresh_it_does_not_do(
             self, api_v3_client, api_v3_module, key):
-        # fetch_latest_versions is the older spelling; both must work.
-        api_v3_module.api_v3.plugin_store_manager.fetch_registry.return_value = {"plugins": []}
+        # The route only re-downloads the registry. It used to append "(with
+        # refreshed commit metadata from GitHub)" for either flag without
+        # fetching any.
+        store = api_v3_module.api_v3.plugin_store_manager
+        store.fetch_registry.return_value = {"plugins": [{"id": "a"}]}
         response = api_v3_client.post(self.URL, json={key: True})
-        assert "commit metadata" in response.get_json()["message"]
+        assert response.get_json()["message"] == "Plugin store refreshed"
+        store.fetch_registry.assert_called_once_with(force_refresh=True)
 
     def test_message_stays_plain_without_the_flag(self, api_v3_client, api_v3_module):
         api_v3_module.api_v3.plugin_store_manager.fetch_registry.return_value = {"plugins": []}

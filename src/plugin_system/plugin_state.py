@@ -41,7 +41,6 @@ class PluginStateManager:
         self._state_transition_counts: Dict[str, int] = {}
         self._error_info: Dict[str, Dict[str, Any]] = {}
         self._last_update: Dict[str, datetime] = {}
-        self._last_display: Dict[str, datetime] = {}
     
     def _record_transition(self, plugin_id: str) -> None:
         """Count a state transition. Callers must already hold ``_lock``."""
@@ -181,11 +180,7 @@ class PluginStateManager:
     def get_last_update(self, plugin_id: str) -> Optional[datetime]:
         """Get timestamp of last update() call."""
         return self._last_update.get(plugin_id)
-    
-    def get_last_display(self, plugin_id: str) -> Optional[datetime]:
-        """Get timestamp of last display() call."""
-        return self._last_display.get(plugin_id)
-    
+
     def get_state_info(self, plugin_id: str) -> Dict[str, Any]:
         """
         Get comprehensive state information for a plugin.
@@ -212,7 +207,6 @@ class PluginStateManager:
                 'is_error': self.is_error(plugin_id),
                 'can_execute': self.can_execute(plugin_id),
                 'last_update': self.get_last_update(plugin_id),
-                'last_display': self.get_last_display(plugin_id),
                 'error_info': self.get_error_info(plugin_id),
                 'state_history_count': self._state_transition_counts.get(plugin_id, 0)
             }
@@ -231,5 +225,4 @@ class PluginStateManager:
             self._state_transition_counts.pop(plugin_id, None)
             self._error_info.pop(plugin_id, None)
             self._last_update.pop(plugin_id, None)
-            self._last_display.pop(plugin_id, None)
 

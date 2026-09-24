@@ -11,12 +11,16 @@ Four such calls were ungranted, all of them captive-portal teardown/setup:
     rfkill unblock wifi                   wifi_manager.py:1811
     mkdir -p .../dnsmasq-shared.d         wifi_manager.py:922
 
+The drop-in written into that directory was missing too: the literal
+`cp /tmp/ledmatrix-nm-dnsmasq.conf .../dnsmasq-shared.d/ledmatrix-captive.conf`
+and `rm -f` of the same file, so the directory was granted but not the file.
+
 It goes unnoticed because a stock Raspberry Pi image ships
 /etc/sudoers.d/010_pi-nopasswd granting the default user
 `ALL=(ALL) NOPASSWD: ALL`, which satisfies every gap in both files. It only
 bites once that blanket rule is removed or the service runs as another user.
 
-Scope, deliberately narrow: this pins the four commands above, each of which
+Scope, deliberately narrow: this pins the commands above, each of which
 can be written out literally. The portal makes further sudo calls whose
 arguments are built at runtime -- iptables and nft rules carrying an interface
 name and a port, `ip addr`, `ip link` -- and those cannot be granted safely
@@ -50,6 +54,11 @@ REQUIRED = (
     ("nft", "delete", "table", "ip", "ledmatrix"),
     ("rfkill", "unblock", "wifi"),
     ("mkdir", "-p", "/etc/NetworkManager/dnsmasq-shared.d"),
+    # The drop-in that directory exists for, written and removed by
+    # _write_nm_dnsmasq_captive_conf / _remove_nm_dnsmasq_captive_conf.
+    ("cp", "/tmp/ledmatrix-nm-dnsmasq.conf",
+     "/etc/NetworkManager/dnsmasq-shared.d/ledmatrix-captive.conf"),
+    ("rm", "-f", "/etc/NetworkManager/dnsmasq-shared.d/ledmatrix-captive.conf"),
 )
 
 #: Tools with an option that executes a program of the caller's choosing.

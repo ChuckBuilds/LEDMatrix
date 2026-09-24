@@ -31,7 +31,11 @@ import pytest
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from web_interface import system_metrics  # noqa: E402
 from web_interface.system_metrics import collect_system_metrics  # noqa: E402
+
+MB = 1024 * 1024
+GB = 1024 * MB
 
 
 @pytest.fixture
@@ -45,10 +49,11 @@ def metrics(monkeypatch):
                                 lambda _p: (_ for _ in ()).throw(OSError("no such mount")))
         else:
             monkeypatch.setattr(psutil, "disk_usage",
-                                lambda _p: SimpleNamespace(percent=disk_percent))
+                                lambda _p: SimpleNamespace(percent=disk_percent,
+                                                           total=32 * GB, used=4 * GB))
         monkeypatch.setattr(psutil, "virtual_memory",
-                            lambda: SimpleNamespace(percent=used_percent,
-                                                    available=available_bytes))
+                            lambda: SimpleNamespace(percent=used_percent, total=1024 * MB,
+                                                    used=600 * MB, available=available_bytes))
         return collect_system_metrics()
     return _collect
 
@@ -101,3 +106,18 @@ class TestEveryPredictiveFieldIsPresent:
                       "memory_available_mb", "disk_used_percent"):
             assert field in m
         assert m["disk_used_percent"] is None
+        assert all(m[key] is None for key in m if key != "cpu_temp")
+
+
+class TestUnavailableIsNull:
+    """One answer for "could not be read": None, never 0."""
+
+    def test_unreadable_temperature_is_null_not_zero_degrees(self, metrics, monkeypatch):
+        monkeypatch.setattr(system_metrics, "_THERMAL_ZONE", "/nonexistent/thermal/temp")
+        assert metrics()["cpu_temp"] is None
+
+    def test_readable_temperature_is_degrees_c(self, metrics, monkeypatch, tmp_path):
+        zone = tmp_path / "temp"
+        zone.write_text("48312\n")
+        monkeypatch.setattr(system_metrics, "_THERMAL_ZONE", str(zone))
+        assert metrics()["cpu_temp"] == 48.3

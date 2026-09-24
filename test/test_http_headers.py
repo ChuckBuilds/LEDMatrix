@@ -78,3 +78,25 @@ class TestBackgroundDataServiceHeaders:
             assert 'yourusername' not in str(headers)
         finally:
             service.shutdown(wait=False)
+
+
+class TestResolverHeaders:
+    def test_dynamic_team_resolver_sends_the_user_agent(self):
+        from unittest.mock import patch
+        from src.dynamic_team_resolver import DynamicTeamResolver
+        DynamicTeamResolver._rankings_cache = {}
+        DynamicTeamResolver._cache_timestamp = 0
+        try:
+            with patch('src.dynamic_team_resolver.requests.get',
+                       side_effect=RuntimeError("stop")) as get:
+                DynamicTeamResolver().resolve_teams(["AP_TOP_5"])
+            assert get.call_args.kwargs['headers']['User-Agent'] == USER_AGENT
+        finally:
+            DynamicTeamResolver._rankings_cache = {}
+            DynamicTeamResolver._cache_timestamp = 0
+
+    def test_odds_manager_uses_the_shared_headers(self):
+        from src.base_odds_manager import BaseOddsManager
+        headers = BaseOddsManager(MagicMock()).session.headers
+        for name, value in DEFAULT_HTTP_HEADERS.items():
+            assert headers[name] == value

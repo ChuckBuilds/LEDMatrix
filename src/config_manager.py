@@ -16,8 +16,10 @@ additionally keeps rotating backups in ``config/backups/``.
 Plugin configuration
 --------------------
 Plugin configs are stored inside ``config.json`` under the plugin's ID key
-and survive plugin reinstalls.  Use :meth:`ConfigManager.update_plugin_config`
-to write plugin settings; never write directly to the plugin directory.
+and survive plugin reinstalls. Write them by saving the whole config with
+:meth:`ConfigManager.save_config_atomic` (or
+:meth:`ConfigManager.save_raw_file_content`); never write settings into the
+plugin directory, which a reinstall deletes.
 
 Hot-reload
 ----------
@@ -127,13 +129,10 @@ class ConfigManager:
         # Update in-memory config if save was successful
         if result.status == SaveResultStatus.SUCCESS:
             self.config = new_config_data
-            # In-memory config now matches what was just written; refresh
-            # the load signature so the fast path stays valid. NOTE: the
-            # in-memory copy includes merged secrets; the on-disk file has
-            # them stripped — the fast path returning self.config preserves
-            # exactly the pre-cache behavior (load-after-save also returned
-            # the secret-merged self.config only after re-reading secrets;
-            # here secrets file is unchanged, so contents are equivalent).
+            # In-memory config now matches what was just written, so the
+            # load_config fast path may return it. It still carries the
+            # merged secrets that were stripped on disk; that matches a full
+            # reload, because the secrets file was not changed by the save.
             self._loaded_sig = self._files_signature()
             self.logger.info(f"Configuration successfully saved atomically to {os.path.abspath(self.config_path)}")
         elif result.status == SaveResultStatus.ROLLED_BACK:
@@ -253,11 +252,11 @@ class ConfigManager:
             return self.config
             
         except FileNotFoundError as e:
-            if str(e).find('config_secrets.json') == -1:  # Only raise if main config is missing
-                error_msg = f"Configuration file not found at {os.path.abspath(self.config_path)}"
-                self.logger.error(error_msg, exc_info=True)
-                raise ConfigError(error_msg, config_path=self.config_path) from e
-            return self.config
+            # Only config.json can get here: a missing or unreadable secrets
+            # file is handled where it is read.
+            error_msg = f"Configuration file not found at {os.path.abspath(self.config_path)}"
+            self.logger.error(error_msg, exc_info=True)
+            raise ConfigError(error_msg, config_path=self.config_path) from e
         except json.JSONDecodeError as e:
             error_msg = f"Error parsing configuration file {os.path.abspath(self.config_path)}"
             self.logger.error(error_msg, exc_info=True)
@@ -320,10 +319,9 @@ class ConfigManager:
         A missing secrets file is fine (nothing to strip). But a file that
         EXISTS and cannot be read or parsed means stripping is impossible —
         and the in-memory config being saved has secrets deep-merged into it,
-        so proceeding would write them into config.json in plaintext. That
-        was the historical behavior; it is now a hard refusal. The save
-        raises so the caller (and user) fixes the secrets file instead of
-        silently leaking its contents into the world-readable main config.
+        so proceeding would write them into config.json in plaintext. The
+        save raises instead, so the caller (and user) fixes the secrets file
+        rather than leaking its contents into the world-readable main config.
         """
         if not os.path.exists(self.secrets_path):
             return {}
@@ -465,9 +463,8 @@ class ConfigManager:
                 # Merge template defaults into current config
                 self._merge_template_defaults(self.config, template_config)
                 
-                # Save migrated config using atomic save to preserve permissions
-                # Use atomic save to preserve file permissions
-                # Note: save_config_atomic handles secrets internally
+                # save_config_atomic strips the merged secrets back out and
+                # keeps the file's owner and mode.
                 result = self.save_config_atomic(
                     new_config_data=self.config,
                     create_backup=False,  # Already created backup above
@@ -600,20 +597,16 @@ class ConfigManager:
 
             self.logger.info(f"{file_type.capitalize()} configuration successfully saved to {os.path.abspath(path_to_save)}")
             
-            # If we just saved the main config or secrets, the merged self.config might be stale.
-            # Reload it to reflect the new state.
-            # Note: We wrap this in try-except because reload failures (e.g., migration errors)
-            # should not cause the save operation to fail - the file was saved successfully.
-            if file_type == "main" or file_type == "secrets":
-                try:
-                    self.load_config()
-                except Exception as reload_error:
-                    # Log the reload error but don't fail the save operation
-                    # The file was saved successfully, reload is just for in-memory consistency
-                    self.logger.warning(
-                        f"Configuration file saved successfully, but reload failed: {reload_error}. "
-                        f"The file on disk is valid, but in-memory config may be stale."
-                    )
+            # The merged self.config is now stale; reload it. A reload failure
+            # (a migration error, say) is logged, not raised: the file itself
+            # was saved.
+            try:
+                self.load_config()
+            except Exception as reload_error:
+                self.logger.warning(
+                    f"Configuration file saved successfully, but reload failed: {reload_error}. "
+                    f"The file on disk is valid, but in-memory config may be stale."
+                )
 
         except PermissionError as e:
             # Provide helpful error message with fix instructions
@@ -670,7 +663,7 @@ class ConfigManager:
         try:
             # Load current configs
             main_config = self.get_raw_file_content('main')
-            secrets_config = self.get_raw_file_content('secrets') if os.path.exists(self.secrets_path) else {}
+            secrets_config = self.get_raw_file_content('secrets')  # {} when there is no file
             
             # Remove plugin from main config
             if plugin_id in main_config:
@@ -703,7 +696,7 @@ class ConfigManager:
         try:
             # Load current configs
             main_config = self.get_raw_file_content('main')
-            secrets_config = self.get_raw_file_content('secrets') if os.path.exists(self.secrets_path) else {}
+            secrets_config = self.get_raw_file_content('secrets')  # {} when there is no file
             
             valid_set = set(valid_plugin_ids)
             

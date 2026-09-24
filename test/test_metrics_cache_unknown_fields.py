@@ -116,10 +116,14 @@ def test_values_of_the_wrong_type_fall_back_to_usable_defaults(bad):
     assert isinstance(getattr(metrics, field_name), (int, float)), \
         f"{field_name} came back as {getattr(metrics, field_name)!r}"
 
-    # The real proof: arithmetic on the loaded metrics must not explode.
+    # The real proof: the arithmetic monitor_call and get_metrics_summary do
+    # on the loaded metrics must not explode.
     metrics.call_count += 1
     metrics.total_execution_time += 0.5
-    metrics.update_average_execution_time()
+    metrics.max_execution_time = max(metrics.max_execution_time, 0.5)
+    metrics.min_execution_time = min(metrics.min_execution_time, 0.5)
+    metrics.memory_mb = max(metrics.memory_mb, 1.0)
+    assert metrics.total_execution_time / metrics.call_count >= 0
 
 
 def test_a_numeric_string_is_accepted_rather_than_discarded():

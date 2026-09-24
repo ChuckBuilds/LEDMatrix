@@ -1,12 +1,13 @@
 """Font catalogue, upload, preview and deletion.
 
-Routes decorate the shared `api_v3` Blueprint from ._common, so their
-endpoint names are unchanged by living here.
+Routes decorate the shared `api_v3` Blueprint from the package `__init__`,
+so their endpoint names are unchanged by living here.
 """
 from web_interface.blueprints.api_v3 import (
     PROJECT_ROOT, Path, Response, SYSTEM_FONTS, api_v3,
     jsonify, logger, os, re, request, validate_file_upload,
 )
+from web_interface.cache import delete_cached, get_cached, set_cached
 
 
 def _catalog_response(catalog):
@@ -52,16 +53,9 @@ def _catalog_response(catalog):
 @api_v3.route('/fonts/catalog', methods=['GET'])
 def get_fonts_catalog():
     """Get fonts catalog"""
-    # Check cache first (5 minute TTL)
-    try:
-        from web_interface.cache import get_cached, set_cached
-        cached_result = get_cached('fonts_catalog', ttl_seconds=300)
-        if cached_result is not None:
-            return _catalog_response(cached_result)
-    except ImportError:
-        # Cache not available, continue without caching
-        get_cached = None
-        set_cached = None
+    cached_result = get_cached('fonts_catalog', ttl_seconds=300)
+    if cached_result is not None:
+        return _catalog_response(cached_result)
 
     # Try to import freetype, but continue without it if unavailable
     try:
@@ -148,12 +142,7 @@ def get_fonts_catalog():
                     'metadata': metadata if metadata else None
                 }
 
-    # Cache the result (5 minute TTL) if available
-    if set_cached:
-        try:
-            set_cached('fonts_catalog', catalog, ttl_seconds=300)
-        except Exception:
-            logger.error("[FontCatalog] Failed to cache fonts_catalog", exc_info=True)
+    set_cached('fonts_catalog', catalog, ttl_seconds=300)
 
     return _catalog_response(catalog)
 @api_v3.route('/fonts/tokens', methods=['GET'])
@@ -229,14 +218,7 @@ def upload_font():
     # Save the file
     font_file.save(str(filepath))
 
-    # Clear font catalog cache
-    try:
-        from web_interface.cache import delete_cached
-        delete_cached('fonts_catalog')
-    except ImportError as e:
-        logger.warning("[FontUpload] Cache module not available: %s", e)
-    except Exception:
-        logger.error("[FontUpload] Failed to clear fonts_catalog cache", exc_info=True)
+    delete_cached('fonts_catalog')
 
     return jsonify({
         'status': 'success',
@@ -453,14 +435,7 @@ def delete_font(font_family: str) -> tuple[Response, int] | Response:
     if not deleted:
         return jsonify({'status': 'error', 'message': f'Font not found: {font_family}'}), 404
 
-    # Clear font catalog cache
-    try:
-        from web_interface.cache import delete_cached
-        delete_cached('fonts_catalog')
-    except ImportError as e:
-        logger.warning("[FontDelete] Cache module not available: %s", e)
-    except Exception:
-        logger.error("[FontDelete] Failed to clear fonts_catalog cache", exc_info=True)
+    delete_cached('fonts_catalog')
 
     return jsonify({
         'status': 'success',

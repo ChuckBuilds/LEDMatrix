@@ -8,10 +8,14 @@ test here asserts observable behavior: returned font types, cache identity,
 fallback selection, and BDF native-size reading.
 """
 
+import json
+import shutil
+
 import freetype
 import pytest
 from PIL import ImageFont
 
+from src.common.font_layout import resolve_asset_path
 from src.font_manager import FontManager
 
 
@@ -132,3 +136,37 @@ class TestCacheLifecycle:
         fm.reload_config({})
         assert fm.cache_generation == gen_before + 1
         assert not fm.font_cache
+
+
+class TestPluginFonts:
+    """plugin:// sources resolve against the plugin's own directory, which
+    by default lives under plugin-repos/, not a cwd-relative plugins/."""
+
+    MANIFEST = {"fonts": [{"family": "bundled", "source": "plugin://fonts/Bundled.ttf"}]}
+
+    @staticmethod
+    def _plugin_with_font(root, name="my-plugin"):
+        plugin_dir = root / name
+        (plugin_dir / "fonts").mkdir(parents=True)
+        (plugin_dir / "manifest.json").write_text(json.dumps({"id": "my-plugin"}))
+        shutil.copy(resolve_asset_path("assets/fonts/PressStart2P-Regular.ttf"),
+                    plugin_dir / "fonts" / "Bundled.ttf")
+        return plugin_dir
+
+    def test_font_resolves_under_the_given_plugin_dir(self, fm, tmp_path):
+        plugin_dir = self._plugin_with_font(tmp_path / "plugin-repos")
+
+        assert fm.register_plugin_fonts("my-plugin", self.MANIFEST, plugin_dir=plugin_dir)
+
+        assert fm.font_catalog["my-plugin::bundled"] == str(plugin_dir / "fonts" / "Bundled.ttf")
+        font = fm.resolve_font("x.y", "bundled", 8, plugin_id="my-plugin")
+        assert isinstance(font, ImageFont.FreeTypeFont)
+
+    def test_without_a_plugin_dir_the_configured_directory_is_searched(self, tmp_path):
+        plugins_root = tmp_path / "installed"
+        plugin_dir = self._plugin_with_font(plugins_root, name="ledmatrix-my-plugin")
+        fm = FontManager({"plugin_system": {"plugins_directory": str(plugins_root)}})
+
+        assert fm.register_plugin_fonts("my-plugin", self.MANIFEST)
+
+        assert fm.font_catalog["my-plugin::bundled"] == str(plugin_dir / "fonts" / "Bundled.ttf")

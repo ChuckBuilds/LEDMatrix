@@ -49,7 +49,6 @@ from src.plugin_system.operation_types import OperationType
 from src.web_interface.validators import (
     validate_file_upload
 )
-from src.error_aggregator import get_error_aggregator
 from src.common.permission_utils import install_requirements_file
 from src.common.path_safety import resolve_under
 from src.device_location import DeviceLocationResolver, apply_device_location
@@ -95,13 +94,11 @@ def _scrub_git_remote_url(url: str) -> str:
 # `config_manager` used to resolve to a None that was never assigned, which
 # silently disabled the /health checks and made /display/current fall back
 # to a hardcoded 128x64.
-# Get project root directory (web_interface/../..)
-# web_interface/blueprints/api_v3/_common.py -> up four to the project root.
-# This was three levels when everything lived in web_interface/blueprints/api_v3.py;
-# the split moved the file one directory deeper and silently pointed PROJECT_ROOT
-# at web_interface/ instead. Nothing failed at import -- it surfaced as routes
-# 404ing and "installation script not found", because every path built from it
-# was wrong. Asserted in test_api_v3_url_map.py so the next move cannot repeat it.
+# The project root, three directories above this package. The split from a
+# single api_v3.py moved this file one directory deeper, and a count left at
+# the old depth pointed PROJECT_ROOT at web_interface/ without failing at
+# import: routes 404ed and reported "installation script not found".
+# test_api_v3_url_map.py asserts it so the next move cannot repeat that.
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 # System fonts that cannot be deleted (used by catalog API and delete endpoint)
 SYSTEM_FONTS = frozenset([
@@ -415,9 +412,9 @@ def resolve_pull_command(project_dir):
     is: first_time_install.sh chmods five scripts that git tracked as 644, so
     every machine that ran the installer carries five permanent mode changes
     and the update button reports "cannot pull with rebase: You have unstaged
-    changes". Those modes are corrected in this commit, but a user cannot pull
-    the correction while the pull is what is blocked, and any other local edit
-    would reproduce it anyway. Autostash reapplies the changes afterwards.
+    changes". The repository now tracks those modes, but a user cannot pull
+    that correction while the pull is what is blocked, and any other local
+    edit would reproduce it anyway. Autostash reapplies the changes afterwards.
 
     Returns ``(args, note, error)``. When ``origin/<branch>`` exists the pull
     is made explicit against it, so the update proceeds and the branch is
@@ -594,12 +591,7 @@ def _installed_plugin_ids():
     enumerate the installed plugins and read each one's persisted summary by ID
     instead of relying on the tracker's in-memory `get_all_*` view.
     """
-    manifests = _discovered_plugin_manifests()
-    try:
-        return list(manifests.keys()) if manifests else []
-    except Exception:
-        logger.debug('listing plugin_manifests failed while building plugin ids', exc_info=True)
-        return []
+    return list(_discovered_plugin_manifests())
 def _discovered_plugin_manifests(plugin_id=None, rescan=False):
     """The plugin manager's manifests, discovering plugins first if needed.
 
@@ -741,8 +733,6 @@ def _parse_form_value(value):
     Parse a form value into the appropriate Python type.
     Handles booleans, numbers, JSON arrays/objects, and strings.
     """
-    import json
-
     if value is None:
         return None
 
@@ -892,8 +882,6 @@ def _parse_form_value_with_schema(value, key_path, schema):
     Returns:
         Parsed value with correct type, or _SKIP_FIELD to indicate the field should not be set
     """
-    import json
-
     # Get the schema property for this field
     prop = _get_schema_property(schema, key_path)
 
@@ -1394,16 +1382,24 @@ def _prune_credential_backups(plugin_dir: Path) -> None:
 # calendarList.list pages at 250 entries maximum. Ten pages is far past any
 # real account and exists only so a malformed nextPageToken cannot spin here.
 _CALENDAR_LIST_MAX_PAGES = 10
+def _plugin_directory(plugin_id: str) -> Optional[Path]:
+    """An installed plugin's directory, or None when it has none on disk.
+
+    Only the plugin manager is asked, so no plugin manager means None. There
+    is no fallback to the legacy plugins/ directory: the loader never scans
+    it, so a plugin found only there is one that never runs.
+    """
+    if not api_v3.plugin_manager:
+        return None
+    plugin_dir = api_v3.plugin_manager.get_plugin_directory(plugin_id)
+    if not plugin_dir or not Path(plugin_dir).exists():
+        return None
+    return Path(plugin_dir)
+
+
 def _calendar_plugin_dir() -> Optional[Path]:
     """Where the calendar plugin is installed, or None if it is not."""
-    if api_v3.plugin_manager:
-        plugin_dir = api_v3.plugin_manager.get_plugin_directory('calendar')
-    else:
-        plugin_dir = PROJECT_ROOT / 'plugins' / 'calendar'
-    if not plugin_dir:
-        return None
-    plugin_dir = Path(plugin_dir)
-    return plugin_dir if plugin_dir.exists() else None
+    return _plugin_directory('calendar')
 def _run_calendar_registration(plugin_dir: Path, stdin_payload: str):
     """Run the plugin's OAuth script and return the JSON object it prints.
 
@@ -1901,8 +1897,6 @@ def _write_starlark_manifest(manifest: Dict[str, Any]) -> bool:
         return False
 def _install_star_file(app_id: str, star_file_path: str, metadata: Dict[str, Any], assets_dir: Optional[str] = None) -> bool:
     """Install a .star file and update the manifest (standalone, no plugin needed)."""
-    import shutil
-    import json
     app_dir, path_error = _validate_starlark_app_path(app_id)
     if path_error:
         logger.warning("Refusing to install %r: %s", app_id, path_error)
