@@ -809,12 +809,7 @@ function initializePlugins() {
     if (pluginsInitialized) {
         debugLog('[initializePlugins] Already initialized, skipping (but still setting up handlers)');
         // Still set up handlers even if already initialized (in case page was HTMX swapped)
-        debugLog('[initializePlugins] Force setting up GitHub handlers anyway...');
-        if (typeof setupGitHubInstallHandlers === 'function') {
-            setupGitHubInstallHandlers();
-        } else {
-            console.error('[initializePlugins] setupGitHubInstallHandlers not found!');
-        }
+        setupGitHubInstallHandlers();
         return;
     }
     pluginsInitialized = true;
@@ -822,21 +817,8 @@ function initializePlugins() {
     debugLog('[initializePlugins] Starting initialization...');
     debugLog('[INIT] Initializing plugins...');
 
-    // Check GitHub authentication status
-    debugLog('[INIT] Checking for checkGitHubAuthStatus function...', {
-        exists: typeof window.checkGitHubAuthStatus,
-        type: typeof window.checkGitHubAuthStatus
-    });
-    if (window.checkGitHubAuthStatus) {
-        debugLog('[INIT] Calling checkGitHubAuthStatus...');
-        try {
-            window.checkGitHubAuthStatus();
-        } catch (error) {
-            console.error('[INIT] Error calling checkGitHubAuthStatus:', error);
-        }
-    } else {
-        console.warn('[INIT] checkGitHubAuthStatus not available yet');
-    }
+    // Returns a promise and handles its own errors.
+    window.checkGitHubAuthStatus();
 
     // Load both installed plugins and plugin store.
     // On HTMX re-swaps with a still-warm cache, skip GitHub metadata to avoid
@@ -855,9 +837,7 @@ function initializePlugins() {
         .then(() => {
             // Re-render store from cache to update install/update/reinstall badges now
             // that window.installedPlugins is populated. No network call — instant.
-            if (typeof applyStoreFiltersAndSort === 'function') {
-                applyStoreFiltersAndSort(true);
-            }
+            applyStoreFiltersAndSort(true);
         });
 
     // #plugin-search and #plugin-category are wired by the store's ListFilter
@@ -867,15 +847,7 @@ function initializePlugins() {
     // cached-filter fast path and refetched /api/v3/plugins/store/list with commit
     // info. Filtering the cached list is the controller's job — leave it to it.
 
-    // Setup GitHub installation handlers
-    debugLog('[initializePlugins] About to call setupGitHubInstallHandlers...');
-    if (typeof setupGitHubInstallHandlers === 'function') {
-        debugLog('[initializePlugins] setupGitHubInstallHandlers is a function, calling it...');
-        setupGitHubInstallHandlers();
-        debugLog('[initializePlugins] setupGitHubInstallHandlers called');
-    } else {
-        console.error('[initializePlugins] ERROR: setupGitHubInstallHandlers is not a function! Type:', typeof setupGitHubInstallHandlers);
-    }
+    setupGitHubInstallHandlers();
 
     // Setup collapsible section handlers
     setupCollapsibleSections();
@@ -1335,24 +1307,6 @@ function handlePluginAction(event) {
 
     debugLog('[EVENT DELEGATION] Plugin action:', action, 'Plugin ID:', pluginId);
 
-    // Helper function to wait for a function to be available
-    const waitForFunction = (funcName, maxAttempts = 10, delay = 50) => {
-        return new Promise((resolve, reject) => {
-            let attempts = 0;
-            const check = () => {
-                attempts++;
-                if (window[funcName] && typeof window[funcName] === 'function') {
-                    resolve(window[funcName]);
-                } else if (attempts >= maxAttempts) {
-                    reject(new Error(`${funcName} not available after ${maxAttempts} attempts`));
-                } else {
-                    setTimeout(check, delay);
-                }
-            };
-            check();
-        });
-    };
-
     switch(action) {
         case 'toggle':
             // Toggling under an Enabled/Disabled filter would otherwise make the
@@ -1362,24 +1316,11 @@ function handlePluginAction(event) {
                 const ctl = getInstalledFilter();
                 if (ctl) ctl.sticky.add(pluginId);
             }
-            // Get the current enabled state from plugin data (source of truth)
-            // rather than from the checkbox DOM which might be out of sync
+            // The new state is the opposite of the stored one. The plugin data
+            // is the source of truth; the checkbox is only a fallback, and
+            // because the click was preventDefault()ed it still shows the old
+            // state too.
             const plugin = (window.installedPlugins || []).find(p => p.id === pluginId);
-
-            // Special handling: If plugin data isn't found or is stale, fallback to DOM but be careful
-            // If the user clicked the checkbox, the 'checked' property has *already* toggled in the DOM
-            // (even though we preventDefault later, sometimes it's too late for the property read)
-            // However, we used preventDefault() in the global handler, so the checkbox state *should* be reliable if we didn't touch it.
-
-            // BUT: The issue is that 'currentEnabled' calculation might be wrong if window.installedPlugins is outdated.
-            // If the user toggles ON, enabled becomes true. If they click again, we want enabled=false.
-
-            // Let's try a simpler approach: Use the checkbox state as the source of truth for the *desired* state
-            // Since we preventDefault(), the checkbox state reflects the *old* state (before the click)
-            // wait... if we preventDefault() on 'click', the checkbox does NOT change visually or internally.
-            // So button.checked is the OLD state.
-            // We want the NEW state to be !button.checked.
-
             let currentEnabled;
 
             if (plugin) {
@@ -1390,39 +1331,17 @@ function handlePluginAction(event) {
                 currentEnabled = false;
             }
 
-            // Toggle the state - we want the opposite of current state
             const isChecked = !currentEnabled;
 
             debugLog('[DEBUG toggle] Plugin:', pluginId, 'Current enabled (from data):', currentEnabled, 'New state:', isChecked, 'Event type:', event.type);
 
-            waitForFunction('togglePlugin', 10, 50)
-                .then(toggleFunc => {
-                    toggleFunc(pluginId, isChecked);
-                })
-                .catch(error => {
-                    console.error('[EVENT DELEGATION]', error.message);
-                    showNotification('Toggle function not loaded. Please refresh the page.', 'error');
-                });
+            window.togglePlugin(pluginId, isChecked);
             break;
         case 'configure':
-            waitForFunction('configurePlugin', 10, 50)
-                .then(configureFunc => {
-                    configureFunc(pluginId);
-                })
-                .catch(error => {
-                    console.error('[EVENT DELEGATION]', error.message);
-                    showNotification('Configure function not loaded. Please refresh the page.', 'error');
-                });
+            window.configurePlugin(pluginId);
             break;
         case 'update':
-            waitForFunction('updatePlugin', 10, 50)
-                .then(updateFunc => {
-                    updateFunc(pluginId);
-                })
-                .catch(error => {
-                    console.error('[EVENT DELEGATION]', error.message);
-                    showNotification('Update function not loaded. Please refresh the page.', 'error');
-                });
+            window.updatePlugin(pluginId);
             break;
         case 'uninstall':
             if (pluginId.startsWith('starlark:')) {
@@ -1441,14 +1360,7 @@ function handlePluginAction(event) {
                     })
                     .catch(err => alert('Uninstall failed: ' + err.message));
             } else {
-                waitForFunction('uninstallPlugin', 10, 50)
-                    .then(uninstallFunc => {
-                        uninstallFunc(pluginId);
-                    })
-                    .catch(error => {
-                        console.error('[EVENT DELEGATION]', error.message);
-                        showNotification('Uninstall function not loaded. Please refresh the page.', 'error');
-                    });
+                window.uninstallPlugin(pluginId);
             }
             break;
     }
@@ -2899,10 +2811,7 @@ function searchPluginStore(fetchCommitInfo = true) {
     }
 
     // Show loading state
-    try {
-        const countEl = document.getElementById('store-count');
-        if (countEl) countEl.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>Loading...';
-    } catch (e) { /* ignore */ }
+    setStoreCount('<i class="fas fa-spinner fa-spin mr-1"></i>Loading...');
     showStoreLoading(true);
 
     let url = '/api/v3/plugins/store/list';
@@ -2932,39 +2841,31 @@ function searchPluginStore(fetchCommitInfo = true) {
                 }
 
                 // Update total count
-                try {
-                    const countEl = document.getElementById('store-count');
-                    if (countEl) countEl.innerHTML = `${plugins.length} available`;
-                } catch (e) { /* ignore */ }
+                setStoreCount(`${plugins.length} available`);
 
                 applyStoreFiltersAndSort();
 
                 // Re-attach GitHub token collapse handler after store render
-                if (window.attachGithubTokenCollapseHandler) {
-                    requestAnimationFrame(() => {
-                        try { window.attachGithubTokenCollapseHandler(); } catch (e) { /* ignore */ }
-                        if (window.checkGitHubAuthStatus) {
-                            try { window.checkGitHubAuthStatus(); } catch (e) { /* ignore */ }
-                        }
-                    });
-                }
+                requestAnimationFrame(() => {
+                    window.attachGithubTokenCollapseHandler();
+                    window.checkGitHubAuthStatus();
+                });
             } else {
                 showNotification('Failed to search plugin store: ' + data.message, 'error');
-                try {
-                    const countEl = document.getElementById('store-count');
-                    if (countEl) countEl.innerHTML = 'Error loading';
-                } catch (e) { /* ignore */ }
+                setStoreCount('Error loading');
             }
         })
         .catch(error => {
             console.error('Error searching plugin store:', error);
             showStoreLoading(false);
             showNotification('Error searching plugin store: ' + error.message, 'error');
-            try {
-                const countEl = document.getElementById('store-count');
-                if (countEl) countEl.innerHTML = 'Error loading';
-            } catch (e) { /* ignore */ }
+            setStoreCount('Error loading');
         });
+}
+
+function setStoreCount(html) {
+    const countEl = document.getElementById('store-count');
+    if (countEl) countEl.innerHTML = html;
 }
 
 function showStoreLoading(show) {
@@ -4240,11 +4141,7 @@ setTimeout(function() {
     if (installedGrid) {
         debugLog('Found installed-plugins-grid, forcing initialization...');
         window.pluginManager.initialized = false;
-        if (typeof initializePluginPageWhenReady === 'function') {
-            initializePluginPageWhenReady();
-        } else if (typeof window.initPluginsPage === 'function') {
-            window.initPluginsPage();
-        }
+        window.initPluginsPage();
     } else {
         debugLog('installed-plugins-grid not found yet, will retry via event listeners');
     }
