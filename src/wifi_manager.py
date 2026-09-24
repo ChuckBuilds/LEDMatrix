@@ -9,24 +9,18 @@ Tested and optimized for:
 - Raspberry Pi OS Bookworm (Debian 12) with NetworkManager
 - Raspberry Pi 3B+, 4, 5 with built-in WiFi
 
-Sudoers Requirements:
-    The following sudoers entries are required for passwordless operation.
-    Add to /etc/sudoers.d/ledmatrix_wifi:
-
-    ledpi ALL=(ALL) NOPASSWD: /usr/bin/nmcli
-    ledpi ALL=(ALL) NOPASSWD: /usr/bin/systemctl start hostapd
-    ledpi ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop hostapd
-    ledpi ALL=(ALL) NOPASSWD: /usr/bin/systemctl start dnsmasq
-    ledpi ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop dnsmasq
-    ledpi ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart NetworkManager
-    ledpi ALL=(ALL) NOPASSWD: /usr/sbin/ip
-    ledpi ALL=(ALL) NOPASSWD: /sbin/ip
-    ledpi ALL=(ALL) NOPASSWD: /usr/sbin/rfkill
-    ledpi ALL=(ALL) NOPASSWD: /usr/sbin/iptables
-    ledpi ALL=(ALL) NOPASSWD: /usr/sbin/sysctl
-    ledpi ALL=(ALL) NOPASSWD: /usr/bin/cp /tmp/hostapd.conf /etc/hostapd/hostapd.conf
-    ledpi ALL=(ALL) NOPASSWD: /usr/bin/cp /tmp/dnsmasq.conf /etc/dnsmasq.d/ledmatrix-captive.conf
-    ledpi ALL=(ALL) NOPASSWD: /usr/bin/rm -f /etc/dnsmasq.d/ledmatrix-captive.conf
+Privileges:
+    The web interface runs as an unprivileged user and reaches nmcli,
+    systemctl, sysctl, nft and rfkill through exact-command sudo rules.
+    scripts/install/configure_wifi_permissions.sh writes those rules (and a
+    PolicyKit rule for NetworkManager); first_time_install.sh runs it. Use
+    that script rather than granting commands by hand. It deliberately
+    grants neither ``iptables`` nor ``ip``: their rules take a live interface
+    name, so they would need a wildcard, and ``iptables --modprobe=<path>``
+    and ``ip netns exec`` both run an arbitrary program as root. The code
+    paths that call them with sudo therefore only work where the user has
+    broader sudo rights (a stock Raspberry Pi image grants the default user
+    blanket NOPASSWD).
 """
 
 import subprocess
