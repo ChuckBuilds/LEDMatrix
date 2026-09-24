@@ -9,6 +9,8 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.common import frame_timing  # noqa: E402
@@ -301,6 +303,24 @@ def test_watchdog_rate_limits_its_dumps(caplog):
     dumps = [r for r in caplog.records if r.getMessage().startswith("Render stall:")]
     assert len(dumps) == 1
     assert dog.stalls == 2
+
+
+def test_watchdog_threshold_can_be_lowered_for_a_diagnostic_run(monkeypatch):
+    monkeypatch.delenv("LEDMATRIX_STALL_WATCHDOG_MS", raising=False)
+    assert frame_timing.watchdog_settings() == {}
+    monkeypatch.setenv("LEDMATRIX_STALL_WATCHDOG_MS", "nonsense")
+    assert frame_timing.watchdog_settings() == {}
+    monkeypatch.setenv("LEDMATRIX_STALL_WATCHDOG_MS", "30")
+    settings = frame_timing.watchdog_settings()
+    assert settings["threshold"] == pytest.approx(0.030)
+    assert settings["poll"] == pytest.approx(0.010)   # sees a stall one poll long
+
+    # ...and the recorder starts its watchdog with them.
+    rec = frame_timing.FrameTimingRecorder(path=None)
+    rec.scrolling_now = lambda: True
+    monkeypatch.setattr(frame_timing.StallWatchdog, "start", lambda self: None)
+    rec.record(0.001, 0.009, 1, True, 1.0)
+    assert rec.watchdog.threshold == pytest.approx(0.030)
 
 
 # --- measuring the panel, and runs that never locked -------------------------

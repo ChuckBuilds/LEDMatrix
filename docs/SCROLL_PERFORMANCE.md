@@ -349,6 +349,15 @@ A soak is only meaningful against a fixed workload. Compare runs with the same
 content and `--preview` setting, and alternate which build goes first when you
 A/B two of them. A live-API workload drifts over time.
 
+The soak says how often; the service's log says why. A scroll that presents no
+frame for 250 ms logs `Render stall:` with the stack of the render thread and
+the top of every other thread's, and whether the whole interpreter was blocked
+(C code holding the GIL) rather than one thread. To see what is behind the
+shorter hitches, run the service with `LEDMATRIX_STALL_WATCHDOG_MS=30`, which
+dumps at three refreshes late instead: its extra polling costs a little GIL
+time of its own, so do that on a diagnostic run, not a soak you are grading.
+`LEDMATRIX_STALL_WATCHDOG=0` turns it off.
+
 ### Results: hdpi, 2026-09-24
 
 Pi 4, 4×128×64 on one chain (512×64), `gpio_slowdown` 3, cap 120 Hz, the

@@ -62,7 +62,10 @@ top of every other thread's, so the log names what the render thread was
 waiting on. It also measures how late its own wake-up was: if the watchdog was
 held up as long as the render thread, the whole interpreter was blocked (C
 code holding the GIL, or the process not scheduled), not one thread on a lock.
-Set ``LEDMATRIX_STALL_WATCHDOG=0`` to turn it off.
+Set ``LEDMATRIX_STALL_WATCHDOG=0`` to turn it off, or
+``LEDMATRIX_STALL_WATCHDOG_MS`` to dump at a lower threshold -- 30 catches
+frames three refreshes late, which is where GIL contention shows. It polls
+three times per threshold, so keep it to diagnostic runs, not soaks.
 """
 
 from __future__ import annotations
@@ -283,7 +286,7 @@ class FrameTimingRecorder:
             self._static_frames += 1
         elif self.watchdog is None and self.scrolling_now is not None \
                 and os.environ.get("LEDMATRIX_STALL_WATCHDOG", "1") != "0":
-            self.watchdog = StallWatchdog(self)
+            self.watchdog = StallWatchdog(self, **watchdog_settings())
             self.watchdog.start()
         elif previous is not None and previous[1]:
             interval = presented_at - previous[0]
@@ -415,6 +418,23 @@ class FrameTimingRecorder:
             except OSError:
                 pass
             raise
+
+
+def watchdog_settings() -> Dict[str, float]:
+    """StallWatchdog arguments from ``LEDMATRIX_STALL_WATCHDOG_MS``, if set.
+
+    The poll comes down with the threshold, or a stall shorter than one poll
+    would go unseen.
+    """
+    try:
+        ms = float(os.environ.get("LEDMATRIX_STALL_WATCHDOG_MS") or 0)
+    except ValueError:
+        ms = 0.0
+    if ms <= 0:
+        return {}
+    threshold = ms / 1000.0
+    return {"threshold": threshold,
+            "poll": min(WATCHDOG_POLL_SECONDS, threshold / 3)}
 
 
 class StallWatchdog:
