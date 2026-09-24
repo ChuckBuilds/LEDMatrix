@@ -194,6 +194,12 @@ floor on the release that ships them):
   `api_extractors`). No known plugin imports it. A plugin that does must use
   `src.common` or its own copy of the code.
 
+- `display.scan_order_compensation` (`"auto"` by default): while something
+  scrolls at one pixel per refresh, one half of each panel is shown a refresh
+  behind the other, which removes the 1px step a 1:N-scan panel shows across
+  its middle. Only for layouts whose row order is known; `"off"` disables it.
+  See `docs/SCROLL_PERFORMANCE.md`, "A tear across the middle on fast scrolls".
+
 ## 3.5.0
 
 New modules a plugin may import via `src.*` (floor on 3.5.0):
