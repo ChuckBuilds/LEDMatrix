@@ -741,8 +741,6 @@ def _parse_form_value(value):
     Parse a form value into the appropriate Python type.
     Handles booleans, numbers, JSON arrays/objects, and strings.
     """
-    import json
-
     if value is None:
         return None
 
@@ -892,8 +890,6 @@ def _parse_form_value_with_schema(value, key_path, schema):
     Returns:
         Parsed value with correct type, or _SKIP_FIELD to indicate the field should not be set
     """
-    import json
-
     # Get the schema property for this field
     prop = _get_schema_property(schema, key_path)
 
@@ -1901,8 +1897,6 @@ def _write_starlark_manifest(manifest: Dict[str, Any]) -> bool:
         return False
 def _install_star_file(app_id: str, star_file_path: str, metadata: Dict[str, Any], assets_dir: Optional[str] = None) -> bool:
     """Install a .star file and update the manifest (standalone, no plugin needed)."""
-    import shutil
-    import json
     app_dir, path_error = _validate_starlark_app_path(app_id)
     if path_error:
         logger.warning("Refusing to install %r: %s", app_id, path_error)

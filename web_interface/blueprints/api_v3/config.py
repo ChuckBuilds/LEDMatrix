@@ -15,6 +15,7 @@ from src.common.path_safety import resolve_under
 from src.display_geometry import ORIENTATION_ROTATE_DEGREES
 from src.matrix_support import INT_SETTING_LIMITS, describe_range, library_refusals, refusal_message
 from src.pi5_matrix_support import is_raspberry_pi_5
+from web_interface.cache import invalidate_cache
 import web_interface.blueprints.api_v3 as _pkg
 
 # Read through the module rather than bound by value: tests patch these
@@ -220,16 +221,10 @@ def save_schedule_config():
                 status_code=500
             )
 
-        # Invalidate cache on config change
-        try:
-            from web_interface.cache import invalidate_cache
-            invalidate_cache()
-        except ImportError:
-            pass
+        invalidate_cache()
 
         return success_response(message='Schedule configuration saved successfully')
     except Exception as e:
-        import logging
         logger.error("Error saving schedule config", exc_info=True)
         return error_response(
             ErrorCode.CONFIG_SAVE_FAILED,
@@ -240,11 +235,8 @@ def save_schedule_config():
 @api_v3.route('/config/dim-schedule', methods=['GET'])
 def get_dim_schedule_config():
     """Get current dim schedule configuration"""
-    import logging
-    import json
-
     if not api_v3.config_manager:
-        logging.error("[DIM SCHEDULE] Config manager not initialized")
+        logger.error("[DIM SCHEDULE] Config manager not initialized")
         return error_response(
             ErrorCode.CONFIG_LOAD_FAILED,
             'Config manager not initialized',
@@ -264,28 +256,28 @@ def get_dim_schedule_config():
 
         return success_response(data=dim_schedule_config)
     except FileNotFoundError as e:
-        logging.error(f"[DIM SCHEDULE] Config file not found: {e}", exc_info=True)
+        logger.error(f"[DIM SCHEDULE] Config file not found: {e}", exc_info=True)
         return error_response(
             ErrorCode.CONFIG_LOAD_FAILED,
             "Configuration file not found",
             status_code=500
         )
     except json.JSONDecodeError as e:
-        logging.error(f"[DIM SCHEDULE] Invalid JSON in config file: {e}", exc_info=True)
+        logger.error(f"[DIM SCHEDULE] Invalid JSON in config file: {e}", exc_info=True)
         return error_response(
             ErrorCode.CONFIG_LOAD_FAILED,
             "Configuration file contains invalid JSON",
             status_code=500
         )
     except (IOError, OSError) as e:
-        logging.error(f"[DIM SCHEDULE] Error reading config file: {e}", exc_info=True)
+        logger.error(f"[DIM SCHEDULE] Error reading config file: {e}", exc_info=True)
         return error_response(
             ErrorCode.CONFIG_LOAD_FAILED,
             "An error occurred; see logs for details",
             status_code=500, details=describe_exception(e)
         )
     except Exception as e:
-        logging.error(f"[DIM SCHEDULE] Unexpected error loading config: {e}", exc_info=True)
+        logger.error(f"[DIM SCHEDULE] Unexpected error loading config: {e}", exc_info=True)
         return error_response(
             ErrorCode.CONFIG_LOAD_FAILED,
             "An error occurred; see logs for details",
@@ -437,16 +429,10 @@ def save_dim_schedule_config():
                 status_code=500
             )
 
-        # Invalidate cache on config change
-        try:
-            from web_interface.cache import invalidate_cache
-            invalidate_cache()
-        except ImportError:
-            pass
+        invalidate_cache()
 
         return success_response(message='Dim schedule configuration saved successfully')
     except Exception as e:
-        import logging
         logger.error("Error saving dim schedule config", exc_info=True)
         return error_response(
             ErrorCode.CONFIG_SAVE_FAILED,
@@ -1114,12 +1100,7 @@ def save_main_config():
                 status_code=500
             )
 
-        # Invalidate cache on config change
-        try:
-            from web_interface.cache import invalidate_cache
-            invalidate_cache()
-        except ImportError:
-            pass
+        invalidate_cache()
 
         # Notify saved plugins of their new config (with secrets merged), now
         # that it is on disk.

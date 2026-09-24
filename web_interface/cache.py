@@ -6,8 +6,8 @@ seconds or minutes (the font catalog, the system-status snapshot, systemctl
 checks). It is per-process and in-memory only; data shared with the display
 service goes through ``src.cache_manager.CacheManager`` instead.
 
-Separated from app.py to avoid circular imports: blueprints import the
-module-level helpers below lazily, inside their request handlers.
+Separate from app.py so the blueprints can import it without importing the
+app; it imports nothing from the project, so they import it at module top.
 """
 import threading
 import time

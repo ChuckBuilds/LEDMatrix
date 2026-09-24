@@ -193,7 +193,6 @@ def get_logs():
 @api_v3.route('/sync/status', methods=['GET'])
 def get_sync_status():
     """Return live multi-display sync status written by the display process."""
-    import os as _os
     status_file = "/tmp/led_matrix_sync_status.json"
     # Also surface config so the UI can show the configured role even before
     # the display process has written a status file.
@@ -207,7 +206,7 @@ def get_sync_status():
         except Exception:
             pass
 
-    if _os.path.exists(status_file):
+    if os.path.exists(status_file):
         try:
             with open(status_file) as f:
                 live = json.load(f)

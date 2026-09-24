@@ -38,9 +38,6 @@ def get_installed_plugins():
     if not api_v3.plugin_manager or not api_v3.plugin_store_manager:
         return jsonify({'status': 'error', 'message': 'Plugin managers not initialized'}), 500
 
-    import json
-    from pathlib import Path
-
     # Re-discover plugins to ensure we have the latest list
     # This handles cases where plugins are added/removed after app startup
     api_v3.plugin_manager.discover_plugins()
@@ -470,8 +467,7 @@ def toggle_plugin():
                         plugin.on_disable()
             except Exception as lifecycle_error:
                 # Log the error but don't fail the toggle - config is already saved
-                import logging
-                logging.warning(f"Lifecycle method error for {plugin_id}: {lifecycle_error}", exc_info=True)
+                logger.warning("Lifecycle method error for %s: %s", plugin_id, lifecycle_error, exc_info=True)
 
         return success_response(
             message=f"Plugin {plugin_id} {'enabled' if enabled else 'disabled'} successfully"
@@ -748,8 +744,7 @@ def get_plugin_config():
                     plugin_config, schema_mgr.load_schema(plugin_id, use_cache=True), defaults)
             except Exception as e:
                 # Log but don't fail - defaults merge is best effort
-                import logging
-                logging.warning(f"Could not merge defaults for {plugin_id}: {e}")
+                logger.warning("Could not merge defaults for %s: %s", plugin_id, e)
 
         # Special handling for of-the-day plugin: populate uploaded_files and categories from disk
         if plugin_id == 'of-the-day' or plugin_id == 'ledmatrix-of-the-day':
@@ -934,7 +929,6 @@ def update_plugin():
 
         if manifest_path.exists():
             try:
-                import json
                 with open(manifest_path, 'r', encoding='utf-8') as f:
                     manifest = json.load(f)
                     current_last_updated = manifest.get('last_updated')
@@ -983,7 +977,6 @@ def update_plugin():
             updated_version = current_version
             try:
                 if manifest_path.exists():
-                    import json
                     with open(manifest_path, 'r', encoding='utf-8') as f:
                         manifest = json.load(f)
                         updated_last_updated = manifest.get('last_updated', current_last_updated)
@@ -1696,7 +1689,6 @@ def save_plugin_config():
             
             # Process bracket notation fields and set directly in plugin_config
             # Use JSON encoding instead of comma-join to handle values containing commas
-            import json
             for base_path, values in bracket_array_fields.items():
                 # Get schema property to verify it's an array
                 base_prop = _get_schema_property(schema, base_path)
@@ -1858,8 +1850,6 @@ def save_plugin_config():
             try:
                 api_v3.config_manager.save_raw_file_content('secrets', current_secrets)
             except PermissionError as e:
-                # Log the error with more details
-                import os
                 secrets_path = api_v3.config_manager.secrets_path
                 secrets_dir = os.path.dirname(secrets_path) if secrets_path else None
                 
@@ -1880,12 +1870,9 @@ def save_plugin_config():
                     f"Failed to save secrets configuration: Permission denied. Check file permissions on {secrets_path}",
                     status_code=500
                 )
-            except Exception as e:
-                # Log the error but don't fail the entire config save
-                import os
+            except Exception:
                 secrets_path = api_v3.config_manager.secrets_path
                 logger.error("Error saving secrets config for %s (path=%s)", plugin_id, secrets_path, exc_info=True)
-                # Return error response with more context
                 return error_response(
                     ErrorCode.CONFIG_SAVE_FAILED,
                     "Failed to save secrets configuration; see logs for details",
@@ -1931,8 +1918,7 @@ def save_plugin_config():
                                 plugin_instance.on_disable()
                     except Exception as lifecycle_error:
                         # Log the error but don't fail the save - config is already saved
-                        import logging
-                        logging.warning(f"Lifecycle method error for {plugin_id}: {lifecycle_error}", exc_info=True)
+                        logger.warning("Lifecycle method error for %s: %s", plugin_id, lifecycle_error, exc_info=True)
         except Exception as hook_err:
             # Do not fail the save if hook fails; just log
             logger.warning("on_config_change failed: %s", hook_err)
@@ -2669,6 +2655,10 @@ sys.exit(proc.returncode)
                                     'message': 'Could not generate authorization URL'
                                 }), 400
                         except Exception as e:
+                            # Not a copy of the blueprint handler: without it, a
+                            # TimeoutExpired from the plugin's script would reach
+                            # this route's own `except subprocess.TimeoutExpired`
+                            # and be answered as a 408 "Action timed out".
                             logger.error("Error executing action step 1", exc_info=True)
                             return jsonify({
                                 'status': 'error',
@@ -2996,7 +2986,6 @@ def upload_calendar_credentials():
     # Backup existing file if it exists
     if credentials_path.exists():
         backup_path = Path(plugin_dir) / f'credentials.json.backup.{int(_pkg.time.time())}'
-        import shutil
         shutil.copy2(credentials_path, backup_path)
         _prune_credential_backups(Path(plugin_dir))
 
