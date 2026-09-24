@@ -18,6 +18,8 @@ import requests
 import json
 from typing import Dict, Any, Optional, List
 
+from src.common.api_helper import DEFAULT_HTTP_HEADERS
+
 
 class BaseOddsManager:
     """
@@ -45,22 +47,15 @@ class BaseOddsManager:
         self.logger = logging.getLogger(__name__)
         self.base_url = "https://sports.core.api.espn.com/v2/sports"
 
-        # This path used a bare requests.get, so it identified itself as
-        # python-requests/x.y -- the one thing ESPN is known to reject. Around
-        # 2026-08-04 it began 403ing browser strings and bare custom tokens
-        # alike; what it accepts is a token with a URL that says who is
-        # calling. Every other ESPN caller in the tree already sends this
-        # (src/common/api_helper.py); the odds path was simply missed, and it is the one whose failures cost
-        # the caller its whole update budget.
+        # Core's shared headers: ESPN rejects requests' default User-Agent
+        # (see api_helper.USER_AGENT), and a rejected odds request costs the
+        # calling plugin its update budget.
         #
         # Deliberately no retry adapter, unlike api_helper: retries multiply
         # request_timeout, which is set to 5s precisely to stay inside that
         # budget. One try, then the cooldown below.
         self.session = requests.Session()
-        self.session.headers.update({
-            'User-Agent': 'LEDMatrix/1.0 (+https://github.com/ChuckBuilds/LEDMatrix)',
-            'Accept': 'application/json',
-        })
+        self.session.headers.update(DEFAULT_HTTP_HEADERS)
         
         # Configuration with defaults
         self.update_interval = 3600  # 1 hour default

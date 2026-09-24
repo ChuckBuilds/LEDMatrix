@@ -21,6 +21,8 @@ import time
 import requests
 from typing import Dict, List
 
+from src.common.api_helper import DEFAULT_HTTP_HEADERS
+
 logger = logging.getLogger(__name__)
 
 class DynamicTeamResolver:
@@ -141,7 +143,9 @@ class DynamicTeamResolver:
             self.logger.info("Fetching fresh NCAA Football rankings from ESPN API")
             rankings_url = "https://site.api.espn.com/apis/site/v2/sports/football/college-football/rankings"
             
-            response = requests.get(rankings_url, timeout=self.request_timeout)
+            # ESPN rejects requests' default User-Agent; see api_helper.USER_AGENT.
+            response = requests.get(rankings_url, headers=dict(DEFAULT_HTTP_HEADERS),
+                                    timeout=self.request_timeout)
             response.raise_for_status()
             data = response.json()
             
