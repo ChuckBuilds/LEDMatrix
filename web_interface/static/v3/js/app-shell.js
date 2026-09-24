@@ -561,19 +561,29 @@
 
                     // htmx.ajax issues the request and swaps the response into the panel
                     // directly, so it works even before htmx has wired up the element's
-                    // hx-trigger listeners. data-loaded is stamped on success so the panel
-                    // loads once; the activeTab check drops loads for a tab the user navigated
-                    // away from while htmx was still loading (avoids fetching hidden panels).
+                    // hx-trigger listeners. The panel is the request's source as well as
+                    // its target, so htmx fires its events on the panel and the panel's
+                    // hx-on::response-error handler runs. htmx resolves the promise even on
+                    // an error status, so data-loaded is stamped only when no
+                    // htmx:responseError fired; a failed panel reloads on the next visit.
+                    // The activeTab check drops loads for a tab the user navigated away
+                    // from while htmx was still loading (avoids fetching hidden panels).
                     const swap = contentEl.getAttribute('hx-swap') || 'innerHTML';
                     const load = () => {
                         if (this.activeTab !== tab || contentEl.hasAttribute('data-loaded')) {
                             contentEl.removeAttribute('data-loading');
                             return;
                         }
-                        return htmx.ajax('GET', url, { target: contentEl, swap: swap })
-                            .then(() => contentEl.setAttribute('data-loaded', 'true'))
-                            .catch(() => {}) // leave unstamped on failure so it can retry
-                            .finally(() => contentEl.removeAttribute('data-loading'));
+                        let failed = false;
+                        const onError = () => { failed = true; };
+                        contentEl.addEventListener('htmx:responseError', onError, { once: true });
+                        return htmx.ajax('GET', url, { source: contentEl, target: contentEl, swap: swap })
+                            .then(() => { if (!failed) contentEl.setAttribute('data-loaded', 'true'); })
+                            .catch(() => {}) // network failure: leave unstamped so it can retry
+                            .finally(() => {
+                                contentEl.removeEventListener('htmx:responseError', onError);
+                                contentEl.removeAttribute('data-loading');
+                            });
                     };
 
                     if (typeof htmx !== 'undefined') {
@@ -581,8 +591,8 @@
                         return;
                     }
 
-                    // htmx is loaded from a CDN and may not be ready yet. Poll until it is,
-                    // then load; if it never arrives, fall back to a direct fetch.
+                    // base.html injects htmx with a dynamic <script>, so it can arrive
+                    // after Alpine starts. Poll for it; if it never arrives, fetch directly.
                     let tries = 0;
                     const timer = setInterval(() => {
                         if (typeof htmx !== 'undefined') {
@@ -591,25 +601,7 @@
                         } else if (++tries > 100) { // ~10s
                             clearInterval(timer);
                             contentEl.removeAttribute('data-loading');
-                            if (tab === 'overview' && typeof loadOverviewDirect === 'function') loadOverviewDirect();
-                            else if (tab === 'wifi' && typeof loadWifiDirect === 'function') loadWifiDirect();
-                            else if (tab === 'plugins' && typeof loadPluginsDirect === 'function') loadPluginsDirect();
-                            else if (tab === 'tools') {
-                                fetch('/v3/partials/tools')
-                                    .then(r => {
-                                        if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
-                                        return r.text();
-                                    })
-                                    .then(html => {
-                                        contentEl.innerHTML = html;
-                                        contentEl.setAttribute('data-loaded', 'true');
-                                        if (window.Alpine) window.Alpine.initTree(contentEl);
-                                    })
-                                    .catch(err => {
-                                        console.error('Failed to load tools content:', err);
-                                        contentEl.innerHTML = '<div class="bg-red-50 border border-red-200 rounded-lg p-4"><p class="text-red-800">Failed to load Tools. Please refresh the page.</p></div>';
-                                    });
-                            }
+                            window.loadPartialDirect(contentEl.id, url);
                         }
                     }, 100);
                 },
