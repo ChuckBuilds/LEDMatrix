@@ -194,10 +194,14 @@ class DisplayManager:
         self._last_snapshot_ts = 0.0
         self._last_snapshot_touch_ts = 0.0
         self._last_snapshot_digest: Optional[int] = None
+        # The frame actually on disk. _last_snapshot_digest moves when a frame
+        # is handed to the writer; this only once it has been saved, so an
+        # mtime touch never vouches for a frame still waiting to be written.
+        self._saved_snapshot_digest: Optional[int] = None
         self._snapshot_dir_prepared = False
         # Background writer used mid-scroll; see _write_snapshot_if_due.
         self._snapshot_cond = threading.Condition()
-        self._snapshot_pending: Optional[Image.Image] = None
+        self._snapshot_pending: Optional[Tuple[Image.Image, Optional[int]]] = None
         self._snapshot_thread: Optional[threading.Thread] = None
         self._snapshot_stop = False
         # Held for the whole of each PNG write, by the writer thread and by
@@ -1600,12 +1604,16 @@ class DisplayManager:
                 viewer_fresh, digest != self._last_snapshot_digest)
             if action is snapshot_policy.SnapshotAction.SKIP:
                 return
-            if action is snapshot_policy.SnapshotAction.TOUCH:
+            if (action is snapshot_policy.SnapshotAction.TOUCH
+                    and self._saved_snapshot_digest == digest):
                 # mtime bump only: keeps the health check (snapshot age)
                 # green without paying for a PNG encode of an unchanged frame
                 os.utime(self._snapshot_path, None)
                 self._last_snapshot_touch_ts = now
                 return
+            # (A TOUCH for a frame that isn't on disk yet -- still queued, or
+            # its write failed -- is written instead: touching would make the
+            # older file on disk look current.)
 
             # WRITE. Mid-scroll the PNG encode goes to a background thread: at
             # 512x64 it takes 12-14ms on a Pi 4, longer than a 95Hz refresh,
@@ -1615,7 +1623,7 @@ class DisplayManager:
             # it compresses, so the encode no longer holds the loop up. Static
             # frames still write inline: nothing is moving to disturb.
             if self.is_currently_scrolling():
-                self._queue_snapshot(self.image.copy())
+                self._queue_snapshot(self.image.copy(), digest)
             else:
                 # A scroll that just ended can leave its last frame queued or
                 # mid-write; it must not land on top of this newer one.
@@ -1623,6 +1631,7 @@ class DisplayManager:
                     with self._snapshot_cond:
                         self._snapshot_pending = None
                     self._save_snapshot(self.image)
+                    self._saved_snapshot_digest = digest
             self._last_snapshot_ts = now
             self._last_snapshot_touch_ts = now
             self._last_snapshot_digest = digest
@@ -1688,7 +1697,7 @@ class DisplayManager:
         except Exception:
             pass
 
-    def _queue_snapshot(self, image: Image.Image) -> None:
+    def _queue_snapshot(self, image: Image.Image, digest: Optional[int] = None) -> None:
         """Hand a frame to the snapshot writer thread; the newest frame wins.
 
         One slot, not a queue: if the writer is still encoding when the next
@@ -1696,7 +1705,7 @@ class DisplayManager:
         the latest frame, and a backlog would only cost memory and CPU.
         """
         with self._snapshot_cond:
-            self._snapshot_pending = image
+            self._snapshot_pending = (image, digest)
             if self._snapshot_thread is None or not self._snapshot_thread.is_alive():
                 self._snapshot_thread = threading.Thread(
                     target=self._snapshot_writer, daemon=True,
@@ -1716,11 +1725,13 @@ class DisplayManager:
             # clears the slot, so an older frame never lands on a newer one.
             with self._snapshot_write_lock:
                 with self._snapshot_cond:
-                    image, self._snapshot_pending = self._snapshot_pending, None
-                if image is None:
+                    pending, self._snapshot_pending = self._snapshot_pending, None
+                if pending is None:
                     continue
+                image, digest = pending
                 try:
                     self._save_snapshot(image)
+                    self._saved_snapshot_digest = digest
                 except Exception as e:
                     # The frame was recorded as written when it was queued.
                     # Forget that, so an unchanged frame is written again
