@@ -24,6 +24,8 @@
  *
  * Globals:
  *   window.LEDEscape    html / attr / jsStringAttr, the only HTML escaper
+ *   window.escapeHtml / window.escapeAttribute   aliases of LEDEscape.html /
+ *                       .attr, kept for plugin pages
  *   window.getApp()     the root Alpine component (<body x-data="app()">)
  *   window.app          a stub app() so Alpine can start before app-shell.js
  *                       has run; app-shell.js replaces it with the full one
@@ -60,6 +62,10 @@
             }
             return Object.freeze({ html: html, attr: html, jsStringAttr: jsStringAttr });
         })();
+
+        // Kept for plugin web UIs and third-party plugin pages that call them.
+        window.escapeHtml = window.LEDEscape.html;
+        window.escapeAttribute = window.LEDEscape.attr;
 
         // ===== window.getApp(): the root Alpine component =====
         // The data of <body x-data="app()"> (activeTab, installedPlugins, ...),

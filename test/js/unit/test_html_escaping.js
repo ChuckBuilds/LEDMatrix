@@ -197,6 +197,12 @@ console.log('\n4c. no hand-rolled escaper outside app-early.js');
   walk(path.join(ROOT, 'static'));
   walk(path.join(ROOT, 'templates'));
   ok('every escaper is window.LEDEscape', found.length === 0, found);
+  // Plugin pages may call these globals; they stay, as aliases.
+  const early = fs.readFileSync(path.join(ROOT, 'static/v3/js/app-early.js'), 'utf8');
+  ok('window.escapeHtml is kept as an alias of LEDEscape.html',
+     early.includes('window.escapeHtml = window.LEDEscape.html;'));
+  ok('window.escapeAttribute is kept as an alias of LEDEscape.attr',
+     early.includes('window.escapeAttribute = window.LEDEscape.attr;'));
 }
 
 // ── url-input scheme handling (js/xss-through-dom) ─────────────────────────
