@@ -30,10 +30,14 @@ ROOT = Path(__file__).resolve().parent.parent
 INSTALLERS = (
     ROOT / "first_time_install.sh",
     ROOT / "scripts" / "install" / "configure_wifi_permissions.sh",
-    # Writes the same journalctl grants as first_time_install.sh. It was
-    # missing here, and because of that this suite passed while three
-    # ungranted wildcard rules sat in it.
+    # Used to write its own copy of the journalctl grants. It was missing
+    # here, and because of that this suite passed while three untagged
+    # wildcard rules sat in it. Both it and first_time_install.sh now take
+    # their rules from lib_sudoers.sh; they stay listed so a rule written
+    # directly into either one is still checked.
     ROOT / "scripts" / "install" / "configure_web_sudo.sh",
+    # The ledmatrix_web rules, shared by both installers.
+    ROOT / "scripts" / "install" / "lib_sudoers.sh",
 )
 
 #: Commands that will start another program of their own accord -- a pager, an
