@@ -41,6 +41,8 @@ class El {
     this.classList = new ClassList(this);
   }
   appendChild(c) { c.parent = this; this.children.push(c); return c; }
+  append(...nodes) { nodes.forEach(n => this.appendChild(typeof n === 'string' ? new TextNode(n) : n)); }
+  replaceChildren(...nodes) { this.children = []; this._text = ''; this._html = null; this.append(...nodes); }
   setAttribute(n, v) { this.attrs[n] = String(v); }
   getAttribute(n) { return this.attrs[n]; }
   addEventListener(t, f) { (this.listeners[t] ||= []).push(f); }
@@ -127,8 +129,13 @@ console.log('\n1. upload-supplied strings stay text and data');
   sched.click();
   const editor = card.children[1];
   ok('editor opens for a hostile id', !editor.classList.contains('hidden'), editor.className);
-  ok('editor stores the id escaped', !editor.innerHTML.includes("x' onmouseover") && editor.innerHTML.includes('x&#39; onmouseover'),
-     editor.innerHTML.slice(0, 300));
+  // The editor is built with DOM calls: the id must arrive as attribute data,
+  // and no element may carry markup written with innerHTML.
+  const editorEls = [...editor.walk()].filter(e => e instanceof El);
+  const withId = editorEls.filter(e => e.attrs['data-image-id'] !== undefined);
+  ok('editor stores the id as attribute data, not markup',
+     withId.length > 0 && withId.every(e => e.attrs['data-image-id'] === SQ) && editorEls.every(e => e._html === null),
+     withId.map(e => e.attrs['data-image-id']));
 }
 
 console.log('\n2. ids match the server-rendered template');
@@ -148,7 +155,7 @@ console.log('\n2. ids match the server-rendered template');
   editor.id = 'schedule_' + want; editor.className = 'hidden mt-3';
   window.openImageSchedule('g', UUID, 0);
   ok('schedule button of a server-rendered card opens its editor',
-     !editor.classList.contains('hidden') && editor.innerHTML.includes('Schedule Settings'), editor.className);
+     !editor.classList.contains('hidden') && editor.textContent.includes('Schedule Settings'), editor.className);
 }
 
 console.log('\n3. a schedule edit saves without rebuilding the editor');
@@ -183,7 +190,8 @@ console.log('\n4. re-rendering the list keeps an open editor open');
   window.updateImageList('k', images.slice(0, 1));
   const editor = list.children[0].children[1];
   ok('editor still open after re-render', !editor.classList.contains('hidden'), editor.className);
-  ok('editor rebuilt from the saved schedule', editor.innerHTML.includes('value="per_day" selected'));
+  const perDay = [...editor.walk()].find(e => e instanceof El && e.tagName === 'OPTION' && e.attrs.value === 'per_day');
+  ok('editor rebuilt from the saved schedule', !!perDay && 'selected' in perDay.attrs);
 }
 
 console.log('\n5. the delegated change listener routes editor controls');

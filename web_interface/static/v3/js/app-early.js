@@ -60,8 +60,11 @@
             function jsStringAttr(value) {
                 return html(JSON.stringify(value == null ? '' : String(value)));
             }
-            // attr is the same function: html() escapes both quote characters.
-            return Object.freeze({ html: html, attr: html, jsStringAttr: jsStringAttr }); // nosemgrep
+            // An attribute value needs no more than html(): it escapes both quote characters.
+            function attr(value) {
+                return html(value);
+            }
+            return Object.freeze({ html: html, attr: attr, jsStringAttr: jsStringAttr });
         })();
 
         // Kept for plugin web UIs and third-party plugin pages that call them.

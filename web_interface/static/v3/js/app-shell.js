@@ -43,6 +43,12 @@
  *     updateSystemStats, updateDisplayPreview, renderLedDots, drawGrid,
  *     updatePlugin (the plugin card's Update button)
  */
+// htmx:responseError on a tab panel: marks the load as failed so the tab
+// is not stamped data-loaded and reloads on the next visit (see loadTabContent).
+function markPanelLoadFailed(event) {
+    event.currentTarget.setAttribute('data-load-failed', 'true');
+}
+
         function _setConnectionStatus(connected, reconnecting, paused) {
             const el = document.getElementById('connection-status');
             if (!el) return;
@@ -588,14 +594,15 @@
                             contentEl.removeAttribute('data-loading');
                             return;
                         }
-                        let failed = false;
-                        const onError = () => { failed = true; }; // eslint-disable-line
-                        contentEl.addEventListener('htmx:responseError', onError, { once: true });
+                        contentEl.removeAttribute('data-load-failed');
+                        contentEl.addEventListener('htmx:responseError', markPanelLoadFailed, { once: true });
                         return htmx.ajax('GET', url, { source: contentEl, target: contentEl, swap: swap })
-                            .then(() => { if (!failed) contentEl.setAttribute('data-loaded', 'true'); })
+                            .then(() => {
+                                if (!contentEl.hasAttribute('data-load-failed')) contentEl.setAttribute('data-loaded', 'true');
+                            })
                             .catch(() => {}) // network failure: leave unstamped so it can retry
                             .finally(() => {
-                                contentEl.removeEventListener('htmx:responseError', onError);
+                                contentEl.removeEventListener('htmx:responseError', markPanelLoadFailed);
                                 contentEl.removeAttribute('data-loading');
                             });
                     };

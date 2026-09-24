@@ -101,8 +101,6 @@ const ESCAPERS = [
    'static/v3/js/widgets/notification.js', 'function escapeHtml(text) {', 'escapeHtml', false],
   ['google-calendar-picker.js (escapeHtml)',
    'static/v3/js/widgets/google-calendar-picker.js', 'function escapeHtml(str) {', 'escapeHtml', false],
-  ['file-upload.js (escapeHtml)',
-   'static/v3/js/widgets/file-upload.js', 'function escapeHtml(text) {', 'escapeHtml', false],
   ['text-input.js (escapeHtml)',
    'static/v3/js/widgets/text-input.js', 'function escapeHtml(text) {', 'escapeHtml', false],
   ['slider.js (escapeAttr)',

@@ -484,8 +484,6 @@
         return String(imageId).replace(/[^a-zA-Z0-9_]/g, '_');
     }
 
-    function escapeHtml(text) { return window.LEDEscape.html(text); }
-
     /**
      * Replace the image list: writes the hidden input the form saves and
      * re-renders the cards. A schedule editor that was open stays open,
@@ -787,109 +785,98 @@
 
     const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 
-    // Builds the editor markup. Controls carry data-schedule-control and their
-    // ids as data attributes; one delegated change listener (below) routes
-    // them, so the editor needs no per-element listeners and no inline JS.
+    // Builds a DOM element. Attribute values and text children go through the
+    // DOM APIs, so nothing passed in is ever parsed as HTML. `true` sets an
+    // empty (boolean) attribute; `false`, null and undefined leave it off.
+    function h(tag, attrs, children) {
+        const node = document.createElement(tag);
+        Object.entries(attrs || {}).forEach(([name, value]) => {
+            if (value === false || value == null) return;
+            node.setAttribute(name, value === true ? '' : String(value));
+        });
+        (children || []).forEach(child => node.append(child));
+        return node;
+    }
+
+    // Builds the schedule editor. Controls carry data-schedule-control and
+    // their ids as data attributes; one delegated change listener (below)
+    // routes them, so the editor needs no per-element listeners.
     function renderScheduleEditor(container, fieldId, imageId, imageIdx, savedSchedule) {
         const schedule = savedSchedule || { enabled: false, mode: 'always', start_time: '08:00', end_time: '18:00', days: {} };
         const domId = imageDomId(imageId);
-        const ids = `data-field-id="${escapeHtml(fieldId)}" data-image-id="${escapeHtml(imageId)}" data-image-idx="${Number(imageIdx)}"`;
+        const ids = { 'data-field-id': fieldId, 'data-image-id': imageId, 'data-image-idx': Number(imageIdx) };
+        const display = (visible, shown) => `display: ${visible ? shown : 'none'};`;
 
-        // Every interpolated value below is escaped with escapeHtml() or is
-        // constrained: domId is [A-Za-z0-9_] only (imageDomId), day comes from
-        // DAYS, and the rest are literals chosen by a boolean or a mode compare.
-        // eslint-disable-next-line no-unsanitized/property -- nosemgrep: values are escaped above
-        container.innerHTML = `
-            <div class="bg-white rounded-lg border border-blue-200 p-4">
-                <h4 class="text-sm font-semibold text-gray-900 mb-3">
-                    <i class="fas fa-clock mr-2"></i>Schedule Settings
-                </h4>
+        const modeOption = (value, label) => h('option', { value: value, selected: schedule.mode === value }, [label]);
 
-                <div class="mb-4">
-                    <label class="flex items-center">
-                        <input type="checkbox"
-                               id="schedule_enabled_${domId}"
-                               data-schedule-control="enabled" ${ids}
-                               ${schedule.enabled ? 'checked' : ''}
-                               class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
-                        <span class="ml-2 text-sm font-medium text-gray-700">Enable schedule for this image</span>
-                    </label>
-                    <p class="ml-6 text-xs text-gray-500 mt-1">When enabled, this image will only display during scheduled times</p>
-                </div>
+        const rangeTime = (which, label, value) => h('div', {}, [
+            h('label', { for: `schedule_${which}_${domId}`, class: 'block text-xs font-medium text-gray-700 mb-1' }, [label]),
+            h('input', {
+                type: 'time', id: `schedule_${which}_${domId}`, 'data-schedule-control': 'time', ...ids,
+                value: value, class: 'block w-full px-2 py-1 text-sm border border-gray-300 rounded-md',
+            }),
+        ]);
 
-                <div id="schedule_options_${domId}" class="space-y-4" style="display: ${schedule.enabled ? 'block' : 'none'};">
-                    <div>
-                        <label for="schedule_mode_${domId}" class="block text-sm font-medium text-gray-700 mb-2">Schedule Type</label>
-                        <select id="schedule_mode_${domId}"
-                                data-schedule-control="mode" ${ids}
-                                class="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
-                            <option value="always" ${schedule.mode === 'always' ? 'selected' : ''}>Always Show (No Schedule)</option>
-                            <option value="time_range" ${schedule.mode === 'time_range' ? 'selected' : ''}>Same Time Every Day</option>
-                            <option value="per_day" ${schedule.mode === 'per_day' ? 'selected' : ''}>Different Times Per Day</option>
-                        </select>
-                    </div>
+        const dayRow = day => {
+            const dayConfig = (schedule.days && schedule.days[day]) || { enabled: true, start_time: '08:00', end_time: '18:00' };
+            const dayIds = { 'data-schedule-control': 'day', 'data-day': day, ...ids };
+            const dayTime = (which, value) => h('input', {
+                type: 'time', id: `day_${day}_${which}_${domId}`, 'aria-label': `${day} ${which} time`, ...dayIds,
+                value: value, class: 'text-xs px-2 py-1 border border-gray-300 rounded', disabled: !dayConfig.enabled,
+            });
+            return h('div', { class: 'bg-white rounded p-2 border border-gray-200' }, [
+                h('div', { class: 'flex items-center justify-between mb-2' }, [
+                    h('label', { class: 'flex items-center' }, [
+                        h('input', {
+                            type: 'checkbox', id: `day_${day}_${domId}`, ...dayIds, checked: !!dayConfig.enabled,
+                            class: 'h-3 w-3 text-blue-600 focus:ring-blue-500 border-gray-300 rounded',
+                        }),
+                        h('span', { class: 'ml-2 text-xs font-medium text-gray-700 capitalize' }, [day]),
+                    ]),
+                ]),
+                h('div', { class: 'grid grid-cols-2 gap-2 ml-5', id: `day_times_${day}_${domId}`, style: display(dayConfig.enabled, 'grid') }, [
+                    dayTime('start', dayConfig.start_time || '08:00'),
+                    dayTime('end', dayConfig.end_time || '18:00'),
+                ]),
+            ]);
+        };
 
-                    <div id="time_range_${domId}" class="grid grid-cols-2 gap-4" style="display: ${schedule.mode === 'time_range' ? 'grid' : 'none'};">
-                        <div>
-                            <label for="schedule_start_${domId}" class="block text-xs font-medium text-gray-700 mb-1">Start Time</label>
-                            <input type="time"
-                                   id="schedule_start_${domId}"
-                                   data-schedule-control="time" ${ids}
-                                   value="${escapeHtml(schedule.start_time || '08:00')}"
-                                   class="block w-full px-2 py-1 text-sm border border-gray-300 rounded-md">
-                        </div>
-                        <div>
-                            <label for="schedule_end_${domId}" class="block text-xs font-medium text-gray-700 mb-1">End Time</label>
-                            <input type="time"
-                                   id="schedule_end_${domId}"
-                                   data-schedule-control="time" ${ids}
-                                   value="${escapeHtml(schedule.end_time || '18:00')}"
-                                   class="block w-full px-2 py-1 text-sm border border-gray-300 rounded-md">
-                        </div>
-                    </div>
-
-                    <div id="per_day_${domId}" style="display: ${schedule.mode === 'per_day' ? 'block' : 'none'};">
-                        <label class="block text-xs font-medium text-gray-700 mb-2">Day-Specific Times</label>
-                        <div class="bg-gray-50 rounded p-3 space-y-2 max-h-64 overflow-y-auto">
-                            ${DAYS.map(day => {
-                                const dayConfig = (schedule.days && schedule.days[day]) || { enabled: true, start_time: '08:00', end_time: '18:00' };
-                                const dayIds = `data-schedule-control="day" data-day="${day}" ${ids}`;
-                                return `
-                                <div class="bg-white rounded p-2 border border-gray-200">
-                                    <div class="flex items-center justify-between mb-2">
-                                        <label class="flex items-center">
-                                            <input type="checkbox"
-                                                   id="day_${day}_${domId}"
-                                                   ${dayIds}
-                                                   ${dayConfig.enabled ? 'checked' : ''}
-                                                   class="h-3 w-3 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
-                                            <span class="ml-2 text-xs font-medium text-gray-700 capitalize">${day}</span>
-                                        </label>
-                                    </div>
-                                    <div class="grid grid-cols-2 gap-2 ml-5" id="day_times_${day}_${domId}" style="display: ${dayConfig.enabled ? 'grid' : 'none'};">
-                                        <input type="time"
-                                               id="day_${day}_start_${domId}"
-                                               aria-label="${day} start time"
-                                               ${dayIds}
-                                               value="${escapeHtml(dayConfig.start_time || '08:00')}"
-                                               class="text-xs px-2 py-1 border border-gray-300 rounded"
-                                               ${!dayConfig.enabled ? 'disabled' : ''}>
-                                        <input type="time"
-                                               id="day_${day}_end_${domId}"
-                                               aria-label="${day} end time"
-                                               ${dayIds}
-                                               value="${escapeHtml(dayConfig.end_time || '18:00')}"
-                                               class="text-xs px-2 py-1 border border-gray-300 rounded"
-                                               ${!dayConfig.enabled ? 'disabled' : ''}>
-                                    </div>
-                                </div>
-                                `;
-                            }).join('')}
-                        </div>
-                    </div>
-                </div>
-            </div>
-        `;
+        container.replaceChildren(h('div', { class: 'bg-white rounded-lg border border-blue-200 p-4' }, [
+            h('h4', { class: 'text-sm font-semibold text-gray-900 mb-3' }, [
+                h('i', { class: 'fas fa-clock mr-2' }), 'Schedule Settings',
+            ]),
+            h('div', { class: 'mb-4' }, [
+                h('label', { class: 'flex items-center' }, [
+                    h('input', {
+                        type: 'checkbox', id: `schedule_enabled_${domId}`, 'data-schedule-control': 'enabled', ...ids,
+                        checked: !!schedule.enabled, class: 'h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded',
+                    }),
+                    h('span', { class: 'ml-2 text-sm font-medium text-gray-700' }, ['Enable schedule for this image']),
+                ]),
+                h('p', { class: 'ml-6 text-xs text-gray-500 mt-1' }, ['When enabled, this image will only display during scheduled times']),
+            ]),
+            h('div', { id: `schedule_options_${domId}`, class: 'space-y-4', style: display(schedule.enabled, 'block') }, [
+                h('div', {}, [
+                    h('label', { for: `schedule_mode_${domId}`, class: 'block text-sm font-medium text-gray-700 mb-2' }, ['Schedule Type']),
+                    h('select', {
+                        id: `schedule_mode_${domId}`, 'data-schedule-control': 'mode', ...ids,
+                        class: 'block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm',
+                    }, [
+                        modeOption('always', 'Always Show (No Schedule)'),
+                        modeOption('time_range', 'Same Time Every Day'),
+                        modeOption('per_day', 'Different Times Per Day'),
+                    ]),
+                ]),
+                h('div', { id: `time_range_${domId}`, class: 'grid grid-cols-2 gap-4', style: display(schedule.mode === 'time_range', 'grid') }, [
+                    rangeTime('start', 'Start Time', schedule.start_time || '08:00'),
+                    rangeTime('end', 'End Time', schedule.end_time || '18:00'),
+                ]),
+                h('div', { id: `per_day_${domId}`, style: display(schedule.mode === 'per_day', 'block') }, [
+                    h('label', { class: 'block text-xs font-medium text-gray-700 mb-2' }, ['Day-Specific Times']),
+                    h('div', { class: 'bg-gray-50 rounded p-3 space-y-2 max-h-64 overflow-y-auto' }, DAYS.map(dayRow)),
+                ]),
+            ]),
+        ]));
     }
 
     document.addEventListener('change', function(event) {
