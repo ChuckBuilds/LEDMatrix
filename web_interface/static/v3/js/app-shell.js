@@ -1002,9 +1002,10 @@
             }
         }
 
-        // Notification helper function
-        // Fix invalid number inputs before form submission
-        // This prevents "invalid form control is not focusable" errors
+        // Clamps number inputs to their min/max before a form submits, so the
+        // browser does not block the submit with "An invalid form control is
+        // not focusable" for a field the user cannot see. Called from the
+        // Display and Durations forms' onsubmit.
         window.fixInvalidNumberInputs = function(form) {
             if (!form) return;
             const allInputs = form.querySelectorAll('input[type="number"]');
@@ -1043,309 +1044,281 @@
             };
         }
 
-        // Section toggle function - already defined earlier, but ensure it's not overwritten
-        // (duplicate definition removed - function is defined in early script block above)
+        // Plugin ids whose config tab is reloading (see refreshPluginConfig).
+        window.pluginConfigRefreshInProgress = window.pluginConfigRefreshInProgress || new Set();
 
-        // Plugin config handler functions (idempotent initialization)
-        if (!window.__pluginConfigHandlersInitialized) {
-            window.__pluginConfigHandlersInitialized = true;
-            
-            // Initialize state on window object
-            window.pluginConfigRefreshInProgress = window.pluginConfigRefreshInProgress || new Set();
-            
-            // Validate plugin config form and show helpful error messages
-            window.validatePluginConfigForm = function(form, pluginId) {
-                // Check HTML5 validation
-                if (!form.checkValidity()) {
-                    // Find all invalid fields
-                    const invalidFields = Array.from(form.querySelectorAll(':invalid'));
-                    const errors = [];
-                    let firstInvalidField = null;
-                    
-                    invalidFields.forEach((field, index) => {
-                        // Build error message
-                        let fieldName = field.name || field.id || 'field';
-                        // Make field name more readable (remove plugin ID prefix, convert dots/underscores)
-                        fieldName = fieldName.replace(new RegExp('^' + pluginId + '-'), '')
-                                            .replace(/\./g, ' → ')
-                                            .replace(/_/g, ' ')
-                                            .replace(/\b\w/g, l => l.toUpperCase()); // Capitalize words
-                        
-                        let errorMsg = field.validationMessage || 'Invalid value';
-                        
-                        // Get more specific error message based on validation state
-                        if (field.validity.valueMissing) {
-                            errorMsg = 'This field is required';
-                        } else if (field.validity.rangeUnderflow) {
-                            errorMsg = `Value must be at least ${field.min || 'the minimum'}`;
-                        } else if (field.validity.rangeOverflow) {
-                            errorMsg = `Value must be at most ${field.max || 'the maximum'}`;
-                        } else if (field.validity.stepMismatch) {
-                            errorMsg = `Value must be a multiple of ${field.step || 1}`;
-                        } else if (field.validity.typeMismatch) {
-                            errorMsg = 'Invalid format (e.g., text in number field)';
-                        } else if (field.validity.patternMismatch) {
-                            errorMsg = 'Value does not match required pattern';
-                        } else if (field.validity.tooShort) {
-                            errorMsg = `Value must be at least ${field.minLength} characters`;
-                        } else if (field.validity.tooLong) {
-                            errorMsg = `Value must be at most ${field.maxLength} characters`;
-                        } else if (field.validity.badInput) {
-                            errorMsg = 'Invalid input type';
-                        }
-                        
-                        errors.push(`${fieldName}: ${errorMsg}`);
-                        
-                        // Track first invalid field for focusing
-                        if (index === 0) {
-                            firstInvalidField = field;
-                        }
-                        
-                        // If field is in a collapsed section, expand it
-                        const nestedContent = field.closest('.nested-content');
-                        if (nestedContent && nestedContent.classList.contains('hidden')) {
-                            // Find the toggle button for this section
-                            const sectionId = nestedContent.id;
-                            if (sectionId) {
-                                // Try multiple selectors to find the toggle button
-                                const toggleBtn = document.querySelector(`button[aria-controls="${sectionId}"], button[onclick*="${sectionId}"], [data-toggle-section="${sectionId}"]`) ||
-                                                 nestedContent.previousElementSibling?.querySelector('button');
-                                if (toggleBtn && toggleBtn.onclick) {
-                                    toggleBtn.click(); // Expand the section
-                                }
-                            }
-                        }
-                    });
-                    
-                    // Focus and scroll to first invalid field after a brief delay
-                    // (allows collapsed sections to expand first)
-                    setTimeout(() => {
-                        if (firstInvalidField) {
-                            firstInvalidField.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                            firstInvalidField.focus();
-                        }
-                    }, 200);
-                    
-                    // Show error notification with details
-                    if (errors.length > 0) {
-                        // Format error message nicely
-                        const errorList = errors.slice(0, 5).join('\n'); // Show first 5 errors
-                        const moreErrors = errors.length > 5 ? `\n... and ${errors.length - 5} more error(s)` : '';
-                        const errorMessage = `Validation failed:\n${errorList}${moreErrors}`;
-                        
-                        showNotification(errorMessage, 'error');
-                        
-                        // Also log to console for debugging
-                        console.error('Form validation errors:', errors);
-                    }
-                    
-                    // Report validation failure to browser (shows native validation tooltips)
-                    form.reportValidity();
-                    
-                    return false; // Prevent form submission
-                }
-                
-                return true; // Validation passed
-            };
-            
-            // Handle config save response with detailed error logging
-            window.handleConfigSave = function(event, pluginId) {
-                const btn = event.target.querySelector('[type=submit]');
-                if (btn) btn.disabled = false;
-                
-                const xhr = event.detail.xhr;
-                const status = xhr?.status || 0;
-                
-                // Check if request was successful (2xx status codes)
-                if (status >= 200 && status < 300) {
-                    // Try to get message from response JSON
-                    let message = 'Configuration saved successfully!';
-                    try {
-                        if (xhr?.responseJSON?.message) {
-                            message = xhr.responseJSON.message;
-                        } else if (xhr?.responseText) {
-                            const responseData = JSON.parse(xhr.responseText);
-                            message = responseData.message || message;
-                        }
-                    } catch (e) {
-                        // Use default message if parsing fails
-                    }
-                    showNotification(message, 'success');
-                } else {
-                    // Request failed - log detailed error information
-                    console.error('Config save failed:', {
-                        status: status,
-                        statusText: xhr?.statusText,
-                        responseText: xhr?.responseText
-                    });
-                    
-                    // Try to parse error response
-                    let errorMessage = 'Failed to save configuration';
-                    try {
-                        if (xhr?.responseJSON) {
-                            const errorData = xhr.responseJSON;
-                            errorMessage = errorData.message || errorData.details || errorMessage;
-                            if (errorData.validation_errors) {
-                                errorMessage += ': ' + errorData.validation_errors.join(', ');
-                            }
-                        } else if (xhr?.responseText) {
-                            const errorData = JSON.parse(xhr.responseText);
-                            errorMessage = errorData.message || errorData.details || errorMessage;
-                            if (errorData.validation_errors) {
-                                errorMessage += ': ' + errorData.validation_errors.join(', ');
-                            }
-                        }
-                    } catch (e) {
-                        // If parsing fails, use status text
-                        errorMessage = xhr?.statusText || errorMessage;
-                    }
-                    
-                    showNotification(errorMessage, 'error');
-                }
-            };
-            
-            // Handle toggle response
-            window.handleToggleResponse = function(event, pluginId) {
-                const xhr = event.detail.xhr;
-                const status = xhr?.status || 0;
-                
-                if (status >= 200 && status < 300) {
-                    // Update UI in place instead of refreshing to avoid duplication
-                    const checkbox = document.getElementById(`plugin-enabled-${pluginId}`);
-                    const label = checkbox?.nextElementSibling;
-                    
-                    if (checkbox && label) {
-                        const isEnabled = checkbox.checked;
-                        label.textContent = isEnabled ? 'Enabled' : 'Disabled';
-                        label.className = `ml-2 text-sm ${isEnabled ? 'text-green-600' : 'text-gray-500'}`;
-                    }
-                    
-                    // Try to get message from response
-                    let message = 'Plugin status updated';
-                    try {
-                        if (xhr?.responseJSON?.message) {
-                            message = xhr.responseJSON.message;
-                        } else if (xhr?.responseText) {
-                            const responseData = JSON.parse(xhr.responseText);
-                            message = responseData.message || message;
-                        }
-                    } catch (e) {
-                        // Use default message
-                    }
-                    showNotification(message, 'success');
-                } else {
-                    // Revert checkbox state on error
-                    const checkbox = document.getElementById(`plugin-enabled-${pluginId}`);
-                    if (checkbox) {
-                        checkbox.checked = !checkbox.checked;
-                    }
-                    
-                    // Try to get error message from response
-                    let errorMessage = 'Failed to update plugin status';
-                    try {
-                        if (xhr?.responseJSON?.message) {
-                            errorMessage = xhr.responseJSON.message;
-                        } else if (xhr?.responseText) {
-                            const errorData = JSON.parse(xhr.responseText);
-                            errorMessage = errorData.message || errorData.details || errorMessage;
-                        }
-                    } catch (e) {
-                        // Use default message
-                    }
-                    showNotification(errorMessage, 'error');
-                }
-            };
-            
-            // Handle plugin update response
-            window.handlePluginUpdate = function(event, pluginId) {
-                const xhr = event.detail.xhr;
-                const status = xhr?.status || 0;
-                
-                // Check if request was successful (2xx status)
-                if (status >= 200 && status < 300) {
-                    // Try to parse the response to get the actual message from server
-                    let message = 'Plugin updated successfully';
-                    
-                    if (xhr && xhr.responseText) {
-                        try {
-                            const data = JSON.parse(xhr.responseText);
-                            // Use the server's message, ensuring it says "update" not "save"
-                            message = data.message || message;
-                            // Ensure message is about updating, not saving
-                            if (message.toLowerCase().includes('save') && !message.toLowerCase().includes('update')) {
-                                message = message.replace(/save/i, 'update');
-                            }
-                        } catch (e) {
-                            // If parsing fails, use default message
-                            console.warn('Could not parse update response:', e);
-                        }
-                    }
-                    
-                    showNotification(message, 'success');
-                } else {
-                    console.error('Plugin update failed:', {
-                        status: status,
-                        statusText: xhr?.statusText,
-                        responseText: xhr?.responseText
-                    });
-                    
-                    // Try to parse error response for better error message
-                    let errorMessage = 'Failed to update plugin';
-                    if (xhr?.responseText) {
-                        try {
-                            const errorData = JSON.parse(xhr.responseText);
-                            errorMessage = errorData.message || errorMessage;
-                        } catch (e) {
-                            // If parsing fails, use default
-                        }
-                    }
-                    
-                    showNotification(errorMessage, 'error');
-                }
-            };
-            
-            // Refresh plugin config (with duplicate prevention)
-            window.refreshPluginConfig = function(pluginId) {
-                // Prevent concurrent refreshes
-                if (window.pluginConfigRefreshInProgress.has(pluginId)) {
-                    return;
-                }
-                
-                const container = document.getElementById(`plugin-config-${pluginId}`);
-                if (container && window.htmx) {
-                    window.pluginConfigRefreshInProgress.add(pluginId);
-                    
-                    // Clear container first, then reload
-                    container.innerHTML = '';
-                    window.htmx.ajax('GET', `/v3/partials/plugin-config/${pluginId}`, {
-                        target: container,
-                        swap: 'innerHTML'
-                    });
-                    
-                    // Clear flag after delay
-                    setTimeout(() => {
-                        window.pluginConfigRefreshInProgress.delete(pluginId);
-                    }, 1000);
-                }
-            };
-            
-            // Plugin action handlers
-            window.runPluginOnDemand = function(pluginId) {
-                if (typeof window.openOnDemandModal === 'function') {
-                    window.openOnDemandModal(pluginId);
-                } else {
-                    showNotification('On-demand modal not available', 'error');
-                }
-            };
-            
-            window.stopOnDemand = function() {
-                if (typeof window.requestOnDemandStop === 'function') {
-                    window.requestOnDemandStop({});
-                } else {
-                    showNotification('Stop function not available', 'error');
-                }
-            };
+        // The parsed JSON body of an htmx request's XMLHttpRequest, or null.
+        // (XMLHttpRequest has no responseJSON; that is a jQuery property.)
+        function xhrJson(xhr) {
+            try {
+                return xhr && xhr.responseText ? JSON.parse(xhr.responseText) : null;
+            } catch (e) {
+                return null;
+            }
         }
+
+        /**
+         * Checks a plugin config form before htmx posts it. Called from the
+         * form's onsubmit in partials/plugin_config.html
+         * (`return validatePluginConfigForm(this, pluginId)`).
+         * On failure it expands the collapsed sections holding invalid
+         * fields, focuses the first one, and shows the errors.
+         * @returns {boolean} true to let the submit (and htmx) proceed,
+         *   false to cancel it.
+         */
+        window.validatePluginConfigForm = function(form, pluginId) {
+            // Check HTML5 validation
+            if (!form.checkValidity()) {
+                // Find all invalid fields
+                const invalidFields = Array.from(form.querySelectorAll(':invalid'));
+                const errors = [];
+                let firstInvalidField = null;
+
+                invalidFields.forEach((field, index) => {
+                    // Build error message
+                    let fieldName = field.name || field.id || 'field';
+                    // Make field name more readable (remove plugin ID prefix, convert dots/underscores)
+                    fieldName = fieldName.replace(new RegExp('^' + pluginId + '-'), '')
+                                        .replace(/\./g, ' → ')
+                                        .replace(/_/g, ' ')
+                                        .replace(/\b\w/g, l => l.toUpperCase()); // Capitalize words
+
+                    let errorMsg = field.validationMessage || 'Invalid value';
+
+                    // Get more specific error message based on validation state
+                    if (field.validity.valueMissing) {
+                        errorMsg = 'This field is required';
+                    } else if (field.validity.rangeUnderflow) {
+                        errorMsg = `Value must be at least ${field.min || 'the minimum'}`;
+                    } else if (field.validity.rangeOverflow) {
+                        errorMsg = `Value must be at most ${field.max || 'the maximum'}`;
+                    } else if (field.validity.stepMismatch) {
+                        errorMsg = `Value must be a multiple of ${field.step || 1}`;
+                    } else if (field.validity.typeMismatch) {
+                        errorMsg = 'Invalid format (e.g., text in number field)';
+                    } else if (field.validity.patternMismatch) {
+                        errorMsg = 'Value does not match required pattern';
+                    } else if (field.validity.tooShort) {
+                        errorMsg = `Value must be at least ${field.minLength} characters`;
+                    } else if (field.validity.tooLong) {
+                        errorMsg = `Value must be at most ${field.maxLength} characters`;
+                    } else if (field.validity.badInput) {
+                        errorMsg = 'Invalid input type';
+                    }
+
+                    errors.push(`${fieldName}: ${errorMsg}`);
+
+                    // Track first invalid field for focusing
+                    if (index === 0) {
+                        firstInvalidField = field;
+                    }
+
+                    // If field is in a collapsed section, expand it
+                    const nestedContent = field.closest('.nested-content');
+                    if (nestedContent && nestedContent.classList.contains('hidden')) {
+                        // Find the toggle button for this section
+                        const sectionId = nestedContent.id;
+                        if (sectionId) {
+                            // Try multiple selectors to find the toggle button
+                            const toggleBtn = document.querySelector(`button[aria-controls="${sectionId}"], button[onclick*="${sectionId}"], [data-toggle-section="${sectionId}"]`) ||
+                                             nestedContent.previousElementSibling?.querySelector('button');
+                            if (toggleBtn && toggleBtn.onclick) {
+                                toggleBtn.click(); // Expand the section
+                            }
+                        }
+                    }
+                });
+
+                // Focus and scroll to first invalid field after a brief delay
+                // (allows collapsed sections to expand first)
+                setTimeout(() => {
+                    if (firstInvalidField) {
+                        firstInvalidField.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        firstInvalidField.focus();
+                    }
+                }, 200);
+
+                // Show error notification with details
+                if (errors.length > 0) {
+                    // Format error message nicely
+                    const errorList = errors.slice(0, 5).join('\n'); // Show first 5 errors
+                    const moreErrors = errors.length > 5 ? `\n... and ${errors.length - 5} more error(s)` : '';
+                    const errorMessage = `Validation failed:\n${errorList}${moreErrors}`;
+
+                    showNotification(errorMessage, 'error');
+
+                    // Also log to console for debugging
+                    console.error('Form validation errors:', errors);
+                }
+
+                // Report validation failure to browser (shows native validation tooltips)
+                form.reportValidity();
+
+                return false; // Prevent form submission
+            }
+
+            return true; // Validation passed
+        };
+
+        /**
+         * Reports a plugin config save. Called from the config form's
+         * hx-on::after-request in partials/plugin_config.html. Re-enables
+         * the submit button and shows the server's message as a success or
+         * error notification. Returns nothing.
+         */
+        window.handleConfigSave = function(event, pluginId) {
+            const btn = event.target.querySelector('[type=submit]');
+            if (btn) btn.disabled = false;
+
+            const xhr = event.detail.xhr;
+            const status = xhr?.status || 0;
+
+            // Check if request was successful (2xx status codes)
+            if (status >= 200 && status < 300) {
+                const data = xhrJson(xhr);
+                showNotification((data && data.message) || 'Configuration saved successfully!', 'success');
+            } else {
+                // Request failed - log detailed error information
+                console.error('Config save failed:', {
+                    status: status,
+                    statusText: xhr?.statusText,
+                    responseText: xhr?.responseText
+                });
+
+                const errorData = xhrJson(xhr);
+                let errorMessage = errorData
+                    ? (errorData.message || errorData.details || 'Failed to save configuration')
+                    : ((xhr && xhr.statusText) || 'Failed to save configuration');
+                if (errorData && errorData.validation_errors) {
+                    errorMessage += ': ' + errorData.validation_errors.join(', ');
+                }
+                showNotification(errorMessage, 'error');
+            }
+        };
+
+        /**
+         * Reports the enable/disable switch on a plugin's config tab. Called
+         * from the switch's hx-on::after-request in
+         * partials/plugin_config.html. On success it relabels the switch; on
+         * failure it flips the checkbox back. Returns nothing.
+         */
+        window.handleToggleResponse = function(event, pluginId) {
+            const xhr = event.detail.xhr;
+            const status = xhr?.status || 0;
+
+            if (status >= 200 && status < 300) {
+                // Update UI in place instead of refreshing to avoid duplication
+                const checkbox = document.getElementById(`plugin-enabled-${pluginId}`);
+                const label = checkbox?.nextElementSibling;
+
+                if (checkbox && label) {
+                    const isEnabled = checkbox.checked;
+                    label.textContent = isEnabled ? 'Enabled' : 'Disabled';
+                    label.className = `ml-2 text-sm ${isEnabled ? 'text-green-600' : 'text-gray-500'}`;
+                }
+
+                const data = xhrJson(xhr);
+                showNotification((data && data.message) || 'Plugin status updated', 'success');
+            } else {
+                // Revert checkbox state on error
+                const checkbox = document.getElementById(`plugin-enabled-${pluginId}`);
+                if (checkbox) {
+                    checkbox.checked = !checkbox.checked;
+                }
+
+                const errorData = xhrJson(xhr);
+                showNotification((errorData && (errorData.message || errorData.details)) ||
+                    'Failed to update plugin status', 'error');
+            }
+        };
+
+        /**
+         * Reports the Update button on a plugin's config tab. Called from its
+         * hx-on::after-request in partials/plugin_config.html. Shows the
+         * server's message. Returns nothing.
+         */
+        window.handlePluginUpdate = function(event, pluginId) {
+            const xhr = event.detail.xhr;
+            const status = xhr?.status || 0;
+
+            // Check if request was successful (2xx status)
+            if (status >= 200 && status < 300) {
+                // Try to parse the response to get the actual message from server
+                let message = 'Plugin updated successfully';
+
+                if (xhr && xhr.responseText) {
+                    try {
+                        const data = JSON.parse(xhr.responseText);
+                        // Use the server's message, ensuring it says "update" not "save"
+                        message = data.message || message;
+                        // Ensure message is about updating, not saving
+                        if (message.toLowerCase().includes('save') && !message.toLowerCase().includes('update')) {
+                            message = message.replace(/save/i, 'update');
+                        }
+                    } catch (e) {
+                        // If parsing fails, use default message
+                        console.warn('Could not parse update response:', e);
+                    }
+                }
+
+                showNotification(message, 'success');
+            } else {
+                console.error('Plugin update failed:', {
+                    status: status,
+                    statusText: xhr?.statusText,
+                    responseText: xhr?.responseText
+                });
+
+                // Try to parse error response for better error message
+                let errorMessage = 'Failed to update plugin';
+                if (xhr?.responseText) {
+                    try {
+                        const errorData = JSON.parse(xhr.responseText);
+                        errorMessage = errorData.message || errorMessage;
+                    } catch (e) {
+                        // If parsing fails, use default
+                    }
+                }
+
+                showNotification(errorMessage, 'error');
+            }
+        };
+
+        /**
+         * Reloads a plugin's config tab from the server. Called from the
+         * Refresh button's onclick in partials/plugin_config.html. Clicks
+         * within a second of a reload are ignored. Returns nothing.
+         */
+        window.refreshPluginConfig = function(pluginId) {
+            if (window.pluginConfigRefreshInProgress.has(pluginId)) {
+                return;
+            }
+
+            const container = document.getElementById(`plugin-config-${pluginId}`);
+            if (container && window.htmx) {
+                window.pluginConfigRefreshInProgress.add(pluginId);
+
+                container.innerHTML = '';
+                window.htmx.ajax('GET', `/v3/partials/plugin-config/${pluginId}`, {
+                    target: container,
+                    swap: 'innerHTML'
+                });
+
+                setTimeout(() => {
+                    window.pluginConfigRefreshInProgress.delete(pluginId);
+                }, 1000);
+            }
+        };
+
+        // Run / Stop on-demand buttons on a plugin's config tab (onclick in
+        // partials/plugin_config.html); plugins_manager.js implements both.
+        window.runPluginOnDemand = function(pluginId) {
+            window.openOnDemandModal(pluginId);
+        };
+
+        window.stopOnDemand = function() {
+            window.requestOnDemandStop({});
+        };
 
         async function updatePlugin(pluginId) {
             try {
