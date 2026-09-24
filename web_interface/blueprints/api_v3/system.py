@@ -14,6 +14,8 @@ from web_interface.blueprints.api_v3 import (
 )
 import threading
 
+from web_interface.cache import get_cached, set_cached
+from web_interface.system_metrics import collect_system_metrics, format_uptime
 import web_interface.blueprints.api_v3 as _pkg
 # Read through the module rather than bound by value: tests patch these
 # as module attributes, and a value binding would not see the patch.
@@ -23,91 +25,25 @@ import web_interface.blueprints.api_v3 as _pkg
 
 @api_v3.route('/system/status', methods=['GET'])
 def get_system_status():
-    """Get system status"""
-    # Check cache first (10 second TTL for system status)
-    try:
-        from web_interface.cache import get_cached, set_cached
-        cached_result = get_cached('system_status', ttl_seconds=10)
-        if cached_result is not None:
-            return jsonify({'status': 'success', 'data': cached_result})
-    except ImportError:
-        # Cache not available, continue without caching
-        get_cached = None
-        set_cached = None
+    """CPU, memory, disk, temperature and uptime, plus the display service state.
 
-    # Import psutil for system monitoring
-    try:
-        import psutil
-    except ImportError:
-        # Fallback if psutil not available
-        return jsonify({
-            'status': 'error',
-            'message': 'psutil not available for system monitoring'
-        }), 503
+    ``data`` carries every key of system_metrics.collect_system_metrics() --
+    the numbers the live status stream sends -- and ``timestamp``, ``uptime``
+    (formatted) and ``service_active``. A metric that cannot be read is null.
+    Cached for 10 seconds.
+    """
+    cached_result = get_cached('system_status', ttl_seconds=10)
+    if cached_result is not None:
+        return jsonify({'status': 'success', 'data': cached_result})
 
-    # Get system metrics using psutil
-    cpu_percent = psutil.cpu_percent(interval=0.1)  # Short interval for responsiveness
-    memory = psutil.virtual_memory()
-    memory_percent = memory.percent
-    disk = psutil.disk_usage('/')
-    disk_percent = disk.percent
+    # A short blocking sample: this may be the first cpu_percent call in the
+    # process, and a non-blocking first call has nothing to measure against.
+    status = collect_system_metrics(cpu_interval=0.1)
+    status['timestamp'] = _pkg.time.time()
+    status['uptime'] = format_uptime(status['uptime_seconds'])
+    status['service_active'] = _get_display_service_status().get('active', False)
 
-    # Calculate uptime
-    boot_time = psutil.boot_time()
-    uptime_seconds = _pkg.time.time() - boot_time
-    uptime_hours = uptime_seconds / 3600
-    uptime_days = uptime_hours / 24
-
-    # Format uptime string
-    if uptime_days >= 1:
-        uptime_str = f"{int(uptime_days)}d {int(uptime_hours % 24)}h"
-    elif uptime_hours >= 1:
-        uptime_str = f"{int(uptime_hours)}h {int((uptime_seconds % 3600) / 60)}m"
-    else:
-        uptime_str = f"{int(uptime_seconds / 60)}m"
-
-    # Get CPU temperature (Raspberry Pi)
-    cpu_temp = None
-    try:
-        temp_file = '/sys/class/thermal/thermal_zone0/temp'
-        if os.path.exists(temp_file):
-            with open(temp_file, 'r') as f:
-                temp_millidegrees = int(f.read().strip())
-                cpu_temp = temp_millidegrees / 1000.0  # Convert to Celsius
-    except (IOError, ValueError, OSError):
-        # Temperature sensor not available or error reading
-        cpu_temp = None
-
-    # Get display service status
-    service_status = _get_display_service_status()
-
-    status = {
-        'timestamp': _pkg.time.time(),
-        'uptime': uptime_str,
-        'uptime_seconds': int(uptime_seconds),
-        'service_active': service_status.get('active', False),
-        'cpu_percent': round(cpu_percent, 1),
-        'memory_used_percent': round(memory_percent, 1),
-        'memory_total_mb': round(memory.total / (1024 * 1024), 1),
-        'memory_used_mb': round(memory.used / (1024 * 1024), 1),
-        # MemAvailable, not total-minus-used: it accounts for reclaimable
-        # page cache, so it is what actually predicts memory trouble. A
-        # board can read 70% "used" and be fine, or read the same and be
-        # about to fail fork(), and only this number tells them apart.
-        'memory_available_mb': round(memory.available / (1024 * 1024), 1),
-        'cpu_temp': round(cpu_temp, 1) if cpu_temp is not None else None,
-        'disk_used_percent': round(disk_percent, 1),
-        'disk_total_gb': round(disk.total / (1024 * 1024 * 1024), 1),
-        'disk_used_gb': round(disk.used / (1024 * 1024 * 1024), 1)
-    }
-
-    # Cache the result if available
-    if set_cached:
-        try:
-            set_cached('system_status', status, ttl_seconds=10)
-        except Exception:
-            pass  # Cache write failed, but continue
-
+    set_cached('system_status', status, ttl_seconds=10)
     return jsonify({'status': 'success', 'data': status})
 @api_v3.route('/system/version', methods=['GET'])
 def get_system_version():

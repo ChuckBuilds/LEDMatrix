@@ -51,7 +51,7 @@ def _memory(total_mb, used_mb, available_mb):
 
 def _get_status(client, memory):
     # The endpoint caches for 10s; bypass so each case is measured fresh.
-    with patch("web_interface.cache.get_cached", return_value=None), \
+    with patch("web_interface.blueprints.api_v3.system.get_cached", return_value=None), \
          patch("psutil.virtual_memory", return_value=memory), \
          patch("psutil.cpu_percent", return_value=5.0), \
          patch("psutil.boot_time", return_value=0.0):
@@ -90,3 +90,24 @@ def test_a_nearly_exhausted_board_reports_a_small_number(client):
     # to fork. The readout has to surface that rather than round it away.
     data = _get_status(client, _memory(total_mb=905, used_mb=800, available_mb=73))
     assert data["memory_available_mb"] == pytest.approx(73, abs=0.5)
+
+
+def test_status_and_live_stream_give_the_same_answer(client, monkeypatch):
+    """/system/status is built on collect_system_metrics(), so a metric has one
+    value, and "could not be read" is null in both."""
+    from web_interface import system_metrics
+    monkeypatch.setattr(system_metrics, "_THERMAL_ZONE", "/nonexistent/thermal/temp")
+    memory = _memory(total_mb=905, used_mb=620, available_mb=284)
+    with patch("psutil.virtual_memory", return_value=memory), \
+         patch("psutil.cpu_percent", return_value=5.0), \
+         patch("psutil.boot_time", return_value=0.0), \
+         patch("psutil.disk_usage", side_effect=OSError("no such mount")):
+        streamed = system_metrics.collect_system_metrics()
+        with patch("web_interface.blueprints.api_v3.system.get_cached", return_value=None):
+            status = json.loads(client.get("/api/v3/system/status").data)["data"]
+
+    assert status["cpu_temp"] is None
+    assert status["disk_used_percent"] is None
+    for key in system_metrics.METRIC_KEYS:
+        if key != "uptime_seconds":  # the two reads are a moment apart
+            assert status[key] == streamed[key], key
