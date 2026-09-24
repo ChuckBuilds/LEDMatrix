@@ -725,7 +725,10 @@ class DisplayManager:
     @property
     def _capture_mode_active(self) -> bool:
         """True while the calling thread is capturing content off-screen."""
-        return getattr(self._capture_state, 'active', False)
+        # Read like _current_surface(): a DisplayManager built without
+        # __init__ (tests do) has no per-thread state, and captures nothing.
+        state = self.__dict__.get('_capture_state')
+        return getattr(state, 'active', False) if state is not None else False
 
     @_capture_mode_active.setter
     def _capture_mode_active(self, value: bool) -> None:
