@@ -233,11 +233,14 @@ rm -f "$TEMP_POLKIT"
 echo ""
 echo "Step 3: Testing permissions..."
 
-# Test sudo access
-if sudo -n "$NMCLI_PATH" device status > /dev/null 2>&1; then
-    echo "✓ nmcli device status - OK"
+# Ask sudo whether one of the new rules lets this user in without a password.
+# `sudo -l CMD` answers from the rules without running CMD, so the radio is
+# left alone. (This used to run `nmcli device status`, which is not granted,
+# so it could only ever report a failure.)
+if sudo -n -l "$NMCLI_PATH" radio wifi on > /dev/null 2>&1; then
+    echo "✓ nmcli radio wifi on - OK"
 else
-    echo "✗ nmcli device status - Failed (this is expected if not connected)"
+    echo "✗ nmcli radio wifi on - not allowed without a password"
 fi
 
 echo ""

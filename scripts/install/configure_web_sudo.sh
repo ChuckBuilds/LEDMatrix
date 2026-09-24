@@ -164,17 +164,20 @@ if sudo cp "$TEMP_SUDOERS" /etc/sudoers.d/ledmatrix_web; then
     echo ""
     echo "Testing sudo access..."
     
-    # Test a few commands
-    if sudo -n systemctl status ledmatrix.service > /dev/null 2>&1; then
+    # Ask sudo whether two of the new rules let this user in without a
+    # password. `sudo -l CMD` answers from the rules without running CMD, so
+    # this does not depend on whether ledmatrix.service is running, and it
+    # tests commands the rules actually grant.
+    if sudo -n -l "$SYSTEMCTL_PATH" status ledmatrix.service > /dev/null 2>&1; then
         echo "✓ systemctl status ledmatrix.service - OK"
     else
-        echo "✗ systemctl status ledmatrix.service - Failed"
+        echo "✗ systemctl status ledmatrix.service - not allowed without a password"
     fi
-    
-    if sudo -n test -f "$PROJECT_ROOT/start_display.sh"; then
-        echo "✓ File access test - OK"
+
+    if sudo -n -l "$BASH_PATH" "$SAFE_RM_PATH" "$PROJECT_ROOT/plugin-repos/example" > /dev/null 2>&1; then
+        echo "✓ safe_plugin_rm.sh helper - OK"
     else
-        echo "✗ File access test - Failed"
+        echo "✗ safe_plugin_rm.sh helper - not allowed without a password"
     fi
     
     echo ""

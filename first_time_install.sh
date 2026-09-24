@@ -1297,7 +1297,11 @@ else
             WEB_DEPS_OK=false
         fi
     else
-        echo "Web dependencies already installed from web_interface/requirements.txt in Step 5"
+        # No marker means Step 5 did not install web_interface/requirements.txt,
+        # and without the smart installer there is nothing else to try here.
+        echo "⚠ scripts/install_dependencies_apt.py not found, and Step 5 did not install"
+        echo "  web_interface/requirements.txt, so web interface dependencies may be missing."
+        WEB_DEPS_OK=false
     fi
 
     # Create the marker only when installation actually succeeded, so a
@@ -1562,11 +1566,12 @@ echo "-----------------------------------------------------"
 if [ -f "$PROJECT_ROOT_DIR/scripts/install/configure_wifi_permissions.sh" ]; then
     echo "Configuring WiFi management permissions..."
     # Run as the actual user (not root) since the script checks for that
-    sudo -u "$ACTUAL_USER" bash "$PROJECT_ROOT_DIR/scripts/install/configure_wifi_permissions.sh" || {
+    if sudo -u "$ACTUAL_USER" bash "$PROJECT_ROOT_DIR/scripts/install/configure_wifi_permissions.sh"; then
+        echo "✓ WiFi management permissions configured"
+    else
         echo "⚠ WiFi permissions configuration failed, but continuing installation"
         echo "  You can run it manually later: ./scripts/install/configure_wifi_permissions.sh"
-    }
-    echo "✓ WiFi management permissions configured"
+    fi
 else
     echo "⚠ configure_wifi_permissions.sh not found; skipping WiFi permissions configuration"
     echo "  You can configure WiFi permissions later by running:"
@@ -2037,7 +2042,7 @@ echo "AP Mode Status:"
 if systemctl is-active --quiet hostapd 2>/dev/null; then
     echo "  ✓ AP Mode is ACTIVE"
     echo "  → Connect to WiFi network: LEDMatrix-Setup"
-    echo "  → Password: ledmatrix123"
+    echo "  → Open network, no password"
     echo "  → Access web UI at: http://192.168.4.1:5000"
     AP_MODE_ACTIVE=true
 else
@@ -2045,7 +2050,7 @@ else
     if ip addr show wlan0 2>/dev/null | grep -q "192.168.4.1"; then
         echo "  ✓ AP Mode is ACTIVE (IP detected)"
         echo "  → Connect to WiFi network: LEDMatrix-Setup"
-        echo "  → Password: ledmatrix123"
+        echo "  → Open network, no password"
         echo "  → Access web UI at: http://192.168.4.1:5000"
         AP_MODE_ACTIVE=true
     else
