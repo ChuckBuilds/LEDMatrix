@@ -53,14 +53,15 @@ _POSIX = pytest.mark.skipif(sys.platform == "win32" or shutil.which("bash") is N
                             reason="needs a POSIX bash")
 
 
-def _run(tmp_path, env_extra, nmcli_active_line=True, stdin=""):
+def _run(tmp_path, env_extra, nmcli_active_line=True, stdin="", hostapd_active=False):
     stubs = tmp_path / "stubs"
     stubs.mkdir()
     log = tmp_path / "calls.log"
     active = 'echo "yes:HomeNet"' if nmcli_active_line else ":"
+    hostapd = 'case "$*" in *"is-active --quiet hostapd"*) exit 0 ;; esac\n' if hostapd_active else ""
     bodies = {
         "reboot": f'#!/bin/sh\necho REBOOT-CALLED\necho reboot >> "{log}"\n',
-        "systemctl": "#!/bin/sh\nexit 3\n",
+        "systemctl": f"#!/bin/sh\n{hostapd}exit 3\n",
         "hostname": '#!/bin/sh\necho "192.168.1.50 fe80::1"\n',
         "ip": "#!/bin/sh\nexit 1\n",
         # device status -> one connected wifi device; device wifi -> active line
@@ -99,6 +100,17 @@ def test_assume_yes_prints_the_summary_then_reboots(tmp_path, nmcli_active_line)
                  "Enjoy your LED Matrix display!"):
         assert out.index(text) < out.index("REBOOT-CALLED"), text
     assert "Password: ledmatrix123" not in out
+
+
+@_POSIX
+def test_setup_access_point_is_described_as_open(tmp_path):
+    """wifi_manager creates the setup AP with no security ("No password" on
+    the panel); the summary used to print a password it does not have."""
+    result, _ = _run(tmp_path, {"ASSUME_YES": "1"}, hostapd_active=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "AP Mode is ACTIVE" in result.stdout
+    assert "Open network, no password" in result.stdout
+    assert "Password:" not in result.stdout
 
 
 @_POSIX

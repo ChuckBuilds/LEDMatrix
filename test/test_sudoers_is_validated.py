@@ -79,7 +79,9 @@ def test_configure_web_sudo_installs_mode_440():
 def test_configure_wifi_permissions_validates_before_installing():
     """The third sudoers writer. It installed its rules unchecked."""
     body = _read(WIFI)
-    validate = body.index('visudo -c -f "$TEMP_SUDOERS"')
+    # The check itself, as a condition -- not merely the command appearing in
+    # the error report that follows it.
+    validate = body.index('if ! visudo -c -f "$TEMP_SUDOERS"')
     install = body.index('sudo cp "$TEMP_SUDOERS" "$SUDOERS_FILE"')
     assert validate < install, "the rules must be checked before they are installed"
     # ...and a failed check stops the script before the copy.
