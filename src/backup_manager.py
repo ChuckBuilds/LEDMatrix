@@ -140,34 +140,18 @@ class RestoreResult:
 # ---------------------------------------------------------------------------
 
 
-def _ledmatrix_version(project_root: Path) -> str:
-    """Best-effort version string for the current install."""
-    version_file = project_root / "VERSION"
-    if version_file.exists():
-        try:
-            return version_file.read_text(encoding="utf-8").strip() or "unknown"
-        except OSError:
-            pass
-    head_file = project_root / ".git" / "HEAD"
-    if head_file.exists():
-        try:
-            head = head_file.read_text(encoding="utf-8").strip()
-            if head.startswith("ref: "):
-                ref = head[5:]
-                ref_path = project_root / ".git" / ref
-                if ref_path.exists():
-                    return ref_path.read_text(encoding="utf-8").strip()[:12] or "unknown"
-            return head[:12] or "unknown"
-        except OSError:
-            pass
-    return "unknown"
+def _ledmatrix_version() -> str:
+    """The release of the running core (``src.__version__``), recorded in the
+    manifest so a restore can tell which release wrote the backup."""
+    from src import __version__
+    return __version__
 
 
-def _build_manifest(contents: List[str], project_root: Path) -> Dict[str, Any]:
+def _build_manifest(contents: List[str]) -> Dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
         "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        "ledmatrix_version": _ledmatrix_version(project_root),
+        "ledmatrix_version": _ledmatrix_version(),
         "hostname": socket.gethostname(),
         "contents": contents,
     }
@@ -178,13 +162,34 @@ def _build_manifest(contents: List[str], project_root: Path) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _plugins_directory(project_root: Path) -> Path:
+    """The plugin install directory: ``plugin_system.plugins_directory`` from
+    config/config.json (relative to ``project_root`` unless absolute), or
+    ``plugin-repos`` when the config does not say or cannot be read."""
+    configured: Any = None
+    try:
+        with (project_root / _CONFIG_REL).open("r", encoding="utf-8") as f:
+            config = json.load(f)
+        if isinstance(config, dict):
+            plugin_system = config.get("plugin_system")
+            if isinstance(plugin_system, dict):
+                configured = plugin_system.get("plugins_directory")
+    except (OSError, json.JSONDecodeError):
+        pass
+    if not isinstance(configured, str) or not configured.strip():
+        configured = "plugin-repos"
+    path = Path(configured)
+    return path if path.is_absolute() else project_root / path
+
+
 def list_installed_plugins(project_root: Path) -> List[Dict[str, Any]]:
     """
     Return a list of currently-installed plugins suitable for the backup
     manifest. Each entry has ``plugin_id`` and ``version``.
 
-    Reads ``data/plugin_state.json`` if present; otherwise walks the plugin
-    directory and reads each ``manifest.json``.
+    Reads ``data/plugin_state.json`` if present, then adds any plugin it
+    does not list from the ``manifest.json`` files in the configured plugin
+    directory (see :func:`_plugins_directory`).
     """
     plugins: Dict[str, Dict[str, Any]] = {}
 
@@ -206,8 +211,7 @@ def list_installed_plugins(project_root: Path) -> List[Dict[str, Any]]:
         except (OSError, json.JSONDecodeError) as e:
             logger.warning("Could not read plugin_state.json: %s", e)
 
-    # Fall back to scanning plugin-repos/ for manifests.
-    plugins_root = project_root / "plugin-repos"
+    plugins_root = _plugins_directory(project_root)
     if plugins_root.exists():
         for entry in sorted(plugins_root.iterdir()):
             if not entry.is_dir():
@@ -338,7 +342,7 @@ def create_backup(
                 contents.append("plugins")
 
             # Manifest goes last so that `contents` reflects what we actually wrote.
-            manifest = _build_manifest(contents, project_root)
+            manifest = _build_manifest(contents)
             zf.writestr(MANIFEST_NAME, json.dumps(manifest, indent=2))
 
         os.replace(tmp_path, zip_path)
