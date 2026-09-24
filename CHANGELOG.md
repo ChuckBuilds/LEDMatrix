@@ -19,6 +19,20 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+- Scripts and installer:
+  - `fix_web_permissions.sh` makes `safe_plugin_rm.sh` and `safe_pip_install.sh` root-owned again after resetting ownership. A web-user-owned copy of either is a root shell, since sudo lets the web user run them as root. It also restores `config_secrets.json` to mode 640.
+  - `configure_wifi_permissions.sh` checks its rules with `visudo -c` before installing them, and grants the NetworkManager captive-portal `cp` and `rm` commands `wifi_manager` runs.
+  - `configure_web_sudo.sh` uses a random temp file and installs its rules with mode 440.
+  - The installer prints its completion summary before the `-y` reboot, and describes the setup access point as an open network (it was shown with a password it doesn't have).
+  - `fix_cache_permissions.sh` applies `setup_cache.sh`'s `ledmatrix`-group model instead of setting 777.
+  - `check_system_compatibility.sh` reports anything but Debian 13 (Trixie) as unsupported, and reaches its summary.
+  - New `scripts/README.md` lists every script.
+- Docs:
+  - New `docs/ARCHITECTURE.md` (processes, shared state, display loop, plugin system, web UI) and `docs/PERMISSIONS.md` (owners, modes, both sudoers files, repair scripts).
+  - Deprecated plugin APIs are marked in the plugin docs.
+  - `src/common/README.md` covers every module.
+  - Stale setup, service and troubleshooting claims are corrected.
+
 - The web service (`ledmatrix-web`) logs through `src.logging_config` like the
   display service, so `journalctl -p err -u ledmatrix-web` works. Successful
   GET/HEAD/OPTIONS requests (the UI's polling) are logged at DEBUG instead of
