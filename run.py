@@ -31,8 +31,6 @@ if args.emulator:
     print("Using pygame/RGBMatrixEmulator for display")
     print("Press ESC to exit\n")
 
-# Project directory already added above
-
 # Debug output (only in debug mode or emulator mode)
 debug_mode = args.debug or args.emulator or os.environ.get('LEDMATRIX_DEBUG', '').lower() == 'true'
 if debug_mode:

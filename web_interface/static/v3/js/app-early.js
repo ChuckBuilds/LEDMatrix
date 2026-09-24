@@ -1,8 +1,89 @@
 /* global debugLog */
-// Early helpers and the app() stub (must run before Alpine init)
-// Extracted from templates/v3/base.html so browsers cache it as a static asset.
-        // Helper function to get installed plugins with fallback
-        // Must be defined before app() function that uses it
+/*
+ * app-early.js -- helpers every other script relies on, and the app() stub.
+ *
+ * A blocking <script> in <head>, so everything here exists before any other
+ * script, widget or partial runs.
+ *
+ * Load order (templates/v3/base.html):
+ *   <head>, blocking:  debugLog and theme inline scripts; the htmx loader
+ *                      (injects htmx.min.js with a dynamic <script>);
+ *                      js/htmx-config.js; the loadPartialDirect fallback;
+ *                      js/app-early.js
+ *   <head>, defer:     js/app-shell.js, then js/alpinejs.min.js (Alpine
+ *                      starts as soon as it runs, so app-shell.js's app()
+ *                      is the one Alpine uses)
+ *   end of <body>, defer, in this order: app.js, js/tooltips.js,
+ *                      js/settings-search.js, js/utils/dialog.js,
+ *                      js/utils/error_handler.js, js/plugins/api_client.js,
+ *                      state_manager.js, install_manager.js, list_filter.js,
+ *                      the widget bundle (web_interface/widget_bundle.py),
+ *                      plugins_manager.js
+ *   Tab partials arrive later through htmx; their inline scripts run on
+ *   htmx:afterSwap (js/htmx-config.js).
+ *
+ * Globals:
+ *   window.LEDEscape    html / attr / jsStringAttr, the only HTML escaper
+ *   window.escapeHtml / window.escapeAttribute   aliases of LEDEscape.html /
+ *                       .attr, kept for plugin pages
+ *   window.getApp()     the root Alpine component (<body x-data="app()">)
+ *   window.app          a stub app() so Alpine can start before app-shell.js
+ *                       has run; app-shell.js replaces it with the full one
+ *                       (in the normal load order Alpine only ever sees the
+ *                       full one, see the note on the stub below)
+ *   getInstalledPluginsSafe()   installed list via PluginAPI or fetch
+ *   a pluginsUpdated listener that draws the plugin tab row while the app is
+ *   not the full implementation yet
+ */
+
+        // ===== window.LEDEscape: the web UI's HTML escaping =====
+        // This file is a blocking <script> in <head>, so every later script,
+        // widget and partial can call these directly.
+        //   html(v)          text for element content or a quoted attribute
+        //                    value: & < > " ' become entities, null and
+        //                    undefined become ''. Escaping quotes is what makes
+        //                    it attribute-safe; a textContent/innerHTML round
+        //                    trip only escapes & < and >.
+        //   attr(v)          the same function, for call sites that want the
+        //                    attribute context to read explicitly.
+        //   jsStringAttr(v)  a quoted JS string literal for an inline handler
+        //                    attribute: onclick='f(${jsStringAttr(id)})'.
+        //                    JSON.stringify alone leaves ' and & untouched, so a
+        //                    value containing ' could close a single-quoted
+        //                    attribute. The browser decodes the entities before
+        //                    it parses the handler, so the JS sees the literal.
+        window.LEDEscape = (function() {
+            const ENTITIES = new Map([['&', '&amp;'], ['<', '&lt;'], ['>', '&gt;'], ['"', '&quot;'], ["'", '&#39;']]);
+            function html(value) {
+                return value == null ? '' : String(value).replace(/[&<>"']/g, c => ENTITIES.get(c));
+            }
+            function jsStringAttr(value) {
+                return html(JSON.stringify(value == null ? '' : String(value)));
+            }
+            // An attribute value needs no more than html(): it escapes both quote characters.
+            function attr(value) {
+                return html(value);
+            }
+            return Object.freeze({ html: html, attr: attr, jsStringAttr: jsStringAttr });
+        })();
+
+        // Kept for plugin web UIs and third-party plugin pages that call them.
+        window.escapeHtml = window.LEDEscape.html;
+        window.escapeAttribute = window.LEDEscape.attr;
+
+        // ===== window.getApp(): the root Alpine component =====
+        // The data of <body x-data="app()"> (activeTab, installedPlugins, ...),
+        // read through Alpine's public Alpine.$data rather than the private
+        // el._x_dataStack. Null until Alpine has initialised the app.
+        window.getApp = function() {
+            const el = document.querySelector('[x-data="app()"]');
+            if (!el || !window.Alpine) return null;
+            const data = window.Alpine.$data(el);
+            return data && 'activeTab' in data ? data : null;
+        };
+
+        // The installed-plugin list through PluginAPI, or a plain fetch if
+        // PluginAPI (loaded later, deferred) is not there yet.
         async function getInstalledPluginsSafe() {
             if (window.PluginAPI && window.PluginAPI.getInstalledPlugins) {
                 try {
@@ -20,32 +101,19 @@
             return await response.json();
         }
 
-        // Global event listener for pluginsUpdated - works even if Alpine isn't ready yet
-        // This ensures tabs update when plugins_manager.js loads plugins
+        // Builds the plugin tab row from a pluginsUpdated event while the app is
+        // not app-shell.js's full implementation (Alpine not started yet, or
+        // still on the stub below). The full app() has its own pluginsUpdated
+        // listener, registered in its init().
         document.addEventListener('pluginsUpdated', function(event) {
+            const appComponent = window.getApp();
+            if (appComponent && typeof appComponent._doUpdatePluginTabs === 'function') return;
             debugLog('[GLOBAL] Received pluginsUpdated event:', event.detail?.plugins?.length || 0, 'plugins');
             const plugins = event.detail?.plugins || [];
-            
-            // Update window.installedPlugins
-            window.installedPlugins = plugins;
-            
-            // Try to update Alpine component if it exists (only if using full implementation)
-            if (window.Alpine) {
-                const appElement = document.querySelector('[x-data="app()"]');
-                if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
-                    const appComponent = appElement._x_dataStack[0];
-                    appComponent.installedPlugins = plugins;
-                    // Only call updatePluginTabs if it's the full implementation (has _doUpdatePluginTabs)
-                    if (typeof appComponent.updatePluginTabs === 'function' && 
-                        appComponent.updatePluginTabs.toString().includes('_doUpdatePluginTabs')) {
-                        debugLog('[GLOBAL] Updating plugin tabs via Alpine component (full implementation)');
-                        appComponent.updatePluginTabs();
-                        return; // Full implementation handles it, don't do direct update
-                    }
-                }
+            if (appComponent) {
+                appComponent.installedPlugins = plugins;
             }
-            
-            // Only do direct DOM update if full implementation isn't available yet
+
             const pluginTabsRow = document.getElementById('plugin-tabs-row');
             const pluginTabsNav = pluginTabsRow?.querySelector('nav');
             if (pluginTabsRow && pluginTabsNav && plugins.length > 0) {
@@ -60,15 +128,11 @@
                     tabButton.setAttribute('data-plugin-id', plugin.id);
                     tabButton.className = `plugin-tab nav-tab`;
                     tabButton.onclick = function() {
-                        // Try to set activeTab via Alpine if available
-                        if (window.Alpine) {
-                            const appElement = document.querySelector('[x-data="app()"]');
-                            if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
-                                appElement._x_dataStack[0].activeTab = plugin.id;
-                                // Only call updatePluginTabStates if it exists
-                                if (typeof appElement._x_dataStack[0].updatePluginTabStates === 'function') {
-                                    appElement._x_dataStack[0].updatePluginTabStates();
-                                }
+                        const app = window.getApp();
+                        if (app) {
+                            app.activeTab = plugin.id;
+                            if (typeof app.updatePluginTabStates === 'function') {
+                                app.updatePluginTabStates();
                             }
                         }
                     };
@@ -89,8 +153,13 @@
         // Guard flag to prevent duplicate stub-to-full enhancement
         window._appEnhanced = false;
 
-        // Define app() function early so Alpine can find it when it initializes
-        // This is a complete implementation that will work immediately
+        // The stub app(). If Alpine initialises before app-shell.js has run,
+        // this object is what it gets; its init() copies the full
+        // implementation in as soon as app-shell.js has replaced window.app
+        // (the "enhancement", guarded by window._appEnhanced), and draws the
+        // plugin tabs itself until then. base.html now loads app-shell.js
+        // before Alpine, so in practice Alpine calls the full app() directly
+        // and this stub never runs.
         (function() {
             const isAPMode = window.location.hostname === '192.168.4.1' || 
                            window.location.hostname.startsWith('192.168.4.');
@@ -349,8 +418,7 @@
                             debugLog('[STUB] updatePluginTabs: Added', this.installedPlugins.length, 'plugin tabs');
                         }, 100);
                     },
-                    showNotification: function(message, type) {},
-                    escapeHtml: function(text) { return String(text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+                    showNotification: function(message, type) {}
                 };
             };
         })();

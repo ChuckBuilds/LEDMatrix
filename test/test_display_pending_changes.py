@@ -157,7 +157,6 @@ def vegas_coordinator(controller):
     coord._update_callback = None
     coord._update_tick_running = False
     coord.sync_manager = None
-    coord._update_static_mode_plugins = lambda: None
     coord._check_static_plugin_trigger = lambda: None
     coord.frames = 0
 

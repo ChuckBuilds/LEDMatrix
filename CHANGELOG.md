@@ -64,6 +64,24 @@ accepts both, but the store flags the old spelling as deprecated
   - `/plugins/store/refresh` no longer claims a commit-metadata refresh it doesn't do.
   - The plugin-config list repair code is in one place, `src/web_interface/config_arrays.py`.
 
+- Web UI:
+  - Cache tab errors no longer show up in the Logs tab.
+  - A tab that fails to load shows "Try again" instead of a skeleton that never goes away.
+  - Plugin Store search and registry errors appear as a notification, and the Plugin Manager stays on screen.
+  - The image schedule button works on uploaded images, and the editor stays open while you edit.
+  - A failed plugin toggle moves the switch back.
+  - Each save shows one notification; a failed Durations save says it failed.
+  - Stats the server can't read show `--`.
+  - New `window.LEDEscape` (`html`, `attr`, `jsStringAttr`) replaces about 30 copied escapers. `window.escapeHtml` and `window.escapeAttribute` remain as aliases for plugin pages.
+
+- Display and Vegas:
+  - Vegas `max_cycle_duration` defaults to 240 s when unset, as documented (it was 600 s). The Vegas defaults are now defined once.
+  - The display controller stops Vegas mode on shutdown.
+  - Startup validation warnings are logged once, not twice.
+  - Vegas logs one INFO line per plugin-list refresh.
+  - `run.py -d` shows `display_manager` debug output.
+  - Removed: the Vegas staging buffer that was never filled (`swap_buffers()`, and `staging_count` / `current_index` in `get_buffer_status()`), unread `ContentSegment` fields, and `geometry.find_blank_cut()`.
+
 - The web service (`ledmatrix-web`) logs through `src.logging_config` like the
   display service, so `journalctl -p err -u ledmatrix-web` works. Successful
   GET/HEAD/OPTIONS requests (the UI's polling) are logged at DEBUG instead of

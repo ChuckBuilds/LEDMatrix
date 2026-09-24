@@ -113,12 +113,15 @@
                     // that same partial would have that script still un-run
                     // when Alpine evaluates x-data, permanently failing with
                     // "wifiSetup is not defined" (Alpine does not retry).
-                    // Disable htmx's own native script re-execution so the
-                    // same script doesn't also run a second time via settle.
-                    if (typeof htmx !== 'undefined' && htmx.config) {
-                        htmx.config.allowScriptTags = false;
-                    }
+                    // htmx's own script handling is switched off here, in the
+                    // handler, rather than once at setup: base.html injects
+                    // htmx with a dynamic <script>, so at setup htmx is usually
+                    // not defined yet and the switch never took effect. htmx
+                    // then tried to run each script again in its settle phase,
+                    // found it already replaced (no parent) and threw, which
+                    // also skipped the rest of that swap's settle tasks.
                     document.body.addEventListener('htmx:afterSwap', function(event) {
+                        htmx.config.allowScriptTags = false;
                         const target = event.detail && event.detail.target;
                         if (!target || !(target instanceof Element)) return;
                         target.querySelectorAll('script').forEach(function(oldScript) {

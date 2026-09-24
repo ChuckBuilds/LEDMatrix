@@ -260,18 +260,10 @@
         return 'bg-gray-100 text-gray-800';
     }
 
-    function escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
+    function escapeHtml(text) { return window.LEDEscape.html(text); }
 
     function showError(message) {
-        if (typeof showNotification === 'function') {
-            showNotification(message, 'error');
-        } else {
-            alert(message);
-        }
+        showNotification(message, 'error');
     }
 
     // Populate plugin filter
