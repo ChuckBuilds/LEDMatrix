@@ -97,9 +97,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, ClassVar, Dict, List, Optional, Tuple
 
 import pytz
-from src.common.espn_dates import fetch_espn_scoreboard
+from src.common.espn_dates import ESPN_MAX_LIMIT, fetch_espn_scoreboard
 import requests
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 from src.common import sports_card as _card
 from src.common.font_layout import load_truetype, resolve_asset_path
 
@@ -180,9 +180,6 @@ class SportsCoreSharedMixin:
     _QUALITY_CHOICES: ClassVar[frozenset] = frozenset({"any", "ranked"})
     #: How long to stay quiet between ranking-coverage warnings.
     _RANKING_COVERAGE_SECONDS: ClassVar[int] = 60 * 60
-
-    def _get_season_schedule_dates(self) -> tuple[str, str]:
-        return "", ""
 
     def _draw_scorebug_layout(self, game: Dict, force_clear: bool = False) -> None:
         """Placeholder draw method - subclasses should override."""
@@ -869,7 +866,10 @@ class SportsCoreSharedMixin:
         draw.text((x, y), text, font=font, fill=fill)
 
     def _should_log(self, warning_type: str, cooldown: int = 60) -> bool:
-        """Check if we should log a warning based on cooldown period."""
+        """True at most once per ``cooldown`` seconds, for rate-limiting a
+        warning. The cooldown is shared by every warning on this manager:
+        ``warning_type`` is part of the signature scoreboards inherit, but
+        does not give each type its own cooldown."""
         current_time = time.time()
         if current_time - self._last_warning_time > cooldown:
             self._last_warning_time = current_time
@@ -884,8 +884,6 @@ class SportsCoreSharedMixin:
         try:
             # Fetch current week and next few days for immediate display
             now = datetime.now(pytz.utc)
-            immediate_events = []
-
             start_date = now - timedelta(days=self.schedule_lookback_days)
             end_date = now + timedelta(days=self.schedule_lookahead_days)
             date_str = f"{start_date.strftime('%Y%m%d')}-{end_date.strftime('%Y%m%d')}"
@@ -893,7 +891,7 @@ class SportsCoreSharedMixin:
             data = fetch_espn_scoreboard(
                 self.session,
                 url,
-                params={"dates": date_str, "limit": 1000},
+                params={"dates": date_str, "limit": ESPN_MAX_LIMIT},
                 headers=self.headers,
                 timeout=10,
                 logger=self.logger,
