@@ -1,15 +1,20 @@
 """redact_credentials must stay linear in the length of its input.
 
-Regression under test: the URL-userinfo pattern (`scheme://user:password@`)
-could start a match at every letter of a run of scheme characters, and each
-attempt read to the end of the run looking for `://`. A 20k-character run took
-1.6s; the display service redacts every message, stack trace and context value
-it publishes in the error snapshot, and re.sub holds the GIL throughout, so an
+Regressions under test, both quadratic regexes in src/redaction.py:
+
+- The URL-userinfo pattern (`scheme://user:password@`) could start a match at
+  every letter of a run of scheme characters, and each attempt read to the end
+  of the run looking for `://`: 1.6s for a 20k-character run.
+- The Authorization-header pattern had two `\\s*` separated only by an
+  optional quote, so a header followed by whitespace and no credential tried
+  every split of that whitespace between them: 8s for 20k spaces.
+
+The display service redacts every message, stack trace and context value it
+publishes in the error snapshot, and re.sub holds the GIL throughout, so an
 exception quoting a hex digest or a long ID stalled the render loop with it.
 test_error_snapshot_cross_process.py's snapshot-size test spent 140s here.
 
-The anchored pattern has to redact exactly what the old one did, including a
-scheme that begins after digits or `+.-` in the same run.
+The fixed patterns have to redact exactly what the old ones did.
 """
 
 import time
@@ -17,6 +22,17 @@ import time
 import pytest
 
 from src.redaction import redact_credentials
+
+# Each timed input took seconds before the fix and takes about a millisecond
+# after it; the bound leaves CI plenty of headroom while still failing on a
+# quadratic pattern.
+_TIME_LIMIT = 1.0
+
+
+def _timed(text):
+    start = time.perf_counter()
+    result = redact_credentials(text)
+    return result, time.perf_counter() - start
 
 
 class TestUrlUserinfo:
@@ -43,21 +59,52 @@ class TestUrlUserinfo:
         assert redact_credentials(text) == text
 
 
+class TestAuthorizationHeader:
+    @pytest.mark.parametrize("text,expected", [
+        ("Authorization: Bearer eyJ.SECRET.sig", "Authorization: Bearer <redacted>"),
+        ("Proxy-Authorization: Basic dXNlcg==", "Proxy-Authorization: Basic <redacted>"),
+        ("authorization: barecredential", "authorization: <redacted>"),
+        # Whitespace and an opening quote around the value, in either order.
+        ('authorization="  Bearer  tok"', 'authorization="  Bearer  <redacted>"'),
+        ("authorization:  '  tok'", "authorization:  '  <redacted>'"),
+        ("authorization:\n\tBearer tok", "authorization:\n\tBearer <redacted>"),
+    ])
+    def test_credential_is_redacted_and_the_rest_kept(self, text, expected):
+        assert redact_credentials(text) == expected
+
+    @pytest.mark.parametrize("text", ["authorization:   ", "authorization:   , next"])
+    def test_a_header_without_a_credential_is_untouched(self, text):
+        assert redact_credentials(text) == text
+
+
 class TestLinearTime:
-    # Each of these took seconds before the fix (letters ~10s at this size)
-    # and takes about a millisecond after it; the bound leaves CI plenty of
-    # headroom while still failing on a quadratic pattern.
     @pytest.mark.parametrize("unit", ["x", "0123456789abcdef", "1a", "a+", "1"])
     def test_long_scheme_character_runs(self, unit):
         text = (unit * 50_000)[:50_000]
-        start = time.perf_counter()
-        assert redact_credentials(text) == text
-        elapsed = time.perf_counter() - start
-        assert elapsed < 1.0, f"{elapsed:.2f}s to redact {len(text)} chars of {unit!r}"
+        result, elapsed = _timed(text)
+        assert result == text
+        assert elapsed < _TIME_LIMIT, f"{elapsed:.2f}s to redact {len(text)} chars of {unit!r}"
 
     def test_a_credential_after_a_long_run_is_still_found(self):
         run = "ab12" * 10_000
-        text = f"{run} https://user:hunter2@example.com"
-        start = time.perf_counter()
-        assert redact_credentials(text) == f"{run} https://user:<redacted>@example.com"
-        assert time.perf_counter() - start < 1.0
+        result, elapsed = _timed(f"{run} https://user:hunter2@example.com")
+        assert result == f"{run} https://user:<redacted>@example.com"
+        assert elapsed < _TIME_LIMIT
+
+    @pytest.mark.parametrize("header,whitespace", [
+        ("authorization:", " "),
+        ("Proxy-Authorization:", "\t"),
+        ("authorization=", "\n"),
+    ])
+    def test_a_header_followed_by_long_whitespace(self, header, whitespace):
+        text = header + whitespace * 20_000 + ","
+        result, elapsed = _timed(text)
+        assert result == text
+        assert elapsed < _TIME_LIMIT, (
+            f"{elapsed:.2f}s to redact {header!r} and {len(text) - len(header)} more chars")
+
+    def test_a_credential_after_long_whitespace_is_still_found(self):
+        gap = " " * 20_000
+        result, elapsed = _timed(f"authorization:{gap}Bearer tok")
+        assert result == f"authorization:{gap}Bearer <redacted>"
+        assert elapsed < _TIME_LIMIT
