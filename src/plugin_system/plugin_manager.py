@@ -624,6 +624,13 @@ class PluginManager:
             # Delegate sub-module and cached-module cleanup to the loader
             self.plugin_loader.unregister_plugin_modules(plugin_id)
 
+            # Its font registrations go with it (the Fonts tab's "Used by").
+            try:
+                if self.font_manager is not None and hasattr(self.font_manager, 'forget_manager_fonts'):
+                    self.font_manager.forget_manager_fonts(plugin_id)
+            except Exception as e:
+                self.logger.debug("Could not forget fonts of %s: %s", plugin_id, e)
+
             # Update state
             self.state_manager.set_state(plugin_id, PluginState.UNLOADED)
             self.state_manager.clear_state(plugin_id)

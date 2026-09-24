@@ -11,6 +11,7 @@ from web_interface.blueprints.api_v3 import (
     _PIXLET_EDITOR_DEFAULT_TIMEOUT, _PIXLET_EDITOR_MAX_TIMEOUT,
     _PIXLET_EDITOR_SCRIPT, _PIXLET_EDITOR_STATE, _clear_pixlet_editor_state,
     _find_pixlet_binary, _install_star_file, _pixlet_editor_alive,
+    _run_systemctl_command,
     _pixlet_editor_status, _read_pixlet_editor_state,
     _STARLARK_APPS_DIR, _standalone_render_starlark_app,
     _starlark_github_token, _starlark_manifest_lock,
@@ -24,6 +25,36 @@ import web_interface.blueprints.api_v3 as _pkg
 # as module attributes, and a value binding would not see the patch.
 # Several are also called from helpers that live in __init__, so the
 # package is the only patch point that covers every caller.
+
+
+def _ownership_hint(err: BaseException):
+    """An actionable message when the apps directory is not writable.
+
+    The display service runs as root and the web interface as the login user
+    (see systemd/ledmatrix.service and systemd/ledmatrix-web.service). The
+    starlark-apps directory is not in the repository, so whichever service
+    reaches it first creates it -- and when that is the display service, the
+    web user cannot write into it and every install fails.
+
+    The plugin now hands the directory back on startup, so this should not be
+    reachable. It is kept because the failure is otherwise invisible: the
+    generic message names no path and no cause, and the one user who hit it
+    had to read the service logs to find it. If the handover is ever prevented
+    -- an exotic mount, a directory root-owned for another reason -- this says
+    what to do instead of costing somebody an evening.
+
+    Returns None when `err` is not a permission problem.
+    """
+    if not isinstance(err, PermissionError):
+        return None
+    return (
+        f"Cannot write to {_STARLARK_APPS_DIR}. It is owned by another user "
+        f"-- usually because the display service, which runs as root, created "
+        f"it before the web interface did. Restarting the display service "
+        f"(sudo systemctl restart ledmatrix) repairs the ownership "
+        f"automatically. To fix it by hand: "
+        f"sudo chown -R $USER:$USER {_STARLARK_APPS_DIR}"
+    )
 
 
 @api_v3.route('/starlark/status', methods=['GET'])
@@ -278,7 +309,8 @@ def upload_starlark_app():
         # without it, though, and describe_exception redacts credentials and
         # truncates -- the same trade-off every other handler here makes.
         logger.exception("[Starlark] File error uploading starlark app: %s", err)
-        return jsonify({'status': 'error', 'message': 'File error during upload',
+        return jsonify({'status': 'error',
+                        'message': _ownership_hint(err) or 'File error during upload',
                         'details': describe_exception(err)}), 500
     except ImportError as err:
         logger.exception("[Starlark] Module load error uploading starlark app: %s", err)
@@ -702,6 +734,16 @@ def install_from_tronbyte_repository():
 
     except Exception as e:
         logger.exception("[Starlark] install_from_tronbyte_repository failed")
+        hint = _ownership_hint(e)
+        if hint:
+            # `details` is kept deliberately. CodeQL flags it as information
+            # exposure, but this package's rule is "if it returns 5xx, it says
+            # why" -- enforced by test_no_api_v3_handler_discards_its_exception,
+            # whose PRE_EXISTING allowance may shrink and never grow. The
+            # Starlark routes are exactly the ones that policy was written for:
+            # they answered 500 with no detail for three releases. It stays.
+            return jsonify({'status': 'error', 'message': hint,
+                            'details': describe_exception(e)}), 500
         return jsonify({'status': 'error', 'message': 'Failed to install from repository', 'details': describe_exception(e)}), 500
 @api_v3.route('/starlark/repository/categories', methods=['GET'])
 def get_tronbyte_categories():

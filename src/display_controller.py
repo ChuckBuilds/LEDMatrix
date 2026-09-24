@@ -95,6 +95,9 @@ class DisplayController:
         self.config_manager = config_manager  # Keep for backward compatibility
         self.config = self.config_service.get_config()
         self.cache_manager = CacheManager()
+        # The web interface's /api/v3/errors/* read what this publishes.
+        from src.error_aggregator import start_error_snapshot_publisher
+        start_error_snapshot_publisher(self.cache_manager)
         logger.info("Config loaded in %.3f seconds (hot-reload: %s)", time.time() - start_time, enable_hot_reload)
         
         # Validate startup configuration
@@ -402,6 +405,11 @@ class DisplayController:
         except Exception:  # pylint: disable=broad-except
             logger.exception("Plugin system initialization failed")
             self.plugin_manager = None
+
+        # The web UI's Fonts tab ("Used by") reads what this publishes.
+        from src.font_usage import start_font_usage_publisher
+        self._font_usage_publisher = start_font_usage_publisher(
+            self.cache_manager, self.font_manager, self.plugin_manager)
 
         # Display rotation state
         self.current_mode_index = 0
@@ -3338,6 +3346,8 @@ class DisplayController:
                 self.config_service.shutdown()
             except Exception as e:
                 logger.warning("Error shutting down config service: %s", e)
+        if getattr(self, '_font_usage_publisher', None) is not None:
+            self._font_usage_publisher.stop()
         logger.info("Cleaning up display controller...")
         if hasattr(self, 'display_manager'):
             self.display_manager.cleanup()

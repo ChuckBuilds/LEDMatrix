@@ -460,15 +460,6 @@ See the [Plugin Store documentation](https://github.com/ChuckBuilds/ledmatrix-pl
 
 For plugin development, the `plugins/hello-world/` plugin in the [ledmatrix-plugins](https://github.com/ChuckBuilds/ledmatrix-plugins) repository is a starter template.
 
-### Visual Skins for Scoreboards
-
-**Not supported yet.** Skins are meant to restyle a sports scoreboard's
-live/recent/upcoming screens without forking the plugin, but the current
-scoreboard plugins don't render them: a selected skin has no effect. The web
-UI doesn't offer skin install or selection for that reason. The skin system
-and its docs stay in place for when scoreboards adopt it; see
-[docs/SKIN_SYSTEM.md](docs/SKIN_SYSTEM.md) for why.
-
 **Built-in Managers Deprecated**: The built-in managers (hockey, football, stocks, etc.) are now deprecated and have been moved to the plugin system. **You must install replacement plugins from the Plugin Store** in the web interface instead. The plugin system provides the same functionality with better maintainability and extensibility.
 </details>
 
