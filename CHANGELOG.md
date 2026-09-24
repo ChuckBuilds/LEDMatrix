@@ -19,6 +19,14 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+- Display and Vegas:
+  - Vegas `max_cycle_duration` defaults to 240 s when unset, as documented (it was 600 s). The Vegas defaults are now defined once.
+  - The display controller stops Vegas mode on shutdown.
+  - Startup validation warnings are logged once, not twice.
+  - Vegas logs one INFO line per plugin-list refresh.
+  - `run.py -d` shows `display_manager` debug output.
+  - Removed: the Vegas staging buffer that was never filled (`swap_buffers()`, and `staging_count` / `current_index` in `get_buffer_status()`), unread `ContentSegment` fields, and `geometry.find_blank_cut()`.
+
 - The web service (`ledmatrix-web`) logs through `src.logging_config` like the
   display service, so `journalctl -p err -u ledmatrix-web` works. Successful
   GET/HEAD/OPTIONS requests (the UI's polling) are logged at DEBUG instead of
