@@ -328,6 +328,7 @@ This one-shot installer will automatically:
 - Install required system packages (git, python3, build tools, etc.)
 - Clone or update the LEDMatrix repository
 - Run the complete first-time installation script
+- Print the web interface address, then **reboot the Pi automatically** (your SSH session will disconnect; give it a few minutes to come back)
 
 The installation process typically takes 10-30 minutes depending on your internet connection and Pi model. Pi 3B/3B+ and other 1GB boards land at the top of that range, because the C++ library is compiled serially to stay within available memory. All errors are reported explicitly with actionable fixes.
 

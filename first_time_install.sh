@@ -1959,20 +1959,6 @@ if systemctl list-unit-files | grep -q "ledmatrix-wifi-monitor.service"; then
 fi
 
 echo ""
-if [ "$SKIP_REBOOT_PROMPT" = "1" ]; then
-    echo "Skipping reboot prompt as requested (--no-reboot-prompt)."
-elif [ "$ASSUME_YES" = "1" ]; then
-    echo "Non-interactive mode: rebooting now to apply changes..."
-    reboot
-else
-    read -p "A reboot is recommended to apply kernel and audio changes. Reboot now? (y/N): " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        echo "Rebooting now..."
-        reboot
-    fi
-fi
-
 echo "=========================================="
 echo "Installation Complete!"
 echo "=========================================="
@@ -2018,7 +2004,7 @@ if command -v nmcli >/dev/null 2>&1; then
     if [ -n "$WIFI_STATUS" ]; then
         echo "$WIFI_STATUS" | while IFS=':' read -r _ _ state; do
             if [ "$state" = "connected" ]; then
-                SSID=$(nmcli -t -f active,ssid device wifi 2>/dev/null | grep "^yes:" | cut -d: -f2 | head -1)
+                SSID=$(nmcli -t -f active,ssid device wifi 2>/dev/null | grep "^yes:" | cut -d: -f2 | head -1 || true)
                 if [ -n "$SSID" ]; then
                     echo "  ✓ Connected to: $SSID"
                 else
@@ -2152,3 +2138,22 @@ echo "   - Main config: $PROJECT_ROOT_DIR/config/config.json"
 echo "   - Secrets: $PROJECT_ROOT_DIR/config/config_secrets.json"
 echo ""
 echo "Enjoy your LED Matrix display!"
+
+# Reboot last. It used to come before the summary above, so with -y (and
+# the one-shot installer, which always passes -y) the reboot was already
+# under way while the summary printed, and the SSH session usually dropped
+# before any of it -- the web UI address included -- could be read.
+echo ""
+if [ "$SKIP_REBOOT_PROMPT" = "1" ]; then
+    echo "Skipping reboot prompt as requested (--no-reboot-prompt)."
+elif [ "$ASSUME_YES" = "1" ]; then
+    echo "Non-interactive mode: rebooting now to apply changes..."
+    reboot
+else
+    read -p "A reboot is recommended to apply kernel and audio changes. Reboot now? (y/N): " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        echo "Rebooting now..."
+        reboot
+    fi
+fi

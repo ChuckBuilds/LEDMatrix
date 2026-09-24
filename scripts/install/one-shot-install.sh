@@ -429,6 +429,13 @@ main() {
         print_step "Installation Complete!"
         print_success "LED Matrix has been successfully installed!"
         echo ""
+        # first_time_install.sh -y reboots as its last action, so by now the
+        # reboot is under way (unless LEDMATRIX_SKIP_REBOOT_PROMPT=1 was set).
+        if [ "${LEDMATRIX_SKIP_REBOOT_PROMPT:-0}" != "1" ]; then
+            echo "The installer has just started a reboot to finish setup, so this"
+            echo "session may disconnect now. Give the Pi a few minutes to come back, then:"
+            echo ""
+        fi
         echo "Next steps:"
         echo "  1. Configure your settings: sudo nano $REPO_DIR/config/config.json"
         if command -v hostname >/dev/null 2>&1; then
@@ -449,7 +456,7 @@ main() {
         else
             echo "  2. Or use the web interface: http://<your-pi-ip>:5000"
         fi
-        echo "  3. Start the service: sudo systemctl start ledmatrix.service"
+        echo "  3. The display service starts on boot; to start it by hand: sudo systemctl start ledmatrix.service"
         echo ""
     else
         print_error "Main installation script exited with code $INSTALL_EXIT_CODE"
