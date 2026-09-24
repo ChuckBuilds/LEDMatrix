@@ -349,6 +349,31 @@ A soak is only meaningful against a fixed workload. Compare runs with the same
 content and `--preview` setting, and alternate which build goes first when you
 A/B two of them. A live-API workload drifts over time.
 
+### Results: hdpi, 2026-09-24
+
+Pi 4, 4×128×64 on one chain (512×64), `gpio_slowdown` 3, cap 120 Hz, the
+GIL-releasing binding. Vegas mode with live content, 8-minute soaks with
+`--preview`, run in the order shown so each build went both first and last.
+
+| run | build | pacing | pwm_bits | refresh | late | 1 | 2 | 3–5 | 6+ | freezes |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | main | time-based, blended, 90 px/s | 8 | 94.5 Hz | 6.33% | 2,542 | 74 | 19 | 4 | 0 |
+| 2 | #628 | 1 px / refresh | 8 | 100.2 Hz | 0.66% | 238 | 32 | 30 | 5 | 2 |
+| 3 | #628 | 1 px / refresh | 8 | 100.3 Hz | 0.70% | 252 | 38 | 26 | 6 | 2 |
+| 4 | main | time-based, blended, 90 px/s | 8 | 94.5 Hz | 6.46% | 2,659 | 90 | 10 | 4 | 0 |
+| 5 | #628 | 1 px / 2 refreshes (53 px/s) | **7** | 107.2 Hz | 0.32% | 68 | 7 | 4 | 2 | 1 |
+
+- Blending cost the panel refresh rate as well as frames: 94.5 Hz against
+  ~100 Hz for the same hardware under whole-pixel pacing.
+- The freezes and the 3+ rows in the #628 runs line up with canvas-bound
+  plugins fetched on the render thread (`drain_deferred`): `news` took ~320 ms
+  and `hockey-scoreboard` ~660 ms there. Moving those
+  fetches off the render thread is proposed separately (offscreen rendering).
+- Run 5 changed two things at once: the speed, and `pwm_bits` (changed on the
+  rig between runs). Its lower late rate cannot be credited to either alone.
+- These soaks were taken before the recorder counted 1–2 s stalls as freezes,
+  so a stall of that length would be missing from these rows.
+
 ## Rebuilding the binding
 
 ```bash
