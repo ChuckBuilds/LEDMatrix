@@ -1,13 +1,14 @@
 """Display control, on-demand playback and preview.
 
-Routes decorate the shared `api_v3` Blueprint from ._common, so their
-endpoint names are unchanged by living here.
+Routes decorate the shared `api_v3` Blueprint from the package `__init__`,
+so their endpoint names are unchanged by living here.
 """
 from web_interface.blueprints.api_v3 import (
     _ensure_display_service_running,
     _get_display_service_status, _stop_display_service, api_v3,
-    jsonify, logger, os, request, uuid,
+    jsonify, logger, request, uuid,
 )
+from web_interface import display_preview
 import web_interface.blueprints.api_v3 as _pkg
 # Read through the module rather than bound by value: tests patch these
 # as module attributes, and a value binding would not see the patch.
@@ -30,13 +31,11 @@ def _cache_manager():
 
 @api_v3.route('/display/current', methods=['GET'])
 def get_display_current():
-    """Get current display state"""
-    import base64
-    from PIL import Image
-    import io
+    """The latest display preview, as the /stream/display SSE stream sends it.
 
-    snapshot_path = "/tmp/led_matrix_preview.png"
-
+    ``data`` is ``{timestamp, width, height, image}``; ``image`` is the
+    snapshot PNG base64-encoded, or null when there is none to show.
+    """
     # Get display dimensions from config: the logical size DisplayManager
     # renders at, so double-sided setups preview one screen
     from src.display_geometry import logical_size
@@ -46,26 +45,16 @@ def get_display_current():
     except Exception:
         width, height = logical_size({})
 
-    # Try to read snapshot file
-    image_data = None
-    if os.path.exists(snapshot_path):
-        try:
-            with Image.open(snapshot_path) as img:
-                # Convert to PNG and encode as base64
-                buffer = io.BytesIO()
-                img.save(buffer, format='PNG')
-                image_data = base64.b64encode(buffer.getvalue()).decode('utf-8')
-        except Exception as img_err:
-            # File might be being written or corrupted, return None
-            pass
+    try:
+        image = display_preview.read_snapshot_base64()
+    except FileNotFoundError:
+        image = None  # the display service has not written one yet
+    except OSError:
+        logger.warning("Could not read the display preview snapshot", exc_info=True)
+        image = None
 
-    display_data = {
-        'timestamp': _pkg.time.time(),
-        'width': width,
-        'height': height,
-        'image': image_data  # Base64 encoded image data or None if unavailable
-    }
-    return jsonify({'status': 'success', 'data': display_data})
+    return jsonify({'status': 'success',
+                    'data': display_preview.preview_payload(width, height, image)})
 @api_v3.route('/display/modes', methods=['GET'])
 def get_display_modes():
     """Every display mode that can be requested on-demand, with its plugin.

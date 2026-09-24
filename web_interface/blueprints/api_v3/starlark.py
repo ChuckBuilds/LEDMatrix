@@ -1,7 +1,7 @@
 """Starlark / Tronbyte app management routes.
 
-Routes decorate the shared `api_v3` Blueprint from ._common, so their
-endpoint names are unchanged by living here.
+Routes decorate the shared `api_v3` Blueprint from the package `__init__`,
+so their endpoint names are unchanged by living here.
 """
 import signal
 import threading
@@ -333,7 +333,6 @@ def uninstall_starlark_app(app_id):
         else:
             # Standalone: remove app dir and manifest entry. app_dir is the
             # path _validate_starlark_app_path checked, not a fresh join.
-            import shutil
             if app_dir.exists():
                 shutil.rmtree(app_dir)
             with _starlark_manifest_lock():
@@ -716,7 +715,6 @@ def install_from_tronbyte_repository():
                     success = _install_star_file(app_id, temp_path, install_metadata, assets_dir=temp_assets_dir)
             finally:
                 # Clean up temp assets directory
-                import shutil
                 try:
                     shutil.rmtree(temp_assets_dir)
                 except OSError:

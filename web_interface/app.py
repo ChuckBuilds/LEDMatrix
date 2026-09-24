@@ -46,6 +46,7 @@ _JOURNALCTL = shutil.which('journalctl')
 _SYSTEMCTL = shutil.which('systemctl')
 _VCGENCMD = shutil.which('vcgencmd')
 
+from web_interface import display_preview
 from web_interface.system_metrics import collect_system_metrics
 
 # Create Flask app
@@ -53,14 +54,10 @@ app = Flask(__name__)
 app.secret_key = os.urandom(24)
 config_manager = ConfigManager()
 
-# CSRF protection disabled for local-only application
-# CSRF is designed for internet-facing web apps to prevent cross-site request forgery.
-# For a local-only Raspberry Pi application, the threat model is different:
-# - If an attacker has network access to perform CSRF, they have other attack vectors
-# - All API endpoints are programmatic (HTMX/fetch) and don't include CSRF tokens
-# - Forms use HTMX which doesn't automatically include CSRF tokens
-# If you need CSRF protection (e.g., exposing to internet), properly implement CSRF tokens in HTMX forms
-csrf = None
+# No CSRF protection: the UI is meant for the local network, where anyone who
+# can forge a request can also send it directly, and neither the HTMX forms
+# nor the fetch() calls carry a token. Exposing the UI beyond the LAN needs
+# CSRF tokens added to both first.
 
 # Initialize rate limiting (prevent accidental abuse, not security)
 try:
@@ -92,8 +89,6 @@ except ImportError:
         "Install it with the Tools tab's 'Install Base Requirements' button or "
         "'pip install flask-compress'."
     )
-
-# Import cache functions from separate module to avoid circular imports
 
 # Initialize plugin managers - read plugins directory from config
 config = config_manager.load_config()
@@ -144,12 +139,7 @@ schema_manager = SchemaManager(
 )
 
 # Initialize operation queue for plugin operations
-# Use lazy_load=True to defer file loading until first use (improves startup time)
-operation_queue = PluginOperationQueue(
-    history_file=str(project_root / "data" / "plugin_operations.json"),
-    max_history=500,
-    lazy_load=True
-)
+operation_queue = PluginOperationQueue(max_history=500)
 
 # Initialize plugin state manager
 # Use lazy_load=True to defer file loading until first use (improves startup time)
@@ -242,7 +232,6 @@ def serve_plugin_asset(plugin_id, filename):
         if assets_dir is None:
             return jsonify({'status': 'error', 'message': 'Invalid asset path'}), 403
 
-        # Security check: ensure the assets directory exists and is within project_root
         if not assets_dir.exists() or not assets_dir.is_dir():
             return jsonify({'status': 'error', 'message': 'Asset directory not found'}), 404
 
@@ -699,7 +688,7 @@ def system_status_generator():
                 'power': _get_power_status()
             }
             yield status
-        except Exception as e:
+        except Exception:
             app.logger.error("SSE generator error", exc_info=True)
             yield {'error': 'An error occurred; see server logs'}
         time.sleep(10)  # Update every 10 seconds (reduced frequency for better performance)
@@ -707,9 +696,7 @@ def system_status_generator():
 # Display preview generator for SSE
 def display_preview_generator():
     """Generate display preview updates from snapshot file"""
-    import base64
-
-    snapshot_path = "/tmp/led_matrix_preview.png"  # nosec B108 - fixed path matches display_manager; only read here
+    snapshot_path = display_preview.SNAPSHOT_PATH
     # Viewer marker: this generator only runs while the broadcaster has
     # subscribers (it exits with no clients), so touching the marker each
     # loop tells the DISPLAY service a browser is actually watching — it
@@ -744,20 +731,8 @@ def display_preview_generator():
                 # Only read if file is new or has been updated
                 if last_modified is None or current_modified > last_modified:
                     try:
-                        # The snapshot is already a PNG, written atomically by
-                        # the display service (tmp + os.replace in
-                        # display_manager), so pass the raw bytes straight
-                        # through instead of PIL-decoding and re-encoding —
-                        # identical payload, much less CPU on the Pi.
-                        with open(snapshot_path, 'rb') as f:
-                            img_str = base64.b64encode(f.read()).decode('utf-8')
-
-                        preview_data = {
-                            'timestamp': time.time(),
-                            'width': width,
-                            'height': height,
-                            'image': img_str
-                        }
+                        preview_data = display_preview.preview_payload(
+                            width, height, display_preview.read_snapshot_base64(snapshot_path))
                         last_modified = current_modified
                         yield preview_data
                     except OSError:
@@ -765,27 +740,20 @@ def display_preview_generator():
                         # between mtime check and read); skip this update.
                         app.logger.debug("Preview snapshot read failed; skipping frame", exc_info=True)
             else:
-                # No snapshot available
-                yield {
-                    'timestamp': time.time(),
-                    'width': width,
-                    'height': height,
-                    'image': None
-                }
+                yield display_preview.preview_payload(width, height, None)
                 
-        except Exception as e:
+        except Exception:
             app.logger.error("SSE generator error", exc_info=True)
             yield {'error': 'An error occurred; see server logs'}
         
-        time.sleep(1.0)  # Check once per second — halves PIL encode overhead vs 0.5s
+        time.sleep(1.0)  # the snapshot is re-read only when its mtime changes
 
 # Logs generator for SSE
 def logs_generator():
     """Generate log updates from journalctl"""
     while True:
         try:
-            # Get recent logs from journalctl (simplified version)
-            # Note: User should be in systemd-journal group to read logs without sudo
+            # Reading the journal without sudo needs the systemd-journal group.
             try:
                 if not _JOURNALCTL:
                     yield {'timestamp': time.time(), 'logs': 'journalctl not found; cannot read logs'}
@@ -882,29 +850,19 @@ def stream_display():
 def stream_logs():
     return _sse_stream(_logs_broadcaster)
 
-# Exempt SSE streams from CSRF and apply a generous rate limit.
-# SSE connections are long-lived HTTP requests, not repeated API calls, so the
-# tight "20 per minute" default would be exhausted quickly on reconnects.
-if csrf:
-    csrf.exempt(stream_stats)
-    csrf.exempt(stream_display)
-    csrf.exempt(stream_logs)
-    # Note: api_v3 blueprint is exempted above after registration
-
+# Each SSE stream is one long-lived request, so only a (re)connect counts
+# against a limit. The streams get their own 200 per minute, tighter than the
+# 1000 per minute default, which bounds a client stuck reconnecting.
 if limiter:
     limiter.limit("200 per minute")(stream_stats)
     limiter.limit("200 per minute")(stream_display)
     limiter.limit("200 per minute")(stream_logs)
-
-# The pages blueprint's index now serves '/' directly (see the un-prefixed
-# blueprint registration above), so no redirect route is needed here.
 
 @app.route('/favicon.ico')
 def favicon():
     """Return 204 No Content for favicon to avoid 404 errors"""
     return '', 204
 
-_reconciliation_done = False
 _reconciliation_started = False
 import threading as _threading
 _reconciliation_lock = _threading.Lock()
@@ -912,18 +870,13 @@ _reconciliation_lock = _threading.Lock()
 def _run_startup_reconciliation() -> None:
     """Run state reconciliation in background to auto-repair missing plugins.
 
-    Reconciliation runs exactly once per process lifetime, regardless of
-    whether every inconsistency could be auto-fixed. Previously, a failed
-    auto-repair (e.g. a config entry referencing a plugin that no longer
-    exists in the registry) would reset ``_reconciliation_started`` to False,
-    causing the ``@app.before_request`` hook to re-trigger reconciliation on
-    every single HTTP request — an infinite install-retry loop that pegged
-    the CPU and flooded the log. Unresolved issues are now left in place for
-    the user to address via the UI; the reconciler itself also caches
-    per-plugin unrecoverable failures internally so repeated reconcile calls
-    stay cheap.
+    Runs once per process, whether or not every inconsistency could be fixed:
+    ``_reconciliation_started`` is never reset. Resetting it after a failed
+    repair (a config entry naming a plugin the registry no longer has) made
+    the ``before_request`` hook rerun reconciliation on every request, an
+    install-retry loop that pegged the CPU and flooded the log. Unresolved
+    issues are left for the user to address in the UI.
     """
-    global _reconciliation_done
     from src.logging_config import get_logger
     _logger = get_logger('reconciliation')
 
@@ -985,11 +938,6 @@ def _run_startup_reconciliation() -> None:
                     pass
     except Exception as e:
         _logger.error("[Reconciliation] Error: %s", e, exc_info=True)
-    finally:
-        # Always mark done — we do not want an unhandled exception (or an
-        # unresolved inconsistency) to cause the @before_request hook to
-        # retrigger reconciliation on every subsequent request.
-        _reconciliation_done = True
 
 # Run reconciliation in the background on first request
 @app.before_request

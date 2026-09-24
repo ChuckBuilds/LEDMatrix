@@ -370,6 +370,26 @@ def test_default_config_has_no_saved_networks(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_save_config_reports_a_failed_write(manager: WiFiManager, tmp_path: Path) -> None:
+    # A directory where the file should be: every write to it fails, as one
+    # to a root-owned wifi_config.json does for the web user.
+    blocked = tmp_path / "blocked.json"
+    blocked.mkdir()
+    manager.config_path = blocked
+
+    assert manager._save_config() is False
+    assert list(tmp_path.glob(".blocked.json.tmp.*")) == []
+
+
+@pytest.mark.unit
+def test_save_config_round_trips(manager: WiFiManager) -> None:
+    manager.config["auto_enable_ap_mode"] = False
+
+    assert manager._save_config() is True
+    assert json.loads(manager.config_path.read_text())["auto_enable_ap_mode"] is False
+
+
+@pytest.mark.unit
 def test_connecting_does_not_store_the_password(manager: WiFiManager) -> None:
     commands = []
 
@@ -389,3 +409,77 @@ def test_connecting_does_not_store_the_password(manager: WiFiManager) -> None:
         "the new-connection path was not reached"
     assert "hunter22" not in json.dumps(manager.config)
     assert "hunter22" not in manager.config_path.read_text()
+
+
+# ---------------------------------------------------------------------------
+# 7. Disconnect takes the saved profile down
+# ---------------------------------------------------------------------------
+
+def _profile_nmcli(profiles: dict):
+    """A fake subprocess.run for `nmcli connection show` over ``profiles``
+    (profile name -> SSID), recording every command it is given."""
+    commands = []
+
+    def fake_run(cmd, *args, **kwargs):
+        commands.append(cmd)
+        if cmd == ["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show"]:
+            lines = [name.replace(":", "\\:") + ":802-11-wireless" for name in profiles]
+            lines.append("Wired connection 1:802-3-ethernet")
+            return _ok(stdout="\n".join(lines) + "\n")
+        if cmd[:4] == ["nmcli", "-g", "802-11-wireless.ssid", "connection"]:
+            return _ok(stdout=profiles.get(cmd[-1], "") + "\n")
+        if cmd[:3] == ["nmcli", "connection", "show"]:
+            return _ok() if cmd[3] in profiles else _fail()
+        # nmcli rejects 802-11-wireless.ssid as a `connection show -f` column.
+        if "802-11-wireless.ssid" in cmd:
+            return _fail(stderr="Error: invalid field '802-11-wireless.ssid'")
+        return _ok()
+
+    return fake_run, commands
+
+
+@pytest.mark.unit
+def test_find_profile_for_ssid_matches_by_ssid_not_name(manager: WiFiManager) -> None:
+    fake_run, _ = _profile_nmcli({"home: upstairs": "HomeNet", "Office": "OfficeNet"})
+    with patch("src.wifi_manager.subprocess.run", side_effect=fake_run):
+        assert manager._find_profile_for_ssid("HomeNet") == "home: upstairs"
+        assert manager._find_profile_for_ssid("OfficeNet") == "Office"
+        assert manager._find_profile_for_ssid("Elsewhere") is None
+
+
+@pytest.mark.unit
+def test_disconnect_takes_the_profile_down(manager: WiFiManager) -> None:
+    from src.wifi_manager import WiFiStatus
+
+    fake_run, commands = _profile_nmcli({"Home profile": "HomeNet"})
+    with patch("src.wifi_manager.subprocess.run", side_effect=fake_run), \
+         patch("src.wifi_manager.time.sleep"), \
+         patch.object(manager, "get_wifi_status",
+                      return_value=WiFiStatus(connected=True, ssid="HomeNet")):
+        ok, _ = manager.disconnect_from_network(skip_ap_check=True)
+
+    assert ok
+    assert ["nmcli", "connection", "down", "Home profile"] in commands
+    assert ["nmcli", "device", "disconnect", "wlan0"] in commands
+
+
+# ---------------------------------------------------------------------------
+# 8. The nmcli Wi-Fi list parser both scan paths share
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+def test_nmcli_wifi_list_parsing() -> None:
+    out = (
+        "HomeNet:40:WPA2:2437 MHz\n"
+        "Cafe:80::5180 MHz\n"
+        "HomeNet:90:WPA2:5180 MHz\n"   # duplicate SSID: first line wins
+        ":70:WPA2:2412 MHz\n"          # hidden network
+        "Broken:notanumber:WPA2:2412 MHz\n"
+        "Modern:60:WPA3 SAE:5745 MHz\n"
+    )
+    networks = WiFiManager._parse_nmcli_wifi_list(out)
+    assert [(n.ssid, n.signal, n.security, n.frequency) for n in networks] == [
+        ("Cafe", 80, "open", 5180.0),
+        ("Modern", 60, "wpa3", 5745.0),
+        ("HomeNet", 40, "wpa2", 2437.0),
+    ]

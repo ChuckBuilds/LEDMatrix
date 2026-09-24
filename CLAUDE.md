@@ -13,14 +13,17 @@
   loader does NOT fall back to it — `PluginManager.discover_plugins()`
   (`src/plugin_system/plugin_manager.py`) scans only the configured
   directory. Fallbacks exist in two narrower places: store operations
-  (`StoreManager._find_plugin_path()` in `store_manager.py`) and schema
-  lookup (`SchemaManager.get_schema_path()` in `schema_manager.py`,
-  which probes `plugins/` *before* `plugin-repos/`).
+  (`PluginStoreManager._find_plugin_path()` in `store_manager.py`, which
+  searches `store_search_dirs()` from `plugin_dirs.py`) and schema lookup
+  (`SchemaManager.get_schema_path()` in `schema_manager.py`, which probes
+  `plugins/` *before* `plugin-repos/`).
+- `src/plugin_system/plugin_dirs.py` — the one resolver for "which directory
+  holds plugin X" (manifest `id` first, then `<id>` / `ledmatrix-<id>`)
 
 ## Plugin System
 - Plugins inherit from `BasePlugin` in `src/plugin_system/base_plugin.py`
 - Required abstract methods: `update()`, `display(force_clear=False)`
-- Each plugin needs: `manifest.json`, `config_schema.json`, `manager.py`, `requirements.txt`
+- Each plugin needs: `manifest.json`, `config_schema.json`, and the entry point (`manager.py` by default); `requirements.txt` if it has dependencies. Required manifest fields: `docs/PLUGIN_API_REFERENCE.md#manifest-required-fields`
 - Plugin instantiation args: `plugin_id, config, display_manager, cache_manager, plugin_manager`
 - Config schemas use JSON Schema Draft-7
 - Display dimensions: always read dynamically from `self.display_manager.width/height` — not `display_manager.matrix.width/height`, because `matrix` is `None` when hardware init fails (the properties fall back to the canvas size)
@@ -40,14 +43,14 @@
 - Official plugins live in the `ledmatrix-plugins` monorepo (not individual repos)
 - Plugin repo naming convention: `ledmatrix-<plugin-id>` (e.g., `ledmatrix-football-scoreboard`)
 - `plugins.json` registry at `https://raw.githubusercontent.com/ChuckBuilds/ledmatrix-plugins/main/plugins.json`
-- Store manager (`src/plugin_system/store_manager.py`) handles install/update/uninstall
-- Monorepo plugins are installed via ZIP extraction (no `.git` directory)
+- Store manager (`PluginStoreManager` in `src/plugin_system/store_manager.py`) handles install/update/uninstall
+- Monorepo plugins are installed without a `.git` directory: GitHub Trees API + raw downloads, falling back to ZIP extraction
 - Update detection for monorepo plugins uses version comparison (manifest version vs registry latest_version)
 - Plugin configs stored in `config/config.json`, NOT in plugin directories — safe across reinstalls
 - Third-party plugins can use their own repo URL with empty `plugin_path`
 
 ## Common Pitfalls
-- paho-mqtt 2.x needs `callback_api_version=mqtt.CallbackAPIVersion.VERSION1` for v1 compat
+- paho-mqtt 2.x requires a `CallbackAPIVersion` argument: `VERSION1` for code written against v1 callback signatures (the MQTT bridge uses `VERSION2`)
 - BasePlugin uses `get_logger()` from `src.logging_config`, not standard `logging.getLogger()`
 - `DisplayManager` has no `draw_image()` — paste onto the PIL image directly:
   `self.display_manager.image.paste(img, (x, y))` then `update_display()`

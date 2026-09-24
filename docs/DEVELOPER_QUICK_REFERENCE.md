@@ -54,8 +54,8 @@ rows = self.layout.bounds.inset(1).split_v(3, 1, gap=1)
 self.draw_fit("12:34", rows[0])                 # largest crisp font that fits
 self.draw_image(logo, rows[1], mode="fill_height", crop_to_ink=True)
 
-# Weather icons
-display_manager.draw_weather_icon("rain", x=10, y=10, size=16)
+# Weather icons: draw_weather_icon() is deprecated, removed in 3.7.0 —
+# draw your own icons (the weather plugin ships WeatherIcons)
 
 # Scrolling state
 display_manager.set_scrolling_state(True)
@@ -72,12 +72,14 @@ cache_manager.delete("key")       # alias for clear_cache(key)
 
 # Advanced caching
 data = cache_manager.get_cached_data_with_strategy("key", data_type="weather")
-data = cache_manager.get_background_cached_data("key", sport_key="nhl")
 
 # Strategy
 strategy = cache_manager.get_cache_strategy("weather")
-interval = cache_manager.get_sport_live_interval("nhl")
 ```
+
+`get_background_cached_data()` (use `get()`) and `get_sport_live_interval()`
+are deprecated, removed in 3.7.0. See
+[Deprecated APIs](PLUGIN_API_REFERENCE.md#deprecated-apis).
 
 ## Plugin Manager Quick Methods
 
@@ -85,7 +87,8 @@ interval = cache_manager.get_sport_live_interval("nhl")
 # Get plugins
 plugin = plugin_manager.get_plugin("plugin-id")
 all_plugins = plugin_manager.get_all_plugins()
-enabled = plugin_manager.get_enabled_plugins()
+# get_enabled_plugins() is deprecated, removed in 3.7.0 — check `enabled`
+# on the entries in plugin_manager.plugins
 
 # Get info
 info = plugin_manager.get_plugin_info("plugin-id")
@@ -168,7 +171,7 @@ def display(self, force_clear=False):
 
 - [ ] Plugin inherits from `BasePlugin`
 - [ ] Implements `update()` and `display()` methods
-- [ ] `manifest.json` with required fields
+- [ ] `manifest.json` with the [required fields](PLUGIN_API_REFERENCE.md#manifest-required-fields)
 - [ ] `config_schema.json` for web UI (recommended)
 - [ ] `README.md` with documentation
 - [ ] Error handling implemented

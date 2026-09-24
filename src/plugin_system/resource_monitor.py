@@ -33,7 +33,14 @@ class ResourceLimits:
 
 @dataclass
 class ResourceMetrics:
-    """Resource usage metrics for a plugin."""
+    """Resource usage metrics for a plugin.
+
+    ``memory_mb`` is the largest growth in this *process's* resident memory
+    seen across a single monitored call -- a high-water mark, not current
+    usage, and not the plugin's own footprint (another thread allocating
+    during the call counts too). ``cpu_percent`` is the whole process's CPU
+    use since the previous sample.
+    """
     memory_mb: float = 0.0
     cpu_percent: float = 0.0
     execution_time: float = 0.0
@@ -42,11 +49,6 @@ class ResourceMetrics:
     max_execution_time: float = 0.0
     min_execution_time: float = float('inf')
     last_update_time: float = field(default_factory=time.time)
-    
-    def update_average_execution_time(self):
-        """Update average execution time."""
-        if self.call_count > 0:
-            self.total_execution_time = self.total_execution_time / self.call_count
 
 
 #: How often a plugin's metrics are written to the cache, in seconds.
@@ -287,7 +289,8 @@ class PluginResourceMonitor:
             
             # Calculate execution time
             execution_time = time.time() - start_time
-            
+            memory_growth_mb = 0.0
+
             # Update metrics
             with self._lock:
                 metrics.execution_time = execution_time
@@ -302,17 +305,17 @@ class PluginResourceMonitor:
                 
                 # Update memory and CPU if monitoring enabled
                 if self.enable_monitoring:
-                    end_memory = self._get_process_memory_mb()
-                    metrics.memory_mb = max(metrics.memory_mb, end_memory - start_memory)
+                    memory_growth_mb = self._get_process_memory_mb() - start_memory
+                    metrics.memory_mb = max(metrics.memory_mb, memory_growth_mb)
                     # CPU is harder to measure per-call, so we track it separately
                     metrics.cpu_percent = self._get_process_cpu_percent()
-                
+
                 # Persist metrics, at most once per interval per plugin.
                 self._persist_metrics(plugin_id, metrics)
-            
-            # Check limits
+
             if limits:
-                self._check_limits(plugin_id, metrics, limits, execution_time)
+                self._check_limits(plugin_id, metrics, limits, execution_time,
+                                   memory_growth_mb)
             
             return result
             
@@ -326,9 +329,17 @@ class PluginResourceMonitor:
                 metrics.last_update_time = time.time()
             raise
     
-    def _check_limits(self, plugin_id: str, metrics: ResourceMetrics, 
-                     limits: ResourceLimits, execution_time: float) -> None:
-        """Check if plugin has exceeded resource limits."""
+    def _check_limits(self, plugin_id: str, metrics: ResourceMetrics,
+                      limits: ResourceLimits, execution_time: float,
+                      memory_growth_mb: float) -> None:
+        """Raise ResourceLimitExceeded if this call went over a limit.
+
+        Execution time and memory growth are this call's own; CPU is the
+        latest process sample. Judging memory by the stored high-water mark
+        (``metrics.memory_mb``) instead would fail every call after the first
+        expensive one, so the health tracker's circuit breaker would reopen
+        on every recovery probe and the plugin would never update again.
+        """
         warnings = []
         errors = []
         
@@ -343,13 +354,13 @@ class PluginResourceMonitor:
             )
         
         # Check memory
-        if limits.max_memory_mb and metrics.memory_mb > limits.max_memory_mb:
+        if limits.max_memory_mb and memory_growth_mb > limits.max_memory_mb:
             errors.append(
-                f"Memory usage {metrics.memory_mb:.2f}MB exceeds limit {limits.max_memory_mb:.2f}MB"
+                f"Memory growth {memory_growth_mb:.2f}MB exceeds limit {limits.max_memory_mb:.2f}MB"
             )
-        elif limits.max_memory_mb and metrics.memory_mb > limits.max_memory_mb * limits.warning_threshold:
+        elif limits.max_memory_mb and memory_growth_mb > limits.max_memory_mb * limits.warning_threshold:
             warnings.append(
-                f"Memory usage {metrics.memory_mb:.2f}MB approaching limit {limits.max_memory_mb:.2f}MB"
+                f"Memory growth {memory_growth_mb:.2f}MB approaching limit {limits.max_memory_mb:.2f}MB"
             )
         
         # Check CPU
