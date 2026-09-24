@@ -794,7 +794,9 @@ class LogoDownloader:
             return False
         try:
             logo_url = data["team"]["logos"][0]["href"]
-        except KeyError:
+        except (KeyError, IndexError, TypeError):
+            # A team without logos comes back with an empty list.
+            logger.debug(f"No logo URL for team {team_id} in {league}")
             return False
         # Download the logo
         success = self.download_logo(logo_url, logo_path, team_abbreviation)
@@ -824,19 +826,34 @@ class LogoDownloader:
         logger.info(f"Overall logo download results: {total_downloaded} downloaded, {total_failed} failed")
         return results
     
-    def create_placeholder_logo(self, team_abbreviation: str, logo_dir: str) -> bool:
-        """Create a placeholder logo when real logo cannot be downloaded."""
+    def create_placeholder_logo(self, team_abbreviation: str, logo_dir: str,
+                                filepath: Optional[Path] = None) -> bool:
+        """Write a grey placeholder with the team abbreviation on it, for when
+        the real logo cannot be downloaded.
+
+        Args:
+            team_abbreviation: Drawn on the placeholder.
+            logo_dir: Directory for the file when ``filepath`` is not given;
+                the file is then ``<normalize_abbreviation(abbr)>.png``.
+            filepath: The exact path to write, which is where the caller will
+                look for the logo. ``logo_dir`` is ignored when it is given.
+
+        Returns:
+            True if the placeholder was written, False otherwise (logged).
+        """
+        if filepath is not None:
+            filepath = Path(filepath)
+            logo_dir = str(filepath.parent)
         try:
-            # Ensure the logo directory exists
             if not self.ensure_logo_directory(logo_dir):
                 logger.error(f"Failed to create logo directory: {logo_dir}")
                 return False
-            
-            filename = f"{self.normalize_abbreviation(team_abbreviation)}.png"
-            filepath = Path(logo_dir) / filename
 
-            # Create a simple placeholder logo
-            logo = Image.new('RGBA', (64, 64), (100, 100, 100, 255))  # Gray background
+            if filepath is None:
+                filename = f"{self.normalize_abbreviation(team_abbreviation)}.png"
+                filepath = Path(logo_dir) / filename
+
+            logo = Image.new('RGBA', PLACEHOLDER_SIZE, PLACEHOLDER_BG)
             draw = ImageDraw.Draw(logo)
             
             # Try to load a font, fallback to default
@@ -855,8 +872,8 @@ class LogoDownloader:
                 bbox = draw.textbbox((0, 0), text, font=font)
                 text_width = bbox[2] - bbox[0]
                 text_height = bbox[3] - bbox[1]
-                x = (64 - text_width) // 2
-                y = (64 - text_height) // 2
+                x = (PLACEHOLDER_SIZE[0] - text_width) // 2
+                y = (PLACEHOLDER_SIZE[1] - text_height) // 2
                 draw.text((x, y), text, font=font, fill=(255, 255, 255, 255))
             else:
                 # Fallback without font
@@ -963,14 +980,19 @@ def download_missing_logo(league: str, team_id: str, team_abbreviation: str, log
     Convenience function to download a missing team logo.
     
     Args:
-        team_abbreviation: Team abbreviation (e.g., 'UGA', 'BAMA', 'TA&M')
         league: League identifier (e.g., 'ncaa_fb', 'nfl')
-        logo_path: Full path to where the logo should be saved
+        team_id: ESPN team id, used to look up the logo URL when
+            ``logo_url`` is not given
+        team_abbreviation: Team abbreviation (e.g., 'UGA', 'BAMA', 'TA&M')
+        logo_path: Where the logo (or placeholder) is written; relative paths
+            are relative to the install root
         logo_url: Optional direct URL to the logo
         create_placeholder: Whether to create a placeholder if download fails
         
     Returns:
-        True if logo exists or was successfully downloaded, False otherwise
+        True if a logo or placeholder is at ``logo_path`` afterwards (it was
+        already there, was downloaded, or a placeholder was written),
+        False otherwise.
     """
     downloader = shared_downloader()
 
@@ -1011,7 +1033,7 @@ def download_missing_logo(league: str, team_id: str, team_abbreviation: str, log
             time.sleep(0.1)  # Small delay
         if not success and create_placeholder:
             logger.info(f"Creating placeholder logo for {team_abbreviation}")
-            success = downloader.create_placeholder_logo(team_abbreviation, logo_dir)
+            success = downloader.create_placeholder_logo(team_abbreviation, logo_dir, filepath=filepath)
         return success
 
     success = downloader.download_missing_logo_for_team(league, team_id, team_abbreviation, logo_path)
@@ -1019,7 +1041,7 @@ def download_missing_logo(league: str, team_id: str, team_abbreviation: str, log
     if not success and create_placeholder:
         logger.info(f"Creating placeholder logo for {team_abbreviation}")
         # Create placeholder as fallback
-        success = downloader.create_placeholder_logo(team_abbreviation, logo_dir)
+        success = downloader.create_placeholder_logo(team_abbreviation, logo_dir, filepath=filepath)
     
     if success:
         logger.info(f"Successfully handled logo for {team_abbreviation}")

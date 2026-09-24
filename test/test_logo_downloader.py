@@ -357,6 +357,33 @@ class TestRefreshPlaceholderTimestamp:
         assert refresh_placeholder_timestamp(tmp_path / "nope.png") is False
 
 
+class TestFailurePaths:
+    def test_a_team_without_logos_is_a_failed_download(self, tmp_path):
+        downloader = LogoDownloader()
+        with patch.object(downloader, "fetch_single_team",
+                          return_value={"team": {"logos": []}}):
+            assert downloader.download_missing_logo_for_team(
+                "nfl", "1", "XYZ", tmp_path / "XYZ.png") is False
+
+    def test_placeholder_is_written_where_the_caller_looks(self, tmp_path):
+        """A path that is not <normalized abbreviation>.png (the plugin's own
+        file naming, or an abbreviation normalize_abbreviation rewrites)
+        still ends up holding the placeholder, so True means it exists."""
+        logo_path = tmp_path / "TA&M.png"
+        with patch.object(LogoDownloader, "download_logo", return_value=False):
+            assert download_missing_logo(
+                "ncaa_fb", "245", "TA&M", logo_path,
+                logo_url="http://example/tamu.png") is True
+        assert is_placeholder_logo(logo_path)
+        assert not (tmp_path / "TAANDM.png").exists()
+
+    def test_placeholder_uses_the_placeholder_geometry(self, tmp_path):
+        assert LogoDownloader().create_placeholder_logo("AB", str(tmp_path))
+        with Image.open(tmp_path / "AB.png") as img:
+            assert img.size == PLACEHOLDER_SIZE
+            assert img.convert("RGBA").getpixel((0, 0)) == PLACEHOLDER_BG
+
+
 # ---------------------------------------------------------------------------
 # download_logo: the download the scoreboard plugins actually use
 #
