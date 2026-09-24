@@ -51,20 +51,25 @@ if [ ${#MISSING_PACKAGES[@]} -gt 0 ]; then
     
     # Install packages automatically (no prompt)
     # Use apt directly if running as root, otherwise use sudo
+    PACKAGES_OK=true
     if [ "$EUID" -eq 0 ]; then
         apt update || echo "⚠ apt update failed, continuing anyway..."
         apt install -y "${MISSING_PACKAGES[@]}" || {
+            PACKAGES_OK=false
             echo "⚠ Package installation failed, but continuing with WiFi monitor setup"
             echo "  You may need to install packages manually: apt install -y ${MISSING_PACKAGES[*]}"
         }
     else
         sudo apt update || echo "⚠ apt update failed, continuing anyway..."
         sudo apt install -y "${MISSING_PACKAGES[@]}" || {
+            PACKAGES_OK=false
             echo "⚠ Package installation failed, but continuing with WiFi monitor setup"
             echo "  You may need to install packages manually: sudo apt install -y ${MISSING_PACKAGES[*]}"
         }
     fi
-    echo "✓ Package installation completed"
+    if [ "$PACKAGES_OK" = true ]; then
+        echo "✓ Package installation completed"
+    fi
 fi
 
 # Render the unit from systemd/ledmatrix-wifi-monitor.service rather than

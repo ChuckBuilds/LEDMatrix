@@ -9,11 +9,56 @@ Complete API reference for plugin developers. This document describes all method
 
 ## Table of Contents
 
+- [Manifest Required Fields](#manifest-required-fields)
 - [BasePlugin](#baseplugin)
 - [Display Manager](#display-manager)
 - [Cache Manager](#cache-manager)
 - [Plugin Manager](#plugin-manager)
 - [Deprecated APIs](#deprecated-apis)
+
+---
+
+## Manifest Required Fields
+
+Three parts of core check `manifest.json`, each for a different set of
+fields:
+
+| Check | Fields | What happens when one is missing |
+|---|---|---|
+| JSON schema, [`schema/manifest_schema.json`](../schema/manifest_schema.json) | `id`, `name`, `version`, `author`, `entry_point`, `class_name`, `compatible_versions` | Install from URL logs a warning (`PluginStoreManager._validate_manifest_schema()`); nothing is refused |
+| Plugin Store install, [`src/plugin_system/store_manager.py`](../src/plugin_system/store_manager.py) | `id`, `name`, `class_name`, `display_modes` | Install is refused. A registry install first tries to detect a missing `class_name` from the entry-point file |
+| Plugin loader, [`src/plugin_system/plugin_loader.py`](../src/plugin_system/plugin_loader.py) | `class_name` | The plugin fails to load |
+
+Defaults and other uses:
+
+- `entry_point` defaults to `manager.py`; the store writes the default back
+  into the manifest on install.
+- `compatible_versions` (a list of semver ranges such as `">=2.0.0"`) is how
+  the store decides whether a plugin can run on this core. An install is
+  refused only when the field excludes the running version
+  (`compatibility.check()` in
+  [`src/plugin_system/compatibility.py`](../src/plugin_system/compatibility.py)).
+- `version` is compared with the registry's `latest_version` to decide
+  whether an update is available.
+- If `display_modes` is empty at load time, the display controller uses the
+  plugin id as the only mode.
+
+**Set all eight:** `id`, `name`, `version`, `author`, `entry_point`,
+`class_name`, `display_modes`, `compatible_versions`. That satisfies every
+check. The schema lists the optional fields.
+
+```json
+{
+  "id": "my-plugin",
+  "name": "My Plugin",
+  "version": "1.0.0",
+  "author": "YourName",
+  "entry_point": "manager.py",
+  "class_name": "MyPlugin",
+  "display_modes": ["my-plugin"],
+  "compatible_versions": [">=2.0.0"]
+}
+```
 
 ---
 
@@ -432,82 +477,17 @@ self.display_manager.update_display()
 
 This is the canonical way to render arbitrary images.
 
-### Weather Icons
+### Weather Icons (deprecated)
 
-#### `draw_weather_icon(condition: str, x: int, y: int, size: int = 16) -> None`
+> Deprecated, removed in 3.7.0 — draw your own icons (the weather plugin
+> ships `WeatherIcons`). See [Deprecated APIs](#deprecated-apis).
 
-Draw a weather icon based on the condition string.
-
-**Parameters**:
-- `condition` (str): Weather condition (e.g., "clear", "cloudy", "rain", "snow", "storm")
-- `x` (int): X position
-- `y` (int): Y position
-- `size` (int): Icon size in pixels (default: 16)
-
-**Supported Conditions**:
-- `"clear"`, `"sunny"` → Sun icon
-- `"clouds"`, `"cloudy"`, `"partly cloudy"` → Cloud icon
-- `"rain"`, `"drizzle"`, `"shower"` → Rain icon
-- `"snow"`, `"sleet"`, `"hail"` → Snow icon
-- `"thunderstorm"`, `"storm"` → Storm icon
-
-**Example**:
-```python
-self.display_manager.draw_weather_icon("rain", x=10, y=10, size=16)
-```
-
-#### `draw_sun(x: int, y: int, size: int = 16) -> None`
-
-Draw a sun icon with rays.
-
-**Parameters**:
-- `x` (int): X position
-- `y` (int): Y position
-- `size` (int): Icon size (default: 16)
-
-#### `draw_cloud(x: int, y: int, size: int = 16, color: tuple = (200, 200, 200)) -> None`
-
-Draw a cloud icon.
-
-**Parameters**:
-- `x` (int): X position
-- `y` (int): Y position
-- `size` (int): Icon size (default: 16)
-- `color` (tuple): RGB color (default: light gray)
-
-#### `draw_rain(x: int, y: int, size: int = 16) -> None`
-
-Draw rain icon with cloud and droplets.
-
-#### `draw_snow(x: int, y: int, size: int = 16) -> None`
-
-Draw snow icon with cloud and snowflakes.
-
-#### `draw_text_with_icons(text: str, icons: List[tuple] = None, x: int = None, y: int = None, color: tuple = (255, 255, 255)) -> None`
-
-Draw text with weather icons at specified positions.
-
-**Parameters**:
-- `text` (str): Text to display
-- `icons` (List[tuple], optional): List of (icon_type, x, y) tuples
-- `x` (int, optional): X position for text
-- `y` (int, optional): Y position for text
-- `color` (tuple): Text color
-
-**Note**: Automatically calls `update_display()` after drawing.
-
-**Example**:
-```python
-icons = [
-    ("sun", 5, 5),
-    ("cloud", 100, 5)
-]
-self.display_manager.draw_text_with_icons(
-    "Weather: Sunny, Cloudy",
-    icons=icons,
-    x=10, y=20
-)
-```
+- `draw_weather_icon(condition, x, y, size=16)` — icon for a condition
+  string such as `"clear"`, `"clouds"`, `"rain"`, `"snow"`, `"storm"`
+- `draw_sun(x, y, size=16)`, `draw_cloud(x, y, size=16, color=(200, 200, 200))`,
+  `draw_rain(x, y, size=16)`, `draw_snow(x, y, size=16)`
+- `draw_text_with_icons(text, icons=None, x=None, y=None, color=(255, 255, 255))`
+  — text plus a list of `(icon_type, x, y)` icons; calls `update_display()`
 
 ### Scrolling State Management
 
@@ -600,6 +580,8 @@ Process any deferred updates if not currently scrolling. Called automatically by
 **Note**: Plugins typically don't need to call this directly.
 
 #### `get_scrolling_stats() -> dict`
+
+> Deprecated, removed in 3.7.0. See [Deprecated APIs](#deprecated-apis).
 
 Get current scrolling statistics for debugging.
 
@@ -742,6 +724,8 @@ data = self.cache_manager.get_with_auto_strategy("nhl_live_scores")
 
 #### `get_background_cached_data(key: str, sport_key: Optional[str] = None) -> Optional[Dict[str, Any]]`
 
+> Deprecated, removed in 3.7.0 — use `get()`. See [Deprecated APIs](#deprecated-apis).
+
 Get background service cached data with sport-specific intervals.
 
 **Parameters**:
@@ -779,6 +763,8 @@ max_age = strategy['max_age']  # Get configured max age
 
 #### `get_sport_live_interval(sport_key: str) -> int`
 
+> Deprecated, removed in 3.7.0. See [Deprecated APIs](#deprecated-apis).
+
 Get the live_update_interval for a specific sport from config.
 
 **Parameters**:
@@ -802,6 +788,8 @@ Extract data type from cache key to determine appropriate cache strategy.
 **Returns**: Inferred data type string
 
 #### `get_sport_key_from_cache_key(key: str) -> Optional[str]`
+
+> Deprecated, removed in 3.7.0. See [Deprecated APIs](#deprecated-apis).
 
 Extract sport key from cache key for sport-specific strategies.
 
@@ -847,9 +835,11 @@ for file_info in files:
     self.logger.info(f"Cache: {file_info['key']}, Age: {file_info['age_display']}")
 ```
 
-### Metrics Methods
+### Metrics Methods (deprecated)
 
 #### `get_cache_metrics() -> Dict[str, Any]`
+
+> Deprecated, removed in 3.7.0. See [Deprecated APIs](#deprecated-apis).
 
 Get cache performance metrics.
 
@@ -862,6 +852,8 @@ self.logger.info(f"Cache hit rate: {metrics['cache_hit_rate']:.2%}")
 ```
 
 #### `get_memory_cache_stats() -> Dict[str, Any]`
+
+> Deprecated, removed in 3.7.0. See [Deprecated APIs](#deprecated-apis).
 
 Get memory cache statistics.
 
@@ -906,6 +898,8 @@ for plugin_id, plugin in all_plugins.items():
 ```
 
 #### `get_enabled_plugins() -> List[str]`
+
+> Deprecated, removed in 3.7.0 — check `enabled` on the instances in `plugin_manager.plugins`. See [Deprecated APIs](#deprecated-apis).
 
 Get list of enabled plugin IDs.
 
@@ -985,9 +979,8 @@ def update(self):
 
 **Example - Checking if another plugin is enabled**:
 ```python
-enabled_plugins = self.plugin_manager.get_enabled_plugins()
-if "weather" in enabled_plugins:
-    # Weather plugin is enabled
+weather = self.plugin_manager.plugins.get("weather")
+if weather is not None and weather.enabled:
     pass
 ```
 

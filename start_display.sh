@@ -1,9 +1,6 @@
 #!/bin/bash
 
-# Get the current user
-CURRENT_USER=$(whoami)
-
-echo "Starting LED Matrix Display Service for user: $CURRENT_USER..."
+echo "Starting LED Matrix Display Service..."
 
 # Start the service
 sudo systemctl start ledmatrix.service

@@ -26,7 +26,6 @@ fi
 # Get the full paths to commands and validate each one
 MISSING_CMDS=()
 
-PYTHON_PATH=$(command -v python3)   || true
 SYSTEMCTL_PATH=$(command -v systemctl) || true
 REBOOT_PATH=$(command -v reboot)    || true
 POWEROFF_PATH=$(command -v poweroff)  || true
@@ -35,8 +34,8 @@ JOURNALCTL_PATH=$(command -v journalctl) || true
 SAFE_RM_PATH="$PROJECT_ROOT/scripts/fix_perms/safe_plugin_rm.sh"
 SAFE_PIP_INSTALL_PATH="$PROJECT_ROOT/scripts/fix_perms/safe_pip_install.sh"
 
-# Validate required commands (systemctl, bash, python3 are essential)
-for CMD_NAME in SYSTEMCTL_PATH BASH_PATH PYTHON_PATH; do
+# Validate required commands (systemctl and bash are essential)
+for CMD_NAME in SYSTEMCTL_PATH BASH_PATH; do
     CMD_VAL="${!CMD_NAME}"
     if [ -z "$CMD_VAL" ]; then
         MISSING_CMDS+=("$CMD_NAME")
@@ -70,7 +69,6 @@ fi
 . "$SUDOERS_LIB"
 
 echo "Command paths:"
-echo "  Python: $PYTHON_PATH"
 echo "  Systemctl: $SYSTEMCTL_PATH"
 echo "  Reboot: ${REBOOT_PATH:-(not found, skipping)}"
 echo "  Poweroff: ${POWEROFF_PATH:-(not found, skipping)}"
@@ -79,14 +77,24 @@ echo "  Journalctl: ${JOURNALCTL_PATH:-(not found, skipping)}"
 echo "  Safe plugin rm: $SAFE_RM_PATH"
 echo "  Safe pip install: $SAFE_PIP_INSTALL_PATH"
 
-# Create a temporary sudoers file
-TEMP_SUDOERS="/tmp/ledmatrix_web_sudoers_$$"
+# Create a temporary sudoers file. A predictable name in a world-writable
+# directory is a symlink target, and these rules end up in /etc/sudoers.d, so
+# let mktemp pick the name; the trap removes it however the script ends.
+TEMP_SUDOERS=$(mktemp "${TMPDIR:-/tmp}/ledmatrix_web_sudoers.XXXXXX") || {
+    echo "Error: could not create a temporary file" >&2
+    exit 1
+}
+trap 'rm -f "$TEMP_SUDOERS"' EXIT
 
 web_sudoers_rules "$WEB_USER" "$PROJECT_ROOT" "$SYSTEMCTL_PATH" "$BASH_PATH" \
     "$REBOOT_PATH" "$POWEROFF_PATH" "$JOURNALCTL_PATH" > "$TEMP_SUDOERS"
 
 # Never offer to install rules we have not parsed. A malformed drop-in in
 # /etc/sudoers.d makes sudo refuse every command for every user.
+# visudo lives in /usr/sbin, which is not on every user's PATH.
+if ! command -v visudo >/dev/null 2>&1 && [ -x /usr/sbin/visudo ]; then
+    PATH="$PATH:/usr/sbin"
+fi
 if command -v visudo >/dev/null 2>&1; then
     if ! visudo -c -f "$TEMP_SUDOERS" >/dev/null 2>&1; then
         echo ""
@@ -96,6 +104,8 @@ if command -v visudo >/dev/null 2>&1; then
         rm -f "$TEMP_SUDOERS"
         exit 1
     fi
+else
+    echo "⚠ visudo not found; the rules below have not been validated"
 fi
 
 echo ""
@@ -124,7 +134,7 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
     exit 0
 fi
 
-# Apply the configuration using visudo
+# Apply the configuration
 echo "Applying sudoers configuration..."
 # Harden the helper script: root-owned, not writable by web user
 echo "Hardening safe_plugin_rm.sh ownership..."
@@ -143,21 +153,29 @@ if ! sudo chmod 755 "$SAFE_PIP_INSTALL_PATH"; then
 fi
 
 if sudo cp "$TEMP_SUDOERS" /etc/sudoers.d/ledmatrix_web; then
+    # sudo reads /etc/sudoers.d files that are root-owned and not writable by
+    # group or other; 440 is the mode visudo and first_time_install.sh use.
+    if ! sudo chmod 440 /etc/sudoers.d/ledmatrix_web; then
+        echo "Warning: could not set mode 440 on /etc/sudoers.d/ledmatrix_web"
+    fi
     echo "Configuration applied successfully!"
     echo ""
     echo "Testing sudo access..."
     
-    # Test a few commands
-    if sudo -n systemctl status ledmatrix.service > /dev/null 2>&1; then
+    # Ask sudo whether two of the new rules let this user in without a
+    # password. `sudo -l CMD` answers from the rules without running CMD, so
+    # this does not depend on whether ledmatrix.service is running, and it
+    # tests commands the rules actually grant.
+    if sudo -n -l "$SYSTEMCTL_PATH" status ledmatrix.service > /dev/null 2>&1; then
         echo "✓ systemctl status ledmatrix.service - OK"
     else
-        echo "✗ systemctl status ledmatrix.service - Failed"
+        echo "✗ systemctl status ledmatrix.service - not allowed without a password"
     fi
-    
-    if sudo -n test -f "$PROJECT_ROOT/start_display.sh"; then
-        echo "✓ File access test - OK"
+
+    if sudo -n -l "$BASH_PATH" "$SAFE_RM_PATH" "$PROJECT_ROOT/plugin-repos/example" > /dev/null 2>&1; then
+        echo "✓ safe_plugin_rm.sh helper - OK"
     else
-        echo "✗ File access test - Failed"
+        echo "✗ safe_plugin_rm.sh helper - not allowed without a password"
     fi
     
     echo ""
