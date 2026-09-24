@@ -1591,24 +1591,21 @@ def get_github_auth_status():
         })
 @api_v3.route('/plugins/store/refresh', methods=['POST'])
 def refresh_plugin_store():
-    """Refresh plugin store repository"""
+    """Re-download the plugin registry, bypassing its cache.
+
+    Takes no body. Answers ``{status, message, plugin_count}``, the count
+    being the registry's entries. Commit metadata is not refreshed here: the
+    store list fetches it per plugin when it is shown.
+    """
     if not api_v3.plugin_store_manager:
         return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
 
-    data = request.get_json(silent=True) or {}
-    fetch_commit_info = data.get('fetch_commit_info', data.get('fetch_latest_versions', False))
-
-    # Force refresh the registry
     registry = api_v3.plugin_store_manager.fetch_registry(force_refresh=True)
     plugin_count = len(registry.get('plugins', []))
 
-    message = 'Plugin store refreshed'
-    if fetch_commit_info:
-        message += ' (with refreshed commit metadata from GitHub)'
-
     return jsonify({
         'status': 'success',
-        'message': message,
+        'message': 'Plugin store refreshed',
         'plugin_count': plugin_count
     })
 @api_v3.route('/plugins/config', methods=['POST'])
