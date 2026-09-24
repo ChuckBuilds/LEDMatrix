@@ -37,7 +37,7 @@ Going deeper:
 - [PLUGIN_CUSTOM_ICONS.md](PLUGIN_CUSTOM_ICONS.md)
 - [PLUGIN_REGISTRY_SETUP_GUIDE.md](PLUGIN_REGISTRY_SETUP_GUIDE.md) (+ [registry template](plugin_registry_template.json))
 - [STARLARK_APPS_GUIDE.md](STARLARK_APPS_GUIDE.md) — Starlark-based mini-apps
-- [widget-guide.md](widget-guide.md) — widget development
+- [Widget guide](../web_interface/static/v3/js/widgets/README.md) — built-in `x-widget`s and custom widgets
 - [ADAPTIVE_LAYOUT.md](ADAPTIVE_LAYOUT.md) — render legibly on any panel size (opt-in font/layout scaling)
 - [plugin-safety-harness.md](plugin-safety-harness.md) — test a plugin across every screen and matrix size
 
@@ -74,7 +74,7 @@ Going deeper:
 - [HOW_TO_RUN_TESTS.md](HOW_TO_RUN_TESTS.md) — running the test suite
 - [MULTI_ROOT_WORKSPACE_SETUP.md](MULTI_ROOT_WORKSPACE_SETUP.md) — multi-repo workspace
 - [MIGRATION_GUIDE.md](MIGRATION_GUIDE.md) — breaking changes between releases
-- [SPORTS_UNIFICATION.md](SPORTS_UNIFICATION.md) — how the sports scoreboard base classes are organized
+- [SPORTS_UNIFICATION.md](SPORTS_UNIFICATION.md) — how shared sports scoreboard code moves into `src/common`
 
 ## Audits
 
