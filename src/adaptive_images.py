@@ -29,13 +29,9 @@ from typing import Any, Optional, Tuple
 
 from PIL import Image
 
-# The one Pillow >= 9.1 compat shim (replaces the per-plugin copies).
-try:
-    RESAMPLE_LANCZOS = Image.Resampling.LANCZOS
-    RESAMPLE_NEAREST = Image.Resampling.NEAREST
-except AttributeError:  # Pillow < 9.1
-    RESAMPLE_LANCZOS = Image.LANCZOS
-    RESAMPLE_NEAREST = Image.NEAREST
+# Re-exported by src.common for plugins, which import them from there.
+RESAMPLE_LANCZOS = Image.Resampling.LANCZOS
+RESAMPLE_NEAREST = Image.Resampling.NEAREST
 
 FIT_MODES = ("contain", "cover", "fill_height", "stretch")
 
