@@ -100,24 +100,20 @@ class DisplayController:
         start_error_snapshot_publisher(self.cache_manager)
         logger.info("Config loaded in %.3f seconds (hot-reload: %s)", time.time() - start_time, enable_hot_reload)
         
-        # Validate startup configuration
+        # Validate startup configuration. Errors are logged, not fatal. The
+        # plugin checks need the plugin manager and run once it exists.
         try:
             from src.startup_validator import StartupValidator
             validator = StartupValidator(self.config_manager,
                                          cache_manager=self.cache_manager)
             is_valid, errors, warnings = validator.validate_all()
-            
-            if warnings:
-                for warning in warnings:
-                    logger.warning(f"Startup validation warning: {warning}")
-            
+            for warning in warnings:
+                logger.warning("Startup validation warning: %s", warning)
             if not is_valid:
-                error_msg = "Startup validation failed:\n" + "\n".join(f"  - {e}" for e in errors)
-                logger.error(error_msg)
-                # For now, log errors but continue - can be made stricter later
-                # validator.raise_on_errors()  # Uncomment to fail fast on errors
+                logger.error("Startup validation failed:\n%s",
+                             "\n".join(f"  - {e}" for e in errors))
         except Exception as e:
-            logger.warning(f"Startup validation could not be completed: {e}")
+            logger.warning("Startup validation could not be completed: %s", e)
 
         # Automatic updates need their health-check units, and this is the
         # one root process running project code, so it installs them while
@@ -296,22 +292,20 @@ class DisplayController:
             except Exception as e:
                 logger.warning("Could not enable plugin health/resource monitoring: %s", e)
 
-            # Validate plugins after plugin manager is created
+            # Only the plugin checks: validate_all() above has run the rest,
+            # and running it again logged every config warning twice.
             try:
                 from src.startup_validator import StartupValidator
                 validator = StartupValidator(self.config_manager, self.plugin_manager,
                                              cache_manager=self.cache_manager)
-                is_valid, errors, warnings = validator.validate_all()
-                
-                if warnings:
-                    for warning in warnings:
-                        logger.warning(f"Plugin validation warning: {warning}")
-                
-                if not is_valid:
-                    error_msg = "Plugin validation failed:\n" + "\n".join(f"  - {e}" for e in errors)
-                    logger.error(error_msg)
+                validator._validate_plugins()
+                for warning in validator.warnings:
+                    logger.warning("Plugin validation warning: %s", warning)
+                if validator.errors:
+                    logger.error("Plugin validation failed:\n%s",
+                                 "\n".join(f"  - {e}" for e in validator.errors))
             except Exception as e:
-                logger.warning(f"Plugin validation could not be completed: {e}")
+                logger.warning("Plugin validation could not be completed: %s", e)
 
             # Discover plugins
             discovered_plugins = self.plugin_manager.discover_plugins()
