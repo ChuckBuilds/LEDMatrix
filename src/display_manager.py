@@ -286,6 +286,10 @@ class DisplayManager:
         self._snapshot_cond = threading.Condition()
         self._snapshot_pending: Optional[Image.Image] = None
         self._snapshot_thread: Optional[threading.Thread] = None
+        self._snapshot_stop = False
+        # Held for the whole of each PNG write, by the writer thread and by
+        # the inline static path, so the two land on disk in order.
+        self._snapshot_write_lock = threading.Lock()
         self._viewer_check_ts = 0.0
         self._viewer_fresh = False
         self._viewer_was_fresh = False
@@ -1429,6 +1433,8 @@ class DisplayManager:
 
     def cleanup(self):
         """Clean up resources."""
+        if hasattr(self, '_snapshot_cond'):
+            self._stop_snapshot_writer()
         if hasattr(self, 'matrix') and self.matrix is not None:
             try:
                 self.matrix.Clear()
@@ -1793,7 +1799,12 @@ class DisplayManager:
             if self.is_currently_scrolling():
                 self._queue_snapshot(self.image.copy())
             else:
-                self._save_snapshot(self.image)
+                # A scroll that just ended can leave its last frame queued or
+                # mid-write; it must not land on top of this newer one.
+                with self._snapshot_write_lock:
+                    with self._snapshot_cond:
+                        self._snapshot_pending = None
+                    self._save_snapshot(self.image)
             self._last_snapshot_ts = now
             self._last_snapshot_touch_ts = now
             self._last_snapshot_digest = digest
@@ -1878,10 +1889,35 @@ class DisplayManager:
     def _snapshot_writer(self) -> None:
         while True:
             with self._snapshot_cond:
-                while self._snapshot_pending is None:
+                while self._snapshot_pending is None and not self._snapshot_stop:
                     self._snapshot_cond.wait()
-                image, self._snapshot_pending = self._snapshot_pending, None
-            try:
-                self._save_snapshot(image)
-            except Exception as e:
-                self._log_snapshot_failure(e)
+                if self._snapshot_stop:
+                    return          # shutting down: a pending frame is dropped
+            # The write lock before the frame: whichever of this and an inline
+            # static save gets it first also writes first, and a static save
+            # clears the slot, so an older frame never lands on a newer one.
+            with self._snapshot_write_lock:
+                with self._snapshot_cond:
+                    image, self._snapshot_pending = self._snapshot_pending, None
+                if image is None:
+                    continue
+                try:
+                    self._save_snapshot(image)
+                except Exception as e:
+                    # The frame was recorded as written when it was queued.
+                    # Forget that, so an unchanged frame is written again
+                    # rather than only mtime-touching a stale file into
+                    # looking healthy.
+                    self._last_snapshot_digest = None
+                    self._log_snapshot_failure(e)
+
+    def _stop_snapshot_writer(self, timeout: float = 1.0) -> None:
+        """Stop the writer thread, dropping any frame it has not started."""
+        with self._snapshot_cond:
+            self._snapshot_stop = True
+            self._snapshot_pending = None
+            self._snapshot_cond.notify_all()
+        thread = self._snapshot_thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout)
+        self._snapshot_thread = None

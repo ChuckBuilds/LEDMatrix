@@ -399,6 +399,74 @@ class TestSnapshotOffRenderThread:
         assert threads[0] != threading.current_thread().name
         assert os.path.exists(dm._snapshot_path)
 
+    def test_a_failed_background_write_is_retried_not_touched(
+            self, dm, tmp_path, monkeypatch):
+        # Queuing records the frame as written. If the writer then fails, an
+        # unchanged frame must be written again, not mtime-touched: touching
+        # would make a stale preview look healthy.
+        import threading
+        import time
+        failed = threading.Event()
+
+        def failing(image):
+            failed.set()
+            raise OSError("disk full")
+
+        monkeypatch.setattr(dm, "_save_snapshot", failing)
+        self._due(dm, tmp_path, (0, 255, 0))
+        dm.set_scrolling_state(True)
+        try:
+            dm.update_display()
+            assert failed.wait(5)
+            deadline = time.time() + 5
+            while dm._last_snapshot_digest is not None and time.time() < deadline:
+                time.sleep(0.01)
+        finally:
+            dm.set_scrolling_state(False)
+        assert dm._last_snapshot_digest is None
+
+    def test_a_static_frame_lands_after_a_queued_one_still_being_written(
+            self, dm, tmp_path, monkeypatch):
+        # The last frame of a scroll can still be encoding when the first
+        # static frame is due; the older one must not land on top.
+        import threading
+        written, started, release = [], threading.Event(), threading.Event()
+        real = dm._save_snapshot
+
+        def slow_then_record(image):
+            if threading.current_thread().name == "snapshot-writer":
+                started.set()
+                release.wait(5)
+            written.append((threading.current_thread().name, image.getpixel((0, 0))))
+            real(image)
+
+        monkeypatch.setattr(dm, "_save_snapshot", slow_then_record)
+        self._due(dm, tmp_path, (0, 0, 255))
+        dm.set_scrolling_state(True)
+        dm.update_display()                       # queued: the writer blocks mid-write
+        assert started.wait(5)
+        dm.set_scrolling_state(False)
+        self._due(dm, tmp_path, (255, 0, 0))
+        static = threading.Thread(target=dm.update_display)
+        static.start()
+        static.join(0.2)
+        assert static.is_alive(), "the static save must wait for the write in flight"
+        release.set()
+        static.join(5)
+        assert [colour for _, colour in written] == [(0, 0, 255), (255, 0, 0)]
+
+    def test_cleanup_stops_the_writer(self, dm, tmp_path, monkeypatch):
+        threads, done = self._record_saves(dm, monkeypatch)
+        self._due(dm, tmp_path, (0, 255, 255))
+        dm.set_scrolling_state(True)
+        dm.update_display()
+        assert done.wait(5)
+        writer = dm._snapshot_thread
+        dm.set_scrolling_state(False)
+        dm._stop_snapshot_writer()
+        writer.join(2)
+        assert not writer.is_alive()
+
     def test_static_frames_are_still_written_inline(
             self, dm, tmp_path, monkeypatch):
         import threading
