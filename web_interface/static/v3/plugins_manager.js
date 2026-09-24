@@ -142,6 +142,12 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
         }
     }
 
+    // The card was just edited in place, so the grid no longer matches the
+    // markup setGridHtmlIfChanged last wrote; forget that so the next render
+    // (a failed toggle's revert, below) rebuilds it instead of skipping.
+    const installedGrid = document.getElementById('installed-plugins-grid');
+    if (installedGrid) installedGrid._lastRenderedHtml = null;
+
     showNotification(`${action.charAt(0).toUpperCase() + action.slice(1)} ${pluginName}...`, 'info');
 
     return fetch('/api/v3/plugins/toggle', {
@@ -159,22 +165,17 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
 
         showNotification(data.message, data.status);
         if (data.status === 'success') {
-            // Update local state
+            // The switch was already drawn in its new state above; keep it
+            // (and keyboard focus) rather than re-rendering the grid.
             if (plugin) {
                 plugin.enabled = enabled;
             }
-            // Refresh the list to ensure consistency
-            if (typeof loadInstalledPlugins === 'function') {
-                loadInstalledPlugins();
-            }
         } else {
-            // Revert the toggle if API call failed
+            // Re-render so the switch goes back to the state the server kept.
             if (plugin) {
                 plugin.enabled = !enabled;
             }
-            if (typeof loadInstalledPlugins === 'function') {
-                loadInstalledPlugins();
-            }
+            window.pluginManager.loadInstalledPlugins();
         }
 
         // Clear token and re-enable UI
@@ -198,13 +199,11 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
         }
 
         showNotification('Error toggling plugin: ' + error.message, 'error');
-        // Revert the toggle if API call failed
+        // Re-render so the switch goes back to the state the server kept.
         if (plugin) {
             plugin.enabled = !enabled;
         }
-        if (typeof loadInstalledPlugins === 'function') {
-            loadInstalledPlugins();
-        }
+        window.pluginManager.loadInstalledPlugins();
 
         // Clear token and re-enable UI
         delete window._pluginToggleRequests[pluginId];
@@ -436,14 +435,7 @@ window.handleGitHubPluginInstall = function() {
             // Show notification if available
             showNotification(`Plugin ${data.plugin_id} installed successfully`, 'success');
 
-            // Refresh installed plugins list if function available
-            setTimeout(() => {
-                if (typeof loadInstalledPlugins === 'function') {
-                    loadInstalledPlugins();
-                } else if (typeof window.loadInstalledPlugins === 'function') {
-                    window.loadInstalledPlugins();
-                }
-            }, 1000);
+            setTimeout(() => window.pluginManager.loadInstalledPlugins(true), 1000);
         } else {
             if (statusDiv) {
                 statusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>${window.LEDEscape.html(data.message || 'Installation failed')}</span>`;
@@ -1479,8 +1471,7 @@ function handlePluginAction(event) {
                     .then(data => {
                         if (data.status === 'success') {
                             showNotification('Starlark app uninstalled', 'success');
-                            if (typeof loadInstalledPlugins === 'function') loadInstalledPlugins();
-                            else if (typeof window.loadInstalledPlugins === 'function') window.loadInstalledPlugins();
+                            loadInstalledPlugins(true);
                         } else {
                             alert('Uninstall failed: ' + (data.message || 'Unknown error'));
                         }
@@ -4678,6 +4669,15 @@ document.addEventListener('htmx:afterSettle', function() {
     }
 
     // ── Install / Upload / Pixlet ───────────────────────────────────────────
+    // Reload the installed list (the new app joins it as starlark:<id>), then
+    // redraw the current page of apps so its Installed badge shows. A failed
+    // reload has already been reported by loadInstalledPlugins.
+    function refreshAfterStarlarkChange() {
+        window.pluginManager.loadInstalledPlugins(true)
+            .catch(() => {})
+            .then(() => applyStarlarkFiltersAndSort(true));
+    }
+
     window.installStarlarkApp = function(appId) {
         if (!confirm(`Install Starlark app "${appId}" from Tronbyte repository?`)) return;
 
@@ -4690,11 +4690,7 @@ document.addEventListener('htmx:afterSettle', function() {
         .then(data => {
             if (data.status === 'success') {
                 alert(`Installed: ${data.message || appId}`);
-                // Refresh installed plugins list
-                if (typeof loadInstalledPlugins === 'function') loadInstalledPlugins();
-                else if (typeof window.loadInstalledPlugins === 'function') window.loadInstalledPlugins();
-                // Re-render current page to update installed badges
-                setTimeout(() => applyStarlarkFiltersAndSort(true), 500);
+                refreshAfterStarlarkChange();
             } else {
                 alert(`Install failed: ${data.message || 'Unknown error'}`);
             }
@@ -4734,9 +4730,7 @@ document.addEventListener('htmx:afterSettle', function() {
             .then(data => {
                 if (data.status === 'success') {
                     alert(`Uploaded: ${data.app_id}`);
-                    if (typeof loadInstalledPlugins === 'function') loadInstalledPlugins();
-                    else if (typeof window.loadInstalledPlugins === 'function') window.loadInstalledPlugins();
-                    setTimeout(() => applyStarlarkFiltersAndSort(true), 500);
+                    refreshAfterStarlarkChange();
                 } else {
                     alert('Upload failed: ' + (data.message || 'Unknown error'));
                 }
