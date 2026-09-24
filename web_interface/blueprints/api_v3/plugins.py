@@ -224,8 +224,9 @@ def get_plugin_health_single(plugin_id):
             'message': 'Health tracking not available'
         }), 503
 
-    # Get health summary for specific plugin
-    health_summary = api_v3.plugin_manager.health_tracker.get_health_summary(plugin_id)
+    # force_reload for the same reason as the list route above.
+    health_summary = api_v3.plugin_manager.health_tracker.get_health_summary(
+        plugin_id, force_reload=True)
 
     return jsonify({
         'status': 'success',
@@ -299,8 +300,9 @@ def get_plugin_metrics_single(plugin_id):
             'message': 'Resource monitoring not available'
         }), 503
 
-    # Get metrics summary for specific plugin
-    metrics_summary = api_v3.plugin_manager.resource_monitor.get_metrics_summary(plugin_id)
+    # force_reload for the same reason as the list route above.
+    metrics_summary = api_v3.plugin_manager.resource_monitor.get_metrics_summary(
+        plugin_id, force_reload=True)
 
     return jsonify({
         'status': 'success',
