@@ -522,8 +522,9 @@ class CacheManager:
     def update_cache(self, data_type: str, data: Dict[str, Any]) -> bool:
         """Update cache with new data."""
         cache_data = {
+            # Header first; see DiskCache's stale check.
+            'timestamp': time.time(),
             'data': data,
-            'timestamp': time.time()
         }
         return self.save_cache(data_type, cache_data)
 
@@ -556,12 +557,15 @@ class CacheManager:
                  from the key and is only a fallback for entries that did not
                  say. Omit it to keep that inferred behaviour.
         """
-        cache_data = {
-            'data': data,
-            'timestamp': time.time()
-        }
+        # timestamp and ttl before data, so they are the first bytes on disk:
+        # DiskCache.get reads them from the head of the file and can call a
+        # record stale without parsing it. That matters for the big ones -- a
+        # whole MLB season is 53MB and ~1.8s of orjson.loads with the GIL held,
+        # paid in full only to learn the record had expired.
+        cache_data: Dict[str, Any] = {'timestamp': time.time()}
         if ttl is not None:
             cache_data['ttl'] = ttl
+        cache_data['data'] = data
         self.save_cache(key, cache_data)
 
     @deprecated("3.7.0")

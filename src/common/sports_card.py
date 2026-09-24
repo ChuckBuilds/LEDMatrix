@@ -339,6 +339,18 @@ def format_game_date(config: Optional[Dict[str, Any]], logger, date_text: str,
     if not raw:
         return ""
     fmt = str(scroll_card_option(config, "date_format", "abbrev") or "abbrev")
+    return _format_date_as(fmt, raw, lambda: weekday_for(config, logger, game))
+
+
+def _format_date_as(fmt: str, raw: str, weekday, months=MONTH_ABBR) -> str:
+    """Render a stripped, non-empty "M/D" *raw* in style *fmt*.
+
+    The body both date formatters share. They differ in which setting names the
+    style and in which zone the weekday is taken from (see
+    ``SportsCoreSharedMixin._format_game_date``), so those arrive as arguments:
+    *weekday* is a zero-argument callable, only called for the "weekday" style.
+    *months* lets the mixin keep reading its (overridable) ``_MONTH_ABBR``.
+    """
     if fmt == "numeric":
         return raw
     parts = raw.replace("-", "/").split("/")
@@ -347,14 +359,14 @@ def format_game_date(config: Optional[Dict[str, Any]], logger, date_text: str,
     month, day = int(parts[0]), int(parts[1])
     if not 1 <= month <= 12:
         return raw
-    name = MONTH_ABBR[month - 1]
+    name = months[month - 1]
     if fmt == "numeric_day_first":
         return f"{day}/{month}"
     if fmt == "day_first":
         return f"{day} {name}"
     if fmt == "weekday":
-        weekday = weekday_for(config, logger, game)
-        return f"{weekday} {name} {day}" if weekday else f"{name} {day}"
+        day_name = weekday()
+        return f"{day_name} {name} {day}" if day_name else f"{name} {day}"
     return f"{name} {day}"
 
 
@@ -388,6 +400,29 @@ def format_game_time(config: Optional[Dict[str, Any]], time_text: str) -> str:
 _SCHEMA_FONT_SIZE_CACHE: Dict[str, Dict[str, int]] = {}
 
 
+def _read_schema_font_sizes(schema_path: str) -> Dict[str, int]:
+    """``{element: font_size default}`` from a config_schema.json. Raises.
+
+    The parse both schema-default lookups share. Each keeps its own cache --
+    this function per schema path, ``SportsCoreSharedMixin._schema_font_size``
+    per class -- because the lifetimes differ: a class is rebuilt when the
+    display service reloads a plugin, a module-level path cache is not. One
+    cache would change when a reloaded plugin sees an edited schema.
+    """
+    import json
+    with open(schema_path) as fh:
+        schema = json.load(fh)
+    props = (schema.get('properties', {})
+                   .get('customization', {})
+                   .get('properties', {}))
+    sizes: Dict[str, int] = {}
+    for key, spec in props.items():
+        size = spec.get('properties', {}).get('font_size', {}).get('default')
+        if size is not None:
+            sizes[key] = int(size)
+    return sizes
+
+
 def schema_font_size(schema_path: str, element_key) -> Optional[int]:
     """The font_size this plugin's config_schema.json declares, or None.
 
@@ -399,18 +434,8 @@ def schema_font_size(schema_path: str, element_key) -> Optional[int]:
         return None
     cache = _SCHEMA_FONT_SIZE_CACHE.get(schema_path)
     if cache is None:
-        cache = {}
         try:
-            import json
-            with open(schema_path) as fh:
-                schema = json.load(fh)
-            props = (schema.get('properties', {})
-                           .get('customization', {})
-                           .get('properties', {}))
-            for key, spec in props.items():
-                size = spec.get('properties', {}).get('font_size', {}).get('default')
-                if size is not None:
-                    cache[key] = int(size)
+            cache = _read_schema_font_sizes(schema_path)
         except Exception as exc:
             # See sports_shared._schema_font_size: an unreadable schema
             # silently disables the pixel-grid snap for every element.
@@ -444,7 +469,7 @@ def resolve_font_size(schema_path: str, element_config, element_key,
     return crisp_size(font_name, default_size, aliases, grid_table)
 
 
-def unshare_element_fonts(logger, fonts):
+def unshare_element_fonts(logger, fonts, element_for_font=None):
     """Give each colourable element its own face object.
 
     The colour a draw gets is resolved from the face it was handed, and
@@ -459,13 +484,21 @@ def unshare_element_fonts(logger, fonts):
     the ability to tell two elements apart does. Faces that cannot be
     rebuilt (a BDF loaded through freetype.Face, anything without a usable
     path) are left shared, and their draws stay white as before.
+
+    *element_for_font* names the font keys to consider, in order (the first
+    holder of a face keeps it); it defaults to this module's
+    :data:`ELEMENT_FOR_FONT`. ``SportsCoreSharedMixin`` passes its own map,
+    which names different keys -- see ``resolve_font_color`` for why the two
+    vocabularies are kept apart.
     """
     try:
         from src.common.font_layout import load_truetype as _load
     except ImportError:  # pragma: no cover
         return fonts
+    if element_for_font is None:
+        element_for_font = ELEMENT_FOR_FONT
     seen = {}
-    for key in ELEMENT_FOR_FONT:
+    for key in element_for_font:
         font = fonts.get(key)
         if font is None:
             continue

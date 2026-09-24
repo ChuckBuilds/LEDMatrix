@@ -111,34 +111,26 @@ def _parse_bool_ish(value):
 @api_v3.route('/wifi/status', methods=['GET'])
 def get_wifi_status():
     """Get current WiFi connection status"""
-    try:
-        from src.wifi_manager import WiFiManager
+    from src.wifi_manager import WiFiManager
 
-        wifi_manager = WiFiManager()
-        status = wifi_manager.get_wifi_status()
+    wifi_manager = WiFiManager()
+    status = wifi_manager.get_wifi_status()
 
-        # Get auto-enable setting from config
-        auto_enable_ap = wifi_manager.config.get("auto_enable_ap_mode", True)  # Default: True (safe due to grace period)
+    # Get auto-enable setting from config
+    auto_enable_ap = wifi_manager.config.get("auto_enable_ap_mode", True)  # Default: True (safe due to grace period)
 
-        return jsonify({
-            'status': 'success',
-            'data': {
-                'connected': status.connected,
-                'ssid': status.ssid,
-                'ip_address': status.ip_address,
-                'signal': status.signal,
-                'ap_mode_active': status.ap_mode_active,
-                'auto_enable_ap_mode': auto_enable_ap,
-                'last_connect_attempt': _last_connect_snapshot(),
-            }
-        })
-    except Exception as e:
-        logger.error("%s failed", request.path, exc_info=True)
-        return jsonify({
-            'status': 'error',
-            'message': 'An error occurred; see logs for details',
-            'details': describe_exception(e)
-        }), 500
+    return jsonify({
+        'status': 'success',
+        'data': {
+            'connected': status.connected,
+            'ssid': status.ssid,
+            'ip_address': status.ip_address,
+            'signal': status.signal,
+            'ap_mode_active': status.ap_mode_active,
+            'auto_enable_ap_mode': auto_enable_ap,
+            'last_connect_attempt': _last_connect_snapshot(),
+        }
+    })
 @api_v3.route('/wifi/scan', methods=['GET'])
 def scan_wifi_networks():
     """Scan for available WiFi networks
@@ -219,241 +211,188 @@ def connect_wifi():
     background (see _last_connect_attempt); otherwise it waits for the result.
     """
     global _last_connect_attempt
-    try:
-        from src.wifi_manager import WiFiManager
+    from src.wifi_manager import WiFiManager
 
-        data = request.get_json(silent=True)
-        if not data:
-            return jsonify({
-                'status': 'error',
-                'message': 'Request body is required'
-            }), 400
-
-        if 'ssid' not in data:
-            return jsonify({
-                'status': 'error',
-                'message': 'SSID is required'
-            }), 400
-
-        ssid = data['ssid']
-        if not ssid or not ssid.strip():
-            return jsonify({
-                'status': 'error',
-                'message': 'SSID cannot be empty'
-            }), 400
-
-        ssid = ssid.strip()
-        password = data.get('password', '') or ''
-
-        wifi_manager = WiFiManager()
-        ap_mode_active = wifi_manager._is_ap_mode_active()
-
-        # One attempt at a time on either path: concurrent connects fight over
-        # the radio, and the first to finish would clear the in-progress flag
-        # the monitor daemon still needs for the other. The check can't depend
-        # on AP state either -- a background attempt takes the AP down long
-        # before it finishes.
-        with _connect_lock:
-            if _last_connect_attempt and _last_connect_attempt['state'] == 'pending':
-                return jsonify({
-                    'status': 'error',
-                    'message': f"Already connecting to {_last_connect_attempt['ssid']}"
-                }), 409
-            _last_connect_attempt = {
-                'ssid': ssid, 'state': 'pending', 'message': None,
-                'error_type': None, 'finished_at': None,
-            }
-
-        if ap_mode_active:
-            try:
-                _spawn(lambda: _run_background_connect(ssid, password))
-            except Exception:
-                # Nothing will ever finish this attempt; don't leave every
-                # later request refused.
-                with _connect_lock:
-                    _last_connect_attempt = None
-                raise
-            return jsonify({
-                'status': 'pending',
-                'message': (
-                    f'Connecting to {ssid}. The LEDMatrix-Setup network will turn off, '
-                    'so this page will lose its connection.'
-                ),
-                'data': {'ssid': ssid},
-            }), 202
-
-        try:
-            success, message = wifi_manager.connect_to_network(ssid, password)
-        except Exception as e:
-            _record_connect_result(ssid, {'status': 'error', 'message': describe_exception(e)})
-            raise
-        payload = _connect_result_payload(ssid, success, message)
-        _record_connect_result(ssid, payload)
-        return jsonify(payload), (200 if success else 400)
-    except Exception as e:
-        logger.error("Error connecting to WiFi", exc_info=True)
+    data = request.get_json(silent=True)
+    if not data:
         return jsonify({
             'status': 'error',
-            'message': 'An error occurred; see logs for details', 'details': describe_exception(e)
-        }), 500
+            'message': 'Request body is required'
+        }), 400
+
+    if 'ssid' not in data:
+        return jsonify({
+            'status': 'error',
+            'message': 'SSID is required'
+        }), 400
+
+    ssid = data['ssid']
+    if not ssid or not ssid.strip():
+        return jsonify({
+            'status': 'error',
+            'message': 'SSID cannot be empty'
+        }), 400
+
+    ssid = ssid.strip()
+    password = data.get('password', '') or ''
+
+    wifi_manager = WiFiManager()
+    ap_mode_active = wifi_manager._is_ap_mode_active()
+
+    # One attempt at a time on either path: concurrent connects fight over
+    # the radio, and the first to finish would clear the in-progress flag
+    # the monitor daemon still needs for the other. The check can't depend
+    # on AP state either -- a background attempt takes the AP down long
+    # before it finishes.
+    with _connect_lock:
+        if _last_connect_attempt and _last_connect_attempt['state'] == 'pending':
+            return jsonify({
+                'status': 'error',
+                'message': f"Already connecting to {_last_connect_attempt['ssid']}"
+            }), 409
+        _last_connect_attempt = {
+            'ssid': ssid, 'state': 'pending', 'message': None,
+            'error_type': None, 'finished_at': None,
+        }
+
+    if ap_mode_active:
+        try:
+            _spawn(lambda: _run_background_connect(ssid, password))
+        except Exception:
+            # Nothing will ever finish this attempt; don't leave every
+            # later request refused.
+            with _connect_lock:
+                _last_connect_attempt = None
+            raise
+        return jsonify({
+            'status': 'pending',
+            'message': (
+                f'Connecting to {ssid}. The LEDMatrix-Setup network will turn off, '
+                'so this page will lose its connection.'
+            ),
+            'data': {'ssid': ssid},
+        }), 202
+
+    try:
+        success, message = wifi_manager.connect_to_network(ssid, password)
+    except Exception as e:
+        _record_connect_result(ssid, {'status': 'error', 'message': describe_exception(e)})
+        raise
+    payload = _connect_result_payload(ssid, success, message)
+    _record_connect_result(ssid, payload)
+    return jsonify(payload), (200 if success else 400)
 @api_v3.route('/wifi/disconnect', methods=['POST'])
 def disconnect_wifi():
     """Disconnect from the current WiFi network"""
-    try:
-        from src.wifi_manager import WiFiManager
+    from src.wifi_manager import WiFiManager
 
-        wifi_manager = WiFiManager()
-        success, message = wifi_manager.disconnect_from_network()
+    wifi_manager = WiFiManager()
+    success, message = wifi_manager.disconnect_from_network()
 
-        if success:
-            return jsonify({
-                'status': 'success',
-                'message': message
-            })
-        else:
-            return jsonify({
-                'status': 'error',
-                'message': message or 'Failed to disconnect from network'
-            }), 400
-    except Exception as e:
-        logger.error("Error disconnecting from WiFi", exc_info=True)
+    if success:
+        return jsonify({
+            'status': 'success',
+            'message': message
+        })
+    else:
         return jsonify({
             'status': 'error',
-            'message': 'An error occurred; see logs for details', 'details': describe_exception(e)
-        }), 500
+            'message': message or 'Failed to disconnect from network'
+        }), 400
 @api_v3.route('/wifi/ap/enable', methods=['POST'])
 def enable_ap_mode():
     """Enable access point mode"""
-    try:
-        from src.wifi_manager import WiFiManager
+    from src.wifi_manager import WiFiManager
 
-        wifi_manager = WiFiManager()
-        _force_raw = (request.get_json(silent=True) or {}).get('force', False)
-        force = _force_raw is True or (isinstance(_force_raw, str) and _force_raw.lower() in ('true', '1'))
-        success, message = wifi_manager.enable_ap_mode(force=force)
+    wifi_manager = WiFiManager()
+    _force_raw = (request.get_json(silent=True) or {}).get('force', False)
+    force = _force_raw is True or (isinstance(_force_raw, str) and _force_raw.lower() in ('true', '1'))
+    success, message = wifi_manager.enable_ap_mode(force=force)
 
-        if success:
-            return jsonify({
-                'status': 'success',
-                'message': message
-            })
-        else:
-            return jsonify({
-                'status': 'error',
-                'message': message
-            }), 400
-    except Exception as e:
-        logger.error("%s failed", request.path, exc_info=True)
+    if success:
+        return jsonify({
+            'status': 'success',
+            'message': message
+        })
+    else:
         return jsonify({
             'status': 'error',
-            'message': 'An error occurred; see logs for details',
-            'details': describe_exception(e)
-        }), 500
+            'message': message
+        }), 400
 @api_v3.route('/wifi/ap/disable', methods=['POST'])
 def disable_ap_mode():
     """Disable access point mode"""
-    try:
-        from src.wifi_manager import WiFiManager
+    from src.wifi_manager import WiFiManager
 
-        wifi_manager = WiFiManager()
-        success, message = wifi_manager.disable_ap_mode()
+    wifi_manager = WiFiManager()
+    success, message = wifi_manager.disable_ap_mode()
 
-        if success:
-            return jsonify({
-                'status': 'success',
-                'message': message
-            })
-        else:
-            return jsonify({
-                'status': 'error',
-                'message': message
-            }), 400
-    except Exception as e:
-        logger.error("%s failed", request.path, exc_info=True)
+    if success:
+        return jsonify({
+            'status': 'success',
+            'message': message
+        })
+    else:
         return jsonify({
             'status': 'error',
-            'message': 'An error occurred; see logs for details',
-            'details': describe_exception(e)
-        }), 500
+            'message': message
+        }), 400
 @api_v3.route('/wifi/ap/auto-enable', methods=['GET'])
 def get_auto_enable_ap_mode():
     """Get auto-enable AP mode setting"""
-    try:
-        from src.wifi_manager import WiFiManager
+    from src.wifi_manager import WiFiManager
 
-        wifi_manager = WiFiManager()
-        auto_enable = wifi_manager.config.get("auto_enable_ap_mode", True)  # Default: True (safe due to grace period)
+    wifi_manager = WiFiManager()
+    auto_enable = wifi_manager.config.get("auto_enable_ap_mode", True)  # Default: True (safe due to grace period)
 
-        return jsonify({
-            'status': 'success',
-            'data': {
-                'auto_enable_ap_mode': auto_enable
-            }
-        })
-    except Exception as e:
-        logger.error("%s failed", request.path, exc_info=True)
-        return jsonify({
-            'status': 'error',
-            'message': 'An error occurred; see logs for details',
-            'details': describe_exception(e)
-        }), 500
+    return jsonify({
+        'status': 'success',
+        'data': {
+            'auto_enable_ap_mode': auto_enable
+        }
+    })
 @api_v3.route('/wifi/ap/auto-enable', methods=['POST'])
 def set_auto_enable_ap_mode():
     """Set auto-enable AP mode setting"""
-    try:
-        from src.wifi_manager import WiFiManager
+    from src.wifi_manager import WiFiManager
 
-        data = request.get_json(silent=True)
-        if data is None or 'auto_enable_ap_mode' not in data:
-            return jsonify({
-                'status': 'error',
-                'message': 'auto_enable_ap_mode is required'
-            }), 400
-
-        auto_enable = _parse_bool_ish(data['auto_enable_ap_mode'])
-        if auto_enable is None:
-            return jsonify({
-                'status': 'error',
-                'message': 'auto_enable_ap_mode must be a boolean'
-            }), 400
-
-        wifi_manager = WiFiManager()
-        wifi_manager.config["auto_enable_ap_mode"] = auto_enable
-        wifi_manager._save_config()
-
-        return jsonify({
-            'status': 'success',
-            'message': f'Auto-enable AP mode set to {auto_enable}',
-            'data': {
-                'auto_enable_ap_mode': auto_enable
-            }
-        })
-    except Exception as e:
-        logger.error("%s failed", request.path, exc_info=True)
+    data = request.get_json(silent=True)
+    if data is None or 'auto_enable_ap_mode' not in data:
         return jsonify({
             'status': 'error',
-            'message': 'An error occurred; see logs for details',
-            'details': describe_exception(e)
-        }), 500
+            'message': 'auto_enable_ap_mode is required'
+        }), 400
+
+    auto_enable = _parse_bool_ish(data['auto_enable_ap_mode'])
+    if auto_enable is None:
+        return jsonify({
+            'status': 'error',
+            'message': 'auto_enable_ap_mode must be a boolean'
+        }), 400
+
+    wifi_manager = WiFiManager()
+    wifi_manager.config["auto_enable_ap_mode"] = auto_enable
+    wifi_manager._save_config()
+
+    return jsonify({
+        'status': 'success',
+        'message': f'Auto-enable AP mode set to {auto_enable}',
+        'data': {
+            'auto_enable_ap_mode': auto_enable
+        }
+    })
 @api_v3.route('/wifi/radio', methods=['GET'])
 def get_wifi_radio():
     """Get current WiFi radio state (enabled/disabled) and wired-fallback status."""
-    try:
-        from src.wifi_manager import WiFiManager
+    from src.wifi_manager import WiFiManager
 
-        wifi_manager = WiFiManager()
-        state = wifi_manager.get_wifi_radio_state()
+    wifi_manager = WiFiManager()
+    state = wifi_manager.get_wifi_radio_state()
 
-        return jsonify({
-            'status': 'success',
-            'data': state
-        })
-    except Exception as e:
-        logger.error("Error getting WiFi radio state", exc_info=True)
-        return jsonify({
-            'status': 'error',
-            'message': 'An error occurred; see logs for details', 'details': describe_exception(e)
-        }), 500
+    return jsonify({
+        'status': 'success',
+        'data': state
+    })
 @api_v3.route('/wifi/radio', methods=['POST'])
 def set_wifi_radio():
     """Turn the WiFi radio on or off.
@@ -462,53 +401,46 @@ def set_wifi_radio():
     unless Ethernet is connected or force=True, to avoid locking the user out
     of this web interface.
     """
-    try:
-        from src.wifi_manager import WiFiManager
+    from src.wifi_manager import WiFiManager
 
-        data = request.get_json(silent=True) or {}
-        if 'enabled' not in data:
-            return jsonify({
-                'status': 'error',
-                'message': 'enabled is required'
-            }), 400
-
-        # Parse defensively: bool("false") is True and a plain int never
-        # matches `is True`, so `_parse_bool_ish` handles bool, string and
-        # int 1/0 — the endpoint is a public contract, not just the shipped
-        # UI (which always sends real JSON booleans). An unrecognized value
-        # must be rejected, not silently disable the radio: this is the
-        # route that can drop the caller's own connection to this interface.
-        enabled = _parse_bool_ish(data['enabled'])
-        if enabled is None:
-            return jsonify({
-                'status': 'error',
-                'message': 'enabled must be a boolean'
-            }), 400
-        force = _parse_bool_ish(data.get('force', False))
-        if force is None:
-            return jsonify({
-                'status': 'error',
-                'message': 'force must be a boolean'
-            }), 400
-
-        wifi_manager = WiFiManager()
-        success, message, reason = wifi_manager.set_wifi_radio(enabled, force=force)
-
-        if success:
-            return jsonify({
-                'status': 'success',
-                'message': message,
-                'data': wifi_manager.get_wifi_radio_state()
-            })
-        else:
-            return jsonify({
-                'status': 'error',
-                'message': message,
-                'reason': reason
-            }), 400
-    except Exception as e:
-        logger.error("Error setting WiFi radio state", exc_info=True)
+    data = request.get_json(silent=True) or {}
+    if 'enabled' not in data:
         return jsonify({
             'status': 'error',
-            'message': 'An error occurred; see logs for details', 'details': describe_exception(e)
-        }), 500
+            'message': 'enabled is required'
+        }), 400
+
+    # Parse defensively: bool("false") is True and a plain int never
+    # matches `is True`, so `_parse_bool_ish` handles bool, string and
+    # int 1/0 — the endpoint is a public contract, not just the shipped
+    # UI (which always sends real JSON booleans). An unrecognized value
+    # must be rejected, not silently disable the radio: this is the
+    # route that can drop the caller's own connection to this interface.
+    enabled = _parse_bool_ish(data['enabled'])
+    if enabled is None:
+        return jsonify({
+            'status': 'error',
+            'message': 'enabled must be a boolean'
+        }), 400
+    force = _parse_bool_ish(data.get('force', False))
+    if force is None:
+        return jsonify({
+            'status': 'error',
+            'message': 'force must be a boolean'
+        }), 400
+
+    wifi_manager = WiFiManager()
+    success, message, reason = wifi_manager.set_wifi_radio(enabled, force=force)
+
+    if success:
+        return jsonify({
+            'status': 'success',
+            'message': message,
+            'data': wifi_manager.get_wifi_radio_state()
+        })
+    else:
+        return jsonify({
+            'status': 'error',
+            'message': message,
+            'reason': reason
+        }), 400

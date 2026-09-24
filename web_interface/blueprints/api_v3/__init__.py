@@ -35,13 +35,16 @@ from typing import Dict, Any, Optional, Tuple, Type
 from urllib.parse import urlparse, urlunparse
 logger = logging.getLogger(__name__)
 # Import new infrastructure
-from src.web_interface.api_helpers import success_response, error_response, validate_request_json
+from src.web_interface.api_helpers import (success_response, error_response,
+                                           exception_error_response, validate_request_json)
 from src.web_interface.errors import ErrorCode
 from src.web_interface.secret_helpers import (find_secret_fields, mask_all_secret_values,
                                               merge_secrets, remove_empty_secrets,
                                               separate_secrets,
                                               strip_masked_values)
-from src.web_interface.error_handler import describe_exception, redact_text
+from src.web_interface.error_handler import (describe_exception, http_exception_payload,
+                                             redact_text, unhandled_exception_payload)
+from werkzeug.exceptions import HTTPException
 from src.plugin_system.operation_types import OperationType
 from src.web_interface.validators import (
     validate_file_upload
@@ -114,6 +117,43 @@ SYSTEM_FONTS = frozenset([
     'clr6x12', 'helvr12', 'texgyre-27'
 ])
 api_v3 = Blueprint('api_v3', __name__)
+
+
+@api_v3.errorhandler(Exception)
+def _api_v3_unhandled_exception(error):
+    """The answer for any exception an api_v3 route does not handle itself.
+
+    Fifty-odd routes used to end in the same four lines -- log the traceback,
+    return {status, message: "An error occurred; see logs for details",
+    details: describe_exception(e)} with a 500. This is those four lines, once.
+    A route still catches for itself when its failure needs something else: a
+    specific message, extra keys, an operation-history record, or cleanup.
+
+    It is registered on the blueprint, not left to web_interface/app.py's
+    global handler, because the two answers differ: the global one adds
+    `error_code: UNKNOWN_ERROR`, and the plugin API client treats a body with
+    an error_code differently from one without (see api_client.js). Tests that
+    mount this blueprint on a bare Flask app get the same answer as the real
+    app does, too.
+
+    `details` is describe_exception(), which redacts credentials and caps the
+    length. CodeQL reads returning it as stack-trace exposure; it is the
+    project's deliberate trade-off, because a device whose storage is failing
+    otherwise answers "see logs for details" from the log viewer too
+    (test_web_error_detail.py).
+
+    Werkzeug's HTTPExceptions subclass Exception, so a 400/405/413/415 raised
+    inside a route lands here as well; it goes back as itself, in the global
+    handler's shape. A 404 or explicit 500 never arrives: Flask prefers the
+    app's code-specific handlers over a blueprint's class-based one.
+    """
+    if isinstance(error, HTTPException):
+        return jsonify(http_exception_payload(error)), error.code or 500
+    logger.error("Unhandled exception in %s", request.endpoint or request.path,
+                 exc_info=error)
+    return jsonify(unhandled_exception_payload(error)), 500
+
+
 def _get_plugin_version(plugin_id: str) -> str:
     """Read the installed version from a plugin's manifest.json.
 
@@ -1712,7 +1752,7 @@ def _get_starlark_device_location() -> DeviceLocationResolver:
     global _starlark_device_location
     if _starlark_device_location is None:
         _starlark_device_location = DeviceLocationResolver(
-            getattr(api_v3, 'cache_manager', None) or _ensure_cache_manager(), logger)
+            getattr(api_v3, 'cache_manager', None), logger)
     return _starlark_device_location
 
 
