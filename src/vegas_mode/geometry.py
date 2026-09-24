@@ -230,54 +230,6 @@ def blank_runs(
     return list(zip(starts[long_enough].tolist(), ends[long_enough].tolist()))
 
 
-def find_blank_cut(
-    img: Image.Image,
-    target: int,
-    search_radius: int,
-    threshold: int = DEFAULT_INK_THRESHOLD,
-) -> int:
-    """
-    Find a column near ``target`` that carries no ink, so an image can be cut
-    there without slicing through a glyph or logo.
-
-    Used when a single oversized segment has to be narrowed to fit a width
-    budget. Cutting at an arbitrary column would leave half a character
-    hanging at the panel edge; snapping to the nearest gap hides the cut.
-
-    Args:
-        img: Image to cut
-        target: Preferred cut column
-        search_radius: How far either side of ``target`` to look
-        threshold: Ink threshold
-
-    Returns:
-        A blank column within the search window, or ``target`` clamped to the
-        image bounds when the window contains no blank column at all.
-    """
-    width = img.width
-    target = max(0, min(target, width))
-    if search_radius <= 0 or width == 0:
-        return target
-
-    ink = column_has_ink(img, threshold)
-
-    # target may legitimately equal width (a cut after the last column), but
-    # there is no column to inspect there, so both bounds stop at width - 1.
-    lo = max(0, min(target - search_radius, width - 1))
-    hi = max(0, min(target + search_radius, width - 1))
-
-    # Walk outwards from target so the nearest gap wins.
-    for offset in range(0, search_radius + 1):
-        right = target + offset
-        if lo <= right <= hi and not ink[right]:
-            return right
-        left = target - offset
-        if lo <= left <= hi and not ink[left]:
-            return left
-
-    return target
-
-
 class DeadWindowStats(NamedTuple):
     """How much of a composed ticker reads as blank to a viewer."""
 

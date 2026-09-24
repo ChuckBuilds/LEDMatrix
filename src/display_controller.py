@@ -22,6 +22,7 @@ Entry point: :func:`main` — instantiates :class:`DisplayController` and calls
 
 import time
 import os
+import inspect
 import json
 import threading
 import types
@@ -31,7 +32,6 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed  # pylint: disable=no-name-in-module
 import pytz
 
-# Core system imports only - all functionality now handled via plugins
 from src.display_manager import DisplayManager
 from src.config_manager import ConfigManager
 from src.config_service import ConfigService
@@ -39,6 +39,7 @@ from src.cache_manager import CacheManager
 from src.font_manager import FontManager
 from src.logging_config import get_logger
 from src.common.sync_manager import DisplaySyncManager, SyncRole
+from src.vegas_mode.render_pipeline import SYNC_SEND_INTERVAL
 
 # Get logger with consistent configuration
 logger = get_logger(__name__)
@@ -57,10 +58,24 @@ _INITIAL_UPDATE_BUDGET_SECONDS = 20.0
 # slot it never had a chance to use.
 _MIN_INITIAL_UPDATE_TIMEOUT_SECONDS = 2.0
 
-# Vegas mode import (lazy loaded to avoid circular imports)
-_vegas_mode_imported = False
-VegasModeCoordinator = None
 DEFAULT_DYNAMIC_DURATION_CAP = 180.0
+
+# Follower dead reckoning (the follower branch of DisplayController.run()).
+# A leader position further off than this fraction of the strip is a cycle
+# reset, and is snapped to rather than corrected toward.
+_FOLLOWER_SNAP_FRACTION = 0.5
+# Strip width assumed, in screens, before the follower has the leader's image.
+_FOLLOWER_FALLBACK_STRIP_SCREENS = 4
+# Drift beyond this many pixels is corrected by _FOLLOWER_DRIFT_GAIN of the
+# error per tick; smaller drift by _FOLLOWER_NEAR_GAIN, so UDP jitter does not
+# show as the scroll twitching.
+_FOLLOWER_DRIFT_PX = 10
+_FOLLOWER_DRIFT_GAIN = 0.20
+_FOLLOWER_NEAR_GAIN = 0.05
+# Follower render period, and how late a frame may run before the pacing grid
+# is restarted rather than caught up.
+_FOLLOWER_FRAME_INTERVAL = 1.0 / 60
+_FOLLOWER_DEADLINE_SLIP = 0.1
 
 class DisplayController:
     """
@@ -92,7 +107,7 @@ class DisplayController:
             config_manager=config_manager,
             enable_hot_reload=enable_hot_reload
         )
-        self.config_manager = config_manager  # Keep for backward compatibility
+        self.config_manager = config_manager
         self.config = self.config_service.get_config()
         self.cache_manager = CacheManager()
         # The web interface's /api/v3/errors/* read what this publishes.
@@ -100,24 +115,20 @@ class DisplayController:
         start_error_snapshot_publisher(self.cache_manager)
         logger.info("Config loaded in %.3f seconds (hot-reload: %s)", time.time() - start_time, enable_hot_reload)
         
-        # Validate startup configuration
+        # Validate startup configuration. Errors are logged, not fatal. The
+        # plugin checks need the plugin manager and run once it exists.
         try:
             from src.startup_validator import StartupValidator
             validator = StartupValidator(self.config_manager,
                                          cache_manager=self.cache_manager)
             is_valid, errors, warnings = validator.validate_all()
-            
-            if warnings:
-                for warning in warnings:
-                    logger.warning(f"Startup validation warning: {warning}")
-            
+            for warning in warnings:
+                logger.warning("Startup validation warning: %s", warning)
             if not is_valid:
-                error_msg = "Startup validation failed:\n" + "\n".join(f"  - {e}" for e in errors)
-                logger.error(error_msg)
-                # For now, log errors but continue - can be made stricter later
-                # validator.raise_on_errors()  # Uncomment to fail fast on errors
+                logger.error("Startup validation failed:\n%s",
+                             "\n".join(f"  - {e}" for e in errors))
         except Exception as e:
-            logger.warning(f"Startup validation could not be completed: {e}")
+            logger.warning("Startup validation could not be completed: %s", e)
 
         # Automatic updates need their health-check units, and this is the
         # one root process running project code, so it installs them while
@@ -158,29 +169,28 @@ class DisplayController:
                     _real_update()
             self.display_manager.update_display = _follower_gated_update
 
-            # Note: _on_new_cycle is NOT registered here. The leader now sends
-            # its actual scroll image via TCP at each new_cycle, so the follower
-            # adopts that image directly via set_on_scroll_image(). Registering
-            # _on_new_cycle would trigger a local rebuild that overwrites the
-            # leader's just-received image with a different locally-built one.
+            # No new_cycle handler is registered: the leader sends its scroll
+            # image over TCP at each new cycle and the follower adopts it (see
+            # set_on_scroll_image in _initialize_vegas_mode). A local rebuild
+            # would overwrite that image with a different, locally built one.
+
+        # Follower render-loop state (see the follower branch of run()).
+        self._follower_dr_last_t: Optional[float] = None  # perf_counter of last tick
+        self._follower_local_x: Optional[float] = None    # dead-reckoned scroll_x
+        # Set on a cycle reset; holds the last frame until the leader's new
+        # scroll image arrives.
+        self._follower_pending_new_image = False
+        self._follower_last_frame = None
+        self._follower_deadline: Optional[float] = None
+        # Leader: time.time() of the last follower frame sent.
+        self._last_follower_send = 0.0
 
         # Initialize Font Manager
         font_time = time.time()
         self.font_manager = FontManager(self.config)
         logger.info("FontManager initialized in %.3f seconds", time.time() - font_time)
-        
-        # Initialize display modes - all functionality now handled via plugins
-        init_time = time.time()
-        
-        # All other functionality handled via plugins
-        logger.info("Display modes initialized in %.3f seconds", time.time() - init_time)
-        
+
         self.force_change = False
-        
-        # All sports and content managers now handled via plugins
-        logger.info("All sports and content managers now handled via plugin system")
-        
-        # List of available display modes - now handled entirely by plugins
         self.available_modes = []
         
         # Initialize Plugin System
@@ -296,22 +306,20 @@ class DisplayController:
             except Exception as e:
                 logger.warning("Could not enable plugin health/resource monitoring: %s", e)
 
-            # Validate plugins after plugin manager is created
+            # Only the plugin checks: validate_all() above has run the rest,
+            # and running it again logged every config warning twice.
             try:
                 from src.startup_validator import StartupValidator
                 validator = StartupValidator(self.config_manager, self.plugin_manager,
                                              cache_manager=self.cache_manager)
-                is_valid, errors, warnings = validator.validate_all()
-                
-                if warnings:
-                    for warning in warnings:
-                        logger.warning(f"Plugin validation warning: {warning}")
-                
-                if not is_valid:
-                    error_msg = "Plugin validation failed:\n" + "\n".join(f"  - {e}" for e in errors)
-                    logger.error(error_msg)
+                validator._validate_plugins()
+                for warning in validator.warnings:
+                    logger.warning("Plugin validation warning: %s", warning)
+                if validator.errors:
+                    logger.error("Plugin validation failed:\n%s",
+                                 "\n".join(f"  - {e}" for e in validator.errors))
             except Exception as e:
-                logger.warning(f"Plugin validation could not be completed: {e}")
+                logger.warning("Plugin validation could not be completed: %s", e)
 
             # Discover plugins
             discovered_plugins = self.plugin_manager.discover_plugins()
@@ -369,7 +377,7 @@ class DisplayController:
                     
                     if result['success']:
                         plugin_id = result['plugin_id']
-                        logger.info("✓ Loaded plugin %s in %.3f seconds (%d/%d)", 
+                        logger.info("Loaded plugin %s in %.3f seconds (%d/%d)", 
                                   plugin_id, result['load_time'], loaded_count, enabled_count)
                         
                         # Register the loaded plugin's modes, config subscription
@@ -382,7 +390,7 @@ class DisplayController:
                         logger.info("Progress: %d%% (%d/%d plugins, %.1fs elapsed)", 
                                   progress_pct, loaded_count, enabled_count, elapsed)
                     else:
-                        logger.warning("✗ Failed to load plugin %s: %s", 
+                        logger.warning("Failed to load plugin %s: %s", 
                                      result['plugin_id'], result['error'])
             
             # Log disabled plugins
@@ -414,6 +422,8 @@ class DisplayController:
         # Display rotation state
         self.current_mode_index = 0
         self.current_display_mode = None
+        # Last mode written to the display_current_state cache key.
+        self._last_published_mode: Optional[str] = None
         self.global_dynamic_config = (
             self.config.get("display", {}).get("dynamic_duration", {}) or {}
         )
@@ -426,11 +436,12 @@ class DisplayController:
         
         # Schedule management
         self.is_display_active = True
-        self._was_display_active = True  # Track previous state for schedule change detection
+        # The previous schedule result, so only transitions log at INFO.
+        self._was_display_active = True
 
-        # --- Opt #2: cached config values ---
-        # Avoids chained dict.get() with temporary {} defaults on every hot path call.
-        # Refreshed via _refresh_config_cache() on every hot-reload.
+        # Config values read on hot paths, cached so they are not re-read
+        # from the config dict every frame. _refresh_config_cache() updates
+        # them on every hot reload.
         self._normal_brightness: int = (
             self.config.get('display', {}).get('hardware', {}).get('brightness', 90)
         )
@@ -441,12 +452,11 @@ class DisplayController:
         self.is_dimmed = False
         self._was_dimmed = False
 
-        # --- Opt #3: schedule minute-gate ---
-        # Both _check_schedule and _check_dim_schedule re-evaluated at most once per
-        # clock minute.  Storing the (hour, minute) tuple that was last evaluated lets
-        # the methods skip all timezone / strptime work within the same minute.
-        # Reset to None on config change so the next call re-evaluates immediately.
-        self._tz = None                              # pytz timezone, lazily built from config
+        # _check_schedule and _check_dim_schedule re-evaluate at most once per
+        # clock minute: each stores the (hour, minute) it last evaluated and
+        # skips the strptime and comparison work until the minute changes.
+        # Reset to None on config change so the next call re-evaluates.
+        self._tz = None  # pytz timezone, built lazily by _timezone()
         self._schedule_checked_minute: Optional[tuple] = None
         self._dim_checked_minute: Optional[tuple] = None
         self._cached_target_brightness: int = self._normal_brightness
@@ -476,8 +486,6 @@ class DisplayController:
 
     def _initialize_vegas_mode(self):
         """Initialize Vegas mode coordinator if enabled."""
-        global _vegas_mode_imported, VegasModeCoordinator
-
         vegas_config = self.config.get('display', {}).get('vegas_scroll', {})
         if not vegas_config.get('enabled', False):
             logger.debug("Vegas mode disabled in config")
@@ -488,15 +496,7 @@ class DisplayController:
             return
 
         try:
-            # Lazy import to avoid circular imports
-            if not _vegas_mode_imported:
-                try:
-                    from src.vegas_mode import VegasModeCoordinator as VMC
-                    VegasModeCoordinator = VMC
-                    _vegas_mode_imported = True
-                except ImportError:
-                    logger.exception("Failed to import Vegas mode module")
-                    return
+            from src.vegas_mode import VegasModeCoordinator
 
             self.vegas_coordinator = VegasModeCoordinator(
                 config=self.config,
@@ -537,7 +537,7 @@ class DisplayController:
             # cached_array so both Pis have pixel-identical images.
             import numpy as _np
             def _on_leader_scroll_image(image):
-                vc = getattr(self, 'vegas_coordinator', None)
+                vc = self.vegas_coordinator
                 if vc and vc.render_pipeline:
                     rp = vc.render_pipeline
                     arr = _np.asarray(image.convert("RGB"), dtype=_np.uint8)
@@ -556,15 +556,14 @@ class DisplayController:
                 # the follower doesn't have to wait for the next new_cycle event.
                 # Polls until the image is ready (Vegas may still be composing on startup).
                 def _on_follower_connected():
-                    import time as _t
                     for _ in range(300):  # up to 30s
-                        vc = getattr(self, 'vegas_coordinator', None)
+                        vc = self.vegas_coordinator
                         if vc and vc.render_pipeline:
                             img = vc.render_pipeline.scroll_helper.cached_image
                             if img is not None:
                                 self.sync_manager.send_scroll_image(img)
                                 return
-                        _t.sleep(0.1)
+                        time.sleep(0.1)
                     logger.warning("Sync: no scroll image available to push to new follower")
                 self.sync_manager.set_on_follower_connected(_on_follower_connected)
 
@@ -617,25 +616,8 @@ class DisplayController:
 
         return False
 
-    def _check_schedule(self):
-        """Check if display should be active based on schedule."""
-        schedule_config = self.config.get('schedule', {})
-        
-        # If schedule config doesn't exist or is empty, default to always active
-        if not schedule_config:
-            self.is_display_active = True
-            self._was_display_active = True  # Track previous state for schedule change detection
-            return
-        
-        # Check if schedule is explicitly disabled
-        # Default to True (schedule enabled) if 'enabled' key is missing for backward compatibility
-        if 'enabled' in schedule_config and not schedule_config.get('enabled', True):
-            self.is_display_active = True
-            self._was_display_active = True  # Track previous state for schedule change detection
-            logger.debug("Schedule is disabled - display always active")
-            return
-
-        # Lazily build the timezone object once; reuse on every subsequent call.
+    def _timezone(self):
+        """The configured timezone, built once and cached until config changes."""
         if self._tz is None:
             timezone_str = self.config.get('timezone', 'UTC')
             try:
@@ -643,8 +625,33 @@ class DisplayController:
             except pytz.UnknownTimeZoneError:
                 logger.warning("Unknown timezone '%s', using UTC", timezone_str)
                 self._tz = pytz.UTC
+        return self._tz
 
-        current_time = datetime.now(self._tz)
+    @staticmethod
+    def _in_window(start, end, now) -> bool:
+        """Whether ``now`` is within [start, end], a window that may span midnight."""
+        if start <= end:
+            return start <= now <= end
+        return now >= start or now <= end
+
+    def _check_schedule(self):
+        """Check if display should be active based on schedule."""
+        schedule_config = self.config.get('schedule', {})
+
+        # No schedule configured: always active.
+        if not schedule_config:
+            self.is_display_active = True
+            self._was_display_active = True
+            return
+
+        # A schedule without an 'enabled' key counts as enabled.
+        if 'enabled' in schedule_config and not schedule_config.get('enabled', True):
+            self.is_display_active = True
+            self._was_display_active = True
+            logger.debug("Schedule is disabled - display always active")
+            return
+
+        current_time = datetime.now(self._timezone())
         # Gate: schedule state can only change on a minute boundary, so skip
         # all the strptime / comparison work if we already evaluated this minute.
         current_minute_key = (current_time.hour, current_time.minute)
@@ -677,14 +684,12 @@ class DisplayController:
                 use_per_day = True
             else:
                 logger.debug("Per-day schedule exists but %s not configured, using global schedule", current_day)
-        
+
         if use_per_day:
-            # Use per-day schedule
             day_config = days_config[current_day]
-            
-            # Check if this day is enabled
+
             if not day_config.get('enabled', True):
-                was_active = getattr(self, '_was_display_active', True)
+                was_active = self._was_display_active
                 self.is_display_active = False
                 if was_active:
                     logger.info("Schedule activated: Display is now INACTIVE (%s is disabled in schedule). Display will be blanked.", current_day)
@@ -692,56 +697,43 @@ class DisplayController:
                     logger.debug("Display inactive - %s is disabled in schedule", current_day)
                 self._was_display_active = self.is_display_active
                 return
-            
+
             start_time_str = day_config.get('start_time', '07:00')
             end_time_str = day_config.get('end_time', '23:00')
             schedule_type = f"per-day ({current_day})"
         else:
-            # Use global schedule
             start_time_str = schedule_config.get('start_time', '07:00')
             end_time_str = schedule_config.get('end_time', '23:00')
             schedule_type = "global"
-        
+
         try:
             start_time = datetime.strptime(start_time_str, '%H:%M').time()
             end_time = datetime.strptime(end_time_str, '%H:%M').time()
-            
-            if start_time <= end_time:
-                # Normal case: start and end on same day
-                self.is_display_active = start_time <= current_time_only <= end_time
-            else:
-                # Overnight case: start and end on different days
-                self.is_display_active = current_time_only >= start_time or current_time_only <= end_time
-            
-            # Track previous state to detect changes
-            was_active = getattr(self, '_was_display_active', True)
-            
-            # Log schedule state changes
+            self.is_display_active = self._in_window(start_time, end_time, current_time_only)
+
+            was_active = self._was_display_active
             if not self.is_display_active:
                 if was_active:
-                    # State changed from active to inactive - schedule kicked in
-                    logger.info("Schedule activated: Display is now INACTIVE (outside %s schedule window %s - %s). Display will be blanked.", 
+                    logger.info("Schedule activated: Display is now INACTIVE (outside %s schedule window %s - %s). Display will be blanked.",
                                schedule_type, start_time_str, end_time_str)
                 else:
-                    logger.debug("Display inactive - outside %s schedule window (%s - %s)", 
+                    logger.debug("Display inactive - outside %s schedule window (%s - %s)",
                                schedule_type, start_time_str, end_time_str)
             else:
                 if not was_active:
-                    # State changed from inactive to active
-                    logger.info("Schedule activated: Display is now ACTIVE (within %s schedule window %s - %s)", 
+                    logger.info("Schedule activated: Display is now ACTIVE (within %s schedule window %s - %s)",
                                schedule_type, start_time_str, end_time_str)
                 else:
-                    logger.debug("Display active - within %s schedule window (%s - %s)", 
+                    logger.debug("Display active - within %s schedule window (%s - %s)",
                                schedule_type, start_time_str, end_time_str)
-            
-            # Store current state for next check
+
             self._was_display_active = self.is_display_active
-                
+
         except ValueError as e:
             logger.warning("Invalid schedule format for %s schedule: %s (start: %s, end: %s). Defaulting to active.",
                          schedule_type, e, start_time_str, end_time_str)
             self.is_display_active = True
-            self._was_display_active = True  # Track previous state for schedule change detection
+            self._was_display_active = True
 
     def _check_dim_schedule(self) -> int:
         """
@@ -751,7 +743,6 @@ class DisplayController:
             Target brightness level (dim_brightness if in dim period,
             normal brightness otherwise)
         """
-        # Opt #2: use cached brightness rather than re-traversing config dict
         normal_brightness = self._normal_brightness
 
         # If display is OFF via schedule, don't process dim schedule
@@ -766,16 +757,8 @@ class DisplayController:
             self.is_dimmed = False
             return normal_brightness
 
-        # Opt #3: lazily build timezone; gate full re-parse to once per clock minute
-        if self._tz is None:
-            timezone_str = self.config.get('timezone', 'UTC')
-            try:
-                self._tz = pytz.timezone(timezone_str)
-            except pytz.UnknownTimeZoneError:
-                logger.warning("Unknown timezone '%s' in dim schedule, using UTC", timezone_str)
-                self._tz = pytz.UTC
-
-        current_time = datetime.now(self._tz)
+        # Re-evaluated at most once per clock minute, like _check_schedule.
+        current_time = datetime.now(self._timezone())
         current_minute_key = (current_time.hour, current_time.minute)
         if current_minute_key == self._dim_checked_minute:
             return self._cached_target_brightness
@@ -806,15 +789,7 @@ class DisplayController:
             start_time = datetime.strptime(start_time_str, '%H:%M').time()
             end_time = datetime.strptime(end_time_str, '%H:%M').time()
 
-            # Determine if currently in dim period
-            if start_time <= end_time:
-                # Same-day schedule (e.g., 10:00 to 18:00)
-                in_dim_period = start_time <= current_time_only <= end_time
-            else:
-                # Overnight schedule (e.g., 20:00 to 07:00)
-                in_dim_period = current_time_only >= start_time or current_time_only <= end_time
-
-            if in_dim_period:
+            if self._in_window(start_time, end_time, current_time_only):
                 self.is_dimmed = True
                 target_brightness = dim_config.get('dim_brightness', 30)
             else:
@@ -872,38 +847,19 @@ class DisplayController:
                     # running.
                     deferred.append(plugin_id)
                     continue
-            # Check circuit breaker before attempting update
-            if hasattr(self.plugin_manager, 'health_tracker') and self.plugin_manager.health_tracker:
-                if self.plugin_manager.health_tracker.should_skip_plugin(plugin_id):
-                    logger.debug(f"Skipping update for plugin {plugin_id} due to circuit breaker")
-                    continue
-            
-            # Use PluginExecutor if available for safe execution
-            if hasattr(self.plugin_manager, 'plugin_executor'):
-                # The remaining budget is the timeout, so the pass cannot
-                # run past its deadline. Bounding the loop alone did not do
-                # it: the last plugin to start could still block for the
-                # executor's full 30s, which turned a 20s budget into a 31.8s
-                # pass on the rig.
-                success = self.plugin_manager.plugin_executor.execute_update(
-                    plugin_instance, plugin_id, timeout=update_timeout)
-                if success and hasattr(self.plugin_manager, 'plugin_last_update'):
-                    self.plugin_manager.plugin_last_update[plugin_id] = time.time()
-            else:
-                # Fallback to direct call
-                try:
-                    if hasattr(plugin_instance, 'update'):
-                        plugin_instance.update()
-                        if hasattr(self.plugin_manager, 'plugin_last_update'):
-                            self.plugin_manager.plugin_last_update[plugin_id] = time.time()
-                        # Record success
-                        if hasattr(self.plugin_manager, 'health_tracker') and self.plugin_manager.health_tracker:
-                            self.plugin_manager.health_tracker.record_success(plugin_id)
-                except Exception as exc:  # pylint: disable=broad-except
-                    logger.exception("Error updating plugin %s", plugin_id)
-                    # Record failure
-                    if hasattr(self.plugin_manager, 'health_tracker') and self.plugin_manager.health_tracker:
-                        self.plugin_manager.health_tracker.record_failure(plugin_id, exc)
+            health_tracker = self.plugin_manager.health_tracker
+            if health_tracker is not None and health_tracker.should_skip_plugin(plugin_id):
+                logger.debug("Skipping update for plugin %s due to circuit breaker", plugin_id)
+                continue
+
+            # The remaining budget is the timeout, so the pass cannot run past
+            # its deadline. Bounding the loop alone did not do it: the last
+            # plugin to start could still block for the executor's full 30s,
+            # which turned a 20s budget into a 31.8s pass on the rig.
+            success = self.plugin_manager.plugin_executor.execute_update(
+                plugin_instance, plugin_id, timeout=update_timeout)
+            if success:
+                self.plugin_manager.plugin_last_update[plugin_id] = time.time()
 
         if deferred:
             logger.info(
@@ -913,29 +869,25 @@ class DisplayController:
 
     def _tick_plugin_updates_for_vegas(self) -> None:
         """Run scheduled plugin updates and tell Vegas mode which plugins
-        actually got fresh data, so it can hot-swap them into the scroll
+        actually got fresh data, so it can refresh them in the scroll
         without waiting for a full cycle to complete.
 
-        Used as the Vegas coordinator's update callback instead of the plain
-        _tick_plugin_updates() so that a live score change is reflected in
-        the ticker within a few seconds rather than at the next cycle
-        boundary (which, depending on min/max_cycle_duration, can be
-        minutes away). Restores wiring that PR #299 added and PR #330's
-        sync-mode refactor inadvertently dropped: coordinator.mark_plugin_updated()
-        has been unreachable dead code since.
+        This is the Vegas coordinator's update callback, used instead of the
+        plain _tick_plugin_updates() so that a live score change reaches the
+        ticker within seconds rather than at the next cycle boundary (which,
+        depending on min/max_cycle_duration, can be minutes away).
 
-        Delegates the before/after plugin_last_update snapshot to
-        PluginManager.run_scheduled_updates_with_changes() so the snapshot,
-        update pass, and diff are lock-protected against this callback's own
-        background update-tick thread racing the main render loop.
+        PluginManager.run_scheduled_updates_with_changes() takes the
+        before/after plugin_last_update snapshot, so the snapshot, update
+        pass and diff are locked against the main render loop's own update
+        tick running concurrently on the other thread.
         """
-        if not self.plugin_manager or not hasattr(self.plugin_manager, "run_scheduled_updates_with_changes"):
-            self._tick_plugin_updates()
+        if not self.plugin_manager:
             return
 
         updated = self.plugin_manager.run_scheduled_updates_with_changes()
 
-        vc = getattr(self, "vegas_coordinator", None)
+        vc = self.vegas_coordinator
         if vc is None:
             return
 
@@ -948,29 +900,27 @@ class DisplayController:
                     logger.exception("Error marking plugin %s updated for Vegas", plugin_id)
 
     def _tick_plugin_updates(self):
-        """Run scheduled plugin updates if the plugin manager supports them."""
+        """Run any plugin updates that are due."""
         if not self.plugin_manager:
             return
-
-        if hasattr(self.plugin_manager, "run_scheduled_updates"):
-            try:
-                self.plugin_manager.run_scheduled_updates()
-            except Exception:  # pylint: disable=broad-except
-                logger.exception("Error running scheduled plugin updates")
+        try:
+            self.plugin_manager.run_scheduled_updates()
+        except Exception:  # pylint: disable=broad-except
+            logger.exception("Error running scheduled plugin updates")
 
     @contextmanager
     def _display_lock_or_skip(self, plugin_id):
         """Try-lock guard keeping a plugin's display() off its in-flight update().
 
         Yields True when display may run (lock held, released on exit) or
-        when no lock support exists (older plugin manager). Yields False when
-        the plugin's update() is currently executing on the background
+        when there is no plugin manager or plugin id to lock on. Yields False
+        when the plugin's update() is currently executing on the background
         worker — the caller should treat the frame as displayed (the panel
         holds the last pushed frame) rather than as a plugin failure, so a
         mid-update skip never advances the rotation.
         """
         pm = self.plugin_manager
-        if not pm or not hasattr(pm, 'get_plugin_lock') or not plugin_id:
+        if not pm or not plugin_id:
             yield True
             return
         lock = pm.get_plugin_lock(plugin_id)
@@ -982,7 +932,51 @@ class DisplayController:
         finally:
             lock.release()
 
-    _FOLLOWER_SEND_INTERVAL = 1.0 / 90  # raw bytes are cheap; 90fps > follower render rate
+    def _display_once(self, plugin, mode: str, accepts_display_mode: bool,
+                      force_clear: bool = False):
+        """Call ``plugin.display()`` directly for one frame of a render loop.
+
+        Frames after a screen's first dispatch come through here rather than
+        PluginExecutor: the executor spawns a thread per call, which at the
+        high-FPS loop's frame rate would cost more than the advisory timeout
+        it buys -- and that timeout cannot cancel a hung plugin anyway (see
+        execute_with_timeout). The first dispatch in run() still goes through
+        the executor, so failures there are caught and recorded.
+
+        Args:
+            plugin: The plugin to draw.
+            mode: The display mode, passed on when the plugin accepts
+                ``display_mode`` so plugins with several modes stay on it.
+            accepts_display_mode: Whether display() takes ``display_mode``.
+            force_clear: Passed through to display().
+
+        Returns:
+            display()'s result, or True when the frame was skipped because
+            the plugin's update() holds its lock (the panel keeps the last
+            frame; that is not a failure).
+        """
+        with self._display_lock_or_skip(getattr(plugin, 'plugin_id', None)) as can_display:
+            if not can_display:
+                return True
+            if accepts_display_mode:
+                return plugin.display(display_mode=mode, force_clear=force_clear)
+            return plugin.display(force_clear=force_clear)
+
+    def _health_tracker(self):
+        """The plugin circuit breaker, or None when it is not enabled."""
+        if self.plugin_manager is None:
+            return None
+        return self.plugin_manager.health_tracker
+
+    def _follower_sign(self) -> int:
+        """-1 when the follower panel sits left of the leader, +1 when right.
+
+        The follower shows the strip at the leader's position plus
+        ``sign * width``: content that has already scrolled off the leader's
+        left edge when it is on the left (the default).
+        """
+        position = self.config.get("sync", {}).get("follower_position", "left")
+        return -1 if position == "left" else 1
 
     def _send_follower_frame(self, plugin_instance) -> None:
         """Leader: generate and send the follower's portion of the current frame.
@@ -994,17 +988,13 @@ class DisplayController:
         """
         if not (self.sync_manager and self.sync_manager.role == SyncRole.LEADER):
             return
-        # Throttle to ~90fps via _FOLLOWER_SEND_INTERVAL — raw RGB bytes, no encode/decode
         now = time.time()
-        if now - getattr(self, '_last_follower_send', 0) < self._FOLLOWER_SEND_INTERVAL:
+        if now - self._last_follower_send < SYNC_SEND_INTERVAL:
             return
         self._last_follower_send = now
 
         follower_frame = None
-        width = self.display_manager.width
-        sync_cfg = self.config.get("sync", {})
-        sign = -1 if sync_cfg.get("follower_position", "left") == "left" else 1
-        offset = sign * width
+        offset = self._follower_sign() * self.display_manager.width
 
         # 1. Explicit hook — plugin opted in with get_offset_frame()
         try:
@@ -1206,7 +1196,7 @@ class DisplayController:
     def _publish_current_mode_state_if_changed(self) -> None:
         """Publish current mode state only when it actually changed, to avoid
         writing to the shared cache on every render tick."""
-        if self.current_display_mode != getattr(self, '_last_published_mode', None):
+        if self.current_display_mode != self._last_published_mode:
             self._publish_current_mode_state()
 
     def _publish_on_demand_state(self) -> None:
@@ -1232,9 +1222,20 @@ class DisplayController:
 
     def _set_on_demand_error(self, message: str) -> None:
         """Set on-demand state to error and publish."""
+        self._reset_on_demand_fields()
         self.on_demand_status = 'error'
         self.on_demand_last_error = message
         self.on_demand_last_event = None
+        self.rotation_resume_index = None
+        self._publish_on_demand_state()
+
+    def _reset_on_demand_fields(self) -> None:
+        """Clear the on-demand session: no plugin, no modes, no expiry.
+
+        Leaves status, last error/event and rotation_resume_index to the
+        caller, which is what differs between ending a session and failing
+        to start one.
+        """
         self.on_demand_active = False
         self.on_demand_mode = None
         self.on_demand_modes = []
@@ -1244,8 +1245,19 @@ class DisplayController:
         self.on_demand_requested_at = None
         self.on_demand_expires_at = None
         self.on_demand_pinned = False
-        self.rotation_resume_index = None
         self.on_demand_schedule_override = False
+
+    def _advance_on_demand(self) -> None:
+        """Move an active on-demand session to its next mode and publish it.
+
+        The caller checks that on_demand_modes is non-empty.
+        """
+        self.on_demand_mode_index = (self.on_demand_mode_index + 1) % len(self.on_demand_modes)
+        next_mode = self.on_demand_modes[self.on_demand_mode_index]
+        logger.info("Rotating to next on-demand mode: %s (index %d/%d)",
+                    next_mode, self.on_demand_mode_index, len(self.on_demand_modes))
+        self.current_display_mode = next_mode
+        self.force_change = True
         self._publish_on_demand_state()
 
     #: Shortest gap between mailbox disk reads. This is called after every
@@ -1679,7 +1691,7 @@ class DisplayController:
         ordered_modes = self._apply_on_demand_pin(ordered_modes, resolved_mode, pinned)
 
         self.on_demand_active = True
-        self.on_demand_mode = resolved_mode  # Keep for backward compatibility
+        self.on_demand_mode = resolved_mode
         self.on_demand_modes = ordered_modes
         self.on_demand_mode_index = 0
         self.on_demand_plugin_id = resolved_plugin_id
@@ -1731,20 +1743,11 @@ class DisplayController:
                 self._publish_on_demand_state()
             return
 
-        self.on_demand_active = False
-        self.on_demand_mode = None
-        self.on_demand_modes = []
-        self.on_demand_mode_index = 0
-        self.on_demand_plugin_id = None
-        self.on_demand_duration = None
-        self.on_demand_requested_at = None
-        self.on_demand_expires_at = None
-        self.on_demand_pinned = False
+        self._reset_on_demand_fields()
         self.on_demand_status = 'idle'
         self.on_demand_last_error = None
         self.on_demand_last_event = reason or 'cleared'
-        self.on_demand_schedule_override = False
-        
+
         # Clear on-demand configuration from cache
         self.cache_manager.clear_cache('display_on_demand_config')
 
@@ -1764,7 +1767,7 @@ class DisplayController:
 
         self.rotation_resume_index = None
         self.force_change = True
-        logger.info("✓ ON-DEMAND MODE CLEARED (reason=%s), resuming normal rotation to mode: %s", 
+        logger.info("On-demand mode cleared (reason=%s), resuming normal rotation to mode: %s", 
                    reason, self.current_display_mode)
         self._publish_on_demand_state()
 
@@ -1882,7 +1885,7 @@ class DisplayController:
 
     def _vegas_keeps_live_in_ticker(self) -> bool:
         """Whether live content should stay in the ticker instead of preempting it."""
-        coordinator = getattr(self, 'vegas_coordinator', None)
+        coordinator = self.vegas_coordinator
         config = getattr(coordinator, 'vegas_config', None)
         return bool(getattr(config, 'live_in_ticker', False))
 
@@ -1993,78 +1996,77 @@ class DisplayController:
                 # Plugin update() threads still run (via _tick_plugin_updates above) so
                 # data is fresh when we return to standalone if the leader goes offline.
                 if self.sync_manager.is_follower_active():
-                    # Dead-reckoning follower render:
-                    # Advance local position at configured speed each tick; snap or
-                    # gently correct toward received scroll_x to absorb UDP jitter.
-                    _now_dr = time.perf_counter()
-                    _dt = _now_dr - getattr(self, '_follower_dr_last_t', _now_dr)
-                    self._follower_dr_last_t = _now_dr
+                    # Dead-reckoning follower render: advance the local
+                    # position at the configured speed each tick, then snap or
+                    # nudge it toward the leader's scroll_x to absorb UDP
+                    # jitter.
+                    now_dr = time.perf_counter()
+                    last_t = self._follower_dr_last_t
+                    dt = now_dr - last_t if last_t is not None else 0.0
+                    self._follower_dr_last_t = now_dr
 
-                    vc = getattr(self, 'vegas_coordinator', None)
+                    vc = self.vegas_coordinator
                     rp = vc.render_pipeline if (vc and vc.render_pipeline) else None
                     width = self.display_manager.width
 
-                    # Opt #2: use pre-cached scroll speed (constant for the run)
-                    vegas_speed = self._scroll_speed
-                    local_x = getattr(self, '_follower_local_x', None)
+                    local_x = self._follower_local_x
                     if local_x is None:
                         local_x = float(width)  # safe start (past pre-roll guard)
-                    local_x += vegas_speed * _dt
+                    local_x += self._scroll_speed * dt
 
-                    # Pull latest position from leader (may be None if no packet yet)
+                    # Latest position from the leader (None until a packet arrives)
                     scroll_x = self.sync_manager.get_latest_scroll_x()
                     if scroll_x is not None:
                         diff = scroll_x - local_x
                         total_w = (
                             rp.scroll_helper.total_scroll_width
                             if rp and rp.scroll_helper.total_scroll_width
-                            else width * 4
+                            else width * _FOLLOWER_FALLBACK_STRIP_SCREENS
                         )
-                        if abs(diff) > total_w * 0.5:
-                            # Large jump → cycle reset, snap immediately
+                        if abs(diff) > total_w * _FOLLOWER_SNAP_FRACTION:
+                            # A jump that large is a cycle reset: snap.
                             local_x = float(scroll_x)
                             self._follower_pending_new_image = True
-                        elif abs(diff) > 10:
-                            # Moderate drift → 20% correction per tick
-                            local_x += diff * 0.20
+                        elif abs(diff) > _FOLLOWER_DRIFT_PX:
+                            local_x += diff * _FOLLOWER_DRIFT_GAIN
                         else:
-                            # Near → gentle 5% correction
-                            local_x += diff * 0.05
+                            local_x += diff * _FOLLOWER_NEAR_GAIN
 
                     self._follower_local_x = local_x
 
                     if rp and rp.scroll_helper.cached_image is not None:
-                        sync_cfg = self.config.get("sync", {})
-                        sign = -1 if sync_cfg.get("follower_position", "left") == "left" else 1
                         # Hold last frame until TCP image arrives after cycle reset
-                        if not getattr(self, "_follower_pending_new_image", False):
-                            if local_x >= width:
-                                rp.scroll_helper.scroll_position = local_x + sign * width
-                                frame = rp.scroll_helper.get_visible_portion()
-                                if frame is not None:
-                                    self._follower_last_frame = frame
+                        if not self._follower_pending_new_image and local_x >= width:
+                            rp.scroll_helper.scroll_position = (
+                                local_x + self._follower_sign() * width)
+                            frame = rp.scroll_helper.get_visible_portion()
+                            if frame is not None:
+                                self._follower_last_frame = frame
                     elif scroll_x is None:
                         # Fallback: pixel frame before first scroll_x arrives
                         frame = self.sync_manager.get_latest_frame()
                         if frame is not None:
                             self._follower_last_frame = frame
 
-                    display_frame = getattr(self, '_follower_last_frame', None)
-                    if display_frame is not None:
-                        self.display_manager.image = display_frame
+                    if self._follower_last_frame is not None:
+                        self.display_manager.image = self._follower_last_frame
                         self.display_manager._sync_render_allowed = True
                         self.display_manager.update_display()
                         self.display_manager._sync_render_allowed = False
-                    # Precision deadline timer — keeps render at exactly 60fps
-                    _deadline = getattr(self, '_follower_deadline', None)
-                    _now = time.perf_counter()
-                    if _deadline is None or _now > _deadline + 0.1:
-                        _deadline = _now
-                    _deadline += 1.0 / 60
-                    self._follower_deadline = _deadline
-                    _sleep = _deadline - time.perf_counter()
-                    if _sleep > 0:
-                        time.sleep(_sleep)
+
+                    # Pace to a fixed deadline grid rather than sleeping a
+                    # flat interval, so render time doesn't lower the rate.
+                    # After a stall longer than _FOLLOWER_DEADLINE_SLIP the
+                    # grid restarts instead of rendering a burst to catch up.
+                    now = time.perf_counter()
+                    deadline = self._follower_deadline
+                    if deadline is None or now > deadline + _FOLLOWER_DEADLINE_SLIP:
+                        deadline = now
+                    deadline += _FOLLOWER_FRAME_INTERVAL
+                    self._follower_deadline = deadline
+                    remaining = deadline - time.perf_counter()
+                    if remaining > 0:
+                        time.sleep(remaining)
                     continue
 
                 # Process any deferred updates that may have accumulated
@@ -2163,13 +2165,12 @@ class DisplayController:
                     if hasattr(plugin_instance, 'display'):
                         # Check plugin health before attempting to display
                         plugin_id = getattr(plugin_instance, 'plugin_id', active_mode)
-                        should_skip = False
-                        if self.plugin_manager and hasattr(self.plugin_manager, 'health_tracker') and self.plugin_manager.health_tracker:
-                            should_skip = self.plugin_manager.health_tracker.should_skip_plugin(plugin_id)
-                            if should_skip:
-                                logger.info("Skipping plugin %s due to circuit breaker (mode: %s)", plugin_id, active_mode)
-                        
-                        if not should_skip:
+                        health_tracker = self._health_tracker()
+                        should_skip = (health_tracker is not None
+                                       and health_tracker.should_skip_plugin(plugin_id))
+                        if should_skip:
+                            logger.info("Skipping plugin %s due to circuit breaker (mode: %s)", plugin_id, active_mode)
+                        else:
                             manager_to_display = plugin_instance
                             logger.debug(f"Found plugin manager for mode {active_mode}: {type(plugin_instance).__name__}")
                     else:
@@ -2177,168 +2178,138 @@ class DisplayController:
                 else:
                     logger.warning(f"Mode {active_mode} not found in plugin_modes (available: {list(self.plugin_modes.keys())})")
                 
-                # Display the current mode
-                display_result = True  # Default to True for backward compatibility
-                display_failed_due_to_exception = False  # Track if False was due to exception vs no content
+                # Display the current mode. A plugin that returns nothing
+                # (None) counts as having displayed.
+                display_result = True
+                # Whether a False result came from an exception rather than
+                # the plugin having no content.
+                display_failed_due_to_exception = False
                 if not manager_to_display:
                     logger.warning(f"No plugin manager found for mode {active_mode} - skipping display and rotating to next mode")
                     display_result = False
-                elif manager_to_display:
+                else:
                     plugin_id = getattr(manager_to_display, 'plugin_id', active_mode)
                     try:
                         logger.debug(f"Calling display() for {active_mode} with force_clear={self.force_change}")
-                        can_display = False
-                        if hasattr(manager_to_display, 'display'):
-                            # Opt #1: look up (or compute once) whether display() accepts display_mode
-                            _cache_key = plugin_id
-                            if _cache_key not in self._plugin_accepts_display_mode:
-                                import inspect as _inspect
-                                self._plugin_accepts_display_mode[_cache_key] = (
-                                    'display_mode' in _inspect.signature(manager_to_display.display).parameters
-                                )
-                            _accepts_display_mode = self._plugin_accepts_display_mode[_cache_key]
+                        if plugin_id not in self._plugin_accepts_display_mode:
+                            self._plugin_accepts_display_mode[plugin_id] = (
+                                'display_mode' in inspect.signature(manager_to_display.display).parameters
+                            )
+                        _accepts_display_mode = self._plugin_accepts_display_mode[plugin_id]
 
-                            pm = self.plugin_manager
-                            display_lock = None
-                            can_display = True
-                            if pm and hasattr(pm, 'get_plugin_lock'):
-                                display_lock = pm.get_plugin_lock(plugin_id)
-                                can_display = display_lock.acquire(blocking=False)
+                        pm = self.plugin_manager
+                        display_lock = pm.get_plugin_lock(plugin_id) if pm else None
+                        can_display = display_lock is None or display_lock.acquire(blocking=False)
 
-                            if not can_display:
-                                # update() in flight on the worker — hold
-                                # the last frame; not a plugin failure
-                                result = True
-                            elif pm and hasattr(pm, 'plugin_executor'):
-                                # PluginExecutor's own thread.join(timeout) can
-                                # return before the real display() call
-                                # finishes (a lingering daemon thread keeps
-                                # running it) -- so the lock is released from
-                                # inside the wrapped call itself, whichever
-                                # thread actually finishes it, rather than
-                                # here when this dispatch merely returns.
-                                release_guard = threading.Lock()
-                                released = {'done': False}
+                        if display_lock is None:
+                            # Only when plugin loading failed part-way.
+                            result = self._display_once(
+                                manager_to_display, active_mode, _accepts_display_mode,
+                                force_clear=self.force_change)
+                        elif not can_display:
+                            # update() in flight on the worker — hold
+                            # the last frame; not a plugin failure
+                            result = True
+                        else:
+                            # PluginExecutor's own thread.join(timeout) can
+                            # return before the real display() call
+                            # finishes (a lingering daemon thread keeps
+                            # running it) -- so the lock is released from
+                            # inside the wrapped call itself, whichever
+                            # thread actually finishes it, rather than
+                            # here when this dispatch merely returns.
+                            release_guard = threading.Lock()
+                            released = {'done': False}
 
-                                def _release_display_lock():
-                                    with release_guard:
-                                        if released['done']:
-                                            return
-                                        released['done'] = True
-                                    if display_lock is not None:
-                                        display_lock.release()
+                            def _release_display_lock():
+                                with release_guard:
+                                    if released['done']:
+                                        return
+                                    released['done'] = True
+                                display_lock.release()
 
-                                if _accepts_display_mode:
-                                    def _display_target(display_mode=None, force_clear=False):
-                                        try:
-                                            return manager_to_display.display(
-                                                display_mode=display_mode, force_clear=force_clear)
-                                        finally:
-                                            _release_display_lock()
-                                else:
-                                    def _display_target(force_clear=False):
-                                        try:
-                                            return manager_to_display.display(force_clear=force_clear)
-                                        finally:
-                                            _release_display_lock()
-
-                                try:
-                                    result = self.plugin_manager.plugin_executor.execute_display(
-                                        types.SimpleNamespace(display=_display_target),
-                                        plugin_id,
-                                        force_clear=self.force_change,
-                                        display_mode=active_mode if _accepts_display_mode else None,
-                                        # Already resolved and cached above.
-                                        # Without this the executor re-derives
-                                        # it with inspect.signature() against
-                                        # the SimpleNamespace built two lines
-                                        # up -- a fresh callable every call, so
-                                        # nothing there can ever cache.
-                                        accepts_display_mode=_accepts_display_mode
-                                    )
-                                except Exception:  # pragma: no cover - defensive;
-                                    # execute_display catches everything
-                                    # internally, but guarantee the lock is
-                                    # never leaked if something unexpected
-                                    # slips through.
-                                    _release_display_lock()
-                                    raise
+                            if _accepts_display_mode:
+                                def _display_target(display_mode=None, force_clear=False):
+                                    try:
+                                        return manager_to_display.display(
+                                            display_mode=display_mode, force_clear=force_clear)
+                                    finally:
+                                        _release_display_lock()
                             else:
-                                # Fallback to direct call if executor not available
-                                try:
-                                    if _accepts_display_mode:
-                                        result = manager_to_display.display(display_mode=active_mode, force_clear=self.force_change)
-                                    else:
-                                        result = manager_to_display.display(force_clear=self.force_change)
-                                finally:
-                                    if display_lock is not None:
-                                        display_lock.release()
-                            
-                            logger.debug(f"display() returned: {result} (type: {type(result)})")
-                            # Check if display() returned a boolean (new behavior)
-                            if isinstance(result, bool):
-                                display_result = result
-                                if not display_result:
-                                    logger.info("Plugin %s display() returned False for mode %s", plugin_id, active_mode)
-                        
+                                def _display_target(force_clear=False):
+                                    try:
+                                        return manager_to_display.display(force_clear=force_clear)
+                                    finally:
+                                        _release_display_lock()
+
+                            try:
+                                result = pm.plugin_executor.execute_display(
+                                    types.SimpleNamespace(display=_display_target),
+                                    plugin_id,
+                                    force_clear=self.force_change,
+                                    display_mode=active_mode if _accepts_display_mode else None,
+                                    # Already resolved and cached above.
+                                    # Without this the executor re-derives
+                                    # it with inspect.signature() against
+                                    # the SimpleNamespace built above -- a
+                                    # fresh callable every call, so nothing
+                                    # there can ever cache.
+                                    accepts_display_mode=_accepts_display_mode
+                                )
+                            except Exception:  # pragma: no cover - defensive;
+                                # execute_display catches everything
+                                # internally, but guarantee the lock is
+                                # never leaked if something unexpected
+                                # slips through.
+                                _release_display_lock()
+                                raise
+
+                        logger.debug(f"display() returned: {result} (type: {type(result)})")
+                        if isinstance(result, bool):
+                            display_result = result
+                            if not display_result:
+                                logger.info("Plugin %s display() returned False for mode %s", plugin_id, active_mode)
+
                         # Record success only when display() actually ran this
                         # frame -- a skipped frame (lock busy) held the last
                         # frame, not a real success, and must not clear
                         # force_change or the pending mode-switch clear will
                         # be lost when display() finally does run.
                         if can_display:
-                            if self.plugin_manager and hasattr(self.plugin_manager, 'health_tracker') and self.plugin_manager.health_tracker:
-                                self.plugin_manager.health_tracker.record_success(plugin_id)
+                            health_tracker = self._health_tracker()
+                            if health_tracker is not None:
+                                health_tracker.record_success(plugin_id)
                             self.force_change = False
                     except Exception as exc:  # pylint: disable=broad-except
                         logger.exception("Error displaying %s", self.current_display_mode)
-                        # Record failure
-                        if self.plugin_manager and hasattr(self.plugin_manager, 'health_tracker') and self.plugin_manager.health_tracker:
-                            self.plugin_manager.health_tracker.record_failure(plugin_id, exc)
+                        health_tracker = self._health_tracker()
+                        if health_tracker is not None:
+                            health_tracker.record_failure(plugin_id, exc)
                         self.force_change = True
                         display_result = False
-                        display_failed_due_to_exception = True  # Mark that this was an exception, not just no content
-                
+                        display_failed_due_to_exception = True
+
                 # If display() returned False, skip to next mode immediately
                 if not display_result:
                     if self.on_demand_active:
-                        # Skip to next on-demand mode if no content
                         logger.info("No content for on-demand mode %s, skipping to next mode", active_mode)
-                        
-                        # Guard against empty on_demand_modes to prevent ZeroDivisionError
-                        if not self.on_demand_modes or len(self.on_demand_modes) == 0:
+                        if not self.on_demand_modes:
                             logger.warning("On-demand active but no modes configured, skipping rotation")
-                            logger.debug("on_demand_modes is empty, cannot rotate to next mode")
-                            # Skip rotation and continue to next iteration
                             continue
-                        
-                        # Move to next mode in rotation (only if on_demand_modes is non-empty)
-                        self.on_demand_mode_index = (self.on_demand_mode_index + 1) % len(self.on_demand_modes)
-                        next_mode = self.on_demand_modes[self.on_demand_mode_index]
-                        
-                        # Only log when next_mode is valid
-                        if next_mode:
-                            logger.info("Rotating to next on-demand mode: %s (index %d/%d)", 
-                                       next_mode, self.on_demand_mode_index, len(self.on_demand_modes))
-                            self.current_display_mode = next_mode
-                            self.force_change = True
-                            self._publish_on_demand_state()
-                            continue
-                        else:
-                            logger.warning("Next on-demand mode is invalid, skipping rotation")
-                            continue
+                        self._advance_on_demand()
+                        continue
                     else:
                         logger.info("No content to display for %s, skipping to next mode", active_mode)
                         # Don't clear display when immediately moving to next mode - this causes black flashes
                         # The next mode will render immediately with force_clear=True, which is sufficient
-                        
+
                         # Only skip all modes for this plugin if there was an exception (broken plugin)
                         # If it's just "no content", we should still try other modes (recent, upcoming)
                         if display_failed_due_to_exception:
                             current_plugin_id = self.mode_to_plugin_id.get(active_mode)
                             if current_plugin_id and current_plugin_id in self.plugin_display_modes:
                                 plugin_modes = self.plugin_display_modes[current_plugin_id]
-                                logger.warning("Skipping all %d mode(s) for plugin %s due to exception: %s", 
+                                logger.warning("Skipping all %d mode(s) for plugin %s due to exception: %s",
                                               len(plugin_modes), current_plugin_id, plugin_modes)
                                 # Find the next mode that's not from this plugin
                                 next_index = self.current_mode_index
@@ -2353,7 +2324,7 @@ class DisplayController:
                                         self.current_mode_index = next_index
                                         self.current_display_mode = next_mode
                                         self.force_change = True
-                                        logger.info("Switching to mode: %s (skipped plugin %s due to exception)", 
+                                        logger.info("Switching to mode: %s (skipped plugin %s due to exception)",
                                                   self.current_display_mode, current_plugin_id)
                                         found_next = True
                                         break
@@ -2370,9 +2341,7 @@ class DisplayController:
                 else:
                     # Get base duration for current mode
                     base_duration = self._get_display_duration(active_mode)
-                    dynamic_enabled = (
-                        manager_to_display and self._plugin_supports_dynamic(manager_to_display)
-                    )
+                    dynamic_enabled = self._plugin_supports_dynamic(manager_to_display)
                     
                     # Log dynamic duration status
                     if dynamic_enabled:
@@ -2473,296 +2442,252 @@ class DisplayController:
                                 self._check_on_demand_expiration()
                                 continue
 
-                    # For plugins, call display multiple times to allow game rotation
-                    if manager_to_display and hasattr(manager_to_display, 'display'):
-                        # High-FPS decision, in precedence order:
-                        # 1. A plugin that declares needs_high_fps knows best
-                        #    (e.g. static-image sets it False for still PNGs,
-                        #    True for animated GIFs).
-                        # 2. Back-compat: older static-image versions without
-                        #    the attribute keep the historical forced high-FPS
-                        #    (GIF support).
-                        # 3. Otherwise scrolling plugins get high FPS.
-                        plugin_id = getattr(manager_to_display, 'plugin_id', None)
-                        declared = getattr(manager_to_display, 'needs_high_fps', None)
-                        if declared is not None:
-                            needs_high_fps = bool(declared)
-                            logger.debug(
-                                "[DisplayController] FPS check for %s (plugin=%s) - "
-                                "plugin declares needs_high_fps=%s",
-                                active_mode, plugin_id, needs_high_fps)
-                        elif plugin_id == 'static-image':
-                            needs_high_fps = True
-                            logger.debug("FPS check - static-image plugin: forcing high-FPS mode for GIF support")
-                        else:
-                            has_enable_scrolling = hasattr(manager_to_display, 'enable_scrolling')
-                            enable_scrolling_value = getattr(manager_to_display, 'enable_scrolling', False)
-                            needs_high_fps = has_enable_scrolling and enable_scrolling_value
-                            logger.info(
-                                "FPS check for %s - has_enable_scrolling: %s, enable_scrolling_value: %s, needs_high_fps: %s",
-                                active_mode,
-                                has_enable_scrolling,
-                                enable_scrolling_value,
-                                needs_high_fps,
-                            )
-
-                        target_duration = max_duration
-                        start_time = time.time()
-
-                        def _should_exit_dynamic(elapsed_time: float) -> bool:
-                            if not dynamic_enabled:
-                                return False
-                            # Add small grace period (0.5s) after min_duration to prevent
-                            # premature exits due to timing issues
-                            grace_period = 0.5
-                            if elapsed_time < min_duration + grace_period:
-                                logger.debug(
-                                    "_should_exit_dynamic: elapsed %.2fs < min_duration %.2fs + grace %.2fs, returning False",
-                                    elapsed_time,
-                                    min_duration,
-                                    grace_period,
-                                )
-                                return False
-                            cycle_complete = self._plugin_cycle_complete(manager_to_display)
-                            logger.debug(
-                                "_should_exit_dynamic: elapsed %.2fs >= min %.2fs, cycle_complete=%s, returning %s",
-                                elapsed_time,
-                                min_duration + grace_period,
-                                cycle_complete,
-                                cycle_complete,
-                            )
-                            if cycle_complete:
-                                logger.debug(
-                                    "Cycle complete detected for %s after %.2fs (min: %.2fs, grace: %.2fs)",
-                                    active_mode,
-                                    elapsed_time,
-                                    min_duration,
-                                    grace_period,
-                                )
-                            return cycle_complete
-
-                        loop_completed = False
-
-                        if needs_high_fps:
-                            # Ultra-smooth FPS for scrolling plugins (8ms = 125 FPS)
-                            display_interval = 0.008
-                            logger.debug(
-                                "Entering high-FPS loop for %s with display_interval=%.3fs (%.1f FPS)",
-                                active_mode,
-                                display_interval,
-                                1.0 / display_interval
-                            )
-
-                            # Deliberate: frames after the first call
-                            # display() directly rather than through
-                            # PluginExecutor. The executor spawns a thread per
-                            # call, which at this loop's frame rate would cost
-                            # more than the advisory timeout it buys -- and
-                            # that timeout cannot cancel a hung plugin anyway
-                            # (see execute_with_timeout). The first dispatch
-                            # above still goes through it, so load-time
-                            # failures are still caught and recorded.
-                            while True:
-                                _frame_start = time.perf_counter()
-                                try:
-                                    with self._display_lock_or_skip(plugin_id) as can_display:
-                                        if can_display:
-                                            # Pass display_mode to maintain sticky manager state
-                                            if _accepts_display_mode:
-                                                result = manager_to_display.display(display_mode=active_mode, force_clear=False)
-                                            else:
-                                                result = manager_to_display.display(force_clear=False)
-                                        else:
-                                            # update() in flight — hold the last frame
-                                            result = True
-                                    if isinstance(result, bool) and not result:
-                                        logger.debug("Display returned False, breaking early")
-                                        break
-                                except Exception:  # pylint: disable=broad-except
-                                    logger.exception("Error during display update")
-
-                                # Multi-display sync: send follower frame after each render
-                                self._send_follower_frame(manager_to_display)
-
-                                self._tick_plugin_updates()
-                                # Throttled: one clock compare between passes.
-                                self._service_pending_changes()
-
-                                # Pace to the frame deadline rather than sleeping a flat
-                                # interval on top of the work. display() has already
-                                # blocked on the panel's vsync by this point, so an
-                                # unconditional sleep is added to a wait that already
-                                # happened. Measured on a 2x128x64 chain at
-                                # limit_refresh_rate_hz=100: ~4ms of render plus a flat
-                                # 8ms put each iteration at ~12ms against a 10ms refresh
-                                # grid, so every swap missed a refresh and the loop
-                                # settled at 50fps where display_interval asks for 125 --
-                                # and with zero headroom, ~14% of frames slipped a
-                                # further refresh, which is what reads as scroll stutter.
-                                _remaining = display_interval - (time.perf_counter() - _frame_start)
-                                # Yield even when the frame overran its budget, so plugin
-                                # update threads and the web UI are not starved of the GIL.
-                                time.sleep(_remaining if _remaining > 0 else 0.001)
-
-                                if (self.current_display_mode != active_mode
-                                        or not self.is_display_active):
-                                    logger.debug("Mode changed during high-FPS loop, breaking early")
-                                    break
-
-                                elapsed = time.time() - start_time
-                                if elapsed >= target_duration:
-                                    logger.debug(
-                                        "Reached high-FPS target duration %.2fs for mode %s",
-                                        target_duration,
-                                        active_mode,
-                                    )
-                                    loop_completed = True
-                                    break
-                                if _should_exit_dynamic(elapsed):
-                                    logger.debug(
-                                        "Dynamic duration cycle complete for %s after %.2fs",
-                                        active_mode,
-                                        elapsed,
-                                    )
-                                    loop_completed = True
-                                    break
-                        else:
-                            # Normal FPS for other plugins (1 second)
-                            display_interval = 1.0
-                            logger.debug(
-                                "Entering normal FPS loop for %s with display_interval=%.3fs",
-                                active_mode,
-                                display_interval
-                            )
-
-                            # Deliberate: frames after the first call
-                            # display() directly rather than through
-                            # PluginExecutor. The executor spawns a thread per
-                            # call, which at this loop's frame rate would cost
-                            # more than the advisory timeout it buys -- and
-                            # that timeout cannot cancel a hung plugin anyway
-                            # (see execute_with_timeout). The first dispatch
-                            # above still goes through it, so load-time
-                            # failures are still caught and recorded.
-                            while True:
-                                time.sleep(display_interval)
-                                self._tick_plugin_updates()
-
-                                elapsed = time.time() - start_time
-                                if elapsed >= target_duration:
-                                    logger.debug(
-                                        "Reached standard target duration %.2fs for mode %s",
-                                        target_duration,
-                                        active_mode,
-                                    )
-                                    loop_completed = True
-                                    break
-
-                                try:
-                                    with self._display_lock_or_skip(plugin_id) as can_display:
-                                        if can_display:
-                                            # Pass display_mode to maintain sticky manager state
-                                            if _accepts_display_mode:
-                                                result = manager_to_display.display(display_mode=active_mode, force_clear=False)
-                                            else:
-                                                result = manager_to_display.display(force_clear=False)
-                                        else:
-                                            # update() in flight — hold the last frame
-                                            result = True
-                                    if isinstance(result, bool) and not result:
-                                        # For dynamic duration plugins, don't exit on False - keep looping
-                                        # until cycle is complete or max duration is reached
-                                        if not dynamic_enabled:
-                                            logger.info("Display returned False for %s (no dynamic duration), breaking early", active_mode)
-                                            break
-                                        else:
-                                            logger.debug("Display returned False for %s (dynamic duration enabled), continuing loop", active_mode)
-                                except Exception:  # pylint: disable=broad-except
-                                    logger.exception("Error during display update")
-
-                                # Multi-display sync: send follower frame after each render
-                                self._send_follower_frame(manager_to_display)
-
-                                self._service_pending_changes()
-                                if (self.current_display_mode != active_mode
-                                        or not self.is_display_active):
-                                    logger.info("Mode changed during display loop from %s to %s, breaking early", active_mode, self.current_display_mode)
-                                    break
-
-                                if _should_exit_dynamic(elapsed):
-                                    logger.info(
-                                        "Dynamic duration cycle complete for %s after %.2fs",
-                                        active_mode,
-                                        elapsed,
-                                    )
-                                    loop_completed = True
-                                    break
-
-                        # LOAD-BEARING: if current_display_mode changed mid-loop (on-demand
-                        # activation, live priority, etc.), restart the main loop now instead
-                        # of falling into the "honour minimum duration" sleep below. That sleep
-                        # can run for up to the *previous* mode's full display_duration (default
-                        # 30s) and doesn't poll on-demand requests or re-check the mode, so a
-                        # freshly-requested mode switch would sit invisible for up to 30s — or
-                        # get clobbered by a queued stop request — before ever rendering.
-                        #
-                        # This guard was added in #298 (live priority interrupting long display
-                        # durations) and was accidentally dropped in #330 as collateral damage of
-                        # an unrelated time.monotonic() -> time.time() cleanup in the same hunk.
-                        # Removing it again will silently reintroduce both issues. _activate_on_demand
-                        # already sets force_change=True and clears the display, so the next loop
-                        # iteration renders the new mode immediately.
-                        # Likewise if the schedule turned the display off
-                        # mid-screen: the next iteration blanks it.
-                        if (self.current_display_mode != active_mode
-                                or not self.is_display_active):
-                            continue
-
-                        # Ensure we honour minimum duration when not dynamic and loop ended early
-                        if (
-                            not dynamic_enabled
-                            and not loop_completed
-                            and not needs_high_fps
-                        ):
-                            elapsed = time.time() - start_time
-                            remaining_sleep = max(0.0, max_duration - elapsed)
-                            if remaining_sleep > 0:
-                                self._sleep_with_plugin_updates(remaining_sleep)
-
-                        if dynamic_enabled:
-                            elapsed_total = time.time() - start_time
-                            cycle_done = self._plugin_cycle_complete(manager_to_display)
-                            
-                            # Log cycle completion status and metrics
-                            if cycle_done:
-                                logger.info(
-                                    "Dynamic duration cycle completed for %s after %.2fs (target: %.2fs, min: %.2fs, max: %.2fs)",
-                                    active_mode,
-                                    elapsed_total,
-                                    target_duration,
-                                    min_duration,
-                                    max_duration,
-                                )
-                            elif elapsed_total >= max_duration:
-                                logger.info(
-                                    "Dynamic duration cap reached before cycle completion for %s (%.2fs/%ds, min: %.2fs)",
-                                    active_mode,
-                                    elapsed_total,
-                                    int(max_duration),
-                                    min_duration,
-                                )
-                            else:
-                                logger.debug(
-                                    "Dynamic duration cycle in progress for %s: %.2fs elapsed (target: %.2fs, min: %.2fs, max: %.2fs)",
-                                    active_mode,
-                                    elapsed_total,
-                                    target_duration,
-                                    min_duration,
-                                    max_duration,
-                                )
+                    # High-FPS decision, in precedence order:
+                    # 1. A plugin that declares needs_high_fps knows best
+                    #    (e.g. static-image sets it False for still PNGs,
+                    #    True for animated GIFs).
+                    # 2. Back-compat: older static-image versions without
+                    #    the attribute keep the historical forced high-FPS
+                    #    (GIF support).
+                    # 3. Otherwise scrolling plugins get high FPS.
+                    plugin_id = getattr(manager_to_display, 'plugin_id', None)
+                    declared = getattr(manager_to_display, 'needs_high_fps', None)
+                    if declared is not None:
+                        needs_high_fps = bool(declared)
+                        logger.debug(
+                            "[DisplayController] FPS check for %s (plugin=%s) - "
+                            "plugin declares needs_high_fps=%s",
+                            active_mode, plugin_id, needs_high_fps)
+                    elif plugin_id == 'static-image':
+                        needs_high_fps = True
+                        logger.debug("FPS check - static-image plugin: forcing high-FPS mode for GIF support")
                     else:
-                        # For non-plugin modes, use the original behavior
-                        self._sleep_with_plugin_updates(max_duration)
+                        has_enable_scrolling = hasattr(manager_to_display, 'enable_scrolling')
+                        enable_scrolling_value = getattr(manager_to_display, 'enable_scrolling', False)
+                        needs_high_fps = has_enable_scrolling and enable_scrolling_value
+                        logger.info(
+                            "FPS check for %s - has_enable_scrolling: %s, enable_scrolling_value: %s, needs_high_fps: %s",
+                            active_mode,
+                            has_enable_scrolling,
+                            enable_scrolling_value,
+                            needs_high_fps,
+                        )
+
+                    target_duration = max_duration
+                    start_time = time.time()
+
+                    def _should_exit_dynamic(elapsed_time: float) -> bool:
+                        if not dynamic_enabled:
+                            return False
+                        # Add small grace period (0.5s) after min_duration to prevent
+                        # premature exits due to timing issues
+                        grace_period = 0.5
+                        if elapsed_time < min_duration + grace_period:
+                            logger.debug(
+                                "_should_exit_dynamic: elapsed %.2fs < min_duration %.2fs + grace %.2fs, returning False",
+                                elapsed_time,
+                                min_duration,
+                                grace_period,
+                            )
+                            return False
+                        cycle_complete = self._plugin_cycle_complete(manager_to_display)
+                        logger.debug(
+                            "_should_exit_dynamic: elapsed %.2fs >= min %.2fs, cycle_complete=%s, returning %s",
+                            elapsed_time,
+                            min_duration + grace_period,
+                            cycle_complete,
+                            cycle_complete,
+                        )
+                        if cycle_complete:
+                            logger.debug(
+                                "Cycle complete detected for %s after %.2fs (min: %.2fs, grace: %.2fs)",
+                                active_mode,
+                                elapsed_time,
+                                min_duration,
+                                grace_period,
+                            )
+                        return cycle_complete
+
+                    loop_completed = False
+
+                    if needs_high_fps:
+                        # Ultra-smooth FPS for scrolling plugins (8ms = 125 FPS)
+                        display_interval = 0.008
+                        logger.debug(
+                            "Entering high-FPS loop for %s with display_interval=%.3fs (%.1f FPS)",
+                            active_mode,
+                            display_interval,
+                            1.0 / display_interval
+                        )
+
+                        while True:
+                            _frame_start = time.perf_counter()
+                            try:
+                                result = self._display_once(
+                                    manager_to_display, active_mode, _accepts_display_mode)
+                                if isinstance(result, bool) and not result:
+                                    logger.debug("Display returned False, breaking early")
+                                    break
+                            except Exception:  # pylint: disable=broad-except
+                                logger.exception("Error during display update")
+
+                            # Multi-display sync: send follower frame after each render
+                            self._send_follower_frame(manager_to_display)
+
+                            self._tick_plugin_updates()
+                            # Throttled: one clock compare between passes.
+                            self._service_pending_changes()
+
+                            # Pace to the frame deadline rather than sleeping a flat
+                            # interval on top of the work. display() has already
+                            # blocked on the panel's vsync by this point, so an
+                            # unconditional sleep is added to a wait that already
+                            # happened. Measured on a 2x128x64 chain at
+                            # limit_refresh_rate_hz=100: ~4ms of render plus a flat
+                            # 8ms put each iteration at ~12ms against a 10ms refresh
+                            # grid, so every swap missed a refresh and the loop
+                            # settled at 50fps where display_interval asks for 125 --
+                            # and with zero headroom, ~14% of frames slipped a
+                            # further refresh, which is what reads as scroll stutter.
+                            _remaining = display_interval - (time.perf_counter() - _frame_start)
+                            # Yield even when the frame overran its budget, so plugin
+                            # update threads and the web UI are not starved of the GIL.
+                            time.sleep(_remaining if _remaining > 0 else 0.001)
+
+                            if (self.current_display_mode != active_mode
+                                    or not self.is_display_active):
+                                logger.debug("Mode changed during high-FPS loop, breaking early")
+                                break
+
+                            elapsed = time.time() - start_time
+                            if elapsed >= target_duration:
+                                logger.debug(
+                                    "Reached high-FPS target duration %.2fs for mode %s",
+                                    target_duration,
+                                    active_mode,
+                                )
+                                loop_completed = True
+                                break
+                            if _should_exit_dynamic(elapsed):
+                                logger.debug(
+                                    "Dynamic duration cycle complete for %s after %.2fs",
+                                    active_mode,
+                                    elapsed,
+                                )
+                                loop_completed = True
+                                break
+                    else:
+                        # Normal FPS for other plugins (1 second)
+                        display_interval = 1.0
+                        logger.debug(
+                            "Entering normal FPS loop for %s with display_interval=%.3fs",
+                            active_mode,
+                            display_interval
+                        )
+
+                        while True:
+                            time.sleep(display_interval)
+                            self._tick_plugin_updates()
+
+                            elapsed = time.time() - start_time
+                            if elapsed >= target_duration:
+                                logger.debug(
+                                    "Reached standard target duration %.2fs for mode %s",
+                                    target_duration,
+                                    active_mode,
+                                )
+                                loop_completed = True
+                                break
+
+                            try:
+                                result = self._display_once(
+                                    manager_to_display, active_mode, _accepts_display_mode)
+                                if isinstance(result, bool) and not result:
+                                    # For dynamic duration plugins, don't exit on False - keep looping
+                                    # until cycle is complete or max duration is reached
+                                    if not dynamic_enabled:
+                                        logger.info("Display returned False for %s (no dynamic duration), breaking early", active_mode)
+                                        break
+                                    else:
+                                        logger.debug("Display returned False for %s (dynamic duration enabled), continuing loop", active_mode)
+                            except Exception:  # pylint: disable=broad-except
+                                logger.exception("Error during display update")
+
+                            # Multi-display sync: send follower frame after each render
+                            self._send_follower_frame(manager_to_display)
+
+                            self._service_pending_changes()
+                            if (self.current_display_mode != active_mode
+                                    or not self.is_display_active):
+                                logger.info("Mode changed during display loop from %s to %s, breaking early", active_mode, self.current_display_mode)
+                                break
+
+                            if _should_exit_dynamic(elapsed):
+                                logger.info(
+                                    "Dynamic duration cycle complete for %s after %.2fs",
+                                    active_mode,
+                                    elapsed,
+                                )
+                                loop_completed = True
+                                break
+
+                    # LOAD-BEARING: if current_display_mode changed mid-loop (on-demand
+                    # activation, live priority, etc.), restart the main loop now instead
+                    # of falling into the "honour minimum duration" sleep below. That sleep
+                    # can run for up to the *previous* mode's full display_duration (default
+                    # 30s) and doesn't poll on-demand requests or re-check the mode, so a
+                    # freshly-requested mode switch would sit invisible for up to 30s — or
+                    # get clobbered by a queued stop request — before ever rendering.
+                    # _activate_on_demand already sets force_change=True and clears the
+                    # display, so the next loop iteration renders the new mode immediately.
+                    # Likewise if the schedule turned the display off
+                    # mid-screen: the next iteration blanks it.
+                    if (self.current_display_mode != active_mode
+                            or not self.is_display_active):
+                        continue
+
+                    # Ensure we honour minimum duration when not dynamic and loop ended early
+                    if (
+                        not dynamic_enabled
+                        and not loop_completed
+                        and not needs_high_fps
+                    ):
+                        elapsed = time.time() - start_time
+                        remaining_sleep = max(0.0, max_duration - elapsed)
+                        if remaining_sleep > 0:
+                            self._sleep_with_plugin_updates(remaining_sleep)
+
+                    if dynamic_enabled:
+                        elapsed_total = time.time() - start_time
+                        cycle_done = self._plugin_cycle_complete(manager_to_display)
+                        
+                        # Log cycle completion status and metrics
+                        if cycle_done:
+                            logger.info(
+                                "Dynamic duration cycle completed for %s after %.2fs (target: %.2fs, min: %.2fs, max: %.2fs)",
+                                active_mode,
+                                elapsed_total,
+                                target_duration,
+                                min_duration,
+                                max_duration,
+                            )
+                        elif elapsed_total >= max_duration:
+                            logger.info(
+                                "Dynamic duration cap reached before cycle completion for %s (%.2fs/%ds, min: %.2fs)",
+                                active_mode,
+                                elapsed_total,
+                                int(max_duration),
+                                min_duration,
+                            )
+                        else:
+                            logger.debug(
+                                "Dynamic duration cycle in progress for %s: %.2fs elapsed (target: %.2fs, min: %.2fs, max: %.2fs)",
+                                active_mode,
+                                elapsed_total,
+                                target_duration,
+                                min_duration,
+                                max_duration,
+                            )
 
                 # The dwell sleeps above return early when a pending change
                 # (on-demand started or stopped, display scheduled off) has
@@ -2780,14 +2705,7 @@ class DisplayController:
                         self._clear_on_demand(reason='no-modes-available')
                         # Fall through to normal rotation
                     else:
-                        # Rotate to next on-demand mode
-                        self.on_demand_mode_index = (self.on_demand_mode_index + 1) % len(self.on_demand_modes)
-                        next_mode = self.on_demand_modes[self.on_demand_mode_index]
-                        logger.info("Rotating to next on-demand mode: %s (index %d/%d)", 
-                                   next_mode, self.on_demand_mode_index, len(self.on_demand_modes))
-                        self.current_display_mode = next_mode
-                        self.force_change = True
-                        self._publish_on_demand_state()
+                        self._advance_on_demand()
                         continue
 
                 # Check for live priority - don't rotate if current plugin has live content
@@ -3324,22 +3242,33 @@ class DisplayController:
 
     @staticmethod
     def _vegas_scroll_speed(config: Dict[str, Any]) -> float:
-        """Vegas scroll speed in px/s. The default must match VegasModeConfig's
-        (50): a follower dead-reckons with this value between the leader's
-        position packets, so a different default made it run 50% fast."""
+        """Vegas scroll speed in px/s, with VegasModeConfig's default.
+
+        The default has to be the one Vegas itself uses: a follower
+        dead-reckons with this value between the leader's position packets,
+        so a different default makes it run at the wrong speed.
+        """
+        from src.vegas_mode.config import VegasModeConfig
         vegas_cfg = (config.get('display', {}) or {}).get('vegas_scroll', {}) or {}
-        return float(vegas_cfg.get('scroll_speed', 50.0))
+        return float(vegas_cfg.get('scroll_speed', VegasModeConfig.scroll_speed))
 
     def cleanup(self):
         """Clean up resources."""
         # Stop the async update worker first so no in-flight update() call
         # is still touching display/cache-backed resources while they're
         # torn down below.
-        if self.plugin_manager and hasattr(self.plugin_manager, 'stop_update_worker'):
+        if self.plugin_manager:
             try:
                 self.plugin_manager.stop_update_worker()
             except Exception as e:
                 logger.warning("Error stopping plugin update worker: %s", e)
+        # Vegas is torn down before the display manager: stopping it resets
+        # the display's scrolling state.
+        if self.vegas_coordinator is not None:
+            try:
+                self.vegas_coordinator.cleanup()
+            except Exception as e:
+                logger.warning("Error cleaning up Vegas mode: %s", e)
         # Shutdown config service if it exists
         if hasattr(self, 'config_service'):
             try:

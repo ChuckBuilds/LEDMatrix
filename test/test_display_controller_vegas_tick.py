@@ -83,15 +83,9 @@ class TestVegasCoordinatorCallbackWiring:
 
         fake_coordinator = MagicMock()
 
-        import src.display_controller as dc_module
-        original_imported = dc_module._vegas_mode_imported
-        original_class = dc_module.VegasModeCoordinator
-        try:
-            dc_module._vegas_mode_imported = True
-            dc_module.VegasModeCoordinator = MagicMock(return_value=fake_coordinator)
+        from unittest.mock import patch
+        with patch('src.vegas_mode.VegasModeCoordinator',
+                   MagicMock(return_value=fake_coordinator)):
             dc._initialize_vegas_mode()
-        finally:
-            dc_module._vegas_mode_imported = original_imported
-            dc_module.VegasModeCoordinator = original_class
 
         fake_coordinator.set_update_callback.assert_called_once_with(dc._tick_plugin_updates_for_vegas)

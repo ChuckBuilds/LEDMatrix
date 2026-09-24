@@ -167,7 +167,7 @@ class VegasModeConfig:
     # Dynamic duration
     dynamic_duration_enabled: bool = True
     min_cycle_duration: int = 60  # Minimum seconds per full cycle
-    max_cycle_duration: int = 600  # Maximum seconds per full cycle
+    max_cycle_duration: int = 240  # Maximum seconds per full cycle
 
     @classmethod
     def from_config(cls, config: Dict[str, Any]) -> 'VegasModeConfig':
@@ -181,44 +181,50 @@ class VegasModeConfig:
             VegasModeConfig instance
         """
         vegas_config = config.get('display', {}).get('vegas_scroll', {})
+        # Missing keys fall back to the field defaults above, so each default
+        # is written once and the two cannot drift apart.
+        d = cls()
+        get = vegas_config.get
 
         return cls(
-            enabled=vegas_config.get('enabled', False),
-            scroll_speed=float(vegas_config.get('scroll_speed', 50.0)),
-            separator_width=int(vegas_config.get('separator_width', 32)),
-            intra_plugin_gap=int(vegas_config.get('intra_plugin_gap', 8)),
-            render_width_pct=int(vegas_config.get('render_width_pct', 100)),
+            enabled=get('enabled', d.enabled),
+            scroll_speed=float(get('scroll_speed', d.scroll_speed)),
+            separator_width=int(get('separator_width', d.separator_width)),
+            intra_plugin_gap=int(get('intra_plugin_gap', d.intra_plugin_gap)),
+            render_width_pct=int(get('render_width_pct', d.render_width_pct)),
             min_content_separation=int(
-                vegas_config.get('min_content_separation', 24)),
-            min_cut_gap=int(vegas_config.get('min_cut_gap', 6)),
-            smooth_scroll=vegas_config.get('smooth_scroll', True),
-            continuous_scroll=vegas_config.get('continuous_scroll', True),
+                get('min_content_separation', d.min_content_separation)),
+            min_cut_gap=int(get('min_cut_gap', d.min_cut_gap)),
+            smooth_scroll=get('smooth_scroll', d.smooth_scroll),
+            continuous_scroll=get('continuous_scroll', d.continuous_scroll),
             extend_threshold_screens=float(
-                vegas_config.get('extend_threshold_screens', 2.0)),
-            auto_trim=vegas_config.get('auto_trim', True),
-            trim_threshold=int(vegas_config.get('trim_threshold', 10)),
-            content_padding=int(vegas_config.get('content_padding', 8)),
-            min_plugin_width=int(vegas_config.get('min_plugin_width', 8)),
-            lead_in_width=int(vegas_config.get('lead_in_width', 0)),
-            plugins_per_cycle=int(vegas_config.get('plugins_per_cycle', 6)),
+                get('extend_threshold_screens', d.extend_threshold_screens)),
+            auto_trim=get('auto_trim', d.auto_trim),
+            trim_threshold=int(get('trim_threshold', d.trim_threshold)),
+            content_padding=int(get('content_padding', d.content_padding)),
+            min_plugin_width=int(get('min_plugin_width', d.min_plugin_width)),
+            lead_in_width=int(get('lead_in_width', d.lead_in_width)),
+            plugins_per_cycle=int(get('plugins_per_cycle', d.plugins_per_cycle)),
             max_plugin_width_ratio=float(
-                vegas_config.get('max_plugin_width_ratio', 0.0)),
-            overflow_mode=str(vegas_config.get('overflow_mode', 'rotate')),
-            plugin_order=list(vegas_config.get('plugin_order', [])),
-            excluded_plugins=set(vegas_config.get('excluded_plugins', [])),
-            live_in_ticker=bool(vegas_config.get('live_in_ticker', False)),
+                get('max_plugin_width_ratio', d.max_plugin_width_ratio)),
+            overflow_mode=str(get('overflow_mode', d.overflow_mode)),
+            plugin_order=list(get('plugin_order', d.plugin_order)),
+            excluded_plugins=set(get('excluded_plugins', d.excluded_plugins)),
+            live_in_ticker=bool(get('live_in_ticker', d.live_in_ticker)),
             # Clamped: a weight below 1 would drop the plugin from the rotation
             # entirely, and a very large one starves everything else.
-            live_weight=max(1, min(10, int(vegas_config.get('live_weight', 3)))),
-            favorite_live_weight=max(
-                1, min(10, int(vegas_config.get('favorite_live_weight', 5)))),
-            target_fps=int(vegas_config.get('target_fps', 125)),
-            buffer_ahead=int(vegas_config.get('buffer_ahead', 2)),
-            frame_based_scrolling=vegas_config.get('frame_based_scrolling', True),
-            scroll_delay=float(vegas_config.get('scroll_delay', 0.02)),
-            dynamic_duration_enabled=vegas_config.get('dynamic_duration_enabled', True),
-            min_cycle_duration=int(vegas_config.get('min_cycle_duration', 60)),
-            max_cycle_duration=int(vegas_config.get('max_cycle_duration', 600)),
+            live_weight=max(1, min(10, int(get('live_weight', d.live_weight)))),
+            favorite_live_weight=max(1, min(10, int(
+                get('favorite_live_weight', d.favorite_live_weight)))),
+            target_fps=int(get('target_fps', d.target_fps)),
+            buffer_ahead=int(get('buffer_ahead', d.buffer_ahead)),
+            frame_based_scrolling=get(
+                'frame_based_scrolling', d.frame_based_scrolling),
+            scroll_delay=float(get('scroll_delay', d.scroll_delay)),
+            dynamic_duration_enabled=get(
+                'dynamic_duration_enabled', d.dynamic_duration_enabled),
+            min_cycle_duration=int(get('min_cycle_duration', d.min_cycle_duration)),
+            max_cycle_duration=int(get('max_cycle_duration', d.max_cycle_duration)),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -259,22 +265,6 @@ class VegasModeConfig:
     def get_frame_interval(self) -> float:
         """Get the frame interval in seconds for target FPS."""
         return 1.0 / max(1, self.target_fps)
-
-    def is_plugin_included(self, plugin_id: str) -> bool:
-        """
-        Check if a plugin should be included in Vegas scroll.
-
-        This is consistent with get_ordered_plugins - plugins not explicitly
-        in plugin_order are still included (appended at the end) unless excluded.
-
-        Args:
-            plugin_id: Plugin identifier to check
-
-        Returns:
-            True if plugin should be included
-        """
-        # Plugins are included unless explicitly excluded
-        return plugin_id not in self.excluded_plugins
 
     def get_ordered_plugins(self, available_plugins: List[str]) -> List[str]:
         """
