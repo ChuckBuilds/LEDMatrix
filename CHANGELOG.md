@@ -19,6 +19,61 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+- Scripts and installer:
+  - `fix_web_permissions.sh` makes `safe_plugin_rm.sh` and `safe_pip_install.sh` root-owned again after resetting ownership. A web-user-owned copy of either is a root shell, since sudo lets the web user run them as root. It also restores `config_secrets.json` to mode 640.
+  - `configure_wifi_permissions.sh` checks its rules with `visudo -c` before installing them, and grants the NetworkManager captive-portal `cp` and `rm` commands `wifi_manager` runs.
+  - `configure_web_sudo.sh` uses a random temp file and installs its rules with mode 440.
+  - The installer prints its completion summary before the `-y` reboot, and describes the setup access point as an open network (it was shown with a password it doesn't have).
+  - `fix_cache_permissions.sh` applies `setup_cache.sh`'s `ledmatrix`-group model instead of setting 777.
+  - `check_system_compatibility.sh` reports anything but Debian 13 (Trixie) as unsupported, and reaches its summary.
+  - New `scripts/README.md` lists every script.
+- Docs:
+  - New `docs/ARCHITECTURE.md` (processes, shared state, display loop, plugin system, web UI) and `docs/PERMISSIONS.md` (owners, modes, both sudoers files, repair scripts).
+  - Deprecated plugin APIs are marked in the plugin docs.
+  - `src/common/README.md` covers every module.
+  - Stale setup, service and troubleshooting claims are corrected.
+
+- Plugin store and plugin manager fixes:
+  - Updating a plugin that was installed from a ZIP no longer tries to reinstall it from the LEDMatrix repository's own URL.
+  - Repository URLs with `.git` in the middle are no longer mangled. The URL helpers now live in `src/plugin_system/repo_urls.py`.
+  - Installing from a URL works when the repository's only branch isn't `main` or `master`.
+  - A missing required config field is reported once, by name.
+  - A plugin that went over `max_memory_mb` once is no longer refused on every call after that.
+  - `reload_plugin` reads the manifest from the plugin's discovered directory.
+  - Removed: `last_display` from plugin state info and `get_last_display()` (nothing recorded them); `PluginOperationQueue`'s `history_file` and `lazy_load` arguments; and `data/plugin_operations.json`, which nothing read.
+
+- Core service fixes:
+  - `/api/v3/errors` shows each exception's real stack trace instead of `NoneType: None`.
+  - Wi-Fi disconnect takes the saved connection profile down.
+  - `wifi_config.json` is written atomically, and a save that fails now gets a 500.
+  - `plugin://` fonts load from the plugin's own install directory. `FontManager.register_plugin_fonts()` takes an optional `plugin_dir`.
+  - `APIHelper` keeps cached responses for the `cache_ttl` it was given, instead of always 300 s.
+  - Logo scales from 0.1 to 10 are honoured everywhere; values outside that range are clamped.
+  - `LogoHelper` and `logo_downloader`: an empty ESPN logo list counts as a failed download, and the placeholder is written at the requested path.
+  - Bundled font paths no longer depend on the directory the process was started from.
+  - Backups record `src.__version__`.
+  - Removed: `BackgroundDataService`'s `queue_size` stat and `clear_completed_requests()`.
+
+- Web API fixes:
+  - A plugin save drops repeated entries in lists whose schema says `uniqueItems`, instead of failing validation.
+  - `/api/v3/health` reports the real plugin count.
+  - A malformed `vegas_plugin_order` or `vegas_excluded_plugins` is refused with a 400 and nothing is saved. It used to wipe the saved list.
+  - The per-plugin health and metrics routes return the display service's latest state.
+  - Resetting a plugin's config takes a backup first and reports a failed save.
+  - System metrics that can't be read are `null` everywhere: `cpu_temp` off a Pi, and every metric without psutil, where `/system/status` now answers 200 instead of 503.
+  - `/plugins/store/refresh` no longer claims a commit-metadata refresh it doesn't do.
+  - The plugin-config list repair code is in one place, `src/web_interface/config_arrays.py`.
+
+- Web UI:
+  - Cache tab errors no longer show up in the Logs tab.
+  - A tab that fails to load shows "Try again" instead of a skeleton that never goes away.
+  - Plugin Store search and registry errors appear as a notification, and the Plugin Manager stays on screen.
+  - The image schedule button works on uploaded images, and the editor stays open while you edit.
+  - A failed plugin toggle moves the switch back.
+  - Each save shows one notification; a failed Durations save says it failed.
+  - Stats the server can't read show `--`.
+  - New `window.LEDEscape` (`html`, `attr`, `jsStringAttr`) replaces about 30 copied escapers. `window.escapeHtml` and `window.escapeAttribute` remain as aliases for plugin pages.
+
 - Display and Vegas:
   - Vegas `max_cycle_duration` defaults to 240 s when unset, as documented (it was 600 s). The Vegas defaults are now defined once.
   - The display controller stops Vegas mode on shutdown.

@@ -16,7 +16,7 @@ import json
 from typing import Dict, List, Optional, Tuple
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, UnidentifiedImageError
-from src.common.font_layout import load_truetype
+from src.common.font_layout import load_truetype, resolve_asset_path
 from PIL.PngImagePlugin import PngInfo
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -370,22 +370,15 @@ class LogoDownloader:
     
     @staticmethod
     def get_logo_filename_variations(abbreviation: str) -> list:
-        """Get possible filename variations for a team abbreviation."""
-        variations = []
+        """Filenames a logo for ``abbreviation`` may be stored under: the
+        upper-cased abbreviation as given, then its normalize_abbreviation()
+        form (``TA&M.png``, then ``TAANDM.png``)."""
         original = abbreviation.upper()
         normalized = LogoDownloader.normalize_abbreviation(abbreviation)
-        
-        # Add original and normalized versions
-        variations.extend([f"{original}.png", f"{normalized}.png"])
-        
-        # Special handling for known cases
-        if original == 'TA&M':
-            # TA&M has a file named TA&M.png, but normalize creates TAANDM.png
-            variations = [f"{original}.png", f"{normalized}.png"]
-        
-        return variations
+        return [f"{original}.png", f"{normalized}.png"]
     
-    # Allowlist for league names used in filesystem paths: alphanumerics, underscores, dashes only
+    # Allowlist for a league name or code that goes into a filesystem path or
+    # an ESPN URL: lower-case alphanumerics, underscores and dashes only.
     _SAFE_LEAGUE_RE = re.compile(r'^[a-z0-9_-]+$')
 
     def get_logo_directory(self, league: str) -> str:
@@ -462,15 +455,12 @@ class LogoDownloader:
             logger.error(f"Unexpected error downloading logo for {team_abbreviation}: {e}")
             return False
 
-    # Allowlist for the league_code segment interpolated into ESPN API URLs
-    _SAFE_LEAGUE_CODE_RE = re.compile(r'^[a-z0-9_-]+$')
-
     def _resolve_api_url(self, league: str) -> Optional[str]:
         """Resolve the ESPN API teams URL for a league, with dynamic fallback for custom soccer leagues."""
         api_url = self.API_ENDPOINTS.get(league)
         if not api_url and league.startswith('soccer_'):
             league_code = league[len('soccer_'):]
-            if not self._SAFE_LEAGUE_CODE_RE.match(league_code):
+            if not self._SAFE_LEAGUE_RE.match(league_code):
                 logger.warning(f"Rejecting unsafe league_code for ESPN URL construction: {league_code!r}")
                 return None
             api_url = f'https://site.api.espn.com/apis/site/v2/sports/soccer/{league_code}/teams'
@@ -501,7 +491,8 @@ class LogoDownloader:
             return None
     
     def fetch_single_team(self, league: str, team_id: str) -> Optional[Dict]:
-        """Fetch team data from ESPN API for a specific league."""
+        """Fetch one team's record (``<teams endpoint>/<team_id>``) from the
+        ESPN API; None on any request or parse failure."""
         api_url = self._resolve_api_url(league)
         if not api_url:
             logger.error(f"No API endpoint configured for league: {league}")
@@ -520,7 +511,7 @@ class LogoDownloader:
             logger.error(f"Error fetching team data for {team_id} in {league}: {e}")
             return None
         except json.JSONDecodeError as e:
-            logger.error(f"Error parsing JSON response for{team_id} in {league}: {e}")
+            logger.error(f"Error parsing JSON response for {team_id} in {league}: {e}")
             return None
     
     def extract_teams_from_data(self, data: Dict, league: str) -> List[Dict[str, str]]:
@@ -625,42 +616,6 @@ class LogoDownloader:
         
         # Default to FBS for unknown conferences
         return 'FBS'
-    
-    def _get_team_name_variations(self, abbreviation: str) -> List[str]:
-        """Generate common variations of a team abbreviation for matching."""
-        variations = set()
-        abbr = abbreviation.upper()
-        variations.add(abbr)
-        
-        # Add normalized version
-        variations.add(self.normalize_abbreviation(abbr))
-        
-        # Common substitutions
-        substitutions = {
-            '&': ['AND', 'A'],
-            'A&M': ['TAMU', 'TA&M', 'TEXASAM'],
-            'STATE': ['ST', 'ST.'],
-            'UNIVERSITY': ['U', 'UNIV'],
-            'COLLEGE': ['C', 'COL'],
-            'TECHNICAL': ['TECH', 'T'],
-            'NORTHERN': ['NORTH', 'N'],
-            'SOUTHERN': ['SOUTH', 'S'],
-            'EASTERN': ['EAST', 'E'],
-            'WESTERN': ['WEST', 'W']
-        }
-        
-        # Apply substitutions
-        for original, replacements in substitutions.items():
-            if original in abbr:
-                for replacement in replacements:
-                    variations.add(abbr.replace(original, replacement))
-                    variations.add(abbr.replace(original, ''))  # Remove the word entirely
-        
-        # Add common abbreviations for Texas A&M
-        if 'A&M' in abbr or 'TAMU' in abbr:
-            variations.update(['TAMU', 'TA&M', 'TEXASAM', 'TEXAS_A&M', 'TEXAS_AM'])
-        
-        return list(variations)
     
     def download_missing_logos_for_league(self, league: str, force_download: bool = False) -> Tuple[int, int]:
         """Download missing logos for a specific league."""
@@ -794,7 +749,9 @@ class LogoDownloader:
             return False
         try:
             logo_url = data["team"]["logos"][0]["href"]
-        except KeyError:
+        except (KeyError, IndexError, TypeError):
+            # A team without logos comes back with an empty list.
+            logger.debug(f"No logo URL for team {team_id} in {league}")
             return False
         # Download the logo
         success = self.download_logo(logo_url, logo_path, team_abbreviation)
@@ -824,24 +781,39 @@ class LogoDownloader:
         logger.info(f"Overall logo download results: {total_downloaded} downloaded, {total_failed} failed")
         return results
     
-    def create_placeholder_logo(self, team_abbreviation: str, logo_dir: str) -> bool:
-        """Create a placeholder logo when real logo cannot be downloaded."""
+    def create_placeholder_logo(self, team_abbreviation: str, logo_dir: str,
+                                filepath: Optional[Path] = None) -> bool:
+        """Write a grey placeholder with the team abbreviation on it, for when
+        the real logo cannot be downloaded.
+
+        Args:
+            team_abbreviation: Drawn on the placeholder.
+            logo_dir: Directory for the file when ``filepath`` is not given;
+                the file is then ``<normalize_abbreviation(abbr)>.png``.
+            filepath: The exact path to write, which is where the caller will
+                look for the logo. ``logo_dir`` is ignored when it is given.
+
+        Returns:
+            True if the placeholder was written, False otherwise (logged).
+        """
+        if filepath is not None:
+            filepath = Path(filepath)
+            logo_dir = str(filepath.parent)
         try:
-            # Ensure the logo directory exists
             if not self.ensure_logo_directory(logo_dir):
                 logger.error(f"Failed to create logo directory: {logo_dir}")
                 return False
-            
-            filename = f"{self.normalize_abbreviation(team_abbreviation)}.png"
-            filepath = Path(logo_dir) / filename
 
-            # Create a simple placeholder logo
-            logo = Image.new('RGBA', (64, 64), (100, 100, 100, 255))  # Gray background
+            if filepath is None:
+                filename = f"{self.normalize_abbreviation(team_abbreviation)}.png"
+                filepath = Path(logo_dir) / filename
+
+            logo = Image.new('RGBA', PLACEHOLDER_SIZE, PLACEHOLDER_BG)
             draw = ImageDraw.Draw(logo)
             
             # Try to load a font, fallback to default
             try:
-                font = load_truetype("assets/fonts/PressStart2P-Regular.ttf", 12)
+                font = load_truetype(resolve_asset_path("assets/fonts/PressStart2P-Regular.ttf"), 12)
             except (OSError, IOError):
                 try:
                     font = ImageFont.load_default()
@@ -855,8 +827,8 @@ class LogoDownloader:
                 bbox = draw.textbbox((0, 0), text, font=font)
                 text_width = bbox[2] - bbox[0]
                 text_height = bbox[3] - bbox[1]
-                x = (64 - text_width) // 2
-                y = (64 - text_height) // 2
+                x = (PLACEHOLDER_SIZE[0] - text_width) // 2
+                y = (PLACEHOLDER_SIZE[1] - text_height) // 2
                 draw.text((x, y), text, font=font, fill=(255, 255, 255, 255))
             else:
                 # Fallback without font
@@ -963,14 +935,19 @@ def download_missing_logo(league: str, team_id: str, team_abbreviation: str, log
     Convenience function to download a missing team logo.
     
     Args:
-        team_abbreviation: Team abbreviation (e.g., 'UGA', 'BAMA', 'TA&M')
         league: League identifier (e.g., 'ncaa_fb', 'nfl')
-        logo_path: Full path to where the logo should be saved
+        team_id: ESPN team id, used to look up the logo URL when
+            ``logo_url`` is not given
+        team_abbreviation: Team abbreviation (e.g., 'UGA', 'BAMA', 'TA&M')
+        logo_path: Where the logo (or placeholder) is written; relative paths
+            are relative to the install root
         logo_url: Optional direct URL to the logo
         create_placeholder: Whether to create a placeholder if download fails
         
     Returns:
-        True if logo exists or was successfully downloaded, False otherwise
+        True if a logo or placeholder is at ``logo_path`` afterwards (it was
+        already there, was downloaded, or a placeholder was written),
+        False otherwise.
     """
     downloader = shared_downloader()
 
@@ -1011,7 +988,7 @@ def download_missing_logo(league: str, team_id: str, team_abbreviation: str, log
             time.sleep(0.1)  # Small delay
         if not success and create_placeholder:
             logger.info(f"Creating placeholder logo for {team_abbreviation}")
-            success = downloader.create_placeholder_logo(team_abbreviation, logo_dir)
+            success = downloader.create_placeholder_logo(team_abbreviation, logo_dir, filepath=filepath)
         return success
 
     success = downloader.download_missing_logo_for_team(league, team_id, team_abbreviation, logo_path)
@@ -1019,7 +996,7 @@ def download_missing_logo(league: str, team_id: str, team_abbreviation: str, log
     if not success and create_placeholder:
         logger.info(f"Creating placeholder logo for {team_abbreviation}")
         # Create placeholder as fallback
-        success = downloader.create_placeholder_logo(team_abbreviation, logo_dir)
+        success = downloader.create_placeholder_logo(team_abbreviation, logo_dir, filepath=filepath)
     
     if success:
         logger.info(f"Successfully handled logo for {team_abbreviation}")

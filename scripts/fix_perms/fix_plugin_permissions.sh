@@ -51,9 +51,10 @@ fi
 echo "Setting ownership to root:$ACTUAL_USER..."
 sudo chown -R root:"$ACTUAL_USER" "$PLUGINS_DIR"
 
-# Set directory permissions (775: rwxrwxr-x)
-# Root: read/write/execute, Group (ACTUAL_USER): read/write/execute, Others: read/execute
-echo "Setting directory permissions to 2775 (rwxrwxr-x + sticky bit)..."
+# Set directory permissions (2775: rwxrwsr-x)
+# Owner (root) and group (ACTUAL_USER): read/write/execute, others: read/execute.
+# The setgid bit makes new entries inherit the ACTUAL_USER group.
+echo "Setting directory permissions to 2775 (rwxrwsr-x, setgid)..."
 find "$PLUGINS_DIR" -type d -exec sudo chmod 2775 {} \;
 
 # Set file permissions (664: rw-rw-r--)
@@ -71,7 +72,7 @@ fi
 echo "Setting ownership of plugin-repos to root:$ACTUAL_USER..."
 sudo chown -R root:"$ACTUAL_USER" "$PLUGIN_REPOS_DIR"
 
-echo "Setting plugin-repos directory permissions to 2775 (rwxrwxr-x + sticky bit)..."
+echo "Setting plugin-repos directory permissions to 2775 (rwxrwsr-x, setgid)..."
 find "$PLUGIN_REPOS_DIR" -type d -exec sudo chmod 2775 {} \;
 
 echo "Setting plugin-repos file permissions to 664..."
@@ -87,7 +88,7 @@ echo "plugin-repos/:"
 ls -la "$PLUGIN_REPOS_DIR" 2>/dev/null || echo "  (empty or not accessible)"
 echo ""
 echo "Permissions summary:"
-echo "- Root service: Can read/write plugins (for PWM hardware access)"
+echo "- Root service: Can read/write plugins (as root it needs no permission bits)"
 echo "- Web service ($ACTUAL_USER): Can read/write plugins (for installation)"
 echo "- Others: Can read plugins"
 

@@ -19,6 +19,21 @@ This directory contains scripts for installing and configuring the LEDMatrix sys
   (the user who runs the script, i.e. the one you installed LEDMatrix as;
   there is no `ledmatrix` system user) the passwordless `nmcli` and related
   WiFi permissions the web interface needs
+- **`install_dns_fix.sh`** - Optional. Installs `ledmatrix-dns-fix.service`,
+  which adds `options single-request` to the resolver when API calls time
+  out (see `systemd/README.md`)
+- **`install_mqtt_bridge.sh`** - Optional. Installs the Home Assistant MQTT
+  bridge service (see `integrations/mqtt_bridge/README.md`)
+
+Libraries (sourced, not run):
+
+- **`lib_sudoers.sh`** - The web interface's sudo allow-list
+  (`/etc/sudoers.d/ledmatrix_web`), shared by `first_time_install.sh` and
+  `configure_web_sudo.sh`
+- **`lib_systemd_render.sh`** - `sed_escape_replacement`, used by every
+  script that renders a unit from `systemd/*.service`
+- **`lib_lowmem.sh`** - Build-job sizing and temporary swap for the C++
+  build on low-memory Pis (`first_time_install.sh` Step 6)
 
 ## Usage
 

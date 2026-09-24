@@ -30,12 +30,13 @@ global.document = {
   createElement: () => new FakeEl(),
 };
 global.window = global;
+require('../led_escape').install(window);
 global.pluginLog = () => {};
 global.PLUGIN_DEBUG = false;
 global.debugLog = () => {};
 function setupInstalledEventDelegation() {}   // stubbed; tested separately
 
-eval(slice('function escapeHtml(text)', '\nfunction ', ));
+eval(slice('function escapeHtml(text)', '\nfunction isNewPlugin'));
 eval(slice('function renderInstalledCards(plugins, total)',
            '// Set up event delegation for plugin action buttons'));
 

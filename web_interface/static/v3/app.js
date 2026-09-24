@@ -1,6 +1,37 @@
 /* global showNotification */
-// LED Matrix v3 JavaScript
-// Additional helpers for HTMX and Alpine.js integration
+/*
+ * app.js -- page-wide behaviour that is not the Alpine app itself.
+ *
+ * Deferred, first of the scripts at the end of <body>; after app-shell.js
+ * and Alpine.
+ *
+ * Load order (templates/v3/base.html):
+ *   <head>, blocking:  debugLog and theme inline scripts; the htmx loader
+ *                      (injects htmx.min.js with a dynamic <script>);
+ *                      js/htmx-config.js; the loadPartialDirect fallback;
+ *                      js/app-early.js
+ *   <head>, defer:     js/app-shell.js, then js/alpinejs.min.js (Alpine
+ *                      starts as soon as it runs, so app-shell.js's app()
+ *                      is the one Alpine uses)
+ *   end of <body>, defer, in this order: app.js, js/tooltips.js,
+ *                      js/settings-search.js, js/utils/dialog.js,
+ *                      js/utils/error_handler.js, js/plugins/api_client.js,
+ *                      state_manager.js, install_manager.js, list_filter.js,
+ *                      the widget bundle (web_interface/widget_bundle.py),
+ *                      plugins_manager.js
+ *   Tab partials arrive later through htmx; their inline scripts run on
+ *   htmx:afterSwap (js/htmx-config.js).
+ *
+ * Owns: button loading states and the fallback result toast for htmx
+ * requests; the unsaved-changes guard for plugin config forms; the "restart
+ * the display" banner; the floating live preview; aria-current on the nav;
+ * the mobile nav drawer's keyboard handling; header widget placement.
+ *
+ * Globals: showSaveResult, showRestartPending, dismissRestartPending,
+ * restartPendingNow, toggleFloatingPreview, applyFloatingPreviewSize,
+ * cycleFloatingPreviewSize, updateFloatingPreviewVisibility,
+ * previewPluginNow, updateNavAriaCurrent, placeHeaderWidgets.
+ */
 
 // HTMX response handlers
 document.body.addEventListener('htmx:beforeRequest', function(event) {
@@ -22,9 +53,15 @@ document.body.addEventListener('htmx:afterRequest', function(event) {
         if (textEl) textEl.style.opacity = '1';
     }
 
-    // Handle response notifications
+    // Show the server's message, unless the element that made the request
+    // (or its form) has its own after-request handler: every such handler in
+    // the templates reports the result itself, and this used to repeat it,
+    // so each save showed two toasts.
     const response = event.detail.xhr;
-    if (response && response.responseText) {
+    const elt = event.detail.elt;
+    const reportsItself = elt && elt.closest &&
+        elt.closest('[hx-on\\:\\:after-request], [hx-on\\:htmx\\:after-request]');
+    if (!reportsItself && response && response.responseText) {
         try {
             const data = JSON.parse(response.responseText);
             if (data.message) {
@@ -47,6 +84,30 @@ document.body.addEventListener('htmx:afterRequest', function(event) {
         }
     } catch { /* banner is best-effort */ }
 });
+
+/**
+ * Shows the outcome of a settings form save as one notification. Used by the
+ * hx-on:htmx:after-request of the Display, Rotation & Durations and General
+ * forms. Only a 2xx response counts as saved (a network failure is status 0);
+ * the server's message is shown when there is one, and its status can refine
+ * a success but never overturn a failure.
+ * @param {XMLHttpRequest} xhr - event.detail.xhr
+ * @param {string} savedText - message for a success without one
+ * @param {string} failedText - message for a failure without one
+ */
+window.showSaveResult = function(xhr, savedText, failedText) {
+    const httpSuccess = xhr.status >= 200 && xhr.status < 300;
+    let message = httpSuccess ? savedText : failedText;
+    let status = httpSuccess ? 'success' : 'error';
+    try {
+        const data = JSON.parse(xhr.responseText);
+        if (data.message) message = data.message;
+        if (httpSuccess && data.status) status = data.status;
+    } catch {
+        // Non-JSON body: keep the status-code verdict.
+    }
+    showNotification(message, status);
+};
 
 // ===== Unsaved-changes guard =====
 // Plugin config panels are Alpine x-if templates: navigating away DESTROYS
@@ -242,9 +303,8 @@ window.updateFloatingPreviewVisibility = function(tab) {
     if (!panel || !toggle) return;
     let active = tab;
     if (!active) {
-        const el = document.querySelector('[x-data="app()"]') || document.querySelector('[x-data]');
-        const data = el && el._x_dataStack && el._x_dataStack[0];
-        active = data && data.activeTab;
+        const app = window.getApp();
+        active = app && app.activeTab;
     }
     const onOverview = active === 'overview';
     let open = false;
@@ -308,13 +368,9 @@ window.updateNavAriaCurrent = function(tab) {
 // Escape closes the mobile nav drawer and returns focus to the hamburger;
 // opening the drawer moves focus to its first tab.
 (function() {
-    function appData() {
-        const el = document.querySelector('[x-data="app()"]') || document.querySelector('[x-data]');
-        return el && el._x_dataStack && el._x_dataStack[0];
-    }
     document.addEventListener('keydown', function(e) {
         if (e.key !== 'Escape') return;
-        const data = appData();
+        const data = window.getApp();
         if (data && data.mobileNavOpen) {
             data.mobileNavOpen = false;
             const burger = document.querySelector('[aria-controls="site-nav"]');
@@ -328,7 +384,7 @@ window.updateNavAriaCurrent = function(tab) {
         // The click handler toggles mobileNavOpen; focus the first tab once
         // the drawer has slid in (matches the CSS transition timing).
         setTimeout(function() {
-            const data = appData();
+            const data = window.getApp();
             if (data && data.mobileNavOpen) {
                 const first = document.querySelector('#site-nav .nav-tab');
                 if (first) first.focus();

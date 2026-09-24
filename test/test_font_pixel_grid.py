@@ -133,6 +133,26 @@ class TestAssetPathsIgnoreTheWorkingDirectory:
         rel = f"assets/fonts/{FOUR_BY_SIX}"
         assert FontManager._resolve_asset_path(rel) == resolve_asset_path(rel)
 
+    def test_font_overrides_file_lives_in_the_install_config(self, tmp_path, monkeypatch):
+        from src.font_manager import FontManager
+        monkeypatch.chdir(tmp_path)
+        fm = FontManager({})
+        assert fm.font_overrides_file == str(PROJECT_ROOT / "config" / "font_overrides.json")
+
+    def test_logo_placeholder_draws_with_the_bundled_font(self, tmp_path, monkeypatch):
+        import src.logo_downloader as logo_downloader
+        from src.logo_downloader import LogoDownloader
+        loaded = []
+
+        def spy(font, size, **kwargs):
+            loaded.append(font)
+            return load_truetype(font, size, **kwargs)
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(logo_downloader, "load_truetype", spy)
+        assert LogoDownloader().create_placeholder_logo("AB", str(tmp_path))
+        assert loaded == [str(PROJECT_ROOT / "assets" / "fonts" / PRESS_START)]
+
 
 class TestTheHarnessForkAgreesWithTheCore:
     """The divergence that let the wrong rendering be blessed as golden.

@@ -38,6 +38,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
+from test._api_v3_test_helpers import api_v3_client, api_v3_module  # noqa: F401
 from src.common import sync_manager
 from src.common.sync_manager import (
     DisplaySyncManager,
@@ -877,6 +878,14 @@ class TestWriteStatusFile:
         monkeypatch.setattr("builtins.open", MagicMock(side_effect=OSError("disk full")))
         mgr.write_status_file()  # must not raise
         assert mgr.logger.debug.called
+
+    def test_web_status_endpoint_reads_the_file_that_was_written(self, api_v3_client):
+        """GET /sync/status reads STATUS_FILE, which lives under
+        tempfile.gettempdir() -- not always /tmp."""
+        mgr = make_manager(role=SyncRole.LEADER)
+        mgr.write_status_file()
+        response = api_v3_client.get("/api/v3/sync/status")
+        assert response.get_json()["data"]["role"] == "leader"
 
 
 class TestStop:

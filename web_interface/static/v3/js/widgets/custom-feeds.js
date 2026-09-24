@@ -24,15 +24,10 @@
         version: '1.0.0',
         
         /**
-         * Render the custom feeds widget
-         * Note: This widget is currently server-side rendered via Jinja2 template.
-         * This registration ensures the handlers are available globally.
+         * No-op: plugin_config.html renders this widget server-side. The
+         * registration exists for getValue/setValue and the window.* feed-table handlers.
          */
-        render: function(container, config, value, options) {
-            // For now, widgets are server-side rendered
-            // This function is a placeholder for future client-side rendering
-            if (window.debugLog) window.debugLog('[CustomFeedsWidget] Render called (server-side rendered)');
-        },
+        render: function() {},
         
         /**
          * Get current value from widget
@@ -246,8 +241,7 @@
         
         const currentRows = tbody.querySelectorAll('.custom-feed-row');
         if (currentRows.length >= maxItems) {
-            const notifyFn = window.showNotification || alert;
-            notifyFn(`Maximum ${maxItems} feeds allowed`, 'error');
+            window.showNotification(`Maximum ${maxItems} feeds allowed`, 'error');
             return;
         }
         
@@ -507,14 +501,12 @@
                     logoCell.appendChild(container);
                 }
             } else {
-                const notifyFn = window.showNotification || alert;
-                notifyFn('Upload failed: ' + (data.message || 'Unknown error'), 'error');
+                window.showNotification('Upload failed: ' + (data.message || 'Unknown error'), 'error');
             }
         })
         .catch(error => {
             console.error('Upload error:', error);
-            const notifyFn = window.showNotification || alert;
-            notifyFn('Upload failed: ' + error.message, 'error');
+            window.showNotification('Upload failed: ' + error.message, 'error');
         })
         .finally(() => {
             // Reset regardless of outcome, so the same file can be re-selected

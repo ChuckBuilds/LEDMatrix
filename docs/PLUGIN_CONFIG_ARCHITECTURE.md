@@ -155,9 +155,9 @@ deep-merged back into the plugin's config at load time
 ### Custom input widgets
 
 Set `"x-widget": "<name>"` on a property. Core widgets are in
-`web_interface/static/v3/js/widgets/` (see its README); a plugin can ship its
-own widget script, served from `/static/plugin-widgets/<plugin_id>/<name>.js`.
-See [widget-guide.md](widget-guide.md).
+`web_interface/static/v3/js/widgets/`; a plugin can ship its own widget
+script, served from `/static/plugin-widgets/<plugin_id>/<name>.js`. See the
+[widget guide](../web_interface/static/v3/js/widgets/README.md).
 
 ### Custom actions
 

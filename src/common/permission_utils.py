@@ -241,7 +241,8 @@ def get_assets_dir_mode() -> int:
     Return permission mode for asset directories.
     
     Returns:
-        Permission mode: 0o2775 (rwxrwxr-x + sticky bit) for group-writable directories
+        Permission mode: 0o2775 (rwxrwsr-x): group-writable, and setgid so
+        entries created in it take the directory's group
     """
     return 0o2775  # rwxrwsr-x (setgid + group writable)
 
@@ -251,7 +252,8 @@ def get_config_dir_mode() -> int:
     Return permission mode for config directory.
     
     Returns:
-        Permission mode: 0o2775 (rwxrwxr-x + sticky bit) for group-writable directories
+        Permission mode: 0o2775 (rwxrwsr-x): group-writable, and setgid so
+        entries created in it take the directory's group
     """
     return 0o2775  # rwxrwsr-x (setgid + group writable)
 
@@ -271,7 +273,8 @@ def get_plugin_dir_mode() -> int:
     Return permission mode for plugin directories.
     
     Returns:
-        Permission mode: 0o2775 (rwxrwxr-x + sticky bit) for group-writable directories
+        Permission mode: 0o2775 (rwxrwsr-x): group-writable, and setgid so
+        entries created in it take the directory's group
     """
     return 0o2775  # rwxrwsr-x (setgid + group writable)
 
@@ -281,7 +284,8 @@ def get_cache_dir_mode() -> int:
     Return permission mode for cache directories.
 
     Returns:
-        Permission mode: 0o2775 (rwxrwxr-x + sticky bit) for group-writable cache directories
+        Permission mode: 0o2775 (rwxrwsr-x): group-writable, and setgid so
+        entries created in it take the directory's group
     """
     return 0o2775  # rwxrwsr-x (setgid + group writable)
 

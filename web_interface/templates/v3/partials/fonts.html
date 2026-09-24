@@ -164,21 +164,6 @@ function initializeFontsTab() {
     // Reset retry counter on successful init
     initRetryCount = 0;
     
-    // showNotification is implemented by the notification widget
-    // (widgets/notification.js). If it hasn't loaded, queue the message; the
-    // widget shows queued messages as soon as it registers.
-    if (typeof window.showNotification !== 'function') {
-        window.showNotification = function(message, type = 'info') {
-            const registry = window.LEDMatrixWidgets;
-            const widget = registry && typeof registry.get === 'function' ? registry.get('notification') : null;
-            if (widget && typeof widget.show === 'function') {
-                return widget.show(message, typeof type === 'string' ? { type: type } : (type || {}));
-            }
-            (window.__pendingNotifications = window.__pendingNotifications || []).push([message, type]);
-            console.log(`[${String((type && type.type) || type).toUpperCase()}]`, message);
-        };
-    }
-
     debugLog('Initializing font management...');
     initializeFontManagement();
 
@@ -349,14 +334,7 @@ async function loadFontData() {
         // Show error states
         availableContainer.innerHTML = '<div class="text-red-400">Error loading font data. Please refresh the page.</div>';
 
-        // Only show notification if showNotification is available
-        if (typeof showNotification === 'function') {
-            showNotification('Error loading font configuration', 'error');
-        } else if (typeof window.showNotification === 'function') {
-            window.showNotification('Error loading font configuration', 'error');
-        } else {
-            console.error('Error loading font configuration:', error.message);
-        }
+        showNotification('Error loading font configuration', 'error');
     }
 }
 

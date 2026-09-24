@@ -17,6 +17,7 @@ editing files under /etc and restarting services is the installer's job, not
 something a display process should do to a machine while it boots.
 """
 import logging
+import re
 import shlex
 import subprocess
 from pathlib import Path
@@ -251,6 +252,24 @@ def test_sed_escape_replacement_preserves_special_characters():
 
     assert rendered == f"path={value}\n", (
         "a sed-special character in the replacement was not preserved literally")
+
+
+def test_every_unit_renderer_escapes_its_replacement():
+    """Each `sed s|__PLACEHOLDER__|$VALUE|` in an install script uses an escaped value.
+
+    install_dns_fix.sh and install_mqtt_bridge.sh interpolated the raw project
+    path while the other three renderers went through sed_escape_replacement,
+    so a checkout under a path containing `&` rendered a broken unit from
+    those two only.
+    """
+    project_root = Path("src/startup_validator.py").resolve().parent.parent
+    offenders = []
+    for script in sorted((project_root / "scripts" / "install").glob("*.sh")):
+        text = script.read_text(encoding="utf-8")
+        for m in re.finditer(r"s\|__[A-Z_]+__\|\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?\|", text):
+            if not m.group(1).startswith("ESCAPED_") and m.group(1) != "root":
+                offenders.append(f"{script.name}: ${m.group(1)}")
+    assert not offenders, "unescaped sed replacement(s): " + ", ".join(offenders)
 
 
 def test_no_installer_carries_its_own_copy_of_a_unit():

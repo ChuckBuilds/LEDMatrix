@@ -10,6 +10,8 @@ import os
 from pathlib import Path
 from typing import List, Dict, Optional
 
+from src.plugin_system.repo_urls import normalize_repo_url
+
 
 class SavedRepositoriesManager:
     """Manages saved GitHub repository URLs."""
@@ -71,18 +73,6 @@ class SavedRepositoriesManager:
                 pass
             return False
     
-    @staticmethod
-    def _clean_url(repo_url: str) -> str:
-        """Normalize a repo URL: strip whitespace, trailing slashes, and a
-        trailing ``.git`` suffix ONLY. (The old ``.replace('.git', '')``
-        was an unanchored substring replace that mangled URLs merely
-        containing ``.git``, e.g. ``https://github.com/user/my.github.io``.)
-        """
-        repo_url = repo_url.strip().rstrip('/')
-        if repo_url.endswith('.git'):
-            repo_url = repo_url[:-4]
-        return repo_url
-
     def get_all(self) -> List[Dict[str, str]]:
         """Get all saved repositories."""
         return self.repositories.copy()
@@ -98,7 +88,7 @@ class SavedRepositoriesManager:
         Returns:
             True if added successfully
         """
-        repo_url = self._clean_url(repo_url)
+        repo_url = normalize_repo_url(repo_url)
 
         # Check if already exists
         for repo in self.repositories:
@@ -138,7 +128,7 @@ class SavedRepositoriesManager:
         Returns:
             True if removed successfully
         """
-        repo_url = self._clean_url(repo_url)
+        repo_url = normalize_repo_url(repo_url)
 
         previous = self.repositories
         remaining = [r for r in previous if r.get('url') != repo_url]
@@ -156,7 +146,7 @@ class SavedRepositoriesManager:
     
     def has(self, repo_url: str) -> bool:
         """Check if a repository is already saved."""
-        repo_url = self._clean_url(repo_url)
+        repo_url = normalize_repo_url(repo_url)
         return any(r.get('url') == repo_url for r in self.repositories)
     
     def get_registry_repositories(self) -> List[Dict[str, str]]:

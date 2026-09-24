@@ -35,7 +35,7 @@
           hx-ext="json-enc"
           hx-headers='{"Content-Type": "application/json"}'
           hx-swap="none"
-          hx-on:htmx:after-request="showDisplaySaveResult(event.detail.xhr)"
+          hx-on:htmx:after-request="showSaveResult(event.detail.xhr, 'Display settings saved', 'Display settings were not saved. Check your connection and try again.')"
           class="space-y-6"
           novalidate
           onsubmit="fixInvalidNumberInputs(this); return true;">
@@ -863,62 +863,12 @@ document.getElementById('brightness').addEventListener('input', function() {
     document.getElementById('brightness-display').textContent = this.value;
 });
 
-// Fix invalid number inputs function (if not already defined globally)
-if (typeof window.fixInvalidNumberInputs !== 'function') {
-    window.fixInvalidNumberInputs = function(form) {
-        if (!form) return;
-        const allInputs = form.querySelectorAll('input[type="number"]');
-        allInputs.forEach(input => {
-            const min = parseFloat(input.getAttribute('min'));
-            const max = parseFloat(input.getAttribute('max'));
-            const value = parseFloat(input.value);
-
-            if (!isNaN(value)) {
-                if (!isNaN(min) && value < min) {
-                    input.value = min;
-                } else if (!isNaN(max) && value > max) {
-                    input.value = max;
-                }
-            }
-        });
-    };
-}
-
-// Report the outcome of a display-settings save. XMLHttpRequest has no
-// `responseJSON` (that's a jQuery property) — read `responseText` and the real
-// status code, otherwise a failed save reports success.
-window.showDisplaySaveResult = function(xhr) {
-    // Only 2xx counts as saved. A network failure reports status 0, which any
-    // `>= 400` test would wave through as success.
-    const httpSuccess = xhr.status >= 200 && xhr.status < 300;
-    let message = httpSuccess
-        ? 'Display settings saved'
-        : 'Display settings were not saved. Check your connection and try again.';
-    let status = httpSuccess ? 'success' : 'error';
-    try {
-        const data = JSON.parse(xhr.responseText);
-        if (data.message) message = data.message;
-        // A body can refine a successful verdict but never overturn a failed one.
-        if (httpSuccess && data.status) status = data.status;
-    } catch {
-        // Non-JSON body — fall back to the status-code verdict above.
-    }
-    showNotification(message, status);
-};
 
 // Vegas Scroll Mode Settings
 (function() {
-    // Escape HTML to prevent XSS
-    function escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = String(text || '');
-        return div.innerHTML;
-    }
+    function escapeHtml(text) { return window.LEDEscape.html(text); }
 
-    // Escape for use in HTML attributes
-    function escapeAttr(text) {
-        return escapeHtml(text).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-    }
+    function escapeAttr(text) { return window.LEDEscape.attr(text); }
 
     // Toggle settings visibility
     const vegasEnabledCheckbox = document.getElementById('vegas_scroll_enabled');

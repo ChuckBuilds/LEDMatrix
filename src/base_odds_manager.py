@@ -18,6 +18,8 @@ import requests
 import json
 from typing import Dict, Any, Optional, List
 
+from src.common.api_helper import DEFAULT_HTTP_HEADERS
+
 
 class BaseOddsManager:
     """
@@ -45,22 +47,15 @@ class BaseOddsManager:
         self.logger = logging.getLogger(__name__)
         self.base_url = "https://sports.core.api.espn.com/v2/sports"
 
-        # This path used a bare requests.get, so it identified itself as
-        # python-requests/x.y -- the one thing ESPN is known to reject. Around
-        # 2026-08-04 it began 403ing browser strings and bare custom tokens
-        # alike; what it accepts is a token with a URL that says who is
-        # calling. Every other ESPN caller in the tree already sends this
-        # (src/common/api_helper.py); the odds path was simply missed, and it is the one whose failures cost
-        # the caller its whole update budget.
+        # Core's shared headers: ESPN rejects requests' default User-Agent
+        # (see api_helper.USER_AGENT), and a rejected odds request costs the
+        # calling plugin its update budget.
         #
         # Deliberately no retry adapter, unlike api_helper: retries multiply
         # request_timeout, which is set to 5s precisely to stay inside that
         # budget. One try, then the cooldown below.
         self.session = requests.Session()
-        self.session.headers.update({
-            'User-Agent': 'LEDMatrix/1.0 (+https://github.com/ChuckBuilds/LEDMatrix)',
-            'Accept': 'application/json',
-        })
+        self.session.headers.update(DEFAULT_HTTP_HEADERS)
         
         # Configuration with defaults
         self.update_interval = 3600  # 1 hour default
@@ -72,7 +67,6 @@ class BaseOddsManager:
         self.request_timeout = 5
         # Set when a request fails; until then, skip the network entirely.
         self._skip_network_until = 0.0
-        self.cache_ttl = 1800       # 30 minutes default
         
         # Load configuration if available
         if config_manager:
@@ -89,12 +83,10 @@ class BaseOddsManager:
             
             self.update_interval = odds_config.get('update_interval', self.update_interval)
             self.request_timeout = odds_config.get('timeout', self.request_timeout)
-            self.cache_ttl = odds_config.get('cache_ttl', self.cache_ttl)
-            
+
             self.logger.debug(f"BaseOddsManager configuration loaded: "
                             f"update_interval={self.update_interval}s, "
-                            f"timeout={self.request_timeout}s, "
-                            f"cache_ttl={self.cache_ttl}s")
+                            f"timeout={self.request_timeout}s")
                             
         except Exception as e:
             self.logger.warning(f"Failed to load BaseOddsManager configuration: {e}")
@@ -172,15 +164,12 @@ class BaseOddsManager:
             odds_data = self._extract_espn_data(raw_data)
             if odds_data:
                 self.logger.info(f"Successfully extracted odds data: {odds_data}")
-            else:
-                self.logger.debug("No odds data available for this game")
-            
-            if odds_data:
                 self.cache_manager.set(cache_key, odds_data, ttl=interval)
                 self.logger.info(f"Saved odds data to cache for {cache_key} with TTL {interval}s")
             else:
                 self.logger.debug(f"No odds data available for {cache_key}")
-                # Cache the fact that no odds are available to avoid repeated API calls
+                # Cache the absence too, so the game is not re-requested
+                # on every update until the interval passes.
                 self.cache_manager.set(cache_key, {"no_odds": True}, ttl=interval)
             
             return odds_data

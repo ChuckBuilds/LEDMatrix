@@ -152,9 +152,7 @@
                 if (selectedIds.length === 0) {
                     checkbox.checked = true;
                     selectedIds.push(cal.id);
-                    if (window.showNotification) {
-                        window.showNotification('At least one calendar must be selected.', 'warning');
-                    }
+                    window.showNotification('At least one calendar must be selected.', 'warning');
                 }
                 syncHiddenAndSummary();
             });
@@ -185,11 +183,5 @@
         container.appendChild(p);
     }
 
-    function escapeHtml(str) {
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;');
-    }
+    function escapeHtml(str) { return window.LEDEscape.html(str); }
 })();
