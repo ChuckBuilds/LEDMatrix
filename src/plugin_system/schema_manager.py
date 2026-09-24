@@ -14,6 +14,7 @@ import jsonschema
 from jsonschema import Draft7Validator, ValidationError
 
 from src.core_config_keys import CORE_CONFIG_KEYS
+from src.element_style import expand_style_elements
 
 
 def _renders_as_object(prop: Dict[str, Any]) -> bool:
@@ -452,11 +453,7 @@ class SchemaManager:
             # full per-element style blocks (font/size/color + layout
             # offsets) the web-UI config form renders. No-op for schemas
             # without the declaration; never raises.
-            try:
-                from src.element_style import expand_style_elements
-                schema = expand_style_elements(schema)
-            except ImportError:
-                pass
+            schema = expand_style_elements(schema)
 
             # Cache the schema
             self._schema_cache[plugin_id] = schema
