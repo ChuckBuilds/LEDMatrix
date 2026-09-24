@@ -284,22 +284,7 @@ function closeErrorModal() {
     }
 }
 
-/**
- * Escape HTML to prevent XSS.
- *
- * Quotes are escaped as well so the result is safe inside a quoted attribute
- * value -- the textContent/innerHTML round-trip alone only escapes &, < and >.
- */
-function escapeHtml(text) {
-    if (typeof text !== 'string') {
-        text = String(text);
-    }
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-}
+function escapeHtml(text) { return window.LEDEscape.html(text); }
 
 /**
  * Copy error details to clipboard.

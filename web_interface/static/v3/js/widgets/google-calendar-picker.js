@@ -183,11 +183,5 @@
         container.appendChild(p);
     }
 
-    function escapeHtml(str) {
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;');
-    }
+    function escapeHtml(str) { return window.LEDEscape.html(str); }
 })();

@@ -79,6 +79,7 @@ global.document = {
   addEventListener: (t, f) => { (docListeners[t] ||= []).push(f); },
 };
 global.window = global;
+require('../led_escape').install(window);
 window.LEDMatrixWidgets = { register() {} };
 window.currentPluginConfig = null;
 window.getUploadConfig = () => ({ plugin_id: 'static-image' });

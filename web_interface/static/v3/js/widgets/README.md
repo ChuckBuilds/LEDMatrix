@@ -246,12 +246,12 @@ window.LEDMatrixWidgets.register('my-custom-widget', {
     },
     
     /**
-     * Helper: Escape HTML to prevent XSS
+     * Helper: escape text for HTML content or a quoted attribute value.
+     * Use the page's shared escaper; a textContent/innerHTML round trip
+     * leaves quotes alone and is not safe inside value="...".
      */
     escapeHtml: function(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
+        return window.LEDEscape.html(text);
     },
     
     /**

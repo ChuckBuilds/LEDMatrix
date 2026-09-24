@@ -781,15 +781,8 @@
             delete btn._jfmOrigText;
         }
 
-        // Quotes too: the result lands in quoted attribute values (title=,
-        // data-cat=, pattern=, ...), and the textContent/innerHTML round-trip
-        // only escapes &, < and >.
         _esc(str) {
-            const d = document.createElement('div');
-            d.textContent = String(str ?? '');
-            return d.innerHTML
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#39;');
+            return window.LEDEscape.html(str);
         }
 
         _fmtSize(bytes) {

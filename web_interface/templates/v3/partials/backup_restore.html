@@ -132,11 +132,7 @@
         return size.toFixed(i === 0 ? 0 : 1) + ' ' + units[i];
     }
 
-    function escapeHtml(value) {
-        return String(value == null ? '' : value).replace(/[&<>"']/g, function (c) {
-            return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
-        });
-    }
+    function escapeHtml(value) { return window.LEDEscape.html(value); }
 
     async function loadPreview() {
         const el = document.getElementById('export-preview');

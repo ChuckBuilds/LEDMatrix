@@ -789,17 +789,6 @@
                 showNotification(message, type = 'info') {
                     // Use global notification widget
                     window.showNotification(message, type);
-                },
-
-                // Quotes too, so the result is safe inside a quoted attribute
-                // value -- the textContent/innerHTML round-trip alone only
-                // escapes &, < and >.
-                escapeHtml(text) {
-                    const div = document.createElement('div');
-                    div.textContent = text;
-                    return div.innerHTML
-                        .replace(/"/g, '&quot;')
-                        .replace(/'/g, '&#39;');
                 }
             };
 

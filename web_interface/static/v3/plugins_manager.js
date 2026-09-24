@@ -440,7 +440,7 @@ window.handleGitHubPluginInstall = function() {
         debugLog('[handleGitHubPluginInstall] Response data:', data);
         if (data.status === 'success') {
             if (statusDiv) {
-                statusDiv.innerHTML = `<span class="text-green-600"><i class="fas fa-check-circle mr-1"></i>Successfully installed: ${window.escapeHtml(data.plugin_id)}</span>`;
+                statusDiv.innerHTML = `<span class="text-green-600"><i class="fas fa-check-circle mr-1"></i>Successfully installed: ${window.LEDEscape.html(data.plugin_id)}</span>`;
             }
             urlInput.value = '';
 
@@ -457,7 +457,7 @@ window.handleGitHubPluginInstall = function() {
             }, 1000);
         } else {
             if (statusDiv) {
-                statusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>${window.escapeHtml(data.message || 'Installation failed')}</span>`;
+                statusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>${window.LEDEscape.html(data.message || 'Installation failed')}</span>`;
             }
             showNotification(data.message || 'Installation failed', 'error');
         }
@@ -465,7 +465,7 @@ window.handleGitHubPluginInstall = function() {
     .catch(error => {
         console.error('[handleGitHubPluginInstall] Error:', error);
         if (statusDiv) {
-            statusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>Error: ${window.escapeHtml(error.message)}</span>`;
+            statusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>Error: ${window.LEDEscape.html(error.message)}</span>`;
         }
         showNotification('Error installing plugin: ' + error.message, 'error');
     })
@@ -1257,22 +1257,6 @@ function renderInstalledCards(plugins, total) {
         return;
     }
 
-    // Helper function to escape values for use in HTML attributes
-    const escapeAttr = (text) => {
-        return (text || '')
-            .replace(/&/g, '&amp;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;');
-    };
-
-    // Helper function to escape for JavaScript strings (use JSON.stringify for proper escaping)
-    // JSON.stringify returns a quoted string, so we can use it directly in JavaScript
-    const escapeJs = (text) => {
-        return JSON.stringify(text || '');
-    };
-
     setGridHtmlIfChanged(container, plugins.map(plugin => {
         // Convert enabled to boolean for consistent rendering
         const enabledBool = Boolean(plugin.enabled);
@@ -1283,7 +1267,7 @@ function renderInstalledCards(plugins, total) {
         }
 
         // Escape plugin ID for use in HTML attributes and JavaScript
-        const escapedPluginId = escapeAttr(plugin.id);
+        const escapedPluginId = escapeAttribute(plugin.id);
 
         return `
         <div class="plugin-card">
@@ -1305,7 +1289,7 @@ function renderInstalledCards(plugins, total) {
                         <input type="checkbox"
                                class="sr-only peer"
                                role="switch"
-                               aria-label="Enable ${escapeAttr(plugin.name || plugin.id)}"
+                               aria-label="Enable ${escapeAttribute(plugin.name || plugin.id)}"
                                id="toggle-${escapedPluginId}"
                                ${enabledBool ? 'checked' : ''}
                                data-plugin-id="${escapedPluginId}"
@@ -1328,7 +1312,7 @@ function renderInstalledCards(plugins, total) {
                 </div>
                 <div class="text-sm text-gray-600 space-y-1.5 mb-3">
                     <p class="flex items-center"><i class="fas fa-user mr-2 text-gray-400 w-4"></i>${escapeHtml(plugin.author || 'Unknown')}</p>
-                    ${plugin.version ? `<p class="flex items-center flex-wrap gap-1.5"><i class="fas fa-tag mr-2 text-gray-400 w-4"></i>v${escapeHtml(plugin.version)}${plugin.update_available && plugin.latest_version ? `<span class="badge badge-info" title="Installed v${escapeAttr(plugin.version)} → latest v${escapeAttr(plugin.latest_version)}"><i class="fas fa-arrow-circle-up mr-1"></i>v${escapeHtml(plugin.latest_version)} available</span>` : ''}</p>` : ''}
+                    ${plugin.version ? `<p class="flex items-center flex-wrap gap-1.5"><i class="fas fa-tag mr-2 text-gray-400 w-4"></i>v${escapeHtml(plugin.version)}${plugin.update_available && plugin.latest_version ? `<span class="badge badge-info" title="Installed v${escapeAttribute(plugin.version)} → latest v${escapeAttribute(plugin.latest_version)}"><i class="fas fa-arrow-circle-up mr-1"></i>v${escapeHtml(plugin.latest_version)} available</span>` : ''}</p>` : ''}
                     <p class="flex items-center"><i class="fas fa-folder mr-2 text-gray-400 w-4"></i>${escapeHtml(plugin.category || 'General')}</p>
                 </div>
                 <p class="text-sm text-gray-700 leading-relaxed">${escapeHtml(plugin.description || 'No description available')}</p>
@@ -1354,7 +1338,7 @@ function renderInstalledCards(plugins, total) {
                             style="flex: 1;"
                             data-plugin-id="${escapedPluginId}"
                             data-action="update"
-                            title="${plugin.update_available && plugin.latest_version ? 'Update to v' + escapeAttr(plugin.latest_version) : 'Reinstall the latest published version'}">
+                            title="${plugin.update_available && plugin.latest_version ? 'Update to v' + escapeAttribute(plugin.latest_version) : 'Reinstall the latest published version'}">
                         <i class="fas ${plugin.update_available ? 'fa-arrow-circle-up' : 'fa-sync'} mr-2"></i>${plugin.update_available && plugin.latest_version ? 'Update to v' + escapeHtml(plugin.latest_version) : 'Update'}
                     </button>
                     <button class="btn bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-semibold"
@@ -3258,10 +3242,6 @@ function renderPluginStore(plugins) {
         return;
     }
 
-    // JS string literal for an inline handler; see jsStringAttr
-    const escapeJs = (text) => {
-        return jsStringAttr(text || '');
-    };
 
     setGridHtmlIfChanged(container, plugins.map(plugin => {
         const installed = isStorePluginInstalled(plugin);
@@ -3305,10 +3285,10 @@ function renderPluginStore(plugins) {
                            class="flex-1 px-2 py-1 text-xs border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
                 </div>
                 <div class="flex gap-2">
-                    <button onclick='if(window.installPlugin){const branchInput = document.getElementById("branch-input-${plugin.id.replace(/[^a-zA-Z0-9]/g, '-')}"); window.installPlugin(${escapeJs(plugin.id)}, branchInput?.value?.trim() || null)}else{console.error("installPlugin not available")}' class="btn ${installed ? 'bg-gray-500 hover:bg-gray-600' : 'bg-green-600 hover:bg-green-700'} text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold">
+                    <button onclick='if(window.installPlugin){const branchInput = document.getElementById("branch-input-${plugin.id.replace(/[^a-zA-Z0-9]/g, '-')}"); window.installPlugin(${jsStringAttr(plugin.id)}, branchInput?.value?.trim() || null)}else{console.error("installPlugin not available")}' class="btn ${installed ? 'bg-gray-500 hover:bg-gray-600' : 'bg-green-600 hover:bg-green-700'} text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold">
                         <i class="fas ${installed ? 'fa-redo' : 'fa-download'} mr-2"></i>${installed ? 'Reinstall' : 'Install'}
                     </button>
-                    <button onclick='${repoLink ? `window.open(${escapeJs(plugin.plugin_path ? repoLink + "/tree/" + encodeURIComponent(plugin.default_branch || plugin.branch || "main") + "/" + plugin.plugin_path.split("/").map(encodeURIComponent).join("/") : repoLink)}, "_blank")` : `void(0)`}' ${repoLink ? '' : 'disabled'} class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold${repoLink ? '' : ' opacity-50 cursor-not-allowed'}">
+                    <button onclick='${repoLink ? `window.open(${jsStringAttr(plugin.plugin_path ? repoLink + "/tree/" + encodeURIComponent(plugin.default_branch || plugin.branch || "main") + "/" + plugin.plugin_path.split("/").map(encodeURIComponent).join("/") : repoLink)}, "_blank")` : `void(0)`}' ${repoLink ? '' : 'disabled'} class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold${repoLink ? '' : ' opacity-50 cursor-not-allowed'}">
                         <i class="fas fa-external-link-alt mr-2"></i>View
                     </button>
                 </div>
@@ -3469,10 +3449,6 @@ function renderSavedRepositories(repositories) {
         return;
     }
 
-    // JS string literal for an inline handler; see jsStringAttr
-    const escapeJs = (text) => {
-        return jsStringAttr(text || '');
-    };
 
     container.innerHTML = repositories.map(repo => {
         const repoUrl = repo.url || '';
@@ -3488,7 +3464,7 @@ function renderSavedRepositories(repositories) {
                     </div>
                     <p class="text-xs text-gray-500 truncate" title="${escapeAttribute(repoUrl)}">${escapeHtml(repoUrl)}</p>
                 </div>
-                <button onclick='if(window.removeSavedRepository){window.removeSavedRepository(${escapeJs(repoUrl)})}else{console.error("removeSavedRepository not available")}' class="ml-2 text-red-600 hover:text-red-800 text-xs px-2 py-1" title="Remove repository" aria-label="Remove saved repository ${escapeAttribute(repoName)}">
+                <button onclick='if(window.removeSavedRepository){window.removeSavedRepository(${jsStringAttr(repoUrl)})}else{console.error("removeSavedRepository not available")}' class="ml-2 text-red-600 hover:text-red-800 text-xs px-2 py-1" title="Remove repository" aria-label="Remove saved repository ${escapeAttribute(repoName)}">
                     <i class="fas fa-trash" aria-hidden="true"></i>
                 </button>
             </div>
@@ -3854,27 +3830,12 @@ function renderCustomRegistryPlugins(plugins, registryUrl) {
         return;
     }
 
-    // Escape HTML helper. Quotes too: the result lands in quoted attribute
-    // values, and the textContent/innerHTML round-trip only escapes &, < and >.
-    const escapeHtml = (text) => {
-        if (!text) return '';
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-    };
-
-    // JS string literal for an inline handler; see jsStringAttr
-    const escapeJs = (text) => {
-        return jsStringAttr(text || '');
-    };
 
     container.innerHTML = plugins.map(plugin => {
         const isInstalled = isStorePluginInstalled(plugin);
-        const pluginIdJs = escapeJs(plugin.id);
-        const escapedUrlJs = escapeJs(registryUrl);
-        const pluginPathJs = escapeJs(plugin.plugin_path || '');
+        const pluginIdJs = jsStringAttr(plugin.id);
+        const escapedUrlJs = jsStringAttr(registryUrl);
+        const pluginPathJs = jsStringAttr(plugin.plugin_path || '');
         const branchInputId = `branch-input-custom-${plugin.id.replace(/[^a-zA-Z0-9]/g, '-')}`;
 
         const installBtn = isInstalled
@@ -3944,40 +3905,11 @@ function isGithubUrl(url) {
     }
 }
 
-// Utility function to escape HTML. Quotes too: most call sites interpolate the
-// result into a quoted attribute value, and the textContent/innerHTML
-// round-trip only escapes &, < and >.
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-}
-
-// Utility function to escape text for use in HTML attributes
-// Escapes quotes, ampersands, and other special characters that could break attributes
-function escapeAttribute(text) {
-    if (text == null) {
-        return '';
-    }
-    const str = String(text);
-    return str
-        .replace(/&/g, '&amp;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
-}
-
-// A quoted JS string literal that is safe inside an inline handler attribute
-// (onclick='f(${jsStringAttr(id)})' or onclick="..."). JSON.stringify alone
-// makes a valid JS string but leaves ' and & untouched, so a registry entry
-// id containing ' closed a single-quoted attribute and added its own
-// handlers. The browser decodes the entities before the JS is parsed.
-function jsStringAttr(value) {
-    return escapeAttribute(JSON.stringify(value == null ? '' : String(value)));
-}
+// Short local names for window.LEDEscape (app-early.js), which says what each
+// one is for. Function declarations, so they are usable anywhere in this IIFE.
+function escapeHtml(text) { return window.LEDEscape.html(text); }
+function escapeAttribute(text) { return window.LEDEscape.attr(text); }
+function jsStringAttr(value) { return window.LEDEscape.jsStringAttr(value); }
 
 function isNewPlugin(lastUpdated) {
     if (!lastUpdated) return false;
@@ -4254,8 +4186,6 @@ window.dismissGithubWarning = function() {
 // Expose renderArrayObjectItem, getSchemaProperty, and escapeHtml to window for use by global functions
 window.renderArrayObjectItem = renderArrayObjectItem;
 window.getSchemaProperty = getSchemaProperty;
-window.escapeHtml = escapeHtml;
-window.escapeAttribute = escapeAttribute;
 
 // Expose GitHub install handlers. These must be assigned inside the IIFE —
 // from outside the IIFE, `typeof attachInstallButtonHandler` evaluates to
@@ -4299,35 +4229,8 @@ if (typeof window !== 'undefined') {
         if (!itemsSchema || !itemsSchema.properties) return;
 
         const newIndex = currentItems.length;
-        // Use renderArrayObjectItem if available, otherwise create basic HTML
-        let itemHtml = '';
-        if (typeof window.renderArrayObjectItem === 'function') {
-            itemHtml = window.renderArrayObjectItem(fieldId, fullKey, itemsSchema.properties, {}, newIndex, itemsSchema);
-        } else {
-            // Fallback: create basic HTML structure
-            // Note: newItem is {} for newly added items, so this will use schema defaults
-            const newItem = {};
-            itemHtml = `<div class="border border-gray-300 rounded-lg p-4 bg-gray-50 array-object-item" data-index="${newIndex}">`;
-            Object.keys(itemsSchema.properties || {}).forEach(propKey => {
-                const propSchema = itemsSchema.properties[propKey];
-                if (propSchema && propSchema['x-display'] === 'hidden') return;
-                const propValue = newItem[propKey] !== undefined ? newItem[propKey] : propSchema.default;
-                const propLabel = propSchema.title || propKey.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-                itemHtml += `<div class="mb-3"><label class="block text-sm font-medium text-gray-700 mb-1">${escapeHtml(propLabel)}</label>`;
-                if (propSchema.type === 'boolean') {
-                    const checked = propValue ? 'checked' : '';
-                    // No name attribute - rely solely on _data field to prevent key leakage
-                    itemHtml += `<input type="checkbox" data-prop-key="${propKey}" aria-label="${escapeHtml(propLabel)}" ${checked} class="h-4 w-4 text-blue-600" onchange="window.updateArrayObjectData('${fieldId}')">`;
-                } else {
-                    // Escape HTML to prevent XSS
-                    // No name attribute - rely solely on _data field to prevent key leakage
-                    const escapedValue = typeof propValue === 'string' ? propValue.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;') : (propValue || '');
-                    itemHtml += `<input type="text" data-prop-key="${propKey}" aria-label="${escapeHtml(propLabel)}" value="${escapedValue}" class="block w-full px-3 py-2 border border-gray-300 rounded-md" onchange="window.updateArrayObjectData('${fieldId}')">`;
-                }
-                itemHtml += `</div>`;
-            });
-            itemHtml += `<button type="button" onclick="window.removeArrayObjectItem('${fieldId}', ${newIndex})" class="mt-2 px-3 py-2 text-red-600 hover:text-red-800">Remove</button></div>`;
-        }
+        // renderArrayObjectItem is exported by the plugin-manager IIFE above.
+        const itemHtml = window.renderArrayObjectItem(fieldId, fullKey, itemsSchema.properties, {}, newIndex, itemsSchema);
         itemsContainer.insertAdjacentHTML('beforeend', itemHtml);
         window.updateArrayObjectData(fieldId);
 
@@ -4501,16 +4404,7 @@ document.addEventListener('htmx:afterSettle', function() {
     let starlarkDataLoaded = false;
 
     // ── Helpers ─────────────────────────────────────────────────────────────
-    // Quotes too: the result lands in quoted attribute values (data-app-id=,
-    // title=), and the textContent/innerHTML round-trip only escapes &, < and >.
-    function escapeHtml(str) {
-        if (!str) return '';
-        const div = document.createElement('div');
-        div.textContent = str;
-        return div.innerHTML
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-    }
+    function escapeHtml(str) { return window.LEDEscape.html(str); }
 
     function isStarlarkInstalled(appId) {
         // Check window.installedPlugins (populated by loadInstalledPlugins)

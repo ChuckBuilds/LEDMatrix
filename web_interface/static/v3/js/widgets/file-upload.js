@@ -489,12 +489,7 @@
         return String(imageId).replace(/[^a-zA-Z0-9_]/g, '_');
     }
 
-    // Text for HTML text and quoted attribute values (quotes included).
-    function escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = String(text ?? '');
-        return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-    }
+    function escapeHtml(text) { return window.LEDEscape.html(text); }
 
     /**
      * Replace the image list: writes the hidden input the form saves and

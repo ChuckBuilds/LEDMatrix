@@ -53,6 +53,7 @@ global.document = {
   createElement: () => new TextEl(),
 };
 global.window = global;
+require('../led_escape').install(window);
 global.pluginLog = () => {};
 global.isStorePluginInstalled = () => false;
 global.isNewPlugin = () => false;

@@ -435,9 +435,7 @@
         el.innerHTML = html;
     }
 
-    function escHtml(s) {
-        return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-    }
+    function escHtml(s) { return window.LEDEscape.html(s); }
 
     // ── main action dispatcher ────────────────────────────────────────────────
 
@@ -910,11 +908,7 @@
     };
 
     // ── plugin health panel ──────────────────────────────────────────────────
-    function phEscape(s) {
-        return String(s).replace(/[&<>"']/g, function (c) {
-            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
-        });
-    }
+    function phEscape(s) { return window.LEDEscape.html(s); }
     function phFmtSecs(v) {
         if (typeof v !== 'number' || !isFinite(v)) return '—';
         return v.toFixed(3) + 's';

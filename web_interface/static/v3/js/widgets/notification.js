@@ -160,16 +160,7 @@
         setTimeout(() => { region.textContent = text; }, 50);
     }
 
-    /**
-     * Escape HTML to prevent XSS
-     * @param {string} text - Text to escape
-     * @returns {string} Escaped text
-     */
-    function escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = String(text);
-        return div.innerHTML;
-    }
+    function escapeHtml(text) { return window.LEDEscape.html(text); }
 
     function clearTimer(notificationId) {
         const t = timers.get(notificationId);

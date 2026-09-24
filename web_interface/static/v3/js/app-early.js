@@ -1,6 +1,33 @@
 /* global debugLog */
 // Early helpers and the app() stub (must run before Alpine init)
 // Extracted from templates/v3/base.html so browsers cache it as a static asset.
+
+        // ===== window.LEDEscape: the web UI's HTML escaping =====
+        // This file is a blocking <script> in <head>, so every later script,
+        // widget and partial can call these directly.
+        //   html(v)          text for element content or a quoted attribute
+        //                    value: & < > " ' become entities, null and
+        //                    undefined become ''. Escaping quotes is what makes
+        //                    it attribute-safe; a textContent/innerHTML round
+        //                    trip only escapes & < and >.
+        //   attr(v)          the same function, for call sites that want the
+        //                    attribute context to read explicitly.
+        //   jsStringAttr(v)  a quoted JS string literal for an inline handler
+        //                    attribute: onclick='f(${jsStringAttr(id)})'.
+        //                    JSON.stringify alone leaves ' and & untouched, so a
+        //                    value containing ' could close a single-quoted
+        //                    attribute. The browser decodes the entities before
+        //                    it parses the handler, so the JS sees the literal.
+        window.LEDEscape = (function() {
+            const ENTITIES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+            function html(value) {
+                return value == null ? '' : String(value).replace(/[&<>"']/g, c => ENTITIES[c]);
+            }
+            function jsStringAttr(value) {
+                return html(JSON.stringify(value == null ? '' : String(value)));
+            }
+            return Object.freeze({ html: html, attr: html, jsStringAttr: jsStringAttr });
+        })();
         // Helper function to get installed plugins with fallback
         // Must be defined before app() function that uses it
         async function getInstalledPluginsSafe() {
@@ -349,8 +376,7 @@
                             debugLog('[STUB] updatePluginTabs: Added', this.installedPlugins.length, 'plugin tabs');
                         }, 100);
                     },
-                    showNotification: function(message, type) {},
-                    escapeHtml: function(text) { return String(text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+                    showNotification: function(message, type) {}
                 };
             };
         })();

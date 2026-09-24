@@ -260,11 +260,7 @@
         return 'bg-gray-100 text-gray-800';
     }
 
-    function escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
+    function escapeHtml(text) { return window.LEDEscape.html(text); }
 
     function showError(message) {
         showNotification(message, 'error');

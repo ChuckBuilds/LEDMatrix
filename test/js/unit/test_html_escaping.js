@@ -11,9 +11,10 @@
 //     name" onfocus="alert(1)
 //
 // CodeQL reported 83 js/incomplete-html-attribute-sanitization alerts for
-// exactly this. This suite pins the fix at the source: it reads each real
-// implementation out of the shipped file and runs it, so an escaper that loses
-// its quote handling again fails here rather than in a scanner run weeks later.
+// exactly this. The web UI now has one implementation, window.LEDEscape in
+// app-early.js, and the old per-file escapers are one-line names for it. This
+// suite runs LEDEscape and every one of those names as shipped, and fails if a
+// hand-rolled escaper appears anywhere else in web_interface/.
 
 const fs = require('fs');
 const path = require('path');
@@ -41,6 +42,7 @@ class FakeEl {
 }
 global.document = { createElement: () => new FakeEl() };
 global.window = global;
+const LEDEscape = require('../led_escape').install(window);
 
 // ── source extraction ──────────────────────────────────────────────────────
 // Pull a function out of a real source file by its opening line and balanced
@@ -66,6 +68,7 @@ function extract(file, opener) {
 
 // Evaluate an extracted escaper and return it as a callable.
 function loadFn(file, opener, name, { method = false } = {}) {
+  if (file === null) return LEDEscape[name];
   const body = extract(file, opener);
   // Class/object methods (`escapeHtml(text) {...}`) are not valid statements on
   // their own -- wrap them in an object literal so they can be evaluated.
@@ -78,6 +81,8 @@ function loadFn(file, opener, name, { method = false } = {}) {
 
 // ── the escapers, as shipped ───────────────────────────────────────────────
 const ESCAPERS = [
+  ['app-early.js (LEDEscape.html)', null, null, 'html'],
+  ['app-early.js (LEDEscape.attr)', null, null, 'attr'],
   ['base-widget.js (BaseWidget.escapeHtml)',
    'static/v3/js/widgets/base-widget.js', 'escapeHtml(text) {', 'escapeHtml', true],
   ['plugins_manager.js (top-level escapeHtml)',
@@ -90,8 +95,28 @@ const ESCAPERS = [
    'static/v3/js/widgets/json-file-manager.js', '_esc(str) {', '_esc', true],
   ['plugin-file-manager.js (escHtml)',
    'static/v3/js/widgets/plugin-file-manager.js', 'function escHtml(s) {', 'escHtml', false],
-  ['app-shell.js (escapeHtml)',
-   'static/v3/js/app-shell.js', 'escapeHtml(text) {', 'escapeHtml', true],
+  ['plugins_manager.js (escapeAttribute)',
+   'static/v3/plugins_manager.js', 'function escapeAttribute(text) {', 'escapeAttribute', false],
+  ['notification.js (escapeHtml)',
+   'static/v3/js/widgets/notification.js', 'function escapeHtml(text) {', 'escapeHtml', false],
+  ['google-calendar-picker.js (escapeHtml)',
+   'static/v3/js/widgets/google-calendar-picker.js', 'function escapeHtml(str) {', 'escapeHtml', false],
+  ['file-upload.js (escapeHtml)',
+   'static/v3/js/widgets/file-upload.js', 'function escapeHtml(text) {', 'escapeHtml', false],
+  ['text-input.js (escapeHtml)',
+   'static/v3/js/widgets/text-input.js', 'function escapeHtml(text) {', 'escapeHtml', false],
+  ['slider.js (escapeAttr)',
+   'static/v3/js/widgets/slider.js', 'function escapeAttr(text) {', 'escapeAttr', false],
+  ['display.html (escapeAttr)',
+   'templates/v3/partials/display.html', 'function escapeAttr(text) {', 'escapeAttr', false],
+  ['backup_restore.html (escapeHtml)',
+   'templates/v3/partials/backup_restore.html', 'function escapeHtml(value) {', 'escapeHtml', false],
+  ['operation_history.html (escapeHtml)',
+   'templates/v3/partials/operation_history.html', 'function escapeHtml(text) {', 'escapeHtml', false],
+  ['tools.html (escHtml)',
+   'templates/v3/partials/tools.html', 'function escHtml(s) {', 'escHtml', false],
+  ['tools.html (phEscape)',
+   'templates/v3/partials/tools.html', 'function phEscape(s) {', 'phEscape', false],
   ['logs.html (escapeHtml)',
    'templates/v3/partials/logs.html', 'function escapeHtml(text) {', 'escapeHtml', false],
   ['cache.html (escapeHtml)',
@@ -133,6 +158,45 @@ for (const [label, file, opener, name, method] of ESCAPERS) {
   const fn = loadFn(file, opener, name, { method });
   const out = String(fn('&quot;'));
   ok(`${label}: &quot; input stays inert`, out === '&amp;quot;', out);
+}
+
+console.log('\n4b. LEDEscape.jsStringAttr: a JS string literal that survives an attribute');
+{
+  const decode = s => s.replace(/&(quot|#39|lt|gt|amp);/g, (m, e) =>
+    ({ quot: '"', '#39': "'", lt: '<', gt: '>', amp: '&' })[e]);
+  for (const v of ["x' onmouseover='alert(1)", 'x" onmouseover="alert(1)', '</script><b>', 'a&#39;b']) {
+    const out = LEDEscape.jsStringAttr(v);
+    ok(`${JSON.stringify(v)}: no raw quote or bracket`, !/["'<>]/.test(out), out);
+    // eslint-disable-next-line no-eval
+    ok(`${JSON.stringify(v)}: decodes back to the same string`, eval(decode(out)) === v, out);
+  }
+  ok('null and undefined become the empty string',
+     LEDEscape.html(null) === '' && LEDEscape.html(undefined) === '' && LEDEscape.jsStringAttr(null) === '&quot;&quot;');
+  ok('numbers are kept', LEDEscape.html(0) === '0', LEDEscape.html(0));
+}
+
+console.log('\n4c. no hand-rolled escaper outside app-early.js');
+{
+  const skip = new Set(['static/v3/js/app-early.js',
+                        // documentation example, kept self-contained on purpose
+                        'static/v3/js/widgets/example-color-picker.js']);
+  const found = [];
+  const walk = dir => fs.readdirSync(dir, { withFileTypes: true }).forEach(e => {
+    const p = path.join(dir, e.name);
+    const rel = path.relative(ROOT, p).split(path.sep).join('/');
+    if (e.isDirectory()) { if (e.name !== 'vendor') walk(p); return; }
+    if (!/\.(js|html)$/.test(e.name) || /\.min\.js$/.test(e.name) || skip.has(rel)) return;
+    // Writing the entity for a quote is what an escaper does; nothing else in
+    // the UI needs to.
+    let text = fs.readFileSync(p, 'utf8');
+    // In templates only the inline scripts count; Jinja's own |replace("'", "&#39;")
+    // escaping of server-rendered values is not a JS escaper.
+    if (e.name.endsWith('.html')) text = (text.match(/<script[^>]*>[\s\S]*?<\/script>/g) || []).join('\n');
+    if (/['"`]&quot;['"`]|['"`]&#39;['"`]/.test(text)) found.push(rel);
+  });
+  walk(path.join(ROOT, 'static'));
+  walk(path.join(ROOT, 'templates'));
+  ok('every escaper is window.LEDEscape', found.length === 0, found);
 }
 
 // ── url-input scheme handling (js/xss-through-dom) ─────────────────────────
