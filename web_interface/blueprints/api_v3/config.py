@@ -28,6 +28,23 @@ import web_interface.blueprints.api_v3 as _pkg
 FORM_SECTION_FIELD = '__form_section'
 
 
+def _plugin_id_list(raw, field_name):
+    """``(ids, None)`` for a list of plugin ids, or ``(None, message)``.
+
+    The settings forms post these lists as JSON text in a hidden input; a JSON
+    client may send the array itself. Anything else is refused rather than
+    coerced: storing ``[]`` for a malformed value clears the saved order or
+    exclusions without a word.
+    """
+    try:
+        parsed = json.loads(raw) if isinstance(raw, str) else raw
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None, f'{field_name} must be valid JSON'
+    if not isinstance(parsed, list) or not all(isinstance(p, str) for p in parsed):
+        return None, f'{field_name} must be a list of plugin-id strings'
+    return parsed, None
+
+
 def _day_setting(data, day, flat_key, nested_key):
     """(present, value) of one per-day schedule setting in a POST body.
 
@@ -872,28 +889,13 @@ def save_main_config():
                         }), 400
                     vegas_config[config_key] = int_value
 
-            # Handle plugin order and exclusions (JSON arrays)
-            if 'vegas_plugin_order' in data:
-                try:
-                    if isinstance(data['vegas_plugin_order'], str):
-                        parsed = json.loads(data['vegas_plugin_order'])
-                    else:
-                        parsed = data['vegas_plugin_order']
-                    # Ensure result is a list
-                    vegas_config['plugin_order'] = list(parsed) if isinstance(parsed, (list, tuple)) else []
-                except (json.JSONDecodeError, TypeError, ValueError):
-                    vegas_config['plugin_order'] = []
-
-            if 'vegas_excluded_plugins' in data:
-                try:
-                    if isinstance(data['vegas_excluded_plugins'], str):
-                        parsed = json.loads(data['vegas_excluded_plugins'])
-                    else:
-                        parsed = data['vegas_excluded_plugins']
-                    # Ensure result is a list
-                    vegas_config['excluded_plugins'] = list(parsed) if isinstance(parsed, (list, tuple)) else []
-                except (json.JSONDecodeError, TypeError, ValueError):
-                    vegas_config['excluded_plugins'] = []
+            for field_name, config_key in (('vegas_plugin_order', 'plugin_order'),
+                                           ('vegas_excluded_plugins', 'excluded_plugins')):
+                if field_name in data:
+                    ids, id_error = _plugin_id_list(data[field_name], field_name)
+                    if id_error:
+                        return jsonify({'status': 'error', 'message': id_error}), 400
+                    vegas_config[config_key] = ids
 
         # Handle multi-display sync settings
         sync_fields = ["sync_role", "sync_port", "sync_follower_position"]
@@ -921,19 +923,11 @@ def save_main_config():
                     return jsonify({"status": "error", "message": "sync_follower_position must be left or right"}), 400
                 current_config["sync"]["follower_position"] = pos_val
 
-        # Handle primary rotation order: must be a JSON array of plugin-id
-        # strings. Reject anything else with a 400 rather than silently
-        # coercing, so a buggy client can't clear or corrupt the saved order.
         if 'plugin_rotation_order' in data:
-            raw_order = data.pop('plugin_rotation_order')
-            try:
-                parsed = json.loads(raw_order) if isinstance(raw_order, str) else raw_order
-            except (json.JSONDecodeError, TypeError, ValueError):
-                return jsonify({'status': 'error',
-                                'message': 'plugin_rotation_order must be valid JSON'}), 400
-            if not isinstance(parsed, list) or not all(isinstance(p, str) for p in parsed):
-                return jsonify({'status': 'error',
-                                'message': 'plugin_rotation_order must be a list of plugin-id strings'}), 400
+            parsed, id_error = _plugin_id_list(data.pop('plugin_rotation_order'),
+                                               'plugin_rotation_order')
+            if id_error:
+                return jsonify({'status': 'error', 'message': id_error}), 400
             if 'display' not in current_config:
                 current_config['display'] = {}
             current_config['display']['plugin_rotation_order'] = parsed
