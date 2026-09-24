@@ -37,6 +37,9 @@ ROOT = Path(__file__).resolve().parent.parent
 INSTALLERS = (
     ROOT / "first_time_install.sh",
     ROOT / "scripts" / "install" / "configure_wifi_permissions.sh",
+    # The ledmatrix_web rules, which first_time_install.sh and
+    # configure_web_sudo.sh both take from here.
+    ROOT / "scripts" / "install" / "lib_sudoers.sh",
 )
 
 #: Commands this change grants, each fully literal in the source.

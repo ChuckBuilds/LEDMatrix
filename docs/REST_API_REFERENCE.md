@@ -2111,13 +2111,18 @@ Errors use one of two shapes. Most endpoints answer:
 }
 ```
 
-Endpoints built on the structured error helper add a code and category:
+An exception no route anticipated gets this shape too, with a 500, the
+message `An error occurred; see logs for details`, and `details` naming the
+exception type and text (credentials redacted). The api_v3 blueprint's
+error handler produces it, so it is the same for every `/api/v3` route.
+
+Endpoints built on the structured error helper add a code, and usually
+suggested fixes (the web UI's error dialog lists them):
 
 ```json
 {
   "status": "error",
   "error_code": "CONFIG_SAVE_FAILED",
-  "error_category": "configuration",
   "message": "Error description",
   "details": "optional",
   "context": { },

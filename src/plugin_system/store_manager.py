@@ -28,6 +28,9 @@ from src.common.permission_utils import sudo_remove_directory, install_requireme
 from src.plugin_system.plugin_loader import (
     requirements_has_real_deps, requirements_are_satisfied, find_trusted_subdir
 )
+from src.plugin_system.plugin_dirs import (
+    BACKUP_MARKER, PluginDirectoryIndex, resolve_plugin_dir, store_search_dirs,
+)
 
 try:
     from jsonschema import Draft7Validator, ValidationError
@@ -1233,9 +1236,9 @@ class PluginStoreManager:
         Pass-through when nothing is installed, and when called from
         `_reinstall_with_rollback`, which has already moved the old copy aside.
 
-        The aside name embeds '.standalone-backup-' so plugin discovery
-        (`plugin_manager._scan_directory_for_plugins`) skips it even though it
-        still holds a manifest.json.
+        The aside name embeds BACKUP_MARKER ('.standalone-backup-') so every
+        plugin directory lookup (src/plugin_system/plugin_dirs.py) skips it
+        even though it still holds a manifest.json.
 
         Held under the per-plugin reinstall lock for the same reason
         `_reinstall_with_rollback` is: the web UI runs Flask with
@@ -1250,7 +1253,7 @@ class PluginStoreManager:
                 return self._install_plugin_impl(plugin_id, branch)
 
             backup_path = plugin_path.with_name(
-                f"{plugin_path.name}.standalone-backup-preinstall")
+                f"{plugin_path.name}{BACKUP_MARKER}preinstall")
             if backup_path.exists() and not self._safe_remove_directory(backup_path):
                 # Can't stage a safety net. Better to attempt the install than
                 # to refuse outright, which is what callers got before this
@@ -2393,95 +2396,43 @@ class PluginStoreManager:
     def _find_plugin_path(self, plugin_id: str) -> Optional[Path]:
         """
         Find the plugin path by checking the configured directory and standard plugins directory.
-        
+
+        Searches the configured directory, then a sibling ``plugins/`` (the
+        case where plugins sit in plugins/ but config says plugin-repos/) --
+        a store-only fallback; discovery scans the configured directory only.
+        Each directory is searched completely before the next, by the shared
+        rules in ``src/plugin_system/plugin_dirs.py``: a directory whose
+        manifest declares the id wins, then a directory named exactly for it.
+
+        The manifest match matters because a directory name can differ from
+        the id its manifest declares (a hand-made or legacy layout such as
+        `ledmatrix-stocks/` holding id `stocks`); a lookup by directory name
+        alone reported such a plugin as not installed, so update_plugin()
+        silently did nothing.
+
+        No ``ledmatrix-`` prefix and no case folding here, unlike the loader:
+        a store operation may delete what this returns, so it only accepts a
+        directory that names the id exactly or declares it. Note that this
+        leaves registry ids like `stocks` unresolved when the installed
+        plugin is `ledmatrix-stocks/` declaring `ledmatrix-stocks` (the
+        monorepo's leaderboard, music, stocks and weather); passing
+        ``prefix=True`` would resolve them, but update_plugin()'s reinstall
+        path has not been checked against that yet.
+
         Args:
             plugin_id: Plugin identifier
-            
+
         Returns:
             Path to plugin directory if found, None otherwise
         """
-        # First check the configured plugins directory
-        plugin_path = self.plugins_dir / plugin_id
-        if plugin_path.exists():
-            return plugin_path
-        
-        # Also check the standard 'plugins/' directory if it's different
-        # This handles the case where plugins are in plugins/ but config says plugin-repos/
-        try:
-            if self.plugins_dir.is_absolute():
-                project_root = self.plugins_dir.parent
-            else:
-                project_root = self.plugins_dir.resolve().parent
-            
-            standard_plugins_dir = project_root / 'plugins'
-            if standard_plugins_dir.exists() and standard_plugins_dir != self.plugins_dir:
-                plugin_path = standard_plugins_dir / plugin_id
-                if plugin_path.exists():
-                    return plugin_path
-        except (OSError, ValueError):
-            pass
-
-        # Last resort: the directory name may differ from the id being looked
-        # up. install_plugin() deliberately renames a plugin's directory to the
-        # MANIFEST id when it differs from the REGISTRY id (see the rename near
-        # "doesn't match registry ID" above), so `stocks` in the registry lands
-        # in `ledmatrix-stocks/`. Every lookup above is by directory name, so
-        # update_plugin("stocks") found nothing and reported the plugin as not
-        # installed -- silently, and for good: the user sees no error and stays
-        # on a stale version. Four installed plugins hit this in practice
-        # (leaderboard, music, stocks, weather).
-        #
-        # Deliberately last so the two lookups above keep their exact meaning;
-        # this only runs when a direct hit already failed. See
-        # test_discovery_path_contract.py, which pins that ordering.
-        for search_dir in self._candidate_plugin_dirs():
-            match = self._find_by_manifest_id(search_dir, plugin_id)
-            if match is not None:
-                self.logger.debug(
-                    "Resolved plugin '%s' to %s via its manifest id "
-                    "(directory name differs from the id)", plugin_id, match)
-                return match
-
-        return None
+        return resolve_plugin_dir(
+            plugin_id, self._candidate_plugin_dirs(), prefix=False,
+            case_insensitive=False)
 
     def _candidate_plugin_dirs(self) -> List[Path]:
         """Directories that may hold installed plugins, configured one first."""
-        dirs = [self.plugins_dir]
-        try:
-            base = self.plugins_dir if self.plugins_dir.is_absolute()                 else self.plugins_dir.resolve()
-            sibling = base.parent / 'plugins'
-            if sibling != self.plugins_dir:
-                dirs.append(sibling)
-        except (OSError, ValueError):
-            pass
-        return [d for d in dirs if d.exists()]
+        return [d for d in store_search_dirs(self.plugins_dir) if d.exists()]
 
-    @staticmethod
-    def _find_by_manifest_id(search_dir: Path, plugin_id: str) -> Optional[Path]:
-        """A subdirectory of `search_dir` whose manifest declares `plugin_id`.
-
-        Skips half-finished installs: store_manager renames a directory aside
-        with '.standalone-backup-' during install and rollback, and treating
-        one as installed would resurrect a ghost plugin.
-        """
-        try:
-            entries = sorted(search_dir.iterdir())
-        except (OSError, ValueError):
-            return None
-        for entry in entries:
-            if not entry.is_dir() or '.standalone-backup-' in entry.name:
-                continue
-            manifest = entry / 'manifest.json'
-            if not manifest.is_file():
-                continue
-            try:
-                with open(manifest, 'r', encoding='utf-8') as handle:
-                    if json.load(handle).get('id') == plugin_id:
-                        return entry
-            except (OSError, ValueError):
-                continue
-        return None
-    
     def uninstall_plugin(self, plugin_id: str) -> bool:
         """
         Uninstall a plugin by removing its directory.
@@ -2600,9 +2551,9 @@ class PluginStoreManager:
         field during the monorepo migration on a Pi with broken DNS — every
         old-remote plugin was deleted and none could be re-downloaded).
 
-        The aside name embeds '.standalone-backup-' so plugin discovery
-        (plugin_manager._scan_directory_for_plugins) ignores it even though
-        it still contains a manifest.json.
+        The aside name embeds BACKUP_MARKER ('.standalone-backup-') so every
+        plugin directory lookup (src/plugin_system/plugin_dirs.py) ignores it
+        even though it still contains a manifest.json.
 
         Held for the whole operation under a per-plugin_id lock: two
         overlapping requests for the same plugin (double-click, two
@@ -2612,7 +2563,7 @@ class PluginStoreManager:
         """
         with self._get_reinstall_lock(plugin_id):
             backup_path = plugin_path.with_name(
-                f"{plugin_path.name}.standalone-backup-migrating")
+                f"{plugin_path.name}{BACKUP_MARKER}migrating")
             # A stale aside from a previous crash would block the rename
             if backup_path.exists():
                 if not self._safe_remove_directory(backup_path):
@@ -3084,16 +3035,16 @@ class PluginStoreManager:
     def list_installed_plugins(self) -> List[str]:
         """
         Get list of installed plugin IDs.
-        
+
+        One entry per plugin directory in the configured directory that has a
+        manifest.json, named by the manifest's id (the directory name when
+        the manifest carries none, e.g. because it does not parse). Backup
+        and hidden directories are not plugins.
+
         Returns:
-            List of plugin IDs
+            List of plugin IDs, sorted
         """
         if not self.plugins_dir.exists():
             return []
-        
-        installed = []
-        for item in self.plugins_dir.iterdir():
-            if item.is_dir() and (item / "manifest.json").exists():
-                installed.append(item.name)
-        
-        return installed
+        index = PluginDirectoryIndex.scan(self.plugins_dir)
+        return sorted(index.installed_ids(require_parseable_manifest=False))

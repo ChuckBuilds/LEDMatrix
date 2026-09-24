@@ -53,12 +53,8 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple, Union
 
 from PIL import ImageFont
+from src.common.bdf_font import load_bdf_face, read_bdf_native_size
 from src.common.font_layout import load_truetype
-
-try:
-    import freetype
-except ImportError:  # pragma: no cover - freetype ships with the core
-    freetype = None
 
 logger = logging.getLogger(__name__)
 
@@ -164,56 +160,25 @@ def native_bdf_size(font_name: str) -> Optional[int]:
 
 
 def _read_bdf_native_size(path: str) -> Optional[int]:
-    """A BDF file's own pixel size, delegated to FontManager.
+    """A BDF file's own pixel size (the web UI's fonts API imports this name).
 
-    Deliberately not reimplemented: FontManager's reader prefers PIXEL_SIZE
-    over the SIZE line's point-size (they differ on the several bundled
-    fonts defined at 75dpi) and stops at the first STARTCHAR. Core always
-    ships it; the guard is for the plugin test harnesses that stub the
-    module out.
+    See :func:`src.common.bdf_font.read_bdf_native_size`: it prefers
+    PIXEL_SIZE over the SIZE line's point-size, which differ on the several
+    bundled fonts defined at 75dpi.
     """
-    try:
-        from src.font_manager import FontManager
-        return FontManager._read_bdf_native_size(path)
-    except Exception:  # pragma: no cover - defensive
-        return None
+    return read_bdf_native_size(path)
 
 
 def _load_bdf(path: str, size: int) -> Tuple[Any, int]:
     """A ``freetype.Face`` for a BDF file at the closest size it can do.
 
-    BDF fonts are fixed-size bitmap strikes, not scalable outlines:
-    FreeType accepts only the exact pixel size baked into the file and
-    raises for anything else. 32 of the 35 shipped fonts are BDF, so a
-    size the user picked in the web UI usually is not a valid strike.
-
-    Retrying at the file's native size is the behaviour SportsCore already
-    has (``_load_custom_font_from_element_config``). Without it this
-    function fell through to the generic except below and returned
-    *PressStart2P* — so choosing 5x7.bdf at size 10 silently rendered a
-    completely different typeface rather than 5x7 at 7px.
+    BDF fonts are fixed-size bitmap strikes: FreeType accepts only the pixel
+    size baked into the file, and 32 of the 35 shipped fonts are BDF, so a
+    size the user picked in the web UI usually is not a valid strike. The
+    shared loader retries at the native size; without that, 5x7.bdf at size
+    10 used to fall through to *PressStart2P*, a different typeface.
     """
-    if freetype is None:
-        raise RuntimeError("freetype not available for BDF fonts")
-
-    def _face_at(px: int) -> Any:
-        face = freetype.Face(path)
-        # Character size in 1/64th points at 72dpi == pixel size.
-        face.set_char_size(px * 64, px * 64, 72, 72)
-        return face
-
-    try:
-        return _face_at(size), size
-    except Exception:
-        native = _read_bdf_native_size(path)
-        if not native or native == size:
-            raise
-        # A fresh Face: the first one already took a failed set_char_size.
-        face = _face_at(native)
-        logger.debug("BDF font %s loaded at its native size %s "
-                     "(requested %s is not a strike in this file)",
-                     path, native, size)
-        return face, native
+    return load_bdf_face(path, size)
 
 
 def load_font(font_name: str, size: int) -> Any:

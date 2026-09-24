@@ -186,13 +186,6 @@ def get_logs():
             'status': 'error',
             'message': 'Timeout while fetching logs'
         }), 500
-    except Exception as e:
-        logger.error("%s failed", request.path, exc_info=True)
-        return jsonify({
-            'status': 'error',
-            'message': 'An error occurred; see logs for details',
-            'details': describe_exception(e)
-        }), 500
 # Multi-Display Sync Endpoints
 @api_v3.route('/sync/status', methods=['GET'])
 def get_sync_status():
@@ -231,57 +224,49 @@ def get_sync_status():
 @api_v3.route('/cache/list', methods=['GET'])
 def list_cache_files():
     """List all cache files with metadata"""
-    try:
-        if not api_v3.cache_manager:
-            # Initialize cache manager if not already initialized
-            from src.cache_manager import CacheManager
-            api_v3.cache_manager = CacheManager()
+    if not api_v3.cache_manager:
+        # Initialize cache manager if not already initialized
+        from src.cache_manager import CacheManager
+        api_v3.cache_manager = CacheManager()
 
-        cache_files = api_v3.cache_manager.list_cache_files()
-        cache_dir = api_v3.cache_manager.get_cache_dir()
+    cache_files = api_v3.cache_manager.list_cache_files()
+    cache_dir = api_v3.cache_manager.get_cache_dir()
 
-        return jsonify({
-            'status': 'success',
-            'data': {
-                'cache_files': cache_files,
-                'cache_dir': cache_dir,
-                'total_files': len(cache_files)
-            }
-        })
-    except Exception as e:
-        logger.error('Error in list_cache_files', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
+    return jsonify({
+        'status': 'success',
+        'data': {
+            'cache_files': cache_files,
+            'cache_dir': cache_dir,
+            'total_files': len(cache_files)
+        }
+    })
 @api_v3.route('/cache/delete', methods=['POST'])
 def delete_cache_file():
     """Delete a specific cache file by key"""
-    try:
-        if not api_v3.cache_manager:
-            # Initialize cache manager if not already initialized
-            from src.cache_manager import CacheManager
-            api_v3.cache_manager = CacheManager()
+    if not api_v3.cache_manager:
+        # Initialize cache manager if not already initialized
+        from src.cache_manager import CacheManager
+        api_v3.cache_manager = CacheManager()
 
-        data = request.get_json(silent=True)
-        if not data or 'key' not in data:
-            return jsonify({'status': 'error', 'message': 'cache key is required'}), 400
+    data = request.get_json(silent=True)
+    if not data or 'key' not in data:
+        return jsonify({'status': 'error', 'message': 'cache key is required'}), 400
 
-        cache_key = data['key']
+    cache_key = data['key']
 
-        # The key names the file about to be removed. DiskCache refuses an
-        # unusable key on its own, but silently: say so here instead of
-        # reporting a deletion that never happened.
-        if safe_path_component(cache_key) is None:
-            return jsonify({'status': 'error', 'message': 'Invalid cache key'}), 400
+    # The key names the file about to be removed. DiskCache refuses an
+    # unusable key on its own, but silently: say so here instead of
+    # reporting a deletion that never happened.
+    if safe_path_component(cache_key) is None:
+        return jsonify({'status': 'error', 'message': 'Invalid cache key'}), 400
 
-        # Delete the cache file
-        api_v3.cache_manager.clear_cache(cache_key)
+    # Delete the cache file
+    api_v3.cache_manager.clear_cache(cache_key)
 
-        return jsonify({
-            'status': 'success',
-            'message': f'Cache file for key "{cache_key}" deleted successfully'
-        })
-    except Exception as e:
-        logger.error('Error in delete_cache_file', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
+    return jsonify({
+        'status': 'success',
+        'message': f'Cache file for key "{cache_key}" deleted successfully'
+    })
 def _errors_cache():
     """The shared cache the display service publishes its errors to."""
     if not api_v3.cache_manager:

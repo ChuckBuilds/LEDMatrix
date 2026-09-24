@@ -59,6 +59,16 @@ if [ ! -f "$SAFE_PIP_INSTALL_PATH" ]; then
     exit 1
 fi
 
+# The rules are shared with first_time_install.sh (Step 10) so the two cannot
+# drift apart; add or remove a grant in lib_sudoers.sh, not here.
+SUDOERS_LIB="$PROJECT_DIR/lib_sudoers.sh"
+if [ ! -f "$SUDOERS_LIB" ]; then
+    echo "Error: Sudoers rules library not found: $SUDOERS_LIB" >&2
+    exit 1
+fi
+# shellcheck source=scripts/install/lib_sudoers.sh
+. "$SUDOERS_LIB"
+
 echo "Command paths:"
 echo "  Python: $PYTHON_PATH"
 echo "  Systemctl: $SYSTEMCTL_PATH"
@@ -72,56 +82,8 @@ echo "  Safe pip install: $SAFE_PIP_INSTALL_PATH"
 # Create a temporary sudoers file
 TEMP_SUDOERS="/tmp/ledmatrix_web_sudoers_$$"
 
-{
-    echo "# LED Matrix Web Interface passwordless sudo configuration"
-    echo "# This allows the web interface user to run specific commands without a password"
-    echo ""
-    echo "# Allow $WEB_USER to run specific commands without a password for the LED Matrix web interface"
-
-    # Optional: reboot/poweroff (non-critical — skip if not found)
-    if [ -n "$REBOOT_PATH" ]; then
-        echo "$WEB_USER ALL=(ALL) NOPASSWD: $REBOOT_PATH"
-    fi
-    if [ -n "$POWEROFF_PATH" ]; then
-        echo "$WEB_USER ALL=(ALL) NOPASSWD: $POWEROFF_PATH"
-    fi
-
-    # Required: systemctl
-    echo "$WEB_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH start ledmatrix.service"
-    echo "$WEB_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH stop ledmatrix.service"
-    echo "$WEB_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH restart ledmatrix.service"
-    echo "$WEB_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH enable ledmatrix.service"
-    echo "$WEB_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH disable ledmatrix.service"
-    echo "$WEB_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH status ledmatrix.service"
-    echo "$WEB_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH is-active ledmatrix"
-    echo "$WEB_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH is-active ledmatrix.service"
-    echo "$WEB_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH start ledmatrix-web.service"
-    echo "$WEB_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH stop ledmatrix-web.service"
-    echo "$WEB_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH restart ledmatrix-web.service"
-
-    # Optional: journalctl (non-critical — skip if not found)
-    #
-    # NOEXEC, matching first_time_install.sh. These rules end in a wildcard and
-    # journalctl starts a pager, so without it the caller can reach a shell:
-    # less runs "!command" as the user the pager belongs to, which here is
-    # root. NOEXEC stops the granted command executing anything of its own.
-    if [ -n "$JOURNALCTL_PATH" ]; then
-        echo "$WEB_USER ALL=(ALL) NOPASSWD:NOEXEC: $JOURNALCTL_PATH -u ledmatrix.service *"
-        echo "$WEB_USER ALL=(ALL) NOPASSWD:NOEXEC: $JOURNALCTL_PATH -u ledmatrix *"
-        echo "$WEB_USER ALL=(ALL) NOPASSWD:NOEXEC: $JOURNALCTL_PATH -t ledmatrix *"
-    fi
-
-    echo ""
-    echo "# Allow web user to remove plugin directories via vetted helper script"
-    echo "# The helper validates that the target path resolves inside plugin-repos/ or plugins/"
-    echo "$WEB_USER ALL=(ALL) NOPASSWD: $BASH_PATH $SAFE_RM_PATH *"
-    echo ""
-    echo "# Allow web user to install a plugin's requirements.txt as root via vetted"
-    echo "# helper script, so packages are visible to root-run ledmatrix.service"
-    echo "# (not just the web interface's own user). The helper validates the target"
-    echo "# is requirements.txt at the project root or under plugin-repos/ or plugins/."
-    echo "$WEB_USER ALL=(ALL) NOPASSWD: $BASH_PATH $SAFE_PIP_INSTALL_PATH *"
-} > "$TEMP_SUDOERS"
+web_sudoers_rules "$WEB_USER" "$PROJECT_ROOT" "$SYSTEMCTL_PATH" "$BASH_PATH" \
+    "$REBOOT_PATH" "$POWEROFF_PATH" "$JOURNALCTL_PATH" > "$TEMP_SUDOERS"
 
 # Never offer to install rules we have not parsed. A malformed drop-in in
 # /etc/sudoers.d makes sudo refuse every command for every user.

@@ -172,9 +172,10 @@ def _plugin_fingerprint(store_manager, plugin_dir):
     try:
         with open(plugin_dir / 'manifest.json', 'r', encoding='utf-8') as f:
             manifest = json.load(f)
-        if manifest.get('local_only'):
-            return None
-        version = manifest.get('version')
+        if isinstance(manifest, dict):  # valid JSON need not be an object
+            if manifest.get('local_only'):
+                return None
+            version = manifest.get('version')
     except (OSError, ValueError):
         pass
     sha = None
@@ -190,8 +191,12 @@ def update_plugins(store_manager, operation_history=None):
     """Update every installed plugin that has an update. Returns (updated, failed)."""
     updated, failed = [], []
     plugins_dir = Path(store_manager.plugins_dir)
+    # list_installed_plugins() reports manifest ids, and a plugin's directory
+    # may be named differently (ledmatrix-stocks/ holding id "stocks"), so
+    # the directory comes from the store's own lookup, not a join.
+    find_dir = getattr(store_manager, '_find_plugin_path', None)
     for plugin_id in sorted(store_manager.list_installed_plugins()):
-        plugin_dir = plugins_dir / plugin_id
+        plugin_dir = (find_dir(plugin_id) if find_dir else None) or plugins_dir / plugin_id
         before = _plugin_fingerprint(store_manager, plugin_dir)
         if before is None:
             continue  # local_only: managed by hand, never from the registry

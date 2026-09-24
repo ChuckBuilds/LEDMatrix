@@ -64,14 +64,27 @@ live here. Only ``_SCORE_PROBE_TEXT`` varies -- afl and basketball reach three d
 a side and override it, the same two that override ``_SCORE_PROBE`` on
 ``SportsGameRendererMixin``.
 
-DELIBERATELY NOT MERGED WITH sports_card
-----------------------------------------
-Fourteen of these have same-named twins in ``src/common/sports_card.py``, which
-the scoreboards' ``game_renderer.py`` already uses. They are NOT wired together
-here. Only five are provably equivalent by source comparison; the other nine
-differ in ways inspection cannot settle, and a wrong guess silently changes what
-every scoreboard draws. Merging them needs differential testing against both
-implementations, and is left for its own change.
+TWINS IN sports_card
+--------------------
+Many of these have same-named twins in ``src/common/sports_card.py``, which the
+scoreboards' ``game_renderer.py`` uses. ``test/test_sports_twins.py`` calls
+each pair with the same inputs (the plugins' fixture games in every payload
+shape, plus edge cases) and splits them in two:
+
+- Identical: ``_card_option``, ``_vs_text``, ``_format_game_time``,
+  ``_coerce_rgb``, ``_crisp_size``, ``_unshare_element_fonts`` (given the same
+  element map) and the constant tables. These are now thin wrappers over the
+  ``sports_card`` function; ``_format_game_date`` and ``_schema_font_size``
+  share its body/parser while keeping their own setting, zone and cache.
+  ``_resolve_font_size`` agrees too but keeps its body, because it dispatches
+  through the overridable ``_schema_font_size``/``_crisp_size``.
+- Different, and pinned as they are: ``_side_is_favorite`` /
+  ``_favorite_result`` / ``_recent_score_color`` (flat keys and the host's
+  favourites only), ``_weekday_for`` (the plugin's resolved zone, not
+  ``config["timezone"]``), ``_font_color`` / ``_ELEMENT_FOR_FONT`` (another
+  element vocabulary), ``_element_color`` (passes ``SKIN_MODE``). Each shows
+  up in one display mode only, so which side is right is a product decision;
+  the test that pins it names the difference.
 """
 
 from __future__ import annotations
@@ -87,6 +100,7 @@ import pytz
 from src.common.espn_dates import fetch_espn_scoreboard
 import requests
 from PIL import Image, ImageDraw, ImageFont
+from src.common import sports_card as _card
 from src.common.font_layout import load_truetype
 
 logger = logging.getLogger(__name__)
@@ -171,19 +185,17 @@ class SportsCoreSharedMixin:
     _ELEMENT_FOR_FONT: ClassVar[Dict[str, str]] = {
         "score": "score_text", "time": "period_text", "team": "team_text",
         "detail": "detail_text", "status": "status_text"}
+    # The tables below are sports_card's (and font_layout's) values. The dicts
+    # are copies, so a caller that mutates one module's table -- or a subclass
+    # that replaces it -- does not reach into the other.
     #: Default tint for a favourite team's finished game.
-    FAVORITE_RESULT_COLOR_DEFAULTS: ClassVar[Dict[str, Tuple[int, int, int]]] = {
-        "win": (0, 255, 0), "loss": (255, 0, 0), "tie": (255, 200, 0)}
-    _MONTH_ABBR: ClassVar[Tuple[str, ...]] = (
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
-    _WEEKDAY_ABBR: ClassVar[Tuple[str, ...]] = (
-        "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+    FAVORITE_RESULT_COLOR_DEFAULTS: ClassVar[Dict[str, Tuple[int, int, int]]] = dict(
+        _card.FAVORITE_RESULT_COLOR_DEFAULTS)
+    _MONTH_ABBR: ClassVar[Tuple[str, ...]] = _card.MONTH_ABBR
+    _WEEKDAY_ABBR: ClassVar[Tuple[str, ...]] = _card.WEEKDAY_ABBR
     #: Bitmap fonts snap to their native pixel grid.
-    _FONT_PIXEL_GRID: ClassVar[Dict[str, int]] = {
-        "PressStart2P-Regular.ttf": 8, "4x6-font.ttf": 7}
-    _FONT_NAME_ALIASES: ClassVar[Dict[str, str]] = {
-        "press_start": "PressStart2P-Regular.ttf", "four_by_six": "4x6-font.ttf"}
+    _FONT_PIXEL_GRID: ClassVar[Dict[str, int]] = dict(_card.FONT_PIXEL_GRID)
+    _FONT_NAME_ALIASES: ClassVar[Dict[str, str]] = dict(_card.FONT_NAME_ALIASES)
     #: Accepted values for the other-games quality filter.
     _QUALITY_CHOICES: ClassVar[frozenset] = frozenset({"any", "ranked"})
     #: How long to stay quiet between ranking-coverage warnings.
@@ -213,13 +225,11 @@ class SportsCoreSharedMixin:
         """Snap *desired* to the nearest size *font_file* renders crisply at.
 
         A face with no known grid is returned unchanged, so a user-supplied
-        font is never second-guessed.
+        font is never second-guessed. The class's own tables are passed, so a
+        host that declares extra faces keeps them.
         """
-        font_file = cls._FONT_NAME_ALIASES.get(font_file, font_file)
-        grid = cls._FONT_PIXEL_GRID.get(font_file)
-        if not grid or not desired or desired <= 0:
-            return desired
-        return max(grid, int(round(float(desired) / grid)) * grid)
+        return _card.crisp_size(font_file, desired,
+                                cls._FONT_NAME_ALIASES, cls._FONT_PIXEL_GRID)
 
     #: Absolute path of this plugin's directory, declared by the plugin
     #: itself. The mixin cannot work it out -- see _plugin_dir.
@@ -281,23 +291,19 @@ class SportsCoreSharedMixin:
         """The font_size this plugin's config_schema.json declares, or None."""
         if not element_key:
             return None
+        # Cached per class, not in sports_card's per-path cache: the display
+        # service rebuilds the class when it reloads a plugin, and that is
+        # what makes an edited schema take effect. Both caches parse through
+        # sports_card._read_schema_font_sizes.
         cache = getattr(self.__class__, '_SCHEMA_FONT_SIZES', None)
         if cache is None:
             cache = {}
             try:
-                import json
                 directory = self._plugin_dir()
                 if directory is None:
                     raise FileNotFoundError("no config_schema.json on the MRO")
-                with open(os.path.join(directory, 'config_schema.json')) as fh:
-                    schema = json.load(fh)
-                props = (schema.get('properties', {})
-                               .get('customization', {})
-                               .get('properties', {}))
-                for key, spec in props.items():
-                    size = spec.get('properties', {}).get('font_size', {}).get('default')
-                    if size is not None:
-                        cache[key] = int(size)
+                cache = _card._read_schema_font_sizes(
+                    os.path.join(directory, 'config_schema.json'))
             except Exception as exc:
                 # Say so. An unreadable schema is not cosmetic: every element's
                 # configured size then stops matching "the schema default", is
@@ -339,10 +345,7 @@ class SportsCoreSharedMixin:
 
     def _card_option(self, key: str, default: Any = None) -> Any:
         """Read one key from the scroll_card config block."""
-        block = (self.config or {}).get("scroll_card")
-        if isinstance(block, dict) and block.get(key) is not None:
-            return block.get(key)
-        return default
+        return _card.scroll_card_option(self.config, key, default)
 
     def _switch_upcoming_center(self) -> str:
         """Middle of the full-screen upcoming scorebug: 'vs', 'date_time' or 'none'."""
@@ -354,7 +357,7 @@ class SportsCoreSharedMixin:
 
     def _vs_text(self) -> str:
         """Separator drawn between the teams -- "VS", "@", "at", anything."""
-        return str(self._card_option("vs_text", "VS"))
+        return _card.vs_text(self.config)
 
     def _switch_date_format(self) -> str:
         """Date style for the full-screen scorebug.
@@ -374,28 +377,19 @@ class SportsCoreSharedMixin:
         return fmt
 
     def _format_game_date(self, date_text: str, game: Optional[Dict] = None) -> str:
-        """Format an upcoming date per scroll_card.switch_date_format."""
+        """Format an upcoming date per scroll_card.switch_date_format.
+
+        The formatting is sports_card's. What differs from the card's
+        ``format_game_date`` is passed in: the setting (``switch_date_format``,
+        see :meth:`_switch_date_format`) and the weekday, which comes from
+        :meth:`_weekday_for` and so from this plugin's resolved timezone.
+        """
         raw = str(date_text or "").strip()
         if not raw:
             return raw
-        fmt = self._switch_date_format()
-        if fmt == "numeric":
-            return raw
-        parts = raw.replace("-", "/").split("/")
-        if not (len(parts) >= 2 and parts[0].strip().isdigit() and parts[1].strip().isdigit()):
-            return raw
-        month, day = int(parts[0]), int(parts[1])
-        if not 1 <= month <= 12:
-            return raw
-        name = self._MONTH_ABBR[month - 1]
-        if fmt == "numeric_day_first":
-            return f"{day}/{month}"
-        if fmt == "day_first":
-            return f"{day} {name}"
-        if fmt == "weekday":
-            weekday = self._weekday_for(game)
-            return f"{weekday} {name} {day}" if weekday else f"{name} {day}"
-        return f"{name} {day}"
+        return _card._format_date_as(self._switch_date_format(), raw,
+                                     lambda: self._weekday_for(game),
+                                     self._MONTH_ABBR)
 
     def _weekday_for(self, game: Optional[Dict]) -> str:
         """Weekday abbreviation from the game's start time, or ''."""
@@ -413,22 +407,7 @@ class SportsCoreSharedMixin:
 
     def _format_game_time(self, time_text: str) -> str:
         """Return the time as-is (12h) or converted to 24h."""
-        raw = str(time_text or "").strip()
-        if not raw or str(self._card_option("time_format", "12h")) != "24h":
-            return raw
-        cleaned = raw.upper().replace(" ", "")
-        meridiem = "AM" if cleaned.endswith("AM") else "PM" if cleaned.endswith("PM") else ""
-        if not meridiem:
-            return raw
-        try:
-            hh, _, mm = cleaned[:-2].partition(":")
-            hour, minute = int(hh), int(mm or 0)
-        except ValueError:
-            return raw
-        if not (0 <= hour <= 12 and 0 <= minute <= 59):
-            return raw
-        hour = hour % 12 + (12 if meridiem == "PM" else 0)
-        return f"{hour:02d}:{minute:02d}"
+        return _card.format_game_time(self.config, time_text)
 
     def _scorebug_font(self, draw, text: str, width: int):
         """The face this scorebug draws its date and time in.
@@ -560,15 +539,7 @@ class SportsCoreSharedMixin:
     @staticmethod
     def _coerce_rgb(value, fallback):
         """Turn a configured [R, G, B] list into a clamped (r, g, b) tuple."""
-        # Checked before unpacking: a 3-character string ("123") would otherwise
-        # iterate into three digits and yield a colour rather than the fallback.
-        if not isinstance(value, (list, tuple)) or len(value) != 3:
-            return fallback
-        try:
-            r, g, b = (max(0, min(255, int(channel))) for channel in value)
-        except (TypeError, ValueError):
-            return fallback
-        return (r, g, b)
+        return _card.coerce_rgb(value, fallback)
 
     @staticmethod
     def _side_is_favorite(game: Dict, side: str, favorites: set) -> bool:
@@ -849,28 +820,12 @@ class SportsCoreSharedMixin:
         the ability to tell two elements apart does. Faces that cannot be
         rebuilt (a BDF loaded through freetype.Face, anything without a usable
         path) are left shared, and their draws stay white as before.
+
+        The body is sports_card's; this class's own element map is passed, so
+        the keys considered are the ones this class colours by.
         """
-        try:
-            from src.common.font_layout import load_truetype as _load
-        except ImportError:  # pragma: no cover
-            return fonts
-        seen = {}
-        for key in self._ELEMENT_FOR_FONT:
-            font = fonts.get(key)
-            if font is None:
-                continue
-            if id(font) not in seen:
-                seen[id(font)] = key
-                continue
-            path, size = getattr(font, "path", None), getattr(font, "size", None)
-            if not path or not size:
-                continue
-            try:
-                fonts[key] = _load(path, size)
-            except (OSError, ValueError, TypeError):
-                self.logger.debug(
-                    "Could not un-share the %s face; it keeps the default colour", key)
-        return fonts
+        return _card.unshare_element_fonts(self.logger, fonts,
+                                           self._ELEMENT_FOR_FONT)
 
     def _font_color(self, font, default: Tuple[int, int, int] = (255, 255, 255)):
         """Colour for whichever element owns this face.

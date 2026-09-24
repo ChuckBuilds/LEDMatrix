@@ -230,6 +230,52 @@ class TestHandlersCarryDetail:
             "handlers returning the generic message without %s: %r"
             % ("both a traceback log and the detail", offenders))
 
+    def test_no_api_v3_route_copies_the_blueprint_handler(self):
+        """The generic catch-all lives once, on the blueprint.
+
+        Fifty-three routes carried their own copy of it -- log with exc_info,
+        return {status, "An error occurred; see logs for details",
+        describe_exception(e)}, 500 -- until they were folded into
+        `_api_v3_unhandled_exception`. A new copy changes nothing a caller
+        sees, so nothing else would notice it; this does. A handler that says
+        something *different* (its own message, extra keys, cleanup) is fine.
+        """
+        import ast
+        import pathlib
+
+        generic = "An error occurred; see logs for details"
+        copies = []
+        for path in sorted(pathlib.Path("web_interface/blueprints/api_v3").glob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for fn in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]:
+                for h in ast.walk(fn):
+                    if not (isinstance(h, ast.ExceptHandler)
+                            and isinstance(h.type, ast.Name)
+                            and h.type.id == "Exception"):
+                        continue
+                    for r in [n for n in h.body if isinstance(n, ast.Return)]:
+                        v = r.value
+                        if not (isinstance(v, ast.Tuple) and len(v.elts) == 2
+                                and isinstance(v.elts[0], ast.Call)
+                                and getattr(v.elts[0].func, "id", None) == "jsonify"
+                                and v.elts[0].args
+                                and isinstance(v.elts[0].args[0], ast.Dict)):
+                            continue
+                        d = v.elts[0].args[0]
+                        keys = {k.value for k in d.keys if isinstance(k, ast.Constant)}
+                        message = [val.value for k, val in zip(d.keys, d.values)
+                                   if isinstance(k, ast.Constant) and k.value == "message"
+                                   and isinstance(val, ast.Constant)]
+                        if keys == {"status", "message", "details"} and message == [generic]:
+                            copies.append((path.name, fn.name))
+
+        # One is not a copy: execute_plugin_action's step-1 handler sits
+        # inside the route's `except subprocess.TimeoutExpired` arm, which
+        # would turn a plugin's own timeout into a 408 if this let it through.
+        assert copies == [("plugins.py", "execute_plugin_action")], (
+            "these handlers duplicate the api_v3 blueprint's errorhandler; "
+            "delete them and let the exception propagate: %r" % copies)
+
     def test_client_errors_keep_their_own_status(self):
         """A 405 must not be reported as a server-side UNKNOWN_ERROR.
 

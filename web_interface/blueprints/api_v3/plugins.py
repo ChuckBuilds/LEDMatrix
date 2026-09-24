@@ -14,6 +14,7 @@ from web_interface.blueprints.api_v3 import (
     _set_missing_booleans_to_false,
     _set_nested_value, _starlark_virtual_plugins, _toggle_starlark_app,
     api_v3, datetime, deep_merge, describe_exception, error_response,
+    exception_error_response,
     find_secret_fields, hashlib, json, jsonify, logger, logging,
     merge_secrets, os, redact_text, remove_empty_secrets, request,
     separate_secrets, shutil, stat, subprocess, success_response,
@@ -32,380 +33,348 @@ import web_interface.blueprints.api_v3 as _pkg
 @api_v3.route('/plugins/installed', methods=['GET'])
 def get_installed_plugins():
     """Get installed plugins"""
-    try:
-        if not api_v3.plugin_manager or not api_v3.plugin_store_manager:
-            return jsonify({'status': 'error', 'message': 'Plugin managers not initialized'}), 500
+    if not api_v3.plugin_manager or not api_v3.plugin_store_manager:
+        return jsonify({'status': 'error', 'message': 'Plugin managers not initialized'}), 500
 
-        import json
-        from pathlib import Path
+    import json
+    from pathlib import Path
 
-        # Re-discover plugins to ensure we have the latest list
-        # This handles cases where plugins are added/removed after app startup
-        api_v3.plugin_manager.discover_plugins()
+    # Re-discover plugins to ensure we have the latest list
+    # This handles cases where plugins are added/removed after app startup
+    api_v3.plugin_manager.discover_plugins()
 
-        # Get all installed plugin info from the plugin manager
-        all_plugin_info = api_v3.plugin_manager.get_all_plugin_info()
+    # Get all installed plugin info from the plugin manager
+    all_plugin_info = api_v3.plugin_manager.get_all_plugin_info()
 
-        # Load config once before the loop (not per-plugin)
-        full_config = api_v3.config_manager.load_config() if api_v3.config_manager else {}
+    # Load config once before the loop (not per-plugin)
+    full_config = api_v3.config_manager.load_config() if api_v3.config_manager else {}
 
-        def _build_plugin_entry(plugin_info):
-            plugin_id = plugin_info.get('id')
+    def _build_plugin_entry(plugin_info):
+        plugin_id = plugin_info.get('id')
+        try:
+            return _build_plugin_entry_inner(plugin_info, plugin_id)
+        except Exception:
+            logger.exception("Error building plugin entry for %s — skipping", plugin_id)
+            return None
+
+    def _build_plugin_entry_inner(plugin_info, plugin_id):
+        # Capture runtime state (state machine + error context) before the
+        # manifest merge below can shadow the 'state' key. get_all_plugin_info
+        # attaches this via PluginStateManager.get_state_info(); surfacing it
+        # lets the UI show *why* a plugin isn't running instead of just
+        # 'loaded: false'.
+        state_info = plugin_info.get('state')
+        plugin_state = None
+        plugin_error_info = None
+        if isinstance(state_info, dict):
+            plugin_state = state_info.get('state')
+            plugin_error_info = state_info.get('error_info')
+
+        # Re-read manifest from disk to ensure we have the latest metadata
+        manifest_path = Path(api_v3.plugin_manager.plugins_dir) / plugin_id / "manifest.json"
+        if manifest_path.exists():
             try:
-                return _build_plugin_entry_inner(plugin_info, plugin_id)
-            except Exception:
-                logger.exception("Error building plugin entry for %s — skipping", plugin_id)
-                return None
+                with open(manifest_path, 'r', encoding='utf-8') as f:
+                    fresh_manifest = json.load(f)
+                if isinstance(fresh_manifest, dict):
+                    plugin_info.update(fresh_manifest)
+                else:
+                    logger.debug("Manifest for %s is not a dict (%s) — skipping merge",
+                                 plugin_id, type(fresh_manifest).__name__)
+            except (FileNotFoundError, PermissionError, json.JSONDecodeError) as e:
+                logger.debug("Could not read fresh manifest for %s: %s", plugin_id, e)
 
-        def _build_plugin_entry_inner(plugin_info, plugin_id):
-            # Capture runtime state (state machine + error context) before the
-            # manifest merge below can shadow the 'state' key. get_all_plugin_info
-            # attaches this via PluginStateManager.get_state_info(); surfacing it
-            # lets the UI show *why* a plugin isn't running instead of just
-            # 'loaded: false'.
-            state_info = plugin_info.get('state')
-            plugin_state = None
-            plugin_error_info = None
-            if isinstance(state_info, dict):
-                plugin_state = state_info.get('state')
-                plugin_error_info = state_info.get('error_info')
+        # Enabled status: config is source of truth, fall back to instance
+        enabled = None
+        plugin_config = full_config.get(plugin_id, {})
+        if 'enabled' in plugin_config:
+            enabled = bool(plugin_config['enabled'])
 
-            # Re-read manifest from disk to ensure we have the latest metadata
-            manifest_path = Path(api_v3.plugin_manager.plugins_dir) / plugin_id / "manifest.json"
-            if manifest_path.exists():
-                try:
-                    with open(manifest_path, 'r', encoding='utf-8') as f:
-                        fresh_manifest = json.load(f)
-                    if isinstance(fresh_manifest, dict):
-                        plugin_info.update(fresh_manifest)
-                    else:
-                        logger.debug("Manifest for %s is not a dict (%s) — skipping merge",
-                                     plugin_id, type(fresh_manifest).__name__)
-                except (FileNotFoundError, PermissionError, json.JSONDecodeError) as e:
-                    logger.debug("Could not read fresh manifest for %s: %s", plugin_id, e)
+        # Single get_plugin() call shared for both enabled fallback and Vegas mode
+        plugin_instance = api_v3.plugin_manager.get_plugin(plugin_id)
+        if enabled is None:
+            enabled = plugin_instance.enabled if plugin_instance else True
 
-            # Enabled status: config is source of truth, fall back to instance
-            enabled = None
-            plugin_config = full_config.get(plugin_id, {})
-            if 'enabled' in plugin_config:
-                enabled = bool(plugin_config['enabled'])
+        # Verified + latest published version from registry (no network call)
+        store_info = api_v3.plugin_store_manager.get_registry_info(plugin_id)
+        verified = store_info.get('verified', False) if store_info else False
+        latest_version = store_info.get('latest_version', '') if store_info else ''
+        installed_version = plugin_info.get('version', '')
+        update_available = _is_plugin_update_available(installed_version, latest_version)
 
-            # Single get_plugin() call shared for both enabled fallback and Vegas mode
-            plugin_instance = api_v3.plugin_manager.get_plugin(plugin_id)
-            if enabled is None:
-                enabled = plugin_instance.enabled if plugin_instance else True
+        # Local git info (single subprocess on cache miss, zero on hit)
+        plugin_path = Path(api_v3.plugin_manager.plugins_dir) / plugin_id
+        local_git_info = api_v3.plugin_store_manager._get_local_git_info(plugin_path) if plugin_path.exists() else None
 
-            # Verified + latest published version from registry (no network call)
-            store_info = api_v3.plugin_store_manager.get_registry_info(plugin_id)
-            verified = store_info.get('verified', False) if store_info else False
-            latest_version = store_info.get('latest_version', '') if store_info else ''
-            installed_version = plugin_info.get('version', '')
-            update_available = _is_plugin_update_available(installed_version, latest_version)
+        if local_git_info:
+            sha = local_git_info.get('sha', '')
+            last_commit = local_git_info.get('short_sha') or (sha[:7] if sha else None)
+            branch = local_git_info.get('branch')
+            last_updated = local_git_info.get('date_iso') or local_git_info.get('date')
+        else:
+            last_updated = plugin_info.get('last_updated')
+            last_commit = plugin_info.get('last_commit') or plugin_info.get('last_commit_sha')
+            branch = plugin_info.get('branch')
+            if store_info:
+                last_updated = last_updated or store_info.get('last_updated') or store_info.get('last_updated_iso')
+                last_commit = last_commit or store_info.get('last_commit') or store_info.get('last_commit_sha')
+                branch = branch or store_info.get('branch') or store_info.get('default_branch')
 
-            # Local git info (single subprocess on cache miss, zero on hit)
-            plugin_path = Path(api_v3.plugin_manager.plugins_dir) / plugin_id
-            local_git_info = api_v3.plugin_store_manager._get_local_git_info(plugin_path) if plugin_path.exists() else None
+        last_commit_message = plugin_info.get('last_commit_message')
+        if store_info and not last_commit_message:
+            last_commit_message = store_info.get('last_commit_message')
 
-            if local_git_info:
-                sha = local_git_info.get('sha', '')
-                last_commit = local_git_info.get('short_sha') or (sha[:7] if sha else None)
-                branch = local_git_info.get('branch')
-                last_updated = local_git_info.get('date_iso') or local_git_info.get('date')
-            else:
-                last_updated = plugin_info.get('last_updated')
-                last_commit = plugin_info.get('last_commit') or plugin_info.get('last_commit_sha')
-                branch = plugin_info.get('branch')
-                if store_info:
-                    last_updated = last_updated or store_info.get('last_updated') or store_info.get('last_updated_iso')
-                    last_commit = last_commit or store_info.get('last_commit') or store_info.get('last_commit_sha')
-                    branch = branch or store_info.get('branch') or store_info.get('default_branch')
+        # Vegas mode from instance, overridden by explicit config value
+        vegas_mode = None
+        vegas_content_type = None
+        if plugin_instance:
+            try:
+                if hasattr(plugin_instance, 'get_vegas_display_mode'):
+                    mode = plugin_instance.get_vegas_display_mode()
+                    vegas_mode = mode.value if hasattr(mode, 'value') else str(mode)
+            except (AttributeError, TypeError, ValueError) as e:
+                logger.debug("[%s] Failed to get vegas_display_mode: %s", plugin_id, e)
+            try:
+                if hasattr(plugin_instance, 'get_vegas_content_type'):
+                    vegas_content_type = plugin_instance.get_vegas_content_type()
+            except (AttributeError, TypeError, ValueError) as e:
+                logger.debug("[%s] Failed to get vegas_content_type: %s", plugin_id, e)
 
-            last_commit_message = plugin_info.get('last_commit_message')
-            if store_info and not last_commit_message:
-                last_commit_message = store_info.get('last_commit_message')
+        if 'vegas_mode' in plugin_config:
+            vegas_mode = plugin_config['vegas_mode']
 
-            # Vegas mode from instance, overridden by explicit config value
-            vegas_mode = None
-            vegas_content_type = None
-            if plugin_instance:
-                try:
-                    if hasattr(plugin_instance, 'get_vegas_display_mode'):
-                        mode = plugin_instance.get_vegas_display_mode()
-                        vegas_mode = mode.value if hasattr(mode, 'value') else str(mode)
-                except (AttributeError, TypeError, ValueError) as e:
-                    logger.debug("[%s] Failed to get vegas_display_mode: %s", plugin_id, e)
-                try:
-                    if hasattr(plugin_instance, 'get_vegas_content_type'):
-                        vegas_content_type = plugin_instance.get_vegas_content_type()
-                except (AttributeError, TypeError, ValueError) as e:
-                    logger.debug("[%s] Failed to get vegas_content_type: %s", plugin_id, e)
+        return {
+            'id': plugin_id,
+            'name': plugin_info.get('name', plugin_id),
+            'version': plugin_info.get('version', ''),
+            'latest_version': latest_version,
+            'update_available': update_available,
+            'author': plugin_info.get('author', 'Unknown'),
+            'category': plugin_info.get('category', 'General'),
+            'description': plugin_info.get('description', 'No description available'),
+            'tags': plugin_info.get('tags', []),
+            'enabled': enabled,
+            'verified': verified,
+            'loaded': plugin_info.get('loaded', False),
+            'state': plugin_state,
+            'error_info': plugin_error_info,
+            'last_updated': last_updated,
+            'last_commit': last_commit,
+            'last_commit_message': last_commit_message,
+            'branch': branch,
+            'web_ui_actions': plugin_info.get('web_ui_actions', []),
+            'vegas_mode': vegas_mode,
+            'vegas_content_type': vegas_content_type,
+        }
 
-            if 'vegas_mode' in plugin_config:
-                vegas_mode = plugin_config['vegas_mode']
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        results = list(executor.map(_build_plugin_entry, all_plugin_info))
+    plugins = [r for r in results if r is not None]
+    plugins.extend(_starlark_virtual_plugins())
 
-            return {
-                'id': plugin_id,
-                'name': plugin_info.get('name', plugin_id),
-                'version': plugin_info.get('version', ''),
-                'latest_version': latest_version,
-                'update_available': update_available,
-                'author': plugin_info.get('author', 'Unknown'),
-                'category': plugin_info.get('category', 'General'),
-                'description': plugin_info.get('description', 'No description available'),
-                'tags': plugin_info.get('tags', []),
-                'enabled': enabled,
-                'verified': verified,
-                'loaded': plugin_info.get('loaded', False),
-                'state': plugin_state,
-                'error_info': plugin_error_info,
-                'last_updated': last_updated,
-                'last_commit': last_commit,
-                'last_commit_message': last_commit_message,
-                'branch': branch,
-                'web_ui_actions': plugin_info.get('web_ui_actions', []),
-                'vegas_mode': vegas_mode,
-                'vegas_content_type': vegas_content_type,
-            }
-
-        from concurrent.futures import ThreadPoolExecutor
-        with ThreadPoolExecutor(max_workers=8) as executor:
-            results = list(executor.map(_build_plugin_entry, all_plugin_info))
-        plugins = [r for r in results if r is not None]
-        plugins.extend(_starlark_virtual_plugins())
-
-        return jsonify({'status': 'success', 'data': {'plugins': plugins}})
-    except Exception as e:
-        logger.error('Error in get_installed_plugins', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
+    return jsonify({'status': 'success', 'data': {'plugins': plugins}})
 @api_v3.route('/plugins/health', methods=['GET'])
 def get_plugin_health():
     """Get health metrics for all plugins"""
-    try:
-        if not api_v3.plugin_manager:
-            return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
+    if not api_v3.plugin_manager:
+        return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
 
-        # Check if health tracker is available
-        if not hasattr(api_v3.plugin_manager, 'health_tracker') or not api_v3.plugin_manager.health_tracker:
-            return jsonify({
-                'status': 'success',
-                'data': {},
-                'message': 'Health tracking not available'
-            })
-
-        tracker = api_v3.plugin_manager.health_tracker
-        # Build per-plugin summaries by ID so persisted (cross-process) health
-        # is included, then fold in any in-memory-only entries.
-        health_summaries = {}
-        for pid in _installed_plugin_ids():
-            try:
-                # force_reload: this process only reads; bypass the in-memory
-                # snapshot so each poll reflects the display service's latest
-                # persisted state.
-                health_summaries[pid] = tracker.get_health_summary(pid, force_reload=True)
-            except Exception:
-                logger.debug('Could not read health summary for %s', pid, exc_info=True)
-        try:
-            for pid, summary in tracker.get_all_health_summaries().items():
-                health_summaries.setdefault(pid, summary)
-        except Exception:
-            logger.debug('get_all_health_summaries failed', exc_info=True)
-
+    # Check if health tracker is available
+    if not hasattr(api_v3.plugin_manager, 'health_tracker') or not api_v3.plugin_manager.health_tracker:
         return jsonify({
             'status': 'success',
-            'data': health_summaries
+            'data': {},
+            'message': 'Health tracking not available'
         })
-    except Exception as e:
-        logger.error('Error in get_plugin_health', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
+
+    tracker = api_v3.plugin_manager.health_tracker
+    # Build per-plugin summaries by ID so persisted (cross-process) health
+    # is included, then fold in any in-memory-only entries.
+    health_summaries = {}
+    for pid in _installed_plugin_ids():
+        try:
+            # force_reload: this process only reads; bypass the in-memory
+            # snapshot so each poll reflects the display service's latest
+            # persisted state.
+            health_summaries[pid] = tracker.get_health_summary(pid, force_reload=True)
+        except Exception:
+            logger.debug('Could not read health summary for %s', pid, exc_info=True)
+    try:
+        for pid, summary in tracker.get_all_health_summaries().items():
+            health_summaries.setdefault(pid, summary)
+    except Exception:
+        logger.debug('get_all_health_summaries failed', exc_info=True)
+
+    return jsonify({
+        'status': 'success',
+        'data': health_summaries
+    })
 @api_v3.route('/plugins/health/<plugin_id>', methods=['GET'])
 def get_plugin_health_single(plugin_id):
     """Get health metrics for a specific plugin"""
-    try:
-        if not api_v3.plugin_manager:
-            return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
+    if not api_v3.plugin_manager:
+        return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
 
-        # Check if health tracker is available
-        if not hasattr(api_v3.plugin_manager, 'health_tracker') or not api_v3.plugin_manager.health_tracker:
-            return jsonify({
-                'status': 'error',
-                'message': 'Health tracking not available'
-            }), 503
-
-        # Get health summary for specific plugin
-        health_summary = api_v3.plugin_manager.health_tracker.get_health_summary(plugin_id)
-
+    # Check if health tracker is available
+    if not hasattr(api_v3.plugin_manager, 'health_tracker') or not api_v3.plugin_manager.health_tracker:
         return jsonify({
-            'status': 'success',
-            'data': health_summary
-        })
-    except Exception as e:
-        logger.error('Error in get_plugin_health_single', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
+            'status': 'error',
+            'message': 'Health tracking not available'
+        }), 503
+
+    # Get health summary for specific plugin
+    health_summary = api_v3.plugin_manager.health_tracker.get_health_summary(plugin_id)
+
+    return jsonify({
+        'status': 'success',
+        'data': health_summary
+    })
 @api_v3.route('/plugins/health/<plugin_id>/reset', methods=['POST'])
 def reset_plugin_health(plugin_id):
     """Reset health state for a plugin (manual recovery)"""
-    try:
-        if not api_v3.plugin_manager:
-            return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
+    if not api_v3.plugin_manager:
+        return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
 
-        # Check if health tracker is available
-        if not hasattr(api_v3.plugin_manager, 'health_tracker') or not api_v3.plugin_manager.health_tracker:
-            return jsonify({
-                'status': 'error',
-                'message': 'Health tracking not available'
-            }), 503
-
-        # Reset health state
-        api_v3.plugin_manager.health_tracker.reset_health(plugin_id)
-
+    # Check if health tracker is available
+    if not hasattr(api_v3.plugin_manager, 'health_tracker') or not api_v3.plugin_manager.health_tracker:
         return jsonify({
-            'status': 'success',
-            'message': f'Health state reset for plugin {plugin_id}'
-        })
-    except Exception as e:
-        logger.error('Error in reset_plugin_health', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
+            'status': 'error',
+            'message': 'Health tracking not available'
+        }), 503
+
+    # Reset health state
+    api_v3.plugin_manager.health_tracker.reset_health(plugin_id)
+
+    return jsonify({
+        'status': 'success',
+        'message': f'Health state reset for plugin {plugin_id}'
+    })
 @api_v3.route('/plugins/metrics', methods=['GET'])
 def get_plugin_metrics():
     """Get resource metrics for all plugins"""
-    try:
-        if not api_v3.plugin_manager:
-            return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
+    if not api_v3.plugin_manager:
+        return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
 
-        # Check if resource monitor is available
-        if not hasattr(api_v3.plugin_manager, 'resource_monitor') or not api_v3.plugin_manager.resource_monitor:
-            return jsonify({
-                'status': 'success',
-                'data': {},
-                'message': 'Resource monitoring not available'
-            })
-
-        monitor = api_v3.plugin_manager.resource_monitor
-        # Build per-plugin summaries by ID so persisted (cross-process) metrics
-        # are included, then fold in any in-memory-only entries.
-        metrics_summaries = {}
-        for pid in _installed_plugin_ids():
-            try:
-                # force_reload: read-only path — bypass the in-memory snapshot so
-                # each poll reflects the display service's latest persisted metrics.
-                metrics_summaries[pid] = monitor.get_metrics_summary(pid, force_reload=True)
-            except Exception:
-                logger.debug('Could not read metrics summary for %s', pid, exc_info=True)
-        try:
-            for pid, summary in monitor.get_all_metrics_summaries().items():
-                metrics_summaries.setdefault(pid, summary)
-        except Exception:
-            logger.debug('get_all_metrics_summaries failed', exc_info=True)
-
+    # Check if resource monitor is available
+    if not hasattr(api_v3.plugin_manager, 'resource_monitor') or not api_v3.plugin_manager.resource_monitor:
         return jsonify({
             'status': 'success',
-            'data': metrics_summaries
+            'data': {},
+            'message': 'Resource monitoring not available'
         })
-    except Exception as e:
-        logger.error('Error in get_plugin_metrics', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
+
+    monitor = api_v3.plugin_manager.resource_monitor
+    # Build per-plugin summaries by ID so persisted (cross-process) metrics
+    # are included, then fold in any in-memory-only entries.
+    metrics_summaries = {}
+    for pid in _installed_plugin_ids():
+        try:
+            # force_reload: read-only path — bypass the in-memory snapshot so
+            # each poll reflects the display service's latest persisted metrics.
+            metrics_summaries[pid] = monitor.get_metrics_summary(pid, force_reload=True)
+        except Exception:
+            logger.debug('Could not read metrics summary for %s', pid, exc_info=True)
+    try:
+        for pid, summary in monitor.get_all_metrics_summaries().items():
+            metrics_summaries.setdefault(pid, summary)
+    except Exception:
+        logger.debug('get_all_metrics_summaries failed', exc_info=True)
+
+    return jsonify({
+        'status': 'success',
+        'data': metrics_summaries
+    })
 @api_v3.route('/plugins/metrics/<plugin_id>', methods=['GET'])
 def get_plugin_metrics_single(plugin_id):
     """Get resource metrics for a specific plugin"""
-    try:
-        if not api_v3.plugin_manager:
-            return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
+    if not api_v3.plugin_manager:
+        return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
 
-        # Check if resource monitor is available
-        if not hasattr(api_v3.plugin_manager, 'resource_monitor') or not api_v3.plugin_manager.resource_monitor:
-            return jsonify({
-                'status': 'error',
-                'message': 'Resource monitoring not available'
-            }), 503
-
-        # Get metrics summary for specific plugin
-        metrics_summary = api_v3.plugin_manager.resource_monitor.get_metrics_summary(plugin_id)
-
+    # Check if resource monitor is available
+    if not hasattr(api_v3.plugin_manager, 'resource_monitor') or not api_v3.plugin_manager.resource_monitor:
         return jsonify({
-            'status': 'success',
-            'data': metrics_summary
-        })
-    except Exception as e:
-        logger.error('Error in get_plugin_metrics_single', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
+            'status': 'error',
+            'message': 'Resource monitoring not available'
+        }), 503
+
+    # Get metrics summary for specific plugin
+    metrics_summary = api_v3.plugin_manager.resource_monitor.get_metrics_summary(plugin_id)
+
+    return jsonify({
+        'status': 'success',
+        'data': metrics_summary
+    })
 @api_v3.route('/plugins/metrics/<plugin_id>/reset', methods=['POST'])
 def reset_plugin_metrics(plugin_id):
     """Reset metrics for a plugin"""
-    try:
-        if not api_v3.plugin_manager:
-            return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
+    if not api_v3.plugin_manager:
+        return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
 
-        # Check if resource monitor is available
-        if not hasattr(api_v3.plugin_manager, 'resource_monitor') or not api_v3.plugin_manager.resource_monitor:
-            return jsonify({
-                'status': 'error',
-                'message': 'Resource monitoring not available'
-            }), 503
-
-        # Reset metrics
-        api_v3.plugin_manager.resource_monitor.reset_metrics(plugin_id)
-
+    # Check if resource monitor is available
+    if not hasattr(api_v3.plugin_manager, 'resource_monitor') or not api_v3.plugin_manager.resource_monitor:
         return jsonify({
-            'status': 'success',
-            'message': f'Metrics reset for plugin {plugin_id}'
-        })
-    except Exception as e:
-        logger.error('Error in reset_plugin_metrics', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
+            'status': 'error',
+            'message': 'Resource monitoring not available'
+        }), 503
+
+    # Reset metrics
+    api_v3.plugin_manager.resource_monitor.reset_metrics(plugin_id)
+
+    return jsonify({
+        'status': 'success',
+        'message': f'Metrics reset for plugin {plugin_id}'
+    })
 @api_v3.route('/plugins/limits/<plugin_id>', methods=['GET', 'POST'])
 def manage_plugin_limits(plugin_id):
     """Get or set resource limits for a plugin"""
-    try:
-        if not api_v3.plugin_manager:
-            return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
+    if not api_v3.plugin_manager:
+        return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
 
-        # Check if resource monitor is available
-        if not hasattr(api_v3.plugin_manager, 'resource_monitor') or not api_v3.plugin_manager.resource_monitor:
-            return jsonify({
-                'status': 'error',
-                'message': 'Resource monitoring not available'
-            }), 503
+    # Check if resource monitor is available
+    if not hasattr(api_v3.plugin_manager, 'resource_monitor') or not api_v3.plugin_manager.resource_monitor:
+        return jsonify({
+            'status': 'error',
+            'message': 'Resource monitoring not available'
+        }), 503
 
-        if request.method == 'GET':
-            # Get limits
-            limits = api_v3.plugin_manager.resource_monitor.get_limits(plugin_id)
-            if limits:
-                return jsonify({
-                    'status': 'success',
-                    'data': {
-                        'max_memory_mb': limits.max_memory_mb,
-                        'max_cpu_percent': limits.max_cpu_percent,
-                        'max_execution_time': limits.max_execution_time,
-                        'warning_threshold': limits.warning_threshold
-                    }
-                })
-            else:
-                return jsonify({
-                    'status': 'success',
-                    'data': None,
-                    'message': 'No limits configured for this plugin'
-                })
-        else:
-            # POST - Set limits
-            data = request.get_json(silent=True) or {}
-            from src.plugin_system.resource_monitor import ResourceLimits
-
-            limits = ResourceLimits(
-                max_memory_mb=data.get('max_memory_mb'),
-                max_cpu_percent=data.get('max_cpu_percent'),
-                max_execution_time=data.get('max_execution_time'),
-                warning_threshold=data.get('warning_threshold', 0.8)
-            )
-
-            api_v3.plugin_manager.resource_monitor.set_limits(plugin_id, limits)
-
+    if request.method == 'GET':
+        # Get limits
+        limits = api_v3.plugin_manager.resource_monitor.get_limits(plugin_id)
+        if limits:
             return jsonify({
                 'status': 'success',
-                'message': f'Resource limits updated for plugin {plugin_id}'
+                'data': {
+                    'max_memory_mb': limits.max_memory_mb,
+                    'max_cpu_percent': limits.max_cpu_percent,
+                    'max_execution_time': limits.max_execution_time,
+                    'warning_threshold': limits.warning_threshold
+                }
             })
-    except Exception as e:
-        logger.error('Error in manage_plugin_limits', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
+        else:
+            return jsonify({
+                'status': 'success',
+                'data': None,
+                'message': 'No limits configured for this plugin'
+            })
+    else:
+        # POST - Set limits
+        data = request.get_json(silent=True) or {}
+        from src.plugin_system.resource_monitor import ResourceLimits
+
+        limits = ResourceLimits(
+            max_memory_mb=data.get('max_memory_mb'),
+            max_cpu_percent=data.get('max_cpu_percent'),
+            max_execution_time=data.get('max_execution_time'),
+            warning_threshold=data.get('warning_threshold', 0.8)
+        )
+
+        api_v3.plugin_manager.resource_monitor.set_limits(plugin_id, limits)
+
+        return jsonify({
+            'status': 'success',
+            'message': f'Resource limits updated for plugin {plugin_id}'
+        })
 @api_v3.route('/plugins/toggle', methods=['POST'])
 def toggle_plugin():
     """Toggle plugin enabled/disabled"""
@@ -546,14 +515,7 @@ def get_operation_status(operation_id):
 
         return success_response(data=operation.to_dict())
     except Exception as e:
-        from src.web_interface.errors import WebInterfaceError
-        error = WebInterfaceError.from_exception(e, ErrorCode.SYSTEM_ERROR)
-        return error_response(
-            error.error_code,
-            error.message,
-            details=error.details,
-            status_code=500
-        )
+        return exception_error_response(e, ErrorCode.SYSTEM_ERROR, with_context=False)
 @api_v3.route('/plugins/operation/history', methods=['GET'])
 def get_operation_history() -> Response:
     """Get operation history from the audit log."""
@@ -578,9 +540,7 @@ def get_operation_history() -> Response:
             operation_type=operation_type
         )
     except (AttributeError, RuntimeError) as e:
-        from src.web_interface.errors import WebInterfaceError
-        error = WebInterfaceError.from_exception(e, ErrorCode.SYSTEM_ERROR)
-        return error_response(error.error_code, error.message, details=error.details, status_code=500)
+        return exception_error_response(e, ErrorCode.SYSTEM_ERROR, with_context=False)
 
     return success_response(data=[record.to_dict() for record in history])
 @api_v3.route('/plugins/operation/history', methods=['DELETE'])
@@ -596,9 +556,7 @@ def clear_operation_history() -> Response:
     try:
         api_v3.operation_history.clear_history()
     except (OSError, RuntimeError) as e:
-        from src.web_interface.errors import WebInterfaceError
-        error = WebInterfaceError.from_exception(e, ErrorCode.SYSTEM_ERROR)
-        return error_response(error.error_code, error.message, details=error.details, status_code=500)
+        return exception_error_response(e, ErrorCode.SYSTEM_ERROR, with_context=False)
 
     return success_response(message='Operation history cleared')
 @api_v3.route('/plugins/state', methods=['GET'])
@@ -633,15 +591,7 @@ def get_plugin_state():
                 for plugin_id, state in all_states.items()
             })
     except Exception as e:
-        from src.web_interface.errors import WebInterfaceError
-        error = WebInterfaceError.from_exception(e, ErrorCode.SYSTEM_ERROR)
-        return error_response(
-            error.error_code,
-            error.message,
-            details=error.details,
-            context=error.context,
-            status_code=500
-        )
+        return exception_error_response(e, ErrorCode.SYSTEM_ERROR)
 @api_v3.route('/plugins/state/reconcile', methods=['POST'])
 def reconcile_plugin_state():
     """Reconcile plugin state across all sources"""
@@ -705,15 +655,7 @@ def reconcile_plugin_state():
             message=result.message
         )
     except Exception as e:
-        from src.web_interface.errors import WebInterfaceError
-        error = WebInterfaceError.from_exception(e, ErrorCode.SYSTEM_ERROR)
-        return error_response(
-            error.error_code,
-            error.message,
-            details=error.details,
-            context=error.context,
-            status_code=500
-        )
+        return exception_error_response(e, ErrorCode.SYSTEM_ERROR)
 def _drop_stale_reconciliation_findings(unresolved):
     """Re-check a stored reconciliation verdict against current state.
 
@@ -915,15 +857,7 @@ def get_plugin_config():
 
         return success_response(data=plugin_config)
     except Exception as e:
-        from src.web_interface.errors import WebInterfaceError
-        error = WebInterfaceError.from_exception(e, ErrorCode.CONFIG_LOAD_FAILED)
-        return error_response(
-            error.error_code,
-            error.message,
-            details=error.details,
-            context=error.context,
-            status_code=500
-        )
+        return exception_error_response(e, ErrorCode.CONFIG_LOAD_FAILED)
 @api_v3.route('/plugins/update', methods=['POST'])
 def update_plugin():
     """Update plugin"""
@@ -1168,8 +1102,6 @@ def update_plugin():
     except Exception as e:
         logger.error("Unhandled exception in update endpoint", exc_info=True)
         
-        from src.web_interface.errors import WebInterfaceError
-        error = WebInterfaceError.from_exception(e, ErrorCode.PLUGIN_UPDATE_FAILED)
         if api_v3.operation_history:
             api_v3.operation_history.record_operation(
                 "update",
@@ -1177,13 +1109,7 @@ def update_plugin():
                 status="failed",
                 error=str(e)
             )
-        return error_response(
-            error.error_code,
-            error.message,
-            details=error.details,
-            context=error.context,
-            status_code=500
-        )
+        return exception_error_response(e, ErrorCode.PLUGIN_UPDATE_FAILED)
 @api_v3.route('/plugins/uninstall', methods=['POST'])
 def uninstall_plugin():
     """Uninstall plugin"""
@@ -1266,8 +1192,6 @@ def uninstall_plugin():
                 )
 
     except Exception as e:
-        from src.web_interface.errors import WebInterfaceError
-        error = WebInterfaceError.from_exception(e, ErrorCode.PLUGIN_UNINSTALL_FAILED)
         if api_v3.operation_history:
             api_v3.operation_history.record_operation(
                 "uninstall",
@@ -1275,120 +1199,58 @@ def uninstall_plugin():
                 status="failed",
                 error=str(e)
             )
-        return error_response(
-            error.error_code,
-            error.message,
-            details=error.details,
-            context=error.context,
-            status_code=500
-        )
+        return exception_error_response(e, ErrorCode.PLUGIN_UNINSTALL_FAILED)
 @api_v3.route('/plugins/install', methods=['POST'])
 def install_plugin():
     """Install plugin from store"""
+    if not api_v3.plugin_store_manager:
+        return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
+
+    data = request.get_json(silent=True)
+    if not data or 'plugin_id' not in data:
+        return jsonify({'status': 'error', 'message': 'plugin_id required'}), 400
+
+    plugin_id = data['plugin_id']
+    branch = data.get('branch')  # Optional branch parameter
+
+    # A registry entry that isn't a plugin (a custom registry can still
+    # list old "type": "skin" entries) gets a clear refusal, not a failed
+    # install.
     try:
-        if not api_v3.plugin_store_manager:
-            return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
+        registry_entry = api_v3.plugin_store_manager.get_registry_info(plugin_id)
+    except Exception:
+        registry_entry = None
+    if isinstance(registry_entry, dict) and not api_v3.plugin_store_manager.is_plugin_entry(registry_entry):
+        return jsonify({'status': 'error',
+                        'message': f"{plugin_id} is a {registry_entry.get('type')!r} entry, not a plugin"}), 400
 
-        data = request.get_json(silent=True)
-        if not data or 'plugin_id' not in data:
-            return jsonify({'status': 'error', 'message': 'plugin_id required'}), 400
+    # Install the plugin
+    # Log the plugins directory being used for debugging
+    plugins_dir = api_v3.plugin_store_manager.plugins_dir
+    branch_info = f" (branch: {branch})" if branch else ""
+    logger.info("Installing plugin to directory: %s", plugins_dir)
 
-        plugin_id = data['plugin_id']
-        branch = data.get('branch')  # Optional branch parameter
-
-        # A registry entry that isn't a plugin (a custom registry can still
-        # list old "type": "skin" entries) gets a clear refusal, not a failed
-        # install.
-        try:
-            registry_entry = api_v3.plugin_store_manager.get_registry_info(plugin_id)
-        except Exception:
-            registry_entry = None
-        if isinstance(registry_entry, dict) and not api_v3.plugin_store_manager.is_plugin_entry(registry_entry):
-            return jsonify({'status': 'error',
-                            'message': f"{plugin_id} is a {registry_entry.get('type')!r} entry, not a plugin"}), 400
-
-        # Install the plugin
-        # Log the plugins directory being used for debugging
-        plugins_dir = api_v3.plugin_store_manager.plugins_dir
-        branch_info = f" (branch: {branch})" if branch else ""
-        logger.info("Installing plugin to directory: %s", plugins_dir)
-
-        # Use operation queue if available
-        if api_v3.operation_queue:
-            def install_callback(operation):
-                """Callback to execute plugin installation."""
-                success = api_v3.plugin_store_manager.install_plugin(plugin_id, branch=branch)
-
-                if success:
-                    # Invalidate schema cache
-                    if api_v3.schema_manager:
-                        api_v3.schema_manager.invalidate_cache(plugin_id)
-
-                    # Discover and load the new plugin
-                    if api_v3.plugin_manager:
-                        api_v3.plugin_manager.discover_plugins()
-                        api_v3.plugin_manager.load_plugin(plugin_id)
-
-                    # Update state manager
-                    if api_v3.plugin_state_manager:
-                        api_v3.plugin_state_manager.set_plugin_installed(plugin_id)
-
-                    # Record in history
-                    if api_v3.operation_history:
-                        version = _get_plugin_version(plugin_id)
-                        api_v3.operation_history.record_operation(
-                            "install",
-                            plugin_id=plugin_id,
-                            status="success",
-                            details={"version": version, "branch": branch}
-                        )
-
-                    branch_msg = f" (branch: {branch})" if branch else ""
-                    return {'success': True, 'message': f'Plugin {plugin_id} installed successfully{branch_msg}'}
-                else:
-                    error_msg = f'Failed to install plugin {plugin_id}'
-                    if branch:
-                        error_msg += f' (branch: {branch})'
-                    plugin_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id)
-                    if not plugin_info:
-                        error_msg += ' (plugin not found in registry)'
-
-                    # Record failure in history
-                    if api_v3.operation_history:
-                        api_v3.operation_history.record_operation(
-                            "install",
-                            plugin_id=plugin_id,
-                            status="failed",
-                            error=error_msg,
-                            details={"branch": branch}
-                        )
-
-                    raise Exception(error_msg)
-
-            # Enqueue operation
-            operation_id = api_v3.operation_queue.enqueue_operation(
-                OperationType.INSTALL,
-                plugin_id,
-                operation_callback=install_callback
-            )
-
-            branch_msg = f" (branch: {branch})" if branch else ""
-            return success_response(
-                data={'operation_id': operation_id},
-                message=f'Plugin {plugin_id} installation queued{branch_msg}'
-            )
-        else:
-            # Fallback to direct installation
+    # Use operation queue if available
+    if api_v3.operation_queue:
+        def install_callback(operation):
+            """Callback to execute plugin installation."""
             success = api_v3.plugin_store_manager.install_plugin(plugin_id, branch=branch)
 
             if success:
+                # Invalidate schema cache
                 if api_v3.schema_manager:
                     api_v3.schema_manager.invalidate_cache(plugin_id)
+
+                # Discover and load the new plugin
                 if api_v3.plugin_manager:
                     api_v3.plugin_manager.discover_plugins()
                     api_v3.plugin_manager.load_plugin(plugin_id)
+
+                # Update state manager
                 if api_v3.plugin_state_manager:
                     api_v3.plugin_state_manager.set_plugin_installed(plugin_id)
+
+                # Record in history
                 if api_v3.operation_history:
                     version = _get_plugin_version(plugin_id)
                     api_v3.operation_history.record_operation(
@@ -1399,7 +1261,7 @@ def install_plugin():
                     )
 
                 branch_msg = f" (branch: {branch})" if branch else ""
-                return success_response(message=f'Plugin installed successfully{branch_msg}')
+                return {'success': True, 'message': f'Plugin {plugin_id} installed successfully{branch_msg}'}
             else:
                 error_msg = f'Failed to install plugin {plugin_id}'
                 if branch:
@@ -1408,6 +1270,7 @@ def install_plugin():
                 if not plugin_info:
                     error_msg += ' (plugin not found in registry)'
 
+                # Record failure in history
                 if api_v3.operation_history:
                     api_v3.operation_history.record_operation(
                         "install",
@@ -1417,317 +1280,336 @@ def install_plugin():
                         details={"branch": branch}
                     )
 
-                return error_response(
-                    ErrorCode.PLUGIN_INSTALL_FAILED,
-                    error_msg,
-                    status_code=500
+                raise Exception(error_msg)
+
+        # Enqueue operation
+        operation_id = api_v3.operation_queue.enqueue_operation(
+            OperationType.INSTALL,
+            plugin_id,
+            operation_callback=install_callback
+        )
+
+        branch_msg = f" (branch: {branch})" if branch else ""
+        return success_response(
+            data={'operation_id': operation_id},
+            message=f'Plugin {plugin_id} installation queued{branch_msg}'
+        )
+    else:
+        # Fallback to direct installation
+        success = api_v3.plugin_store_manager.install_plugin(plugin_id, branch=branch)
+
+        if success:
+            if api_v3.schema_manager:
+                api_v3.schema_manager.invalidate_cache(plugin_id)
+            if api_v3.plugin_manager:
+                api_v3.plugin_manager.discover_plugins()
+                api_v3.plugin_manager.load_plugin(plugin_id)
+            if api_v3.plugin_state_manager:
+                api_v3.plugin_state_manager.set_plugin_installed(plugin_id)
+            if api_v3.operation_history:
+                version = _get_plugin_version(plugin_id)
+                api_v3.operation_history.record_operation(
+                    "install",
+                    plugin_id=plugin_id,
+                    status="success",
+                    details={"version": version, "branch": branch}
                 )
 
-    except Exception as e:
-        logger.error('Error in install_plugin', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
+            branch_msg = f" (branch: {branch})" if branch else ""
+            return success_response(message=f'Plugin installed successfully{branch_msg}')
+        else:
+            error_msg = f'Failed to install plugin {plugin_id}'
+            if branch:
+                error_msg += f' (branch: {branch})'
+            plugin_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id)
+            if not plugin_info:
+                error_msg += ' (plugin not found in registry)'
+
+            if api_v3.operation_history:
+                api_v3.operation_history.record_operation(
+                    "install",
+                    plugin_id=plugin_id,
+                    status="failed",
+                    error=error_msg,
+                    details={"branch": branch}
+                )
+
+            return error_response(
+                ErrorCode.PLUGIN_INSTALL_FAILED,
+                error_msg,
+                status_code=500
+            )
+
 @api_v3.route('/plugins/install-from-url', methods=['POST'])
 def install_plugin_from_url():
     """Install plugin from custom GitHub URL"""
-    try:
-        if not api_v3.plugin_store_manager:
-            return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
+    if not api_v3.plugin_store_manager:
+        return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
 
-        data = request.get_json(silent=True)
-        if not data or 'repo_url' not in data:
-            return jsonify({'status': 'error', 'message': 'repo_url required'}), 400
+    data = request.get_json(silent=True)
+    if not data or 'repo_url' not in data:
+        return jsonify({'status': 'error', 'message': 'repo_url required'}), 400
 
-        # A non-string repo_url is a client mistake, not a server fault:
-        # .strip() would raise and the catch-all would report it as a 500.
-        if not isinstance(data['repo_url'], str) or not data['repo_url'].strip():
-            return jsonify({'status': 'error', 'message': 'repo_url must be a non-empty string'}), 400
+    # A non-string repo_url is a client mistake, not a server fault:
+    # .strip() would raise and the catch-all would report it as a 500.
+    if not isinstance(data['repo_url'], str) or not data['repo_url'].strip():
+        return jsonify({'status': 'error', 'message': 'repo_url must be a non-empty string'}), 400
 
-        repo_url = data['repo_url'].strip()
-        plugin_id = data.get('plugin_id')  # Optional, for monorepo installations
-        plugin_path = data.get('plugin_path')  # Optional, for monorepo subdirectory
-        branch = data.get('branch')  # Optional branch parameter
+    repo_url = data['repo_url'].strip()
+    plugin_id = data.get('plugin_id')  # Optional, for monorepo installations
+    plugin_path = data.get('plugin_path')  # Optional, for monorepo subdirectory
+    branch = data.get('branch')  # Optional branch parameter
 
-        # Install the plugin
-        result = api_v3.plugin_store_manager.install_from_url(
-            repo_url=repo_url,
-            plugin_id=plugin_id,
-            plugin_path=plugin_path,
-            branch=branch
-        )
+    # Install the plugin
+    result = api_v3.plugin_store_manager.install_from_url(
+        repo_url=repo_url,
+        plugin_id=plugin_id,
+        plugin_path=plugin_path,
+        branch=branch
+    )
 
-        if result.get('success'):
-            # Invalidate schema cache for the installed plugin
-            installed_plugin_id = result.get('plugin_id')
-            if api_v3.schema_manager and installed_plugin_id:
-                api_v3.schema_manager.invalidate_cache(installed_plugin_id)
+    if result.get('success'):
+        # Invalidate schema cache for the installed plugin
+        installed_plugin_id = result.get('plugin_id')
+        if api_v3.schema_manager and installed_plugin_id:
+            api_v3.schema_manager.invalidate_cache(installed_plugin_id)
 
-            # Discover and load the new plugin
-            if api_v3.plugin_manager and installed_plugin_id:
-                api_v3.plugin_manager.discover_plugins()
-                api_v3.plugin_manager.load_plugin(installed_plugin_id)
+        # Discover and load the new plugin
+        if api_v3.plugin_manager and installed_plugin_id:
+            api_v3.plugin_manager.discover_plugins()
+            api_v3.plugin_manager.load_plugin(installed_plugin_id)
 
-            branch_msg = f" (branch: {result.get('branch', branch)})" if (result.get('branch') or branch) else ""
-            response_data = {
-                'status': 'success',
-                'message': f"Plugin {installed_plugin_id} installed successfully{branch_msg}",
-                'plugin_id': installed_plugin_id,
-                'name': result.get('name')
-            }
-            if result.get('branch'):
-                response_data['branch'] = result.get('branch')
-            return jsonify(response_data)
-        else:
-            return jsonify({
-                'status': 'error',
-                'message': result.get('error', 'Failed to install plugin from URL')
-            }), 500
+        branch_msg = f" (branch: {result.get('branch', branch)})" if (result.get('branch') or branch) else ""
+        response_data = {
+            'status': 'success',
+            'message': f"Plugin {installed_plugin_id} installed successfully{branch_msg}",
+            'plugin_id': installed_plugin_id,
+            'name': result.get('name')
+        }
+        if result.get('branch'):
+            response_data['branch'] = result.get('branch')
+        return jsonify(response_data)
+    else:
+        return jsonify({
+            'status': 'error',
+            'message': result.get('error', 'Failed to install plugin from URL')
+        }), 500
 
-    except Exception as e:
-        logger.error('Error in install_plugin_from_url', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 @api_v3.route('/plugins/registry-from-url', methods=['POST'])
 def get_registry_from_url():
     """Get plugin list from a registry-style monorepo URL"""
-    try:
-        if not api_v3.plugin_store_manager:
-            return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
+    if not api_v3.plugin_store_manager:
+        return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
 
-        data = request.get_json(silent=True)
-        if not data or 'repo_url' not in data:
-            return jsonify({'status': 'error', 'message': 'repo_url required'}), 400
+    data = request.get_json(silent=True)
+    if not data or 'repo_url' not in data:
+        return jsonify({'status': 'error', 'message': 'repo_url required'}), 400
 
-        # A non-string repo_url is a client mistake, not a server fault:
-        # .strip() would raise and the catch-all would report it as a 500.
-        if not isinstance(data['repo_url'], str) or not data['repo_url'].strip():
-            return jsonify({'status': 'error', 'message': 'repo_url must be a non-empty string'}), 400
+    # A non-string repo_url is a client mistake, not a server fault:
+    # .strip() would raise and the catch-all would report it as a 500.
+    if not isinstance(data['repo_url'], str) or not data['repo_url'].strip():
+        return jsonify({'status': 'error', 'message': 'repo_url must be a non-empty string'}), 400
 
-        repo_url = data['repo_url'].strip()
+    repo_url = data['repo_url'].strip()
 
-        # Get registry from the URL
-        registry = api_v3.plugin_store_manager.fetch_registry_from_url(repo_url)
+    # Get registry from the URL
+    registry = api_v3.plugin_store_manager.fetch_registry_from_url(repo_url)
 
-        if registry:
-            return jsonify({
-                'status': 'success',
-                'plugins': [p for p in registry.get('plugins', [])
-                            if api_v3.plugin_store_manager.is_plugin_entry(p)],
-                'registry_url': repo_url
-            })
-        else:
-            return jsonify({
-                'status': 'error',
-                'message': 'Failed to fetch registry from URL or URL does not contain a valid registry'
-            }), 400
+    if registry:
+        return jsonify({
+            'status': 'success',
+            'plugins': [p for p in registry.get('plugins', [])
+                        if api_v3.plugin_store_manager.is_plugin_entry(p)],
+            'registry_url': repo_url
+        })
+    else:
+        return jsonify({
+            'status': 'error',
+            'message': 'Failed to fetch registry from URL or URL does not contain a valid registry'
+        }), 400
 
-    except Exception as e:
-        logger.error('Error in get_registry_from_url', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 @api_v3.route('/plugins/saved-repositories', methods=['GET'])
 def get_saved_repositories():
     """Get all saved repositories"""
-    try:
-        if not api_v3.saved_repositories_manager:
-            return jsonify({'status': 'error', 'message': 'Saved repositories manager not initialized'}), 500
+    if not api_v3.saved_repositories_manager:
+        return jsonify({'status': 'error', 'message': 'Saved repositories manager not initialized'}), 500
 
-        repositories = api_v3.saved_repositories_manager.get_all()
-        return jsonify({'status': 'success', 'data': {'repositories': repositories}})
-    except Exception as e:
-        logger.error('Error in get_saved_repositories', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
+    repositories = api_v3.saved_repositories_manager.get_all()
+    return jsonify({'status': 'success', 'data': {'repositories': repositories}})
 @api_v3.route('/plugins/saved-repositories', methods=['POST'])
 def add_saved_repository():
     """Add a repository to saved list"""
-    try:
-        if not api_v3.saved_repositories_manager:
-            return jsonify({'status': 'error', 'message': 'Saved repositories manager not initialized'}), 500
+    if not api_v3.saved_repositories_manager:
+        return jsonify({'status': 'error', 'message': 'Saved repositories manager not initialized'}), 500
 
-        data = request.get_json(silent=True)
-        if not data or 'repo_url' not in data:
-            return jsonify({'status': 'error', 'message': 'repo_url required'}), 400
+    data = request.get_json(silent=True)
+    if not data or 'repo_url' not in data:
+        return jsonify({'status': 'error', 'message': 'repo_url required'}), 400
 
-        # A non-string repo_url is a client mistake, not a server fault:
-        # .strip() would raise and the catch-all would report it as a 500.
-        if not isinstance(data['repo_url'], str) or not data['repo_url'].strip():
-            return jsonify({'status': 'error', 'message': 'repo_url must be a non-empty string'}), 400
+    # A non-string repo_url is a client mistake, not a server fault:
+    # .strip() would raise and the catch-all would report it as a 500.
+    if not isinstance(data['repo_url'], str) or not data['repo_url'].strip():
+        return jsonify({'status': 'error', 'message': 'repo_url must be a non-empty string'}), 400
 
-        repo_url = data['repo_url'].strip()
-        name = data.get('name')
+    repo_url = data['repo_url'].strip()
+    name = data.get('name')
 
-        success = api_v3.saved_repositories_manager.add(repo_url, name)
+    success = api_v3.saved_repositories_manager.add(repo_url, name)
 
-        if success:
-            return jsonify({
-                'status': 'success',
-                'message': 'Repository saved successfully',
-                'data': {'repositories': api_v3.saved_repositories_manager.get_all()}
-            })
-        else:
-            return jsonify({
-                'status': 'error',
-                'message': 'Repository already exists or failed to save'
-            }), 400
-    except Exception as e:
-        logger.error('Error in add_saved_repository', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
+    if success:
+        return jsonify({
+            'status': 'success',
+            'message': 'Repository saved successfully',
+            'data': {'repositories': api_v3.saved_repositories_manager.get_all()}
+        })
+    else:
+        return jsonify({
+            'status': 'error',
+            'message': 'Repository already exists or failed to save'
+        }), 400
 @api_v3.route('/plugins/saved-repositories', methods=['DELETE'])
 def remove_saved_repository():
     """Remove a repository from saved list"""
-    try:
-        if not api_v3.saved_repositories_manager:
-            return jsonify({'status': 'error', 'message': 'Saved repositories manager not initialized'}), 500
+    if not api_v3.saved_repositories_manager:
+        return jsonify({'status': 'error', 'message': 'Saved repositories manager not initialized'}), 500
 
-        data = request.get_json(silent=True)
-        if not data or 'repo_url' not in data:
-            return jsonify({'status': 'error', 'message': 'repo_url required'}), 400
+    data = request.get_json(silent=True)
+    if not data or 'repo_url' not in data:
+        return jsonify({'status': 'error', 'message': 'repo_url required'}), 400
 
-        repo_url = data['repo_url']
+    repo_url = data['repo_url']
 
-        success = api_v3.saved_repositories_manager.remove(repo_url)
+    success = api_v3.saved_repositories_manager.remove(repo_url)
 
-        if success:
-            return jsonify({
-                'status': 'success',
-                'message': 'Repository removed successfully',
-                'data': {'repositories': api_v3.saved_repositories_manager.get_all()}
-            })
-        else:
-            return jsonify({
-                'status': 'error',
-                'message': 'Repository not found'
-            }), 404
-    except Exception as e:
-        logger.error('Error in remove_saved_repository', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
+    if success:
+        return jsonify({
+            'status': 'success',
+            'message': 'Repository removed successfully',
+            'data': {'repositories': api_v3.saved_repositories_manager.get_all()}
+        })
+    else:
+        return jsonify({
+            'status': 'error',
+            'message': 'Repository not found'
+        }), 404
 @api_v3.route('/plugins/store/list', methods=['GET'])
 def list_plugin_store():
     """Search plugin store"""
-    try:
-        if not api_v3.plugin_store_manager:
-            return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
+    if not api_v3.plugin_store_manager:
+        return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
 
-        query = request.args.get('query', '')
-        category = request.args.get('category', '')
-        tags = request.args.getlist('tags')
-        # Default to fetching commit metadata to ensure accurate commit timestamps
-        fetch_commit_param = request.args.get('fetch_commit_info', request.args.get('fetch_latest_versions', '')).lower()
-        fetch_commit = fetch_commit_param != 'false'
+    query = request.args.get('query', '')
+    category = request.args.get('category', '')
+    tags = request.args.getlist('tags')
+    # Default to fetching commit metadata to ensure accurate commit timestamps
+    fetch_commit_param = request.args.get('fetch_commit_info', request.args.get('fetch_latest_versions', '')).lower()
+    fetch_commit = fetch_commit_param != 'false'
 
-        # Search plugins from the registry (including saved repositories)
-        plugins = api_v3.plugin_store_manager.search_plugins(
-            query=query,
-            category=category,
-            tags=tags,
-            fetch_commit_info=fetch_commit,
-            include_saved_repos=True,
-            saved_repositories_manager=api_v3.saved_repositories_manager
-        )
+    # Search plugins from the registry (including saved repositories)
+    plugins = api_v3.plugin_store_manager.search_plugins(
+        query=query,
+        category=category,
+        tags=tags,
+        fetch_commit_info=fetch_commit,
+        include_saved_repos=True,
+        saved_repositories_manager=api_v3.saved_repositories_manager
+    )
 
-        # Format plugins for the web interface
-        formatted_plugins = []
-        for plugin in plugins:
-            if not api_v3.plugin_store_manager.is_plugin_entry(plugin):
-                continue
-            formatted_plugins.append({
-                'id': plugin.get('id'),
-                'name': plugin.get('name'),
-                'author': plugin.get('author'),
-                'category': plugin.get('category'),
-                'description': plugin.get('description'),
-                'tags': plugin.get('tags', []),
-                'stars': plugin.get('stars', 0),
-                'verified': plugin.get('verified', False),
-                'repo': plugin.get('repo', ''),
-                'last_updated': plugin.get('last_updated') or plugin.get('last_updated_iso', ''),
-                'last_updated_iso': plugin.get('last_updated_iso', ''),
-                'last_commit': plugin.get('last_commit') or plugin.get('last_commit_sha'),
-                'last_commit_message': plugin.get('last_commit_message'),
-                'last_commit_author': plugin.get('last_commit_author'),
-                'version': plugin.get('latest_version') or plugin.get('version', ''),
-                'branch': plugin.get('branch') or plugin.get('default_branch'),
-                'default_branch': plugin.get('default_branch'),
-                'plugin_path': plugin.get('plugin_path', '')
-            })
+    # Format plugins for the web interface
+    formatted_plugins = []
+    for plugin in plugins:
+        if not api_v3.plugin_store_manager.is_plugin_entry(plugin):
+            continue
+        formatted_plugins.append({
+            'id': plugin.get('id'),
+            'name': plugin.get('name'),
+            'author': plugin.get('author'),
+            'category': plugin.get('category'),
+            'description': plugin.get('description'),
+            'tags': plugin.get('tags', []),
+            'stars': plugin.get('stars', 0),
+            'verified': plugin.get('verified', False),
+            'repo': plugin.get('repo', ''),
+            'last_updated': plugin.get('last_updated') or plugin.get('last_updated_iso', ''),
+            'last_updated_iso': plugin.get('last_updated_iso', ''),
+            'last_commit': plugin.get('last_commit') or plugin.get('last_commit_sha'),
+            'last_commit_message': plugin.get('last_commit_message'),
+            'last_commit_author': plugin.get('last_commit_author'),
+            'version': plugin.get('latest_version') or plugin.get('version', ''),
+            'branch': plugin.get('branch') or plugin.get('default_branch'),
+            'default_branch': plugin.get('default_branch'),
+            'plugin_path': plugin.get('plugin_path', '')
+        })
 
-        return jsonify({'status': 'success', 'data': {'plugins': formatted_plugins}})
-    except Exception as e:
-        logger.error('Error in list_plugin_store', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
+    return jsonify({'status': 'success', 'data': {'plugins': formatted_plugins}})
 @api_v3.route('/plugins/store/github-status', methods=['GET'])
 def get_github_auth_status():
     """Check if GitHub authentication is configured and validate token"""
-    try:
-        if not api_v3.plugin_store_manager:
-            return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
+    if not api_v3.plugin_store_manager:
+        return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
         
-        token = api_v3.plugin_store_manager.github_token
+    token = api_v3.plugin_store_manager.github_token
         
-        # Check if GitHub token is configured
-        if not token or len(token) == 0:
-            return jsonify({
-                'status': 'success',
-                'data': {
-                    'token_status': 'none',
-                    'authenticated': False,
-                    'rate_limit': 60,
-                    'message': 'No GitHub token configured',
-                    'error': None
-                }
-            })
+    # Check if GitHub token is configured
+    if not token or len(token) == 0:
+        return jsonify({
+            'status': 'success',
+            'data': {
+                'token_status': 'none',
+                'authenticated': False,
+                'rate_limit': 60,
+                'message': 'No GitHub token configured',
+                'error': None
+            }
+        })
         
-        # Validate the token
-        is_valid, error_message = api_v3.plugin_store_manager._validate_github_token(token)
+    # Validate the token
+    is_valid, error_message = api_v3.plugin_store_manager._validate_github_token(token)
         
-        if is_valid:
-            return jsonify({
-                'status': 'success',
-                'data': {
-                    'token_status': 'valid',
-                    'authenticated': True,
-                    'rate_limit': 5000,
-                    'message': 'GitHub API authenticated',
-                    'error': None
-                }
-            })
-        else:
-            return jsonify({
-                'status': 'success',
-                'data': {
-                    'token_status': 'invalid',
-                    'authenticated': False,
-                    'rate_limit': 60,
-                    'message': f'GitHub token is invalid: {error_message}' if error_message else 'GitHub token is invalid',
-                    'error': error_message
-                }
-            })
-    except Exception as e:
-        logger.error('Error in get_github_auth_status', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
+    if is_valid:
+        return jsonify({
+            'status': 'success',
+            'data': {
+                'token_status': 'valid',
+                'authenticated': True,
+                'rate_limit': 5000,
+                'message': 'GitHub API authenticated',
+                'error': None
+            }
+        })
+    else:
+        return jsonify({
+            'status': 'success',
+            'data': {
+                'token_status': 'invalid',
+                'authenticated': False,
+                'rate_limit': 60,
+                'message': f'GitHub token is invalid: {error_message}' if error_message else 'GitHub token is invalid',
+                'error': error_message
+            }
+        })
 @api_v3.route('/plugins/store/refresh', methods=['POST'])
 def refresh_plugin_store():
     """Refresh plugin store repository"""
-    try:
-        if not api_v3.plugin_store_manager:
-            return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
+    if not api_v3.plugin_store_manager:
+        return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
 
-        data = request.get_json(silent=True) or {}
-        fetch_commit_info = data.get('fetch_commit_info', data.get('fetch_latest_versions', False))
+    data = request.get_json(silent=True) or {}
+    fetch_commit_info = data.get('fetch_commit_info', data.get('fetch_latest_versions', False))
 
-        # Force refresh the registry
-        registry = api_v3.plugin_store_manager.fetch_registry(force_refresh=True)
-        plugin_count = len(registry.get('plugins', []))
+    # Force refresh the registry
+    registry = api_v3.plugin_store_manager.fetch_registry(force_refresh=True)
+    plugin_count = len(registry.get('plugins', []))
 
-        message = 'Plugin store refreshed'
-        if fetch_commit_info:
-            message += ' (with refreshed commit metadata from GitHub)'
+    message = 'Plugin store refreshed'
+    if fetch_commit_info:
+        message += ' (with refreshed commit metadata from GitHub)'
 
-        return jsonify({
-            'status': 'success',
-            'message': message,
-            'plugin_count': plugin_count
-        })
-    except Exception as e:
-        logger.error('Error in refresh_plugin_store', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
+    return jsonify({
+        'status': 'success',
+        'message': message,
+        'plugin_count': plugin_count
+    })
 @api_v3.route('/plugins/config', methods=['POST'])
 def save_plugin_config():
     """Save plugin configuration, separating secrets from regular config"""
@@ -2308,8 +2190,6 @@ def save_plugin_config():
 
         return success_response(message=message)
     except Exception as e:
-        from src.web_interface.errors import WebInterfaceError
-        error = WebInterfaceError.from_exception(e, ErrorCode.CONFIG_SAVE_FAILED)
         if api_v3.operation_history:
             api_v3.operation_history.record_operation(
                 "configure",
@@ -2317,13 +2197,7 @@ def save_plugin_config():
                 status="failed",
                 error=str(e)
             )
-        return error_response(
-            error.error_code,
-            error.message,
-            details=error.details,
-            context=error.context,
-            status_code=500
-        )
+        return exception_error_response(e, ErrorCode.CONFIG_SAVE_FAILED)
 def _merge_onto_stored_plugin_config(plugin_id, submitted_config, current_config=None):
     """A JSON plugin-config body merged onto the plugin's stored section.
 
@@ -2740,126 +2614,118 @@ def _prepare_plugin_config_for_save(plugin_id, plugin_config, schema, schema_mgr
 @api_v3.route('/plugins/schema', methods=['GET'])
 def get_plugin_schema():
     """Get plugin configuration schema"""
-    try:
-        plugin_id = request.args.get('plugin_id')
-        if not plugin_id:
-            return jsonify({'status': 'error', 'message': 'plugin_id required'}), 400
+    plugin_id = request.args.get('plugin_id')
+    if not plugin_id:
+        return jsonify({'status': 'error', 'message': 'plugin_id required'}), 400
 
-        # Get schema manager instance
-        schema_mgr = api_v3.schema_manager
-        if not schema_mgr:
-            return jsonify({'status': 'error', 'message': 'Schema manager not initialized'}), 500
+    # Get schema manager instance
+    schema_mgr = api_v3.schema_manager
+    if not schema_mgr:
+        return jsonify({'status': 'error', 'message': 'Schema manager not initialized'}), 500
 
-        # Load schema using SchemaManager (uses caching)
-        schema = schema_mgr.load_schema(plugin_id, use_cache=True)
+    # Load schema using SchemaManager (uses caching)
+    schema = schema_mgr.load_schema(plugin_id, use_cache=True)
 
-        if schema:
-            return jsonify({'status': 'success', 'data': {'schema': schema}})
+    if schema:
+        return jsonify({'status': 'success', 'data': {'schema': schema}})
 
-        # Return a simple default schema if file not found
-        default_schema = {
-            'type': 'object',
-            'properties': {
-                'enabled': {
-                    'type': 'boolean',
-                    'title': 'Enable Plugin',
-                    'description': 'Enable or disable this plugin',
-                    'default': True
-                },
-                'display_duration': {
-                    'type': 'integer',
-                    'title': 'Display Duration',
-                    'description': 'How long to show content (seconds)',
-                    'minimum': 5,
-                    'maximum': 300,
-                    'default': 30
-                }
+    # Return a simple default schema if file not found
+    default_schema = {
+        'type': 'object',
+        'properties': {
+            'enabled': {
+                'type': 'boolean',
+                'title': 'Enable Plugin',
+                'description': 'Enable or disable this plugin',
+                'default': True
+            },
+            'display_duration': {
+                'type': 'integer',
+                'title': 'Display Duration',
+                'description': 'How long to show content (seconds)',
+                'minimum': 5,
+                'maximum': 300,
+                'default': 30
             }
         }
+    }
 
-        return jsonify({'status': 'success', 'data': {'schema': default_schema}})
-    except Exception as e:
-        logger.error('Error in get_plugin_schema', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
+    return jsonify({'status': 'success', 'data': {'schema': default_schema}})
 @api_v3.route('/plugins/config/reset', methods=['POST'])
 def reset_plugin_config():
     """Reset plugin configuration to schema defaults"""
-    try:
-        if not api_v3.config_manager:
-            return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 500
+    if not api_v3.config_manager:
+        return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 500
 
-        data = request.get_json(silent=True) or {}
-        plugin_id = data.get('plugin_id')
-        preserve_secrets = data.get('preserve_secrets', True)
+    data = request.get_json(silent=True) or {}
+    plugin_id = data.get('plugin_id')
+    preserve_secrets = data.get('preserve_secrets', True)
 
-        if not plugin_id:
-            return jsonify({'status': 'error', 'message': 'plugin_id required'}), 400
+    if not plugin_id:
+        return jsonify({'status': 'error', 'message': 'plugin_id required'}), 400
 
-        # Get schema manager instance
-        schema_mgr = api_v3.schema_manager
-        if not schema_mgr:
-            return jsonify({'status': 'error', 'message': 'Schema manager not initialized'}), 500
+    # Get schema manager instance
+    schema_mgr = api_v3.schema_manager
+    if not schema_mgr:
+        return jsonify({'status': 'error', 'message': 'Schema manager not initialized'}), 500
 
-        # Generate defaults from schema
-        defaults = schema_mgr.generate_default_config(plugin_id, use_cache=True)
+    # Generate defaults from schema
+    defaults = schema_mgr.generate_default_config(plugin_id, use_cache=True)
 
-        # Get current configs
-        current_config = api_v3.config_manager.load_config()
-        current_secrets = api_v3.config_manager.get_raw_file_content('secrets')
+    # Get current configs
+    current_config = api_v3.config_manager.load_config()
+    current_secrets = api_v3.config_manager.get_raw_file_content('secrets')
 
-        # Load schema to identify secret fields
-        schema = schema_mgr.load_schema(plugin_id, use_cache=True)
-        secret_fields = set()
+    # Load schema to identify secret fields
+    schema = schema_mgr.load_schema(plugin_id, use_cache=True)
+    secret_fields = set()
 
-        if schema and 'properties' in schema:
-            secret_fields = find_secret_fields(schema['properties'])
+    if schema and 'properties' in schema:
+        secret_fields = find_secret_fields(schema['properties'])
 
-        # Separate defaults into regular and secret configs
-        default_regular, default_secrets = separate_secrets(defaults, secret_fields)
+    # Separate defaults into regular and secret configs
+    default_regular, default_secrets = separate_secrets(defaults, secret_fields)
 
-        # Update main config with defaults
-        current_config[plugin_id] = default_regular
+    # Update main config with defaults
+    current_config[plugin_id] = default_regular
 
-        # Update secrets config (preserve existing secrets if preserve_secrets=True)
-        if preserve_secrets:
-            # Keep existing secrets for this plugin
-            if plugin_id in current_secrets:
-                # Merge defaults with existing secrets
-                existing_secrets = current_secrets[plugin_id]
-                for key, value in default_secrets.items():
-                    if key not in existing_secrets or not existing_secrets[key]:
-                        existing_secrets[key] = value
-            else:
-                current_secrets[plugin_id] = default_secrets
+    # Update secrets config (preserve existing secrets if preserve_secrets=True)
+    if preserve_secrets:
+        # Keep existing secrets for this plugin
+        if plugin_id in current_secrets:
+            # Merge defaults with existing secrets
+            existing_secrets = current_secrets[plugin_id]
+            for key, value in default_secrets.items():
+                if key not in existing_secrets or not existing_secrets[key]:
+                    existing_secrets[key] = value
         else:
-            # Replace all secrets with defaults
             current_secrets[plugin_id] = default_secrets
+    else:
+        # Replace all secrets with defaults
+        current_secrets[plugin_id] = default_secrets
 
-        # Save updated configs
-        api_v3.config_manager.save_config(current_config)
-        if default_secrets or not preserve_secrets:
-            api_v3.config_manager.save_raw_file_content('secrets', current_secrets)
+    # Save updated configs
+    api_v3.config_manager.save_config(current_config)
+    if default_secrets or not preserve_secrets:
+        api_v3.config_manager.save_raw_file_content('secrets', current_secrets)
 
-        # Notify plugin of config change if loaded
-        try:
-            if api_v3.plugin_manager:
-                plugin_instance = api_v3.plugin_manager.get_plugin(plugin_id)
-                if plugin_instance:
-                    merged_config = api_v3.config_manager.load_config()
-                    plugin_full_config = merged_config.get(plugin_id, {})
-                    if hasattr(plugin_instance, 'on_config_change'):
-                        plugin_instance.on_config_change(plugin_full_config)
-        except Exception as hook_err:
-            logger.warning("on_config_change failed: %s", hook_err)
+    # Notify plugin of config change if loaded
+    try:
+        if api_v3.plugin_manager:
+            plugin_instance = api_v3.plugin_manager.get_plugin(plugin_id)
+            if plugin_instance:
+                merged_config = api_v3.config_manager.load_config()
+                plugin_full_config = merged_config.get(plugin_id, {})
+                if hasattr(plugin_instance, 'on_config_change'):
+                    plugin_instance.on_config_change(plugin_full_config)
+    except Exception as hook_err:
+        logger.warning("on_config_change failed: %s", hook_err)
 
-        return jsonify({
-            'status': 'success',
-            'message': f'Plugin {plugin_id} configuration reset to defaults',
-            'data': {'config': defaults}
-        })
-    except Exception as e:
-        logger.error('Error in reset_plugin_config', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
+    return jsonify({
+        'status': 'success',
+        'message': f'Plugin {plugin_id} configuration reset to defaults',
+        'data': {'config': defaults}
+    })
 @api_v3.route('/plugins/action', methods=['POST'])
 def execute_plugin_action():
     """Execute a plugin-defined action (e.g., authentication)"""
@@ -2868,8 +2734,10 @@ def execute_plugin_action():
         try:
             data = request.get_json(force=True) or {}
         except Exception as e:
-            import logging
-            logger = logging.getLogger(__name__)
+            # The module logger, not a local one: binding `logger` anywhere in
+            # this function made every other `logger.error` here raise
+            # UnboundLocalError, so the step-1 handler below reported that
+            # instead of the plugin script's real failure.
             logger.error(f"Error parsing JSON in execute_plugin_action: {e}")
             return jsonify({
                 'status': 'error', 
@@ -3172,9 +3040,6 @@ sys.exit(proc.returncode)
 
     except subprocess.TimeoutExpired:
         return jsonify({'status': 'error', 'message': 'Action timed out'}), 408
-    except Exception as e:
-        logger.error('Error in execute_plugin_action', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 def _plugin_uploads_dir(plugin_id):
     """assets/plugins/<plugin_id>/uploads for a request-supplied id, or None.
 
@@ -3187,154 +3052,150 @@ def _plugin_uploads_dir(plugin_id):
 @api_v3.route('/plugins/assets/upload', methods=['POST'])
 def upload_plugin_asset():
     """Upload asset files for a plugin"""
-    try:
-        plugin_id = request.form.get('plugin_id')
-        if not plugin_id:
-            return jsonify({'status': 'error', 'message': 'plugin_id is required'}), 400
+    plugin_id = request.form.get('plugin_id')
+    if not plugin_id:
+        return jsonify({'status': 'error', 'message': 'plugin_id is required'}), 400
 
-        if 'files' not in request.files:
-            return jsonify({'status': 'error', 'message': 'No files provided'}), 400
+    if 'files' not in request.files:
+        return jsonify({'status': 'error', 'message': 'No files provided'}), 400
 
-        files = request.files.getlist('files')
-        if not files or all(not f.filename for f in files):
-            return jsonify({'status': 'error', 'message': 'No files provided'}), 400
+    files = request.files.getlist('files')
+    if not files or all(not f.filename for f in files):
+        return jsonify({'status': 'error', 'message': 'No files provided'}), 400
 
-        # Validate file count
-        if len(files) > 10:
-            return jsonify({'status': 'error', 'message': 'Maximum 10 files per upload'}), 400
+    # Validate file count
+    if len(files) > 10:
+        return jsonify({'status': 'error', 'message': 'Maximum 10 files per upload'}), 400
 
-        # Setup plugin assets directory. plugin_id is a form field: without
-        # the guard '../../config' created, listed and wrote into directories
-        # outside assets/plugins (the serving route was fixed in #561).
-        assets_dir = _plugin_uploads_dir(plugin_id)
-        if assets_dir is None:
-            return jsonify({'status': 'error', 'message': 'Invalid plugin_id'}), 400
-        plugin_id = safe_path_component(plugin_id)
-        assets_dir.mkdir(parents=True, exist_ok=True)
+    # Setup plugin assets directory. plugin_id is a form field: without
+    # the guard '../../config' created, listed and wrote into directories
+    # outside assets/plugins (the serving route was fixed in #561).
+    assets_dir = _plugin_uploads_dir(plugin_id)
+    if assets_dir is None:
+        return jsonify({'status': 'error', 'message': 'Invalid plugin_id'}), 400
+    plugin_id = safe_path_component(plugin_id)
+    assets_dir.mkdir(parents=True, exist_ok=True)
 
-        # Load metadata file
-        metadata_file = assets_dir / '.metadata.json'
-        if metadata_file.exists():
-            with open(metadata_file, 'r') as f:
-                metadata = json.load(f)
-        else:
-            metadata = {}
+    # Load metadata file
+    metadata_file = assets_dir / '.metadata.json'
+    if metadata_file.exists():
+        with open(metadata_file, 'r') as f:
+            metadata = json.load(f)
+    else:
+        metadata = {}
 
-        uploaded_files = []
-        total_size = 0
-        max_size_per_file = 5 * 1024 * 1024  # 5MB
-        max_total_size = 50 * 1024 * 1024  # 50MB
+    uploaded_files = []
+    total_size = 0
+    max_size_per_file = 5 * 1024 * 1024  # 5MB
+    max_total_size = 50 * 1024 * 1024  # 50MB
 
-        # Calculate current total size
-        for entry in metadata.values():
-            if 'size' in entry:
-                total_size += entry.get('size', 0)
+    # Calculate current total size
+    for entry in metadata.values():
+        if 'size' in entry:
+            total_size += entry.get('size', 0)
 
-        for file in files:
-            if not file.filename:
-                continue
+    for file in files:
+        if not file.filename:
+            continue
 
-            # Validate file type
-            allowed_extensions = ['.png', '.jpg', '.jpeg', '.bmp', '.gif']
-            file_ext = '.' + file.filename.lower().split('.')[-1]
-            if file_ext not in allowed_extensions:
-                return jsonify({
-                    'status': 'error',
-                    'message': f'Invalid file type: {file_ext}. Allowed: {allowed_extensions}'
-                }), 400
+        # Validate file type
+        allowed_extensions = ['.png', '.jpg', '.jpeg', '.bmp', '.gif']
+        file_ext = '.' + file.filename.lower().split('.')[-1]
+        if file_ext not in allowed_extensions:
+            return jsonify({
+                'status': 'error',
+                'message': f'Invalid file type: {file_ext}. Allowed: {allowed_extensions}'
+            }), 400
 
-            # Read file to check size and validate
-            file.seek(0, os.SEEK_END)
-            file_size = file.tell()
-            file.seek(0)
+        # Read file to check size and validate
+        file.seek(0, os.SEEK_END)
+        file_size = file.tell()
+        file.seek(0)
 
-            if file_size > max_size_per_file:
-                return jsonify({
-                    'status': 'error',
-                    'message': f'File {file.filename} exceeds 5MB limit'
-                }), 400
+        if file_size > max_size_per_file:
+            return jsonify({
+                'status': 'error',
+                'message': f'File {file.filename} exceeds 5MB limit'
+            }), 400
 
-            if total_size + file_size > max_total_size:
-                return jsonify({
-                    'status': 'error',
-                    'message': f'Upload would exceed 50MB total storage limit'
-                }), 400
+        if total_size + file_size > max_total_size:
+            return jsonify({
+                'status': 'error',
+                'message': f'Upload would exceed 50MB total storage limit'
+            }), 400
 
-            # Validate file is actually an image (check magic bytes)
-            file_content = file.read(8)
-            file.seek(0)
-            is_valid_image = False
-            if file_content.startswith(b'\x89PNG\r\n\x1a\n'):  # PNG
-                is_valid_image = True
-            elif file_content[:2] == b'\xff\xd8':  # JPEG
-                is_valid_image = True
-            elif file_content[:2] == b'BM':  # BMP
-                is_valid_image = True
-            elif file_content[:6] in [b'GIF87a', b'GIF89a']:  # GIF
-                is_valid_image = True
+        # Validate file is actually an image (check magic bytes)
+        file_content = file.read(8)
+        file.seek(0)
+        is_valid_image = False
+        if file_content.startswith(b'\x89PNG\r\n\x1a\n'):  # PNG
+            is_valid_image = True
+        elif file_content[:2] == b'\xff\xd8':  # JPEG
+            is_valid_image = True
+        elif file_content[:2] == b'BM':  # BMP
+            is_valid_image = True
+        elif file_content[:6] in [b'GIF87a', b'GIF89a']:  # GIF
+            is_valid_image = True
 
-            if not is_valid_image:
-                return jsonify({
-                    'status': 'error',
-                    'message': f'File {file.filename} is not a valid image file'
-                }), 400
+        if not is_valid_image:
+            return jsonify({
+                'status': 'error',
+                'message': f'File {file.filename} is not a valid image file'
+            }), 400
 
-            # Generate unique filename
-            timestamp = int(_pkg.time.time())
-            file_hash = hashlib.md5(file_content + file.filename.encode()).hexdigest()[:8]
-            safe_filename = f"image_{timestamp}_{file_hash}{file_ext}"
+        # Generate unique filename
+        timestamp = int(_pkg.time.time())
+        file_hash = hashlib.md5(file_content + file.filename.encode()).hexdigest()[:8]
+        safe_filename = f"image_{timestamp}_{file_hash}{file_ext}"
+        file_path = assets_dir / safe_filename
+
+        # Ensure filename is unique
+        counter = 1
+        while file_path.exists():
+            safe_filename = f"image_{timestamp}_{file_hash}_{counter}{file_ext}"
             file_path = assets_dir / safe_filename
+            counter += 1
 
-            # Ensure filename is unique
-            counter = 1
-            while file_path.exists():
-                safe_filename = f"image_{timestamp}_{file_hash}_{counter}{file_ext}"
-                file_path = assets_dir / safe_filename
-                counter += 1
+        # Save file
+        file.save(str(file_path))
 
-            # Save file
-            file.save(str(file_path))
+        # Make file readable
+        os.chmod(file_path, 0o644)
 
-            # Make file readable
-            os.chmod(file_path, 0o644)
+        # Generate unique ID
+        image_id = str(uuid.uuid4())
 
-            # Generate unique ID
-            image_id = str(uuid.uuid4())
+        # Store metadata
+        relative_path = f"assets/plugins/{plugin_id}/uploads/{safe_filename}"
+        metadata[image_id] = {
+            'id': image_id,
+            'filename': safe_filename,
+            'path': relative_path,
+            'size': file_size,
+            'uploaded_at': datetime.utcnow().isoformat() + 'Z',
+            'original_filename': file.filename
+        }
 
-            # Store metadata
-            relative_path = f"assets/plugins/{plugin_id}/uploads/{safe_filename}"
-            metadata[image_id] = {
-                'id': image_id,
-                'filename': safe_filename,
-                'path': relative_path,
-                'size': file_size,
-                'uploaded_at': datetime.utcnow().isoformat() + 'Z',
-                'original_filename': file.filename
-            }
-
-            uploaded_files.append({
-                'id': image_id,
-                'filename': safe_filename,
-                'path': relative_path,
-                'size': file_size,
-                'uploaded_at': metadata[image_id]['uploaded_at']
-            })
-
-            total_size += file_size
-
-        # Save metadata
-        with open(metadata_file, 'w') as f:
-            json.dump(metadata, f, indent=2)
-
-        return jsonify({
-            'status': 'success',
-            'uploaded_files': uploaded_files,
-            'total_files': len(metadata)
+        uploaded_files.append({
+            'id': image_id,
+            'filename': safe_filename,
+            'path': relative_path,
+            'size': file_size,
+            'uploaded_at': metadata[image_id]['uploaded_at']
         })
 
-    except Exception as e:
-        logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
+        total_size += file_size
+
+    # Save metadata
+    with open(metadata_file, 'w') as f:
+        json.dump(metadata, f, indent=2)
+
+    return jsonify({
+        'status': 'success',
+        'uploaded_files': uploaded_files,
+        'total_files': len(metadata)
+    })
+
 @api_v3.route('/plugins/<plugin_id>/static/<path:file_path>', methods=['GET'])
 def serve_plugin_static(plugin_id, file_path):
     """Serve static files from plugin directory.
@@ -3353,132 +3214,124 @@ def serve_plugin_static(plugin_id, file_path):
       ``plugin-repos/foo-evil/x``, whose string does start with
       ``plugin-repos/foo``.
     """
-    try:
-        safe_plugin_id = safe_path_component(plugin_id)
-        if not safe_plugin_id:
-            return jsonify({'status': 'error', 'message': 'Invalid plugin ID'}), 400
+    safe_plugin_id = safe_path_component(plugin_id)
+    if not safe_plugin_id:
+        return jsonify({'status': 'error', 'message': 'Invalid plugin ID'}), 400
 
-        safe_parts = safe_relative_parts(file_path)
-        if not safe_parts:
-            return jsonify({'status': 'error', 'message': 'Invalid file path'}), 400
+    safe_parts = safe_relative_parts(file_path)
+    if not safe_parts:
+        return jsonify({'status': 'error', 'message': 'Invalid file path'}), 400
 
-        # Get plugin directory
-        if api_v3.plugin_manager:
-            plugin_dir = api_v3.plugin_manager.get_plugin_directory(safe_plugin_id)
-        else:
-            plugin_dir = PROJECT_ROOT / 'plugins' / safe_plugin_id
+    # Get plugin directory
+    if api_v3.plugin_manager:
+        plugin_dir = api_v3.plugin_manager.get_plugin_directory(safe_plugin_id)
+    else:
+        plugin_dir = PROJECT_ROOT / 'plugins' / safe_plugin_id
 
-        if not plugin_dir or not Path(plugin_dir).exists():
-            return jsonify({'status': 'error', 'message': 'Plugin not found'}), 404
+    if not plugin_dir or not Path(plugin_dir).exists():
+        return jsonify({'status': 'error', 'message': 'Plugin not found'}), 404
 
-        # Containment is still checked after resolving: name validation cannot
-        # see a symlink inside the plugin directory that points out of it.
-        requested_file = resolve_under(plugin_dir, *safe_parts)
-        if requested_file is None:
-            return jsonify({'status': 'error', 'message': 'Invalid file path'}), 403
+    # Containment is still checked after resolving: name validation cannot
+    # see a symlink inside the plugin directory that points out of it.
+    requested_file = resolve_under(plugin_dir, *safe_parts)
+    if requested_file is None:
+        return jsonify({'status': 'error', 'message': 'Invalid file path'}), 403
 
-        # Check if file exists
-        if not requested_file.exists() or not requested_file.is_file():
-            return jsonify({'status': 'error', 'message': 'File not found'}), 404
+    # Check if file exists
+    if not requested_file.exists() or not requested_file.is_file():
+        return jsonify({'status': 'error', 'message': 'File not found'}), 404
 
-        # Determine content type
-        content_type = 'text/plain'
-        name = requested_file.name
-        if name.endswith('.html'):
-            content_type = 'text/html'
-        elif name.endswith('.js'):
-            content_type = 'application/javascript'
-        elif name.endswith('.css'):
-            content_type = 'text/css'
-        elif name.endswith('.json'):
-            content_type = 'application/json'
+    # Determine content type
+    content_type = 'text/plain'
+    name = requested_file.name
+    if name.endswith('.html'):
+        content_type = 'text/html'
+    elif name.endswith('.js'):
+        content_type = 'application/javascript'
+    elif name.endswith('.css'):
+        content_type = 'text/css'
+    elif name.endswith('.json'):
+        content_type = 'application/json'
 
-        # Read and return file
-        with open(requested_file, 'r', encoding='utf-8') as f:
-            content = f.read()
+    # Read and return file
+    with open(requested_file, 'r', encoding='utf-8') as f:
+        content = f.read()
 
-        return Response(content, mimetype=content_type)
+    return Response(content, mimetype=content_type)
 
-    except Exception as e:
-        logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 @api_v3.route('/plugins/calendar/upload-credentials', methods=['POST'])
 def upload_calendar_credentials():
     """Upload credentials.json file for calendar plugin"""
+    if 'file' not in request.files:
+        return jsonify({'status': 'error', 'message': 'No file provided'}), 400
+
+    file = request.files['file']
+    if not file or not file.filename:
+        return jsonify({'status': 'error', 'message': 'No file provided'}), 400
+
+    # Validate file extension
+    if not file.filename.lower().endswith('.json'):
+        return jsonify({'status': 'error', 'message': 'File must be a JSON file (.json)'}), 400
+
+    # Validate file size (max 1MB for credentials)
+    file.seek(0, os.SEEK_END)
+    file_size = file.tell()
+    file.seek(0)
+
+    if file_size > 1024 * 1024:  # 1MB
+        return jsonify({'status': 'error', 'message': 'File exceeds 1MB limit'}), 400
+
+    # Validate it's valid JSON
     try:
-        if 'file' not in request.files:
-            return jsonify({'status': 'error', 'message': 'No file provided'}), 400
-
-        file = request.files['file']
-        if not file or not file.filename:
-            return jsonify({'status': 'error', 'message': 'No file provided'}), 400
-
-        # Validate file extension
-        if not file.filename.lower().endswith('.json'):
-            return jsonify({'status': 'error', 'message': 'File must be a JSON file (.json)'}), 400
-
-        # Validate file size (max 1MB for credentials)
-        file.seek(0, os.SEEK_END)
-        file_size = file.tell()
+        file_content = file.read()
         file.seek(0)
+        creds_data = json.loads(file_content)
+    except json.JSONDecodeError:
+        return jsonify({'status': 'error', 'message': 'File is not valid JSON'}), 400
 
-        if file_size > 1024 * 1024:  # 1MB
-            return jsonify({'status': 'error', 'message': 'File exceeds 1MB limit'}), 400
-
-        # Validate it's valid JSON
-        try:
-            file_content = file.read()
-            file.seek(0)
-            creds_data = json.loads(file_content)
-        except json.JSONDecodeError:
-            return jsonify({'status': 'error', 'message': 'File is not valid JSON'}), 400
-
-        # Validate it looks like Google OAuth credentials. A bare scalar, a
-        # list, true/null — all valid JSON, none of them credentials. Reject
-        # rather than save: a file written as credentials.json but unusable
-        # as credentials only fails later, somewhere less obvious.
-        if not isinstance(creds_data, dict) or not (
-                'installed' in creds_data or 'web' in creds_data):
-            return jsonify({
-                'status': 'error',
-                'message': 'File does not appear to be a valid Google OAuth credentials file'
-            }), 400
-
-        # Get plugin directory
-        plugin_id = 'calendar'
-        if api_v3.plugin_manager:
-            plugin_dir = api_v3.plugin_manager.get_plugin_directory(plugin_id)
-        else:
-            plugin_dir = PROJECT_ROOT / 'plugins' / plugin_id
-
-        if not plugin_dir or not Path(plugin_dir).exists():
-            return jsonify({'status': 'error', 'message': 'Plugin not found'}), 404
-
-        # Save file to plugin directory
-        credentials_path = Path(plugin_dir) / 'credentials.json'
-
-        # Backup existing file if it exists
-        if credentials_path.exists():
-            backup_path = Path(plugin_dir) / f'credentials.json.backup.{int(_pkg.time.time())}'
-            import shutil
-            shutil.copy2(credentials_path, backup_path)
-            _prune_credential_backups(Path(plugin_dir))
-
-        # Save new file
-        file.save(str(credentials_path))
-
-        # Set proper permissions
-        os.chmod(credentials_path, 0o600)  # Read/write for owner only
-
+    # Validate it looks like Google OAuth credentials. A bare scalar, a
+    # list, true/null — all valid JSON, none of them credentials. Reject
+    # rather than save: a file written as credentials.json but unusable
+    # as credentials only fails later, somewhere less obvious.
+    if not isinstance(creds_data, dict) or not (
+            'installed' in creds_data or 'web' in creds_data):
         return jsonify({
-            'status': 'success',
-            'message': 'Credentials file uploaded successfully',
-            'path': str(credentials_path)
-        })
+            'status': 'error',
+            'message': 'File does not appear to be a valid Google OAuth credentials file'
+        }), 400
 
-    except Exception as e:
-        logger.error('Error in upload_calendar_credentials', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
+    # Get plugin directory
+    plugin_id = 'calendar'
+    if api_v3.plugin_manager:
+        plugin_dir = api_v3.plugin_manager.get_plugin_directory(plugin_id)
+    else:
+        plugin_dir = PROJECT_ROOT / 'plugins' / plugin_id
+
+    if not plugin_dir or not Path(plugin_dir).exists():
+        return jsonify({'status': 'error', 'message': 'Plugin not found'}), 404
+
+    # Save file to plugin directory
+    credentials_path = Path(plugin_dir) / 'credentials.json'
+
+    # Backup existing file if it exists
+    if credentials_path.exists():
+        backup_path = Path(plugin_dir) / f'credentials.json.backup.{int(_pkg.time.time())}'
+        import shutil
+        shutil.copy2(credentials_path, backup_path)
+        _prune_credential_backups(Path(plugin_dir))
+
+    # Save new file
+    file.save(str(credentials_path))
+
+    # Set proper permissions
+    os.chmod(credentials_path, 0o600)  # Read/write for owner only
+
+    return jsonify({
+        'status': 'success',
+        'message': 'Credentials file uploaded successfully',
+        'path': str(credentials_path)
+    })
+
 @api_v3.route('/plugins/calendar/authenticate', methods=['POST'])
 def authenticate_calendar():
     """Google OAuth for the calendar plugin, in the two steps it requires.
@@ -3492,44 +3345,38 @@ def authenticate_calendar():
     The script persists the PKCE verifier from step 1 for step 2 to reuse; the
     exchange fails with "Missing code verifier" otherwise.
     """
-    try:
-        plugin_dir = _pkg._calendar_plugin_dir()
-        if plugin_dir is None:
-            return jsonify({
-                'status': 'error',
-                'message': 'The calendar plugin is not installed'
-            }), 404
+    plugin_dir = _pkg._calendar_plugin_dir()
+    if plugin_dir is None:
+        return jsonify({
+            'status': 'error',
+            'message': 'The calendar plugin is not installed'
+        }), 404
 
-        if not (plugin_dir / 'credentials.json').exists():
-            return jsonify({
-                'status': 'error',
-                'message': ('No credentials.json yet. Upload your Google OAuth '
-                            'client file first (Step 1).')
-            }), 400
+    if not (plugin_dir / 'credentials.json').exists():
+        return jsonify({
+            'status': 'error',
+            'message': ('No credentials.json yet. Upload your Google OAuth '
+                        'client file first (Step 1).')
+        }), 400
 
-        data = request.get_json(silent=True) or {}
-        redirect_url = (data.get('redirect_url') or data.get('code') or '').strip()
+    data = request.get_json(silent=True) or {}
+    redirect_url = (data.get('redirect_url') or data.get('code') or '').strip()
 
-        payload, error = _run_calendar_registration(plugin_dir, redirect_url)
-        if error:
-            return jsonify({'status': 'error', 'message': error}), 500
-        if payload.get('status') != 'success':
-            # The script's own diagnosis is more useful than anything that
-            # could be reconstructed here -- but it interpolates exceptions
-            # into its messages, so it reaches the client redacted and the
-            # original goes to the log.
-            logger.error('calendar authentication failed: %s', payload)
-            safe = dict(payload)
-            safe['message'] = redact_text(str(payload.get('message', '')
-                                              or 'Authentication failed'))
-            return jsonify(safe), 400
-        return jsonify(payload)
+    payload, error = _run_calendar_registration(plugin_dir, redirect_url)
+    if error:
+        return jsonify({'status': 'error', 'message': error}), 500
+    if payload.get('status') != 'success':
+        # The script's own diagnosis is more useful than anything that
+        # could be reconstructed here -- but it interpolates exceptions
+        # into its messages, so it reaches the client redacted and the
+        # original goes to the log.
+        logger.error('calendar authentication failed: %s', payload)
+        safe = dict(payload)
+        safe['message'] = redact_text(str(payload.get('message', '')
+                                          or 'Authentication failed'))
+        return jsonify(safe), 400
+    return jsonify(payload)
 
-    except Exception as e:
-        logger.error('Error in authenticate_calendar', exc_info=True)
-        return jsonify({'status': 'error',
-                        'message': 'An error occurred; see logs for details',
-                        'details': describe_exception(e)}), 500
 @api_v3.route('/plugins/calendar/list-calendars', methods=['GET'])
 def list_calendar_calendars():
     """The calendars this account can see, for the config picker.
@@ -3538,174 +3385,160 @@ def list_calendar_calendars():
     picker is used interactively and a subprocess per click is slower than the
     API call it would be wrapping.
     """
+    plugin_dir = _pkg._calendar_plugin_dir()
+    if plugin_dir is None:
+        return jsonify({
+            'status': 'error',
+            'message': 'The calendar plugin is not installed'
+        }), 404
+
+    token_file = plugin_dir / 'token.pickle'
+    if not token_file.exists():
+        return jsonify({
+            'status': 'error',
+            'message': ('Not authenticated with Google yet. Complete Step 2 '
+                        'first, then load your calendars.')
+        }), 400
+
     try:
-        plugin_dir = _pkg._calendar_plugin_dir()
-        if plugin_dir is None:
-            return jsonify({
-                'status': 'error',
-                'message': 'The calendar plugin is not installed'
-            }), 404
+        import pickle
+        from google.auth.transport.requests import Request as GoogleRequest
+        from googleapiclient.discovery import build as build_google_service
+    except ImportError as e:
+        return jsonify({
+            'status': 'error',
+            # The name of the missing module is the whole diagnosis, but it
+            # arrives as an exception, so it goes through the redactor like
+            # any other -- an ImportError can quote a path.
+            'message': ('The Google API libraries are not installed. Install '
+                        "the calendar plugin's requirements.txt. (%s)"
+                        % describe_exception(e))
+        }), 500
 
-        token_file = plugin_dir / 'token.pickle'
-        if not token_file.exists():
-            return jsonify({
-                'status': 'error',
-                'message': ('Not authenticated with Google yet. Complete Step 2 '
-                            'first, then load your calendars.')
-            }), 400
+    with open(token_file, 'rb') as handle:
+        # Written only by this plugin's own OAuth flow, into its own
+        # directory, and read here exactly as the plugin itself reads it.
+        creds = pickle.load(handle)  # nosec B301 - locally generated token
 
-        try:
-            import pickle
-            from google.auth.transport.requests import Request as GoogleRequest
-            from googleapiclient.discovery import build as build_google_service
-        except ImportError as e:
-            return jsonify({
-                'status': 'error',
-                # The name of the missing module is the whole diagnosis, but it
-                # arrives as an exception, so it goes through the redactor like
-                # any other -- an ImportError can quote a path.
-                'message': ('The Google API libraries are not installed. Install '
-                            "the calendar plugin's requirements.txt. (%s)"
-                            % describe_exception(e))
-            }), 500
+    if creds and creds.expired and creds.refresh_token:
+        creds.refresh(GoogleRequest())
+        with open(token_file, 'wb') as handle:
+            pickle.dump(creds, handle)
+        os.chmod(token_file, 0o600)
 
-        with open(token_file, 'rb') as handle:
-            # Written only by this plugin's own OAuth flow, into its own
-            # directory, and read here exactly as the plugin itself reads it.
-            creds = pickle.load(handle)  # nosec B301 - locally generated token
+    if not creds or not creds.valid:
+        return jsonify({
+            'status': 'error',
+            'message': ('Stored Google credentials are no longer valid. '
+                        'Run Step 2 again to re-authenticate.')
+        }), 400
 
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(GoogleRequest())
-            with open(token_file, 'wb') as handle:
-                pickle.dump(creds, handle)
-            os.chmod(token_file, 0o600)
+    service = build_google_service('calendar', 'v3', credentials=creds)
 
-        if not creds or not creds.valid:
-            return jsonify({
-                'status': 'error',
-                'message': ('Stored Google credentials are no longer valid. '
-                            'Run Step 2 again to re-authenticate.')
-            }), 400
+    # calendarList.list returns 100 entries per page by default and caps at
+    # 250, handing back a nextPageToken when there are more. Taking only
+    # the first page would silently hide calendars from the picker, and the
+    # user would have no way to tell the list was truncated.
+    entries = []
+    page_token = None
+    for _ in range(_CALENDAR_LIST_MAX_PAGES):
+        response = service.calendarList().list(
+            maxResults=250, pageToken=page_token).execute()
+        entries.extend(response.get('items', []))
+        page_token = response.get('nextPageToken')
+        if not page_token:
+            break
+    else:
+        # 2500 calendars in, something is wrong with the account or the
+        # token is looping; show what was collected rather than spin.
+        logger.warning(
+            'calendarList paging stopped at %d pages with more remaining',
+            _CALENDAR_LIST_MAX_PAGES)
 
-        service = build_google_service('calendar', 'v3', credentials=creds)
+    calendars = [{
+        'id': entry.get('id'),
+        # The picker labels each row with summary and falls back to the id
+        # only in its own display, so send something either way.
+        'summary': entry.get('summary') or entry.get('id'),
+        'primary': bool(entry.get('primary', False)),
+    } for entry in entries if entry.get('id')]
 
-        # calendarList.list returns 100 entries per page by default and caps at
-        # 250, handing back a nextPageToken when there are more. Taking only
-        # the first page would silently hide calendars from the picker, and the
-        # user would have no way to tell the list was truncated.
-        entries = []
-        page_token = None
-        for _ in range(_CALENDAR_LIST_MAX_PAGES):
-            response = service.calendarList().list(
-                maxResults=250, pageToken=page_token).execute()
-            entries.extend(response.get('items', []))
-            page_token = response.get('nextPageToken')
-            if not page_token:
-                break
-        else:
-            # 2500 calendars in, something is wrong with the account or the
-            # token is looping; show what was collected rather than spin.
-            logger.warning(
-                'calendarList paging stopped at %d pages with more remaining',
-                _CALENDAR_LIST_MAX_PAGES)
+    # Primary first, then alphabetically: the list is usually short but the
+    # one the user wants is almost always their own calendar.
+    calendars.sort(key=lambda c: (not c['primary'], c['summary'].lower()))
 
-        calendars = [{
-            'id': entry.get('id'),
-            # The picker labels each row with summary and falls back to the id
-            # only in its own display, so send something either way.
-            'summary': entry.get('summary') or entry.get('id'),
-            'primary': bool(entry.get('primary', False)),
-        } for entry in entries if entry.get('id')]
+    return jsonify({'status': 'success', 'calendars': calendars})
 
-        # Primary first, then alphabetically: the list is usually short but the
-        # one the user wants is almost always their own calendar.
-        calendars.sort(key=lambda c: (not c['primary'], c['summary'].lower()))
-
-        return jsonify({'status': 'success', 'calendars': calendars})
-
-    except Exception as e:
-        logger.error('Error in list_calendar_calendars', exc_info=True)
-        return jsonify({'status': 'error',
-                        'message': 'An error occurred; see logs for details',
-                        'details': describe_exception(e)}), 500
 @api_v3.route('/plugins/assets/delete', methods=['POST'])
 def delete_plugin_asset():
     """Delete an asset file for a plugin"""
-    try:
-        data = request.get_json()
-        plugin_id = data.get('plugin_id')
-        image_id = data.get('image_id')
+    data = request.get_json()
+    plugin_id = data.get('plugin_id')
+    image_id = data.get('image_id')
 
-        if not plugin_id or not image_id:
-            return jsonify({'status': 'error', 'message': 'plugin_id and image_id are required'}), 400
+    if not plugin_id or not image_id:
+        return jsonify({'status': 'error', 'message': 'plugin_id and image_id are required'}), 400
 
-        # Get asset directory
-        assets_dir = _plugin_uploads_dir(plugin_id)
-        if assets_dir is None:
-            return jsonify({'status': 'error', 'message': 'Invalid plugin_id'}), 400
-        metadata_file = assets_dir / '.metadata.json'
+    # Get asset directory
+    assets_dir = _plugin_uploads_dir(plugin_id)
+    if assets_dir is None:
+        return jsonify({'status': 'error', 'message': 'Invalid plugin_id'}), 400
+    metadata_file = assets_dir / '.metadata.json'
 
-        if not metadata_file.exists():
-            return jsonify({'status': 'error', 'message': 'Metadata file not found'}), 404
+    if not metadata_file.exists():
+        return jsonify({'status': 'error', 'message': 'Metadata file not found'}), 404
 
-        # Load metadata
-        with open(metadata_file, 'r') as f:
-            metadata = json.load(f)
+    # Load metadata
+    with open(metadata_file, 'r') as f:
+        metadata = json.load(f)
 
-        if image_id not in metadata:
-            return jsonify({'status': 'error', 'message': 'Image not found'}), 404
+    if image_id not in metadata:
+        return jsonify({'status': 'error', 'message': 'Image not found'}), 404
 
-        # Delete file. The stored path is data, not a trusted location: only
-        # unlink it when it resolves to a file directly inside this plugin's
-        # uploads. An entry pointing anywhere else is dropped from the
-        # metadata without touching the file it names.
-        entry = metadata[image_id] if isinstance(metadata[image_id], dict) else {}
-        parts = safe_relative_parts(entry.get('path'))
-        file_path = resolve_under(PROJECT_ROOT, *parts) if parts else None
-        if file_path is None or file_path.parent != assets_dir:
-            logger.warning('Asset %s has a path outside its uploads directory; '
-                           'removing the entry without deleting a file', image_id)
-        elif file_path.exists():
-            file_path.unlink()
+    # Delete file. The stored path is data, not a trusted location: only
+    # unlink it when it resolves to a file directly inside this plugin's
+    # uploads. An entry pointing anywhere else is dropped from the
+    # metadata without touching the file it names.
+    entry = metadata[image_id] if isinstance(metadata[image_id], dict) else {}
+    parts = safe_relative_parts(entry.get('path'))
+    file_path = resolve_under(PROJECT_ROOT, *parts) if parts else None
+    if file_path is None or file_path.parent != assets_dir:
+        logger.warning('Asset %s has a path outside its uploads directory; '
+                       'removing the entry without deleting a file', image_id)
+    elif file_path.exists():
+        file_path.unlink()
 
-        # Remove from metadata
-        del metadata[image_id]
+    # Remove from metadata
+    del metadata[image_id]
 
-        # Save metadata
-        with open(metadata_file, 'w') as f:
-            json.dump(metadata, f, indent=2)
+    # Save metadata
+    with open(metadata_file, 'w') as f:
+        json.dump(metadata, f, indent=2)
 
-        return jsonify({'status': 'success', 'message': 'Image deleted successfully'})
+    return jsonify({'status': 'success', 'message': 'Image deleted successfully'})
 
-    except Exception as e:
-        logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
 @api_v3.route('/plugins/assets/list', methods=['GET'])
 def list_plugin_assets():
     """List asset files for a plugin"""
-    try:
-        plugin_id = request.args.get('plugin_id')
-        if not plugin_id:
-            return jsonify({'status': 'error', 'message': 'plugin_id is required'}), 400
+    plugin_id = request.args.get('plugin_id')
+    if not plugin_id:
+        return jsonify({'status': 'error', 'message': 'plugin_id is required'}), 400
 
-        # Get asset directory
-        assets_dir = _plugin_uploads_dir(plugin_id)
-        if assets_dir is None:
-            return jsonify({'status': 'error', 'message': 'Invalid plugin_id'}), 400
-        metadata_file = assets_dir / '.metadata.json'
+    # Get asset directory
+    assets_dir = _plugin_uploads_dir(plugin_id)
+    if assets_dir is None:
+        return jsonify({'status': 'error', 'message': 'Invalid plugin_id'}), 400
+    metadata_file = assets_dir / '.metadata.json'
 
-        if not metadata_file.exists():
-            return jsonify({'status': 'success', 'data': {'assets': []}})
+    if not metadata_file.exists():
+        return jsonify({'status': 'success', 'data': {'assets': []}})
 
-        # Load metadata
-        with open(metadata_file, 'r') as f:
-            metadata = json.load(f)
+    # Load metadata
+    with open(metadata_file, 'r') as f:
+        metadata = json.load(f)
 
-        # Convert to list
-        assets = list(metadata.values())
+    # Convert to list
+    assets = list(metadata.values())
 
-        return jsonify({'status': 'success', 'data': {'assets': assets}})
+    return jsonify({'status': 'success', 'data': {'assets': assets}})
 
-    except Exception as e:
-        logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
