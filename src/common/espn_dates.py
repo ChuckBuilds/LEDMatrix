@@ -47,6 +47,12 @@ except ImportError:
     def response_json(response: Any) -> Any:
         return response.json()
 
+try:
+    from src.common.render_gate import yielding as _yielding
+except ImportError:
+    # Older cores (see above) have no render gate: fetch freely.
+    from contextlib import nullcontext as _yielding
+
 # Above this, ESPN returns a truncated list instead of an error. See module
 # docstring: 500 is the largest value measured to return complete data.
 ESPN_MAX_LIMIT = 500
@@ -193,20 +199,25 @@ def _fetch_one_chunk(
 
     One bad chunk must not sink the rest of the season, so every error is
     logged and swallowed here rather than raised to the gather below.
+
+    While Vegas scrolls, a chunk runs only when the render thread is waiting on
+    the panel (``render_gate``): a season refresh is a couple of dozen of these
+    at once, and they used to crowd the render thread off the GIL for seconds.
     """
-    try:
-        response = session.get(
-            url,
-            params=dict(params, dates=chunk, limit=ESPN_MAX_LIMIT),
-            headers=headers,
-            timeout=timeout,
-        )
-        response.raise_for_status()
-        return response_json(response)
-    except Exception as exc:  # noqa: BLE001 - see docstring
-        if logger:
-            logger.warning("ESPN chunk %s failed, skipping it: %s", chunk, exc)
-        return None
+    with _yielding():
+        try:
+            response = session.get(
+                url,
+                params=dict(params, dates=chunk, limit=ESPN_MAX_LIMIT),
+                headers=headers,
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            return response_json(response)
+        except Exception as exc:  # noqa: BLE001 - see docstring
+            if logger:
+                logger.warning("ESPN chunk %s failed, skipping it: %s", chunk, exc)
+            return None
 
 
 def _fetch_chunks(

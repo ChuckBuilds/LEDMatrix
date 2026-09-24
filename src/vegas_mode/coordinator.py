@@ -357,6 +357,7 @@ class VegasModeCoordinator:
                    getattr(self.render_pipeline, '_prefetch_lock', None),
                    getattr(self.plugin_adapter, '_cache_lock', None))
         self.display_manager.render_gate = gate
+        render_gate.set_active(gate)
         logger.info("Vegas: prefetch gated on vsync")
 
     def _remove_render_gate(self) -> None:
@@ -364,6 +365,8 @@ class VegasModeCoordinator:
         if gate is None:
             return
         self.display_manager.render_gate = None
+        if render_gate.active() is gate:
+            render_gate.set_active(None)
         logger.info("Vegas: prefetch gate parked the prefetch %d times, %.1fs in all",
                     gate.parks, gate.parked_seconds)
 

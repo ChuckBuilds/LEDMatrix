@@ -28,7 +28,16 @@ behind it, so it is never parked:
   on a static screen or a stalled frame.
 
 And a parked thread is never held more than ``MAX_WAIT_SECONDS`` at a time, so
-whatever the gate gets wrong costs a frame, not a freeze.
+whatever the gate gets wrong costs a frame, not a freeze. The render thread
+itself is never gated, whatever it calls.
+
+The prefetch thread is not the only one that competes. Once an hour the sports
+plugins refresh their schedules together, about twenty ESPN chunk-fetch threads
+at once (hdpi, 2026-09-24), and the render thread queued behind all of them for
+a 1.9s freeze. So Vegas also makes its gate the *active* one, and code that runs
+background fetches wraps them in the module-level ``yielding()``, which uses the
+active gate if there is one and does nothing otherwise: ``espn_dates``' chunk
+fetches and the background data service's workers.
 
 Only worth enabling on a binding whose SwapOnVSync releases the GIL (see
 scripts/build_rgbmatrix_nogil.sh). With one that keeps it, the window never
@@ -42,7 +51,8 @@ import sys
 import threading
 import time
 from collections import deque
-from typing import Any, Callable, Deque, List, Optional
+from contextlib import nullcontext
+from typing import Any, Callable, ContextManager, Deque, List, Optional
 
 #: Park background threads this long before the refresh a swap will return on,
 #: so a short C call already under way has finished by then.
@@ -122,6 +132,7 @@ class RenderGate:
         self._period: Optional[float] = None
         self._guarded: List[Any] = []
         self._local = threading.local()
+        self._render_ident: Optional[int] = None
         #: How often, and for how long in all, background threads were parked.
         self.parks = 0
         self.parked_seconds = 0.0
@@ -164,6 +175,11 @@ class RenderGate:
         """The swap returned and the render thread needs the GIL: close the window."""
         now = self.clock()
         self._open_until = 0.0
+        if self._render_ident is None:
+            # The first thread to swap is the render loop. A plugin pushing a
+            # live refresh from its update thread swaps too, but must not take
+            # over its exemption.
+            self._render_ident = threading.get_ident()
         last = self._last_return
         if last is not None and now - last < STALE_SECONDS:
             self._periods.append((now - last) / max(1, int(hold)))
@@ -208,15 +224,49 @@ class _Yielding:
         self.gate = gate
         self._previous: Any = None
         self._previous_base: Any = None
+        self._skipped = False
 
     def __enter__(self) -> RenderGate:
-        local = self.gate._local  # pylint: disable=protected-access
+        gate = self.gate
+        # pylint: disable=protected-access
+        if threading.get_ident() == gate._render_ident:
+            self._skipped = True        # parking the render thread parks the display
+            return gate
+        local = gate._local
         self._previous_base = getattr(local, "base", None)
-        local.base = sys._getframe(1)  # pylint: disable=protected-access
+        if self._previous_base is None:
+            # Nested blocks keep the outermost frame, so everything the thread
+            # entered since it first gave way is still checked for locks.
+            local.base = sys._getframe(1)
         self._previous = sys.getprofile()
-        sys.setprofile(self.gate._hook)  # pylint: disable=protected-access
-        return self.gate
+        sys.setprofile(gate._hook)
+        return gate
 
     def __exit__(self, *_exc: Any) -> None:
+        if self._skipped:
+            return
         sys.setprofile(self._previous)
         self.gate._local.base = self._previous_base  # pylint: disable=protected-access
+
+
+#: The gate of the Vegas run in progress, if any; see the module docstring.
+_active: Optional[RenderGate] = None
+
+
+def set_active(gate: Optional[RenderGate]) -> None:
+    """Make ``gate`` the one ``yielding()`` uses (None: no gate, run freely)."""
+    global _active  # pylint: disable=global-statement
+    _active = gate
+
+
+def active() -> Optional[RenderGate]:
+    """The gate ``yielding()`` currently uses, if any."""
+    return _active
+
+
+def yielding() -> ContextManager[Any]:
+    """``with render_gate.yielding():`` gives way to the render thread while a
+    Vegas run has a gate, and does nothing otherwise. For background work that
+    does not know whether Vegas is running."""
+    gate = _active
+    return gate.yielding() if gate is not None else nullcontext()
