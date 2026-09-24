@@ -24,7 +24,6 @@ class FakeDisplayManager:
 
 def _make_pipeline(sync_manager=None):
     stream_manager = MagicMock()
-    stream_manager.get_buffer_status.return_value = {'staging_count': 0}
     pipeline = RenderPipeline(VegasModeConfig(), FakeDisplayManager(), stream_manager)
     pipeline.sync_manager = sync_manager
     return pipeline, stream_manager
@@ -37,7 +36,7 @@ class TestShouldRecompose:
         stream_manager.has_pending_updates_for_visible_segments.return_value = False
         assert pipeline.should_recompose() is True
 
-    def test_no_pending_updates_no_staging_does_not_recompose(self):
+    def test_no_pending_updates_does_not_recompose(self):
         pipeline, stream_manager = _make_pipeline()
         stream_manager.has_pending_updates_for_visible_segments.return_value = False
         assert pipeline.should_recompose() is False
@@ -47,12 +46,6 @@ class TestShouldRecompose:
         must trigger a recompose instead of waiting for cycle end."""
         pipeline, stream_manager = _make_pipeline()
         stream_manager.has_pending_updates_for_visible_segments.return_value = True
-        assert pipeline.should_recompose() is True
-
-    def test_staging_buffer_content_triggers_recompose(self):
-        pipeline, stream_manager = _make_pipeline()
-        stream_manager.get_buffer_status.return_value = {'staging_count': 1}
-        stream_manager.has_pending_updates_for_visible_segments.return_value = False
         assert pipeline.should_recompose() is True
 
     def test_sync_active_defers_pending_updates_to_cycle_boundary(self):

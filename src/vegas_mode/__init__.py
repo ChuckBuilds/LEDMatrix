@@ -6,8 +6,8 @@ plugins' content is composed into a single horizontally scrolling display.
 
 Components:
 - VegasModeCoordinator: Main orchestrator for Vegas mode
-- StreamManager: Manages plugin content streaming with 1-2 ahead buffering
-- RenderPipeline: Handles 125 FPS rendering with double-buffering
+- StreamManager: Plugin rotation, content fetching and pending-update tracking
+- RenderPipeline: Strip composition and per-frame rendering
 - PluginAdapter: Converts plugin content to scrollable images
 - VegasModeConfig: Configuration management
 """

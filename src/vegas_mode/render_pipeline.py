@@ -1,8 +1,8 @@
 """
 Render Pipeline for Vegas Mode
 
-Handles high-FPS (125 FPS) rendering with double-buffering for smooth scrolling.
-Uses the existing ScrollHelper for numpy-optimized scroll operations.
+Composes plugin content into one wide strip and renders the visible window of
+it each frame, using ScrollHelper for the numpy-backed scroll.
 """
 
 import logging
@@ -31,8 +31,9 @@ class RenderPipeline:
     Key responsibilities:
     - Compose content segments into scrollable image
     - Manage scroll position and velocity
-    - Handle 125 FPS rendering loop
-    - Double-buffer for hot-swap during updates
+    - Render one frame per call at the target FPS
+    - Extend the strip (continuous mode) or recompose and hot-swap it (swap
+      mode) as content changes
     - Track scroll cycle completion
     """
 
@@ -82,11 +83,6 @@ class RenderPipeline:
         # Configure scroll helper
         self._configure_scroll_helper()
 
-        # Double-buffer for composed images
-        self._active_scroll_image: Optional[Image.Image] = None
-        self._staging_scroll_image: Optional[Image.Image] = None
-        self._buffer_lock = threading.Lock()
-
         # Group prepared off the render thread, waiting to be appended.
         self._prepared_group = None
         # Plugins that need the shared canvas, appended one at a time.
@@ -96,13 +92,9 @@ class RenderPipeline:
         self._prefetch_lock = threading.Lock()
 
         # Render state
-        self._is_rendering = False
         self._cycle_complete = False
         self._segments_in_scroll: List[str] = []  # Plugin IDs in current scroll
 
-        # Timing
-        self._last_frame_time = 0.0
-        self._frame_interval = config.get_frame_interval()
         self._cycle_start_time = 0.0
 
         # Statistics
@@ -191,10 +183,6 @@ class RenderPipeline:
             if not self.scroll_helper.cached_image:
                 logger.error("ScrollHelper failed to create cached image")
                 return False
-
-            # Store reference to composed image
-            with self._buffer_lock:
-                self._active_scroll_image = self.scroll_helper.cached_image
 
             # Track which plugins are in this scroll (get safely via buffer status)
             self._segments_in_scroll = self.stream_manager.get_active_plugin_ids()
@@ -335,8 +323,6 @@ class RenderPipeline:
             element_gap=0,
         )
         if appended:
-            with self._buffer_lock:
-                self._active_scroll_image = self.scroll_helper.cached_image
             logger.info(
                 "[%s] Appended deferred content: strip now %dpx, %dpx ahead",
                 plugin_id, self.scroll_helper.total_scroll_width,
@@ -419,9 +405,6 @@ class RenderPipeline:
 
             # Keep a screen's worth behind the viewport as a safety margin.
             self.scroll_helper.drop_scrolled_prefix(keep_before=self.display_width)
-
-            with self._buffer_lock:
-                self._active_scroll_image = self.scroll_helper.cached_image
 
             self._segments_in_scroll = [pid for pid, _ in grouped]
             self.stats['composition_count'] += 1
@@ -603,7 +586,6 @@ class RenderPipeline:
 
         Returns True when:
         - Cycle is complete and we should start fresh
-        - Staging buffer has new content
         - A plugin currently visible in the scroll has pending updated data
           (e.g. a live score changed) — standalone (non-sync) mode only
         """
@@ -613,15 +595,10 @@ class RenderPipeline:
         # When multi-display sync is active, defer mid-cycle hot swaps until the
         # cycle ends naturally. Hot swaps block the render loop for 15-30ms while
         # the image is rebuilt, causing a freeze+jump that the follower perceives
-        # as a speed-up. Deferring to cycle boundaries keeps transitions clean.
-        # Staging buffer content is still pre-loaded; it just applies at cycle end.
+        # as a speed-up. Deferring to cycle boundaries keeps transitions clean;
+        # the pending updates are still applied, by the recompose at cycle end.
         if self.sync_manager is not None:
             return False
-
-        # Check if we need more content in the buffer
-        buffer_status = self.stream_manager.get_buffer_status()
-        if buffer_status['staging_count'] > 0:
-            return True
 
         # Trigger recompose when pending updates affect visible segments, so
         # live score/status changes reach the display within a few seconds
@@ -652,10 +629,12 @@ class RenderPipeline:
 
     def hot_swap_content(self) -> bool:
         """
-        Hot-swap to new composed content.
+        Refetch the plugins with pending updates and recompose the strip.
 
-        Called when staging buffer has updated content.
-        Swaps atomically to prevent visual glitches.
+        Swap mode only (continuous mode uses :meth:`refresh_updated_plugins`).
+        Called when :meth:`should_recompose` finds a visible plugin with
+        pending updates. The scroll resumes at the same relative position in
+        the rebuilt strip.
 
         Returns:
             True if swap occurred
@@ -668,9 +647,7 @@ class RenderPipeline:
             old_width = self.scroll_helper.total_scroll_width
             old_pos = self.scroll_helper.scroll_position
 
-            # Process any pending updates
             self.stream_manager.process_updates()
-            self.stream_manager.swap_buffers()
 
             # Recompose with updated content
             if self.compose_scroll_content():
@@ -792,7 +769,6 @@ class RenderPipeline:
         """
         old_fps = self.config.target_fps
         self.config = new_config
-        self._frame_interval = new_config.get_frame_interval()
 
         # Reconfigure scroll helper
         self._configure_scroll_helper()
@@ -804,10 +780,6 @@ class RenderPipeline:
         """Reset the render pipeline state."""
         self.scroll_helper.reset_scroll()
         self.scroll_helper.clear_cache()
-
-        with self._buffer_lock:
-            self._active_scroll_image = None
-            self._staging_scroll_image = None
 
         self._cycle_complete = False
         self._segments_in_scroll = []

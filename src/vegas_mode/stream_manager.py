@@ -54,10 +54,12 @@ class StreamManager:
     Manages streaming of plugin content for Vegas scroll mode.
 
     Key responsibilities:
-    - Maintain ordered list of plugins to stream
-    - Prefetch content 1-2 plugins ahead of current position
-    - Handle plugin data updates via double-buffer swap
-    - Manage content lifecycle and staleness
+    - Maintain the ordered (and priority-weighted) rotation of plugins
+    - Fill the active buffer with a cycle's worth of segments (swap mode), or
+      hand out the next group of plugins directly (continuous mode)
+    - Track plugins whose data changed in ``_pending_updates``, which
+      :meth:`process_updates` (swap mode) or
+      :meth:`invalidate_pending_updates` (continuous mode) consumes
     """
 
     def __init__(
@@ -78,10 +80,11 @@ class StreamManager:
         self.plugin_manager = plugin_manager
         self.plugin_adapter = plugin_adapter
 
-        # Content queue (double-buffered)
+        # Segments composed into the current cycle (swap mode only).
         self._active_buffer: Deque[ContentSegment] = deque()
-        self._staging_buffer: Deque[ContentSegment] = deque()
-        self._buffer_lock = threading.RLock()  # RLock for reentrant access
+        # Reentrant: _prefetch_content releases and re-acquires it around the
+        # slow fetch while a caller may already hold it.
+        self._buffer_lock = threading.RLock()
 
         # Plugin rotation state
         self._ordered_plugins: List[str] = []
@@ -97,7 +100,6 @@ class StreamManager:
         self.stats = {
             'segments_fetched': 0,
             'segments_served': 0,
-            'buffer_swaps': 0,
             'fetch_errors': 0,
         }
 
@@ -167,7 +169,6 @@ class StreamManager:
         with self._buffer_lock:
             return {
                 'active_count': len(self._active_buffer),
-                'staging_count': len(self._staging_buffer),
                 'total_plugins': len(self._ordered_plugins),
                 'current_index': self._current_index,
                 'prefetch_index': self._prefetch_index,
@@ -190,8 +191,9 @@ class StreamManager:
         """
         Mark a plugin as having updated data.
 
-        Called when a plugin's data changes. Triggers content refresh
-        for that plugin in the staging buffer.
+        Only records it in ``_pending_updates``. The refetch happens later,
+        in :meth:`process_updates` (swap mode) or by dropping the plugin's
+        caches in :meth:`invalidate_pending_updates` (continuous mode).
 
         Args:
             plugin_id: Plugin that was updated
@@ -308,19 +310,6 @@ class StreamManager:
             self._active_buffer = new_buffer
 
         logger.debug("Processed in-place updates for %d plugins", len(updated_plugins))
-
-    def swap_buffers(self) -> None:
-        """
-        Swap active and staging buffers.
-
-        Called when staging buffer has updated content ready.
-        """
-        with self._buffer_lock:
-            if self._staging_buffer:
-                # True swap: staging becomes active, old active is discarded
-                self._active_buffer, self._staging_buffer = self._staging_buffer, deque()
-                self.stats['buffer_swaps'] += 1
-                logger.debug("Swapped buffers, active now has %d segments", len(self._active_buffer))
 
     def refresh(self) -> None:
         """
@@ -789,7 +778,6 @@ class StreamManager:
         """Reset the stream manager state."""
         with self._buffer_lock:
             self._active_buffer.clear()
-            self._staging_buffer.clear()
             self._current_index = 0
             self._prefetch_index = 0
             self._pending_updates.clear()

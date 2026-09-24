@@ -133,7 +133,6 @@ class TestInvalidatePendingUpdates:
 class TestContinuousModeReachesTheRefresh:
     def _pipeline(self):
         stream = MagicMock()
-        stream.get_buffer_status.return_value = {'staging_count': 0}
         return RenderPipeline(VegasModeConfig(), FakeDisplayManager(), stream), stream
 
     def test_refresh_delegates_to_the_stream_manager(self):
@@ -161,7 +160,6 @@ class TestContinuousModeReachesTheRefresh:
         pipeline.refresh_updated_plugins()
 
         assert pipeline.scroll_helper.scroll_position == 1234
-        stream.swap_buffers.assert_not_called()
         stream.process_updates.assert_not_called()
 
 
