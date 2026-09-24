@@ -102,6 +102,8 @@ class RenderPipeline:
         self._cycle_complete = False
         self._segments_in_scroll: List[str] = []  # Plugin IDs in current scroll
 
+        # The sub-pixel path's pacing; the crisp path solves its own (frame_interval).
+        self._frame_interval = config.get_frame_interval()
         self._cycle_start_time = 0.0
 
         # Statistics
@@ -883,6 +885,7 @@ class RenderPipeline:
         """
         old_fps = self.config.target_fps
         self.config = new_config
+        self._frame_interval = new_config.get_frame_interval()
 
         # Reconfigure scroll helper
         self._configure_scroll_helper()
