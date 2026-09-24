@@ -120,6 +120,13 @@ floor on the release that ships them):
   when the count is only known to the display service.
 - The Logs tab has a **Plugin errors** panel: per-plugin counts, repeating
   errors and a Clear button.
+- Credential redaction in exception text (`src/redaction.py`) takes time
+  proportional to the text, not its square. Two patterns were quadratic: URL
+  `user:password@`, on a long unbroken run of letters or digits (a hex digest,
+  an ID), and `Authorization:` followed by a long run of whitespace. Either
+  used to stall every thread of the display service for up to seconds each
+  time the snapshot was published: about 0.5s for 20k characters of hex, 8s
+  for 20k spaces. What gets redacted is unchanged.
 
 ### Removed
 
