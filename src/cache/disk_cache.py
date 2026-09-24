@@ -7,6 +7,7 @@ Handles persistent disk-based caching with atomic writes and error recovery.
 import json
 import math
 import os
+import re
 import stat
 import time
 import tempfile
@@ -96,6 +97,40 @@ def _replace_nonfinite(obj: Any) -> Any:
 # Without the read half, installing orjson turned every legacy record holding a
 # NaN into a "corrupted cache file" that DiskCache.get logged as an error and
 # deleted. Both halves are covered by test/test_cache_nonfinite_floats.py.
+
+
+#: Enough of a record to hold its header: ``{"timestamp":<float>,"ttl":<n>,``.
+_HEAD_BYTES = 256
+
+#: A record written with its header first (CacheManager.set does). Anything
+#: else -- older files with "data" first, records from other writers -- does not
+#: match and is parsed in full, as before.
+_HEAD_RE = re.compile(
+    rb'\A\s*\{\s*"timestamp"\s*:\s*(-?[0-9][0-9.eE+-]*)\s*'
+    rb'(?:,\s*"ttl"\s*:\s*(-?[0-9][0-9.eE+-]*))?\s*[,}]'
+)
+
+
+def _stale_from_head(head: bytes, max_age: Optional[int], now: float) -> bool:
+    """True when a record's header alone shows it has expired.
+
+    Mirrors the expiry rule in DiskCache.get: a per-entry ttl wins over the
+    caller's max_age, and no limit at all means never stale. False whenever the
+    header cannot be read, so the full parse decides as it always did.
+    """
+    match = _HEAD_RE.match(head)
+    if not match:
+        return False
+    try:
+        timestamp = float(match.group(1))
+        limit = max_age
+        if match.group(2) is not None:
+            ttl = float(match.group(2))
+            if ttl >= 0:
+                limit = ttl
+    except ValueError:
+        return False
+    return limit is not None and (now - timestamp) > limit
 
 
 if orjson is not None:
@@ -266,6 +301,14 @@ class DiskCache:
         try:
             with self._lock:
                 with open(cache_path, 'rb') as f:
+                    # Decide staleness from the header before paying for the
+                    # parse. A stale read is the common case for the biggest
+                    # records (a season schedule is re-fetched when its cache
+                    # expires), and parsing 53MB to throw it away held the GIL
+                    # for ~1.8s -- a visible freeze on the panel.
+                    if _stale_from_head(f.read(_HEAD_BYTES), max_age, time.time()):
+                        return None
+                    f.seek(0)
                     record = _loads(f.read())
             
             # Determine record timestamp (prefer embedded, else file mtime)
