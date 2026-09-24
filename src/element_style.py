@@ -90,6 +90,14 @@ def _cache_put(key: Tuple[str, int], value: Tuple[Any, int]) -> None:
 # Config keys a style element block carries, in schema/UI order.
 _STYLE_KEYS = ('font', 'font_size', 'text_color', 'visible', 'align')
 
+#: Bounds on a user-set ``customization.layout.<element>.scale``. They are the
+#: Scale field's minimum and maximum in the generated schema, and every reader
+#: (coerce_scale, element_scale, LogoHelper.load_logo) clamps to them, so the
+#: web form and the renderer agree. Below 0.1 a logo is a dot; ten times a
+#: panel-sized box is already far off the panel.
+MIN_ELEMENT_SCALE = 0.1
+MAX_ELEMENT_SCALE = 10.0
+
 
 @dataclass(frozen=True)
 class ElementStyle:
@@ -457,8 +465,8 @@ def _offset_block_from_spec(element_key: str,
             'title': 'Scale',
             'description': 'Size multiplier; 1 is the shipped size.',
             'default': 1.0,
-            'minimum': 0.1,
-            'maximum': 10.0,
+            'minimum': MIN_ELEMENT_SCALE,
+            'maximum': MAX_ELEMENT_SCALE,
             'x-advanced': True,
         }
         if isinstance(scale_spec, dict):
@@ -1010,12 +1018,15 @@ def _coerce_align(value: Any) -> Optional[str]:
     return None
 
 
-def _coerce_scale(value: Any, default: float) -> float:
-    """A positive size multiplier, or ``default``.
+def coerce_scale(value: Any, default: float = 1.0) -> float:
+    """A usable size multiplier: ``value`` clamped to
+    [MIN_ELEMENT_SCALE, MAX_ELEMENT_SCALE], or ``default``.
 
-    Clamped rather than merely validated: a scale of 0 or a negative one is
-    a zero-or-inverted image, and the panel is 32 pixels tall -- a typo
-    should cost a wrong size, not a crash inside PIL.
+    ``default`` is returned for anything that is not a finite positive number
+    (None, a bool, a string, 0, a negative, NaN, infinity): those are typos,
+    and a typo should cost the shipped size, not a blank or inverted image or
+    a crash inside PIL. A positive number outside the range is a real request
+    for "smaller" or "bigger", so it is clamped rather than ignored.
     """
     if isinstance(value, bool) or value is None:
         return default
@@ -1023,9 +1034,9 @@ def _coerce_scale(value: Any, default: float) -> float:
         scale = float(value)
     except (TypeError, ValueError):
         return default
-    if scale <= 0:
+    if not math.isfinite(scale) or scale <= 0:
         return default
-    return min(scale, 10.0)
+    return min(max(scale, MIN_ELEMENT_SCALE), MAX_ELEMENT_SCALE)
 
 
 def _coerce_offset(value: Any, default: int, element_key: str,
@@ -1194,7 +1205,7 @@ def element_scale(config: Any, element_key: str, default: float = 1.0,
     try:
         value = _element_field(config, element_key, 'scale', mode,
                                in_layout=True)
-        return default if value is None else _coerce_scale(value, default)
+        return default if value is None else coerce_scale(value, default)
     except Exception as e:
         logger.warning("Error reading scale for %s: %s", element_key, e)
         return default
@@ -1497,7 +1508,7 @@ class ElementStyleResolver:
             user_forced_color=bool(color_forced),
             visible=_coerce_bool(visible, True),
             align=_coerce_align(align),
-            scale=_coerce_scale(scale, 1.0),
+            scale=coerce_scale(scale, 1.0),
         )
 
     def _classic_style(self, classic_font: str, classic_size: int,

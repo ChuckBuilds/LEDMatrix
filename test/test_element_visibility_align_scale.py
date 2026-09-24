@@ -185,3 +185,35 @@ class TestLogoScale:
     def test_an_unusable_scale_is_ignored(self, logo, bad):
         helper = LogoHelper(display_width=64, display_height=32)
         assert helper.load_logo("AAA", logo, 32, 32, scale=bad).size == (32, 32)
+
+    def test_a_scale_the_schema_allows_is_applied(self, logo):
+        """The Scale field's maximum is honoured, not reset to 1.0."""
+        from src.element_style import MAX_ELEMENT_SCALE
+        helper = LogoHelper(display_width=64, display_height=32)
+        big = helper.load_logo("AAA", logo, 4, 4, scale=MAX_ELEMENT_SCALE)
+        assert big.size == (40, 40)
+
+    def test_a_scale_beyond_the_range_is_clamped(self, logo):
+        from src.element_style import MAX_ELEMENT_SCALE, MIN_ELEMENT_SCALE
+        helper = LogoHelper(display_width=64, display_height=32)
+        assert helper.load_logo("AAA", logo, 4, 4, scale=MAX_ELEMENT_SCALE * 3).size == (40, 40)
+        assert helper.load_logo("AAA", logo, 40, 40, scale=MIN_ELEMENT_SCALE / 2).size == (4, 4)
+
+
+class TestScaleCoercion:
+    """One range for the schema, element_scale and LogoHelper."""
+
+    def test_schema_bounds_are_the_clamp_bounds(self):
+        from src.element_style import (MAX_ELEMENT_SCALE, MIN_ELEMENT_SCALE,
+                                       _offset_block_from_spec)
+        prop = _offset_block_from_spec("home_logo", {"scale": True})["properties"]["scale"]
+        assert (prop["minimum"], prop["maximum"]) == (MIN_ELEMENT_SCALE, MAX_ELEMENT_SCALE)
+
+    @pytest.mark.parametrize("raw,expected", [
+        (0.5, 0.5), (25, 10.0), (0.01, 0.1),
+        (0, 1.0), (-2, 1.0), ("x", 1.0), (True, 1.0),
+        (float("nan"), 1.0), (float("inf"), 1.0),
+    ])
+    def test_element_scale_clamps_and_rejects(self, raw, expected):
+        cfg = {"customization": {"layout": {"home_logo": {"scale": raw}}}}
+        assert element_scale(cfg, "home_logo") == expected

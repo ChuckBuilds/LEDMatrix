@@ -32,31 +32,6 @@ from src.common.permission_utils import (
 # trade for not re-warning about a file nobody is going to add.
 MISSING_LOGO_RECHECK_SECONDS = 3600.0
 
-#: Bounds on a user-supplied logo scale. Wide enough to be useful, closed
-#: enough that a typo cannot ask for a 4000px image on a 64px panel.
-MIN_LOGO_SCALE = 0.05
-MAX_LOGO_SCALE = 8.0
-
-
-def _usable_scale(scale) -> float:
-    """A scale that can be applied, or 1.0.
-
-    Anything unusable -- None, a string, zero, a negative, NaN, infinity --
-    means "as shipped", because the alternative is a blank panel from a
-    mistyped number.
-    """
-    try:
-        value = float(scale)
-    except (TypeError, ValueError):
-        return 1.0
-    if value != value or value in (float('inf'), float('-inf')):
-        return 1.0
-    if value < MIN_LOGO_SCALE or value > MAX_LOGO_SCALE:
-        return 1.0
-    return value
-
-
-
 # Well above any real team logo; bounds what a remote URL can write to disk.
 # The cap for every logo download: src.logo_downloader.fetch_logo uses it too.
 MAX_LOGO_BYTES = 10 * 1024 * 1024
@@ -122,9 +97,11 @@ class LogoHelper:
             max_width: Maximum width (defaults to display_width * 1.5)
             max_height: Maximum height (defaults to display_height * 1.5)
             scale: User's size multiplier for this image, from
-                ``customization.layout.<element>.scale``. 1.0 is untouched and
-                takes exactly the path it always did. Callers hold the config,
-                so they resolve the element name; this only applies the number.
+                ``customization.layout.<element>.scale``; 1.0 leaves the box
+                as is. Callers hold the config, so they resolve the element
+                name; this only applies the number, clamped to
+                src.element_style's MIN_ELEMENT_SCALE..MAX_ELEMENT_SCALE.
+                A value that is not a finite positive number means 1.0.
 
         Returns:
             PIL Image object or None if loading fails
@@ -141,7 +118,10 @@ class LogoHelper:
             max_width = int(self.display_width * 1.5)
         if max_height is None:
             max_height = int(self.display_height * 1.5)
-        scale = _usable_scale(scale)
+        # Imported here: src.element_style imports src.common (for bdf_font),
+        # whose __init__ imports this module.
+        from src.element_style import coerce_scale
+        scale = coerce_scale(scale, 1.0)
         if scale != 1.0:
             max_width = max(1, int(round(max_width * scale)))
             max_height = max(1, int(round(max_height * scale)))
