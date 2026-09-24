@@ -21,6 +21,28 @@ moved to the prefetch thread still needs the GIL, and the render thread waits
 for it (risk 5 below). The late rate did not improve overall. The 1–2 s
 freezes appear in both builds and have a separate, not yet identified cause.
 
+The GIL fix, measured on hdpi (90 px/s, `pwm_bits` 8, preview open, 8-minute
+runs after a 2-minute warm-up, order A B C C B A, 2026-09-24). Each arm pools
+two runs, about 81,000 frames:
+
+| arm | late | by 1 | 2 | 3–5 | 6+ | 2+ late per 10k frames | freezes |
+|---|---|---|---|---|---|---|---|
+| A: step 1 as is | 0.90% | 575 | 64 | 91 | 9 | 20.1 | 0 |
+| B: `switch_interval_ms` 1 | 0.78% | 510 | 105 | 23 | 2 | 15.8 | 0 |
+| C: `prefetch_gate` | **0.60%** | 471 | 11 | 7 | 2 | **2.5** | 0 |
+
+The gate removes the frames the render thread spent waiting for the GIL, and
+it costs the prefetch nothing that shows: it parked the thread for 3–6 s per
+run, and the next group was ready at every strip extension in every arm.
+`prefetch_gate` is therefore on by default; `switch_interval_ms` stays an
+off-by-default experiment. What is left is almost all one refresh late, which
+is the per-frame budget (a 6.75 ms p50 blit in a refresh the panel holds at
+83–85 Hz while rendering), not contention.
+
+The runs restart the service, so the hourly sports refresh never fell inside
+one. That refresh is its own case: about twenty ESPN chunk-fetch threads at
+once, which the gate does not cover (it gates only the prefetch thread).
+
 ## The problem
 
 Vegas mode builds its ticker from every plugin's content. Most of that work
@@ -285,9 +307,8 @@ updates are disabled while sync is active.
    it, and a waiting thread only gets it back after the switch interval
    (default 5 ms). Expect some single-refresh late frames while a prefetch
    runs. Measure with the soak. A render process separate from plugin work
-   is the structural answer (the "native presenter" step). Two opt-in
-   experiments try to get most of the way first, both off by default until
-   the soak says otherwise:
+   is the structural answer (the "native presenter" step). Two experiments
+   get most of the way first (results under Status, above):
    - `vegas_scroll.switch_interval_ms` lowers the switch interval for a Vegas
      run (1 ms is the obvious try), so the render thread waits at most that
      long behind bytecode. It does nothing for a C call that keeps the GIL.
@@ -297,7 +318,8 @@ updates are disabled while sync is active.
      parks it the rest of the time. That covers C calls too, since the gate is
      checked before each one starts. It never parks the thread while it holds
      a lock the render thread takes, and never for more than 50 ms. It needs
-     the rebuilt binding, which releases the GIL during the swap.
+     the rebuilt binding, which releases the GIL during the swap. On by
+     default.
 
 ## What this does not fix
 

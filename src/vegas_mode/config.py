@@ -87,16 +87,17 @@ class VegasModeConfig:
     # 5ms. Plugin rendering on the prefetch thread and plugin updates hold the
     # GIL in Pillow and Python code, and a frame waiting its turn for 5ms at a
     # time misses its refresh. 0 leaves the interpreter default alone.
-    # Experimental: measured with scripts/frame_soak.py before it gets a default.
+    # Experimental. On hdpi it did less than prefetch_gate (0.90% -> 0.78% late
+    # against 0.60%; see docs/OFFSCREEN_RENDERING.md), so it stays off.
     switch_interval_ms: float = 0.0
 
     # Let the prefetch thread run Python only while the render thread is
     # blocked waiting for vsync, and park it the rest of the time, so the
     # render thread never waits for the GIL when its refresh comes round. Needs
-    # a binding that releases the GIL in SwapOnVSync; ignored otherwise.
-    # Experimental: see src/common/render_gate.py and measure with
-    # scripts/frame_soak.py before it gets a default.
-    prefetch_gate: bool = False
+    # a binding that releases the GIL in SwapOnVSync; off otherwise. On hdpi
+    # it cut frames two or more refreshes late eightfold, and late frames
+    # overall from 0.90% to 0.60%. See src/common/render_gate.py.
+    prefetch_gate: bool = True
 
     # Keep one continuous strip, extending it with the next group of plugins as
     # the scroll approaches the end, instead of composing a fresh strip and
@@ -229,7 +230,7 @@ class VegasModeConfig:
             continuous_scroll=vegas_config.get('continuous_scroll', True),
             offscreen_prefetch=bool(vegas_config.get('offscreen_prefetch', True)),
             switch_interval_ms=float(vegas_config.get('switch_interval_ms', 0.0) or 0.0),
-            prefetch_gate=bool(vegas_config.get('prefetch_gate', False)),
+            prefetch_gate=bool(vegas_config.get('prefetch_gate', True)),
             extend_threshold_screens=float(
                 vegas_config.get('extend_threshold_screens', 2.0)),
             auto_trim=vegas_config.get('auto_trim', True),

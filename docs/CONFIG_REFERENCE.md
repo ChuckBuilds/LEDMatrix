@@ -128,6 +128,8 @@ Read by `src/vegas_mode/config.py` (`VegasScrollConfig.from_config`). See
 | `min_cut_gap` | int, `6` |
 | `continuous_scroll` | bool, `true` |
 | `offscreen_prefetch` | bool, `true` — render every plugin's ticker content on the background thread, each on its own canvas. `false` restores handing canvas-bound plugins to the render thread, one pause at a time. Temporary; see [OFFSCREEN_RENDERING.md](OFFSCREEN_RENDERING.md) |
+| `prefetch_gate` | bool, `true` — let that background thread run Python only while the render thread is waiting for the panel, so the render thread never waits for the GIL when a refresh comes round. Only takes effect with the rebuilt rgbmatrix binding (`scripts/build_rgbmatrix_nogil.sh`). See [OFFSCREEN_RENDERING.md](OFFSCREEN_RENDERING.md) |
+| `switch_interval_ms` | float, `0` — experimental: shorten Python's GIL switch interval to this many ms while Vegas runs. `0` leaves the default (5 ms) alone |
 | `smooth_scroll` | bool, `true` — move a whole number of pixels per panel refresh, locked to vsync. `scroll_speed` is snapped to the nearest speed the panel can show that way (at 95Hz: 95, 47.5, 31.7 px/s…), measured against the panel's real refresh rate once scrolling starts |
 | `sub_pixel_blend` | bool, `false` — the older smoothing: advance by elapsed time and blend neighbouring pixel columns. Looks anti-aliased in the web preview but shimmers on the panel and is not locked to the refresh. Overrides `smooth_scroll` when on |
 | `extend_threshold_screens` | float, `2.0` |

@@ -340,12 +340,14 @@ class VegasModeCoordinator:
         if getattr(self.display_manager, 'render_gate', None) is not None:
             return
         releases = render_gate.swap_releases_gil()
+        if releases is None:
+            logger.debug("Vegas: no prefetch gate -- no hardware binding loaded")
+            return
         if not releases:
-            logger.warning(
-                "Vegas: prefetch_gate ignored -- %s",
-                "this rgbmatrix binding keeps the GIL in SwapOnVSync "
-                "(scripts/build_rgbmatrix_nogil.sh)" if releases is False
-                else "no hardware binding loaded")
+            # On by default, so this is every stock install: say so once per
+            # run, not as a warning.
+            logger.info("Vegas: no prefetch gate -- this rgbmatrix binding keeps "
+                        "the GIL in SwapOnVSync (scripts/build_rgbmatrix_nogil.sh)")
             return
         gate = render_gate.RenderGate()
         # Locks the render thread takes too: never park the prefetch holding one.

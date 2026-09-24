@@ -311,9 +311,15 @@ class TestVegasWiring:
         c.display_manager = type("DM", (), {"render_gate": None})()
         return c
 
-    def test_off_by_default(self, monkeypatch):
+    def test_on_by_default(self, monkeypatch):
         monkeypatch.setattr(render_gate, "swap_releases_gil", lambda: True)
         c = self._coordinator()
+        c._install_render_gate()
+        assert isinstance(c.display_manager.render_gate, RenderGate)
+
+    def test_can_be_turned_off(self, monkeypatch):
+        monkeypatch.setattr(render_gate, "swap_releases_gil", lambda: True)
+        c = self._coordinator(prefetch_gate=False)
         c._install_render_gate()
         assert c.display_manager.render_gate is None
 
@@ -338,12 +344,12 @@ class TestVegasWiring:
 
     def test_read_from_config(self):
         from src.vegas_mode.config import VegasModeConfig
-        on = VegasModeConfig.from_config(
-            {"display": {"vegas_scroll": {"prefetch_gate": True}}})
-        assert on.prefetch_gate is True
-        assert on.to_dict()["prefetch_gate"] is True
+        off = VegasModeConfig.from_config(
+            {"display": {"vegas_scroll": {"prefetch_gate": False}}})
+        assert off.prefetch_gate is False
+        assert off.to_dict()["prefetch_gate"] is False
         assert VegasModeConfig.from_config(
-            {"display": {"vegas_scroll": {}}}).prefetch_gate is False
+            {"display": {"vegas_scroll": {}}}).prefetch_gate is True
 
     def test_the_prefetch_runs_inside_the_gate(self):
         from src.vegas_mode.render_pipeline import RenderPipeline
