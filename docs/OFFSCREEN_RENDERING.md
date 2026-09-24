@@ -1,8 +1,25 @@
 # Offscreen Rendering
 
-**Status: proposed (2026-09-24).** Nothing here is implemented yet. This is the
-design for review. When it lands, this file becomes the reference for how
-plugin content is rendered off the render thread.
+**Status (2026-09-24):** step 1, offscreen rendering, is implemented
+(`DisplayManager.offscreen()`, the adapter on the prefetch thread, the plugin
+lock). Steps 2 and 3 are proposed. When all three land, this file becomes the
+reference for how plugin content is rendered off the render thread.
+
+First soak of step 1 on hdpi (50 px/s, `pwm_bits` 7, preview open, 8-minute
+runs, A/B/B/A):
+
+| build | late | by 1 | 2 | 3–5 | 6+ | freezes | render-thread fetches |
+|---|---|---|---|---|---|---|---|
+| #628 | 0.53% | 82 | 2 | 3 | 2 | 3 | 6 |
+| step 1 | 0.63% | 78 | 63 | 17 | 2 | 1 | 0 |
+| step 1 | 0.42% | 77 | 23 | 10 | 0 | 0 | 0 |
+| #628 | 0.37% | 84 | 5 | 3 | 3 | 2 | 14 |
+
+It does what it was built to: no plugin is fetched on the render thread, and
+freezes fell from 5 to 1. But frames 2–5 refreshes late rose. The rendering
+moved to the prefetch thread still needs the GIL, and the render thread waits
+for it (risk 5 below). The late rate did not improve overall. The 1–2 s
+freezes appear in both builds and have a separate, not yet identified cause.
 
 ## The problem
 
