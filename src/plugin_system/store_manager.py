@@ -22,14 +22,15 @@ from pathlib import Path
 from typing import List, Dict, Optional, Any, Tuple, Set
 import logging
 
-from urllib.parse import urlparse
-
 from src.common.permission_utils import sudo_remove_directory, install_requirements_file
 from src.plugin_system.plugin_loader import (
     requirements_has_real_deps, requirements_are_satisfied, find_trusted_subdir
 )
 from src.plugin_system.plugin_dirs import (
     BACKUP_MARKER, PluginDirectoryIndex, resolve_plugin_dir, store_search_dirs,
+)
+from src.plugin_system.repo_urls import (
+    USER_AGENT, github_api_headers, github_owner_repo, normalize_repo_url, same_repo,
 )
 
 try:
@@ -368,13 +369,7 @@ class PluginStoreManager:
         # Validate token by making a lightweight API call to /user endpoint
         try:
             api_url = "https://api.github.com/user"
-            headers = {
-                'Accept': 'application/vnd.github.v3+json',
-                'User-Agent': 'LEDMatrix-Plugin-Manager/1.0',
-                'Authorization': f'token {token}'
-            }
-            
-            response = requests.get(api_url, headers=headers, timeout=5)
+            response = requests.get(api_url, headers=github_api_headers(token), timeout=5)
             
             if response.status_code == 200:
                 # Token is valid
@@ -535,134 +530,107 @@ class PluginStoreManager:
             self.logger.debug(f"Error validating manifest schema for {plugin_id}: {e}")
             return []
 
+    _EMPTY_REPO_INFO: Dict[str, Any] = {
+        'stars': 0,
+        'forks': 0,
+        'open_issues': 0,
+        'updated_at_iso': '',
+        'last_commit_iso': '',
+        'last_commit_date': '',
+        'language': '',
+        'license': '',
+        'default_branch': 'main',
+    }
+
     def _get_github_repo_info(self, repo_url: str) -> Dict[str, Any]:
-        """Fetch GitHub repository information (stars, etc.)"""
-        # Extract owner/repo from URL
+        """GitHub metadata for a repository (stars, default branch, last push).
+
+        Returns zeroed defaults (``_EMPTY_REPO_INFO``) for a non-GitHub URL or
+        when GitHub cannot be asked and nothing is cached.
+        """
         try:
-            # Handle different URL formats
-            _parsed_url = urlparse(repo_url)
-            if _parsed_url.hostname in ('github.com', 'www.github.com'):
-                parts = repo_url.strip('/').split('/')
-                if len(parts) >= 2:
-                    owner = parts[-2]
-                    repo = parts[-1]
-                    if repo.endswith('.git'):
-                        repo = repo[:-4]
+            owner_repo = github_owner_repo(repo_url)
+            if owner_repo is None:
+                return dict(self._EMPTY_REPO_INFO)
+            owner, repo = owner_repo
+            cache_key = f"{owner}/{repo}"
 
-                    cache_key = f"{owner}/{repo}"
+            if cache_key in self.github_cache:
+                cached_time, cached_data = self.github_cache[cache_key]
+                if time.time() - cached_time < self.cache_timeout:
+                    return cached_data
 
-                    # Check cache first
-                    if cache_key in self.github_cache:
-                        cached_time, cached_data = self.github_cache[cache_key]
-                        if time.time() - cached_time < self.cache_timeout:
-                            return cached_data
+            api_url = f"https://api.github.com/repos/{owner}/{repo}"
+            try:
+                response = requests.get(
+                    api_url, headers=github_api_headers(self.github_token), timeout=10)
+            except requests.RequestException as req_err:
+                # Network error: prefer a stale cache hit over an empty
+                # default so the UI keeps working on a flaky Pi WiFi link.
+                # Bump the cached entry's timestamp into a short backoff
+                # window so subsequent requests serve the stale payload
+                # cheaply instead of re-hitting the network on every request.
+                if cache_key in self.github_cache:
+                    _, stale = self.github_cache[cache_key]
+                    self._record_cache_backoff(self.github_cache, cache_key, self.cache_timeout, stale)
+                    self.logger.warning(
+                        "GitHub repo info fetch failed for %s (%s); serving stale cache.",
+                        cache_key, req_err,
+                    )
+                    return stale
+                raise
 
-                    # Fetch from GitHub API
-                    api_url = f"https://api.github.com/repos/{owner}/{repo}"
-                    headers = {
-                        'Accept': 'application/vnd.github.v3+json',
-                        'User-Agent': 'LEDMatrix-Plugin-Manager/1.0'
-                    }
-                    
-                    # Add authentication if token is available
-                    if self.github_token:
-                        headers['Authorization'] = f'token {self.github_token}'
+            if response.status_code == 200:
+                data = response.json()
+                pushed_at = data.get('pushed_at', '') or data.get('updated_at', '')
+                repo_info = {
+                    'stars': data.get('stargazers_count', 0),
+                    'forks': data.get('forks_count', 0),
+                    'open_issues': data.get('open_issues_count', 0),
+                    'updated_at_iso': data.get('updated_at', ''),
+                    'last_commit_iso': pushed_at,
+                    'last_commit_date': self._iso_to_date(pushed_at),
+                    'language': data.get('language', ''),
+                    'license': data.get('license', {}).get('name', '') if data.get('license') else '',
+                    'default_branch': data.get('default_branch', 'main')
+                }
+                self.github_cache[cache_key] = (time.time(), repo_info)
+                return repo_info
 
-                    try:
-                        response = requests.get(api_url, headers=headers, timeout=10)
-                    except requests.RequestException as req_err:
-                        # Network error: prefer a stale cache hit over an
-                        # empty default so the UI keeps working on a flaky
-                        # Pi WiFi link. Bump the cached entry's timestamp
-                        # into a short backoff window so subsequent
-                        # requests serve the stale payload cheaply instead
-                        # of re-hitting the network on every request.
-                        if cache_key in self.github_cache:
-                            _, stale = self.github_cache[cache_key]
-                            self._record_cache_backoff(self.github_cache, cache_key, self.cache_timeout, stale)
-                            self.logger.warning(
-                                "GitHub repo info fetch failed for %s (%s); serving stale cache.",
-                                cache_key, req_err,
-                            )
-                            return stale
-                        raise
+            if response.status_code == 403:
+                # Rate limit or authentication issue. A stale star count is
+                # better than a reset to zero, and the backoff bump stops the
+                # store hammering the API while rate-limited.
+                if cache_key in self.github_cache:
+                    _, stale = self.github_cache[cache_key]
+                    self._record_cache_backoff(self.github_cache, cache_key, self.cache_timeout, stale)
+                    self.logger.warning(
+                        "GitHub API 403 for %s; serving stale cache.", cache_key,
+                    )
+                    return stale
+                if not self.github_token:
+                    self.logger.warning(
+                        "GitHub API rate limit likely exceeded (403). "
+                        "Add a GitHub personal access token to config/config_secrets.json "
+                        "under 'github.api_token' to increase rate limits from 60 to 5000/hour."
+                    )
+                else:
+                    self.logger.warning(
+                        f"GitHub API request failed: 403 for {api_url}. "
+                        f"Your token may have insufficient permissions or rate limit exceeded."
+                    )
+            else:
+                self.logger.warning(f"GitHub API request failed: {response.status_code} for {api_url}")
+                if cache_key in self.github_cache:
+                    _, stale = self.github_cache[cache_key]
+                    self._record_cache_backoff(self.github_cache, cache_key, self.cache_timeout, stale)
+                    return stale
 
-                    if response.status_code == 200:
-                        data = response.json()
-                        pushed_at = data.get('pushed_at', '') or data.get('updated_at', '')
-                        repo_info = {
-                            'stars': data.get('stargazers_count', 0),
-                            'forks': data.get('forks_count', 0),
-                            'open_issues': data.get('open_issues_count', 0),
-                            'updated_at_iso': data.get('updated_at', ''),
-                            'last_commit_iso': pushed_at,
-                            'last_commit_date': self._iso_to_date(pushed_at),
-                            'language': data.get('language', ''),
-                            'license': data.get('license', {}).get('name', '') if data.get('license') else '',
-                            'default_branch': data.get('default_branch', 'main')
-                        }
-
-                        # Cache the result
-                        self.github_cache[cache_key] = (time.time(), repo_info)
-                        return repo_info
-                    elif response.status_code == 403:
-                        # Rate limit or authentication issue. If we have a
-                        # previously-cached value, serve it rather than
-                        # returning empty defaults — a stale star count is
-                        # better than a reset to zero. Apply the same
-                        # failure-backoff bump as the network-error path
-                        # so we don't hammer the API with repeat requests
-                        # while rate-limited.
-                        if cache_key in self.github_cache:
-                            _, stale = self.github_cache[cache_key]
-                            self._record_cache_backoff(self.github_cache, cache_key, self.cache_timeout, stale)
-                            self.logger.warning(
-                                "GitHub API 403 for %s; serving stale cache.", cache_key,
-                            )
-                            return stale
-                        if not self.github_token:
-                            self.logger.warning(
-                                "GitHub API rate limit likely exceeded (403). "
-                                "Add a GitHub personal access token to config/config_secrets.json "
-                                "under 'github.api_token' to increase rate limits from 60 to 5000/hour."
-                            )
-                        else:
-                            self.logger.warning(
-                                f"GitHub API request failed: 403 for {api_url}. "
-                                f"Your token may have insufficient permissions or rate limit exceeded."
-                            )
-                    else:
-                        self.logger.warning(f"GitHub API request failed: {response.status_code} for {api_url}")
-                        if cache_key in self.github_cache:
-                            _, stale = self.github_cache[cache_key]
-                            self._record_cache_backoff(self.github_cache, cache_key, self.cache_timeout, stale)
-                            return stale
-
-            return {
-                'stars': 0,
-                'forks': 0,
-                'open_issues': 0,
-                'updated_at_iso': '',
-                'last_commit_iso': '',
-                'last_commit_date': '',
-                'language': '',
-                'license': '',
-                'default_branch': 'main'
-            }
+            return dict(self._EMPTY_REPO_INFO)
 
         except Exception as e:
             self.logger.error(f"Error fetching GitHub repo info for {repo_url}: {e}")
-            return {
-                'stars': 0,
-                'forks': 0,
-                'open_issues': 0,
-                'updated_at_iso': '',
-                'last_commit_iso': '',
-                'last_commit_date': '',
-                'language': '',
-                'license': '',
-                'default_branch': 'main'
-            }
+            return dict(self._EMPTY_REPO_INFO)
 
     def _http_get_with_retries(self, url: str, *, timeout: int = 10, stream: bool = False, headers: Dict[str, str] = None, max_retries: int = 3, backoff_sec: float = 0.75):
         """
@@ -697,27 +665,17 @@ class PluginStoreManager:
             Registry dict with plugins list, or None if not found/invalid
         """
         try:
-            # Clean up URL
-            repo_url = repo_url.rstrip('/').replace('.git', '')
-            
-            # Try to find plugins.json in common locations
-            # First try root directory
-            registry_urls = []
+            repo_url = normalize_repo_url(repo_url)
 
-            # Extract owner/repo from URL
-            _parsed_repo_url = urlparse(repo_url)
-            if _parsed_repo_url.hostname in ('github.com', 'www.github.com'):
-                parts = repo_url.split('/')
-                if len(parts) >= 2:
-                    owner = parts[-2]
-                    repo = parts[-1]
-                    
-                    # Try common branch names
-                    for branch in ['main', 'master']:
-                        registry_urls.append(f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/plugins.json")
-                        registry_urls.append(f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/registry.json")
-            
-            # Try each URL
+            # plugins.json or registry.json at the root of main, then master.
+            registry_urls = []
+            owner_repo = github_owner_repo(repo_url)
+            if owner_repo is not None:
+                owner, repo = owner_repo
+                for branch in ['main', 'master']:
+                    registry_urls.append(f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/plugins.json")
+                    registry_urls.append(f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/registry.json")
+
             for url in registry_urls:
                 try:
                     response = self._http_get_with_retries(url, timeout=10)
@@ -959,46 +917,34 @@ class PluginStoreManager:
             Manifest data or None if not found
         """
         try:
-            # Convert repo URL to raw content URL
-            # https://github.com/user/repo -> https://raw.githubusercontent.com/user/repo/branch/manifest.json
-            _parsed_manifest_url = urlparse(repo_url)
-            if _parsed_manifest_url.hostname in ('github.com', 'www.github.com'):
-                # Handle different URL formats
-                repo_url = repo_url.rstrip('/')
-                if repo_url.endswith('.git'):
-                    repo_url = repo_url[:-4]
+            owner_repo = github_owner_repo(repo_url)
+            if owner_repo is None:
+                return None
+            owner, repo = owner_repo
 
-                parts = repo_url.split('/')
-                if len(parts) >= 2:
-                    owner = parts[-2]
-                    repo = parts[-1]
+            cache_key = f"{owner}/{repo}:{branch}:{manifest_path}"
+            if not force_refresh and cache_key in self.manifest_cache:
+                cached_time, cached_data = self.manifest_cache[cache_key]
+                if time.time() - cached_time < self.manifest_cache_timeout:
+                    return cached_data
 
-                    # Check cache first
-                    cache_key = f"{owner}/{repo}:{branch}:{manifest_path}"
-                    if not force_refresh and cache_key in self.manifest_cache:
-                        cached_time, cached_data = self.manifest_cache[cache_key]
-                        if time.time() - cached_time < self.manifest_cache_timeout:
-                            return cached_data
+            raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{manifest_path}"
+            response = self._http_get_with_retries(raw_url, timeout=10)
+            if response.status_code == 200:
+                result = response.json()
+                self.manifest_cache[cache_key] = (time.time(), result)
+                return result
+            if response.status_code == 404 and branch != "main":
+                raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/main/{manifest_path}"
+                response = self._http_get_with_retries(raw_url, timeout=10)
+                if response.status_code == 200:
+                    result = response.json()
+                    self.manifest_cache[cache_key] = (time.time(), result)
+                    return result
 
-                    raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{manifest_path}"
-
-                    response = self._http_get_with_retries(raw_url, timeout=10)
-                    if response.status_code == 200:
-                        result = response.json()
-                        self.manifest_cache[cache_key] = (time.time(), result)
-                        return result
-                    elif response.status_code == 404:
-                        # Try main branch instead
-                        if branch != "main":
-                            raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/main/{manifest_path}"
-                            response = self._http_get_with_retries(raw_url, timeout=10)
-                            if response.status_code == 200:
-                                result = response.json()
-                                self.manifest_cache[cache_key] = (time.time(), result)
-                                return result
-
-                    # Cache negative result
-                    self.manifest_cache[cache_key] = (time.time(), None)
+            # Cache the miss too, so a plugin without a manifest at this path
+            # is not re-fetched on every browse.
+            self.manifest_cache[cache_key] = (time.time(), None)
         except Exception as e:
             self.logger.debug(f"Could not fetch manifest from GitHub for {repo_url}: {e}")
 
@@ -1007,21 +953,11 @@ class PluginStoreManager:
     def _get_latest_commit_info(self, repo_url: str, branch: str = "main", force_refresh: bool = False) -> Optional[Dict[str, Any]]:
         """Return metadata about the latest commit on the given branch."""
         try:
-            if 'github.com' not in repo_url:
+            owner_repo = github_owner_repo(repo_url)
+            if owner_repo is None:
                 return None
+            owner, repo = owner_repo
 
-            repo_url = repo_url.rstrip('/')
-            if repo_url.endswith('.git'):
-                repo_url = repo_url[:-4]
-
-            parts = repo_url.split('/')
-            if len(parts) < 2:
-                return None
-
-            owner = parts[-2]
-            repo = parts[-1]
-
-            # Check cache first
             cache_key = f"{owner}/{repo}:{branch}"
             if not force_refresh and cache_key in self.commit_info_cache:
                 cached_time, cached_data = self.commit_info_cache[cache_key]
@@ -1029,14 +965,7 @@ class PluginStoreManager:
                     return cached_data
 
             branches_to_try = self._distinct_sequence([branch, 'main', 'master'])
-
-            headers = {
-                'Accept': 'application/vnd.github.v3+json',
-                'User-Agent': 'LEDMatrix-Plugin-Manager/1.0'
-            }
-
-            if self.github_token:
-                headers['Authorization'] = f'token {self.github_token}'
+            headers = github_api_headers(self.github_token)
 
             last_error = None
             for branch_name in branches_to_try:
@@ -1523,8 +1452,7 @@ class PluginStoreManager:
         branch_info = f" (branch: {branch})" if branch else ""
         self.logger.info(f"Installing plugin from custom URL: {repo_url}{branch_info}" + (f" (subpath: {plugin_path})" if plugin_path else ""))
         
-        # Clean up URL (remove .git suffix if present)
-        repo_url = repo_url.rstrip('/').replace('.git', '')
+        repo_url = normalize_repo_url(repo_url)
         
         temp_dir = None
         try:
@@ -1815,14 +1743,6 @@ class PluginStoreManager:
             pass
         return None, None
 
-    @staticmethod
-    def _normalize_repo_url(url: str) -> str:
-        """Normalize a GitHub repo URL for comparison (strip trailing / and .git)."""
-        url = url.rstrip('/')
-        if url.endswith('.git'):
-            url = url[:-4]
-        return url.lower()
-
     def _install_from_monorepo_api(self, repo_url: str, branch: str, plugin_subpath: str, target_path: Path) -> bool:
         """
         Install a plugin subdirectory using the GitHub Git Trees API.
@@ -1841,25 +1761,15 @@ class PluginStoreManager:
             True if successful, False to trigger ZIP fallback
         """
         try:
-            # Parse owner/repo from URL
-            clean_url = repo_url.rstrip('/')
-            if clean_url.endswith('.git'):
-                clean_url = clean_url[:-4]
-            parts = clean_url.split('/')
-            if len(parts) < 2:
+            owner_repo = github_owner_repo(repo_url)
+            if owner_repo is None:
                 return False
-            owner, repo = parts[-2], parts[-1]
+            owner, repo = owner_repo
 
             # Step 1: Get the recursive tree listing (1 API call)
             api_url = f"https://api.github.com/repos/{owner}/{repo}/git/trees/{branch}?recursive=true"
-            headers = {
-                'Accept': 'application/vnd.github.v3+json',
-                'User-Agent': 'LEDMatrix-Plugin-Manager/1.0'
-            }
-            if self.github_token:
-                headers['Authorization'] = f'token {self.github_token}'
-
-            tree_response = self._http_get_with_retries(api_url, timeout=15, headers=headers)
+            tree_response = self._http_get_with_retries(
+                api_url, timeout=15, headers=github_api_headers(self.github_token))
             if tree_response.status_code != 200:
                 self.logger.debug(f"Trees API returned {tree_response.status_code} for {owner}/{repo}")
                 return False
@@ -2028,7 +1938,7 @@ class PluginStoreManager:
         try:
             self.logger.info(f"Downloading from: {download_url}")
             # Allow redirects (GitHub archive URLs redirect to codeload.github.com)
-            response = self._http_get_with_retries(download_url, timeout=60, stream=True, headers={'User-Agent': 'LEDMatrix-Plugin-Manager/1.0'})
+            response = self._http_get_with_retries(download_url, timeout=60, stream=True, headers={'User-Agent': USER_AGENT})
             response.raise_for_status()
             
             # Download to temporary file
@@ -2665,7 +2575,7 @@ class PluginStoreManager:
                     # while the registry now points to the monorepo. Detect this and reinstall.
                     registry_repo = plugin_info_remote.get('repo', '')
                     local_remote = git_info.get('remote_url', '')
-                    if local_remote and registry_repo and self._normalize_repo_url(local_remote) != self._normalize_repo_url(registry_repo):
+                    if local_remote and registry_repo and not same_repo(local_remote, registry_repo):
                         self.logger.info(
                             f"Plugin {resolved_id} git remote ({local_remote}) differs from registry ({registry_repo}). "
                             f"Reinstalling from registry to migrate to new source."
