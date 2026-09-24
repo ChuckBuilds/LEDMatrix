@@ -67,7 +67,6 @@ class BaseOddsManager:
         self.request_timeout = 5
         # Set when a request fails; until then, skip the network entirely.
         self._skip_network_until = 0.0
-        self.cache_ttl = 1800       # 30 minutes default
         
         # Load configuration if available
         if config_manager:
@@ -84,12 +83,10 @@ class BaseOddsManager:
             
             self.update_interval = odds_config.get('update_interval', self.update_interval)
             self.request_timeout = odds_config.get('timeout', self.request_timeout)
-            self.cache_ttl = odds_config.get('cache_ttl', self.cache_ttl)
-            
+
             self.logger.debug(f"BaseOddsManager configuration loaded: "
                             f"update_interval={self.update_interval}s, "
-                            f"timeout={self.request_timeout}s, "
-                            f"cache_ttl={self.cache_ttl}s")
+                            f"timeout={self.request_timeout}s")
                             
         except Exception as e:
             self.logger.warning(f"Failed to load BaseOddsManager configuration: {e}")
@@ -167,15 +164,12 @@ class BaseOddsManager:
             odds_data = self._extract_espn_data(raw_data)
             if odds_data:
                 self.logger.info(f"Successfully extracted odds data: {odds_data}")
-            else:
-                self.logger.debug("No odds data available for this game")
-            
-            if odds_data:
                 self.cache_manager.set(cache_key, odds_data, ttl=interval)
                 self.logger.info(f"Saved odds data to cache for {cache_key} with TTL {interval}s")
             else:
                 self.logger.debug(f"No odds data available for {cache_key}")
-                # Cache the fact that no odds are available to avoid repeated API calls
+                # Cache the absence too, so the game is not re-requested
+                # on every update until the interval passes.
                 self.cache_manager.set(cache_key, {"no_odds": True}, ttl=interval)
             
             return odds_data
