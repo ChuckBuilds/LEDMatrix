@@ -1122,8 +1122,11 @@ user. In short:
   `fix_plugin_permissions.sh` are run with `sudo`.
 - `fix_web_permissions.sh` is run as the web interface user, without
   `sudo` (it refuses to run as root and calls `sudo` itself where needed).
-  It resets file ownership for that user. It does not write sudoers rules;
-  `scripts/install/configure_web_sudo.sh` does that.
+  It resets project file ownership for that user, then makes the two
+  helper scripts the web user may run as root (`safe_plugin_rm.sh`,
+  `safe_pip_install.sh`) root-owned again and restores `config_secrets.json`
+  to its owner, the `ledmatrix` group and mode `640`. It does not write
+  sudoers rules; `scripts/install/configure_web_sudo.sh` does that.
 
 Do not `chmod` the whole `config/` directory: `config_secrets.json` must stay
 `640`.

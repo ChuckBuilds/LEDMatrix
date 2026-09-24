@@ -30,9 +30,14 @@ system user.
   can read and write plugin files (manifests, configs, requirements
   installs).
 
-- **`fix_web_permissions.sh`** — Fixes permissions on log files,
-  systemd journal access, and the sudoers entries the web interface
-  needs to control the display service.
+- **`fix_web_permissions.sh`** — Adds you to the `systemd-journal` and
+  `adm` groups so the web UI can read logs, and makes the project
+  directory yours again, keeping the root-owned sudo helpers
+  (`safe_plugin_rm.sh`, `safe_pip_install.sh`) and `config_secrets.json`
+  the way the installer leaves them. Run it as the web interface's user,
+  **without** `sudo` (it refuses to run as root and calls `sudo` itself).
+  It does not write sudoers rules; that is
+  `scripts/install/configure_web_sudo.sh`.
 
 - **`safe_pip_install.sh`** — Installs a `requirements.txt` as root
   after checking it is the project's own or one under `plugin-repos/` or
@@ -67,7 +72,9 @@ Run these scripts only when:
 sudo ./scripts/fix_perms/fix_cache_permissions.sh
 sudo ./scripts/fix_perms/fix_assets_permissions.sh
 sudo ./scripts/fix_perms/fix_plugin_permissions.sh
-sudo ./scripts/fix_perms/fix_web_permissions.sh
+
+# Run as the web interface's user, without sudo (it asks for sudo itself)
+./scripts/fix_perms/fix_web_permissions.sh
 ```
 
 If you're not sure which one you need, run `fix_cache_permissions.sh`
