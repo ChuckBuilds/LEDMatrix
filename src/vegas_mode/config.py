@@ -90,6 +90,14 @@ class VegasModeConfig:
     # Experimental: measured with scripts/frame_soak.py before it gets a default.
     switch_interval_ms: float = 0.0
 
+    # Let the prefetch thread run Python only while the render thread is
+    # blocked waiting for vsync, and park it the rest of the time, so the
+    # render thread never waits for the GIL when its refresh comes round. Needs
+    # a binding that releases the GIL in SwapOnVSync; ignored otherwise.
+    # Experimental: see src/common/render_gate.py and measure with
+    # scripts/frame_soak.py before it gets a default.
+    prefetch_gate: bool = False
+
     # Keep one continuous strip, extending it with the next group of plugins as
     # the scroll approaches the end, instead of composing a fresh strip and
     # swapping it in. A swap stops the motion, substitutes every pixel at once
@@ -221,6 +229,7 @@ class VegasModeConfig:
             continuous_scroll=vegas_config.get('continuous_scroll', True),
             offscreen_prefetch=bool(vegas_config.get('offscreen_prefetch', True)),
             switch_interval_ms=float(vegas_config.get('switch_interval_ms', 0.0) or 0.0),
+            prefetch_gate=bool(vegas_config.get('prefetch_gate', False)),
             extend_threshold_screens=float(
                 vegas_config.get('extend_threshold_screens', 2.0)),
             auto_trim=vegas_config.get('auto_trim', True),
@@ -264,6 +273,7 @@ class VegasModeConfig:
             'continuous_scroll': self.continuous_scroll,
             'offscreen_prefetch': self.offscreen_prefetch,
             'switch_interval_ms': self.switch_interval_ms,
+            'prefetch_gate': self.prefetch_gate,
             'extend_threshold_screens': self.extend_threshold_screens,
             'auto_trim': self.auto_trim,
             'trim_threshold': self.trim_threshold,

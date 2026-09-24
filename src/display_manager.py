@@ -322,6 +322,11 @@ class DisplayManager:
         # See src/common/scroll_config.py and scripts/scroll_speeds.py.
         self._frame_hold = 1
 
+        # A src.common.render_gate.RenderGate while Vegas runs with
+        # vegas_scroll.prefetch_gate on: opened around each swap so the
+        # prefetch thread only runs Python while this thread waits on vsync.
+        self.render_gate = None
+
         self._scrolling_state = {
             'is_scrolling': False,
             'last_scroll_activity': 0,
@@ -948,7 +953,12 @@ class DisplayManager:
                 # Swap buffers immediately. framerate_fraction holds the frame
                 # for N refreshes; SwapOnVSync blocks for all of them, which is
                 # what paces the render loop to the chosen frame rate.
+                gate = self.render_gate
+                if gate is not None:
+                    gate.before_swap(self._frame_hold)
                 self.matrix.SwapOnVSync(self.offscreen_canvas, self._frame_hold)
+                if gate is not None:
+                    gate.after_swap(self._frame_hold)
 
                 # Swap our canvas references
                 self.offscreen_canvas, self.current_canvas = self.current_canvas, self.offscreen_canvas

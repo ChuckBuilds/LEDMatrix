@@ -10,6 +10,7 @@ import os
 import time
 import threading
 from collections import deque
+from contextlib import nullcontext
 from typing import Optional, List, Any, Dict, Deque, TYPE_CHECKING
 from PIL import Image
 
@@ -392,8 +393,12 @@ class RenderPipeline:
                     os.nice(10)
                 except (OSError, AttributeError):
                     pass
+                # With vegas_scroll.prefetch_gate on, run only while the render
+                # thread waits on vsync; see src/common/render_gate.py.
+                gate = getattr(self.display_manager, 'render_gate', None)
                 try:
-                    group = self.stream_manager.take_next_group(offscreen_only=True)
+                    with gate.yielding() if gate is not None else nullcontext():
+                        group = self.stream_manager.take_next_group(offscreen_only=True)
                 except Exception:
                     logger.exception("Background prefetch failed")
                     group = []

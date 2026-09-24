@@ -18,6 +18,7 @@ import time
 import threading
 from typing import Optional, Dict, Any, List, Callable, TYPE_CHECKING
 
+from src.common import render_gate
 from src.vegas_mode.config import VegasModeConfig
 from src.vegas_mode.plugin_adapter import PluginAdapter
 from src.vegas_mode.stream_manager import StreamManager
@@ -282,6 +283,7 @@ class VegasModeCoordinator:
             self._fps_last_health_log = 0.0
             self._fps_was_degraded = False
             self._apply_switch_interval()
+            self._install_render_gate()
 
         # Line up the next group immediately, so the first extension is already
         # warm rather than stalling the scroll to fetch it.
@@ -305,6 +307,7 @@ class VegasModeCoordinator:
                 self._start_time = None
 
         self._restore_switch_interval()
+        self._remove_render_gate()
 
         # Cleanup components
         self.render_pipeline.reset()
@@ -329,6 +332,38 @@ class VegasModeCoordinator:
         if saved is not None:
             sys.setswitchinterval(saved)
             self._saved_switch_interval = None
+
+    def _install_render_gate(self) -> None:
+        """Gate the prefetch thread on the render thread's swaps; see VegasModeConfig."""
+        if not self.vegas_config.prefetch_gate:
+            return
+        if getattr(self.display_manager, 'render_gate', None) is not None:
+            return
+        releases = render_gate.swap_releases_gil()
+        if not releases:
+            logger.warning(
+                "Vegas: prefetch_gate ignored -- %s",
+                "this rgbmatrix binding keeps the GIL in SwapOnVSync "
+                "(scripts/build_rgbmatrix_nogil.sh)" if releases is False
+                else "no hardware binding loaded")
+            return
+        gate = render_gate.RenderGate()
+        # Locks the render thread takes too: never park the prefetch holding one.
+        gate.guard(self._state_lock,
+                   getattr(self.stream_manager, '_buffer_lock', None),
+                   getattr(self.render_pipeline, '_buffer_lock', None),
+                   getattr(self.render_pipeline, '_prefetch_lock', None),
+                   getattr(self.plugin_adapter, '_cache_lock', None))
+        self.display_manager.render_gate = gate
+        logger.info("Vegas: prefetch gated on vsync")
+
+    def _remove_render_gate(self) -> None:
+        gate = getattr(self.display_manager, 'render_gate', None)
+        if gate is None:
+            return
+        self.display_manager.render_gate = None
+        logger.info("Vegas: prefetch gate parked the prefetch %d times, %.1fs in all",
+                    gate.parks, gate.parked_seconds)
 
     def pause(self) -> None:
         """Pause Vegas mode (for live priority interruption)."""
@@ -552,6 +587,10 @@ class VegasModeCoordinator:
                         fps, target, fps_frame_count,
                         p99 * 1000.0, frame_worst * 1000.0
                     )
+                    gate = getattr(self.display_manager, 'render_gate', None)
+                    if gate is not None:
+                        logger.info("Vegas: prefetch parked %d times, %.1fs in all",
+                                    gate.parks, gate.parked_seconds)
                     self._fps_last_health_log = current_time
                 else:
                     logger.debug(
