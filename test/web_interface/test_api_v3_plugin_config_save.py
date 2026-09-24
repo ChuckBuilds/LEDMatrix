@@ -130,6 +130,34 @@ class TestUniqueItemsRepeats:
         assert env.stored()["stock_symbols"] == ["TSLA", "AAPL", "FNMA"]
 
 
+class TestNumberedFieldsBecomeLists:
+    """The news plugin's custom feeds, posted one field per row."""
+
+    FEEDS = [{"name": "Local", "url": "https://example.com/local.xml", "enabled": True},
+             {"name": "Tech", "url": "https://example.com/tech.xml", "enabled": False}]
+
+    def test_form_post(self, env):
+        response = env.client.post(f"/api/v3/plugins/config?plugin_id={NEWS_ID}", data={
+            "feeds.custom_feeds.0.name": "Local",
+            "feeds.custom_feeds.0.url": "https://example.com/local.xml",
+            "feeds.custom_feeds.0.enabled": "on",
+            "feeds.custom_feeds.1.name": "Tech",
+            "feeds.custom_feeds.1.url": "https://example.com/tech.xml",
+        })
+
+        assert response.status_code == 200, response.get_json()
+        assert env.stored(NEWS_ID)["feeds"]["custom_feeds"] == self.FEEDS
+
+    def test_json_post(self, env):
+        response = env.client.post("/api/v3/plugins/config", json={
+            "plugin_id": NEWS_ID,
+            "config": {"feeds": {"custom_feeds": {"1": self.FEEDS[1], "0": self.FEEDS[0]}}},
+        })
+
+        assert response.status_code == 200, response.get_json()
+        assert env.stored(NEWS_ID)["feeds"]["custom_feeds"] == self.FEEDS
+
+
 class TestReset:
     """POST /plugins/config/reset saves the way every other plugin save does."""
 
