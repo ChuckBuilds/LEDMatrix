@@ -117,7 +117,11 @@ class TestCacheLifetimeWithRealCacheManager:
         from src.cache_manager import CacheManager
         with patch('src.cache_manager.CacheManager._get_writable_cache_dir',
                    return_value=str(tmp_path)):
-            return CacheManager()
+            cache = CacheManager()
+        yield cache
+        # Releases the class-wide cleanup-thread claim on this directory,
+        # which would otherwise leak into test_cache_cleanup_thread_ownership.
+        cache.stop_cleanup_thread()
 
     def _fetch_twice(self, real_cache, monkeypatch, ttl, elapsed):
         helper = APIHelper(cache_manager=real_cache)
