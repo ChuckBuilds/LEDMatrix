@@ -120,6 +120,12 @@ floor on the release that ships them):
   when the count is only known to the display service.
 - The Logs tab has a **Plugin errors** panel: per-plugin counts, repeating
   errors and a Clear button.
+- Redacting `user:password@` from URLs in exception text (`src/redaction.py`)
+  takes time proportional to the text, not its square. A plugin error quoting
+  a long unbroken run of letters or digits (a hex digest, an ID) used to stall
+  every thread of the display service for up to seconds each time the snapshot
+  was published: about 0.5s for 20k characters of hex. What gets redacted is
+  unchanged.
 
 ### Removed
 

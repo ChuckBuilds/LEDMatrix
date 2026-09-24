@@ -34,8 +34,16 @@ _REDACT_AUTH_HEADER = re.compile(
 # Credentials embedded in a URL: https://user:password@host. requests quotes
 # the full URL in its exceptions, so this is a realistic leak. The username is
 # kept -- it identifies which account failed without being the secret.
-_REDACT_URL_USERINFO = re.compile(r'([a-z][a-z0-9+.-]*://[^/\s:@]+:)([^/\s@]+)(@)',
-                                  re.IGNORECASE)
+#
+# A match may only start where a run of scheme characters starts. Unanchored,
+# `[a-z][a-z0-9+.-]*://` was tried from every letter of a long run (a hex
+# digest, an ID, a blob of response body), each attempt reading to the end of
+# the run: quadratic, 1.6s for 20k characters, all of it holding the GIL.
+# Leading digits and `+.-` sit inside group 1 so the substitution puts them
+# back; the scheme proper still has to start with a letter.
+_REDACT_URL_USERINFO = re.compile(
+    r'((?<![a-z0-9+.-])[0-9+.-]*[a-z][a-z0-9+.-]*://[^/\s:@]+:)([^/\s@]+)(@)',
+    re.IGNORECASE)
 
 
 def redact_credentials(text: str) -> str:
