@@ -176,9 +176,16 @@ the segment keeps its snapshot until it has scrolled off.
   `clock-simple` and `ledmatrix-music` are named on every 4-second tick. A
   redraw whose pixels hash the same as the segment's is discarded without a
   swap.
-- **Rate limit.** A plugin is redrawn at most once per
-  `vegas_scroll.refresh_min_interval` (proposed 5 s), and never while its
-  previous redraw is still running.
+- **Redraw on real updates only.** Vegas makes no API calls. Each plugin
+  fetches on its own schedule, and a redraw is triggered only when the
+  plugin's `update()` has run since its segment was drawn. On hdpi live
+  football, baseball and hockey poll every 30 s (live odds every 60 s,
+  everything else hourly), so a live sports card is redrawn once per poll.
+- **Floor.** A plugin is redrawn at most once per
+  `vegas_scroll.refresh_min_interval` (proposed 10 s), and never while its
+  previous redraw is still running. The floor never holds back a sports card
+  polling every 30 s. It exists for chatty plugins: `clock-simple` updates
+  every second and `ledmatrix-music` polls every 2 s.
 - **One worker.** Redraws go through the same background worker as prefetch,
   one plugin at a time at `nice 10`, under the plugin's lock.
 
@@ -210,12 +217,33 @@ half-changed.
 
 ### Multi-display sync
 
-The follower renders from its own copy of the strip, which the leader sends
-whole at a new cycle (`send_scroll_image`), plus the scroll position every
-frame. Replacements and patches would need a new message
-(`send_segment_patch(offset, image)`) so the follower shows the same pixels.
-Until that exists, fresh-content updates are disabled while sync is active,
-and the follower keeps today's behaviour.
+The follower renders from its own copy of the strip, offset from the leader's
+scroll position. Today the leader sends that copy whole, and only in
+`start_new_cycle()` (`send_scroll_image`), plus the scroll position every
+frame. Continuous scroll, the default, extends and trims the strip without
+starting a new cycle, and nothing sends those changes. From reading the code,
+the follower therefore probably falls out of step after the first extension
+already, before any of this design. That is untested; it needs a two-Pi rig.
+
+With a segment strip, keeping the follower identical becomes **replaying the
+leader's operations**:
+
+- Every strip mutation (append, trim, replace, patch) is one operation in
+  strip coordinates. The leader applies it and sends the same operation to the
+  follower over the existing TCP channel. Segments are small: a card is ~29 KB
+  raw and compresses well.
+- Operations on off-screen segments apply on arrival. A patch to a segment
+  that is on either panel carries an *apply at scroll position X* stamp a
+  couple of hundred milliseconds ahead. Both sides apply it when their scroll
+  position passes X, so both panels change on the same frame, within the
+  existing position-sync jitter.
+- Each operation carries a sequence number. A follower that sees a gap (a
+  reconnect, a dropped message) asks for a full snapshot, which is today's
+  `send_scroll_image` path.
+
+That also fixes the probable continuous-mode gap as a side effect, since
+appends and trims become operations too. Until it is in place, fresh-content
+updates are disabled while sync is active.
 
 ## Risks, and what was checked
 
@@ -303,7 +331,8 @@ deferred path when `false`, and `display.vegas_scroll.live_refresh` (default
 1. Keep the kill switch, or ship without one?
 2. Plugin lock timeout: skip the plugin and keep its cached segment (proposed),
    or wait longer?
-3. `refresh_min_interval`: 5 s proposed. Sports plugins that poll every 15–30 s
-   would mostly be redrawn once per fetch anyway.
-4. Multi-display sync: ship fresh content with it disabled under sync
-   (proposed), or build the follower patch message first?
+3. `refresh_min_interval`: 10 s proposed. It only limits chatty plugins;
+   live sports are redrawn once per 30 s poll regardless.
+4. Multi-display sync: is there a two-Pi rig to test on? Operation replay is
+   proposed as part of the segment strip (step 2), with fresh content
+   disabled under sync until it has been verified on real hardware.
