@@ -138,24 +138,26 @@ class _OffscreenMatrix(_LogicalMatrix):
 
     Reports the surface's size, so plugins that lay out from ``matrix.width``
     follow it, and swallows every write that would reach the hardware. Nothing
-    drawn off-screen may touch the panel the render loop is driving.
+    drawn off-screen may touch the panel the render loop is driving. Method
+    names mirror the rgbmatrix API they stand in for.
     """
 
+    # pylint: disable=invalid-name
     __slots__ = ()
 
-    def SetImage(self, *args: Any, **kwargs: Any) -> None:
+    def SetImage(self, *_args: Any, **_kwargs: Any) -> None:
         """Inert: off-screen drawing never reaches the panel."""
 
-    def SetPixel(self, *args: Any, **kwargs: Any) -> None:
+    def SetPixel(self, *_args: Any, **_kwargs: Any) -> None:
         """Inert: off-screen drawing never reaches the panel."""
 
     def Clear(self) -> None:
         """Inert: off-screen drawing never reaches the panel."""
 
-    def Fill(self, *args: Any, **kwargs: Any) -> None:
+    def Fill(self, *_args: Any, **_kwargs: Any) -> None:
         """Inert: off-screen drawing never reaches the panel."""
 
-    def SwapOnVSync(self, canvas: Any, *args: Any, **kwargs: Any) -> Any:
+    def SwapOnVSync(self, canvas: Any, *_args: Any, **_kwargs: Any) -> Any:
         """Inert: hands the canvas straight back without waiting on the panel."""
         return canvas
 
@@ -174,7 +176,8 @@ class _OffscreenSurface:
     def __init__(self, width: int, height: int, real_matrix: Any) -> None:
         self.image = Image.new('RGB', (width, height))
         self.draw = ImageDraw.Draw(self.image)
-        self.draw.fontmode = "1"  # 1-bit text: the panel has no partial brightness, so AA only smears glyphs.
+        # 1-bit text: the panel has no partial brightness, so AA only smears glyphs.
+        self.draw.fontmode = "1"
         self.matrix = (_OffscreenMatrix(real_matrix, width, height)
                        if real_matrix is not None else None)
 
@@ -190,7 +193,7 @@ def _per_thread_canvas_attr(name: str) -> property:
     shared = "_shared_" + name
 
     def fget(self: "DisplayManager") -> Any:
-        surface = self._current_surface()
+        surface = self._current_surface()  # pylint: disable=protected-access
         if surface is not None:
             return getattr(surface, name)
         try:
@@ -199,7 +202,7 @@ def _per_thread_canvas_attr(name: str) -> property:
             raise AttributeError(name) from None
 
     def fset(self: "DisplayManager", value: Any) -> None:
-        surface = self._current_surface()
+        surface = self._current_surface()  # pylint: disable=protected-access
         if surface is not None:
             setattr(surface, name, value)
         else:

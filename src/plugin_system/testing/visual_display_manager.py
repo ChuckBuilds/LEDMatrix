@@ -263,7 +263,8 @@ class VisualTestDisplayManager:
             self.matrix = _MatrixProxy(target_w, target_h)
             self.image = Image.new('RGB', (target_w, target_h), (0, 0, 0))
             self.draw = ImageDraw.Draw(self.image)
-            self.draw.fontmode = "1"  # Match production: 1-bit text, so goldens show what the panel shows.
+            # Match production: 1-bit text, so goldens show what the panel shows.
+            self.draw.fontmode = "1"
             self._capture_mode_active = True
             yield self
         finally:

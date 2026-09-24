@@ -160,11 +160,10 @@ class PluginAdapter:
         there is no plugin manager to ask -- the behaviour before the lock was
         taken here at all.
         """
-        get_lock = getattr(self.plugin_manager, 'get_plugin_lock', None)
-        if get_lock is None:
+        if not hasattr(self.plugin_manager, 'get_plugin_lock'):
             yield True
             return
-        lock = get_lock(plugin_id)
+        lock = self.plugin_manager.get_plugin_lock(plugin_id)
         acquired = lock.acquire(timeout=self.PLUGIN_LOCK_TIMEOUT)
         try:
             yield acquired
