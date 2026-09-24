@@ -116,8 +116,8 @@ weather and other location-aware plugins.
 4. Wait for installation to finish — installed plugins appear in the
    **Installed Plugins** section above and get their own tab in the second
    nav row
-5. Toggle the plugin to enabled
-6. From **Overview**, click **Restart Display Service**
+5. Toggle the plugin to enabled. The running display loads it within a
+   few seconds; no restart is needed
 
 You can also install community plugins straight from a GitHub URL using the
 **Install from GitHub** section further down the same tab — see
@@ -128,9 +128,9 @@ You can also install community plugins straight from a GitHub URL using the
 1. Each installed plugin gets its own tab in the second navigation row
 2. Open that plugin's tab to edit its settings (favorite teams, API keys,
    update intervals, etc.)
-3. Click **Save**
-4. Restart the display service from **Overview** so the new settings take
-   effect
+3. Click **Save**. The display service watches `config.json` and hands the
+   new settings to the running plugin, so no restart is needed. If a plugin
+   still shows old settings, restart the display service from **Overview**
 
 **Note:** how long each plugin stays on screen is not set in the
 plugin's own tab — use the **Rotation** tab's **Screen Durations**
@@ -197,14 +197,15 @@ The fastest way to verify a plugin works without waiting for the rotation:
 
 **Check:**
 1. Plugin is enabled (toggle on the **Plugin Manager** tab)
-2. Display service was restarted after enabling
-3. Plugin's display duration is non-zero
-4. No errors in the **Logs** tab for that plugin
+2. Plugin's display duration is non-zero
+3. No errors in the **Logs** tab for that plugin. A plugin whose
+   `validate_config()` fails is not loaded until its settings are fixed
 
 **Fix:**
 1. Enable the plugin from **Plugin Manager**
-2. Click **Restart Display Service** on **Overview**
-3. Check the **Logs** tab for plugin-specific errors
+2. Check the **Logs** tab for plugin-specific errors
+3. If it still does not appear, click **Restart Display Service** on
+   **Overview**
 
 ### Weather Plugin Shows "No Data"
 
