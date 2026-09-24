@@ -18,13 +18,14 @@ _measure_draw = ImageDraw.Draw(Image.new("RGB", (1, 1)))
 
 class TextHelper:
     """
-    Helper class for text rendering with outlines and font management.
-    
-    Provides functionality for:
-    - Loading and managing fonts
-    - Drawing text with outlines for better readability
-    - Calculating text dimensions and positioning
-    - Managing font resources
+    Font loading, outlined text and text measurement for plugins.
+
+    - :meth:`load_fonts` loads TrueType fonts from ``font_dir`` (the install's
+      assets/fonts by default) with the layout engine pinned
+      (font_layout.load_truetype). Each (file, size) is loaded once per helper
+      and reused; a missing or unloadable file becomes PIL's default font.
+    - :meth:`draw_text_with_outline` and friends draw onto a caller's
+      ``ImageDraw``; the measuring methods need no canvas.
     """
     
     def __init__(self, font_dir: Optional[Union[str, Path]] = None, 
@@ -39,17 +40,20 @@ class TextHelper:
         """
         self.logger = logger or logging.getLogger(__name__)
         self.font_dir = Path(font_dir) if font_dir else Path(resolve_asset_path("assets/fonts"))
+        # "<path>:<size>" -> loaded font; see load_fonts.
         self._font_cache: Dict[str, ImageFont.ImageFont] = {}
     
     def load_fonts(self, font_config: Optional[Dict[str, Dict]] = None) -> Dict[str, ImageFont.ImageFont]:
         """
         Load fonts for different text elements.
-        
+
         Args:
-            font_config: Custom font configuration dictionary
-            
+            font_config: ``{name: {"file": <file in font_dir>, "size": <px>}}``;
+                defaults to the scoreboard set in _get_default_font_config.
+
         Returns:
-            Dictionary mapping font names to PIL ImageFont objects
+            Dictionary mapping font names to PIL ImageFont objects. A font
+            already loaded by this helper at the same size is reused.
         """
         if font_config is None:
             font_config = self._get_default_font_config()
@@ -62,9 +66,13 @@ class TextHelper:
                 size = config['size']
                 
                 if font_path.exists():
-                    font = load_truetype(str(font_path), size)
+                    cache_key = f"{font_path}:{size}"
+                    font = self._font_cache.get(cache_key)
+                    if font is None:
+                        font = load_truetype(str(font_path), size)
+                        self._font_cache[cache_key] = font
+                        self.logger.debug(f"Loaded font: {font_name} ({font_path}, size {size})")
                     fonts[font_name] = font
-                    self.logger.debug(f"Loaded font: {font_name} ({font_path}, size {size})")
                 else:
                     # Fallback to default font
                     font = ImageFont.load_default()
@@ -116,12 +124,7 @@ class TextHelper:
         Returns:
             Width in pixels
         """
-        try:
-            return int(_measure_draw.textlength(text, font=font))
-        except AttributeError:
-            # Fallback for older PIL versions
-            bbox = _measure_draw.textbbox((0, 0), text, font=font)
-            return bbox[2] - bbox[0]
+        return int(_measure_draw.textlength(text, font=font))
     
     def get_text_height(self, text: str, font: ImageFont.ImageFont) -> int:
         """
