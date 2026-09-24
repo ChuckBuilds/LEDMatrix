@@ -1029,18 +1029,22 @@ function loadInstalledPlugins(forceRefresh = false) {
 
                 return installedPlugins;
             } else {
-                const errorMsg = 'Failed to load installed plugins: ' + data.message;
-                showError(errorMsg);
-                throw new Error(errorMsg);
+                throw new Error('Failed to load installed plugins: ' + data.message);
             }
         })
         .catch(error => {
             console.error('Error loading installed plugins:', error);
             let errorMsg = 'Error loading plugins: ' + error.message;
-            if (error.message && error.message.includes('Failed to Fetch')) {
+            if (isNetworkFailure(error)) {
                 errorMsg += ' - Please try refreshing your browser.';
             }
-            showError(errorMsg);
+            // Replace the whole panel only when there is nothing to show yet; a
+            // failed refresh keeps the grid and the store the user is looking at.
+            if (pluginLoadCache.data === null) {
+                showInstalledLoadError(errorMsg);
+            } else {
+                showNotification(errorMsg, 'error');
+            }
             throw error;
         })
         .finally(() => {
@@ -3278,7 +3282,7 @@ function searchPluginStore(fetchCommitInfo = true) {
                     });
                 }
             } else {
-                showError('Failed to search plugin store: ' + data.message);
+                showNotification('Failed to search plugin store: ' + data.message, 'error');
                 try {
                     const countEl = document.getElementById('store-count');
                     if (countEl) countEl.innerHTML = 'Error loading';
@@ -3288,7 +3292,7 @@ function searchPluginStore(fetchCommitInfo = true) {
         .catch(error => {
             console.error('Error searching plugin store:', error);
             showStoreLoading(false);
-            showError('Error searching plugin store: ' + error.message);
+            showNotification('Error searching plugin store: ' + error.message, 'error');
             try {
                 const countEl = document.getElementById('store-count');
                 if (countEl) countEl.innerHTML = 'Error loading';
@@ -3617,7 +3621,7 @@ window.installFromCustomRegistry = function(pluginId, registryUrl, pluginPath, b
     .then(response => response.json())
     .then(data => {
         if (data.status === 'success') {
-            showSuccess(`Plugin ${data.plugin_id} installed successfully`);
+            showNotification(`Plugin ${data.plugin_id} installed successfully`, 'success');
             // Refresh installed plugins and re-render custom registry
             loadInstalledPlugins();
             // Re-render custom registry to update install buttons
@@ -3626,15 +3630,15 @@ window.installFromCustomRegistry = function(pluginId, registryUrl, pluginPath, b
                 document.getElementById('load-registry-from-url').click();
             }
         } else {
-            showError(data.message || 'Installation failed');
+            showNotification(data.message || 'Installation failed', 'error');
         }
     })
     .catch(error => {
         let errorMsg = 'Error installing plugin: ' + error.message;
-        if (error.message && error.message.includes('Failed to Fetch')) {
+        if (isNetworkFailure(error)) {
             errorMsg += ' - Please try refreshing your browser.';
         }
-        showError(errorMsg);
+        showNotification(errorMsg, 'error');
     });
 }
 
@@ -3722,16 +3726,16 @@ window.removeSavedRepository = function(repoUrl) {
     .then(response => response.json())
     .then(data => {
         if (data.status === 'success') {
-            showSuccess('Repository removed successfully');
+            showNotification('Repository removed successfully', 'success');
             renderSavedRepositories(data.data.repositories || []);
             // Refresh plugin store to remove plugins from deleted repo
             searchPluginStore();
         } else {
-            showError(data.message || 'Failed to remove repository');
+            showNotification(data.message || 'Failed to remove repository', 'error');
         }
     })
     .catch(error => {
-        showError('Error removing repository: ' + error.message);
+        showNotification('Error removing repository: ' + error.message, 'error');
     });
 }
 
@@ -4005,12 +4009,12 @@ function setupGitHubInstallHandlers() {
         saveRegistryBtn.addEventListener('click', function() {
             const repoUrl = registryUrlInput.value.trim();
             if (!repoUrl) {
-                showError('Please enter a repository URL first');
+                showNotification('Please enter a repository URL first', 'error');
                 return;
             }
 
             if (!isGithubUrl(repoUrl)) {
-                showError('Please enter a valid GitHub URL');
+                showNotification('Please enter a valid GitHub URL', 'error');
                 return;
             }
 
@@ -4027,16 +4031,16 @@ function setupGitHubInstallHandlers() {
             .then(response => response.json())
             .then(data => {
                 if (data.status === 'success') {
-                    showSuccess('Repository saved successfully! Its plugins will appear in the Plugin Store.');
+                    showNotification('Repository saved successfully! Its plugins will appear in the Plugin Store.', 'success');
                     renderSavedRepositories(data.data.repositories || []);
                     // Refresh plugin store to include new repo
                     searchPluginStore();
                 } else {
-                    showError(data.message || 'Failed to save repository');
+                    showNotification(data.message || 'Failed to save repository', 'error');
                 }
             })
             .catch(error => {
-                showError('Error saving repository: ' + error.message);
+                showNotification('Error saving repository: ' + error.message, 'error');
             })
             .finally(() => {
                 saveRegistryBtn.disabled = false;
@@ -4051,7 +4055,7 @@ function setupGitHubInstallHandlers() {
         refreshSavedReposBtn.addEventListener('click', function() {
             loadSavedRepositories();
             searchPluginStore(); // Also refresh plugin store
-            showSuccess('Repositories refreshed');
+            showNotification('Repositories refreshed', 'success');
         });
     }
 }
@@ -4119,32 +4123,13 @@ function renderCustomRegistryPlugins(plugins, registryUrl) {
     }).join('');
 }
 
-function showSuccess(message) {
-    // Try to use notification system if available, otherwise use alert
-    if (typeof showNotification === 'function') {
-        showNotification(message, 'success');
-    } else {
-        debugLog('Success: ' + message);
-        // Show a temporary success message
-        const statusDiv = document.getElementById('github-plugin-status') || document.getElementById('registry-status');
-        if (statusDiv) {
-            statusDiv.innerHTML = `<span class="text-green-600"><i class="fas fa-check-circle mr-1"></i>${message}</span>`;
-            setTimeout(() => {
-                if (statusDiv) statusDiv.innerHTML = '';
-            }, 5000);
-        }
-    }
-}
-
-function showError(message) {
+// Replaces the whole Plugin Manager panel. Only for a first load of the
+// installed list that failed, when there is nothing else worth keeping on
+// screen; every other failure is a notification.
+function showInstalledLoadError(message) {
     const content = document.getElementById('plugins-content');
     if (!content) {
-        console.error('plugins-content element not found');
-        if (typeof showNotification === 'function') {
-            showNotification(message, 'error');
-        } else {
-            console.error('Error: ' + message);
-        }
+        showNotification(message, 'error');
         return;
     }
     content.innerHTML = `
@@ -4155,6 +4140,11 @@ function showError(message) {
     `;
 }
 
+// fetch() rejects with a TypeError when no HTTP answer arrives at all
+// (connection refused, offline); PluginAPI wraps that as NETWORK_ERROR.
+function isNetworkFailure(error) {
+    return error instanceof TypeError || (error && error.error_code === 'NETWORK_ERROR');
+}
 
 // Validate that a URL's actual host is github.com (not just a substring
 // match, which 'evil.com/github.com' or 'github.com.evil.com' would pass).
