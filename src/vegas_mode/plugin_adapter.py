@@ -48,15 +48,8 @@ class PluginAdapter:
             from src.vegas_mode.config import VegasModeConfig
             config = VegasModeConfig()
         self.config = config
-        # Handle both property and method access patterns
-        self.display_width = (
-            display_manager.width() if callable(display_manager.width)
-            else display_manager.width
-        )
-        self.display_height = (
-            display_manager.height() if callable(display_manager.height)
-            else display_manager.height
-        )
+        self.display_width = display_manager.width
+        self.display_height = display_manager.height
 
         # Cache for recently fetched content (prevents redundant fetch)
         self._content_cache: dict = {}

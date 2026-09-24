@@ -10,7 +10,7 @@ import os
 import time
 import threading
 from collections import deque
-from typing import Optional, List, Any, Dict, Deque, TYPE_CHECKING
+from typing import Optional, List, Any, Dict, Deque
 from PIL import Image
 
 from src.common.scroll_helper import ScrollHelper
@@ -18,10 +18,12 @@ from src.vegas_mode.config import VegasModeConfig
 from src.vegas_mode.geometry import separation_gap
 from src.vegas_mode.stream_manager import StreamManager
 
-if TYPE_CHECKING:
-    pass
-
 logger = logging.getLogger(__name__)
+
+#: Shortest gap between multi-display sync sends from the leader, for both the
+#: Vegas scroll position and the controller's per-frame follower images. The
+#: payloads are raw and cheap, and 90/s is above the follower's render rate.
+SYNC_SEND_INTERVAL = 1.0 / 90
 
 
 class RenderPipeline:
@@ -60,18 +62,10 @@ class RenderPipeline:
         self.stream_manager = stream_manager
         self.sync_manager = None        # Optional DisplaySyncManager — set by coordinator
         self.sync_follower_left = True  # True = follower is LEFT of leader (default)
-        self._sync_send_interval = 1.0 / 90  # raw bytes are cheap; 90fps > follower render rate
         self._last_sync_send = 0.0
 
-        # Display dimensions (handle both property and method access patterns)
-        self.display_width = (
-            display_manager.width() if callable(display_manager.width)
-            else display_manager.width
-        )
-        self.display_height = (
-            display_manager.height() if callable(display_manager.height)
-            else display_manager.height
-        )
+        self.display_width = display_manager.width
+        self.display_height = display_manager.height
 
         # ScrollHelper for optimized scrolling
         self.scroll_helper = ScrollHelper(
@@ -548,7 +542,7 @@ class RenderPipeline:
             # leader's via TCP image transfer at each new_cycle) at scroll_x ± display_width.
             if self.sync_manager:
                 now = time.time()
-                if now - self._last_sync_send >= self._sync_send_interval:
+                if now - self._last_sync_send >= SYNC_SEND_INTERVAL:
                     self._last_sync_send = now
                     self.sync_manager.send_scroll_x(self.scroll_helper.scroll_position)
 
@@ -706,21 +700,17 @@ class RenderPipeline:
         result = self.compose_scroll_content()
 
         if result and self.sync_manager:
-            # When sync is active, start the leader past the lead-in gap so it
-            # immediately shows content, leaving the follower on the blank gap
-            # for a clean transition rather than near-end content wrapping
-            # around. This tracks lead_in_width rather than assuming a full
-            # display width of gap, which is no longer the default.
+            # Start the leader past the lead-in gap so it immediately shows
+            # content, leaving the follower on the blank gap for a clean
+            # transition rather than near-end content wrapping around.
             self.scroll_helper.scroll_position = float(self.config.lead_in_width)
 
-        if result and self.sync_manager:
             # Signal follower that a new cycle started (triggers its own rebuild)
             self.sync_manager.send_new_cycle()
             # Push the actual scroll image over TCP so follower has identical pixels.
             # Done in a background thread to not block the render loop (~15ms transfer).
             if self.scroll_helper.cached_image is not None:
-                import threading as _t
-                _t.Thread(
+                threading.Thread(
                     target=self.sync_manager.send_scroll_image,
                     args=(self.scroll_helper.cached_image,),
                     daemon=True, name="sync-image-push"
