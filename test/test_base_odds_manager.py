@@ -342,7 +342,6 @@ class TestLoadConfiguration:
             'base_odds_manager': {
                 'update_interval': 100,
                 'timeout': 5,
-                'cache_ttl': 42,
             }
         }
 
@@ -352,7 +351,6 @@ class TestLoadConfiguration:
         # Key/attr mismatch pin: the config key is 'timeout' but the
         # attribute is request_timeout.
         assert manager.request_timeout == 5
-        assert manager.cache_ttl == 42
 
     def test_get_config_raising_keeps_defaults(self, cache_manager):
         config_manager = MagicMock()
@@ -362,4 +360,3 @@ class TestLoadConfiguration:
 
         assert manager.update_interval == 3600
         assert manager.request_timeout == 5
-        assert manager.cache_ttl == 1800

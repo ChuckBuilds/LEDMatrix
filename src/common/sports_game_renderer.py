@@ -56,21 +56,13 @@ class SportsGameRendererMixin:
 
     # ---- geometry ------------------------------------------------------
 
-    # Non-finite settings are rejected before any int()/round(): "inf" reaches
-    # these from config as a float or a string, passes an `isinstance` plus
-    # `>= 0` check unharmed, and then raises OverflowError out of int() --
-    # which the old `except (TypeError, ValueError)` did not catch, so it
-    # aborted the whole card render. Present in all eight plugins before this
-    # moved to the core; fixing it here fixes it in all eight.
-
     def _score_reserve_width(self) -> int:
-        """Centre strip the score actually needs, measured rather than assumed.
+        """Centre strip the score needs: the width of _SCORE_PROBE in the
+        score font plus a gutter each side, or 0 if it cannot be measured.
 
-        The gap was derived from the card width alone (width x
-        CENTER_GAP_RATIO, clamped to CENTER_GAP_MAX_PX) while the score's size
-        comes from config and the element-style resolver. Nothing compared the
-        two, so any score wider than the clamp was drawn over the logos.
-        Measuring it keeps the strip wide enough for whatever font is in play.
+        Measured rather than derived from the card width, because the score's
+        size comes from config and the element-style resolver: a strip sized
+        from the width alone lets a large score run over the logos.
         """
         try:
             probe = ImageDraw.Draw(Image.new("RGB", (4, 4)))
@@ -87,6 +79,10 @@ class SportsGameRendererMixin:
         the card width between the configurable min and max. 0 restores
         edge-to-edge logos.
         """
+        # Non-finite settings are rejected before any int()/round(): "inf"
+        # arrives from config as a float or a string, passes the isinstance
+        # and >= 0 checks, and int() then raises OverflowError, which would
+        # abort the whole card render.
         configured = self._scroll_card_option("center_gap")
         if (isinstance(configured, (int, float))
                 and math.isfinite(configured) and configured >= 0):
@@ -110,10 +106,9 @@ class SportsGameRendererMixin:
     def _logo_slot_width(self) -> int:
         """Per-side logo slot, leaving the center gap clear.
 
-        No longer capped at display_height: the card is sized as two
-        full-height logos plus the measured gap, so what is left after the gap
-        is exactly the logo's share. The cap was what froze the logos at 46px
-        on the old flat 128px card.
+        Not capped at display_height: the card is sized as two full-height
+        logos plus the measured gap, so what is left after the gap is exactly
+        the logo's share. At least 8 px.
         """
         available = (self.display_width - self._center_gap_width()) // 2
         return max(8, available)
@@ -130,9 +125,8 @@ class SportsGameRendererMixin:
         """X/Y nudge for one element, from customization.layout.
 
         Same block the full-screen scorebug reads (sports.py
-        _get_layout_offset), so a nudge configured in the web UI now moves
-        the element on the scroll/Vegas card too -- previously the schema
-        advertised these offsets but this renderer ignored them.
+        _get_layout_offset), so a nudge configured in the web UI moves the
+        element on the scroll/Vegas card as well as on the scorebug.
         """
         from src.element_style import layout_offset
         return layout_offset(self.config, element, axis, default,

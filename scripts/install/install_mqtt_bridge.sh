@@ -9,6 +9,10 @@
 set -e
 
 PROJECT_ROOT_DIR=$(cd "$(dirname "$0")/../.." && pwd)
+
+# shellcheck source=scripts/install/lib_systemd_render.sh
+source "$PROJECT_ROOT_DIR/scripts/install/lib_systemd_render.sh"
+
 BRIDGE_DIR="$PROJECT_ROOT_DIR/integrations/mqtt_bridge"
 SERVICE_NAME="ledmatrix-mqtt-bridge"
 UNIT_SRC="$PROJECT_ROOT_DIR/systemd/$SERVICE_NAME.service"
@@ -40,7 +44,8 @@ python3 -m pip install -r "$BRIDGE_DIR/requirements.txt" 2>/dev/null \
     || python3 -m pip install --break-system-packages -r "$BRIDGE_DIR/requirements.txt"
 
 echo "Installing $UNIT_DEST..."
-sed "s|__PROJECT_ROOT_DIR__|$PROJECT_ROOT_DIR|g" "$UNIT_SRC" \
+ESCAPED_PROJECT_ROOT_DIR=$(sed_escape_replacement "$PROJECT_ROOT_DIR")
+sed "s|__PROJECT_ROOT_DIR__|$ESCAPED_PROJECT_ROOT_DIR|g" "$UNIT_SRC" \
     | $SUDO tee "$UNIT_DEST" > /dev/null
 
 $SYSTEMCTL_CMD daemon-reload

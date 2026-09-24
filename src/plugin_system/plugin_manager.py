@@ -2,7 +2,8 @@
 Plugin Manager
 
 Manages plugin discovery, loading, and lifecycle for the LEDMatrix system.
-Handles dynamic plugin loading from the plugins/ directory.
+Loads plugins from the configured plugins directory
+(``plugin_system.plugins_directory``, ``plugin-repos/`` by default).
 
 API Version: 1.0.0
 """
@@ -40,7 +41,7 @@ class PluginManager:
     Manages plugin discovery, loading, and lifecycle.
     
     The PluginManager is responsible for:
-    - Discovering plugins in the plugins/ directory
+    - Discovering plugins in the configured plugins directory
     - Loading plugin modules and instantiating plugin classes
     - Managing plugin lifecycle (load, unload, reload)
     - Providing access to loaded plugins
@@ -99,10 +100,9 @@ class PluginManager:
         self.plugin_directories: Dict[str, Path] = {}
         self.plugin_last_update: Dict[str, float] = {}
 
-        # Cached data-fetch intervals per plugin_id.
-        # _get_plugin_update_interval falls back to config_manager.get_config()
-        # (a full dict copy) when the manifest lacks an interval — caching avoids
-        # that copy on every 30-fps tick.  Cleared on load/unload.
+        # Cached static data-fetch intervals per plugin_id, so the render
+        # loop's scheduling tick does not repeat the manifest/config lookup
+        # for every plugin. Cleared on load/unload.
         self._update_interval_cache: Dict[str, Optional[float]] = {}
 
         # Health tracking (optional, set by display_controller if available)
@@ -110,14 +110,12 @@ class PluginManager:
         self.resource_monitor = None
 
         # --- Asynchronous plugin updates -------------------------------
-        # update() used to run inline in the render loop (execute_update's
-        # internal thread.join(timeout=30) blocked it), so one slow plugin
-        # HTTP fetch froze scrolling for the whole fetch. Scheduling still
-        # happens on the render thread (run_scheduled_updates), but
-        # execution moves to this single background worker. Per-plugin
-        # locks keep a plugin's update() and display() mutually exclusive —
-        # today's implicit guarantee, now explicit (and, unlike today,
-        # also held across the post-timeout window).
+        # Run inline in the render loop, one slow plugin HTTP fetch in
+        # update() freezes scrolling for the whole fetch. Scheduling happens
+        # on the render thread (run_scheduled_updates); execution happens on
+        # this single background worker. Per-plugin locks keep a plugin's
+        # update() and display() mutually exclusive, including across the
+        # post-timeout window.
         # Kill switch: plugin_system.synchronous_updates: true restores the
         # inline path.
         self._update_queue: "queue.Queue[Optional[Tuple[str, float]]]" = queue.Queue()
@@ -396,7 +394,8 @@ class PluginManager:
                 self.font_manager, 'register_plugin_fonts'
             ):
                 try:
-                    self.font_manager.register_plugin_fonts(plugin_id, font_manifest)
+                    self.font_manager.register_plugin_fonts(
+                        plugin_id, font_manifest, plugin_dir=plugin_dir)
                 except Exception as e:
                     self.logger.warning(
                         "Failed to register fonts for plugin %s: %s", plugin_id, e
@@ -661,9 +660,15 @@ class PluginManager:
             if not self.unload_plugin(plugin_id):
                 return False
         
-        # Re-discover to get updated manifest
-        manifest_path = self.plugins_dir / plugin_id / "manifest.json"
-        if manifest_path.exists():
+        # Re-read the manifest so an edit to it takes effect, from the
+        # directory discovery found the plugin in: a directory's name need not
+        # be the id its manifest declares.
+        with self._discovery_lock:
+            directories = dict(self.plugin_directories)
+        plugin_dir = self.plugin_loader.find_plugin_directory(
+            plugin_id, self.plugins_dir, directories)
+        manifest_path = plugin_dir / "manifest.json" if plugin_dir is not None else None
+        if manifest_path is not None and manifest_path.exists():
             try:
                 with open(manifest_path, 'r', encoding='utf-8') as f:
                     manifest = json.load(f)
@@ -881,11 +886,12 @@ class PluginManager:
         updating, since a scheduler that propagates a plugin bug stops every
         other plugin too.
 
-        The static result is cached per plugin_id after the first lookup to
-        avoid calling config_manager.get_config() — which returns a full dict
-        copy — on every tick of the 30-fps display loop. The cache is
-        invalidated when a plugin is loaded or unloaded. The dynamic hook is
-        deliberately *not* cached: caching it would defeat its only purpose.
+        The static result is cached per plugin_id after the first lookup, so
+        the manifest/config resolution is not repeated on every scheduling
+        tick of the display loop. A change to ``update_interval`` in
+        config.json therefore takes effect when the plugin is next loaded or
+        unloaded, which clears the cache. The dynamic hook is deliberately
+        *not* cached: caching it would defeat its only purpose.
         """
         dynamic = self._dynamic_update_interval(plugin_id, plugin_instance)
         if dynamic is not None:

@@ -34,7 +34,9 @@ class PluginState:
     version: Optional[str] = None
     installed_at: Optional[datetime] = None
     last_updated: Optional[datetime] = None
-    config_version: int = 1  # For detecting state corruption
+    # Bumped on every update_plugin_state(). Nothing reads it; it stays so
+    # plugin_state.json keeps the shape older releases load with cls(**data).
+    config_version: int = 1
     metadata: Dict[str, Any] = None
     
     def __post_init__(self):
@@ -100,6 +102,8 @@ class PluginStateManager:
         
         # State storage
         self._states: Dict[str, PluginState] = {}
+        # The file's top-level "version", written back as read. Nothing
+        # checks it yet; it is there for a future format change to branch on.
         self._state_version = 1
         
         # Threading
@@ -193,7 +197,6 @@ class PluginStateManager:
                     current_state.metadata = {}
                 current_state.metadata.update(updates['metadata'])
             
-            # Increment config version
             current_state.config_version += 1
             
             # Store updated state

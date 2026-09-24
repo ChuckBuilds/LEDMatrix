@@ -24,10 +24,13 @@ class TestTextHelper:
         assert th.font_dir == tmp_path
         assert th._font_cache == {}
     
-    def test_init_default_font_dir(self):
-        """Test TextHelper initialization with default font directory."""
+    def test_init_default_font_dir(self, tmp_path, monkeypatch):
+        """The default is the install's assets/fonts, not a cwd-relative path."""
+        from pathlib import Path
+        monkeypatch.chdir(tmp_path)
         th = TextHelper()
-        assert th.font_dir == pytest.importorskip("pathlib").Path("assets/fonts")
+        assert th.font_dir == Path(__file__).resolve().parents[1] / "assets" / "fonts"
+        assert isinstance(th.load_fonts()["score"], ImageFont.FreeTypeFont)
     
     @patch('PIL.ImageFont.truetype')
     @patch('PIL.ImageFont.load_default')
@@ -123,6 +126,17 @@ class TestTextHelper:
     def test_get_default_font_config(self, text_helper):
         """Test getting default font configuration."""
         config = text_helper._get_default_font_config()
-        
+
         assert isinstance(config, dict)
         assert len(config) > 0
+
+    def test_each_font_file_and_size_is_loaded_once(self):
+        th = TextHelper()
+        first = th.load_fonts()
+        second = th.load_fonts()
+        # Six names, three (file, size) pairs: PressStart2P at 10 and 8, 4x6 at 6.
+        assert first["score"] is second["score"] is first["rank"]
+        assert th.get_font_cache_stats()["cached_fonts"] == 3
+        th.clear_font_cache()
+        assert th.get_font_cache_stats()["cached_fonts"] == 0
+        assert th.load_fonts()["score"] is not first["score"]

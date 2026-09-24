@@ -1,9 +1,6 @@
 #!/bin/bash
 
-# Get the current user
-CURRENT_USER=$(whoami)
-
-echo "Stopping LED Matrix Display Service for user: $CURRENT_USER..."
+echo "Stopping LED Matrix Display Service..."
 
 # Stop the service
 sudo systemctl stop ledmatrix.service

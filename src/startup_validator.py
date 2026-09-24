@@ -1,8 +1,14 @@
 """
 Startup Validator
 
-Validates system configuration, plugins, and dependencies on startup.
-Fails fast with clear error messages to prevent runtime issues.
+Checks configuration, the cache directory, plugins and the installed systemd
+units when the display service starts, and reports what it finds.
+
+validate_all() never raises: it returns (is_valid, errors, warnings) and
+DisplayController logs them. Startup continues either way, so a problem found
+here shows up in the log rather than stopping the display. raise_on_errors()
+turns the errors into exceptions for a caller that does want to stop; the
+display service does not call it.
 """
 
 import os
@@ -180,17 +186,16 @@ class StartupValidator:
         try:
             config = self.config_manager.load_config()
             
-            # Check for required top-level keys
             required_keys = ['display', 'timezone']
             for key in required_keys:
                 if key not in config:
                     self.errors.append(f"Missing required configuration key: {key}")
-            
-            # Validate display configuration
-            display_config = config.get('display', {})
-            if not display_config:
-                self.errors.append("Display configuration is missing or empty")
-            
+
+            # A missing display section is reported once, above, and an empty
+            # one here; _validate_display_config leaves both to this method.
+            if 'display' in config and not config['display']:
+                self.errors.append("Display configuration is empty")
+
         except ConfigError as e:
             self.errors.append(f"Configuration error: {e}")
         except Exception as e:
@@ -247,8 +252,7 @@ class StartupValidator:
             display_config = config.get('display', {})
             
             if not display_config:
-                self.errors.append("Display configuration is missing")
-                return
+                return  # reported by _validate_config
             
             hardware_config = display_config.get('hardware', {})
             if not hardware_config:
