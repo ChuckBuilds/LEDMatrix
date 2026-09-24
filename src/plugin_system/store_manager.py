@@ -5,6 +5,7 @@ Handles plugin discovery, installation, updates, and uninstallation
 from both the official registry and custom GitHub repositories.
 """
 
+import errno
 import os
 import re
 import json
@@ -22,22 +23,19 @@ from pathlib import Path
 from typing import List, Dict, Optional, Any, Tuple, Set
 import logging
 
-from src.common.permission_utils import sudo_remove_directory, install_requirements_file
-from src.plugin_system.plugin_loader import (
-    requirements_has_real_deps, requirements_are_satisfied, find_trusted_subdir
+from jsonschema import Draft7Validator, ValidationError
+
+from src.common.permission_utils import (
+    ensure_directory_permissions, get_plugin_dir_mode, install_requirements_file,
+    sudo_remove_directory,
 )
+from src.plugin_system.plugin_loader import contained_plugin_dir, requirements_to_install
 from src.plugin_system.plugin_dirs import (
     BACKUP_MARKER, PluginDirectoryIndex, resolve_plugin_dir, store_search_dirs,
 )
 from src.plugin_system.repo_urls import (
     USER_AGENT, github_api_headers, github_owner_repo, normalize_repo_url, same_repo,
 )
-
-try:
-    from jsonschema import Draft7Validator, ValidationError
-    JSONSCHEMA_AVAILABLE = True
-except ImportError:
-    JSONSCHEMA_AVAILABLE = False
 
 
 class PluginStoreManager:
@@ -94,11 +92,11 @@ class PluginStoreManager:
         self.registry_cache_timeout = 900
         self.commit_info_cache = {}  # Cache for latest commit info: {key: (timestamp, data)}
         # 30 minutes for commit/manifest caches. Plugin Store users browse
-        # the catalog via /plugins/store/list which fetches commit info and
-        # manifest data per plugin. 5-min TTLs meant every fresh browse on
-        # a Pi4 paid for ~3 HTTP requests x N plugins (30-60s serial). 30
-        # minutes keeps the cache warm across a realistic session while
-        # still picking up upstream updates within a reasonable window.
+        # the catalog via /plugins/store/list, which fetches commit info per
+        # plugin; with a 5-minute TTL nearly every browse on a Pi4 paid for
+        # an HTTP request per plugin again. 30 minutes keeps the cache warm
+        # across a realistic session while still picking up upstream updates
+        # within a reasonable window.
         self.commit_cache_timeout = 1800
         self.manifest_cache = {}  # Cache for GitHub manifest fetches: {key: (timestamp, data)}
         self.manifest_cache_timeout = 1800
@@ -128,9 +126,9 @@ class PluginStoreManager:
         # where ``signature`` is a tuple of (head_mtime, resolved_ref_mtime,
         # head_contents) so a fast-forward update to the current branch
         # (which touches .git/refs/heads/<branch> but NOT .git/HEAD) still
-        # invalidates the cache. Before this cache, every
-        # /plugins/installed request fired 4 git subprocesses per plugin,
-        # which pegged the CPU on a Pi4 with a dozen plugins. The cached
+        # invalidates the cache. Without it every /plugins/installed request
+        # runs a git subprocess per plugin, which adds up on a Pi4 with a
+        # dozen plugins. The cached
         # ``data`` dict is the same shape returned by ``_get_local_git_info``
         # itself (sha / short_sha / branch / optional remote_url, date_iso,
         # date) — all string-keyed strings.
@@ -497,9 +495,6 @@ class PluginStoreManager:
         Returns:
             List of validation error messages (empty if valid or schema unavailable)
         """
-        if not JSONSCHEMA_AVAILABLE:
-            return []
-        
         try:
             # Load manifest schema
             schema_path = Path(__file__).parent.parent.parent / "schema" / "manifest_schema.json"
@@ -773,15 +768,20 @@ class PluginStoreManager:
         """
         Search for plugins in the registry with enhanced metadata.
 
-        GitHub is now treated as the source of truth for live metadata like
-        stars and last commit timestamps. The registry provides descriptive
-        information (name, description, repo URL, etc.).
+        GitHub supplies live metadata such as stars and last commit
+        timestamps; the registry supplies descriptive information (name,
+        description, repo URL, etc.).
 
         Args:
-            query: Search query string (searches name, description, id)
+            query: Search query string (searches name, description, id, author)
             category: Filter by category (e.g., 'sports', 'weather', 'time')
             tags: Filter by tags (matches any tag in list)
             fetch_commit_info: If True (default), fetch commit metadata from GitHub.
+            include_saved_repos: If True (default), also search the
+                registry-style repositories the user saved.
+            saved_repositories_manager: The SavedRepositoriesManager holding
+                those repositories; without it only the official registry is
+                searched.
 
         Returns:
             List of matching plugin metadata enriched with GitHub information
@@ -835,11 +835,11 @@ class PluginStoreManager:
         def _enrich(plugin: Dict) -> Dict:
             """Enrich a single plugin with GitHub metadata.
 
-            Called concurrently from a ThreadPoolExecutor. Each underlying
-            HTTP helper (``_get_github_repo_info`` / ``_get_latest_commit_info``
-            / ``_fetch_manifest_from_github``) is thread-safe — they use
-            ``requests`` and write their own cache keys on Python dicts,
-            which is atomic under the GIL for single-key assignments.
+            Called concurrently from a ThreadPoolExecutor. Both HTTP helpers
+            (``_get_github_repo_info`` / ``_get_latest_commit_info``) are
+            thread-safe -- they use ``requests`` and write their own cache
+            keys on Python dicts, which is atomic under the GIL for
+            single-key assignments.
             """
             enhanced_plugin = plugin.copy()
             repo_url = plugin.get('repo', '')
@@ -870,24 +870,21 @@ class PluginStoreManager:
                 # The registry's plugins.json already carries ``description``
                 # (it is generated from each plugin's manifest by
                 # ``update_registry.py``), and ``last_updated`` is filled in
-                # from the commit info above. An earlier implementation
-                # fetched manifest.json per plugin anyway, which meant one
-                # extra HTTPS round trip per result; on a Pi4 with a flaky
-                # WiFi link the tail retries of that one extra call
+                # from the commit info above. Fetching manifest.json per
+                # plugin costs one extra HTTPS round trip per result; on a Pi4
+                # with a flaky WiFi link the tail retries of that one call
                 # (_http_get_with_retries does 3 attempts with exponential
-                # backoff) dominated wall time even after parallelization.
+                # backoff) dominate wall time even with the thread pool.
 
             return enhanced_plugin
 
-        # Fan out the per-plugin GitHub enrichment. The previous
-        # implementation did this serially, which on a Pi4 with ~15 plugins
-        # and a fresh cache meant 30+ HTTP requests in strict sequence (the
-        # "connecting to display" hang reported by users). With a thread
+        # Fan out the per-plugin GitHub enrichment. Serially, a Pi4 with ~15
+        # plugins and a cold cache makes 30+ HTTP requests in strict sequence
+        # (the "connecting to display" hang users reported). With a thread
         # pool, latency is dominated by the slowest request rather than
         # their sum. Workers capped at 10 to stay well under the
         # unauthenticated GitHub rate limit burst and avoid overwhelming a
-        # Pi's WiFi link. For a small number of plugins the pool is
-        # essentially free.
+        # Pi's WiFi link.
         if not filtered:
             return []
 
@@ -1183,46 +1180,57 @@ class PluginStoreManager:
 
             backup_path = plugin_path.with_name(
                 f"{plugin_path.name}{BACKUP_MARKER}preinstall")
-            if backup_path.exists() and not self._safe_remove_directory(backup_path):
-                # Can't stage a safety net. Better to attempt the install than
-                # to refuse outright, which is what callers got before this
-                # existed.
+            problem = self._set_aside(plugin_path, backup_path)
+            if problem:
+                # Can't stage a safety net. Attempting the install anyway is
+                # what callers got before the net existed; refusing would be
+                # a new failure mode for a direct install.
                 self.logger.warning(
-                    "Could not clear stale pre-install backup for %s at %s; "
-                    "installing without a rollback net", plugin_id, backup_path)
-                return self._install_plugin_impl(plugin_id, branch)
-
-            try:
-                plugin_path.rename(backup_path)
-            except OSError as e:
-                self.logger.warning(
-                    "Could not set aside existing install of %s (%s); "
-                    "installing without a rollback net", plugin_id, e)
+                    "Installing %s without a rollback net: %s", plugin_id, problem)
                 return self._install_plugin_impl(plugin_id, branch)
 
             try:
                 installed = self._install_plugin_impl(plugin_id, branch)
             except Exception:
-                self._restore_preinstall_backup(plugin_id, plugin_path, backup_path)
+                self._restore_backup(plugin_id, plugin_path, backup_path, "Install")
                 raise
 
             if installed:
-                if not self._safe_remove_directory(backup_path):
-                    self.logger.warning(
-                        "Install of %s succeeded but the previous copy at %s "
-                        "could not be removed; it will be cleared on the next "
-                        "install", plugin_id, backup_path)
+                self._discard_backup(plugin_id, backup_path, "install")
                 return True
 
-            self._restore_preinstall_backup(plugin_id, plugin_path, backup_path)
+            self._restore_backup(plugin_id, plugin_path, backup_path, "Install")
             return False
 
-    def _restore_preinstall_backup(
-        self, plugin_id: str, plugin_path: Path, backup_path: Path
+    def _set_aside(self, plugin_path: Path, backup_path: Path) -> Optional[str]:
+        """Rename an installed plugin to ``backup_path`` so a failed
+        (re)install can put it back.
+
+        A stale backup left by a crash is cleared first, since it would block
+        the rename. Returns None on success, otherwise why it could not.
+        """
+        if backup_path.exists() and not self._safe_remove_directory(backup_path):
+            return f"could not clear stale backup at {backup_path}"
+        try:
+            plugin_path.rename(backup_path)
+        except OSError as e:
+            return f"could not set aside {plugin_path}: {e}"
+        return None
+
+    def _discard_backup(self, plugin_id: str, backup_path: Path, action: str) -> None:
+        """Remove the set-aside copy after a successful (re)install."""
+        if not self._safe_remove_directory(backup_path):
+            self.logger.warning(
+                "%s of %s succeeded but the previous copy at %s could not be "
+                "removed; it will be cleared on the next %s",
+                action.capitalize(), plugin_id, backup_path, action)
+
+    def _restore_backup(
+        self, plugin_id: str, plugin_path: Path, backup_path: Path, action: str
     ) -> None:
-        """Put the previous install back after a failed (re)install."""
+        """Put the set-aside copy back after a failed (re)install."""
         self.logger.error(
-            "Install of %s failed; restoring the previous version", plugin_id)
+            "%s of %s failed; restoring the previous version", action, plugin_id)
         try:
             if plugin_path.exists():
                 # Partial download debris from the failed install.
@@ -1559,8 +1567,10 @@ class PluginStoreManager:
                     json.dump(manifest, f, indent=2)
                 self.logger.info(f"Added missing entry_point field to {plugin_id} manifest (defaulted to manager.py)")
             
-            # Move to plugins directory - use manifest ID as source of truth
-            # This ensures directory name always matches manifest ID
+            # The directory is named for the caller's plugin_id when one was
+            # given (update_plugin passes the installed id), else for the
+            # manifest's id -- so it can differ from the manifest id, which
+            # discovery tolerates by reading the manifest.
             final_path = self.plugins_dir / plugin_id
             if final_path.exists():
                 self.logger.warning(f"Plugin {plugin_id} already exists, removing existing copy")
@@ -1572,9 +1582,7 @@ class PluginStoreManager:
             
             shutil.move(str(temp_dir), str(final_path))
             temp_dir = None  # Prevent cleanup since we moved it
-            
-            # Note: plugin_id here is already from manifest (line 749), so directory name matches manifest ID
-            
+
             # Install dependencies
             self._install_dependencies(final_path)
             
@@ -1626,7 +1634,6 @@ class PluginStoreManager:
             Class name if found, None otherwise
         """
         try:
-            import re
             with open(manager_file, 'r', encoding='utf-8') as f:
                 content = f.read()
             
@@ -1823,10 +1830,6 @@ class PluginStoreManager:
             self.logger.info(f"Downloading {len(file_entries)} files for {plugin_subpath} via API")
 
             # Step 3: Create target directory and download each file
-            from src.common.permission_utils import (
-                ensure_directory_permissions,
-                get_plugin_dir_mode
-            )
             ensure_directory_permissions(target_path.parent, get_plugin_dir_mode())
             target_path.mkdir(parents=True, exist_ok=True)
 
@@ -1922,10 +1925,6 @@ class PluginStoreManager:
 
                 source_plugin_dir = temp_extract / root_dir / plugin_subpath
 
-                from src.common.permission_utils import (
-                    ensure_directory_permissions,
-                    get_plugin_dir_mode
-                )
                 ensure_directory_permissions(target_path.parent, get_plugin_dir_mode())
                 # Ensure target doesn't exist to prevent shutil.move nesting
                 if target_path.exists():
@@ -1996,10 +1995,6 @@ class PluginStoreManager:
                     # Move contents from root_dir to target
                     source_dir = temp_extract / root_dir
                     if source_dir.exists():
-                        from src.common.permission_utils import (
-                            ensure_directory_permissions,
-                            get_plugin_dir_mode
-                        )
                         ensure_directory_permissions(target_path.parent, get_plugin_dir_mode())
                         shutil.move(str(source_dir), str(target_path))
                     else:
@@ -2025,42 +2020,23 @@ class PluginStoreManager:
         """
         Install Python dependencies from requirements.txt.
 
+        ``plugin_path`` is ultimately derived from a plugin-supplied manifest
+        ``id``, so it is only used after contained_plugin_dir() has rebuilt it
+        from a listing of ``self.plugins_dir``.
+
         Args:
             plugin_path: Path to plugin directory
 
         Returns:
             True if successful or no requirements file
         """
-        # Reconstruct the plugin path from the trusted self.plugins_dir base +
-        # an entry actually enumerated from it, rather than trusting
-        # plugin_path directly -- callers ultimately derive it from a
-        # plugin-supplied manifest "id" field (see install_plugin_from_url),
-        # so without this a malicious manifest could point requirements_file
-        # outside plugins_dir. find_trusted_subdir()'s return value always
-        # comes from os.scandir() on the trusted root, so building the path
-        # from it (not from the caller's string) is a real containment
-        # guarantee, matching the pattern in PluginLoader.install_dependencies().
-        plugin_dir_real = os.path.realpath(str(plugin_path))
-        plugins_dir_real = os.path.realpath(str(self.plugins_dir))
-        requested_name = os.path.basename(plugin_dir_real)
-        matched_name = find_trusted_subdir(plugins_dir_real, requested_name)
-        if matched_name is None:
+        safe_plugin_dir = contained_plugin_dir(plugin_path, self.plugins_dir)
+        if safe_plugin_dir is None:
             self.logger.error("Plugin directory not found inside plugins dir for dependency install")
             return False
-        safe_plugin_path = Path(os.path.join(plugins_dir_real, matched_name))
 
-        requirements_file = safe_plugin_path / "requirements.txt"
-
-        if not requirements_file.exists():
-            self.logger.debug(f"No requirements.txt found in {plugin_path.name}")
-            return True
-
-        if not requirements_has_real_deps(str(requirements_file)):
-            self.logger.debug(f"requirements.txt for {plugin_path.name} has no real dependencies, skipping pip")
-            return True
-
-        if requirements_are_satisfied(str(requirements_file)):
-            self.logger.debug(f"Dependencies for {plugin_path.name} already satisfied, skipping pip")
+        requirements_file = requirements_to_install(safe_plugin_dir, self.logger, plugin_path.name)
+        if requirements_file is None:
             return True
 
         try:
@@ -2072,7 +2048,7 @@ class PluginStoreManager:
             # ledmatrix.service, so pip reports success while the package
             # stays invisible to the running plugin (e.g. missing `astral`
             # for the weather plugin even though "install" succeeded).
-            result = install_requirements_file(requirements_file, timeout=300)
+            result = install_requirements_file(Path(requirements_file), timeout=300)
             if result.returncode != 0:
                 self.logger.error(
                     f"Error installing dependencies for {plugin_path.name}: {result.stderr}"
@@ -2084,10 +2060,10 @@ class PluginStoreManager:
         except subprocess.TimeoutExpired:
             self.logger.error("Dependency installation timed out")
             return False
-        except (BrokenPipeError, OSError) as e:
-            # Handle broken pipe errors (errno 32) which can occur during pip downloads
-            # Often caused by network interruptions or output buffer issues
-            if isinstance(e, OSError) and e.errno == 32:
+        except OSError as e:
+            # A broken pipe (EPIPE) happens when pip's output pipe closes
+            # mid-download, usually a network interruption.
+            if e.errno == errno.EPIPE:
                 self.logger.error(
                     f"Broken pipe error during dependency installation for {plugin_path.name}. "
                     f"This usually indicates a network interruption or pip output buffer issue. "
@@ -2097,7 +2073,6 @@ class PluginStoreManager:
                 self.logger.error(f"OS error during dependency installation: {e}")
             return False
         except Exception as e:
-            # Catch any other unexpected errors
             self.logger.error(f"Unexpected error installing dependencies for {plugin_path.name}: {e}", exc_info=True)
             return False
 
@@ -2172,9 +2147,9 @@ class PluginStoreManager:
 
         Results are cached keyed on a signature that includes HEAD
         contents plus the mtime of HEAD AND the resolved ref (or
-        packed-refs). Repeated calls skip the four ``git`` subprocesses
-        when nothing has changed, and a ``git pull`` that fast-forwards
-        the branch correctly invalidates the cache.
+        packed-refs). Repeated calls skip the ``git log`` subprocess when
+        nothing has changed, and a ``git pull`` that fast-forwards the
+        branch correctly invalidates the cache.
         """
         git_dir = plugin_path / '.git'
         if not git_dir.exists():
@@ -2343,12 +2318,11 @@ class PluginStoreManager:
 
         No ``ledmatrix-`` prefix and no case folding here, unlike the loader:
         a store operation may delete what this returns, so it only accepts a
-        directory that names the id exactly or declares it. Note that this
-        leaves registry ids like `stocks` unresolved when the installed
-        plugin is `ledmatrix-stocks/` declaring `ledmatrix-stocks` (the
-        monorepo's leaderboard, music, stocks and weather); passing
-        ``prefix=True`` would resolve them, but update_plugin()'s reinstall
-        path has not been checked against that yet.
+        directory that names the id exactly or declares it. So a registry id
+        such as `stocks` does not resolve to an installed `ledmatrix-stocks/`
+        declaring `ledmatrix-stocks` (the monorepo's leaderboard, music,
+        stocks and weather); callers pass the installed id, and
+        update_plugin() maps it back to the registry id itself.
 
         Args:
             plugin_id: Plugin identifier
@@ -2476,11 +2450,9 @@ class PluginStoreManager:
 
         The old install is renamed aside (not deleted) until the new install
         succeeds, then removed; on ANY install failure the old directory is
-        restored. This is the difference between a failed update and a
-        destroyed plugin: the previous delete-then-install flow permanently
-        removed plugins whenever the download failed mid-update (seen in the
-        field during the monorepo migration on a Pi with broken DNS — every
-        old-remote plugin was deleted and none could be re-downloaded).
+        restored. Deleting first turns a failed download into a destroyed
+        plugin: during the monorepo migration a Pi with broken DNS lost every
+        old-remote plugin that way, with none able to be re-downloaded.
 
         The aside name embeds BACKUP_MARKER ('.standalone-backup-') so every
         plugin directory lookup (src/plugin_system/plugin_dirs.py) ignores it
@@ -2495,18 +2467,11 @@ class PluginStoreManager:
         with self._get_reinstall_lock(plugin_id):
             backup_path = plugin_path.with_name(
                 f"{plugin_path.name}{BACKUP_MARKER}migrating")
-            # A stale aside from a previous crash would block the rename
-            if backup_path.exists():
-                if not self._safe_remove_directory(backup_path):
-                    self.logger.error(
-                        f"Could not clear stale backup for {plugin_id} at "
-                        f"{backup_path}; leaving old install in place")
-                    return False
-            try:
-                plugin_path.rename(backup_path)
-            except OSError as e:
+            problem = self._set_aside(plugin_path, backup_path)
+            if problem:
                 self.logger.error(
-                    f"Could not set aside old plugin directory for {plugin_id}: {e}")
+                    "Not updating %s: %s; the installed version is left in place",
+                    plugin_id, problem)
                 return False
 
             try:
@@ -2516,27 +2481,11 @@ class PluginStoreManager:
                 installed = False
 
             if installed:
-                if not self._safe_remove_directory(backup_path):
-                    self.logger.warning(
-                        f"Update of {plugin_id} succeeded but the old backup "
-                        f"at {backup_path} could not be removed; it will be "
-                        f"cleared on the next update")
+                self._discard_backup(plugin_id, backup_path, "update")
                 return True
 
-            # Install failed (bad network, registry error...) — put the old
-            # version back so the user still has a working plugin.
-            self.logger.error(
-                f"Reinstall of {plugin_id} failed; restoring previous version")
-            try:
-                if plugin_path.exists():
-                    # partial download debris from the failed install
-                    self._safe_remove_directory(plugin_path)
-                backup_path.rename(plugin_path)
-                self.logger.info(f"Restored previous install of {plugin_id}")
-            except OSError as e:
-                self.logger.error(
-                    f"CRITICAL: could not restore {plugin_id} from {backup_path}: {e}. "
-                    f"The previous install is preserved there — rename it back manually.")
+            # Bad network, registry error...: the user keeps a working plugin.
+            self._restore_backup(plugin_id, plugin_path, backup_path, "Reinstall")
             return False
 
     def update_plugin(self, plugin_id: str) -> bool:
@@ -2745,7 +2694,6 @@ class PluginStoreManager:
                         # If status check times out, assume there might be changes and proceed
                         self.logger.warning(f"Git status check timed out for {plugin_id}, proceeding with update")
                         has_changes = True
-                        status_result = type('obj', (object,), {'stdout': '', 'stderr': 'Status check timed out'})()
                     
                     stash_info = ""
                     # Whether the pull can be undone without destroying work.
@@ -2829,7 +2777,7 @@ class PluginStoreManager:
 
                 except subprocess.CalledProcessError as git_error:
                     error_output = git_error.stderr or git_error.stdout or "Unknown error"
-                    cmd_str = ' '.join(git_error.cmd) if hasattr(git_error, 'cmd') else 'unknown'
+                    cmd_str = ' '.join(git_error.cmd)
                     self.logger.error(f"Git update failed for {plugin_id}")
                     self.logger.error(f"Command: {cmd_str}")
                     self.logger.error(f"Return code: {git_error.returncode}")
@@ -2845,7 +2793,7 @@ class PluginStoreManager:
                         self.logger.error(f"Authentication failed for {plugin_id}. Check git credentials or repository permissions.")
                     elif "not found" in error_lower or "does not exist" in error_lower:
                         self.logger.error(f"Remote branch or repository not found for {plugin_id}. Check repository URL and branch name.")
-                    elif "merge conflict" in error_lower or "conflict" in error_lower:
+                    elif "conflict" in error_lower:
                         self.logger.error(f"Merge conflict detected for {plugin_id}. Resolve conflicts manually or reinstall plugin.")
                     
                     return False
@@ -2962,9 +2910,7 @@ class PluginStoreManager:
             return self._reinstall_with_rollback(registry_id, plugin_path)
 
         except Exception as e:
-            import traceback
-            self.logger.error(f"Error updating plugin {plugin_id}: {e}")
-            self.logger.debug(traceback.format_exc())
+            self.logger.error(f"Error updating plugin {plugin_id}: {e}", exc_info=True)
             return False
     
     def list_installed_plugins(self) -> List[str]:
