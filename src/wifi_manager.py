@@ -1490,47 +1490,48 @@ class WiFiManager:
             logger.error(f"Error restoring connection: {e}")
             return False
     
+    def _find_profile_for_ssid(self, ssid: str) -> Optional[str]:
+        """Name of the saved NetworkManager profile for ``ssid``, or None.
+
+        ``802-11-wireless.ssid`` is not a column ``nmcli connection show``
+        can list, so this lists the Wi-Fi profiles and asks each one for its
+        SSID. A profile named after the SSID is the fallback, for when the
+        listing fails.
+        """
+        list_result = subprocess.run(  # nosec B603 B607 - fixed args, no user input
+            ["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show"],
+            capture_output=True, text=True, timeout=5
+        )
+        if list_result.returncode == 0:
+            for line in list_result.stdout.strip().split('\n'):
+                # Terse output escapes a colon inside a field as "\:". TYPE
+                # never contains one, so the last colon ends the name.
+                conn_name, sep, conn_type = line.rpartition(':')
+                if not sep or conn_type.strip() != '802-11-wireless':
+                    continue
+                conn_name = conn_name.replace('\\:', ':').replace('\\\\', '\\')
+                ssid_r = subprocess.run(  # nosec B603 B607 - conn_name from nmcli output, not user input
+                    ["nmcli", "-g", "802-11-wireless.ssid", "connection", "show", conn_name],
+                    capture_output=True, text=True, timeout=5
+                )
+                if ssid_r.returncode == 0 and ssid_r.stdout.strip() == ssid:
+                    return conn_name
+
+        direct_check = subprocess.run(  # nosec B603 B607 - list args, no shell
+            ["nmcli", "connection", "show", ssid],
+            capture_output=True, text=True, timeout=5
+        )
+        if direct_check.returncode == 0:
+            return ssid
+        return None
+
     def _connect_nmcli(self, ssid: str, password: str) -> Tuple[bool, str]:
         """Connect using nmcli"""
         try:
             # Show LED message
             self._show_led_message(f"Connecting to {ssid}...", duration=10)
             
-            # Find existing NM connection for this SSID.
-            # 802-11-wireless.ssid is not a valid column in 'nmcli connection show',
-            # so list all wifi connections then query each one's SSID individually.
-            list_result = subprocess.run(  # nosec B603 B607 - fixed args, no user input
-                ["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show"],
-                capture_output=True, text=True, timeout=5
-            )
-            existing_conn_name = None
-            if list_result.returncode == 0:
-                for line in list_result.stdout.strip().split('\n'):
-                    if ':' not in line:
-                        continue
-                    parts = line.split(':')
-                    if len(parts) < 2 or parts[1].strip() != '802-11-wireless':
-                        continue
-                    conn_name = parts[0].strip()
-                    ssid_r = subprocess.run(  # nosec B603 B607 - conn_name from nmcli output, not user input
-                        ["nmcli", "-g", "802-11-wireless.ssid", "connection", "show", conn_name],
-                        capture_output=True, text=True, timeout=5
-                    )
-                    if ssid_r.returncode == 0 and ssid_r.stdout.strip() == ssid:
-                        existing_conn_name = conn_name
-                        break
-            
-            # Also try direct lookup by SSID (in case connection name matches SSID)
-            if not existing_conn_name:
-                direct_check = subprocess.run(
-                    ["nmcli", "connection", "show", ssid],
-                    capture_output=True,
-                    text=True,
-                    timeout=5
-                )
-                if direct_check.returncode == 0:
-                    existing_conn_name = ssid
-            
+            existing_conn_name = self._find_profile_for_ssid(ssid)
             if existing_conn_name:
                 # Connection exists, try to activate it first (faster and more reliable)
                 logger.info(f"Found existing connection for {ssid}, activating...")
@@ -1739,33 +1740,18 @@ class WiFiManager:
             
             # Disconnect using nmcli
             if self.has_nmcli:
-                # Try to disconnect the specific connection first (more reliable)
+                # Take the profile down first, then the device, so the
+                # device ends up disconnected even when no profile is found.
                 if status.ssid:
-                    # Find the connection name for this SSID
-                    conn_result = subprocess.run(
-                        ["nmcli", "-t", "-f", "NAME,802-11-wireless.ssid", "connection", "show"],
-                        capture_output=True,
-                        text=True,
-                        timeout=5
-                    )
-                    if conn_result.returncode == 0:
-                        for line in conn_result.stdout.strip().split('\n'):
-                            if ':' in line:
-                                parts = line.split(':')
-                                if len(parts) >= 2:
-                                    conn_name = parts[0].strip()
-                                    conn_ssid = parts[1].strip() if len(parts) > 1 else ""
-                                    if conn_ssid == status.ssid:
-                                        # Disconnect this specific connection
-                                        subprocess.run(
-                                            ["nmcli", "connection", "down", conn_name],
-                                            capture_output=True,
-                                            timeout=10
-                                        )
-                                        logger.info(f"Disconnected connection {conn_name} for {status.ssid}")
-                                        break
-                
-                # Also disconnect the device to ensure clean state
+                    conn_name = self._find_profile_for_ssid(status.ssid)
+                    if conn_name:
+                        subprocess.run(  # nosec B603 B607 - list args, no shell
+                            ["nmcli", "connection", "down", conn_name],
+                            capture_output=True,
+                            timeout=10
+                        )
+                        logger.info(f"Disconnected connection {conn_name} for {status.ssid}")
+
                 result = subprocess.run(
                     ["nmcli", "device", "disconnect", self._wifi_interface],
                     capture_output=True,
