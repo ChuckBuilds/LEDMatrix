@@ -1850,11 +1850,6 @@ function requestOnDemandStop({ stopService = false } = {}) {
         });
 }
 
-function stopOnDemand(event) {
-    const stopService = event && event.shiftKey;
-    requestOnDemandStop({ stopService });
-}
-
 window.requestOnDemandStop = requestOnDemandStop;
 
 function closeOnDemandModalOnBackdrop(event) {
@@ -3723,19 +3718,6 @@ function isNewPlugin(lastUpdated) {
     } catch (e) {
         return false;
     }
-}
-
-// Debounce utility
-function debounce(func, wait) {
-    let timeout;
-    return function executedFunction(...args) {
-        const later = () => {
-            clearTimeout(timeout);
-            func(...args);
-        };
-        clearTimeout(timeout);
-        timeout = setTimeout(later, wait);
-    };
 }
 
 // Toggle password visibility for secret fields
