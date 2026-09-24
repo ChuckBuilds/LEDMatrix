@@ -38,6 +38,29 @@ class TestVegasModeConfigDefaults:
         cfg = VegasModeConfig()
         assert len(cfg.excluded_plugins) == 0
 
+    def test_defaults_match_the_shipped_template(self):
+        # The template, the web UI help and CONFIG_REFERENCE all document
+        # these values. max_cycle_duration defaulted to 600 in code while all
+        # three said 240, so an install without the key ran iterations 2.5x
+        # longer than documented.
+        import json
+        from pathlib import Path
+        template = json.loads(
+            (Path(__file__).resolve().parent.parent / "config"
+             / "config.template.json").read_text(encoding="utf-8"))
+        shipped = template["display"]["vegas_scroll"]
+        defaults = VegasModeConfig().to_dict()
+        mismatched = {k: (v, defaults[k]) for k, v in shipped.items()
+                      if k in defaults and defaults[k] != v}
+        assert not mismatched, f"template vs code default: {mismatched}"
+
+    def test_missing_keys_read_the_field_defaults(self):
+        # from_config used to repeat every default; with no keys set it must
+        # produce exactly the dataclass defaults.
+        assert VegasModeConfig.from_config({}).to_dict() == VegasModeConfig().to_dict()
+        assert (VegasModeConfig.from_config({"display": {"vegas_scroll": {}}}).to_dict()
+                == VegasModeConfig().to_dict())
+
 
 # ---------------------------------------------------------------------------
 # from_config

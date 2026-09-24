@@ -3324,11 +3324,15 @@ class DisplayController:
 
     @staticmethod
     def _vegas_scroll_speed(config: Dict[str, Any]) -> float:
-        """Vegas scroll speed in px/s. The default must match VegasModeConfig's
-        (50): a follower dead-reckons with this value between the leader's
-        position packets, so a different default made it run 50% fast."""
+        """Vegas scroll speed in px/s, with VegasModeConfig's default.
+
+        The default has to be the one Vegas itself uses: a follower
+        dead-reckons with this value between the leader's position packets,
+        so a different default makes it run at the wrong speed.
+        """
+        from src.vegas_mode.config import VegasModeConfig
         vegas_cfg = (config.get('display', {}) or {}).get('vegas_scroll', {}) or {}
-        return float(vegas_cfg.get('scroll_speed', 50.0))
+        return float(vegas_cfg.get('scroll_speed', VegasModeConfig.scroll_speed))
 
     def cleanup(self):
         """Clean up resources."""
