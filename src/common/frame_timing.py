@@ -145,7 +145,10 @@ STATS_FILENAME = "ledmatrix_frame_stats.json"
 
 
 def default_stats_path() -> str:
-    base = "/dev/shm" if os.path.isdir("/dev/shm") else tempfile.gettempdir()
+    # A fixed name in a shared directory is safe here: write() creates its
+    # temp file with mkstemp and os.replace()s it over this path, which swaps
+    # out whatever is there -- a planted symlink included -- without following it.
+    base = "/dev/shm" if os.path.isdir("/dev/shm") else tempfile.gettempdir()  # nosec B108
     return os.path.join(base, STATS_FILENAME)
 
 
