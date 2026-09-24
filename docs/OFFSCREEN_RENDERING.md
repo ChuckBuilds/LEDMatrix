@@ -284,9 +284,20 @@ updates are disabled while sync is active.
    removes the pauses, but the work still needs the GIL. Pillow drawing holds
    it, and a waiting thread only gets it back after the switch interval
    (default 5 ms). Expect some single-refresh late frames while a prefetch
-   runs. Measure with the soak. Lowering `sys.setswitchinterval` during Vegas
-   (e.g. 1 ms) is a one-line experiment, and a render process separate from
-   plugin work is the structural answer (the "native presenter" step).
+   runs. Measure with the soak. A render process separate from plugin work
+   is the structural answer (the "native presenter" step). Two opt-in
+   experiments try to get most of the way first, both off by default until
+   the soak says otherwise:
+   - `vegas_scroll.switch_interval_ms` lowers the switch interval for a Vegas
+     run (1 ms is the obvious try), so the render thread waits at most that
+     long behind bytecode. It does nothing for a C call that keeps the GIL.
+   - `vegas_scroll.prefetch_gate` (`src/common/render_gate.py`) lets the
+     prefetch thread run Python only while the render thread is blocked in
+     `SwapOnVSync`, up to just before the refresh the swap returns on, and
+     parks it the rest of the time. That covers C calls too, since the gate is
+     checked before each one starts. It never parks the thread while it holds
+     a lock the render thread takes, and never for more than 50 ms. It needs
+     the rebuilt binding, which releases the GIL during the swap.
 
 ## What this does not fix
 
