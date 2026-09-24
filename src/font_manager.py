@@ -40,6 +40,11 @@ from pathlib import Path
 from PIL import ImageFont
 from src.common.bdf_font import load_bdf_face, read_bdf_native_size
 from src.common.font_layout import load_truetype, resolve_asset_path
+from src.common.permission_utils import (
+    ensure_directory_permissions,
+    get_assets_dir_mode,
+    get_config_dir_mode,
+)
 from typing import Dict, Tuple, Optional, Union, Any, List
 from src.deprecation import deprecated
 
@@ -57,7 +62,6 @@ class FontManager:
     
     def __init__(self, config: Dict[str, Any]):
         self.config = config
-        self.fonts_config = config.get("fonts", {})
         
         # Font discovery and catalog
         self.font_catalog: Dict[str, str] = {}  # family_name -> file_path
@@ -73,10 +77,8 @@ class FontManager:
         # Plugin font management
         self.plugin_fonts: Dict[str, Dict[str, Any]] = {}  # plugin_id -> font_manifest
         self.plugin_font_catalogs: Dict[str, Dict[str, str]] = {}  # plugin_id -> {family_name -> file_path}
-        self.font_metadata: Dict[str, Dict[str, Any]] = {}  # family_name -> metadata
-        self.font_dependencies: Dict[str, List[str]] = {}  # family_name -> [required_families]
 
-        # Manager font registration - NEW for manager-centric model
+        # Fonts managers and plugins report using (register_manager_font).
         self.manager_fonts: Dict[str, Dict[str, Any]] = {}  # manager_id -> {element_key: {family, size_px, color}}
         self.detected_fonts: Dict[str, Dict[str, Any]] = {}  # element_key -> {family, size_px, color, manager_id, usage_count}
         # Bumped when a manager's registered families change (not when one
@@ -88,13 +90,10 @@ class FontManager:
         self.temp_font_dir = Path(tempfile.gettempdir()) / "ledmatrix_fonts"
         self.temp_font_dir.mkdir(exist_ok=True)
 
-        # Performance monitoring
+        # Counters behind get_performance_stats().
         self.performance_stats = {
-            "font_load_times": {},
             "cache_hits": 0,
             "cache_misses": 0,
-            "render_times": {},
-            "total_renders": 0,
             "failed_loads": 0,
             "start_time": time.time()
         }
@@ -105,9 +104,6 @@ class FontManager:
             "four_by_six": "assets/fonts/4x6-font.ttf",
             "five_by_seven": "assets/fonts/5x7.bdf",
             "tom_thumb": "assets/fonts/tom-thumb.bdf"
-            # Note: cozette_bdf removed - font file not available
-            # To re-enable: download cozette.bdf from https://github.com/the-moonwitch/Cozette
-            # and add: "cozette_bdf": "assets/fonts/cozette.bdf"
         }
         
         # Size tokens for convenience
@@ -131,7 +127,6 @@ class FontManager:
     def reload_config(self, new_config: Dict[str, Any]):
         """Reload configuration and refresh font catalog."""
         self.config = new_config
-        self.fonts_config = new_config.get("fonts", {})
         self.font_cache.clear()  # Clear cache to force reload
         self.metrics_cache.clear()  # Clear metrics cache
         self.cache_generation += 1
@@ -139,7 +134,6 @@ class FontManager:
         logger.info("FontManager configuration reloaded successfully")
 
     # ==================== Manager Font Registration ====================
-    # NEW: Support for managers to register their font choices dynamically
 
     def register_manager_font(self, manager_id: str, element_key: str, 
                              family: str, size_px: int, color: Optional[Tuple[int, int, int]] = None):
@@ -309,14 +303,6 @@ class FontManager:
             self.plugin_font_catalogs[plugin_id][family] = font_path
             self.font_catalog[namespaced_family] = font_path
 
-            # Store metadata
-            if "metadata" in font_def:
-                self.font_metadata[namespaced_family] = font_def["metadata"]
-
-            # Store dependencies
-            if "dependencies" in font_def:
-                self.font_dependencies[namespaced_family] = font_def["dependencies"]
-
             logger.info(f"Registered plugin font: {namespaced_family} -> {font_path}")
             return True
 
@@ -417,8 +403,6 @@ class FontManager:
                         namespaced_family = f"{plugin_id}::{family}"
                         if namespaced_family in self.font_catalog:
                             del self.font_catalog[namespaced_family]
-                        if namespaced_family in self.font_metadata:
-                            del self.font_metadata[namespaced_family]
                     
                     del self.plugin_font_catalogs[plugin_id]
 
@@ -469,8 +453,6 @@ class FontManager:
         Returns:
             Resolved font object
         """
-        start_time = time.time()
-        
         try:
             # Check for manual overrides first
             if element_key in self.font_overrides:
@@ -487,14 +469,7 @@ class FontManager:
                 if plugin_id in self.plugin_font_catalogs and family in self.plugin_font_catalogs[plugin_id]:
                     family = f"{plugin_id}::{family}"
 
-            # Get the font
-            font = self.get_font(family, size_px)
-            
-            # Record performance
-            duration = time.time() - start_time
-            self._record_performance_metric("resolve", f"{family}_{size_px}", duration)
-            
-            return font
+            return self.get_font(family, size_px)
 
         except Exception as e:
             logger.error(f"Error resolving font for {element_key}: {e}", exc_info=True)
@@ -518,7 +493,6 @@ class FontManager:
             return self.font_cache[cache_key]
 
         self.performance_stats["cache_misses"] += 1
-        start_time = time.time()
 
         # Load font
         font_path = self.font_catalog.get(family)
@@ -533,15 +507,13 @@ class FontManager:
                 else:
                     font = load_truetype(font_path, size_px)
             except Exception as e:
+                # The one log line for a failed load: _load_bdf_font lets
+                # its error propagate to here.
                 logger.error(f"Error loading font {font_path}: {e}")
                 self.performance_stats["failed_loads"] += 1
                 font = ImageFont.load_default()
 
-        # Cache and record performance
         self.font_cache[cache_key] = font
-        duration = time.time() - start_time
-        self.performance_stats["font_load_times"][cache_key] = duration
-        
         return font
 
     def _load_bdf_font(self, font_path: str, size_px: int) -> freetype.Face:
@@ -551,11 +523,7 @@ class FontManager:
         rather than failing over to PIL's default font, a different typeface
         (see :func:`src.common.bdf_font.load_bdf_face`).
         """
-        try:
-            return load_bdf_face(font_path, size_px)[0]
-        except Exception as e:
-            logger.error(f"Error loading BDF font {font_path}: {e}")
-            raise
+        return load_bdf_face(font_path, size_px)[0]
 
     def get_native_bdf_size(self, family: str) -> Optional[int]:
         """The one true pixel size of a BDF family in the catalog, or None
@@ -750,11 +718,6 @@ class FontManager:
     def _save_overrides(self):
         """Save current font overrides to file."""
         try:
-            from pathlib import Path
-            from src.common.permission_utils import (
-                ensure_directory_permissions,
-                get_config_dir_mode
-            )
             font_overrides_path = Path(self.font_overrides_file)
             ensure_directory_permissions(font_overrides_path.parent, get_config_dir_mode())
             with open(self.font_overrides_file, 'w') as f:
@@ -780,12 +743,6 @@ class FontManager:
     def get_size_tokens(self) -> Dict[str, int]:
         """Get available size tokens."""
         return self.size_tokens.copy()
-
-    def _record_performance_metric(self, operation: str, font_key: str, duration: float):
-        """Record a performance metric."""
-        if operation not in self.performance_stats:
-            self.performance_stats[operation] = {}
-        self.performance_stats[operation][font_key] = duration
 
     @deprecated("3.7.0")
     def get_performance_stats(self) -> Dict[str, Any]:
@@ -816,7 +773,8 @@ class FontManager:
 
     @deprecated("3.7.0")
     def add_font(self, font_file_path: str, family_name: str) -> bool:
-        """Add a new font to the catalog."""
+        """Add ``font_file_path`` to the catalog as ``family_name``. The file
+        stays where it is; only assets/fonts is created if it is missing."""
         try:
             # Validate font file
             if not os.path.exists(font_file_path):
@@ -828,13 +786,7 @@ class FontManager:
                 logger.warning(f"Font family '{family_name}' already exists")
                 return False
 
-            # Copy font to assets/fonts directory
-            from pathlib import Path
-            from src.common.permission_utils import (
-                ensure_directory_permissions,
-                get_assets_dir_mode
-            )
-            fonts_dir = Path("assets/fonts")
+            fonts_dir = Path(resolve_asset_path("assets/fonts"))
             ensure_directory_permissions(fonts_dir, get_assets_dir_mode())
 
             # Add to catalog
