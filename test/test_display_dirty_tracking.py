@@ -28,7 +28,6 @@ def dm(tmp_path_factory):
     """One real DisplayManager on the emulator (it's a process singleton)."""
     from src.display_manager import DisplayManager
     DisplayManager._instance = None
-    DisplayManager._initialized = False
     manager = DisplayManager({
         "display": {
             "hardware": {"rows": 32, "cols": 64, "chain_length": 2,
@@ -60,7 +59,6 @@ def dm(tmp_path_factory):
             "test module.")
     yield manager
     DisplayManager._instance = None
-    DisplayManager._initialized = False
 
 
 class _SwapSpy:
@@ -230,7 +228,6 @@ class TestKillSwitch:
     def test_config_flag_wires_through(self):
         from src.display_manager import DisplayManager
         DisplayManager._instance = None
-        DisplayManager._initialized = False
         try:
             manager = DisplayManager({
                 "display": {
@@ -243,7 +240,6 @@ class TestKillSwitch:
             assert manager._dirty_tracking_enabled is False
         finally:
             DisplayManager._instance = None
-            DisplayManager._initialized = False
 
 
 if __name__ == "__main__":
