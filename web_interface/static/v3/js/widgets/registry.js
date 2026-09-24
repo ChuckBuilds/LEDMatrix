@@ -1,3 +1,4 @@
+/* global debugLog */
 /**
  * LEDMatrix Widget Registry
  * 
@@ -183,7 +184,7 @@
             const removed = this._widgets.delete(widgetName);
             this._handlers.delete(widgetName);
             if (removed) {
-                console.log(`[WidgetRegistry] Unregistered widget: ${widgetName}`);
+                debugLog(`[WidgetRegistry] Unregistered widget: ${widgetName}`);
             }
             return removed;
         },
@@ -194,7 +195,7 @@
         clear: function() {
             this._widgets.clear();
             this._handlers.clear();
-            console.log('[WidgetRegistry] Cleared all widgets');
+            debugLog('[WidgetRegistry] Cleared all widgets');
         }
     };
     

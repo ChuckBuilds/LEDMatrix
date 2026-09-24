@@ -148,7 +148,7 @@
             fieldId: 'schedule'
         });
 
-        console.log('[Schedule] Schedule picker widget initialized');
+        debugLog('[Schedule] Schedule picker widget initialized');
     }
 
     // Handle form submission response
@@ -165,28 +165,7 @@
         const type = response.status || 'info';
 
         // Use global notification function if available
-        if (typeof window.showNotification === 'function') {
-            window.showNotification(message, type);
-        } else {
-            // Fallback notification
-            const colors = {
-                success: 'bg-green-500',
-                error: 'bg-red-500',
-                warning: 'bg-yellow-500',
-                info: 'bg-blue-500'
-            };
-
-            const notification = document.createElement('div');
-            notification.className = 'fixed top-4 right-4 px-6 py-3 rounded-lg shadow-lg z-50 ' + (colors[type] || colors.info) + ' text-white';
-            notification.textContent = message;
-            document.body.appendChild(notification);
-
-            setTimeout(function() {
-                notification.style.transition = 'opacity 0.5s';
-                notification.style.opacity = '0';
-                setTimeout(function() { notification.remove(); }, 500);
-            }, 3000);
-        }
+        window.showNotification(message, type);
     };
 
     // Initialize when DOM is ready or if already loaded
@@ -265,7 +244,7 @@
             fieldId: 'dim_schedule'
         });
 
-        console.log('[DimSchedule] Dim schedule picker widget initialized');
+        debugLog('[DimSchedule] Dim schedule picker widget initialized');
     }
 
     // Handle dim schedule form submission response
@@ -282,28 +261,7 @@
         const type = response.status || 'info';
 
         // Use global notification function if available
-        if (typeof window.showNotification === 'function') {
-            window.showNotification(message, type);
-        } else {
-            // Fallback notification
-            const colors = {
-                success: 'bg-green-500',
-                error: 'bg-red-500',
-                warning: 'bg-yellow-500',
-                info: 'bg-blue-500'
-            };
-
-            const notification = document.createElement('div');
-            notification.className = 'fixed top-4 right-4 px-6 py-3 rounded-lg shadow-lg z-50 ' + (colors[type] || colors.info) + ' text-white';
-            notification.textContent = message;
-            document.body.appendChild(notification);
-
-            setTimeout(function() {
-                notification.style.transition = 'opacity 0.5s';
-                notification.style.opacity = '0';
-                setTimeout(function() { notification.remove(); }, 500);
-            }, 3000);
-        }
+        window.showNotification(message, type);
     };
 
     // Initialize when DOM is ready

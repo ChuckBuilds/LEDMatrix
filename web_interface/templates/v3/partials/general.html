@@ -11,24 +11,7 @@
           hx-ext="json-enc"
           hx-headers='{"Content-Type": "application/json"}'
           hx-swap="none"
-          hx-on:htmx:after-request="
-              var xhr = event.detail.xhr;
-              var isSuccess = xhr.status >= 200 && xhr.status < 300;
-              var message = '';
-              var status = 'success';
-              try {
-                  var data = JSON.parse(xhr.responseText);
-                  message = data.message || '';
-                  status = data.status || status;
-              } catch (e) {}
-              if (isSuccess) {
-                  message = message || 'Settings saved';
-              } else {
-                  message = message || 'Failed to save settings';
-                  status = 'error';
-              }
-              showNotification(message, status);
-          "
+          hx-on:htmx:after-request="showSaveResult(event.detail.xhr, 'Settings saved', 'Failed to save settings')"
           class="space-y-6">
         {# Marks this post as the whole form, so an unchecked box saves as
            false. Without it the save endpoint treats absent keys as unchanged

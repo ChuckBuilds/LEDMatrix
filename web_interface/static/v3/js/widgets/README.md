@@ -227,11 +227,10 @@ directory is the only place the core serves plugin widgets from.
     }
 
     const sanitizeId = (id) => String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
-    const escapeHtml = (text) => {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    };
+    // The page's shared escaper covers HTML content and quoted attribute
+    // values. A textContent/innerHTML round trip leaves quotes alone, so it
+    // is not safe inside value="...".
+    const escapeHtml = (text) => window.LEDEscape.html(text);
 
     window.LEDMatrixWidgets.register('my-custom-widget', {
         name: 'My Custom Widget',

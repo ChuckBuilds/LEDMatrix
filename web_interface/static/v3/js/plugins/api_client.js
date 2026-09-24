@@ -1,3 +1,4 @@
+/* global debugLog */
 /**
  * API client for plugin operations.
  * 
@@ -10,7 +11,6 @@ const RequestThrottler = {
     pending: new Map(),
     cache: new Map(),
     cacheTTL: 5000, // 5 seconds cache for GET requests
-    debug: false, // Set to true to enable logging
     
     /**
      * Throttle a request to prevent rapid-fire calls
@@ -19,23 +19,17 @@ const RequestThrottler = {
         // Check cache first
         const cached = this.cache.get(key);
         if (cached && (Date.now() - cached.timestamp) < this.cacheTTL) {
-            if (this.debug) {
-                console.log('[RequestThrottler] Cache hit for:', key);
-            }
+            debugLog('[RequestThrottler] Cache hit for:', key);
             return cached.data;
         }
         
         // Check if request is already pending
         if (this.pending.has(key)) {
-            if (this.debug) {
-                console.log('[RequestThrottler] Reusing pending request for:', key);
-            }
+            debugLog('[RequestThrottler] Reusing pending request for:', key);
             return this.pending.get(key);
         }
         
-        if (this.debug) {
-            console.log('[RequestThrottler] Creating new request for:', key);
-        }
+        debugLog('[RequestThrottler] Creating new request for:', key);
         
         // Create throttled request with abort support
         let abortController = null;
@@ -49,16 +43,12 @@ const RequestThrottler = {
                             data: result,
                             timestamp: Date.now()
                         });
-                        if (this.debug) {
-                            console.log('[RequestThrottler] Cached response for:', key);
-                        }
+                        debugLog('[RequestThrottler] Cached response for:', key);
                     }
                     resolve(result);
                 } catch (error) {
                     // Don't cache errors
-                    if (this.debug) {
-                        console.error('[RequestThrottler] Request failed for:', key, error);
-                    }
+                    debugLog('[RequestThrottler] Request failed for:', key, error);
                     reject(error);
                 } finally {
                     this.pending.delete(key);
@@ -74,9 +64,7 @@ const RequestThrottler = {
         // Add abort method if available
         if (abortController) {
             promise.abort = () => {
-                if (this.debug) {
-                    console.log('[RequestThrottler] Aborting request for:', key);
-                }
+                debugLog('[RequestThrottler] Aborting request for:', key);
                 abortController.abort();
                 this.pending.delete(key);
             };
@@ -95,13 +83,6 @@ const RequestThrottler = {
         } else {
             this.cache.clear();
         }
-    },
-    
-    /**
-     * Enable or disable debug logging
-     */
-    setDebug(enabled) {
-        this.debug = enabled;
     },
     
     /**
