@@ -11,7 +11,7 @@ the one-shot installer. The pages here go deeper.
 2. [WEB_INTERFACE_GUIDE.md](WEB_INTERFACE_GUIDE.md) — using the web UI
 3. [PLUGIN_STORE_GUIDE.md](PLUGIN_STORE_GUIDE.md) — installing and managing plugins
 4. [WIFI_NETWORK_SETUP.md](WIFI_NETWORK_SETUP.md) — WiFi and AP-mode setup
-5. [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — common issues and fixes
+5. [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — common issues and fixes ([PERMISSIONS.md](PERMISSIONS.md) for "Permission denied")
 6. [SSH_UNAVAILABLE_AFTER_INSTALL.md](SSH_UNAVAILABLE_AFTER_INSTALL.md) — recovering SSH after install
 7. [CONFIG_DEBUGGING.md](CONFIG_DEBUGGING.md) — diagnosing config problems
 8. [LOW_MEMORY_BOARDS.md](LOW_MEMORY_BOARDS.md) — Pi Zero 2 W / 3B+ / 1GB Pi 4 memory limits
@@ -56,16 +56,20 @@ Going deeper:
 - [ADVANCED_FEATURES.md](ADVANCED_FEATURES.md) — Vegas scroll, on-demand display,
   cache management, background services, permissions
 - [FONT_MANAGER.md](FONT_MANAGER.md) — font system
+- [PERMISSIONS.md](PERMISSIONS.md) — file ownership, sudo rules, repair scripts
+- [MQTT bridge](../integrations/mqtt_bridge/README.md) — control the display from Home Assistant over MQTT
 
 ## Reference
 
 - [CONFIG_REFERENCE.md](CONFIG_REFERENCE.md) — every key in config.json and config_secrets.json
 - [REST_API_REFERENCE.md](REST_API_REFERENCE.md) — all web-interface HTTP endpoints
 - [PLUGIN_API_REFERENCE.md](PLUGIN_API_REFERENCE.md) — Python APIs available to plugins
+- [src/common/README.md](../src/common/README.md) — shared helper modules plugins can import
 - [DEVELOPER_QUICK_REFERENCE.md](DEVELOPER_QUICK_REFERENCE.md) — common dev tasks
 
 ## Contributing to LEDMatrix itself
 
+- [ARCHITECTURE.md](ARCHITECTURE.md) — processes, display loop, plugin system, web UI; where to start reading
 - [DEVELOPMENT.md](DEVELOPMENT.md) — environment setup
 - [HOW_TO_RUN_TESTS.md](HOW_TO_RUN_TESTS.md) — running the test suite
 - [MULTI_ROOT_WORKSPACE_SETUP.md](MULTI_ROOT_WORKSPACE_SETUP.md) — multi-repo workspace
