@@ -3340,6 +3340,13 @@ class DisplayController:
                 self.plugin_manager.stop_update_worker()
             except Exception as e:
                 logger.warning("Error stopping plugin update worker: %s", e)
+        # Vegas is torn down before the display manager: stopping it resets
+        # the display's scrolling state.
+        if self.vegas_coordinator is not None:
+            try:
+                self.vegas_coordinator.cleanup()
+            except Exception as e:
+                logger.warning("Error cleaning up Vegas mode: %s", e)
         # Shutdown config service if it exists
         if hasattr(self, 'config_service'):
             try:
