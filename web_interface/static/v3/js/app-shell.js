@@ -1,6 +1,48 @@
 /* global debugLog */
-// SSE wiring + full Alpine app() implementation and tab logic
-// Extracted from templates/v3/base.html so browsers cache it as a static asset.
+/*
+ * app-shell.js -- the page shell: the Alpine app(), tab loading, live
+ * streams, header stats, and the handlers the plugin config tab calls.
+ *
+ * Deferred, and placed before alpinejs.min.js so window.app is the full
+ * implementation by the time Alpine starts, and the alpine:init listener
+ * (Alpine stores) is registered first.
+ *
+ * Load order (templates/v3/base.html):
+ *   <head>, blocking:  debugLog and theme inline scripts; the htmx loader
+ *                      (injects htmx.min.js with a dynamic <script>);
+ *                      js/htmx-config.js; the loadPartialDirect fallback;
+ *                      js/app-early.js
+ *   <head>, defer:     js/app-shell.js, then js/alpinejs.min.js (Alpine
+ *                      starts as soon as it runs, so app-shell.js's app()
+ *                      is the one Alpine uses)
+ *   end of <body>, defer, in this order: app.js, js/tooltips.js,
+ *                      js/settings-search.js, js/utils/dialog.js,
+ *                      js/utils/error_handler.js, js/plugins/api_client.js,
+ *                      state_manager.js, install_manager.js, list_filter.js,
+ *                      the widget bundle (web_interface/widget_bundle.py),
+ *                      plugins_manager.js
+ *   Tab partials arrive later through htmx; their inline scripts run on
+ *   htmx:afterSwap (js/htmx-config.js).
+ *
+ * Globals:
+ *   window.app                  the root component: activeTab, plugin tab
+ *                               row, loadTabContent (htmx, with a
+ *                               loadPartialDirect fallback)
+ *   window.LEDVisibility        run a partial's timers only while its tab is
+ *                               active and the page is visible
+ *   window.LEDStreams           the one owner of the stats and display SSE
+ *                               streams (window.statsSource / displaySource)
+ *   window.showNotification     a queueing stand-in until the notification
+ *                               widget loads
+ *   Alpine stores 'onDemand' and 'plugins'
+ *   Template handlers: fixInvalidNumberInputs, validatePluginConfigForm,
+ *     handleConfigSave, handleToggleResponse, handlePluginUpdate,
+ *     refreshPluginConfig, runPluginOnDemand, stopOnDemand,
+ *     dismissPowerWarningBanner, takeScreenshot
+ *   Plain functions other scripts and the Overview partial call:
+ *     updateSystemStats, updateDisplayPreview, renderLedDots, drawGrid,
+ *     updatePlugin (the plugin card's Update button)
+ */
         function _setConnectionStatus(connected, reconnecting, paused) {
             const el = document.getElementById('connection-status');
             if (!el) return;
@@ -30,8 +72,7 @@
 
         var _statsErrorCount = 0;
 
-        // Kept on window for backward compatibility; LEDStreams attaches them
-        // to every EventSource it opens.
+        // LEDStreams attaches these to every EventSource it opens.
         window._statsOpenHandler = function() {
             _statsErrorCount = 0;
             _setConnectionStatus(true, false);
@@ -387,7 +428,7 @@
         });
 
 
-        // Alpine.js app function - full implementation
+        // The full app(). Alpine calls it for <body x-data="app()">.
         function app() {
             const fullImplementation = {
                 activeTab: (function() {
@@ -400,7 +441,6 @@
                 installedPlugins: [],
 
                 init() {
-                    // Prevent multiple initializations
                     if (this._initialized) {
                         return;
                     }
@@ -463,7 +503,6 @@
                         });
                     });
 
-                    // Load initial tab content
                     this.$nextTick(() => {
                         this.loadTabContent(this.activeTab);
                         if (typeof window.updateNavAriaCurrent === 'function') {
@@ -474,7 +513,8 @@
                         }));
                     });
 
-                    // Listen for plugin updates from pluginManager
+                    // The installed list is published by renderInstalledPlugins
+                    // (plugins_manager.js) with one pluginsUpdated event.
                     document.addEventListener('pluginsUpdated', (event) => {
                         debugLog('Received pluginsUpdated event:', event.detail.plugins.length, 'plugins');
                         this.installedPlugins = event.detail.plugins;
@@ -663,7 +703,6 @@
                         return;
                     }
                     
-                    // Store the current plugin IDs for next comparison
                     this._lastRenderedPluginIds = currentPluginIds;
 
                     const pluginTabsRow = document.getElementById('plugin-tabs-row');
@@ -695,16 +734,13 @@
 
                     debugLog(`[FULL] Updating plugin tabs for ${pluginsToShow.length} plugins`);
 
-                    // Always show the plugin tabs row (Plugin Manager should always be available)
-                    debugLog('[FULL] Ensuring plugin tabs row is visible');
+                    // The row also holds the Plugin Manager tab, so it is always shown.
                     pluginTabsRow.style.display = 'block';
 
-                    // Clear existing plugin tabs (except the Plugin Manager tab)
                     const existingTabs = pluginTabsNav.querySelectorAll('.plugin-tab');
                     debugLog(`[FULL] Removing ${existingTabs.length} existing plugin tabs`);
                     existingTabs.forEach(tab => tab.remove());
 
-                    // Add tabs for each installed plugin
                     debugLog('[FULL] Adding tabs for plugins:', pluginsToShow.map(p => p.id));
                     pluginsToShow.forEach(plugin => {
                         const tabButton = document.createElement('button');
@@ -727,7 +763,6 @@
                         const labelNode = document.createTextNode(plugin.name || plugin.id);
                         tabButton.replaceChildren(iconEl, labelNode);
 
-                        // Insert before the closing </nav> tag
                         pluginTabsNav.appendChild(tabButton);
                         debugLog('[FULL] Added tab for plugin:', plugin.id);
                     });
@@ -736,7 +771,6 @@
                 },
 
                 updatePluginTabStates() {
-                    // Update active state of all plugin tabs when activeTab changes
                     const pluginTabsNav = document.getElementById('plugin-tabs-row')?.querySelector('nav');
                     if (!pluginTabsNav) return;
                     
@@ -752,19 +786,18 @@
                 },
 
                 showNotification(message, type = 'info') {
-                    // Use global notification widget
                     window.showNotification(message, type);
                 }
             };
 
-            // Update window.app to return full implementation
             window.app = function() {
                 return fullImplementation;
             };
             
-            // If Alpine is already initialized, update the existing component immediately
+            // If Alpine started on the app-early.js stub, copy the full
+            // implementation into that live component (next frame, once
+            // Alpine has finished initialising it).
             if (window.Alpine) {
-                // Use requestAnimationFrame for immediate execution without blocking
                 requestAnimationFrame(() => {
                     if (window._appEnhanced) return;
                     window._appEnhanced = true;
@@ -798,11 +831,10 @@
             return fullImplementation;
         }
         
-        // Make app() available globally
         window.app = app;
 
 
-        // ===== Display Preview Functions (from v2) =====
+        // ===== Display preview (Overview tab and the floating preview) =====
         
         function updateDisplayPreview(data) {
             const preview = document.getElementById('displayPreview');

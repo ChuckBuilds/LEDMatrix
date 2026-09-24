@@ -1,6 +1,37 @@
 /* global showNotification */
-// LED Matrix v3 JavaScript
-// Additional helpers for HTMX and Alpine.js integration
+/*
+ * app.js -- page-wide behaviour that is not the Alpine app itself.
+ *
+ * Deferred, first of the scripts at the end of <body>; after app-shell.js
+ * and Alpine.
+ *
+ * Load order (templates/v3/base.html):
+ *   <head>, blocking:  debugLog and theme inline scripts; the htmx loader
+ *                      (injects htmx.min.js with a dynamic <script>);
+ *                      js/htmx-config.js; the loadPartialDirect fallback;
+ *                      js/app-early.js
+ *   <head>, defer:     js/app-shell.js, then js/alpinejs.min.js (Alpine
+ *                      starts as soon as it runs, so app-shell.js's app()
+ *                      is the one Alpine uses)
+ *   end of <body>, defer, in this order: app.js, js/tooltips.js,
+ *                      js/settings-search.js, js/utils/dialog.js,
+ *                      js/utils/error_handler.js, js/plugins/api_client.js,
+ *                      state_manager.js, install_manager.js, list_filter.js,
+ *                      the widget bundle (web_interface/widget_bundle.py),
+ *                      plugins_manager.js
+ *   Tab partials arrive later through htmx; their inline scripts run on
+ *   htmx:afterSwap (js/htmx-config.js).
+ *
+ * Owns: button loading states and the fallback result toast for htmx
+ * requests; the unsaved-changes guard for plugin config forms; the "restart
+ * the display" banner; the floating live preview; aria-current on the nav;
+ * the mobile nav drawer's keyboard handling; header widget placement.
+ *
+ * Globals: showSaveResult, showRestartPending, dismissRestartPending,
+ * restartPendingNow, toggleFloatingPreview, applyFloatingPreviewSize,
+ * cycleFloatingPreviewSize, updateFloatingPreviewVisibility,
+ * previewPluginNow, updateNavAriaCurrent, placeHeaderWidgets.
+ */
 
 // HTMX response handlers
 document.body.addEventListener('htmx:beforeRequest', function(event) {

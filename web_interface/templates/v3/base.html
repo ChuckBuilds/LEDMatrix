@@ -907,11 +907,10 @@
          their own URLs for plugin-loader.js and debugging. -->
     <script src="{{ widgets_bundle_url() }}" defer></script>
 
-    <!-- plugins_manager.js: loaded LAST on purpose — it defines the live
-         window.* implementations for several plugin actions (installPlugin,
-         uninstallPlugin, executePluginAction, ...) and intentionally wins
-         over same-named definitions in js/app.js and js/app-shell.js. Do not
-         remove or reorder without resolving that overlap first. -->
+    <!-- plugins_manager.js: loaded last. It uses PluginAPI, ListFilter,
+         LEDDialog, the widgets and app-shell.js's updatePlugin at load time
+         or when a card is clicked, so it must follow all of them. No other
+         script defines the same globals. -->
     <script src="{{ url_for('static', filename='v3/plugins_manager.js') }}?v=20260307" defer></script>
     
     <!-- Custom feeds table helpers live in js/widgets/custom-feeds.js (the

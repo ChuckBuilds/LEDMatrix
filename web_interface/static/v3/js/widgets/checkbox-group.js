@@ -24,15 +24,10 @@
         version: '1.0.0',
         
         /**
-         * Render the checkbox group widget
-         * Note: This widget is currently server-side rendered via Jinja2 template.
-         * This registration ensures the handlers are available globally.
+         * No-op: plugin_config.html renders this widget server-side. The
+         * registration exists for getValue/setValue and updateCheckboxGroupData.
          */
-        render: function(container, config, value, options) {
-            // For now, widgets are server-side rendered
-            // This function is a placeholder for future client-side rendering
-            if (window.debugLog) window.debugLog('[CheckboxGroupWidget] Render called (server-side rendered)');
-        },
+        render: function() {},
         
         /**
          * Get current value from widget

@@ -1,6 +1,38 @@
 /* global debugLog */
-// Early helpers and the app() stub (must run before Alpine init)
-// Extracted from templates/v3/base.html so browsers cache it as a static asset.
+/*
+ * app-early.js -- helpers every other script relies on, and the app() stub.
+ *
+ * A blocking <script> in <head>, so everything here exists before any other
+ * script, widget or partial runs.
+ *
+ * Load order (templates/v3/base.html):
+ *   <head>, blocking:  debugLog and theme inline scripts; the htmx loader
+ *                      (injects htmx.min.js with a dynamic <script>);
+ *                      js/htmx-config.js; the loadPartialDirect fallback;
+ *                      js/app-early.js
+ *   <head>, defer:     js/app-shell.js, then js/alpinejs.min.js (Alpine
+ *                      starts as soon as it runs, so app-shell.js's app()
+ *                      is the one Alpine uses)
+ *   end of <body>, defer, in this order: app.js, js/tooltips.js,
+ *                      js/settings-search.js, js/utils/dialog.js,
+ *                      js/utils/error_handler.js, js/plugins/api_client.js,
+ *                      state_manager.js, install_manager.js, list_filter.js,
+ *                      the widget bundle (web_interface/widget_bundle.py),
+ *                      plugins_manager.js
+ *   Tab partials arrive later through htmx; their inline scripts run on
+ *   htmx:afterSwap (js/htmx-config.js).
+ *
+ * Globals:
+ *   window.LEDEscape    html / attr / jsStringAttr, the only HTML escaper
+ *   window.getApp()     the root Alpine component (<body x-data="app()">)
+ *   window.app          a stub app() so Alpine can start before app-shell.js
+ *                       has run; app-shell.js replaces it with the full one
+ *                       (in the normal load order Alpine only ever sees the
+ *                       full one, see the note on the stub below)
+ *   getInstalledPluginsSafe()   installed list via PluginAPI or fetch
+ *   a pluginsUpdated listener that draws the plugin tab row while the app is
+ *   not the full implementation yet
+ */
 
         // ===== window.LEDEscape: the web UI's HTML escaping =====
         // This file is a blocking <script> in <head>, so every later script,
@@ -39,8 +71,9 @@
             const data = window.Alpine.$data(el);
             return data && 'activeTab' in data ? data : null;
         };
-        // Helper function to get installed plugins with fallback
-        // Must be defined before app() function that uses it
+
+        // The installed-plugin list through PluginAPI, or a plain fetch if
+        // PluginAPI (loaded later, deferred) is not there yet.
         async function getInstalledPluginsSafe() {
             if (window.PluginAPI && window.PluginAPI.getInstalledPlugins) {
                 try {
@@ -110,8 +143,13 @@
         // Guard flag to prevent duplicate stub-to-full enhancement
         window._appEnhanced = false;
 
-        // Define app() function early so Alpine can find it when it initializes
-        // This is a complete implementation that will work immediately
+        // The stub app(). If Alpine initialises before app-shell.js has run,
+        // this object is what it gets; its init() copies the full
+        // implementation in as soon as app-shell.js has replaced window.app
+        // (the "enhancement", guarded by window._appEnhanced), and draws the
+        // plugin tabs itself until then. base.html now loads app-shell.js
+        // before Alpine, so in practice Alpine calls the full app() directly
+        // and this stub never runs.
         (function() {
             const isAPMode = window.location.hostname === '192.168.4.1' || 
                            window.location.hostname.startsWith('192.168.4.');

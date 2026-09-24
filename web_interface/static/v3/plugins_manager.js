@@ -1,4 +1,56 @@
 /* global debugLog */
+/*
+ * plugins_manager.js -- the Plugin Manager tab and everything that acts on
+ * installed plugins: the installed grid (toggle, configure, update,
+ * uninstall), the plugin store and custom registries, GitHub-URL installs
+ * and the GitHub token panel, on-demand runs, the array-of-objects and
+ * key/value config fields, plugin web-UI actions, and the Starlark apps
+ * section.
+ *
+ * Deferred and loaded last, after the widget bundle, so everything it uses
+ * (PluginAPI, ListFilter, LEDDialog, the widgets, app-shell.js's
+ * updatePlugin) already exists.
+ *
+ * Load order (templates/v3/base.html):
+ *   <head>, blocking:  debugLog and theme inline scripts; the htmx loader
+ *                      (injects htmx.min.js with a dynamic <script>);
+ *                      js/htmx-config.js; the loadPartialDirect fallback;
+ *                      js/app-early.js
+ *   <head>, defer:     js/app-shell.js, then js/alpinejs.min.js (Alpine
+ *                      starts as soon as it runs, so app-shell.js's app()
+ *                      is the one Alpine uses)
+ *   end of <body>, defer, in this order: app.js, js/tooltips.js,
+ *                      js/settings-search.js, js/utils/dialog.js,
+ *                      js/utils/error_handler.js, js/plugins/api_client.js,
+ *                      state_manager.js, install_manager.js, list_filter.js,
+ *                      the widget bundle (web_interface/widget_bundle.py),
+ *                      plugins_manager.js
+ *   Tab partials arrive later through htmx; their inline scripts run on
+ *   htmx:afterSwap (js/htmx-config.js).
+ *
+ * Layout: a few handlers defined up front, outside any IIFE, because the
+ * cards and other scripts call them through window (configurePlugin,
+ * togglePlugin, the GitHub token helpers, handleGitHubPluginInstall,
+ * checkGitHubAuthStatus); then the plugin-manager IIFE (private state:
+ * installedPlugins, the store cache, the on-demand poller); then the
+ * array-of-objects field helpers; then the Starlark IIFE.
+ *
+ * The installed list is published only by renderInstalledPlugins: it sets
+ * window.installedPlugins and dispatches one `pluginsUpdated` event, which
+ * app-shell.js's app() uses to draw the plugin tabs.
+ *
+ * Globals include: window.pluginManager (loadInstalledPlugins,
+ * searchPluginStore, init flags), initPluginsPage, handlePluginAction,
+ * configurePlugin, togglePlugin, uninstallPlugin, installPlugin,
+ * installFromCustomRegistry, removeSavedRepository, executePluginAction,
+ * openOnDemandModal, requestOnDemandStop, loadOnDemandStatus,
+ * renderArrayObjectItem, addArrayObjectItem, removeArrayObjectItem,
+ * updateArrayObjectData, handleArrayObjectFileUpload, removeArrayObjectFile,
+ * removeKeyValuePair, updateKeyValuePairData, getSchemaProperty,
+ * installStarlarkApp, installPixlet, the GitHub token functions,
+ * window.installedPlugins and window.currentPluginConfig.
+ */
+
 // ─── LocalStorage Safety Wrappers ────────────────────────────────────────────
 // Handles environments where localStorage is unavailable or restricted (private browsing, etc.)
 const safeLocalStorage = {
@@ -55,7 +107,8 @@ window.configurePlugin = window.configurePlugin || async function(pluginId) {
     }
 };
 
-// Initialize per-plugin toggle request token map for race condition protection
+// Latest toggle request per plugin, so a slow response to an earlier click
+// cannot overwrite the outcome of a later one.
 if (!window._pluginToggleRequests) {
     window._pluginToggleRequests = {};
 }
@@ -86,12 +139,10 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
         toggleCheckbox.classList.add('opacity-50', 'cursor-not-allowed');
     }
 
-    // Disable wrapper to provide visual feedback
     if (wrapperDiv) {
         wrapperDiv.classList.add('opacity-50', 'pointer-events-none');
     }
 
-    // Update wrapper background and border
     if (wrapperDiv) {
         if (enabled) {
             wrapperDiv.classList.remove('bg-gray-50', 'border-gray-300');
@@ -102,7 +153,6 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
         }
     }
 
-    // Update toggle track
     if (toggleTrack) {
         if (enabled) {
             toggleTrack.classList.remove('bg-gray-300');
@@ -113,7 +163,6 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
         }
     }
 
-    // Update toggle handle
     if (toggleHandle) {
         if (enabled) {
             toggleHandle.classList.add('translate-x-full', 'border-green-500');
@@ -126,7 +175,6 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
         }
     }
 
-    // Update label with icon and text
     if (toggleLabel) {
         if (enabled) {
             toggleLabel.className = 'text-sm font-semibold text-green-700 flex items-center gap-1.5';
@@ -220,10 +268,7 @@ window.__pendingStorePlugins = window.__pendingStorePlugins || null;
 // Document-level delegation for plugin card actions, so a card works even if
 // it was rendered before the grid's own listener was attached. It hands the
 // event to handlePluginAction, which the plugin-manager IIFE below exposes on
-// window. (It used to test `typeof handlePluginAction`, which is IIFE-scoped
-// and so never visible here: every click took a copied fallback instead, which
-// asked to confirm an uninstall twice and sent Starlark app uninstalls to the
-// plugin endpoint.)
+// window (the function itself is IIFE-scoped and not visible from here).
 (function setupGlobalEventDelegation() {
     const handleGlobalPluginAction = function(event) {
         const target = event.target;
@@ -240,9 +285,6 @@ window.__pendingStorePlugins = window.__pendingStorePlugins || null;
     document.addEventListener('change', handleGlobalPluginAction, true);
     debugLog('[PLUGINS SCRIPT] Global event delegation set up');
 })();
-
-// Note: configurePlugin and togglePlugin are now defined at the top of the file (after uninstallPlugin)
-// to ensure they're available immediately when the script loads
 
 // GitHub Token Collapse Handler - Define early so it's available before IIFE
 debugLog('[DEFINE] Defining attachGithubTokenCollapseHandler function...');
@@ -676,7 +718,6 @@ window.initPluginsPage = function() {
         return;
     }
 
-    // Check if required elements exist
     const installedGrid = document.getElementById('installed-plugins-grid');
     if (!installedGrid) {
         debugLog('Plugin elements not ready yet');
@@ -749,7 +790,6 @@ window.initPluginsPage = function() {
     return true;
 }
 
-// Consolidated initialization function
 function initializePluginPageWhenReady() {
     return window.initPluginsPage();
 }
@@ -759,13 +799,11 @@ function initializePluginPageWhenReady() {
     let initTimer = null;
 
     function attemptInit() {
-        // Clear any pending timer
         if (initTimer) {
             clearTimeout(initTimer);
             initTimer = null;
         }
 
-        // Try immediate initialization
         initializePluginPageWhenReady();
     }
 
@@ -800,7 +838,6 @@ function initializePluginPageWhenReady() {
     }, { once: false }); // Allow multiple swaps
 })();
 
-// Initialization guard to prevent multiple initializations
 let pluginsInitialized = false;
 
 function initializePlugins() {
@@ -840,25 +877,20 @@ function initializePlugins() {
             applyStoreFiltersAndSort(true);
         });
 
-    // #plugin-search and #plugin-category are wired by the store's ListFilter
-    // controller (setupStoreFilterListeners). They used to ALSO be bound here to
-    // searchPluginStore; because that binding passed the DOM event as the
-    // `fetchCommitInfo` argument, every keystroke and category change skipped the
-    // cached-filter fast path and refetched /api/v3/plugins/store/list with commit
-    // info. Filtering the cached list is the controller's job — leave it to it.
+    // #plugin-search and #plugin-category belong to the store's ListFilter
+    // controller (setupStoreFilterListeners), which filters the cached list.
+    // Do not bind searchPluginStore to them as well: it would receive the DOM
+    // event as `fetchCommitInfo` and refetch the whole store on every keystroke.
 
     setupGitHubInstallHandlers();
 
-    // Setup collapsible section handlers
     setupCollapsibleSections();
 
-    // Load saved repositories
     loadSavedRepositories();
 
     debugLog('[INIT] Plugins initialized');
 }
 
-// Track in-flight requests to prevent duplicates
 // ===== PLUGIN LOADING WITH REQUEST DEDUPLICATION & CACHING =====
 // Prevents redundant API calls by caching results for a short time
 const pluginLoadCache = {
@@ -899,14 +931,12 @@ function loadInstalledPlugins(forceRefresh = false) {
         }) :
         fetch('/api/v3/plugins/installed').then(response => response.json());
 
-    // Store the promise
     pluginLoadCache.promise = fetchPromise
         .then(data => {
             if (data.status === 'success') {
                 const pluginsData = data.data?.plugins;
                 installedPlugins = Array.isArray(pluginsData) ? pluginsData : [];
 
-                // Update cache
                 pluginLoadCache.data = installedPlugins;
                 pluginLoadCache.timestamp = Date.now();
 
@@ -936,7 +966,6 @@ function loadInstalledPlugins(forceRefresh = false) {
             throw error;
         })
         .finally(() => {
-            // Clear the in-flight promise (but keep cache data)
             pluginLoadCache.promise = null;
         });
 
@@ -1267,16 +1296,13 @@ function setupInstalledEventDelegation() {
         return;
     }
 
-    // Skip if already set up (guard against multiple calls)
     if (container._eventDelegationSetup) {
         return;
     }
 
-    // Mark as set up
     container._eventDelegationSetup = true;
     container._pluginActionHandler = handlePluginAction;
 
-    // Add listeners for both click and change events
     container.addEventListener('click', handlePluginAction, true);
     container.addEventListener('change', handlePluginAction, true);
     debugLog('[RENDER] Event delegation set up for installed-plugins-grid');
@@ -1284,7 +1310,6 @@ function setupInstalledEventDelegation() {
 
 
 function handlePluginAction(event) {
-    // Check for both button and input (for toggle)
     const button = event.target.closest('button[data-action]') || event.target.closest('input[data-action]');
     if (!button) return;
 
@@ -1857,9 +1882,6 @@ function closeOnDemandModalOnBackdrop(event) {
         closeOnDemandModal();
     }
 }
-
-// configurePlugin is already defined at the top of the script - no need to redefine
-
 
 // Helper function to get the full property object from schema
 // Uses greedy longest-match to handle schema keys containing dots (e.g., "eng.1")
@@ -2650,8 +2672,6 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
     });
 }
 
-// togglePlugin is already defined at the top of the script - no need to redefine
-
 window.uninstallPlugin = function(pluginId) {
     const plugin = (window.installedPlugins || installedPlugins || []).find(p => p.id === pluginId);
     const pluginName = plugin ? (plugin.name || pluginId) : pluginId;
@@ -2805,7 +2825,6 @@ function searchPluginStore(fetchCommitInfo = true) {
         }
     }
 
-    // Show loading state
     setStoreCount('<i class="fas fa-spinner fa-spin mr-1"></i>Loading...');
     showStoreLoading(true);
 
@@ -2886,8 +2905,7 @@ function isStorePluginInstalled(pluginIdOrPlugin) {
 }
 
 // ── Plugin Store: search / filter / sort ────────────────────────────────
-// Behaviour, element ids and localStorage keys are unchanged from the
-// hand-rolled version this replaces — only the machinery is now shared.
+// Driven by the shared ListFilter controller (js/plugins/list_filter.js).
 const STORE_COMPARATORS = {
     'a-z': (a, b) => storeSortName(a).localeCompare(storeSortName(b)),
     'z-a': (a, b) => storeSortName(b).localeCompare(storeSortName(a)),
@@ -3204,13 +3222,8 @@ window.installFromCustomRegistry = function(pluginId, registryUrl, pluginPath, b
 function setupCollapsibleSections() {
     debugLog('[setupCollapsibleSections] Setting up collapsible sections...');
 
-    // Installed Plugins and Plugin Store sections no longer have collapse buttons
-    // They are always visible
-
-    // Functions are now defined outside IIFE, just attach the handler
-    if (window.attachGithubTokenCollapseHandler) {
-        window.attachGithubTokenCollapseHandler();
-    }
+    // The GitHub token panel is the only collapsible section left.
+    window.attachGithubTokenCollapseHandler();
 
     debugLog('[setupCollapsibleSections] Collapsible sections setup complete');
 }
@@ -3720,7 +3733,8 @@ function isNewPlugin(lastUpdated) {
     }
 }
 
-// Toggle password visibility for secret fields
+// Opens the GitHub token panel (the warning banner's "Configure Token" link),
+// expanded, and reports whether a token is saved.
 window.openGithubTokenSettings = function() {
     const settings = document.getElementById('github-token-settings');
     const warning = document.getElementById('github-auth-warning');
@@ -3964,21 +3978,19 @@ window.dismissGithubWarning = function() {
 }
 
 
-// Expose renderArrayObjectItem, getSchemaProperty, and escapeHtml to window for use by global functions
+// Used by the array-of-objects helpers below, which live outside this IIFE.
 window.renderArrayObjectItem = renderArrayObjectItem;
 window.getSchemaProperty = getSchemaProperty;
 
-// Expose GitHub install handlers. These must be assigned inside the IIFE —
-// from outside the IIFE, `typeof attachInstallButtonHandler` evaluates to
-// 'undefined' and the fallback path at the bottom of this file fires a
-// [FALLBACK] attachInstallButtonHandler not available on window warning.
+// Assigned here because the functions are IIFE-local; the load-time and
+// htmx:afterSettle wiring below, outside the IIFE, reaches them through window.
 window.attachInstallButtonHandler = attachInstallButtonHandler;
 window.setupGitHubInstallHandlers = setupGitHubInstallHandlers;
 
 })(); // End IIFE
 
-// Functions to handle array-of-objects
-// Define these at the top level (outside any IIFE) to ensure they're always available
+// Array-of-objects config fields: add and remove items (the inline onclick
+// handlers that renderArrayObjectItem writes call these).
 if (typeof window !== 'undefined') {
     window.addArrayObjectItem = function(fieldId, fullKey, maxItems) {
         const itemsContainer = document.getElementById(fieldId + '_items');
@@ -4053,9 +4065,8 @@ if (typeof window !== 'undefined') {
                         input.id = newId;
                     }
                 });
-                // Update button onclick attributes - only update the index parameter
-                // Since we use data-index for tracking, we can compute index from closest('.array-object-item')
-                // For now, update onclick strings but be more careful with the regex
+                // The buttons' inline onclick handlers carry the item index, so
+                // rewrite it in each one.
                 itemEl.querySelectorAll('button[onclick]').forEach(button => {
                     const onclick = button.getAttribute('onclick');
                     if (onclick) {
@@ -4105,9 +4116,6 @@ if (typeof window !== 'undefined') {
     };
 
 }
-
-// Make currentPluginConfig globally accessible (outside IIFE)
-window.currentPluginConfig = null;
 
 // Force initialization immediately when script loads (for HTMX swapped content)
 debugLog('Plugins script loaded, checking for elements...');
@@ -4292,11 +4300,8 @@ document.addEventListener('htmx:afterSettle', function() {
             });
     }
 
-    // ── Apply Filters + Sort ────────────────────────────────────────────────
     // ── Filter / Sort / Paginate ────────────────────────────────────────────
-    // Same behaviour, element ids and localStorage keys as the hand-rolled
-    // version this replaces; the machinery is now shared with the store and
-    // the installed-plugins list.
+    // The same ListFilter controller as the store and the installed list.
     function starlarkSortName(app) {
         return (app.name || app.id || '').toLowerCase();
     }
@@ -4480,7 +4485,6 @@ document.addEventListener('htmx:afterSettle', function() {
         }
     }
 
-    // ── Filter UI Updates ───────────────────────────────────────────────────
     // ── Event Listeners ─────────────────────────────────────────────────────
     function setupStarlarkFilterListeners() {
         const ctl = getStarlarkFilter();
