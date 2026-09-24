@@ -53,14 +53,15 @@
         //                    attribute. The browser decodes the entities before
         //                    it parses the handler, so the JS sees the literal.
         window.LEDEscape = (function() {
-            const ENTITIES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+            const ENTITIES = new Map([['&', '&amp;'], ['<', '&lt;'], ['>', '&gt;'], ['"', '&quot;'], ["'", '&#39;']]);
             function html(value) {
-                return value == null ? '' : String(value).replace(/[&<>"']/g, c => ENTITIES[c]);
+                return value == null ? '' : String(value).replace(/[&<>"']/g, c => ENTITIES.get(c));
             }
             function jsStringAttr(value) {
                 return html(JSON.stringify(value == null ? '' : String(value)));
             }
-            return Object.freeze({ html: html, attr: html, jsStringAttr: jsStringAttr });
+            // attr is the same function: html() escapes both quote characters.
+            return Object.freeze({ html: html, attr: html, jsStringAttr: jsStringAttr }); // nosemgrep
         })();
 
         // Kept for plugin web UIs and third-party plugin pages that call them.

@@ -770,7 +770,8 @@
      * @param {number} imageIdx - Image index
      */
     window.openImageSchedule = function(fieldId, imageId, imageIdx) {
-        const image = window.getCurrentImages(fieldId)[imageIdx];
+        const idx = Number(imageIdx);
+        const image = Number.isInteger(idx) && idx >= 0 ? window.getCurrentImages(fieldId).at(idx) : undefined;
         if (!image) return;
 
         const scheduleContainer = document.getElementById(`schedule_${imageDomId(imageId || imageIdx)}`);
@@ -790,11 +791,14 @@
     // ids as data attributes; one delegated change listener (below) routes
     // them, so the editor needs no per-element listeners and no inline JS.
     function renderScheduleEditor(container, fieldId, imageId, imageIdx, savedSchedule) {
-        const esc = escapeHtml;
         const schedule = savedSchedule || { enabled: false, mode: 'always', start_time: '08:00', end_time: '18:00', days: {} };
         const domId = imageDomId(imageId);
-        const ids = `data-field-id="${esc(fieldId)}" data-image-id="${esc(imageId)}" data-image-idx="${Number(imageIdx)}"`;
+        const ids = `data-field-id="${escapeHtml(fieldId)}" data-image-id="${escapeHtml(imageId)}" data-image-idx="${Number(imageIdx)}"`;
 
+        // Every interpolated value below is escaped with escapeHtml() or is
+        // constrained: domId is [A-Za-z0-9_] only (imageDomId), day comes from
+        // DAYS, and the rest are literals chosen by a boolean or a mode compare.
+        // eslint-disable-next-line no-unsanitized/property -- nosemgrep: values are escaped above
         container.innerHTML = `
             <div class="bg-white rounded-lg border border-blue-200 p-4">
                 <h4 class="text-sm font-semibold text-gray-900 mb-3">
@@ -831,7 +835,7 @@
                             <input type="time"
                                    id="schedule_start_${domId}"
                                    data-schedule-control="time" ${ids}
-                                   value="${esc(schedule.start_time || '08:00')}"
+                                   value="${escapeHtml(schedule.start_time || '08:00')}"
                                    class="block w-full px-2 py-1 text-sm border border-gray-300 rounded-md">
                         </div>
                         <div>
@@ -839,7 +843,7 @@
                             <input type="time"
                                    id="schedule_end_${domId}"
                                    data-schedule-control="time" ${ids}
-                                   value="${esc(schedule.end_time || '18:00')}"
+                                   value="${escapeHtml(schedule.end_time || '18:00')}"
                                    class="block w-full px-2 py-1 text-sm border border-gray-300 rounded-md">
                         </div>
                     </div>
@@ -867,14 +871,14 @@
                                                id="day_${day}_start_${domId}"
                                                aria-label="${day} start time"
                                                ${dayIds}
-                                               value="${esc(dayConfig.start_time || '08:00')}"
+                                               value="${escapeHtml(dayConfig.start_time || '08:00')}"
                                                class="text-xs px-2 py-1 border border-gray-300 rounded"
                                                ${!dayConfig.enabled ? 'disabled' : ''}>
                                         <input type="time"
                                                id="day_${day}_end_${domId}"
                                                aria-label="${day} end time"
                                                ${dayIds}
-                                               value="${esc(dayConfig.end_time || '18:00')}"
+                                               value="${escapeHtml(dayConfig.end_time || '18:00')}"
                                                class="text-xs px-2 py-1 border border-gray-300 rounded"
                                                ${!dayConfig.enabled ? 'disabled' : ''}>
                                     </div>

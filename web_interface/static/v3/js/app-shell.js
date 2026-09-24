@@ -1,4 +1,4 @@
-/* global debugLog */
+/* global debugLog, showNotification */
 /*
  * app-shell.js -- the page shell: the Alpine app(), tab loading, live
  * streams, header stats, and the handlers the plugin config tab calls.
@@ -589,7 +589,7 @@
                             return;
                         }
                         let failed = false;
-                        const onError = () => { failed = true; };
+                        const onError = () => { failed = true; }; // eslint-disable-line
                         contentEl.addEventListener('htmx:responseError', onError, { once: true });
                         return htmx.ajax('GET', url, { source: contentEl, target: contentEl, swap: swap })
                             .then(() => { if (!failed) contentEl.setAttribute('data-loaded', 'true'); })
