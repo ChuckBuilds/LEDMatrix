@@ -191,7 +191,7 @@ console.log('\n4c. no hand-rolled escaper outside app-early.js');
     let text = fs.readFileSync(p, 'utf8');
     // In templates only the inline scripts count; Jinja's own |replace("'", "&#39;")
     // escaping of server-rendered values is not a JS escaper.
-    if (e.name.endsWith('.html')) text = (text.match(/<script[^>]*>[\s\S]*?<\/script>/g) || []).join('\n');
+    if (e.name.endsWith('.html')) text = (text.match(/<script[^>]*>[\s\S]*?<\/script\s*>/gi) || []).join('\n');
     if (/['"`]&quot;['"`]|['"`]&#39;['"`]/.test(text)) found.push(rel);
   });
   walk(path.join(ROOT, 'static'));

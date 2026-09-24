@@ -526,7 +526,10 @@
             leftSection.className = 'flex items-center space-x-3 flex-1';
 
             const imgEl = document.createElement('img');
-            imgEl.src = '/' + String(img.path || '').replace(/^\/+/, '');
+            // A stored path names a file under the project root. Encoding each
+            // segment keeps it a same-origin path whatever characters it holds.
+            imgEl.src = '/' + String(img.path || '').replace(/^\/+/, '')
+                .split('/').map(encodeURIComponent).join('/');
             imgEl.alt = String(img.filename || '');
             imgEl.loading = 'lazy';
             imgEl.decoding = 'async';
