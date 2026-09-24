@@ -461,3 +461,25 @@ def test_disconnect_takes_the_profile_down(manager: WiFiManager) -> None:
     assert ok
     assert ["nmcli", "connection", "down", "Home profile"] in commands
     assert ["nmcli", "device", "disconnect", "wlan0"] in commands
+
+
+# ---------------------------------------------------------------------------
+# 8. The nmcli Wi-Fi list parser both scan paths share
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+def test_nmcli_wifi_list_parsing() -> None:
+    out = (
+        "HomeNet:40:WPA2:2437 MHz\n"
+        "Cafe:80::5180 MHz\n"
+        "HomeNet:90:WPA2:5180 MHz\n"   # duplicate SSID: first line wins
+        ":70:WPA2:2412 MHz\n"          # hidden network
+        "Broken:notanumber:WPA2:2412 MHz\n"
+        "Modern:60:WPA3 SAE:5745 MHz\n"
+    )
+    networks = WiFiManager._parse_nmcli_wifi_list(out)
+    assert [(n.ssid, n.signal, n.security, n.frequency) for n in networks] == [
+        ("Cafe", 80, "open", 5180.0),
+        ("Modern", 60, "wpa3", 5745.0),
+        ("HomeNet", 40, "wpa2", 2437.0),
+    ]
