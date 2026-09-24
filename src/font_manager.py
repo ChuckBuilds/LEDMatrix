@@ -38,6 +38,7 @@ import time
 from collections import OrderedDict
 from pathlib import Path
 from PIL import ImageFont
+from src.common.bdf_font import load_bdf_face, read_bdf_native_size
 from src.common.font_layout import load_truetype, resolve_asset_path
 from typing import Dict, Tuple, Optional, Union, Any, List
 from src.deprecation import deprecated
@@ -517,29 +518,14 @@ class FontManager:
         return font
 
     def _load_bdf_font(self, font_path: str, size_px: int) -> freetype.Face:
-        """Load a BDF font using FreeType."""
+        """Load a BDF font through the shared loader.
+
+        A size the file has no strike for comes back at the native strike
+        rather than failing over to PIL's default font, a different typeface
+        (see :func:`src.common.bdf_font.load_bdf_face`).
+        """
         try:
-            native_size = self._read_bdf_native_size(font_path)
-            if native_size is not None and native_size != size_px:
-                # BDF is a fixed-strike bitmap format: FreeType renders the
-                # native size no matter what set_char_size asks for.
-                logger.debug(
-                    "BDF font %s requested at %spx but renders at its native "
-                    "%spx", font_path, size_px, native_size
-                )
-            face = freetype.Face(font_path)
-            try:
-                # Character size in 1/64th points at 72dpi == pixel size.
-                face.set_char_size(size_px * 64, size_px * 64, 72, 72)
-            except freetype.FT_Exception:
-                # FreeType rejects any size but the strike's own, and get_font
-                # used to answer that with PIL's default font -- a different
-                # typeface. Use the native strike, as element_style does.
-                if native_size is None or native_size == size_px:
-                    raise
-                face = freetype.Face(font_path)
-                face.set_char_size(native_size * 64, native_size * 64, 72, 72)
-            return face
+            return load_bdf_face(font_path, size_px)[0]
         except Exception as e:
             logger.error(f"Error loading BDF font {font_path}: {e}")
             raise
@@ -554,30 +540,9 @@ class FontManager:
 
     @staticmethod
     def _read_bdf_native_size(bdf_path: str) -> Optional[int]:
-        """Read a BDF file's own header to find its one true pixel size.
-        Prefers the PIXEL_SIZE property, which states the real pixel height
-        directly; falls back to the SIZE line's point-size only if PIXEL_SIZE
-        is absent, since point-size only equals pixel height at exactly
-        100dpi — several bundled fonts (e.g. 6x13.bdf, 5x8.bdf) are defined
-        at 75dpi, where the two values genuinely differ."""
-        size_line_value = None
-        try:
-            with open(bdf_path, "r", encoding="ascii", errors="ignore") as f:
-                for line in f:
-                    if line.startswith("PIXEL_SIZE"):
-                        parts = line.split()
-                        if len(parts) >= 2:
-                            return int(float(parts[1]))
-                    elif line.startswith("SIZE") and size_line_value is None:
-                        # Format: "SIZE <point_size> <xres> <yres>"
-                        parts = line.split()
-                        if len(parts) >= 2:
-                            size_line_value = int(float(parts[1]))
-                    elif line.startswith("STARTCHAR"):
-                        break
-        except (OSError, ValueError):
-            return None
-        return size_line_value
+        """A BDF file's one true pixel size; see
+        :func:`src.common.bdf_font.read_bdf_native_size`."""
+        return read_bdf_native_size(bdf_path)
 
     def _get_fallback_font(self) -> ImageFont.ImageFont:
         """Get a fallback font when loading fails."""

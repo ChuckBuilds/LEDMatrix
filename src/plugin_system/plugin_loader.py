@@ -8,7 +8,6 @@ Extracted from PluginManager to improve separation of concerns.
 import importlib
 import importlib.metadata
 import importlib.util
-import json
 import os
 import sys
 import subprocess
@@ -21,6 +20,7 @@ from packaging.requirements import InvalidRequirement, Requirement
 
 from src.exceptions import PluginError
 from src.logging_config import get_logger
+from src.plugin_system.plugin_dirs import resolve_plugin_dir
 
 
 def requirements_has_real_deps(requirements_file: str) -> bool:
@@ -214,85 +214,36 @@ class PluginLoader:
     ) -> Optional[Path]:
         """
         Find the plugin directory for a given plugin ID.
-        
-        Tries multiple strategies:
-        1. Use plugin_directories mapping if available
-        2. Direct path matching
-        3. Case-insensitive directory matching
-        4. Manifest-based search
-        
+
+        1. The discovery mapping, when it has the id and the path exists.
+        2. ``plugins_dir`` only, by the shared rules in
+           ``src/plugin_system/plugin_dirs.py``: a directory whose manifest
+           declares the id wins; otherwise ``<id>`` or ``ledmatrix-<id>``,
+           matched case-insensitively. Backup and hidden directories are
+           never matched.
+
         Args:
             plugin_id: Plugin identifier
             plugins_dir: Base plugins directory
             plugin_directories: Optional mapping of plugin_id to directory
-            
-        Returns:
-            Path to plugin directory or None if not found
-        """
-        # Sanitize plugin_id — os.path.basename is a CodeQL-recognized path sanitizer
-        plugin_id = os.path.basename(plugin_id or '')
-        if not plugin_id:
-            return None
 
+        Returns:
+            Path to plugin directory or None if not found. An id that is not
+            one plain path segment finds nothing.
+        """
         # Strategy 1: Use mapping from discovery
         if plugin_directories and plugin_id in plugin_directories:
             plugin_dir = plugin_directories[plugin_id]
             if plugin_dir.exists():
                 self.logger.debug("Using plugin directory from discovery mapping: %s", plugin_dir)
                 return plugin_dir
-        
-        # Strategy 2: Direct paths — resolve and validate they stay within plugins_dir
-        plugins_dir_resolved = plugins_dir.resolve()
-        for _candidate_name in (plugin_id, f"ledmatrix-{plugin_id}"):
-            _candidate = (plugins_dir_resolved / _candidate_name).resolve()
-            try:
-                _candidate.relative_to(plugins_dir_resolved)
-            except ValueError:
-                continue
-            if _candidate.exists():
-                return _candidate
-        
-        # Strategy 3: Case-insensitive search
-        normalized_id = plugin_id.lower()
-        for item in plugins_dir.iterdir():
-            if not item.is_dir():
-                continue
-            
-            item_name = item.name
-            if item_name.lower() == normalized_id:
-                return item
-            
-            if item_name.lower() == f"ledmatrix-{plugin_id}".lower():
-                return item
-        
-        # Strategy 4: Manifest-based search
-        self.logger.debug("Directory name search failed for %s, searching by manifest...", plugin_id)
-        for item in plugins_dir.iterdir():
-            if not item.is_dir():
-                continue
-            
-            # Skip if already checked
-            if item.name.lower() == normalized_id or item.name.lower() == f"ledmatrix-{plugin_id}".lower():
-                continue
-            
-            manifest_path = item / "manifest.json"
-            if manifest_path.exists():
-                try:
-                    with open(manifest_path, 'r', encoding='utf-8') as f:
-                        item_manifest = json.load(f)
-                        item_manifest_id = item_manifest.get('id')
-                        if item_manifest_id == plugin_id:
-                            self.logger.info(
-                                "Found plugin %s in directory %s (manifest ID matches)",
-                                plugin_id,
-                                item.name
-                            )
-                            return item
-                except (json.JSONDecodeError, Exception) as e:
-                    self.logger.debug("Skipping %s due to manifest error: %s", item.name, e)
-                    continue
 
-        return None
+        plugin_dir = resolve_plugin_dir(
+            plugin_id, [plugins_dir], prefix=True, case_insensitive=True)
+        if plugin_dir is not None and plugin_dir.name != plugin_id:
+            self.logger.debug("Found plugin %s in directory %s",
+                              plugin_id, plugin_dir.name)
+        return plugin_dir
 
     def install_dependencies(
         self,

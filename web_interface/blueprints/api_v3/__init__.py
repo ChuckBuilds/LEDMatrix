@@ -1752,7 +1752,7 @@ def _get_starlark_device_location() -> DeviceLocationResolver:
     global _starlark_device_location
     if _starlark_device_location is None:
         _starlark_device_location = DeviceLocationResolver(
-            getattr(api_v3, 'cache_manager', None) or _ensure_cache_manager(), logger)
+            getattr(api_v3, 'cache_manager', None), logger)
     return _starlark_device_location
 
 
