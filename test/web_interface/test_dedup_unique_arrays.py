@@ -1,11 +1,9 @@
-"""Tests for dedup_unique_arrays used by save_plugin_config.
+"""Tests for dedup_unique_arrays, which the plugin-config save path
+(_prepare_plugin_config_for_save in api_v3/plugins.py) runs before validation.
 
-Validates that arrays with uniqueItems: true in the JSON schema have
-duplicates removed before validation, preventing spurious validation
-failures when form merging introduces duplicate entries.
-
-Tests import the production function from src.web_interface.validators
-to ensure they exercise the real code path.
+Arrays with uniqueItems: true in the JSON schema lose their duplicates, so a
+repeat introduced by form merging does not fail validation.
+test_api_v3_plugin_config_save.py checks the same through the endpoint.
 """
 
 
