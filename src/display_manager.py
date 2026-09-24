@@ -39,8 +39,7 @@ from src.common.font_layout import crisp_size, load_truetype, resolve_asset_path
 from src import scan_order
 from src.display_geometry import (
     DEFAULT_CHAIN_LENGTH, DEFAULT_COLS, DEFAULT_PARALLEL, DEFAULT_ROWS,
-    ORIENTATION_ROTATE_DEGREES, compose_pixel_mapper_config, physical_size,
-    resolve_double_sided,
+    compose_pixel_mapper_config, physical_size, resolve_double_sided,
 )
 from src.matrix_support import MatrixSettingsRefused, library_refusals, refusal_message
 from src.pi5_matrix_support import is_raspberry_pi_5
@@ -48,7 +47,6 @@ import threading
 import time
 from collections import OrderedDict, deque
 from typing import Dict, Any, List, Optional, Tuple
-import logging
 import math
 import zlib
 import freetype
@@ -56,6 +54,7 @@ import freetype
 from src.common import snapshot_policy
 from src.common.frame_timing import FrameTimingRecorder
 from src.deprecation import deprecated
+from src.logging_config import get_logger
 from src.common.permission_utils import (
     ensure_directory_permissions,
     ensure_file_permissions,
@@ -63,9 +62,7 @@ from src.common.permission_utils import (
     get_assets_file_mode,
 )
 
-# Get logger without configuring
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)  # Set to INFO level
+logger = get_logger(__name__)
 
 #: The strike 5x7.bdf is drawn at. FreeType renders a BDF at its own fixed
 #: size regardless, but a Face needs an active size before its metrics --
@@ -136,11 +133,6 @@ class _LogicalMatrix:
         setattr(object.__getattribute__(self, "_matrix"), name, value)
 
 
-# Moved to src/display_geometry.py so the web preview, Starlark magnify and
-# sync handshake compute the display size exactly as DisplayManager does
-# without importing rgbmatrix. Aliased here for existing callers.
-_resolve_double_sided = resolve_double_sided
-
 
 class DisplayManager:
     """
@@ -162,7 +154,6 @@ class DisplayManager:
     """
 
     _instance = None
-    _initialized = False
 
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
@@ -256,20 +247,16 @@ class DisplayManager:
         font_time = time.time()
         self._load_fonts()
         logger.info("Font loading completed in %.3f seconds", time.time() - font_time)
-        
-        # Initialize managers
-        # Calendar manager is now initialized by DisplayController
-        
-    # Orientation setting -> rpi-rgb-led-matrix "Rotate:<deg>" pixel-mapper suffix.
-    _ORIENTATION_ROTATE_DEGREES = ORIENTATION_ROTATE_DEGREES
 
-    def _build_pixel_mapper_config(self, hardware_config: dict) -> str:
-        """Compose pixel_mapper_config with the orientation setting.
+    def _new_canvas(self, width: int, height: int) -> None:
+        """Replace ``image``/``draw`` with a black canvas of the given size.
 
-        See :func:`src.display_geometry.compose_pixel_mapper_config`, which the
-        web preview shares so it sizes the canvas the same way.
+        Text is drawn 1-bit (``fontmode = "1"``): the panel has no partial
+        brightness, so anti-aliasing only smears glyphs.
         """
-        return compose_pixel_mapper_config(hardware_config)
+        self.image = Image.new('RGB', (width, height))
+        self.draw = ImageDraw.Draw(self.image)
+        self.draw.fontmode = "1"
 
     @staticmethod
     def _fallback_advice(cause: str, error: Exception) -> str:
@@ -338,7 +325,7 @@ class DisplayManager:
             # logical (per-screen) size, and keep a full-chain buffer to tile
             # the rendered screen into once per frame.
             ds_config = self.config.get('display', {}).get('double_sided', {})
-            ds = _resolve_double_sided(self.matrix.width, self.matrix.height, ds_config)
+            ds = resolve_double_sided(self.matrix.width, self.matrix.height, ds_config)
             self._double_sided = ds
             if ds is not None:
                 self._physical_image = Image.new(
@@ -347,9 +334,7 @@ class DisplayManager:
                     self.matrix, ds['logical_width'], ds['logical_height'])
 
             # Create image with the (logical) display dimensions
-            self.image = Image.new('RGB', (self.matrix.width, self.matrix.height))
-            self.draw = ImageDraw.Draw(self.image)
-            self.draw.fontmode = "1"  # 1-bit text: the panel has no partial brightness, so AA only smears glyphs.
+            self._new_canvas(self.matrix.width, self.matrix.height)
             logger.info(f"Image canvas created with dimensions: {self.matrix.width}x{self.matrix.height}")
             
             # Initialize font with Press Start 2P
@@ -380,7 +365,7 @@ class DisplayManager:
                 fallback_width, fallback_height = physical_size(self.config)
                 # Mirror double-sided in fallback so the preview shows one screen.
                 ds_config = self.config.get('display', {}).get('double_sided', {}) if self.config else {}
-                ds = _resolve_double_sided(fallback_width, fallback_height, ds_config)
+                ds = resolve_double_sided(fallback_width, fallback_height, ds_config)
                 self._double_sided = ds
                 if ds is not None:
                     fallback_width = ds['logical_width']
@@ -388,9 +373,7 @@ class DisplayManager:
             except Exception:
                 fallback_width, fallback_height = 128, 32
 
-            self.image = Image.new('RGB', (fallback_width, fallback_height))
-            self.draw = ImageDraw.Draw(self.image)
-            self.draw.fontmode = "1"  # 1-bit text: the panel has no partial brightness, so AA only smears glyphs.
+            self._new_canvas(fallback_width, fallback_height)
             # Simple fallback visualization so web UI shows a realistic canvas
             try:
                 self.draw.rectangle([0, 0, fallback_width - 1, fallback_height - 1], outline=(255, 0, 0))
@@ -619,18 +602,14 @@ class DisplayManager:
                 line, font=font, fill=(0, 0, 255))
 
     def _draw_test_pattern(self):
-        """Draw a test pattern to verify the display is working."""
+        """Draw a test pattern to verify the display is working.
+
+        Only called from _setup_matrix once the matrix exists; fallback mode
+        draws its own "Simulation" canvas there.
+        """
         try:
             self.clear()
-            
-            if self.matrix is None:
-                # Fallback mode - just draw on the image
-                self.draw.rectangle([0, 0, self.image.width-1, self.image.height-1], outline=(255, 0, 0))
-                self.draw.line([0, 0, self.image.width-1, self.image.height-1], fill=(0, 255, 0))
-                self.draw.text((10, 10), "Simulation", font=self.font, fill=(0, 0, 255))
-                logger.info("Drew test pattern in fallback mode")
-                return
-            
+
             # Draw a red rectangle border
             self.draw.rectangle([0, 0, self.matrix.width-1, self.matrix.height-1], outline=(255, 0, 0))
             
@@ -645,7 +624,7 @@ class DisplayManager:
             
             # Update the display once after everything is drawn
             self.update_display()
-            time.sleep(0.5)  # Reduced from 1 second to 0.5 seconds for faster animation
+            time.sleep(0.5)
             
         except Exception as e:
             logger.error(f"Error drawing test pattern: {e}", exc_info=True)
@@ -720,9 +699,7 @@ class DisplayManager:
                 self.matrix = _LogicalMatrix(real_matrix, target_w, target_h)
             # With no hardware, the width/height properties fall through to
             # self.image, so swapping the buffer below is enough on its own.
-            self.image = Image.new('RGB', (target_w, target_h))
-            self.draw = ImageDraw.Draw(self.image)
-            self.draw.fontmode = "1"  # 1-bit text: the panel has no partial brightness, so AA only smears glyphs.
+            self._new_canvas(target_w, target_h)
             yield
         finally:
             self.matrix = real_matrix
@@ -890,28 +867,14 @@ class DisplayManager:
         try:
             if self.matrix is None:
                 # Fallback mode - just clear the image
-                # Explicitly clear old image reference to help garbage collection
                 old_image = getattr(self, 'image', None)
                 width = old_image.width if old_image else 64
                 height = old_image.height if old_image else 64
-                if old_image is not None:
-                    del old_image
-                
-                self.image = Image.new('RGB', (width, height))
-                self.draw = ImageDraw.Draw(self.image)
-                self.draw.fontmode = "1"  # 1-bit text: the panel has no partial brightness, so AA only smears glyphs.
+                self._new_canvas(width, height)
                 logger.debug("Cleared display in fallback mode")
                 return
-                
-            # Explicitly clear old image reference to help garbage collection
-            old_image = getattr(self, 'image', None)
-            if old_image is not None:
-                del old_image
-                
-            # Create a new black image
-            self.image = Image.new('RGB', (self.matrix.width, self.matrix.height))
-            self.draw = ImageDraw.Draw(self.image)
-            self.draw.fontmode = "1"  # 1-bit text: the panel has no partial brightness, so AA only smears glyphs.
+
+            self._new_canvas(self.matrix.width, self.matrix.height)
 
             if not self._capture_mode_active:
                 # Clear both canvases and the underlying matrix to ensure no artifacts.
@@ -1371,14 +1334,11 @@ class DisplayManager:
         # Ensure image/draw are reset to a blank state
         if hasattr(self, 'image') and hasattr(self, 'draw'):
             try:
-                self.image = Image.new('RGB', (self.width, self.height))
-                self.draw = ImageDraw.Draw(self.image)
-                self.draw.fontmode = "1"  # 1-bit text: the panel has no partial brightness, so AA only smears glyphs.
+                self._new_canvas(self.width, self.height)
             except (OSError, RuntimeError, ValueError, MemoryError):
                 logger.debug("Canvas reset during cleanup failed", exc_info=True)
         # Reset the singleton state when cleaning up
         DisplayManager._instance = None
-        DisplayManager._initialized = False
 
     def format_date_with_ordinal(self, dt):
         """Formats a datetime object into 'Mon Aug 30th' style."""
@@ -1416,9 +1376,9 @@ class DisplayManager:
         options.pwm_bits = hardware_config.get('pwm_bits', 10)
         options.pwm_lsb_nanoseconds = hardware_config.get('pwm_lsb_nanoseconds', 150)
         options.led_rgb_sequence = hardware_config.get('led_rgb_sequence', 'RGB')
-        # _build_pixel_mapper_config reads only class attributes, so the class
-        # stands in for an instance here.
-        options.pixel_mapper_config = cls._build_pixel_mapper_config(cls, hardware_config)
+        # Orientation becomes a "Rotate:<deg>" pixel mapper; the web preview
+        # composes it the same way so it sizes the canvas identically.
+        options.pixel_mapper_config = compose_pixel_mapper_config(hardware_config)
         options.row_address_type = hardware_config.get('row_address_type', 0)
         options.multiplexing = hardware_config.get('multiplexing', 0)
         options.panel_type = hardware_config.get('panel_type', '')
@@ -1532,13 +1492,16 @@ class DisplayManager:
         that does not care gets a new frame every refresh.
         """
         current_time = time.time()
+        # Scrolling callers set this every frame; log transitions only.
+        changed = self._scrolling_state['is_scrolling'] != is_scrolling
         self._scrolling_state['is_scrolling'] = is_scrolling
         if is_scrolling:
             self._scrolling_state['last_scroll_activity'] = current_time
             self.set_frame_hold(frame_hold)
         else:
             self._frame_hold = 1
-        logger.debug(f"Scrolling state set to: {is_scrolling}")
+        if changed:
+            logger.debug("Scrolling state set to: %s", is_scrolling)
 
     def is_currently_scrolling(self) -> bool:
         """Check if the display is currently in a scrolling state."""
@@ -1602,9 +1565,6 @@ class DisplayManager:
         self._cleanup_expired_deferred_updates(current_time)
         
         if self.is_currently_scrolling():
-            return
-            
-        if not self._scrolling_state['deferred_updates']:
             return
             
         if not self._scrolling_state['deferred_updates']:

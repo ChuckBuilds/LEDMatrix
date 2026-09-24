@@ -2,7 +2,7 @@
 Tests for src/vegas_mode/config.py
 
 Covers VegasModeConfig: from_config, to_dict, get_frame_interval,
-is_plugin_included, get_ordered_plugins, validate.
+get_ordered_plugins, validate.
 """
 
 import pytest
@@ -37,6 +37,29 @@ class TestVegasModeConfigDefaults:
     def test_default_excluded_plugins_empty(self):
         cfg = VegasModeConfig()
         assert len(cfg.excluded_plugins) == 0
+
+    def test_defaults_match_the_shipped_template(self):
+        # The template, the web UI help and CONFIG_REFERENCE all document
+        # these values. max_cycle_duration defaulted to 600 in code while all
+        # three said 240, so an install without the key ran iterations 2.5x
+        # longer than documented.
+        import json
+        from pathlib import Path
+        template = json.loads(
+            (Path(__file__).resolve().parent.parent / "config"
+             / "config.template.json").read_text(encoding="utf-8"))
+        shipped = template["display"]["vegas_scroll"]
+        defaults = VegasModeConfig().to_dict()
+        mismatched = {k: (v, defaults[k]) for k, v in shipped.items()
+                      if k in defaults and defaults[k] != v}
+        assert not mismatched, f"template vs code default: {mismatched}"
+
+    def test_missing_keys_read_the_field_defaults(self):
+        # from_config used to repeat every default; with no keys set it must
+        # produce exactly the dataclass defaults.
+        assert VegasModeConfig.from_config({}).to_dict() == VegasModeConfig().to_dict()
+        assert (VegasModeConfig.from_config({"display": {"vegas_scroll": {}}}).to_dict()
+                == VegasModeConfig().to_dict())
 
 
 # ---------------------------------------------------------------------------
@@ -145,24 +168,6 @@ class TestGetFrameInterval:
         # Should not raise ZeroDivisionError (max(1, fps) guard)
         result = cfg.get_frame_interval()
         assert result == 1.0
-
-
-# ---------------------------------------------------------------------------
-# is_plugin_included
-# ---------------------------------------------------------------------------
-
-class TestIsPluginIncluded:
-    def test_not_excluded_is_included(self):
-        cfg = VegasModeConfig(excluded_plugins={"bad_plugin"})
-        assert cfg.is_plugin_included("good_plugin") is True
-
-    def test_excluded_plugin_not_included(self):
-        cfg = VegasModeConfig(excluded_plugins={"bad_plugin"})
-        assert cfg.is_plugin_included("bad_plugin") is False
-
-    def test_empty_exclusions_all_included(self):
-        cfg = VegasModeConfig()
-        assert cfg.is_plugin_included("anything") is True
 
 
 # ---------------------------------------------------------------------------

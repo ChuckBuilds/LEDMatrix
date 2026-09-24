@@ -344,21 +344,15 @@ function forceRenderStarlarkApp(appId) {
         .then(function(r) { return r.json(); })
         .then(function(data) {
             if (data.status === 'success') {
-                if (typeof showNotification === 'function') {
-                    showNotification('Rendered successfully! ' + (data.frame_count || 0) + ' frame(s)', 'success');
-                } else {
-                    alert('Rendered successfully! ' + (data.frame_count || 0) + ' frame(s)');
-                }
+                showNotification('Rendered successfully! ' + (data.frame_count || 0) + ' frame(s)', 'success');
             } else {
                 var msg = 'Render failed: ' + (data.message || 'Unknown error');
-                if (typeof showNotification === 'function') showNotification(msg, 'error');
-                else alert(msg);
+                showNotification(msg, 'error');
             }
         })
         .catch(function(err) {
             var msg = 'Render failed: ' + err.message;
-            if (typeof showNotification === 'function') showNotification(msg, 'error');
-            else alert(msg);
+            showNotification(msg, 'error');
         });
 }
 
@@ -371,22 +365,20 @@ function toggleStarlarkApp(appId, enabled) {
     .then(function(r) { return r.json(); })
     .then(function(data) {
         if (data.status === 'success') {
-            if (typeof loadInstalledPlugins === 'function') loadInstalledPlugins();
-            else if (typeof window.loadInstalledPlugins === 'function') window.loadInstalledPlugins();
+            // A failed reload has already been reported by loadInstalledPlugins.
+            window.pluginManager.loadInstalledPlugins(true).catch(function() {});
             var container = document.getElementById('plugin-config-starlark:' + appId);
             if (container && window.htmx) {
                 htmx.ajax('GET', '/v3/partials/plugin-config/starlark:' + encodeURIComponent(appId), {target: container, swap: 'innerHTML'});
             }
         } else {
             var msg = 'Toggle failed: ' + (data.message || 'Unknown error');
-            if (typeof showNotification === 'function') showNotification(msg, 'error');
-            else alert(msg);
+            showNotification(msg, 'error');
         }
     })
     .catch(function(err) {
         var msg = 'Toggle failed: ' + err.message;
-        if (typeof showNotification === 'function') showNotification(msg, 'error');
-        else alert(msg);
+        showNotification(msg, 'error');
     });
 }
 
@@ -436,8 +428,7 @@ function saveStarlarkConfig(appId) {
     .then(function(r) { return r.json(); })
     .then(function(data) {
         if (data.status === 'success') {
-            if (typeof showNotification === 'function') showNotification('Configuration saved!', 'success');
-            else alert('Configuration saved!');
+            showNotification('Configuration saved!', 'success');
             // Reload partial to reflect updated status
             var container = document.getElementById('plugin-config-starlark:' + appId);
             if (container && window.htmx) {
@@ -445,14 +436,12 @@ function saveStarlarkConfig(appId) {
             }
         } else {
             var msg = 'Save failed: ' + (data.message || 'Unknown error');
-            if (typeof showNotification === 'function') showNotification(msg, 'error');
-            else alert(msg);
+            showNotification(msg, 'error');
         }
     })
     .catch(function(err) {
         var msg = 'Save failed: ' + err.message;
-        if (typeof showNotification === 'function') showNotification(msg, 'error');
-        else alert(msg);
+        showNotification(msg, 'error');
     });
 }
 

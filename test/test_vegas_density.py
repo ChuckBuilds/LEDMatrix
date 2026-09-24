@@ -416,7 +416,7 @@ class TestStreamGrouping:
         from src.plugin_system.base_plugin import VegasDisplayMode
         imgs = [Image.new('RGB', (10, 8)) for _ in range(count)]
         return ContentSegment(
-            plugin_id=plugin_id, images=imgs, total_width=10 * count,
+            plugin_id=plugin_id, images=imgs,
             display_mode=mode or VegasDisplayMode.SCROLL)
 
     def test_grouping_preserves_plugin_boundaries(self):
@@ -436,10 +436,6 @@ class TestStreamGrouping:
     def test_imageless_segments_are_skipped(self):
         sm = self._stream([self._seg('a', 0), self._seg('b', 2)])
         assert [pid for pid, _ in sm.get_grouped_content_for_composition()] == ['b']
-
-    def test_flat_accessor_still_matches_grouped_total(self):
-        sm = self._stream([self._seg('a', 3), self._seg('b', 2)])
-        assert len(sm.get_all_content_for_composition()) == 5
 
 
 class TestApiBoundsMatchValidate:
@@ -980,8 +976,8 @@ class TestRotationAcrossMultipleCycles:
     """
     The single-image crop advances a window across cycles. The second and later
     passes are where start + budget can land exactly on the image width, which
-    crashed find_blank_cut in the field and lost that plugin's content for the
-    cycle. First-pass-only tests never reach it.
+    once crashed the cut and lost that plugin's content for the cycle.
+    First-pass-only tests never reach it.
     """
 
     def test_window_advances_over_many_cycles_without_error(self):

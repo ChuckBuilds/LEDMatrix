@@ -1,6 +1,54 @@
-/* global debugLog */
-// SSE wiring + full Alpine app() implementation and tab logic
-// Extracted from templates/v3/base.html so browsers cache it as a static asset.
+/* global debugLog, showNotification, htmx */
+/*
+ * app-shell.js -- the page shell: the Alpine app(), tab loading, live
+ * streams, header stats, and the handlers the plugin config tab calls.
+ *
+ * Deferred, and placed before alpinejs.min.js so window.app is the full
+ * implementation by the time Alpine starts, and the alpine:init listener
+ * (Alpine stores) is registered first.
+ *
+ * Load order (templates/v3/base.html):
+ *   <head>, blocking:  debugLog and theme inline scripts; the htmx loader
+ *                      (injects htmx.min.js with a dynamic <script>);
+ *                      js/htmx-config.js; the loadPartialDirect fallback;
+ *                      js/app-early.js
+ *   <head>, defer:     js/app-shell.js, then js/alpinejs.min.js (Alpine
+ *                      starts as soon as it runs, so app-shell.js's app()
+ *                      is the one Alpine uses)
+ *   end of <body>, defer, in this order: app.js, js/tooltips.js,
+ *                      js/settings-search.js, js/utils/dialog.js,
+ *                      js/utils/error_handler.js, js/plugins/api_client.js,
+ *                      state_manager.js, install_manager.js, list_filter.js,
+ *                      the widget bundle (web_interface/widget_bundle.py),
+ *                      plugins_manager.js
+ *   Tab partials arrive later through htmx; their inline scripts run on
+ *   htmx:afterSwap (js/htmx-config.js).
+ *
+ * Globals:
+ *   window.app                  the root component: activeTab, plugin tab
+ *                               row, loadTabContent (htmx, with a
+ *                               loadPartialDirect fallback)
+ *   window.LEDVisibility        run a partial's timers only while its tab is
+ *                               active and the page is visible
+ *   window.LEDStreams           the one owner of the stats and display SSE
+ *                               streams (window.statsSource / displaySource)
+ *   window.showNotification     a queueing stand-in until the notification
+ *                               widget loads
+ *   Alpine stores 'onDemand' and 'plugins'
+ *   Template handlers: fixInvalidNumberInputs, validatePluginConfigForm,
+ *     handleConfigSave, handleToggleResponse, handlePluginUpdate,
+ *     refreshPluginConfig, runPluginOnDemand, stopOnDemand,
+ *     dismissPowerWarningBanner, takeScreenshot
+ *   Plain functions other scripts and the Overview partial call:
+ *     updateSystemStats, updateDisplayPreview, renderLedDots, drawGrid,
+ *     updatePlugin (the plugin card's Update button)
+ */
+// htmx:responseError on a tab panel: marks the load as failed so the tab
+// is not stamped data-loaded and reloads on the next visit (see loadTabContent).
+function markPanelLoadFailed(event) {
+    event.currentTarget.setAttribute('data-load-failed', 'true');
+}
+
         function _setConnectionStatus(connected, reconnecting, paused) {
             const el = document.getElementById('connection-status');
             if (!el) return;
@@ -30,8 +78,7 @@
 
         var _statsErrorCount = 0;
 
-        // Kept on window for backward compatibility; LEDStreams attaches them
-        // to every EventSource it opens.
+        // LEDStreams attaches these to every EventSource it opens.
         window._statsOpenHandler = function() {
             _statsErrorCount = 0;
             _setConnectionStatus(true, false);
@@ -61,9 +108,8 @@
             let lastTab = null;
 
             function activeTab() {
-                const el = document.querySelector('[x-data="app()"]');
-                const data = el && el._x_dataStack && el._x_dataStack[0];
-                return (data && data.activeTab) || lastTab;
+                const app = window.getApp();
+                return (app && app.activeTab) || lastTab;
             }
             function isActive(tab) {
                 return !document.hidden && activeTab() === tab;
@@ -208,9 +254,6 @@
             return { refresh: refresh, reconnect: reconnect, isOpen: function(name) { return !!open[name]; } };
         })();
 
-        // Public helper (previously duplicated in app.js).
-        window.reconnectSSE = function() { window.LEDStreams.reconnect(); };
-
         // Header stats start immediately; the display stream opens once the
         // active tab is known (Alpine init dispatches ledmatrix:tab-changed).
         window.LEDStreams.refresh();
@@ -299,46 +342,33 @@
             }
         }
 
+        // A metric the server could not read arrives as null (off a Pi there is
+        // no CPU temperature); show the same '--' placeholder the page starts
+        // with rather than "null°C".
+        function statText(value, unit) {
+            return (value == null ? '--' : value) + unit;
+        }
+
         function updateSystemStats(data) {
-            // Update CPU in header
-            const cpuEl = document.getElementById('cpu-stat');
-            if (cpuEl && data.cpu_percent !== undefined) {
-                const spans = cpuEl.querySelectorAll('span');
-                if (spans.length > 0) spans[spans.length - 1].textContent = data.cpu_percent + '%';
-            }
+            // Header: the value is the last <span> inside each stat.
+            const header = [['cpu-stat', data.cpu_percent, '%'],
+                            ['memory-stat', data.memory_used_percent, '%'],
+                            ['temp-stat', data.cpu_temp, '°C']];
+            header.forEach(([id, value, unit]) => {
+                const spans = document.getElementById(id)?.querySelectorAll('span');
+                if (spans && spans.length > 0) spans[spans.length - 1].textContent = statText(value, unit);
+            });
 
-            // Update Memory in header
-            const memEl = document.getElementById('memory-stat');
-            if (memEl && data.memory_used_percent !== undefined) {
-                const spans = memEl.querySelectorAll('span');
-                if (spans.length > 0) spans[spans.length - 1].textContent = data.memory_used_percent + '%';
-            }
-
-            // Update Temperature in header
-            const tempEl = document.getElementById('temp-stat');
-            if (tempEl && data.cpu_temp !== undefined) {
-                const spans = tempEl.querySelectorAll('span');
-                if (spans.length > 0) spans[spans.length - 1].textContent = data.cpu_temp + '°C';
-            }
-
-            // Update Power (under-voltage / throttling) status in header + banner
             updatePowerStatus(data.power);
 
-            // Update Overview tab stats (if visible)
-            const cpuUsageEl = document.getElementById('cpu-usage');
-            if (cpuUsageEl && data.cpu_percent !== undefined) {
-                cpuUsageEl.textContent = data.cpu_percent + '%';
-            }
-
-            const memUsageEl = document.getElementById('memory-usage');
-            if (memUsageEl && data.memory_used_percent !== undefined) {
-                memUsageEl.textContent = data.memory_used_percent + '%';
-            }
-
-            const cpuTempEl = document.getElementById('cpu-temp');
-            if (cpuTempEl && data.cpu_temp !== undefined) {
-                cpuTempEl.textContent = data.cpu_temp + '°C';
-            }
+            // Overview tab (only present while it is loaded)
+            const overview = [['cpu-usage', data.cpu_percent, '%'],
+                              ['memory-usage', data.memory_used_percent, '%'],
+                              ['cpu-temp', data.cpu_temp, '°C']];
+            overview.forEach(([id, value, unit]) => {
+                const el = document.getElementById(id);
+                if (el) el.textContent = statText(value, unit);
+            });
 
             const displayStatusEl = document.getElementById('display-status');
             if (displayStatusEl) {
@@ -404,17 +434,8 @@
         });
 
 
-        // Alpine.js app function - full implementation
+        // The full app(). Alpine calls it for <body x-data="app()">.
         function app() {
-            // If Alpine is already initialized, get the current component and enhance it
-            let baseComponent = {};
-            if (window.Alpine) {
-                const appElement = document.querySelector('[x-data]');
-                if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
-                    baseComponent = appElement._x_dataStack[0];
-                }
-            }
-            
             const fullImplementation = {
                 activeTab: (function() {
                     // Auto-open WiFi tab when in AP mode (192.168.4.x)
@@ -426,7 +447,6 @@
                 installedPlugins: [],
 
                 init() {
-                    // Prevent multiple initializations
                     if (this._initialized) {
                         return;
                     }
@@ -489,7 +509,6 @@
                         });
                     });
 
-                    // Load initial tab content
                     this.$nextTick(() => {
                         this.loadTabContent(this.activeTab);
                         if (typeof window.updateNavAriaCurrent === 'function') {
@@ -500,7 +519,8 @@
                         }));
                     });
 
-                    // Listen for plugin updates from pluginManager
+                    // The installed list is published by renderInstalledPlugins
+                    // (plugins_manager.js) with one pluginsUpdated event.
                     document.addEventListener('pluginsUpdated', (event) => {
                         debugLog('Received pluginsUpdated event:', event.detail.plugins.length, 'plugins');
                         this.installedPlugins = event.detail.plugins;
@@ -561,19 +581,30 @@
 
                     // htmx.ajax issues the request and swaps the response into the panel
                     // directly, so it works even before htmx has wired up the element's
-                    // hx-trigger listeners. data-loaded is stamped on success so the panel
-                    // loads once; the activeTab check drops loads for a tab the user navigated
-                    // away from while htmx was still loading (avoids fetching hidden panels).
+                    // hx-trigger listeners. The panel is the request's source as well as
+                    // its target, so htmx fires its events on the panel and the panel's
+                    // hx-on::response-error handler runs. htmx resolves the promise even on
+                    // an error status, so data-loaded is stamped only when no
+                    // htmx:responseError fired; a failed panel reloads on the next visit.
+                    // The activeTab check drops loads for a tab the user navigated away
+                    // from while htmx was still loading (avoids fetching hidden panels).
                     const swap = contentEl.getAttribute('hx-swap') || 'innerHTML';
                     const load = () => {
                         if (this.activeTab !== tab || contentEl.hasAttribute('data-loaded')) {
                             contentEl.removeAttribute('data-loading');
                             return;
                         }
-                        return htmx.ajax('GET', url, { target: contentEl, swap: swap })
-                            .then(() => contentEl.setAttribute('data-loaded', 'true'))
-                            .catch(() => {}) // leave unstamped on failure so it can retry
-                            .finally(() => contentEl.removeAttribute('data-loading'));
+                        contentEl.removeAttribute('data-load-failed');
+                        contentEl.addEventListener('htmx:responseError', markPanelLoadFailed, { once: true });
+                        return htmx.ajax('GET', url, { source: contentEl, target: contentEl, swap: swap })
+                            .then(() => {
+                                if (!contentEl.hasAttribute('data-load-failed')) contentEl.setAttribute('data-loaded', 'true');
+                            })
+                            .catch(() => {}) // network failure: leave unstamped so it can retry
+                            .finally(() => {
+                                contentEl.removeEventListener('htmx:responseError', markPanelLoadFailed);
+                                contentEl.removeAttribute('data-loading');
+                            });
                     };
 
                     if (typeof htmx !== 'undefined') {
@@ -581,8 +612,8 @@
                         return;
                     }
 
-                    // htmx is loaded from a CDN and may not be ready yet. Poll until it is,
-                    // then load; if it never arrives, fall back to a direct fetch.
+                    // base.html injects htmx with a dynamic <script>, so it can arrive
+                    // after Alpine starts. Poll for it; if it never arrives, fetch directly.
                     let tries = 0;
                     const timer = setInterval(() => {
                         if (typeof htmx !== 'undefined') {
@@ -591,25 +622,7 @@
                         } else if (++tries > 100) { // ~10s
                             clearInterval(timer);
                             contentEl.removeAttribute('data-loading');
-                            if (tab === 'overview' && typeof loadOverviewDirect === 'function') loadOverviewDirect();
-                            else if (tab === 'wifi' && typeof loadWifiDirect === 'function') loadWifiDirect();
-                            else if (tab === 'plugins' && typeof loadPluginsDirect === 'function') loadPluginsDirect();
-                            else if (tab === 'tools') {
-                                fetch('/v3/partials/tools')
-                                    .then(r => {
-                                        if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
-                                        return r.text();
-                                    })
-                                    .then(html => {
-                                        contentEl.innerHTML = html;
-                                        contentEl.setAttribute('data-loaded', 'true');
-                                        if (window.Alpine) window.Alpine.initTree(contentEl);
-                                    })
-                                    .catch(err => {
-                                        console.error('Failed to load tools content:', err);
-                                        contentEl.innerHTML = '<div class="bg-red-50 border border-red-200 rounded-lg p-4"><p class="text-red-800">Failed to load Tools. Please refresh the page.</p></div>';
-                                    });
-                            }
+                            window.loadPartialDirect(contentEl.id, url);
                         }
                     }, 100);
                 },
@@ -653,25 +666,13 @@
                     }
                 },
 
+                // Rebuilds the plugin tab row now. app-early.js recognises the
+                // full implementation by the _doUpdatePluginTabs name in this
+                // method's source, so keep the call spelled out.
                 updatePluginTabs(retryCount = 0) {
-                    debugLog('[FULL] updatePluginTabs called (retryCount:', retryCount, ')');
-                    const maxRetries = 5;
-
-                    // Debounce: Clear any pending update
-                    if (this._updatePluginTabsTimeout) {
-                        clearTimeout(this._updatePluginTabsTimeout);
-                    }
-                    
-                    // For first call or retries, execute immediately to ensure tabs appear quickly
-                    if (retryCount === 0) {
-                        // First call - execute immediately, then debounce subsequent calls
-                        this._doUpdatePluginTabs(retryCount);
-                    } else {
-                        // Retry - execute immediately
-                        this._doUpdatePluginTabs(retryCount);
-                    }
+                    this._doUpdatePluginTabs(retryCount);
                 },
-                
+
                 _doUpdatePluginTabs(retryCount = 0) {
                     const maxRetries = 5;
 
@@ -709,7 +710,6 @@
                         return;
                     }
                     
-                    // Store the current plugin IDs for next comparison
                     this._lastRenderedPluginIds = currentPluginIds;
 
                     const pluginTabsRow = document.getElementById('plugin-tabs-row');
@@ -741,16 +741,13 @@
 
                     debugLog(`[FULL] Updating plugin tabs for ${pluginsToShow.length} plugins`);
 
-                    // Always show the plugin tabs row (Plugin Manager should always be available)
-                    debugLog('[FULL] Ensuring plugin tabs row is visible');
+                    // The row also holds the Plugin Manager tab, so it is always shown.
                     pluginTabsRow.style.display = 'block';
 
-                    // Clear existing plugin tabs (except the Plugin Manager tab)
                     const existingTabs = pluginTabsNav.querySelectorAll('.plugin-tab');
                     debugLog(`[FULL] Removing ${existingTabs.length} existing plugin tabs`);
                     existingTabs.forEach(tab => tab.remove());
 
-                    // Add tabs for each installed plugin
                     debugLog('[FULL] Adding tabs for plugins:', pluginsToShow.map(p => p.id));
                     pluginsToShow.forEach(plugin => {
                         const tabButton = document.createElement('button');
@@ -773,7 +770,6 @@
                         const labelNode = document.createTextNode(plugin.name || plugin.id);
                         tabButton.replaceChildren(iconEl, labelNode);
 
-                        // Insert before the closing </nav> tag
                         pluginTabsNav.appendChild(tabButton);
                         debugLog('[FULL] Added tab for plugin:', plugin.id);
                     });
@@ -782,7 +778,6 @@
                 },
 
                 updatePluginTabStates() {
-                    // Update active state of all plugin tabs when activeTab changes
                     const pluginTabsNav = document.getElementById('plugin-tabs-row')?.querySelector('nav');
                     if (!pluginTabsNav) return;
                     
@@ -798,546 +793,26 @@
                 },
 
                 showNotification(message, type = 'info') {
-                    // Use global notification widget
-                    if (typeof window.showNotification === 'function') {
-                        window.showNotification(message, type);
-                    } else {
-                        debugLog(`[${type.toUpperCase()}]`, message);
-                    }
-                },
-
-                // Quotes too, so the result is safe inside a quoted attribute
-                // value -- the textContent/innerHTML round-trip alone only
-                // escapes &, < and >.
-                escapeHtml(text) {
-                    const div = document.createElement('div');
-                    div.textContent = text;
-                    return div.innerHTML
-                        .replace(/"/g, '&quot;')
-                        .replace(/'/g, '&#39;');
-                },
-
-                async refreshPlugins() {
-                    await this.loadInstalledPlugins();
-                    await this.searchPluginStore();
-                    this.showNotification('Plugin list refreshed', 'success');
-                },
-
-
-
-                async loadPluginConfig(pluginId) {
-                    debugLog('Loading config for plugin:', pluginId);
-                    this.loading = true;
-
-                    try {
-                        // Load config, schema, and installed plugins (for web_ui_actions) in parallel
-                        // Use batched API if available for better performance
-                        let configData, schemaData, pluginsData;
-                        
-                        if (window.PluginAPI && window.PluginAPI.batch) {
-                            // PluginAPI.batch returns already-parsed JSON objects
-                            try {
-                                const results = await window.PluginAPI.batch([
-                                    {endpoint: `/plugins/config?plugin_id=${encodeURIComponent(pluginId)}`, method: 'GET'},
-                                    {endpoint: `/plugins/schema?plugin_id=${encodeURIComponent(pluginId)}`, method: 'GET'},
-                                    {endpoint: '/plugins/installed', method: 'GET'}
-                                ]);
-                                [configData, schemaData, pluginsData] = results;
-                            } catch (batchError) {
-                                console.error('Batch API request failed, falling back to individual requests:', batchError);
-                                // Fall back to individual requests
-                                const [configResponse, schemaResponse, pluginsResponse] = await Promise.all([
-                                    fetch(`/api/v3/plugins/config?plugin_id=${pluginId}`).then(r => r.json()).catch(e => ({ status: 'error', message: e.message })),
-                                    fetch(`/api/v3/plugins/schema?plugin_id=${pluginId}`).then(r => r.json()).catch(e => ({ status: 'error', message: e.message })),
-                                    fetch(`/api/v3/plugins/installed`).then(r => r.json()).catch(e => ({ status: 'error', message: e.message }))
-                                ]);
-                                configData = configResponse;
-                                schemaData = schemaResponse;
-                                pluginsData = pluginsResponse;
-                            }
-                        } else {
-                            // Direct fetch returns Response objects that need parsing
-                            const [configResponse, schemaResponse, pluginsResponse] = await Promise.all([
-                                fetch(`/api/v3/plugins/config?plugin_id=${pluginId}`).then(r => r.json()).catch(e => ({ status: 'error', message: e.message })),
-                                fetch(`/api/v3/plugins/schema?plugin_id=${pluginId}`).then(r => r.json()).catch(e => ({ status: 'error', message: e.message })),
-                                fetch(`/api/v3/plugins/installed`).then(r => r.json()).catch(e => ({ status: 'error', message: e.message }))
-                            ]);
-                            configData = configResponse;
-                            schemaData = schemaResponse;
-                            pluginsData = pluginsResponse;
-                        }
-
-                        if (configData && configData.status === 'success') {
-                            this.config = configData.data;
-                        } else {
-                            console.warn('Config API returned non-success status:', configData);
-                            // Set defaults if config failed to load
-                            this.config = { enabled: true, display_duration: 30 };
-                        }
-
-                        if (schemaData && schemaData.status === 'success') {
-                            this.schema = schemaData.data.schema || {};
-                        } else {
-                            console.warn('Schema API returned non-success status:', schemaData);
-                            // Set empty schema as fallback
-                            this.schema = {};
-                        }
-
-                        // Extract web_ui_actions from installed plugins and update plugin data
-                        if (pluginsData && pluginsData.status === 'success' && pluginsData.data && pluginsData.data.plugins) {
-                            // Update window.installedPlugins with fresh data (includes commit info)
-                            // The setter will check if data actually changed before updating tabs
-                            window.installedPlugins = pluginsData.data.plugins;
-                            // Update Alpine.js app data
-                            this.installedPlugins = pluginsData.data.plugins;
-                            
-                            const pluginInfo = pluginsData.data.plugins.find(p => p.id === pluginId);
-                            this.webUiActions = pluginInfo ? (pluginInfo.web_ui_actions || []) : [];
-                            debugLog('[DEBUG] Loaded web_ui_actions for', pluginId, ':', this.webUiActions.length, 'actions');
-                            debugLog('[DEBUG] Updated plugin data with commit info:', pluginInfo ? {
-                                last_commit: pluginInfo.last_commit,
-                                branch: pluginInfo.branch,
-                                last_updated: pluginInfo.last_updated
-                            } : 'plugin not found');
-                        } else {
-                            console.warn('Plugins API returned non-success status:', pluginsData);
-                            this.webUiActions = [];
-                        }
-
-                        debugLog('Loaded config, schema, and actions for', pluginId);
-                    } catch (error) {
-                        console.error('Error loading plugin config:', error);
-                        this.config = { enabled: true, display_duration: 30 };
-                        this.schema = {};
-                        this.webUiActions = [];
-                    } finally {
-                        this.loading = false;
-                    }
-                },
-
-                // Helper function to get schema property type for a field path
-                getSchemaPropertyType(schema, path) {
-                    if (!schema || !schema.properties) return null;
-                    
-                    const parts = path.split('.');
-                    let current = schema.properties;
-                    
-                    for (let i = 0; i < parts.length; i++) {
-                        const part = parts[i];
-                        if (current && current[part]) {
-                            if (i === parts.length - 1) {
-                                return current[part];
-                            } else if (current[part].properties) {
-                                current = current[part].properties;
-                            } else {
-                                return null;
-                            }
-                        } else {
-                            return null;
-                        }
-                    }
-                    return null;
-                },
-
-                // Helper function to escape CSS selector special characters
-                escapeCssSelector(str) {
-                    if (typeof str !== 'string') {
-                        str = String(str);
-                    }
-                    // Use CSS.escape() when available (handles unicode, leading digits, and edge cases)
-                    if (typeof CSS !== 'undefined' && CSS.escape) {
-                        return CSS.escape(str);
-                    }
-                    // Fallback to regex-based escaping for older browsers
-                    // First, handle leading digits and whitespace (must be done before regex)
-                    let escaped = str;
-                    let hasLeadingHexEscape = false;
-                    if (escaped.length > 0) {
-                        const firstChar = escaped[0];
-                        const firstCode = firstChar.charCodeAt(0);
-                        
-                        // Escape leading digit (0-9: U+0030-U+0039)
-                        if (firstCode >= 0x30 && firstCode <= 0x39) {
-                            const hex = firstCode.toString(16).toUpperCase().padStart(4, '0');
-                            escaped = '\\' + hex + ' ' + escaped.slice(1);
-                            hasLeadingHexEscape = true;
-                        }
-                        // Escape leading whitespace (space: U+0020, tab: U+0009, etc.)
-                        else if (/\s/.test(firstChar)) {
-                            const hex = firstCode.toString(16).toUpperCase().padStart(4, '0');
-                            escaped = '\\' + hex + ' ' + escaped.slice(1);
-                            hasLeadingHexEscape = true;
-                        }
-                    }
-                    
-                    // Escape special characters
-                    escaped = escaped.replace(/[!"#$%&'()*+,.\/:;<=>?@[\\\]^`{|}~]/g, '\\$&');
-                    
-                    // Escape internal spaces (replace spaces with \ ), but preserve space in hex escape
-                    if (hasLeadingHexEscape) {
-                        // Skip the first 6 characters (e.g., "\0030 ") when replacing spaces
-                        escaped = escaped.slice(0, 6) + escaped.slice(6).replace(/ /g, '\\ ');
-                    } else {
-                        escaped = escaped.replace(/ /g, '\\ ');
-                    }
-                    
-                    return escaped;
-                },
-
-                async savePluginConfig(pluginId, event) {
-                    try {
-                        // Get the form element for this plugin
-                        const form = event ? event.target : null;
-                        if (!form) {
-                            throw new Error('Form element not found');
-                        }
-                        const formData = new FormData(form);
-                        const schema = this.schema || {};
-                        
-                        // First, collect all checkbox states (including unchecked ones)
-                        // Unchecked checkboxes don't appear in FormData, so we need to iterate form elements
-                        const flatConfig = {};
-                        
-                        // Process all form elements to capture all field states
-                        for (let i = 0; i < form.elements.length; i++) {
-                            const element = form.elements[i];
-                            const name = element.name;
-                            
-                            // Skip elements without names or submit buttons
-                            if (!name || element.type === 'submit' || element.type === 'button') {
-                                continue;
-                            }
-                            
-                            // Handle checkboxes explicitly (both checked and unchecked)
-                            if (element.type === 'checkbox') {
-                                // Check if this is a checkbox group (name ends with [])
-                                if (name.endsWith('[]')) {
-                                    const baseName = name.slice(0, -2); // Remove '[]' suffix
-                                    if (!flatConfig[baseName]) {
-                                        flatConfig[baseName] = [];
-                                    }
-                                    if (element.checked) {
-                                        flatConfig[baseName].push(element.value);
-                                    }
-                                } else {
-                                    // Regular checkbox (boolean)
-                                    flatConfig[name] = element.checked;
-                                }
-                            }
-                            // Handle radio buttons
-                            else if (element.type === 'radio') {
-                                if (element.checked) {
-                                    flatConfig[name] = element.value;
-                                }
-                            }
-                            // Handle select elements (including multi-select)
-                            else if (element.tagName === 'SELECT') {
-                                if (element.multiple) {
-                                    // Multi-select: get all selected options
-                                    const selectedValues = Array.from(element.selectedOptions).map(opt => opt.value);
-                                    flatConfig[name] = selectedValues;
-                                } else {
-                                    // Single select: handled by FormData, but ensure it's captured
-                                    if (!(name in flatConfig)) {
-                                        flatConfig[name] = element.value;
-                                    }
-                                }
-                            }
-                            // Handle textarea
-                            else if (element.tagName === 'TEXTAREA') {
-                                // Textarea: handled by FormData, but ensure it's captured
-                                if (!(name in flatConfig)) {
-                                    flatConfig[name] = element.value;
-                                }
-                            }
-                        }
-                        
-                        // Now process FormData for other field types
-                        for (const [key, value] of formData.entries()) {
-                            // Skip checkboxes - we already handled them above
-                            // Use querySelector to reliably find element by name (handles dot notation)
-                            const escapedKey = this.escapeCssSelector(key);
-                            const element = form.querySelector(`[name="${escapedKey}"]`);
-                            if (element && element.type === 'checkbox') {
-                                // Also skip checkbox groups (name ends with [])
-                                if (key.endsWith('[]')) {
-                                    continue; // Already processed
-                                }
-                                continue; // Already processed
-                            }
-                            // Skip multi-select - we already handled them above
-                            if (element && element.tagName === 'SELECT' && element.multiple) {
-                                continue; // Already processed
-                            }
-                            
-                            // Get schema property type if available
-                            const propSchema = this.getSchemaPropertyType(schema, key);
-                            const propType = propSchema ? propSchema.type : null;
-                            
-                            // Handle based on schema type or field name patterns
-                            if (propType === 'array') {
-                                // Check if this is a file upload widget (JSON array in hidden input)
-                                if (propSchema && propSchema['x-widget'] === 'file-upload') {
-                                    try {
-                                        // Unescape HTML entities that were escaped when setting the value
-                                        let unescapedValue = value;
-                                        if (typeof value === 'string') {
-                                            // Reverse the HTML escaping: &quot; -> ", &#39; -> ', &amp; -> &
-                                            unescapedValue = value
-                                                .replace(/&quot;/g, '"')
-                                                .replace(/&#39;/g, "'")
-                                                .replace(/&lt;/g, '<')
-                                                .replace(/&gt;/g, '>')
-                                                .replace(/&amp;/g, '&');
-                                        }
-                                        
-                                        // Try to parse as JSON
-                                        const jsonValue = JSON.parse(unescapedValue);
-                                        if (Array.isArray(jsonValue)) {
-                                            flatConfig[key] = jsonValue;
-                                            debugLog(`File upload array field ${key}: parsed JSON array with ${jsonValue.length} items`);
-                                        } else {
-                                            // Fallback to empty array
-                                            flatConfig[key] = [];
-                                        }
-                                    } catch (e) {
-                                        console.warn(`Failed to parse JSON for file upload field ${key}:`, e, 'Value:', value);
-                                        // Not valid JSON, use empty array or try comma-separated
-                                        if (value && value.trim()) {
-                                            // Try to unescape and parse again
-                                            try {
-                                                const unescaped = value
-                                                    .replace(/&quot;/g, '"')
-                                                    .replace(/&#39;/g, "'")
-                                                    .replace(/&amp;/g, '&');
-                                                const jsonValue = JSON.parse(unescaped);
-                                                if (Array.isArray(jsonValue)) {
-                                                    flatConfig[key] = jsonValue;
-                                                } else {
-                                                    flatConfig[key] = [];
-                                                }
-                                            } catch (e2) {
-                                                // If still fails, try comma-separated or empty array
-                                                const arrayValue = value.split(',').map(v => v.trim()).filter(v => v);
-                                                flatConfig[key] = arrayValue.length > 0 ? arrayValue : [];
-                                            }
-                                        } else {
-                                            flatConfig[key] = [];
-                                        }
-                                    }
-                                } else {
-                                    // Regular array: convert comma-separated string to array
-                                    const arrayValue = value ? value.split(',').map(v => v.trim()).filter(v => v) : [];
-                                    flatConfig[key] = arrayValue;
-                                }
-                            } else if (propType === 'integer' || (Array.isArray(propType) && propType.includes('integer'))) {
-                                // Handle union types - if null is allowed and value is empty, keep as empty string (backend will convert to null)
-                                if (Array.isArray(propType) && propType.includes('null') && (!value || value.trim() === '')) {
-                                    flatConfig[key] = ''; // Send empty string, backend will normalize to null
-                                } else {
-                                    const numValue = parseInt(value, 10);
-                                    flatConfig[key] = isNaN(numValue) ? (propSchema && propSchema.default !== undefined ? propSchema.default : 0) : numValue;
-                                }
-                            } else if (propType === 'number' || (Array.isArray(propType) && propType.includes('number'))) {
-                                // Handle union types - if null is allowed and value is empty, keep as empty string (backend will convert to null)
-                                if (Array.isArray(propType) && propType.includes('null') && (!value || value.trim() === '')) {
-                                    flatConfig[key] = ''; // Send empty string, backend will normalize to null
-                                } else {
-                                    const numValue = parseFloat(value);
-                                    flatConfig[key] = isNaN(numValue) ? (propSchema && propSchema.default !== undefined ? propSchema.default : 0) : numValue;
-                                }
-                            } else if (propType === 'boolean') {
-                                // Boolean from FormData (shouldn't happen for checkboxes, but handle it)
-                                flatConfig[key] = value === 'on' || value === 'true' || value === true;
-                            } else {
-                                // String or other types
-                                // Check if it's a number field by name pattern (fallback if no schema)
-                                if (!propType && (key.includes('duration') || key.includes('interval') || 
-                                    key.includes('timeout') || key.includes('teams') || key.includes('fps') ||
-                                    key.includes('bits') || key.includes('nanoseconds') || key.includes('hz'))) {
-                                    const numValue = parseFloat(value);
-                                    if (!isNaN(numValue)) {
-                                        flatConfig[key] = Number.isInteger(numValue) ? parseInt(value, 10) : numValue;
-                                    } else {
-                                        flatConfig[key] = value;
-                                    }
-                                } else {
-                                    flatConfig[key] = value;
-                                }
-                            }
-                        }
-                        
-                        // Handle unchecked checkboxes using schema (if available)
-                        if (schema && schema.properties) {
-                            const collectBooleanFields = (props, prefix = '') => {
-                                const boolFields = [];
-                                for (const [key, prop] of Object.entries(props)) {
-                                    const fullKey = prefix ? `${prefix}.${key}` : key;
-                                    if (prop.type === 'boolean') {
-                                        boolFields.push(fullKey);
-                                    } else if (prop.type === 'object' && prop.properties) {
-                                        boolFields.push(...collectBooleanFields(prop.properties, fullKey));
-                                    }
-                                }
-                                return boolFields;
-                            };
-                            
-                            const allBoolFields = collectBooleanFields(schema.properties);
-                            allBoolFields.forEach(key => {
-                                // Only set to false if the field is completely missing from flatConfig
-                                // Don't override existing false values - they're explicitly set by the user
-                                if (!(key in flatConfig)) {
-                                    flatConfig[key] = false;
-                                }
-                            });
-                        }
-                        
-                        // Convert dot notation to nested object
-                        const dotToNested = (obj) => {
-                            const result = {};
-                            for (const key in obj) {
-                                const parts = key.split('.');
-                                let current = result;
-                                for (let i = 0; i < parts.length - 1; i++) {
-                                    if (!current[parts[i]]) {
-                                        current[parts[i]] = {};
-                                    }
-                                    current = current[parts[i]];
-                                }
-                                current[parts[parts.length - 1]] = obj[key];
-                            }
-                            return result;
-                        };
-                        
-                        const config = dotToNested(flatConfig);
-                        
-                        // Save to backend
-                        const response = await fetch('/api/v3/plugins/config', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                plugin_id: pluginId,
-                                config: config
-                            })
-                        });
-                        
-                        let data;
-                        try {
-                            data = await response.json();
-                        } catch (e) {
-                            console.error('Failed to parse JSON response:', e);
-                            console.error('Response status:', response.status, response.statusText);
-                            console.error('Response text:', await response.text());
-                            throw new Error(`Failed to parse server response: ${response.status} ${response.statusText}`);
-                        }
-                        
-                        debugLog('Response status:', response.status, 'Response OK:', response.ok);
-                        debugLog('Response data:', JSON.stringify(data, null, 2));
-                        
-                        if (!response.ok || data.status !== 'success') {
-                            let errorMessage = data.message || 'Failed to save configuration';
-                            if (data.validation_errors && Array.isArray(data.validation_errors)) {
-                                console.error('Validation errors:', data.validation_errors);
-                                errorMessage += '\n\nValidation errors:\n' + data.validation_errors.join('\n');
-                            }
-                            if (data.config_keys && data.schema_keys) {
-                                console.error('Config keys sent:', data.config_keys);
-                                console.error('Schema keys expected:', data.schema_keys);
-                                const extraKeys = data.config_keys.filter(k => !data.schema_keys.includes(k));
-                                const missingKeys = data.schema_keys.filter(k => !data.config_keys.includes(k));
-                                if (extraKeys.length > 0) {
-                                    errorMessage += '\n\nExtra keys (not in schema): ' + extraKeys.join(', ');
-                                }
-                                if (missingKeys.length > 0) {
-                                    errorMessage += '\n\nMissing keys (in schema): ' + missingKeys.join(', ');
-                                }
-                            }
-                            this.showNotification(errorMessage, 'error');
-                            console.error('Config save failed - Full error response:', JSON.stringify(data, null, 2));
-                        } else {
-                            this.showNotification('Configuration saved successfully', 'success');
-                            // Reload plugin config to reflect changes
-                            await this.loadPluginConfig(pluginId);
-                        }
-                    } catch (error) {
-                        console.error('Error saving plugin config:', error);
-                        this.showNotification('Error saving configuration: ' + error.message, 'error');
-                    }
-                },
-
-                formatCommitInfo(commit, branch) {
-                    // Handle null, undefined, or empty string
-                    const commitStr = (commit && String(commit).trim()) || '';
-                    const branchStr = (branch && String(branch).trim()) || '';
-                    
-                    if (!commitStr && !branchStr) return 'Unknown';
-                    
-                    const shortCommit = commitStr.length >= 7 ? commitStr.substring(0, 7) : commitStr;
-
-                    if (branchStr && shortCommit) {
-                        return `${branchStr} · ${shortCommit}`;
-                    }
-                    if (branchStr) {
-                        return branchStr;
-                    }
-                    if (shortCommit) {
-                        return shortCommit;
-                    }
-                    return 'Unknown';
-                },
-
-                formatDateInfo(dateString) {
-                    // Handle null, undefined, or empty string
-                    if (!dateString || !String(dateString).trim()) return 'Unknown';
-                    
-                    try {
-                        const date = new Date(dateString);
-                        // Check if date is valid
-                        if (isNaN(date.getTime())) {
-                            return 'Unknown';
-                        }
-                        
-                        const now = new Date();
-                        const diffTime = Math.abs(now - date);
-                        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-                        
-                        if (diffDays < 1) {
-                            return 'Today';
-                        } else if (diffDays < 2) {
-                            return 'Yesterday';
-                        } else if (diffDays < 7) {
-                            return `${diffDays} days ago`;
-                        } else if (diffDays < 30) {
-                            const weeks = Math.floor(diffDays / 7);
-                            return `${weeks} ${weeks === 1 ? 'week' : 'weeks'} ago`;
-                        } else {
-                            // Return formatted date for older items
-                            return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-                        }
-                    } catch (e) {
-                        console.error('Error formatting date:', e, dateString);
-                        return 'Unknown';
-                    }
+                    window.showNotification(message, type);
                 }
             };
-            
-            // Update window.app to return full implementation
+
             window.app = function() {
                 return fullImplementation;
             };
             
-            // If Alpine is already initialized, update the existing component immediately
+            // If Alpine started on the app-early.js stub, copy the full
+            // implementation into that live component (next frame, once
+            // Alpine has finished initialising it).
             if (window.Alpine) {
-                // Use requestAnimationFrame for immediate execution without blocking
                 requestAnimationFrame(() => {
                     if (window._appEnhanced) return;
                     window._appEnhanced = true;
                     const isAPMode = window.location.hostname === '192.168.4.1' ||
                                    window.location.hostname.startsWith('192.168.4.');
                     const defaultTab = isAPMode ? 'wifi' : 'overview';
-                    const appElement = document.querySelector('[x-data]');
-                    if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
-                        const existingComponent = appElement._x_dataStack[0];
+                    const existingComponent = window.getApp();
+                    if (existingComponent) {
                         // Preserve runtime state that should not be reset
                         const preservedPlugins = existingComponent.installedPlugins;
                         const preservedTab = existingComponent.activeTab;
@@ -1363,100 +838,10 @@
             return fullImplementation;
         }
         
-        // Make app() available globally
         window.app = app;
 
 
-        // ===== Nested Section Toggle =====
-        window.toggleNestedSection = function(sectionId, event) {
-            // Prevent event bubbling if event is provided
-            if (event) {
-                event.stopPropagation();
-                event.preventDefault();
-            }
-            
-            const content = document.getElementById(sectionId);
-            const icon = document.getElementById(sectionId + '-icon');
-            
-            if (!content || !icon) {
-                console.warn('[toggleNestedSection] Content or icon not found for:', sectionId);
-                return;
-            }
-            
-            // Check if content is currently collapsed (has 'collapsed' class or display:none)
-            const isCollapsed = content.classList.contains('collapsed') || 
-                                content.style.display === 'none' ||
-                                (content.style.display === '' && !content.classList.contains('expanded'));
-            
-            if (isCollapsed) {
-                // Expand the section
-                content.classList.remove('collapsed');
-                content.classList.add('expanded');
-                content.style.display = 'block';
-                content.style.overflow = 'hidden'; // Prevent content jumping during animation
-                
-                // CRITICAL FIX: Use setTimeout to ensure browser has time to layout the element
-                // When element goes from display:none to display:block, scrollHeight might be 0
-                // We need to wait for the browser to calculate the layout
-                setTimeout(() => {
-                    // Force reflow to ensure transition works
-                    void content.offsetHeight;
-                    
-                    // Now measure the actual content height after layout
-                    const scrollHeight = content.scrollHeight;
-                    if (scrollHeight > 0) {
-                        content.style.maxHeight = scrollHeight + 'px';
-                    } else {
-                        // Fallback: if scrollHeight is still 0, try measuring again after a brief delay
-                        setTimeout(() => {
-                            const retryHeight = content.scrollHeight;
-                            content.style.maxHeight = retryHeight > 0 ? retryHeight + 'px' : '500px';
-                        }, 10);
-                    }
-                }, 10);
-                
-                icon.classList.remove('fa-chevron-right');
-                icon.classList.add('fa-chevron-down');
-                
-                // After animation completes, remove max-height constraint to allow natural expansion
-                setTimeout(() => {
-                    if (content.classList.contains('expanded') && !content.classList.contains('collapsed')) {
-                        content.style.maxHeight = 'none';
-                        content.style.overflow = '';
-                    }
-                }, 320); // Slightly longer than transition duration
-            } else {
-                // Collapse the section
-                content.classList.add('collapsed');
-                content.classList.remove('expanded');
-                content.style.overflow = 'hidden'; // Prevent content jumping during animation
-                
-                // Set max-height to current scroll height first (required for smooth animation)
-                const currentHeight = content.scrollHeight;
-                content.style.maxHeight = currentHeight + 'px';
-                
-                // Force reflow to apply the height
-                void content.offsetHeight;
-                
-                // Then animate to 0
-                setTimeout(() => {
-                    content.style.maxHeight = '0';
-                }, 10);
-                
-                // Hide after transition completes
-                setTimeout(() => {
-                    if (content.classList.contains('collapsed')) {
-                        content.style.display = 'none';
-                        content.style.overflow = '';
-                    }
-                }, 320); // Match the CSS transition duration + small buffer
-                
-                icon.classList.remove('fa-chevron-down');
-                icon.classList.add('fa-chevron-right');
-            }
-        };
-
-        // ===== Display Preview Functions (from v2) =====
+        // ===== Display preview (Overview tab and the floating preview) =====
         
         function updateDisplayPreview(data) {
             const preview = document.getElementById('displayPreview');
@@ -1656,373 +1041,10 @@
             }
         }
 
-        // ===== Plugin Management Functions =====
-
-        // Make togglePluginFromTab global so Alpine.js can access it  
-        window.togglePluginFromTab = async function(pluginId, enabled) {
-            try {
-                const response = await fetch('/api/v3/plugins/toggle', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ plugin_id: pluginId, enabled })
-                });
-                const data = await response.json();
-
-                showNotification(data.message, data.status);
-
-                if (data.status === 'success') {
-                    // Update the plugin in window.installedPlugins
-                    if (window.installedPlugins) {
-                        const plugin = window.installedPlugins.find(p => p.id === pluginId);
-                        if (plugin) {
-                            plugin.enabled = enabled;
-                        }
-                    }
-                    
-                    // Refresh the plugin list to ensure both management page and config page stay in sync
-                    if (typeof loadInstalledPlugins === 'function') {
-                        loadInstalledPlugins();
-                    }
-                } else {
-                    // Revert the toggle if API call failed
-                    if (window.installedPlugins) {
-                        const plugin = window.installedPlugins.find(p => p.id === pluginId);
-                        if (plugin) {
-                            plugin.enabled = !enabled;
-                        }
-                    }
-                }
-
-            } catch (error) {
-                showNotification('Error toggling plugin: ' + error.message, 'error');
-                // Revert on error
-                if (window.installedPlugins) {
-                    const plugin = window.installedPlugins.find(p => p.id === pluginId);
-                    if (plugin) {
-                        plugin.enabled = !enabled;
-                    }
-                }
-            }
-        }
-
-        // Helper function to get schema property type for a field path
-        function getSchemaPropertyType(schema, path) {
-            if (!schema || !schema.properties) return null;
-            
-            const parts = path.split('.');
-            let current = schema.properties;
-            
-            for (let i = 0; i < parts.length; i++) {
-                const part = parts[i];
-                if (current && current[part]) {
-                    if (i === parts.length - 1) {
-                        return current[part];
-                    } else if (current[part].properties) {
-                        current = current[part].properties;
-                    } else {
-                        return null;
-                    }
-                } else {
-                    return null;
-                }
-            }
-            return null;
-        }
-
-        // Helper function to escape CSS selector special characters
-        function escapeCssSelector(str) {
-            if (typeof str !== 'string') {
-                str = String(str);
-            }
-            // Use CSS.escape() when available (handles unicode, leading digits, and edge cases)
-            if (typeof CSS !== 'undefined' && CSS.escape) {
-                return CSS.escape(str);
-            }
-            // Fallback to regex-based escaping for older browsers
-            // First, handle leading digits and whitespace (must be done before regex)
-            let escaped = str;
-            let hasLeadingHexEscape = false;
-            if (escaped.length > 0) {
-                const firstChar = escaped[0];
-                const firstCode = firstChar.charCodeAt(0);
-                
-                // Escape leading digit (0-9: U+0030-U+0039)
-                if (firstCode >= 0x30 && firstCode <= 0x39) {
-                    const hex = firstCode.toString(16).toUpperCase().padStart(4, '0');
-                    escaped = '\\' + hex + ' ' + escaped.slice(1);
-                    hasLeadingHexEscape = true;
-                }
-                // Escape leading whitespace (space: U+0020, tab: U+0009, etc.)
-                else if (/\s/.test(firstChar)) {
-                    const hex = firstCode.toString(16).toUpperCase().padStart(4, '0');
-                    escaped = '\\' + hex + ' ' + escaped.slice(1);
-                    hasLeadingHexEscape = true;
-                }
-            }
-            
-            // Escape special characters
-            escaped = escaped.replace(/[!"#$%&'()*+,.\/:;<=>?@[\\\]^`{|}~]/g, '\\$&');
-            
-            // Escape internal spaces (replace spaces with \ ), but preserve space in hex escape
-            if (hasLeadingHexEscape) {
-                // Skip the first 6 characters (e.g., "\0030 ") when replacing spaces
-                escaped = escaped.slice(0, 6) + escaped.slice(6).replace(/ /g, '\\ ');
-            } else {
-                escaped = escaped.replace(/ /g, '\\ ');
-            }
-            
-            return escaped;
-        }
-
-        async function savePluginConfig(pluginId) {
-            try {
-                debugLog('Saving config for plugin:', pluginId);
-                
-                // Load schema for type detection
-                let schema = {};
-                try {
-                    const schemaResponse = await fetch(`/api/v3/plugins/schema?plugin_id=${pluginId}`);
-                    const schemaData = await schemaResponse.json();
-                    if (schemaData.status === 'success' && schemaData.data.schema) {
-                        schema = schemaData.data.schema;
-                    }
-                } catch (e) {
-                    console.warn('Could not load schema for type detection:', e);
-                }
-                
-                // Find the form in the active plugin tab
-                // Alpine.js hides/shows elements with display:none, so we look for the currently visible one
-                const allForms = document.querySelectorAll('form[x-on\\:submit\\.prevent]');
-                debugLog('Found forms:', allForms.length);
-                
-                let form = null;
-                for (const f of allForms) {
-                    const parent = f.closest('[x-show]');
-                    if (parent && parent.style.display !== 'none' && parent.offsetParent !== null) {
-                        form = f;
-                        debugLog('Found visible form');
-                        break;
-                    }
-                }
-                
-                if (!form) {
-                    throw new Error('Form not found for plugin ' + pluginId);
-                }
-
-                const formData = new FormData(form);
-                const flatConfig = {};
-
-                // First, collect all checkbox states (including unchecked ones)
-                // Unchecked checkboxes don't appear in FormData, so we need to iterate form elements
-                for (let i = 0; i < form.elements.length; i++) {
-                    const element = form.elements[i];
-                    const name = element.name;
-                    
-                    // Skip elements without names or submit buttons
-                    if (!name || element.type === 'submit' || element.type === 'button') {
-                        continue;
-                    }
-                    
-                    // Handle checkboxes explicitly (both checked and unchecked)
-                    if (element.type === 'checkbox') {
-                        flatConfig[name] = element.checked;
-                    }
-                    // Handle radio buttons
-                    else if (element.type === 'radio') {
-                        if (element.checked) {
-                            flatConfig[name] = element.value;
-                        }
-                    }
-                    // Handle select elements (including multi-select)
-                    else if (element.tagName === 'SELECT') {
-                        if (element.multiple) {
-                            // Multi-select: get all selected options
-                            const selectedValues = Array.from(element.selectedOptions).map(opt => opt.value);
-                            flatConfig[name] = selectedValues;
-                        } else {
-                            // Single select: handled by FormData, but ensure it's captured
-                            if (!(name in flatConfig)) {
-                                flatConfig[name] = element.value;
-                            }
-                        }
-                    }
-                    // Handle textarea
-                    else if (element.tagName === 'TEXTAREA') {
-                        // Textarea: handled by FormData, but ensure it's captured
-                        if (!(name in flatConfig)) {
-                            flatConfig[name] = element.value;
-                        }
-                    }
-                }
-
-                // Now process FormData for other field types
-                for (const [key, value] of formData.entries()) {
-                    // Skip checkboxes - we already handled them above
-                    // Use querySelector to reliably find element by name (handles dot notation)
-                    const escapedKey = escapeCssSelector(key);
-                    const element = form.querySelector(`[name="${escapedKey}"]`);
-                    if (element && element.type === 'checkbox') {
-                        continue; // Already processed
-                    }
-                    // Skip multi-select - we already handled them above
-                    if (element && element.tagName === 'SELECT' && element.multiple) {
-                        continue; // Already processed
-                    }
-                    
-                    // Get schema property type if available
-                    const propSchema = getSchemaPropertyType(schema, key);
-                    const propType = propSchema ? propSchema.type : null;
-                    
-                    // Handle based on schema type or field name patterns
-                    if (propType === 'array') {
-                        // Check if this is a file upload widget (JSON array in hidden input)
-                        if (propSchema && propSchema['x-widget'] === 'file-upload') {
-                            try {
-                                // Unescape HTML entities that were escaped when setting the value
-                                let unescapedValue = value;
-                                if (typeof value === 'string') {
-                                    // Reverse the HTML escaping: &quot; -> ", &#39; -> ', &amp; -> &
-                                    unescapedValue = value
-                                        .replace(/&quot;/g, '"')
-                                        .replace(/&#39;/g, "'")
-                                        .replace(/&lt;/g, '<')
-                                        .replace(/&gt;/g, '>')
-                                        .replace(/&amp;/g, '&');
-                                }
-                                
-                                try {
-                                    const jsonValue = JSON.parse(unescapedValue);
-                                    if (Array.isArray(jsonValue)) {
-                                        flatConfig[key] = jsonValue;
-                                        debugLog(`File upload array field ${key}: parsed JSON array with ${jsonValue.length} items`);
-                                    } else {
-                                        // Fallback to empty array
-                                        flatConfig[key] = [];
-                                    }
-                                } catch (e) {
-                                    console.warn(`Failed to parse JSON for file upload field ${key}:`, e, 'Value:', value);
-                                    // Fallback to empty array
-                                    flatConfig[key] = [];
-                                }
-                            } catch (e) {
-                                // Not valid JSON, use empty array or try comma-separated
-                                if (value && value.trim()) {
-                                    const arrayValue = value.split(',').map(v => v.trim()).filter(v => v);
-                                    flatConfig[key] = arrayValue;
-                                } else {
-                                    flatConfig[key] = [];
-                                }
-                            }
-                        } else {
-                            // Regular array: convert comma-separated string to array
-                            const arrayValue = value ? value.split(',').map(v => v.trim()).filter(v => v) : [];
-                            flatConfig[key] = arrayValue;
-                        }
-                    } else if (propType === 'integer') {
-                        const numValue = parseInt(value, 10);
-                        flatConfig[key] = isNaN(numValue) ? (propSchema && propSchema.default !== undefined ? propSchema.default : 0) : numValue;
-                    } else if (propType === 'number') {
-                        const numValue = parseFloat(value);
-                        flatConfig[key] = isNaN(numValue) ? (propSchema && propSchema.default !== undefined ? propSchema.default : 0) : numValue;
-                    } else if (propType === 'boolean') {
-                        // Boolean from FormData (shouldn't happen for checkboxes, but handle it)
-                        flatConfig[key] = value === 'on' || value === 'true' || value === true;
-                    } else {
-                        // String or other types
-                        // Check if it's a number field by name pattern (fallback if no schema)
-                        if (!propType && (key.includes('duration') || key.includes('interval') || 
-                            key.includes('timeout') || key.includes('teams') || key.includes('fps') ||
-                            key.includes('bits') || key.includes('nanoseconds') || key.includes('hz'))) {
-                            const numValue = parseFloat(value);
-                            if (!isNaN(numValue)) {
-                                flatConfig[key] = Number.isInteger(numValue) ? parseInt(value, 10) : numValue;
-                            } else {
-                                flatConfig[key] = value;
-                            }
-                        } else {
-                            flatConfig[key] = value;
-                        }
-                    }
-                }
-
-                // Handle unchecked checkboxes using schema (if available)
-                if (schema && schema.properties) {
-                    const collectBooleanFields = (props, prefix = '') => {
-                        const boolFields = [];
-                        for (const [key, prop] of Object.entries(props)) {
-                            const fullKey = prefix ? `${prefix}.${key}` : key;
-                            if (prop.type === 'boolean') {
-                                boolFields.push(fullKey);
-                            } else if (prop.type === 'object' && prop.properties) {
-                                boolFields.push(...collectBooleanFields(prop.properties, fullKey));
-                            }
-                        }
-                        return boolFields;
-                    };
-                    
-                    const allBoolFields = collectBooleanFields(schema.properties);
-                    allBoolFields.forEach(key => {
-                        if (!(key in flatConfig)) {
-                            flatConfig[key] = false;
-                        }
-                    });
-                }
-
-                // Convert dot notation to nested object
-                const dotToNested = (obj) => {
-                    const result = {};
-                    for (const key in obj) {
-                        const parts = key.split('.');
-                        let current = result;
-                        for (let i = 0; i < parts.length - 1; i++) {
-                            if (!current[parts[i]]) {
-                                current[parts[i]] = {};
-                            }
-                            current = current[parts[i]];
-                        }
-                        current[parts[parts.length - 1]] = obj[key];
-                    }
-                    return result;
-                };
-
-                const config = dotToNested(flatConfig);
-
-                debugLog('Saving config for', pluginId, ':', config);
-                debugLog('Flat config before nesting:', flatConfig);
-
-                // Save to backend
-                const response = await fetch('/api/v3/plugins/config', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ plugin_id: pluginId, config })
-                });
-
-                let data;
-                try {
-                    data = await response.json();
-                } catch (e) {
-                    throw new Error(`Failed to parse server response: ${response.status} ${response.statusText}`);
-                }
-
-                if (!response.ok || data.status !== 'success') {
-                    let errorMessage = data.message || 'Failed to save configuration';
-                    if (data.validation_errors && Array.isArray(data.validation_errors)) {
-                        errorMessage += '\n\nValidation errors:\n' + data.validation_errors.join('\n');
-                    }
-                    throw new Error(errorMessage);
-                } else {
-                    showNotification(`Configuration saved for ${pluginId}`, 'success');
-                }
-
-            } catch (error) {
-                console.error('Error saving plugin configuration:', error);
-                showNotification('Error saving plugin configuration: ' + error.message, 'error');
-            }
-        }
-        
-        // Notification helper function
-        // Fix invalid number inputs before form submission
-        // This prevents "invalid form control is not focusable" errors
+        // Clamps number inputs to their min/max before a form submits, so the
+        // browser does not block the submit with "An invalid form control is
+        // not focusable" for a field the user cannot see. Called from the
+        // Display and Durations forms' onsubmit.
         window.fixInvalidNumberInputs = function(form) {
             if (!form) return;
             const allInputs = form.querySelectorAll('input[type="number"]');
@@ -2041,9 +1063,11 @@
             });
         };
         
-        // showNotification is implemented by the notification.js widget.
-        // Until it loads, this fallback queues messages; the widget shows the
-        // queue as soon as it registers (and then replaces this function).
+        // Stand-in for window.showNotification until the notification widget
+        // (widgets/notification.js, in the widget bundle) loads: it queues
+        // messages, and the widget shows the queue and replaces this function.
+        // This script runs before every other script that notifies, so callers
+        // use showNotification without checking that it exists.
         if (typeof window.showNotification !== 'function') {
             window.showNotification = function(message, type = 'info') {
                 const registry = window.LEDMatrixWidgets;
@@ -2059,340 +1083,281 @@
             };
         }
 
-        // Section toggle function - already defined earlier, but ensure it's not overwritten
-        // (duplicate definition removed - function is defined in early script block above)
+        // Plugin ids whose config tab is reloading (see refreshPluginConfig).
+        window.pluginConfigRefreshInProgress = window.pluginConfigRefreshInProgress || new Set();
 
-        // Plugin config handler functions (idempotent initialization)
-        if (!window.__pluginConfigHandlersInitialized) {
-            window.__pluginConfigHandlersInitialized = true;
-            
-            // Initialize state on window object
-            window.pluginConfigRefreshInProgress = window.pluginConfigRefreshInProgress || new Set();
-            
-            // Validate plugin config form and show helpful error messages
-            window.validatePluginConfigForm = function(form, pluginId) {
-                // Check HTML5 validation
-                if (!form.checkValidity()) {
-                    // Find all invalid fields
-                    const invalidFields = Array.from(form.querySelectorAll(':invalid'));
-                    const errors = [];
-                    let firstInvalidField = null;
-                    
-                    invalidFields.forEach((field, index) => {
-                        // Build error message
-                        let fieldName = field.name || field.id || 'field';
-                        // Make field name more readable (remove plugin ID prefix, convert dots/underscores)
-                        fieldName = fieldName.replace(new RegExp('^' + pluginId + '-'), '')
-                                            .replace(/\./g, ' → ')
-                                            .replace(/_/g, ' ')
-                                            .replace(/\b\w/g, l => l.toUpperCase()); // Capitalize words
-                        
-                        let errorMsg = field.validationMessage || 'Invalid value';
-                        
-                        // Get more specific error message based on validation state
-                        if (field.validity.valueMissing) {
-                            errorMsg = 'This field is required';
-                        } else if (field.validity.rangeUnderflow) {
-                            errorMsg = `Value must be at least ${field.min || 'the minimum'}`;
-                        } else if (field.validity.rangeOverflow) {
-                            errorMsg = `Value must be at most ${field.max || 'the maximum'}`;
-                        } else if (field.validity.stepMismatch) {
-                            errorMsg = `Value must be a multiple of ${field.step || 1}`;
-                        } else if (field.validity.typeMismatch) {
-                            errorMsg = 'Invalid format (e.g., text in number field)';
-                        } else if (field.validity.patternMismatch) {
-                            errorMsg = 'Value does not match required pattern';
-                        } else if (field.validity.tooShort) {
-                            errorMsg = `Value must be at least ${field.minLength} characters`;
-                        } else if (field.validity.tooLong) {
-                            errorMsg = `Value must be at most ${field.maxLength} characters`;
-                        } else if (field.validity.badInput) {
-                            errorMsg = 'Invalid input type';
-                        }
-                        
-                        errors.push(`${fieldName}: ${errorMsg}`);
-                        
-                        // Track first invalid field for focusing
-                        if (index === 0) {
-                            firstInvalidField = field;
-                        }
-                        
-                        // If field is in a collapsed section, expand it
-                        const nestedContent = field.closest('.nested-content');
-                        if (nestedContent && nestedContent.classList.contains('hidden')) {
-                            // Find the toggle button for this section
-                            const sectionId = nestedContent.id;
-                            if (sectionId) {
-                                // Try multiple selectors to find the toggle button
-                                const toggleBtn = document.querySelector(`button[aria-controls="${sectionId}"], button[onclick*="${sectionId}"], [data-toggle-section="${sectionId}"]`) ||
-                                                 nestedContent.previousElementSibling?.querySelector('button');
-                                if (toggleBtn && toggleBtn.onclick) {
-                                    toggleBtn.click(); // Expand the section
-                                }
-                            }
-                        }
-                    });
-                    
-                    // Focus and scroll to first invalid field after a brief delay
-                    // (allows collapsed sections to expand first)
-                    setTimeout(() => {
-                        if (firstInvalidField) {
-                            firstInvalidField.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                            firstInvalidField.focus();
-                        }
-                    }, 200);
-                    
-                    // Show error notification with details
-                    if (errors.length > 0) {
-                        // Format error message nicely
-                        const errorList = errors.slice(0, 5).join('\n'); // Show first 5 errors
-                        const moreErrors = errors.length > 5 ? `\n... and ${errors.length - 5} more error(s)` : '';
-                        const errorMessage = `Validation failed:\n${errorList}${moreErrors}`;
-                        
-                        if (typeof showNotification === 'function') {
-                            showNotification(errorMessage, 'error');
-                        } else {
-                            alert(errorMessage); // Fallback if showNotification not available
-                        }
-                        
-                        // Also log to console for debugging
-                        console.error('Form validation errors:', errors);
-                    }
-                    
-                    // Report validation failure to browser (shows native validation tooltips)
-                    form.reportValidity();
-                    
-                    return false; // Prevent form submission
-                }
-                
-                return true; // Validation passed
-            };
-            
-            // Handle config save response with detailed error logging
-            window.handleConfigSave = function(event, pluginId) {
-                const btn = event.target.querySelector('[type=submit]');
-                if (btn) btn.disabled = false;
-                
-                const xhr = event.detail.xhr;
-                const status = xhr?.status || 0;
-                
-                // Check if request was successful (2xx status codes)
-                if (status >= 200 && status < 300) {
-                    // Try to get message from response JSON
-                    let message = 'Configuration saved successfully!';
-                    try {
-                        if (xhr?.responseJSON?.message) {
-                            message = xhr.responseJSON.message;
-                        } else if (xhr?.responseText) {
-                            const responseData = JSON.parse(xhr.responseText);
-                            message = responseData.message || message;
-                        }
-                    } catch (e) {
-                        // Use default message if parsing fails
-                    }
-                    showNotification(message, 'success');
-                } else {
-                    // Request failed - log detailed error information
-                    console.error('Config save failed:', {
-                        status: status,
-                        statusText: xhr?.statusText,
-                        responseText: xhr?.responseText
-                    });
-                    
-                    // Try to parse error response
-                    let errorMessage = 'Failed to save configuration';
-                    try {
-                        if (xhr?.responseJSON) {
-                            const errorData = xhr.responseJSON;
-                            errorMessage = errorData.message || errorData.details || errorMessage;
-                            if (errorData.validation_errors) {
-                                errorMessage += ': ' + errorData.validation_errors.join(', ');
-                            }
-                        } else if (xhr?.responseText) {
-                            const errorData = JSON.parse(xhr.responseText);
-                            errorMessage = errorData.message || errorData.details || errorMessage;
-                            if (errorData.validation_errors) {
-                                errorMessage += ': ' + errorData.validation_errors.join(', ');
-                            }
-                        }
-                    } catch (e) {
-                        // If parsing fails, use status text
-                        errorMessage = xhr?.statusText || errorMessage;
-                    }
-                    
-                    showNotification(errorMessage, 'error');
-                }
-            };
-            
-            // Handle toggle response
-            window.handleToggleResponse = function(event, pluginId) {
-                const xhr = event.detail.xhr;
-                const status = xhr?.status || 0;
-                
-                if (status >= 200 && status < 300) {
-                    // Update UI in place instead of refreshing to avoid duplication
-                    const checkbox = document.getElementById(`plugin-enabled-${pluginId}`);
-                    const label = checkbox?.nextElementSibling;
-                    
-                    if (checkbox && label) {
-                        const isEnabled = checkbox.checked;
-                        label.textContent = isEnabled ? 'Enabled' : 'Disabled';
-                        label.className = `ml-2 text-sm ${isEnabled ? 'text-green-600' : 'text-gray-500'}`;
-                    }
-                    
-                    // Try to get message from response
-                    let message = 'Plugin status updated';
-                    try {
-                        if (xhr?.responseJSON?.message) {
-                            message = xhr.responseJSON.message;
-                        } else if (xhr?.responseText) {
-                            const responseData = JSON.parse(xhr.responseText);
-                            message = responseData.message || message;
-                        }
-                    } catch (e) {
-                        // Use default message
-                    }
-                    showNotification(message, 'success');
-                } else {
-                    // Revert checkbox state on error
-                    const checkbox = document.getElementById(`plugin-enabled-${pluginId}`);
-                    if (checkbox) {
-                        checkbox.checked = !checkbox.checked;
-                    }
-                    
-                    // Try to get error message from response
-                    let errorMessage = 'Failed to update plugin status';
-                    try {
-                        if (xhr?.responseJSON?.message) {
-                            errorMessage = xhr.responseJSON.message;
-                        } else if (xhr?.responseText) {
-                            const errorData = JSON.parse(xhr.responseText);
-                            errorMessage = errorData.message || errorData.details || errorMessage;
-                        }
-                    } catch (e) {
-                        // Use default message
-                    }
-                    showNotification(errorMessage, 'error');
-                }
-            };
-            
-            // Handle plugin update response
-            window.handlePluginUpdate = function(event, pluginId) {
-                const xhr = event.detail.xhr;
-                const status = xhr?.status || 0;
-                
-                // Check if request was successful (2xx status)
-                if (status >= 200 && status < 300) {
-                    // Try to parse the response to get the actual message from server
-                    let message = 'Plugin updated successfully';
-                    
-                    if (xhr && xhr.responseText) {
-                        try {
-                            const data = JSON.parse(xhr.responseText);
-                            // Use the server's message, ensuring it says "update" not "save"
-                            message = data.message || message;
-                            // Ensure message is about updating, not saving
-                            if (message.toLowerCase().includes('save') && !message.toLowerCase().includes('update')) {
-                                message = message.replace(/save/i, 'update');
-                            }
-                        } catch (e) {
-                            // If parsing fails, use default message
-                            console.warn('Could not parse update response:', e);
-                        }
-                    }
-                    
-                    showNotification(message, 'success');
-                } else {
-                    console.error('Plugin update failed:', {
-                        status: status,
-                        statusText: xhr?.statusText,
-                        responseText: xhr?.responseText
-                    });
-                    
-                    // Try to parse error response for better error message
-                    let errorMessage = 'Failed to update plugin';
-                    if (xhr?.responseText) {
-                        try {
-                            const errorData = JSON.parse(xhr.responseText);
-                            errorMessage = errorData.message || errorMessage;
-                        } catch (e) {
-                            // If parsing fails, use default
-                        }
-                    }
-                    
-                    showNotification(errorMessage, 'error');
-                }
-            };
-            
-            // Refresh plugin config (with duplicate prevention)
-            window.refreshPluginConfig = function(pluginId) {
-                // Prevent concurrent refreshes
-                if (window.pluginConfigRefreshInProgress.has(pluginId)) {
-                    return;
-                }
-                
-                const container = document.getElementById(`plugin-config-${pluginId}`);
-                if (container && window.htmx) {
-                    window.pluginConfigRefreshInProgress.add(pluginId);
-                    
-                    // Clear container first, then reload
-                    container.innerHTML = '';
-                    window.htmx.ajax('GET', `/v3/partials/plugin-config/${pluginId}`, {
-                        target: container,
-                        swap: 'innerHTML'
-                    });
-                    
-                    // Clear flag after delay
-                    setTimeout(() => {
-                        window.pluginConfigRefreshInProgress.delete(pluginId);
-                    }, 1000);
-                }
-            };
-            
-            // Plugin action handlers
-            window.runPluginOnDemand = function(pluginId) {
-                if (typeof window.openOnDemandModal === 'function') {
-                    window.openOnDemandModal(pluginId);
-                } else {
-                    showNotification('On-demand modal not available', 'error');
-                }
-            };
-            
-            window.stopOnDemand = function() {
-                if (typeof window.requestOnDemandStop === 'function') {
-                    window.requestOnDemandStop({});
-                } else {
-                    showNotification('Stop function not available', 'error');
-                }
-            };
-            
-            window.executePluginAction = function(actionId, actionIndex, pluginId) {
-                fetch(`/api/v3/plugins/action?plugin_id=${pluginId}&action_id=${actionId}`, {
-                    method: 'POST'
-                })
-                .then(r => r.json())
-                .then(data => {
-                    if (data.status === 'success') {
-                        showNotification(data.message || 'Action executed', 'success');
-                    } else {
-                        showNotification(data.message || 'Action failed', 'error');
-                    }
-                })
-                .catch(err => {
-                    showNotification('Failed to execute action', 'error');
-                });
-            };
-        }
-
-        function getAppComponent() {
-            if (window.Alpine) {
-                const appElement = document.querySelector('[x-data="app()"]');
-                if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
-                    return appElement._x_dataStack[0];
-                }
+        // The parsed JSON body of an htmx request's XMLHttpRequest, or null.
+        // (XMLHttpRequest has no responseJSON; that is a jQuery property.)
+        function xhrJson(xhr) {
+            try {
+                return xhr && xhr.responseText ? JSON.parse(xhr.responseText) : null;
+            } catch (e) {
+                return null;
             }
-            return null;
         }
+
+        /**
+         * Checks a plugin config form before htmx posts it. Called from the
+         * form's onsubmit in partials/plugin_config.html
+         * (`return validatePluginConfigForm(this, pluginId)`).
+         * On failure it expands the collapsed sections holding invalid
+         * fields, focuses the first one, and shows the errors.
+         * @returns {boolean} true to let the submit (and htmx) proceed,
+         *   false to cancel it.
+         */
+        window.validatePluginConfigForm = function(form, pluginId) {
+            // Check HTML5 validation
+            if (!form.checkValidity()) {
+                // Find all invalid fields
+                const invalidFields = Array.from(form.querySelectorAll(':invalid'));
+                const errors = [];
+                let firstInvalidField = null;
+
+                invalidFields.forEach((field, index) => {
+                    // Build error message
+                    let fieldName = field.name || field.id || 'field';
+                    // Make field name more readable (remove plugin ID prefix, convert dots/underscores)
+                    fieldName = fieldName.replace(new RegExp('^' + pluginId + '-'), '')
+                                        .replace(/\./g, ' → ')
+                                        .replace(/_/g, ' ')
+                                        .replace(/\b\w/g, l => l.toUpperCase()); // Capitalize words
+
+                    let errorMsg = field.validationMessage || 'Invalid value';
+
+                    // Get more specific error message based on validation state
+                    if (field.validity.valueMissing) {
+                        errorMsg = 'This field is required';
+                    } else if (field.validity.rangeUnderflow) {
+                        errorMsg = `Value must be at least ${field.min || 'the minimum'}`;
+                    } else if (field.validity.rangeOverflow) {
+                        errorMsg = `Value must be at most ${field.max || 'the maximum'}`;
+                    } else if (field.validity.stepMismatch) {
+                        errorMsg = `Value must be a multiple of ${field.step || 1}`;
+                    } else if (field.validity.typeMismatch) {
+                        errorMsg = 'Invalid format (e.g., text in number field)';
+                    } else if (field.validity.patternMismatch) {
+                        errorMsg = 'Value does not match required pattern';
+                    } else if (field.validity.tooShort) {
+                        errorMsg = `Value must be at least ${field.minLength} characters`;
+                    } else if (field.validity.tooLong) {
+                        errorMsg = `Value must be at most ${field.maxLength} characters`;
+                    } else if (field.validity.badInput) {
+                        errorMsg = 'Invalid input type';
+                    }
+
+                    errors.push(`${fieldName}: ${errorMsg}`);
+
+                    // Track first invalid field for focusing
+                    if (index === 0) {
+                        firstInvalidField = field;
+                    }
+
+                    // If field is in a collapsed section, expand it
+                    const nestedContent = field.closest('.nested-content');
+                    if (nestedContent && nestedContent.classList.contains('hidden')) {
+                        // Find the toggle button for this section
+                        const sectionId = nestedContent.id;
+                        if (sectionId) {
+                            // Try multiple selectors to find the toggle button
+                            const toggleBtn = document.querySelector(`button[aria-controls="${sectionId}"], button[onclick*="${sectionId}"], [data-toggle-section="${sectionId}"]`) ||
+                                             nestedContent.previousElementSibling?.querySelector('button');
+                            if (toggleBtn && toggleBtn.onclick) {
+                                toggleBtn.click(); // Expand the section
+                            }
+                        }
+                    }
+                });
+
+                // Focus and scroll to first invalid field after a brief delay
+                // (allows collapsed sections to expand first)
+                setTimeout(() => {
+                    if (firstInvalidField) {
+                        firstInvalidField.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        firstInvalidField.focus();
+                    }
+                }, 200);
+
+                // Show error notification with details
+                if (errors.length > 0) {
+                    // Format error message nicely
+                    const errorList = errors.slice(0, 5).join('\n'); // Show first 5 errors
+                    const moreErrors = errors.length > 5 ? `\n... and ${errors.length - 5} more error(s)` : '';
+                    const errorMessage = `Validation failed:\n${errorList}${moreErrors}`;
+
+                    showNotification(errorMessage, 'error');
+
+                    // Also log to console for debugging
+                    console.error('Form validation errors:', errors);
+                }
+
+                // Report validation failure to browser (shows native validation tooltips)
+                form.reportValidity();
+
+                return false; // Prevent form submission
+            }
+
+            return true; // Validation passed
+        };
+
+        /**
+         * Reports a plugin config save. Called from the config form's
+         * hx-on::after-request in partials/plugin_config.html. Re-enables
+         * the submit button and shows the server's message as a success or
+         * error notification. Returns nothing.
+         */
+        window.handleConfigSave = function(event, pluginId) {
+            const btn = event.target.querySelector('[type=submit]');
+            if (btn) btn.disabled = false;
+
+            const xhr = event.detail.xhr;
+            const status = xhr?.status || 0;
+
+            // Check if request was successful (2xx status codes)
+            if (status >= 200 && status < 300) {
+                const data = xhrJson(xhr);
+                showNotification((data && data.message) || 'Configuration saved successfully!', 'success');
+            } else {
+                // Request failed - log detailed error information
+                console.error('Config save failed:', {
+                    status: status,
+                    statusText: xhr?.statusText,
+                    responseText: xhr?.responseText
+                });
+
+                const errorData = xhrJson(xhr);
+                let errorMessage = errorData
+                    ? (errorData.message || errorData.details || 'Failed to save configuration')
+                    : ((xhr && xhr.statusText) || 'Failed to save configuration');
+                if (errorData && errorData.validation_errors) {
+                    errorMessage += ': ' + errorData.validation_errors.join(', ');
+                }
+                showNotification(errorMessage, 'error');
+            }
+        };
+
+        /**
+         * Reports the enable/disable switch on a plugin's config tab. Called
+         * from the switch's hx-on::after-request in
+         * partials/plugin_config.html. On success it relabels the switch; on
+         * failure it flips the checkbox back. Returns nothing.
+         */
+        window.handleToggleResponse = function(event, pluginId) {
+            const xhr = event.detail.xhr;
+            const status = xhr?.status || 0;
+
+            if (status >= 200 && status < 300) {
+                // Update UI in place instead of refreshing to avoid duplication
+                const checkbox = document.getElementById(`plugin-enabled-${pluginId}`);
+                const label = checkbox?.nextElementSibling;
+
+                if (checkbox && label) {
+                    const isEnabled = checkbox.checked;
+                    label.textContent = isEnabled ? 'Enabled' : 'Disabled';
+                    label.className = `ml-2 text-sm ${isEnabled ? 'text-green-600' : 'text-gray-500'}`;
+                }
+
+                const data = xhrJson(xhr);
+                showNotification((data && data.message) || 'Plugin status updated', 'success');
+            } else {
+                // Revert checkbox state on error
+                const checkbox = document.getElementById(`plugin-enabled-${pluginId}`);
+                if (checkbox) {
+                    checkbox.checked = !checkbox.checked;
+                }
+
+                const errorData = xhrJson(xhr);
+                showNotification((errorData && (errorData.message || errorData.details)) ||
+                    'Failed to update plugin status', 'error');
+            }
+        };
+
+        /**
+         * Reports the Update button on a plugin's config tab. Called from its
+         * hx-on::after-request in partials/plugin_config.html. Shows the
+         * server's message. Returns nothing.
+         */
+        window.handlePluginUpdate = function(event, pluginId) {
+            const xhr = event.detail.xhr;
+            const status = xhr?.status || 0;
+
+            // Check if request was successful (2xx status)
+            if (status >= 200 && status < 300) {
+                // Try to parse the response to get the actual message from server
+                let message = 'Plugin updated successfully';
+
+                if (xhr && xhr.responseText) {
+                    try {
+                        const data = JSON.parse(xhr.responseText);
+                        // Use the server's message, ensuring it says "update" not "save"
+                        message = data.message || message;
+                        // Ensure message is about updating, not saving
+                        if (message.toLowerCase().includes('save') && !message.toLowerCase().includes('update')) {
+                            message = message.replace(/save/i, 'update');
+                        }
+                    } catch (e) {
+                        // If parsing fails, use default message
+                        console.warn('Could not parse update response:', e);
+                    }
+                }
+
+                showNotification(message, 'success');
+            } else {
+                console.error('Plugin update failed:', {
+                    status: status,
+                    statusText: xhr?.statusText,
+                    responseText: xhr?.responseText
+                });
+
+                // Try to parse error response for better error message
+                let errorMessage = 'Failed to update plugin';
+                if (xhr?.responseText) {
+                    try {
+                        const errorData = JSON.parse(xhr.responseText);
+                        errorMessage = errorData.message || errorMessage;
+                    } catch (e) {
+                        // If parsing fails, use default
+                    }
+                }
+
+                showNotification(errorMessage, 'error');
+            }
+        };
+
+        /**
+         * Reloads a plugin's config tab from the server. Called from the
+         * Refresh button's onclick in partials/plugin_config.html. Clicks
+         * within a second of a reload are ignored. Returns nothing.
+         */
+        window.refreshPluginConfig = function(pluginId) {
+            if (window.pluginConfigRefreshInProgress.has(pluginId)) {
+                return;
+            }
+
+            const container = document.getElementById(`plugin-config-${pluginId}`);
+            if (container && window.htmx) {
+                window.pluginConfigRefreshInProgress.add(pluginId);
+
+                container.innerHTML = '';
+                window.htmx.ajax('GET', `/v3/partials/plugin-config/${pluginId}`, {
+                    target: container,
+                    swap: 'innerHTML'
+                });
+
+                setTimeout(() => {
+                    window.pluginConfigRefreshInProgress.delete(pluginId);
+                }, 1000);
+            }
+        };
+
+        // Run / Stop on-demand buttons on a plugin's config tab (onclick in
+        // partials/plugin_config.html); plugins_manager.js implements both.
+        window.runPluginOnDemand = function(pluginId) {
+            window.openOnDemandModal(pluginId);
+        };
+
+        window.stopOnDemand = function() {
+            window.requestOnDemandStop({});
+        };
 
         async function updatePlugin(pluginId) {
             try {
@@ -2409,7 +1374,7 @@
 
                 if (data.status === 'success') {
                     // Refresh the plugin list
-                    const appComponent = getAppComponent();
+                    const appComponent = window.getApp();
                     if (appComponent && typeof appComponent.loadInstalledPlugins === 'function') {
                         await appComponent.loadInstalledPlugins();
                     }
@@ -2419,206 +1384,4 @@
             }
         }
 
-        async function updateAllPlugins() {
-            try {
-                // Starlark apps are listed as virtual 'starlark:<id>' entries;
-                // /plugins/update does not handle them (see install_manager.js).
-                const plugins = (Array.isArray(window.installedPlugins) ? window.installedPlugins : [])
-                    .filter(p => p && typeof p.id === 'string' && !p.is_starlark_app && !p.id.startsWith('starlark:'));
-
-                if (!plugins.length) {
-                    showNotification('No installed plugins to update.', 'warning');
-                    return;
-                }
-
-                showNotification(`Checking ${plugins.length} plugin${plugins.length === 1 ? '' : 's'} for updates...`, 'info');
-
-                let successCount = 0;
-                let failureCount = 0;
-
-                for (const plugin of plugins) {
-                    const pluginId = plugin.id;
-                    const pluginName = plugin.name || pluginId;
-
-                    try {
-                        const response = await fetch('/api/v3/plugins/update', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ plugin_id: pluginId })
-                        });
-
-                        const data = await response.json();
-                        const status = data.status || 'info';
-                        const message = data.message || `Checked ${pluginName}`;
-
-                        showNotification(message, status);
-
-                        if (status === 'success') {
-                            successCount += 1;
-                        } else {
-                            failureCount += 1;
-                        }
-                    } catch (error) {
-                        failureCount += 1;
-                        showNotification(`Error updating ${pluginName}: ${error.message}`, 'error');
-                    }
-                }
-
-                const appComponent = getAppComponent();
-                if (appComponent && typeof appComponent.loadInstalledPlugins === 'function') {
-                    await appComponent.loadInstalledPlugins();
-                }
-
-                if (failureCount === 0) {
-                    showNotification(`Finished checking ${successCount} plugin${successCount === 1 ? '' : 's'} for updates.`, 'success');
-                } else {
-                    showNotification(`Updated ${successCount} plugin${successCount === 1 ? '' : 's'} with ${failureCount} failure${failureCount === 1 ? '' : 's'}. Check logs for details.`, 'error');
-                }
-            } catch (error) {
-                console.error('Bulk plugin update failed:', error);
-                showNotification('Failed to update all plugins: ' + error.message, 'error');
-            }
-        }
-
-        window.updateAllPlugins = updateAllPlugins;
-
-
-        async function uninstallPlugin(pluginId) {
-            try {
-                // Get plugin info from window.installedPlugins
-                const plugin = window.installedPlugins ? window.installedPlugins.find(p => p.id === pluginId) : null;
-                const pluginName = plugin ? (plugin.name || pluginId) : pluginId;
-
-                if (!confirm(`Are you sure you want to uninstall ${pluginName}?`)) {
-                    return;
-                }
-
-                showNotification(`Uninstalling ${pluginName}...`, 'info');
-
-                const response = await fetch('/api/v3/plugins/uninstall', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ plugin_id: pluginId })
-                });
-                const data = await response.json();
-
-                // Check if operation was queued
-                if (data.status === 'success' && data.data && data.data.operation_id) {
-                    // Operation was queued, poll for completion
-                    const operationId = data.data.operation_id;
-                    showNotification(`Uninstall queued for ${pluginName}...`, 'info');
-                    await pollUninstallOperation(operationId, pluginId, pluginName);
-                } else if (data.status === 'success') {
-                    // Direct uninstall completed immediately
-                    showNotification(data.message || `Plugin ${pluginName} uninstalled successfully`, 'success');
-                    // Refresh the plugin list
-                    await app.loadInstalledPlugins();
-                } else {
-                    // Error response
-                    showNotification(data.message || 'Failed to uninstall plugin', data.status || 'error');
-                }
-            } catch (error) {
-                showNotification('Error uninstalling plugin: ' + error.message, 'error');
-            }
-        }
-
-        async function pollUninstallOperation(operationId, pluginId, pluginName, maxAttempts = 60, attempt = 0) {
-            if (attempt >= maxAttempts) {
-                showNotification(`Uninstall operation timed out for ${pluginName}`, 'error');
-                // Refresh plugin list to see actual state
-                await app.loadInstalledPlugins();
-                return;
-            }
-
-            try {
-                const response = await fetch(`/api/v3/plugins/operation/${operationId}`);
-                const data = await response.json();
-                
-                if (data.status === 'success' && data.data) {
-                    const operation = data.data;
-                    const status = operation.status;
-                    
-                    if (status === 'completed') {
-                        // Operation completed successfully
-                        showNotification(`Plugin ${pluginName} uninstalled successfully`, 'success');
-                        await app.loadInstalledPlugins();
-                    } else if (status === 'failed') {
-                        // Operation failed
-                        const errorMsg = operation.error || operation.message || `Failed to uninstall ${pluginName}`;
-                        showNotification(errorMsg, 'error');
-                        // Refresh plugin list to see actual state
-                        await app.loadInstalledPlugins();
-                    } else if (status === 'pending' || status === 'in_progress') {
-                        // Still in progress, poll again
-                        await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
-                        await pollUninstallOperation(operationId, pluginId, pluginName, maxAttempts, attempt + 1);
-                    } else {
-                        // Unknown status, poll again
-                        await new Promise(resolve => setTimeout(resolve, 1000));
-                        await pollUninstallOperation(operationId, pluginId, pluginName, maxAttempts, attempt + 1);
-                    }
-                } else {
-                    // Error getting operation status, try again
-                    await new Promise(resolve => setTimeout(resolve, 1000));
-                    await pollUninstallOperation(operationId, pluginId, pluginName, maxAttempts, attempt + 1);
-                }
-            } catch (error) {
-                console.error('Error polling operation status:', error);
-                // On error, refresh plugin list to see actual state
-                await app.loadInstalledPlugins();
-            }
-        }
-
-        // Assign to window for global access
-        window.uninstallPlugin = uninstallPlugin;
-
-        // Format commit information for display
-        function formatCommitInfo(commit, branch) {
-            if (!commit && !branch) return 'Unknown';
-            const shortCommit = commit ? String(commit).substring(0, 7) : '';
-            const branchText = branch ? String(branch) : '';
-
-            if (branchText && shortCommit) {
-                return `${branchText} · ${shortCommit}`;
-            }
-            if (branchText) {
-                return branchText;
-            }
-            if (shortCommit) {
-                return shortCommit;
-            }
-            return 'Latest';
-        }
-
-        // Format date for display
-        function formatDateInfo(dateString) {
-            if (!dateString) return 'Unknown';
-            
-            try {
-                const date = new Date(dateString);
-                const now = new Date();
-                const diffTime = Math.abs(now - date);
-                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-                
-                if (diffDays < 1) {
-                    return 'Today';
-                } else if (diffDays < 2) {
-                    return 'Yesterday';
-                } else if (diffDays < 7) {
-                    return `${diffDays} days ago`;
-                } else if (diffDays < 30) {
-                    const weeks = Math.floor(diffDays / 7);
-                    return `${weeks} ${weeks === 1 ? 'week' : 'weeks'} ago`;
-                } else {
-                    // Return formatted date for older items
-                    return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-                }
-            } catch (e) {
-                return dateString;
-            }
-        }
-
-        // Make functions available to Alpine.js
-        window.formatCommitInfo = formatCommitInfo;
-        window.formatDateInfo = formatDateInfo;
 

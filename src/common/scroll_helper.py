@@ -238,19 +238,8 @@ class ScrollHelper:
         self.cached_image = full_image
         # Convert to numpy array for fast operations
         self.cached_array = np.array(full_image)
-        
-        # Use actual image width instead of calculated width to ensure accuracy
-        # This fixes cases where width calculation doesn't match actual positioning
         actual_image_width = full_image.width
         self.total_scroll_width = actual_image_width
-        
-        # Log if there's a mismatch (indicating a bug in width calculation)
-        if actual_image_width != total_width:
-            self.logger.warning(
-                "Width calculation mismatch: calculated=%dpx, actual=%dpx (diff=%dpx). "
-                "Using actual width for scroll calculations.",
-                total_width, actual_image_width, abs(actual_image_width - total_width)
-            )
         
         self.scroll_position = 0.0
         self.total_distance_scrolled = 0.0
@@ -339,10 +328,8 @@ class ScrollHelper:
             # gained. This is what the one visibly smooth scroller on the
             # hardware (the stock ticker) was already doing by virtue of never
             # enabling frame-based mode.
-            if self.scroll_delay > 0:
-                pixels_per_second = self.scroll_speed / self.scroll_delay
-            else:
-                pixels_per_second = self.scroll_speed * 100.0
+            # set_scroll_delay clamps scroll_delay to at least 0.001.
+            pixels_per_second = self.scroll_speed / self.scroll_delay
             pixels_to_move = pixels_per_second * delta_time
             self.last_step_time = current_time
         else:
@@ -353,11 +340,11 @@ class ScrollHelper:
         self.scroll_position += pixels_to_move
         self.total_distance_scrolled += pixels_to_move
         
-        # Calculate required total distance: total_scroll_width only.
-        # The image already includes display_width pixels of blank padding at the start
-        # (added by create_scrolling_image), so once scroll_position reaches
-        # total_scroll_width the last card has fully scrolled off the left edge.
-        # Adding display_width here would cause 1-2 extra wrap-arounds on wide chains.
+        # One pass is total_scroll_width. With the default lead_gap the strip
+        # starts with display_width of blank, so by then the last item has
+        # fully left the panel; a caller passing a smaller lead_gap (Vegas)
+        # decides for itself where its cycle ends. Adding display_width here
+        # caused 1-2 extra wrap-arounds on wide chains.
         required_total_distance = self.total_scroll_width
 
         # Guard: zero-width content has nothing to scroll — keep position at 0 and skip
@@ -414,7 +401,6 @@ class ScrollHelper:
             and current_time - self.last_progress_log_time >= self.progress_log_interval
         ):
             elapsed_time = current_time - (self.scroll_start_time or current_time)
-            # The image already includes display_width padding, so we only need total_scroll_width
             required_total_distance = self.total_scroll_width
             # Progress telemetry, emitted every few seconds for the whole of
             # every scroll. It says how far along a marquee is, which is what
@@ -461,10 +447,8 @@ class ScrollHelper:
         """
         Linear blend between the frames at ``start_x`` and ``start_x + 1``.
 
-        Implemented with numpy rather than scipy.ndimage.shift: scipy is not
-        installed on the target devices, and the old scipy-based sub-pixel path
-        was dead code -- get_visible_portion never consulted the flag. The scipy
-        import was removed with it; installing scipy has no effect.
+        Implemented with numpy rather than scipy.ndimage.shift, which is not
+        installed on the target devices.
 
         Args:
             start_x: Left column of the earlier of the two frames
@@ -571,22 +555,16 @@ class ScrollHelper:
             return self.min_duration
         
         try:
-            # Calculate total scroll distance needed
-            # The image already includes display_width padding at the start, so we need
-            # to scroll total_scroll_width pixels to show all content, plus display_width
-            # more pixels to ensure the last content scrolls completely off the screen
+            # The strip's width plus one more screen, so the duration covers
+            # the last item leaving the panel even when the strip has less
+            # than display_width of lead-in blank (lead_gap).
             total_scroll_distance = self.total_scroll_width + self.display_width
             
             # Calculate effective pixels per second based on scrolling mode
             if self.frame_based_scrolling:
-                # Frame-based mode: scroll_speed is pixels per frame, scroll_delay is seconds per frame
-                # Effective pixels per second = pixels per frame / seconds per frame
-                if self.scroll_delay > 0:
-                    pixels_per_second = self.scroll_speed / self.scroll_delay
-                else:
-                    # Fallback if scroll_delay is invalid
-                    pixels_per_second = self.scroll_speed * 50  # Assume 50 FPS default
-                    self.logger.warning("Invalid scroll_delay (%s), using fallback calculation", self.scroll_delay)
+                # Frame-based mode: scroll_speed is pixels per scroll_delay
+                # seconds, and set_scroll_delay keeps scroll_delay >= 0.001.
+                pixels_per_second = self.scroll_speed / self.scroll_delay
                 scroll_mode_str = "frame-based"
             else:
                 # Time-based mode: scroll_speed is already pixels per second
@@ -1072,7 +1050,6 @@ class ScrollHelper:
         Returns:
             Dictionary with scroll state information
         """
-        # The image already includes display_width padding, so we only need total_scroll_width
         required_total_distance = self.total_scroll_width if self.total_scroll_width > 0 else 0
         return {
             'scroll_position': self.scroll_position,

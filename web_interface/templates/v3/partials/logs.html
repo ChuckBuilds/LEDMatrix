@@ -126,8 +126,10 @@
 </div>
 
 <script>
-// Global variables - use window properties to avoid redeclaration errors with HTMX reloads
-// Initialize only if not already defined
+// Scoped: this script runs at global scope after every HTMX swap, and the
+// Cache partial has helpers with the same names (showError, escapeHtml). State
+// that must survive a reload of this partial lives on window._logs* instead.
+(function() {
 if (typeof window._logsEventSource === 'undefined') {
     window._logsEventSource = null;
 }
@@ -624,9 +626,7 @@ function toggleRealtime() {
 
 function refreshLogs() {
     loadLogs();
-    if (typeof showNotification !== 'undefined') {
-        showNotification('Logs refreshed', 'success');
-    }
+    showNotification('Logs refreshed', 'success');
 }
 
 function clearLogs() {
@@ -637,16 +637,12 @@ function clearLogs() {
     }
     showEmptyState();
     updateLogStats();
-    if (typeof showNotification !== 'undefined') {
-        showNotification('Logs cleared', 'info');
-    }
+    showNotification('Logs cleared', 'info');
 }
 
 function downloadLogs() {
     if (window._filteredLogs.length === 0) {
-        if (typeof showNotification !== 'undefined') {
-            showNotification('No logs to download', 'warning');
-        }
+        showNotification('No logs to download', 'warning');
         return;
     }
 
@@ -662,9 +658,7 @@ function downloadLogs() {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
 
-    if (typeof showNotification !== 'undefined') {
-        showNotification('Logs downloaded', 'success');
-    }
+    showNotification('Logs downloaded', 'success');
 }
 
 // Track if user is near bottom for smart auto-scroll
@@ -776,16 +770,7 @@ function showError(message) {
     }
 }
 
-// Utility function to escape HTML. Quotes too: the result is interpolated into
-// quoted attribute values (option value=, title=), and the
-// textContent/innerHTML round-trip only escapes &, < and >.
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-}
+function escapeHtml(text) { return window.LEDEscape.html(text); }
 
 function refreshCurrentPluginStatus() {
     fetch('/api/v3/display/current-status')
@@ -920,15 +905,13 @@ function clearPluginErrors() {
     })
         .then(response => response.json())
         .then(data => {
-            if (typeof showNotification !== 'undefined') {
-                showNotification(data.status === 'success' ? 'Plugin errors cleared'
-                    : (data.message || 'Could not clear plugin errors'),
-                    data.status === 'success' ? 'success' : 'error');
-            }
+            showNotification(data.status === 'success' ? 'Plugin errors cleared'
+                : (data.message || 'Could not clear plugin errors'),
+                data.status === 'success' ? 'success' : 'error');
             refreshPluginErrors();
         })
         .catch(() => {
-            if (typeof showNotification !== 'undefined') showNotification('Could not clear plugin errors', 'error');
+            showNotification('Could not clear plugin errors', 'error');
         });
 }
 
@@ -946,4 +929,5 @@ window.addEventListener('beforeunload', function() {
         window._pluginErrorsPollTimer = null;
     }
 });
+})();
 </script>

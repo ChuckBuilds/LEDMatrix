@@ -806,14 +806,13 @@
         const file = event.target.files && event.target.files[0];
         if (!file) return;
 
-        const notifyFn = window.showNotification || console.log;
         const allowed  = ['image/png', 'image/jpeg', 'image/bmp', 'image/gif'];
         if (!allowed.includes(file.type)) {
-            notifyFn(`File type "${file.type}" not allowed`, 'error');
+            window.showNotification(`File type "${file.type}" not allowed`, 'error');
             return;
         }
         if (file.size > 5 * 1024 * 1024) {
-            notifyFn('File exceeds 5MB limit', 'error');
+            window.showNotification('File exceeds 5MB limit', 'error');
             return;
         }
 
@@ -829,12 +828,12 @@
                 const path = data.uploaded_files[0].path;
                 pathInput.value = path;
                 if (previewImg) { previewImg.src = '/' + path; previewImg.style.display = 'inline'; }
-                notifyFn('Image uploaded', 'success');
+                window.showNotification('Image uploaded', 'success');
             } else {
                 throw new Error(data.message || 'Upload failed');
             }
         } catch (err) {
-            notifyFn('Upload error: ' + err.message, 'error');
+            window.showNotification('Upload error: ' + err.message, 'error');
         } finally {
             event.target.value = '';
         }
@@ -853,7 +852,6 @@
         addButton.style.opacity = isAtMax ? '0.5' : '';
     }
 
-    window.updateArrayTableAddButtonState = updateAddButtonState;
 
     window.addArrayTableRow = function(button) {
         const fieldId        = button.getAttribute('data-field-id');
@@ -874,7 +872,7 @@
 
         const currentRows = tbody.querySelectorAll('.array-table-row').length;
         if (currentRows >= maxItems) {
-            (window.showNotification || alert)(`Maximum ${maxItems} items allowed`, 'error');
+            window.showNotification(`Maximum ${maxItems} items allowed`, 'error');
             return;
         }
 

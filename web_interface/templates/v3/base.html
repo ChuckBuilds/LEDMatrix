@@ -168,54 +168,109 @@
     </script>
     <script src="{{ url_for('static', filename='v3/js/htmx-config.js') }}"></script>
 
-    <!-- Fallback for loading plugins if HTMX fails -->
+    <!-- Direct-fetch fallback for tab panels. Used when HTMX never loads, and
+         by the hx-on::response-error handlers on the Overview, WiFi and
+         Plugin Manager panels when HTMX's own request fails. -->
     <script>
-        function loadPluginsDirect() {
-            const content = document.getElementById('plugins-content');
-            if (content && !content.hasAttribute('data-loaded')) {
-                content.setAttribute('data-loaded', 'true');
-                debugLog('Loading plugins directly via fetch (HTMX fallback)...');
+        (function() {
+            const PANEL_LABELS = {
+                'overview-content': 'the Overview',
+                'wifi-content': 'WiFi setup',
+                'plugins-content': 'the Plugin Manager'
+            };
+
+            // Fetches `url` into the element `id`, runs the partial's inline
+            // scripts, and lets HTMX and Alpine process the new markup. The
+            // scripts run before Alpine sees the content for the same reason
+            // htmx-config.js runs them on htmx:afterSwap: partials define their
+            // x-data component functions in those scripts.
+            window.loadPartialDirect = function(id, url) {
+                const el = document.getElementById(id);
+                if (!el || !url || el.hasAttribute('data-loaded') || el.hasAttribute('data-direct-loading')) return;
+                el.setAttribute('data-direct-loading', 'true');
+                debugLog('Loading ' + url + ' directly via fetch (HTMX fallback)');
                 const controller = new AbortController();
                 const timeout = setTimeout(() => controller.abort(), 10000);
-                fetch('/v3/partials/plugins', { signal: controller.signal })
+                fetch(url, { signal: controller.signal })
                     .then(r => {
                         if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
                         return r.text();
                     })
                     .then(html => {
-                        clearTimeout(timeout);
-                        content.innerHTML = html;
-                        if (typeof htmx !== 'undefined') {
-                            htmx.process(content);
-                        }
-                        // Trigger full initialization chain
-                        if (window.pluginManager) {
-                            window.pluginManager.initialized = false;
-                            window.pluginManager.initializing = false;
-                        }
-                        if (window.initPluginsPage) {
+                        el.innerHTML = html;
+                        el.querySelectorAll('script').forEach(oldScript => {
+                            const script = document.createElement('script');
+                            for (const attr of oldScript.attributes) script.setAttribute(attr.name, attr.value);
+                            script.textContent = oldScript.textContent;
+                            oldScript.replaceWith(script);
+                        });
+                        el.setAttribute('data-loaded', 'true');
+                        if (typeof htmx !== 'undefined') htmx.process(el);
+                        if (window.Alpine) window.Alpine.initTree(el);
+                        if (id === 'plugins-content' && window.initPluginsPage) {
+                            if (window.pluginManager) {
+                                window.pluginManager.initialized = false;
+                                window.pluginManager.initializing = false;
+                            }
                             window.initPluginsPage();
                         }
                     })
                     .catch(err => {
+                        console.error('Failed to load ' + url + ':', err);
+                        const label = PANEL_LABELS[id] || 'this page';
+                        el.innerHTML = '<div class="bg-red-50 border border-red-200 rounded-lg p-4" role="alert"><p class="text-red-800">Couldn’t load ' + label + '. Check that the device is still reachable, then try again.</p><button type="button" class="mt-3 px-3 py-1.5 text-sm font-medium bg-red-600 hover:bg-red-700 text-white rounded-md">Try again</button></div>';
+                        el.querySelector('button').addEventListener('click', () => window.loadPartialDirect(id, url));
+                    })
+                    .finally(() => {
                         clearTimeout(timeout);
-                        console.error('Failed to load plugins:', err);
-                        content.removeAttribute('data-loaded');
-                        content.innerHTML = '<div class="bg-red-50 border border-red-200 rounded-lg p-4" role="alert"><p class="text-red-800">Couldn’t load the Plugin Manager. Check that the device is still reachable, then try again.</p><button type="button" onclick="loadPluginsDirect()" class="mt-3 px-3 py-1.5 text-sm font-medium bg-red-600 hover:bg-red-700 text-white rounded-md">Try again</button></div>';
+                        el.removeAttribute('data-direct-loading');
                     });
-            }
-        }
+            };
 
-        // Fallback if HTMX doesn't load within 5 seconds
-        var _pluginsFallbackTimer = setTimeout(() => {
-            if (typeof htmx === 'undefined') {
-                console.warn('HTMX not loaded after 5 seconds, using direct fetch for plugins');
-                // Load plugins tab content directly regardless of active tab,
-                // so it's ready when the user navigates to it
-                loadPluginsDirect();
+            function activeTab() {
+                const appEl = document.querySelector('[x-data="app()"]');
+                try {
+                    return (window.Alpine && appEl) ? window.Alpine.$data(appEl).activeTab : null;
+                } catch (e) {
+                    return null; // Alpine has not initialised the app yet
+                }
             }
-        }, 5000);
-        window.addEventListener('htmx:ready', function() { clearTimeout(_pluginsFallbackTimer); }, { once: true });
+
+            function loadActiveTabDirect() {
+                const el = document.getElementById((activeTab() || 'overview') + '-content');
+                if (el) window.loadPartialDirect(el.id, el.getAttribute('hx-get'));
+            }
+
+            // HTMX loaded but never initialised, even from the CDN rescue.
+            window.addEventListener('htmx-load-failed', function() {
+                console.warn('HTMX failed to load, loading the active tab directly');
+                setTimeout(loadActiveTabDirect, 2000);
+            });
+
+            // HTMX still missing after 5 seconds: load the active tab, and the
+            // Plugin Manager regardless of tab so the plugin tabs work.
+            const fallbackTimer = setTimeout(function() {
+                if (typeof htmx !== 'undefined') return;
+                console.warn('HTMX not loaded after 5 seconds, loading tabs directly');
+                window.loadPartialDirect('plugins-content', '/v3/partials/plugins');
+                loadActiveTabDirect();
+            }, 5000);
+
+            // AP mode (setting up WiFi) opens on the WiFi tab and can least
+            // afford to wait, so it gets an earlier check.
+            const apTimer = setTimeout(function() {
+                const host = window.location.hostname;
+                if (typeof htmx === 'undefined' && host.startsWith('192.168.4.')) {
+                    console.warn('HTMX not loaded, loading WiFi setup directly');
+                    window.loadPartialDirect('wifi-content', '/v3/partials/wifi');
+                }
+            }, 3000);
+
+            window.addEventListener('htmx:ready', function() {
+                clearTimeout(fallbackTimer);
+                clearTimeout(apTimer);
+            }, { once: true });
+        })();
     </script>
     <!-- Alpine.js app function - defined early so it's available when Alpine initializes -->
     <script src="{{ url_for('static', filename='v3/js/app-early.js') }}"></script>
@@ -244,45 +299,6 @@
                 document.head.appendChild(s);
             }
         });
-    </script>
-
-    <!-- CodeMirror for JSON editing - lazy loaded when needed -->
-    <link rel="preload" href="{{ url_for('static', filename='v3/vendor/codemirror/codemirror.min.css') }}" as="style" onload="this.onload=null;this.rel='stylesheet'">
-    <noscript><link rel="stylesheet" href="{{ url_for('static', filename='v3/vendor/codemirror/codemirror.min.css') }}"></noscript>
-    <link rel="preload" href="{{ url_for('static', filename='v3/vendor/codemirror/theme/monokai.min.css') }}" as="style" onload="this.onload=null;this.rel='stylesheet'">
-    <noscript><link rel="stylesheet" href="{{ url_for('static', filename='v3/vendor/codemirror/theme/monokai.min.css') }}"></noscript>
-    <!-- CodeMirror scripts loaded on demand when JSON editor is opened -->
-    <script>
-        // Lazy load CodeMirror when needed
-        window.loadCodeMirror = function() {
-            if (window.CodeMirror) return Promise.resolve();
-            
-            return new Promise((resolve, reject) => {
-                // Vendored CodeMirror 5.65.2 (note: the previously listed CDN
-                // mode/json/json.min.js never existed — it 404'd on every
-                // editor open; JSON highlighting comes from the javascript
-                // mode, so it's simply dropped here)
-                const scripts = [
-                    '/static/v3/vendor/codemirror/codemirror.min.js',
-                    '/static/v3/vendor/codemirror/mode/javascript/javascript.min.js',
-                    '/static/v3/vendor/codemirror/addon/edit/closebrackets.min.js',
-                    '/static/v3/vendor/codemirror/addon/edit/matchbrackets.min.js'
-                ];
-                
-                let loaded = 0;
-                scripts.forEach((src, index) => {
-                    const script = document.createElement('script');
-                    script.src = src;
-                    script.defer = true;
-                    script.onload = () => {
-                        loaded++;
-                        if (loaded === scripts.length) resolve();
-                    };
-                    script.onerror = reject;
-                    document.head.appendChild(script);
-                });
-            });
-        };
     </script>
 
     <!-- Font Awesome icons (vendored 6.0.0 — css/all.min.css references
@@ -548,7 +564,7 @@
             <!-- Second row - Plugin tabs (populated dynamically) -->
             <div id="plugin-tabs-row" class="border-b border-gray-200">
                 <nav aria-label="Plugins" class="-mb-px flex flex-wrap gap-y-2 gap-x-2 lg:gap-x-3 xl:gap-x-4">
-                    <button @click="activeTab = 'plugins'; if (typeof htmx === 'undefined') { $nextTick(() => loadPluginsDirect()); }"
+                    <button @click="activeTab = 'plugins'; if (typeof htmx === 'undefined') { $nextTick(() => loadPartialDirect('plugins-content', '/v3/partials/plugins')); }"
                             :class="activeTab === 'plugins' ? 'nav-tab-active' : ''"
                             class="nav-tab">
                         <i class="fas fa-plug" aria-hidden="true"></i>Plugin Manager
@@ -592,7 +608,7 @@
         <div id="tab-content" class="space-y-6" tabindex="-1">
             <!-- Overview tab -->
             <div x-show="activeTab === 'overview'" x-transition>
-                <div id="overview-content" hx-get="/v3/partials/overview" hx-trigger="loadtab" hx-swap="innerHTML" hx-on::htmx:response-error="loadOverviewDirect()">
+                <div id="overview-content" hx-get="/v3/partials/overview" hx-trigger="loadtab" hx-swap="innerHTML" hx-on::response-error="loadPartialDirect(this.id, this.getAttribute('hx-get'))">
                     <div class="animate-pulse">
                         <div class="bg-white rounded-lg shadow p-6">
                             <div class="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
@@ -601,65 +617,6 @@
                     </div>
                 </div>
             </div>
-            
-            <script>
-                // Fallback: Load overview content directly if HTMX fails
-                function loadOverviewDirect() {
-                    const overviewContent = document.getElementById('overview-content');
-                    if (overviewContent && !overviewContent.hasAttribute('data-loaded')) {
-                        fetch('/v3/partials/overview')
-                            .then(response => {
-                                if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
-                                return response.text();
-                            })
-                            .then(html => {
-                                overviewContent.innerHTML = html;
-                                overviewContent.setAttribute('data-loaded', 'true');
-                                if (typeof htmx !== 'undefined') {
-                                    htmx.process(overviewContent);
-                                }
-                                // Re-initialize Alpine.js for the new content
-                                if (window.Alpine) {
-                                    window.Alpine.initTree(overviewContent);
-                                }
-                            })
-                            .catch(err => {
-                                console.error('Failed to load overview content:', err);
-                                overviewContent.innerHTML = '<div class="bg-red-50 border border-red-200 rounded-lg p-4" role="alert"><p class="text-red-800">Couldn’t load the Overview. Check that the device is still reachable, then try again.</p><button type="button" onclick="loadOverviewDirect()" class="mt-3 px-3 py-1.5 text-sm font-medium bg-red-600 hover:bg-red-700 text-white rounded-md">Try again</button></div>';
-                            });
-                    }
-                }
-                
-                // Listen for HTMX load failure
-                window.addEventListener('htmx-load-failed', function() {
-                    console.warn('HTMX failed to load, setting up direct content loading fallbacks');
-                    // Try to load content directly after a delay
-                    setTimeout(() => {
-                        const appElement = document.querySelector('[x-data="app()"]');
-                        if (appElement && appElement.__x) {
-                            const activeTab = appElement.__x.$data.activeTab || 'overview';
-                            if (activeTab === 'overview') {
-                                loadOverviewDirect();
-                            }
-                        }
-                    }, 2000);
-                });
-                
-                // Also try direct load if HTMX doesn't load within 5 seconds
-                var _overviewFallbackTimer = setTimeout(() => {
-                    if (typeof htmx === 'undefined') {
-                        console.warn('HTMX not loaded after 5 seconds, using direct fetch for content');
-                        const appElement = document.querySelector('[x-data="app()"]');
-                        if (appElement && appElement.__x) {
-                            const activeTab = appElement.__x.$data.activeTab || 'overview';
-                            if (activeTab === 'overview') {
-                                loadOverviewDirect();
-                            }
-                        }
-                    }
-                }, 5000);
-                window.addEventListener('htmx:ready', function() { clearTimeout(_overviewFallbackTimer); }, { once: true });
-            </script>
 
             <!-- General tab -->
             <div x-show="activeTab === 'general'" x-transition>
@@ -683,7 +640,7 @@
                      hx-get="/v3/partials/wifi" 
                      hx-trigger="loadtab" 
                      hx-swap="innerHTML"
-                     hx-on::htmx:response-error="loadWifiDirect()">
+                     hx-on::response-error="loadPartialDirect(this.id, this.getAttribute('hx-get'))">
                     <div class="animate-pulse">
                         <div class="bg-white rounded-lg shadow p-6">
                             <div class="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
@@ -696,42 +653,6 @@
                     </div>
                 </div>
             </div>
-            
-            <script>
-                // Fallback: Load WiFi content directly if HTMX fails
-                function loadWifiDirect() {
-                    const wifiContent = document.getElementById('wifi-content');
-                    if (wifiContent && !wifiContent.hasAttribute('data-loaded')) {
-                        fetch('/v3/partials/wifi')
-                            .then(response => {
-                                if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
-                                return response.text();
-                            })
-                            .then(html => {
-                                wifiContent.innerHTML = html;
-                                wifiContent.setAttribute('data-loaded', 'true');
-                                // Re-initialize Alpine.js for the new content
-                                if (window.Alpine) {
-                                    window.Alpine.initTree(wifiContent);
-                                }
-                            })
-                            .catch(err => {
-                                console.error('Failed to load WiFi content:', err);
-                                wifiContent.innerHTML = '<div class="bg-red-50 border border-red-200 rounded-lg p-4" role="alert"><p class="text-red-800">Couldn’t load WiFi setup. Check that the device is still reachable, then try again.</p><button type="button" onclick="loadWifiDirect()" class="mt-3 px-3 py-1.5 text-sm font-medium bg-red-600 hover:bg-red-700 text-white rounded-md">Try again</button></div>';
-                            });
-                    }
-                }
-                
-                // Also try direct load if HTMX doesn't load within 3 seconds (AP mode detection)
-                setTimeout(() => {
-                    const isAPMode = window.location.hostname === '192.168.4.1' || 
-                                   window.location.hostname.startsWith('192.168.4.');
-                    if (isAPMode && typeof htmx === 'undefined') {
-                        console.warn('HTMX not loaded, using direct fetch for WiFi content');
-                        loadWifiDirect();
-                    }
-                }, 3000);
-            </script>
 
             <!-- Schedule tab -->
             <div x-show="activeTab === 'schedule'" x-transition>
@@ -806,7 +727,7 @@
             <!-- Plugins tab -->
             <div x-show="activeTab === 'plugins'" x-transition>
                 <div id="plugins-content" hx-get="/v3/partials/plugins" hx-trigger="loadtab" hx-swap="innerHTML"
-                     hx-on::response-error="loadPluginsDirect()">
+                     hx-on::response-error="loadPartialDirect(this.id, this.getAttribute('hx-get'))">
                     <div class="animate-pulse">
                         <div class="bg-white rounded-lg shadow p-6">
                             <div class="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
@@ -986,11 +907,10 @@
          their own URLs for plugin-loader.js and debugging. -->
     <script src="{{ widgets_bundle_url() }}" defer></script>
 
-    <!-- plugins_manager.js: loaded LAST on purpose — it defines the live
-         window.* implementations for several plugin actions (installPlugin,
-         uninstallPlugin, executePluginAction, ...) and intentionally wins
-         over same-named definitions in js/app.js and js/app-shell.js. Do not
-         remove or reorder without resolving that overlap first. -->
+    <!-- plugins_manager.js: loaded last. It uses PluginAPI, ListFilter,
+         LEDDialog, the widgets and app-shell.js's updatePlugin at load time
+         or when a card is clicked, so it must follow all of them. No other
+         script defines the same globals. -->
     <script src="{{ url_for('static', filename='v3/plugins_manager.js') }}?v=20260307" defer></script>
     
     <!-- Custom feeds table helpers live in js/widgets/custom-feeds.js (the
@@ -1147,16 +1067,12 @@
                         'services to run the new code');
                 }
             }
-            if (typeof showNotification === 'function') {
-                showNotification(data.message || 'Update complete', data.status || 'success');
-            }
+            showNotification(data.message || 'Update complete', data.status || 'success');
         })
         .catch(function() {
             btn.innerHTML = originalHTML;
             btn.disabled = false;
-            if (typeof showNotification === 'function') {
-                showNotification('Update failed — check your connection', 'error');
-            }
+            showNotification('Update failed — check your connection', 'error');
         });
     };
 
