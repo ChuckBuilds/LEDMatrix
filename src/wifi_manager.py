@@ -33,6 +33,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass
 
+from src.config_manager_atomic import atomic_write_json
+
 logger = logging.getLogger(__name__)
 
 # Path for storing WiFi configuration (will be set dynamically)
@@ -315,14 +317,22 @@ class WiFiManager:
             del self.config["saved_networks"]
             self._save_config()
     
-    def _save_config(self):
-        """Save WiFi configuration to file"""
+    def _save_config(self) -> bool:
+        """Write ``self.config`` to ``self.config_path``.
+
+        The write is atomic and keeps the file's owner and shared group (see
+        atomic_write_json), so a save by the root display service does not
+        lock the web user out of the file. Returns False when the file could
+        not be written, for example when an older root-run save left it
+        owned by root; the in-memory config is kept either way.
+        """
         try:
-            with open(self.config_path, 'w') as f:
-                json.dump(self.config, f, indent=2)
-            logger.info(f"Saved WiFi config to {self.config_path}")
-        except Exception as e:
-            logger.error(f"Failed to save WiFi config: {e}")
+            atomic_write_json(self.config_path, self.config)
+        except (OSError, TypeError, ValueError) as e:
+            logger.error(f"Failed to save WiFi config to {self.config_path}: {e}")
+            return False
+        logger.info(f"Saved WiFi config to {self.config_path}")
+        return True
     
     def get_wifi_status(self) -> WiFiStatus:
         """

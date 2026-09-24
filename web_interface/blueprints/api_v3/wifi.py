@@ -372,7 +372,12 @@ def set_auto_enable_ap_mode():
 
     wifi_manager = WiFiManager()
     wifi_manager.config["auto_enable_ap_mode"] = auto_enable
-    wifi_manager._save_config()
+    if not wifi_manager._save_config():
+        return jsonify({
+            'status': 'error',
+            'message': (f'Could not save the setting to {wifi_manager.config_path}; '
+                        'check that the web interface user can write it.'),
+        }), 500
 
     return jsonify({
         'status': 'success',

@@ -370,6 +370,26 @@ def test_default_config_has_no_saved_networks(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_save_config_reports_a_failed_write(manager: WiFiManager, tmp_path: Path) -> None:
+    # A directory where the file should be: every write to it fails, as one
+    # to a root-owned wifi_config.json does for the web user.
+    blocked = tmp_path / "blocked.json"
+    blocked.mkdir()
+    manager.config_path = blocked
+
+    assert manager._save_config() is False
+    assert list(tmp_path.glob(".blocked.json.tmp.*")) == []
+
+
+@pytest.mark.unit
+def test_save_config_round_trips(manager: WiFiManager) -> None:
+    manager.config["auto_enable_ap_mode"] = False
+
+    assert manager._save_config() is True
+    assert json.loads(manager.config_path.read_text())["auto_enable_ap_mode"] is False
+
+
+@pytest.mark.unit
 def test_connecting_does_not_store_the_password(manager: WiFiManager) -> None:
     commands = []
 
