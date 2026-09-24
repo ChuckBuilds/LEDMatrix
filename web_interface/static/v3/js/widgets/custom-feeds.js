@@ -246,8 +246,7 @@
         
         const currentRows = tbody.querySelectorAll('.custom-feed-row');
         if (currentRows.length >= maxItems) {
-            const notifyFn = window.showNotification || alert;
-            notifyFn(`Maximum ${maxItems} feeds allowed`, 'error');
+            window.showNotification(`Maximum ${maxItems} feeds allowed`, 'error');
             return;
         }
         
@@ -507,14 +506,12 @@
                     logoCell.appendChild(container);
                 }
             } else {
-                const notifyFn = window.showNotification || alert;
-                notifyFn('Upload failed: ' + (data.message || 'Unknown error'), 'error');
+                window.showNotification('Upload failed: ' + (data.message || 'Unknown error'), 'error');
             }
         })
         .catch(error => {
             console.error('Upload error:', error);
-            const notifyFn = window.showNotification || alert;
-            notifyFn('Upload failed: ' + error.message, 'error');
+            window.showNotification('Upload failed: ' + error.message, 'error');
         })
         .finally(() => {
             // Reset regardless of outcome, so the same file can be re-selected

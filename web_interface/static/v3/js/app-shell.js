@@ -788,11 +788,7 @@
 
                 showNotification(message, type = 'info') {
                     // Use global notification widget
-                    if (typeof window.showNotification === 'function') {
-                        window.showNotification(message, type);
-                    } else {
-                        debugLog(`[${type.toUpperCase()}]`, message);
-                    }
+                    window.showNotification(message, type);
                 },
 
                 // Quotes too, so the result is safe inside a quoted attribute
@@ -1074,9 +1070,11 @@
             });
         };
         
-        // showNotification is implemented by the notification.js widget.
-        // Until it loads, this fallback queues messages; the widget shows the
-        // queue as soon as it registers (and then replaces this function).
+        // Stand-in for window.showNotification until the notification widget
+        // (widgets/notification.js, in the widget bundle) loads: it queues
+        // messages, and the widget shows the queue and replaces this function.
+        // This script runs before every other script that notifies, so callers
+        // use showNotification without checking that it exists.
         if (typeof window.showNotification !== 'function') {
             window.showNotification = function(message, type = 'info') {
                 const registry = window.LEDMatrixWidgets;
@@ -1182,11 +1180,7 @@
                         const moreErrors = errors.length > 5 ? `\n... and ${errors.length - 5} more error(s)` : '';
                         const errorMessage = `Validation failed:\n${errorList}${moreErrors}`;
                         
-                        if (typeof showNotification === 'function') {
-                            showNotification(errorMessage, 'error');
-                        } else {
-                            alert(errorMessage); // Fallback if showNotification not available
-                        }
+                        showNotification(errorMessage, 'error');
                         
                         // Also log to console for debugging
                         console.error('Form validation errors:', errors);

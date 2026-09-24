@@ -67,9 +67,7 @@ window.configurePlugin = window.configurePlugin || async function(pluginId) {
         window.scrollTo({ top: 0, behavior: 'smooth' });
     } else {
         console.error('Alpine.js app instance not found');
-        if (typeof showNotification === 'function') {
-            showNotification('Unable to switch to plugin configuration. Please refresh the page.', 'error');
-        }
+        showNotification('Unable to switch to plugin configuration. Please refresh the page.', 'error');
     }
 };
 
@@ -155,9 +153,7 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
         }
     }
 
-    if (typeof showNotification === 'function') {
-        showNotification(`${action.charAt(0).toUpperCase() + action.slice(1)} ${pluginName}...`, 'info');
-    }
+    showNotification(`${action.charAt(0).toUpperCase() + action.slice(1)} ${pluginName}...`, 'info');
 
     return fetch('/api/v3/plugins/toggle', {
         method: 'POST',
@@ -172,9 +168,7 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
             return;
         }
 
-        if (typeof showNotification === 'function') {
-            showNotification(data.message, data.status);
-        }
+        showNotification(data.message, data.status);
         if (data.status === 'success') {
             // Update local state
             if (plugin) {
@@ -214,9 +208,7 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
             return;
         }
 
-        if (typeof showNotification === 'function') {
-            showNotification('Error toggling plugin: ' + error.message, 'error');
-        }
+        showNotification('Error toggling plugin: ' + error.message, 'error');
         // Revert the toggle if API call failed
         if (plugin) {
             plugin.enabled = !enabled;
@@ -453,9 +445,7 @@ window.handleGitHubPluginInstall = function() {
             urlInput.value = '';
 
             // Show notification if available
-            if (typeof showNotification === 'function') {
-                showNotification(`Plugin ${data.plugin_id} installed successfully`, 'success');
-            }
+            showNotification(`Plugin ${data.plugin_id} installed successfully`, 'success');
 
             // Refresh installed plugins list if function available
             setTimeout(() => {
@@ -469,9 +459,7 @@ window.handleGitHubPluginInstall = function() {
             if (statusDiv) {
                 statusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>${window.escapeHtml(data.message || 'Installation failed')}</span>`;
             }
-            if (typeof showNotification === 'function') {
-                showNotification(data.message || 'Installation failed', 'error');
-            }
+            showNotification(data.message || 'Installation failed', 'error');
         }
     })
     .catch(error => {
@@ -479,9 +467,7 @@ window.handleGitHubPluginInstall = function() {
         if (statusDiv) {
             statusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>Error: ${window.escapeHtml(error.message)}</span>`;
         }
-        if (typeof showNotification === 'function') {
-            showNotification('Error installing plugin: ' + error.message, 'error');
-        }
+        showNotification('Error installing plugin: ' + error.message, 'error');
     })
     .finally(() => {
         if (installBtn) {
@@ -1521,11 +1507,7 @@ function handlePluginAction(event) {
                 })
                 .catch(error => {
                     console.error('[EVENT DELEGATION]', error.message);
-                    if (typeof showNotification === 'function') {
-                        showNotification('Toggle function not loaded. Please refresh the page.', 'error');
-                    } else {
-                        alert('Toggle function not loaded. Please refresh the page.');
-                    }
+                    showNotification('Toggle function not loaded. Please refresh the page.', 'error');
                 });
             break;
         case 'configure':
@@ -1535,11 +1517,7 @@ function handlePluginAction(event) {
                 })
                 .catch(error => {
                     console.error('[EVENT DELEGATION]', error.message);
-                    if (typeof showNotification === 'function') {
-                        showNotification('Configure function not loaded. Please refresh the page.', 'error');
-                    } else {
-                        alert('Configure function not loaded. Please refresh the page.');
-                    }
+                    showNotification('Configure function not loaded. Please refresh the page.', 'error');
                 });
             break;
         case 'update':
@@ -1549,11 +1527,7 @@ function handlePluginAction(event) {
                 })
                 .catch(error => {
                     console.error('[EVENT DELEGATION]', error.message);
-                    if (typeof showNotification === 'function') {
-                        showNotification('Update function not loaded. Please refresh the page.', 'error');
-                    } else {
-                        alert('Update function not loaded. Please refresh the page.');
-                    }
+                    showNotification('Update function not loaded. Please refresh the page.', 'error');
                 });
             break;
         case 'uninstall':
@@ -1565,8 +1539,7 @@ function handlePluginAction(event) {
                     .then(r => r.json())
                     .then(data => {
                         if (data.status === 'success') {
-                            if (typeof showNotification === 'function') showNotification('Starlark app uninstalled', 'success');
-                            else alert('Starlark app uninstalled');
+                            showNotification('Starlark app uninstalled', 'success');
                             if (typeof loadInstalledPlugins === 'function') loadInstalledPlugins();
                             else if (typeof window.loadInstalledPlugins === 'function') window.loadInstalledPlugins();
                         } else {
@@ -1581,11 +1554,7 @@ function handlePluginAction(event) {
                     })
                     .catch(error => {
                         console.error('[EVENT DELEGATION]', error.message);
-                        if (typeof showNotification === 'function') {
-                            showNotification('Uninstall function not loaded. Please refresh the page.', 'error');
-                        } else {
-                            alert('Uninstall function not loaded. Please refresh the page.');
-                        }
+                        showNotification('Uninstall function not loaded. Please refresh the page.', 'error');
                     });
             }
             break;
@@ -1620,23 +1589,19 @@ function loadOnDemandStatus(fromRefreshButton = false) {
             if (result.status === 'success') {
                 updateOnDemandStore(result.data);
                 hasLoadedOnDemandStatus = true;
-                if (fromRefreshButton && typeof showNotification === 'function') {
+                if (fromRefreshButton) {
                     showNotification('On-demand status refreshed', 'success');
                 }
             } else {
                 const message = result.message || 'Failed to load on-demand status';
                 setOnDemandError(message);
-                if (typeof showNotification === 'function') {
-                    showNotification(message, 'error');
-                }
+                showNotification(message, 'error');
             }
         })
         .catch(error => {
             console.error('Error fetching on-demand status:', error);
             setOnDemandError(error?.message || 'Error fetching on-demand status');
-            if (typeof showNotification === 'function') {
-                showNotification('Error fetching on-demand status: ' + error.message, 'error');
-            }
+            showNotification('Error fetching on-demand status: ' + error.message, 'error');
         });
 }
 
@@ -1763,9 +1728,7 @@ function runUpdateAllPlugins() {
         })
         .catch(error => {
             console.error('Error updating all plugins:', error);
-            if (typeof showNotification === 'function') {
-                showNotification('Error updating all plugins: ' + error.message, 'error');
-            }
+            showNotification('Error updating all plugins: ' + error.message, 'error');
         })
         .finally(() => {
             button.innerHTML = originalContent;
@@ -1819,9 +1782,7 @@ window.__openOnDemandModalImpl = function(pluginId) {
     debugLog('[__openOnDemandModalImpl] Found plugin:', plugin ? plugin.id : 'NOT FOUND');
     if (!plugin) {
         console.warn('[__openOnDemandModalImpl] Plugin not found, installedPlugins:', window.installedPlugins?.length || 0);
-        if (typeof showNotification === 'function') {
-            showNotification(`Plugin ${pluginId} not found`, 'error');
-        }
+        showNotification(`Plugin ${pluginId} not found`, 'error');
         return;
     }
 
@@ -1991,9 +1952,7 @@ function submitOnDemandRequest(event) {
 
     if (!currentOnDemandPluginId) {
         console.error('[submitOnDemandRequest] No plugin ID set');
-        if (typeof showNotification === 'function') {
-            showNotification('Select a plugin before starting on-demand mode.', 'error');
-        }
+        showNotification('Select a plugin before starting on-demand mode.', 'error');
         return;
     }
 
@@ -2042,24 +2001,18 @@ function submitOnDemandRequest(event) {
         .then(result => {
             debugLog('[submitOnDemandRequest] Response data:', result);
             if (result.status === 'success') {
-                if (typeof showNotification === 'function') {
-                    const pluginName = resolvePluginDisplayName(currentOnDemandPluginId);
-                    showNotification(`Requested on-demand mode for ${pluginName}`, 'success');
-                }
+                const pluginName = resolvePluginDisplayName(currentOnDemandPluginId);
+                showNotification(`Requested on-demand mode for ${pluginName}`, 'success');
                 closeOnDemandModal();
                 setTimeout(() => loadOnDemandStatus(true), 700);
             } else {
                 console.error('[submitOnDemandRequest] Request failed:', result);
-                if (typeof showNotification === 'function') {
-                    showNotification(result.message || 'Failed to start on-demand mode', 'error');
-                }
+                showNotification(result.message || 'Failed to start on-demand mode', 'error');
             }
         })
         .catch(error => {
             console.error('[submitOnDemandRequest] Error starting on-demand mode:', error);
-            if (typeof showNotification === 'function') {
-                showNotification('Error starting on-demand mode: ' + error.message, 'error');
-            }
+            showNotification('Error starting on-demand mode: ' + error.message, 'error');
         });
 }
 
@@ -2077,24 +2030,18 @@ function requestOnDemandStop({ stopService = false } = {}) {
         .then(response => response.json())
         .then(result => {
             if (result.status === 'success') {
-                if (typeof showNotification === 'function') {
-                    const message = stopService
-                        ? 'On-demand mode stop requested and display service will be stopped.'
-                        : 'On-demand mode stop requested';
-                    showNotification(message, 'success');
-                }
+                const message = stopService
+                    ? 'On-demand mode stop requested and display service will be stopped.'
+                    : 'On-demand mode stop requested';
+                showNotification(message, 'success');
                 setTimeout(() => loadOnDemandStatus(true), 700);
             } else {
-                if (typeof showNotification === 'function') {
-                    showNotification(result.message || 'Failed to stop on-demand mode', 'error');
-                }
+                showNotification(result.message || 'Failed to stop on-demand mode', 'error');
             }
         })
         .catch(error => {
             console.error('Error stopping on-demand mode:', error);
-            if (typeof showNotification === 'function') {
-                showNotification('Error stopping on-demand mode: ' + error.message, 'error');
-            }
+            showNotification('Error stopping on-demand mode: ' + error.message, 'error');
         });
 }
 
@@ -2505,26 +2452,20 @@ window.handleArrayObjectFileUpload = async function(event, fieldId, itemIndex, p
     // Validate file type using uploadConfig
     const allowedTypes = uploadConfig.allowed_types || ['image/png', 'image/jpeg', 'image/jpg', 'image/bmp'];
     if (!allowedTypes.includes(file.type)) {
-        if (typeof showNotification === 'function') {
-            showNotification(`File ${file.name} is not a valid image type`, 'error');
-        }
+        showNotification(`File ${file.name} is not a valid image type`, 'error');
         return;
     }
 
     // Validate file size using uploadConfig
     const maxSizeMB = uploadConfig.max_size_mb || 5;
     if (file.size > maxSizeMB * 1024 * 1024) {
-        if (typeof showNotification === 'function') {
-            showNotification(`File ${file.name} exceeds ${maxSizeMB}MB limit`, 'error');
-        }
+        showNotification(`File ${file.name} exceeds ${maxSizeMB}MB limit`, 'error');
         return;
     }
 
     // Validate pluginId before upload (fail fast)
     if (!pluginId || pluginId === 'null' || pluginId === 'undefined' || (typeof pluginId === 'string' && pluginId.trim() === '')) {
-        if (typeof showNotification === 'function') {
-            showNotification('Plugin ID is required for file upload', 'error');
-        }
+        showNotification('Plugin ID is required for file upload', 'error');
         console.error('File upload failed: pluginId is required');
         return;
     }
@@ -2553,9 +2494,7 @@ window.handleArrayObjectFileUpload = async function(event, fieldId, itemIndex, p
                     errorMessage = `Upload failed: ${errorText}`;
                 }
             }
-            if (typeof showNotification === 'function') {
-                showNotification(errorMessage, 'error');
-            }
+            showNotification(errorMessage, 'error');
             return;
         }
 
@@ -2596,19 +2535,13 @@ window.handleArrayObjectFileUpload = async function(event, fieldId, itemIndex, p
             // Update the hidden input with the new file data
             updateArrayObjectData(fieldId);
 
-            if (typeof showNotification === 'function') {
-                showNotification('Logo uploaded successfully', 'success');
-            }
+            showNotification('Logo uploaded successfully', 'success');
         } else {
-            if (typeof showNotification === 'function') {
-                showNotification(`Upload failed: ${data.message || 'Unknown error'}`, 'error');
-            }
+            showNotification(`Upload failed: ${data.message || 'Unknown error'}`, 'error');
         }
     } catch (error) {
         console.error('Upload error:', error);
-        if (typeof showNotification === 'function') {
-            showNotification(`Upload error: ${error.message}`, 'error');
-        }
+        showNotification(`Upload error: ${error.message}`, 'error');
     }
 
     // Clear file input
@@ -2635,9 +2568,7 @@ window.removeArrayObjectFile = function(fieldId, itemIndex, propKey) {
     // Update the hidden input to remove the file data
     updateArrayObjectData(fieldId);
 
-    if (typeof showNotification === 'function') {
-        showNotification('Logo removed', 'success');
-    }
+    showNotification('Logo removed', 'success');
 };
 
 // Generic Plugin Action Handler
@@ -2766,9 +2697,7 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
         console.error('No plugin ID available after all fallbacks. actionId:', actionId, 'actionIndex:', actionIndex);
         console.error('[DEBUG] Button found:', !!btn);
         console.error('[DEBUG] currentPluginConfig:', currentPluginConfig);
-        if (typeof showNotification === 'function') {
-            showNotification('Unable to determine plugin ID. Please refresh the page.', 'error');
-        }
+        showNotification('Unable to determine plugin ID. Please refresh the page.', 'error');
         return;
     }
 
@@ -2796,9 +2725,7 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
         console.error(`Action not found: ${actionId} for plugin ${pluginId}`);
         debugLog('[DEBUG] currentPluginConfig:', currentPluginConfig);
         debugLog('[DEBUG] installedPlugins:', window.installedPlugins);
-        if (typeof showNotification === 'function') {
-            showNotification(`Action ${actionId} not found. Please refresh the page.`, 'error');
-        }
+        showNotification(`Action ${actionId} not found. Please refresh the page.`, 'error');
         return;
     }
 
@@ -2834,9 +2761,7 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
                 btn.innerHTML = originalText;
                 btn.disabled = false;
                 delete btn.dataset.step;
-                if (typeof showNotification === 'function') {
-                    showNotification(data.message || 'Action completed successfully!', 'success');
-                }
+                showNotification(data.message || 'Action completed successfully!', 'success');
             } else {
                 statusDiv.innerHTML = `<div class="text-red-600"><i class="fas fa-exclamation-circle mr-2"></i>${escapeHtml(data.message || 'Error')}</div>`;
                 if (data.output) {
@@ -2897,9 +2822,7 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
                 btn.textContent = action.step2_button_text || 'Complete Authentication';
                 btn.dataset.step = '2';
                 btn.disabled = false;
-                if (typeof showNotification === 'function') {
-                    showNotification(data.message || 'Authorization URL generated. Please authorize and paste the redirect URL.', 'info');
-                }
+                showNotification(data.message || 'Authorization URL generated. Please authorize and paste the redirect URL.', 'info');
             } else {
                 // Simple success
                 statusDiv.innerHTML = `
@@ -2912,9 +2835,7 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
                 `;
                 btn.innerHTML = originalText;
                 btn.disabled = false;
-                if (typeof showNotification === 'function') {
-                    showNotification(data.message || 'Action completed successfully!', 'success');
-                }
+                showNotification(data.message || 'Action completed successfully!', 'success');
             }
         } else {
             statusDiv.innerHTML = `

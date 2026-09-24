@@ -760,11 +760,7 @@
         }
 
         _notify(msg, type) {
-            if (typeof window.showNotification === 'function') {
-                window.showNotification(msg, type || 'info');
-            } else {
-                console.info(`[JsonFileManager] ${type || 'info'}: ${msg}`);
-            }
+            window.showNotification(msg, type || 'info');
         }
 
         _busy(btn, label) {

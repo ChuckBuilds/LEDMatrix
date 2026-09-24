@@ -1068,16 +1068,12 @@
                         'services to run the new code');
                 }
             }
-            if (typeof showNotification === 'function') {
-                showNotification(data.message || 'Update complete', data.status || 'success');
-            }
+            showNotification(data.message || 'Update complete', data.status || 'success');
         })
         .catch(function() {
             btn.innerHTML = originalHTML;
             btn.disabled = false;
-            if (typeof showNotification === 'function') {
-                showNotification('Update failed — check your connection', 'error');
-            }
+            showNotification('Update failed — check your connection', 'error');
         });
     };
 

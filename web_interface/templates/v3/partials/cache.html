@@ -189,21 +189,15 @@ function deleteCacheFile(key) {
     .then(response => response.json())
     .then(data => {
         if (data.status === 'success') {
-            if (typeof showNotification !== 'undefined') {
-                showNotification(data.message || 'Cache file deleted successfully', 'success');
-            }
+            showNotification(data.message || 'Cache file deleted successfully', 'success');
             // Reload cache files list
             loadCacheFiles();
         } else {
-            if (typeof showNotification !== 'undefined') {
-                showNotification(data.message || 'Failed to delete cache file', 'error');
-            }
+            showNotification(data.message || 'Failed to delete cache file', 'error');
         }
     })
     .catch(error => {
-        if (typeof showNotification !== 'undefined') {
-            showNotification('Error deleting cache file: ' + error.message, 'error');
-        }
+        showNotification('Error deleting cache file: ' + error.message, 'error');
     });
 }
 

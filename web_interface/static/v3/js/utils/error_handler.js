@@ -139,12 +139,7 @@ function displayError(error, context = null, options = {}) {
         showErrorModal(error, context, message, suggestions, docLink);
     } else {
         // Simple notification
-        if (typeof showNotification === 'function') {
-            showNotification(fullMessage, 'error');
-        } else {
-            console.error('Error:', fullMessage);
-            alert(fullMessage);
-        }
+        showNotification(fullMessage, 'error');
     }
 }
 
@@ -315,16 +310,12 @@ function copyErrorDetails(error) {
     const errorText = JSON.stringify(error, null, 2);
     function copyFailed(err) {
         console.error('Failed to copy error details:', err);
-        if (typeof showNotification === 'function') {
-            showNotification("Couldn't copy to the clipboard. Open Technical details and copy the text by hand.", 'warning');
-        }
+        showNotification("Couldn't copy to the clipboard. Open Technical details and copy the text by hand.", 'warning');
     }
 
     if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(errorText).then(() => {
-            if (typeof showNotification === 'function') {
-                showNotification('Error details copied to clipboard', 'success');
-            }
+            showNotification('Error details copied to clipboard', 'success');
         }).catch(copyFailed);
     } else {
         // Fallback for older browsers
@@ -340,9 +331,7 @@ function copyErrorDetails(error) {
         textArea.select();
         try {
             document.execCommand('copy');
-            if (typeof showNotification === 'function') {
-                showNotification('Error details copied to clipboard', 'success');
-            }
+            showNotification('Error details copied to clipboard', 'success');
         } catch (err) {
             copyFailed(err);
         }

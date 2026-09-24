@@ -2,9 +2,11 @@
  * LEDMatrix Notification Widget
  *
  * Global notification/toast system for displaying messages to users.
- * This is the single implementation: the early fallbacks in app-shell.js,
- * app.js and partials/fonts.html only queue messages until this widget has
- * loaded (see window.__pendingNotifications) and then delegate to it.
+ * This is the single implementation. app-shell.js defines a stand-in first
+ * (it runs before every other script that notifies), which queues messages
+ * in window.__pendingNotifications until this widget loads, shows the queue
+ * and replaces it. So window.showNotification always exists: call it
+ * directly, without a typeof check or a fallback.
  *
  * Usage:
  *   window.showNotification('Message here', 'success');

@@ -142,24 +142,23 @@
             .split(',').map(e => e.trim().toLowerCase());
 
         const statusDiv = document.getElementById(`${fieldId}_upload_status`);
-        const notifyFn = window.showNotification || console.log;
 
         // Guard: endpoint must be configured
         if (!uploadEndpoint) {
-            notifyFn('No upload endpoint configured for this field', 'error');
+            window.showNotification('No upload endpoint configured for this field', 'error');
             return;
         }
 
         // Validate extension
         const fileExt = '.' + file.name.split('.').pop().toLowerCase();
         if (!allowedExtensions.includes(fileExt)) {
-            notifyFn(`File must be one of: ${allowedExtensions.join(', ')}`, 'error');
+            window.showNotification(`File must be one of: ${allowedExtensions.join(', ')}`, 'error');
             return;
         }
 
         // Validate size
         if (file.size > maxSizeMB * 1024 * 1024) {
-            notifyFn(`File exceeds ${maxSizeMB}MB limit`, 'error');
+            window.showNotification(`File exceeds ${maxSizeMB}MB limit`, 'error');
             return;
         }
 
@@ -198,7 +197,7 @@
                 // Update hidden input with the target filename
                 const hiddenInput = document.getElementById(fieldId);
                 if (hiddenInput) hiddenInput.value = targetFilename;
-                notifyFn(`${targetFilename} uploaded successfully`, 'success');
+                window.showNotification(`${targetFilename} uploaded successfully`, 'success');
             } else {
                 if (statusDiv) {
                     statusDiv.className = 'mt-2 text-xs text-red-600';
@@ -208,7 +207,7 @@
                     statusDiv.appendChild(icon);
                     statusDiv.appendChild(document.createTextNode(`Upload failed: ${data.message}`));
                 }
-                notifyFn(`Upload failed: ${data.message}`, 'error');
+                window.showNotification(`Upload failed: ${data.message}`, 'error');
             }
         } catch (error) {
             if (statusDiv) {
@@ -219,7 +218,7 @@
                 statusDiv.appendChild(icon);
                 statusDiv.appendChild(document.createTextNode(`Upload error: ${error.message}`));
             }
-            notifyFn(`Upload error: ${error.message}`, 'error');
+            window.showNotification(`Upload error: ${error.message}`, 'error');
         } finally {
             const fileInput = document.getElementById(`${fieldId}_file_input`);
             if (fileInput) fileInput.value = '';
@@ -249,23 +248,20 @@
         const validFiles = [];
         for (const file of files) {
             if (file.size > maxSizeMB * 1024 * 1024) {
-                const notifyFn = window.showNotification || console.error;
-                notifyFn(`File ${file.name} exceeds ${maxSizeMB}MB limit`, 'error');
+                window.showNotification(`File ${file.name} exceeds ${maxSizeMB}MB limit`, 'error');
                 continue;
             }
             
             if (fileType === 'json') {
                 // Validate JSON files
                 if (!file.name.toLowerCase().endsWith('.json')) {
-                    const notifyFn = window.showNotification || console.error;
-                    notifyFn(`File ${file.name} must be a JSON file (.json)`, 'error');
+                    window.showNotification(`File ${file.name} must be a JSON file (.json)`, 'error');
                     continue;
                 }
             } else {
                 // Validate image files using allowedTypes from config
                 if (!allowedTypes.includes(file.type)) {
-                    const notifyFn = window.showNotification || console.error;
-                    notifyFn(`File ${file.name} is not a valid image type`, 'error');
+                    window.showNotification(`File ${file.name} is not a valid image type`, 'error');
                     continue;
                 }
             }
@@ -275,8 +271,7 @@
         
         // Check max files AFTER building validFiles
         if (currentFiles.length + validFiles.length > maxFiles) {
-            const notifyFn = window.showNotification || console.error;
-            notifyFn(`Maximum ${maxFiles} files allowed. You have ${currentFiles.length} and tried to add ${validFiles.length}.`, 'error');
+            window.showNotification(`Maximum ${maxFiles} files allowed. You have ${currentFiles.length} and tried to add ${validFiles.length}.`, 'error');
             return;
         }
         
@@ -317,16 +312,13 @@
                     window.updateImageList(fieldId, newFiles);
                 }
                 
-                const notifyFn = window.showNotification || console.log;
-                notifyFn(`Successfully uploaded ${data.uploaded_files?.length || data.data?.files?.length || 0} ${fileType === 'json' ? 'file(s)' : 'image(s)'}`, 'success');
+                window.showNotification(`Successfully uploaded ${data.uploaded_files?.length || data.data?.files?.length || 0} ${fileType === 'json' ? 'file(s)' : 'image(s)'}`, 'success');
             } else {
-                const notifyFn = window.showNotification || console.error;
-                notifyFn(`Upload failed: ${data.message}`, 'error');
+                window.showNotification(`Upload failed: ${data.message}`, 'error');
             }
         } catch (error) {
             console.error('Upload error:', error);
-            const notifyFn = window.showNotification || console.error;
-            notifyFn(`Upload error: ${error.message}`, 'error');
+            window.showNotification(`Upload error: ${error.message}`, 'error');
         } finally {
             if (window.hideUploadProgress) {
                 window.hideUploadProgress(fieldId);
@@ -394,16 +386,13 @@
                     window.updateImageList(fieldId, newFiles);
                 }
                 
-                const notifyFn = window.showNotification || console.log;
-                notifyFn(`${fileType === 'json' ? 'File' : 'Image'} deleted successfully`, 'success');
+                window.showNotification(`${fileType === 'json' ? 'File' : 'Image'} deleted successfully`, 'success');
             } else {
-                const notifyFn = window.showNotification || console.error;
-                notifyFn(`Delete failed: ${data.message}`, 'error');
+                window.showNotification(`Delete failed: ${data.message}`, 'error');
             }
         } catch (error) {
             console.error('Delete error:', error);
-            const notifyFn = window.showNotification || console.error;
-            notifyFn(`Delete error: ${error.message}`, 'error');
+            window.showNotification(`Delete error: ${error.message}`, 'error');
         }
     };
 

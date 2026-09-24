@@ -267,11 +267,7 @@
     }
 
     function showError(message) {
-        if (typeof showNotification === 'function') {
-            showNotification(message, 'error');
-        } else {
-            alert(message);
-        }
+        showNotification(message, 'error');
     }
 
     // Populate plugin filter

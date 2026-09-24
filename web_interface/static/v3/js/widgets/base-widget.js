@@ -173,9 +173,7 @@
          * @returns {Function|null} Notification function or null
          */
         getNotificationFunction() {
-            if (typeof window.showNotification === 'function') {
-                return window.showNotification;
-            }
+            return window.showNotification;
             return null;
         }
         

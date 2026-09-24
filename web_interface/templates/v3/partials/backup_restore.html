@@ -121,11 +121,7 @@
     let inspectedFile = null;
 
     function notify(message, kind) {
-        if (typeof showNotification === 'function') {
-            showNotification(message, kind || 'info');
-        } else {
-            console.log('[backup]', kind || 'info', message);
-        }
+        showNotification(message, kind || 'info');
     }
 
     function formatSize(bytes) {
