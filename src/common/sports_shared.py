@@ -101,7 +101,7 @@ from src.common.espn_dates import fetch_espn_scoreboard
 import requests
 from PIL import Image, ImageDraw, ImageFont
 from src.common import sports_card as _card
-from src.common.font_layout import load_truetype
+from src.common.font_layout import load_truetype, resolve_asset_path
 
 logger = logging.getLogger(__name__)
 
@@ -132,36 +132,16 @@ def _resolve_font_path(path: str) -> str:
     load raises, the caller falls back, and the scoreboard renders in PIL's
     default face instead of the pixel font it was laid out for.
 
-    Resolution order matches the core's own resolver: the path as given
-    first, so behaviour is unchanged wherever it already worked and a
-    configured absolute path is returned untouched, then the core install
-    root, then the original string so callers still raise and fall back
-    exactly as they do today.
+    Resolution order: the path as given, relative to the cwd, when it
+    exists -- the order the scoreboards' own sports.py copies used, so a
+    process running from another checkout keeps that checkout's fonts --
+    then :func:`src.common.font_layout.resolve_asset_path` (the install
+    root), which returns the original string when neither exists so callers
+    still raise and fall back.
     """
     if os.path.exists(path):
         return path
-    try:
-        import src.font_manager as _core_fonts
-
-        # The core grew this resolver in ChuckBuilds/LEDMatrix#425. Use it
-        # when it is there so both repos stay on one definition of "install
-        # root"; older cores fall through to the equivalent derivation below.
-        manager = getattr(_core_fonts, "FontManager", None)
-        resolver = getattr(manager, "_resolve_asset_path", None)
-        if resolver is not None:
-            resolved = resolver(path)
-            if resolved and os.path.exists(resolved):
-                return resolved
-        root = os.path.dirname(os.path.dirname(os.path.abspath(_core_fonts.__file__)))
-        candidate = os.path.join(root, path)
-        if os.path.exists(candidate):
-            return candidate
-    except (ImportError, AttributeError, OSError):
-        # No core on the path (standalone tooling), a core laid out
-        # differently, or an unreadable install. Returning the original keeps
-        # the caller's existing fallback intact.
-        return path
-    return path
+    return resolve_asset_path(path)
 
 
 class SportsCoreSharedMixin:

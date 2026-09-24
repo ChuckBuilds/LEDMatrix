@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
 from PIL import Image, ImageDraw, ImageFont
-from src.common.font_layout import load_truetype
+from src.common.font_layout import load_truetype, resolve_asset_path
 
 # Shared throwaway draw surface for measuring text without a target canvas.
 _measure_draw = ImageDraw.Draw(Image.new("RGB", (1, 1)))
@@ -33,11 +33,12 @@ class TextHelper:
         Initialize the TextHelper.
         
         Args:
-            font_dir: Directory containing font files (defaults to assets/fonts)
+            font_dir: Directory containing font files. Defaults to the
+                install's assets/fonts, whatever the process cwd is.
             logger: Optional logger instance
         """
         self.logger = logger or logging.getLogger(__name__)
-        self.font_dir = Path(font_dir) if font_dir else Path("assets/fonts")
+        self.font_dir = Path(font_dir) if font_dir else Path(resolve_asset_path("assets/fonts"))
         self._font_cache: Dict[str, ImageFont.ImageFont] = {}
     
     def load_fonts(self, font_config: Optional[Dict[str, Dict]] = None) -> Dict[str, ImageFont.ImageFont]:

@@ -116,7 +116,10 @@ class FontManager:
         }
         
         # Font overrides storage (for manual overrides)
-        self.font_overrides_file = "config/font_overrides.json"
+        # Under the install root's config/ (which always exists), not the
+        # cwd: the file itself may not exist yet, and resolve_asset_path
+        # hands back a missing path unchanged.
+        self.font_overrides_file = os.path.join(resolve_asset_path("config"), "font_overrides.json")
         self.font_overrides: Dict[str, Dict[str, Any]] = {}
 
         # Bumped whenever cached font objects are invalidated, so holders of

@@ -24,10 +24,13 @@ class TestTextHelper:
         assert th.font_dir == tmp_path
         assert th._font_cache == {}
     
-    def test_init_default_font_dir(self):
-        """Test TextHelper initialization with default font directory."""
+    def test_init_default_font_dir(self, tmp_path, monkeypatch):
+        """The default is the install's assets/fonts, not a cwd-relative path."""
+        from pathlib import Path
+        monkeypatch.chdir(tmp_path)
         th = TextHelper()
-        assert th.font_dir == pytest.importorskip("pathlib").Path("assets/fonts")
+        assert th.font_dir == Path(__file__).resolve().parents[1] / "assets" / "fonts"
+        assert isinstance(th.load_fonts()["score"], ImageFont.FreeTypeFont)
     
     @patch('PIL.ImageFont.truetype')
     @patch('PIL.ImageFont.load_default')
