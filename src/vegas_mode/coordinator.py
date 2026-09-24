@@ -230,7 +230,9 @@ class VegasModeCoordinator:
         returns immediately, collapsing the inter-iteration gap to <1 ms.
 
         Args:
-            callback: Callable with no arguments (typically _tick_plugin_updates)
+            callback: Callable with no arguments. The display controller
+                passes _tick_plugin_updates_for_vegas, which also reports the
+                plugins that got fresh data through mark_plugin_updated().
         """
         self._update_callback = callback
 
@@ -806,9 +808,9 @@ class VegasModeCoordinator:
                     logger.info("Static pause interrupted by live priority")
                     return False
 
-                # Yield immediately if multi-display follower mode becomes active
+                # On-demand, a WiFi message, the schedule, follower mode...
                 if self._interrupt_check and self._interrupt_check():
-                    logger.info("Static pause interrupted by sync follower mode")
+                    logger.info("Static pause interrupted by the display controller")
                     return False
 
                 # Sleep in small increments to remain responsive

@@ -266,22 +266,6 @@ class VegasModeConfig:
         """Get the frame interval in seconds for target FPS."""
         return 1.0 / max(1, self.target_fps)
 
-    def is_plugin_included(self, plugin_id: str) -> bool:
-        """
-        Check if a plugin should be included in Vegas scroll.
-
-        This is consistent with get_ordered_plugins - plugins not explicitly
-        in plugin_order are still included (appended at the end) unless excluded.
-
-        Args:
-            plugin_id: Plugin identifier to check
-
-        Returns:
-            True if plugin should be included
-        """
-        # Plugins are included unless explicitly excluded
-        return plugin_id not in self.excluded_plugins
-
     def get_ordered_plugins(self, available_plugins: List[str]) -> List[str]:
         """
         Get plugins in configured order, filtering excluded ones.

@@ -31,22 +31,14 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ContentSegment:
-    """Represents a segment of scrollable content from a plugin."""
+    """One plugin's content for a cycle.
+
+    A STATIC segment carries no images: it marks where the coordinator pauses
+    the scroll to show the plugin full-screen.
+    """
     plugin_id: str
     images: List[Image.Image]
-    total_width: int
     display_mode: VegasDisplayMode = field(default=VegasDisplayMode.FIXED_SEGMENT)
-    fetched_at: float = field(default_factory=time.time)
-    is_stale: bool = False
-
-    @property
-    def image_count(self) -> int:
-        return len(self.images)
-
-    @property
-    def is_static(self) -> bool:
-        """Check if this segment should trigger a static pause."""
-        return self.display_mode == VegasDisplayMode.STATIC
 
 
 class StreamManager:
@@ -86,9 +78,8 @@ class StreamManager:
         # slow fetch while a caller may already hold it.
         self._buffer_lock = threading.RLock()
 
-        # Plugin rotation state
+        # Plugin rotation, and the position of the next plugin to fetch in it.
         self._ordered_plugins: List[str] = []
-        self._current_index: int = 0
         self._prefetch_index: int = 0
 
         # Update tracking
@@ -170,7 +161,6 @@ class StreamManager:
             return {
                 'active_count': len(self._active_buffer),
                 'total_plugins': len(self._ordered_plugins),
-                'current_index': self._current_index,
                 'prefetch_index': self._prefetch_index,
                 'stats': self.stats.copy(),
             }
@@ -243,11 +233,6 @@ class StreamManager:
             len(updated), ', '.join(updated)
         )
         return updated
-
-    def has_pending_updates(self) -> bool:
-        """Check if any plugins have pending updates awaiting processing."""
-        with self._buffer_lock:
-            return len(self._pending_updates) > 0
 
     def has_pending_updates_for_visible_segments(self) -> bool:
         """Check if pending updates affect plugins currently in the active buffer."""
@@ -382,8 +367,6 @@ class StreamManager:
         # Atomically update shared state under lock to avoid races with prefetchers
         with self._buffer_lock:
             self._ordered_plugins = ordered_plugins
-            if self._current_index >= len(self._ordered_plugins):
-                self._current_index = 0
             if self._prefetch_index >= len(self._ordered_plugins):
                 self._prefetch_index = 0
 
@@ -607,7 +590,6 @@ class StreamManager:
                 segment = ContentSegment(
                     plugin_id=plugin_id,
                     images=[],  # No images needed for static pause
-                    total_width=0,
                     display_mode=display_mode
                 )
                 self.stats['segments_fetched'] += 1
@@ -631,7 +613,6 @@ class StreamManager:
             segment = ContentSegment(
                 plugin_id=plugin_id,
                 images=images,
-                total_width=total_width,
                 display_mode=display_mode
             )
 
@@ -657,24 +638,6 @@ class StreamManager:
         low_water = min(self.config.buffer_ahead, self.config.plugins_per_cycle)
         if len(self._active_buffer) < low_water:
             self._prefetch_content(count=low_water - len(self._active_buffer))
-
-    def get_all_content_for_composition(self) -> List[Image.Image]:
-        """
-        Get all buffered content as a flat list of images.
-
-        Skips STATIC segments as they don't have images to compose.
-
-        Prefer get_grouped_content_for_composition(): flattening loses the
-        plugin boundaries, which is what tells the compositor where a
-        separator belongs and where it does not.
-
-        Returns:
-            List of all images in buffer order
-        """
-        all_images = []
-        for _plugin_id, images in self.get_grouped_content_for_composition():
-            all_images.extend(images)
-        return all_images
 
     def get_grouped_content_for_composition(self) -> List[Tuple[str, List[Image.Image]]]:
         """
@@ -778,7 +741,6 @@ class StreamManager:
         """Reset the stream manager state."""
         with self._buffer_lock:
             self._active_buffer.clear()
-            self._current_index = 0
             self._prefetch_index = 0
             self._pending_updates.clear()
 

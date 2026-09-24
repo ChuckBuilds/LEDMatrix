@@ -2,7 +2,7 @@
 Tests for src/vegas_mode/config.py
 
 Covers VegasModeConfig: from_config, to_dict, get_frame_interval,
-is_plugin_included, get_ordered_plugins, validate.
+get_ordered_plugins, validate.
 """
 
 import pytest
@@ -168,24 +168,6 @@ class TestGetFrameInterval:
         # Should not raise ZeroDivisionError (max(1, fps) guard)
         result = cfg.get_frame_interval()
         assert result == 1.0
-
-
-# ---------------------------------------------------------------------------
-# is_plugin_included
-# ---------------------------------------------------------------------------
-
-class TestIsPluginIncluded:
-    def test_not_excluded_is_included(self):
-        cfg = VegasModeConfig(excluded_plugins={"bad_plugin"})
-        assert cfg.is_plugin_included("good_plugin") is True
-
-    def test_excluded_plugin_not_included(self):
-        cfg = VegasModeConfig(excluded_plugins={"bad_plugin"})
-        assert cfg.is_plugin_included("bad_plugin") is False
-
-    def test_empty_exclusions_all_included(self):
-        cfg = VegasModeConfig()
-        assert cfg.is_plugin_included("anything") is True
 
 
 # ---------------------------------------------------------------------------

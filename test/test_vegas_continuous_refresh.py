@@ -108,10 +108,10 @@ class TestInvalidatePendingUpdates:
         # Left unconsumed they accumulate forever and nothing ever refreshes.
         stream = self._manager({'baseball': SimpleNamespace()})
         stream.mark_plugin_updated('baseball')
-        assert stream.has_pending_updates() is True
+        assert stream._pending_updates
 
         stream.invalidate_pending_updates()
-        assert stream.has_pending_updates() is False
+        assert not stream._pending_updates
         assert stream.invalidate_pending_updates() == []
 
     def test_no_pending_updates_does_no_work(self):
