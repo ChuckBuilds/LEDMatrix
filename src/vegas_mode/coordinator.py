@@ -145,12 +145,7 @@ class VegasModeCoordinator:
 
         # Static pause handling
         self._static_pause_active = False
-        self._static_pause_plugin: Optional['BasePlugin'] = None
-        self._static_pause_start: Optional[float] = None
         self._saved_scroll_position: Optional[int] = None
-
-        # Track which plugins should use STATIC mode (pause scroll)
-        self._static_mode_plugins: set = set()
 
         # Statistics
         self.stats = {
@@ -416,9 +411,6 @@ class VegasModeCoordinator:
         if not self.is_active:
             if not self.start():
                 return False
-
-        # Update static mode plugin list on iteration start
-        self._update_static_mode_plugins()
 
         frame_interval = self.vegas_config.get_frame_interval()
         if self.vegas_config.continuous_scroll:
@@ -733,13 +725,6 @@ class VegasModeCoordinator:
 
         return status
 
-    def get_ordered_plugins(self) -> List[str]:
-        """Get the current ordered list of plugins in Vegas scroll."""
-        if hasattr(self.plugin_manager, 'plugins'):
-            available = list(self.plugin_manager.plugins.keys())
-            return self.vegas_config.get_ordered_plugins(available)
-        return []
-
     # -------------------------------------------------------------------------
     # Static pause handling (for STATIC display mode)
     # -------------------------------------------------------------------------
@@ -795,8 +780,6 @@ class VegasModeCoordinator:
             # Save current scroll position for smooth resume
             self._saved_scroll_position = self.render_pipeline.get_scroll_position()
             self._static_pause_active = True
-            self._static_pause_plugin = plugin
-            self._static_pause_start = time.time()
             self.stats['static_pauses'] += 1
 
         logger.info("Static pause started for plugin: %s", plugin_id)
@@ -860,8 +843,6 @@ class VegasModeCoordinator:
 
             # Clear pause state
             self._static_pause_active = False
-            self._static_pause_plugin = None
-            self._static_pause_start = None
 
             # Restore scroll position if we're resuming
             if should_resume_scrolling and self._saved_scroll_position is not None:
@@ -874,29 +855,6 @@ class VegasModeCoordinator:
             logger.debug("Static pause ended, scroll resumed")
         else:
             logger.debug("Static pause ended (interrupted, not resuming scroll)")
-
-    def _update_static_mode_plugins(self) -> None:
-        """Update the set of plugins using STATIC display mode."""
-        self._static_mode_plugins.clear()
-
-        for plugin_id in self.get_ordered_plugins():
-            plugin = self.plugin_manager.get_plugin(plugin_id)
-            if plugin:
-                try:
-                    mode = plugin.get_vegas_display_mode()
-                    if mode == VegasDisplayMode.STATIC:
-                        self._static_mode_plugins.add(plugin_id)
-                except Exception:
-                    logger.exception(
-                        "Error getting vegas display mode for plugin %s",
-                        plugin_id
-                    )
-
-        if self._static_mode_plugins:
-            logger.info(
-                "Static mode plugins: %s",
-                ', '.join(self._static_mode_plugins)
-            )
 
     def cleanup(self) -> None:
         """Clean up all resources."""
