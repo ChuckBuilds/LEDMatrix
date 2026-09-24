@@ -35,6 +35,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 from src.common.font_layout import crisp_size, load_truetype, resolve_asset_path
+from src import scan_order
 from src.display_geometry import (
     DEFAULT_CHAIN_LENGTH, DEFAULT_COLS, DEFAULT_PARALLEL, DEFAULT_ROWS,
     ORIENTATION_ROTATE_DEGREES, compose_pixel_mapper_config, physical_size,
@@ -44,7 +45,7 @@ from src.matrix_support import MatrixSettingsRefused, library_refusals, refusal_
 from src.pi5_matrix_support import is_raspberry_pi_5
 import threading
 import time
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from typing import Dict, Any, List, Optional, Tuple
 import logging
 import math
@@ -243,6 +244,7 @@ class DisplayManager:
         
         self._setup_matrix()
         logger.info("Matrix setup completed in %.3f seconds", time.time() - start_time)
+        self._setup_scan_order_compensation()
         
         font_time = time.time()
         self._load_fonts()
@@ -811,7 +813,7 @@ class DisplayManager:
                 if self._double_sided is not None:
                     self.offscreen_canvas.SetImage(self._composite_double_sided())
                 else:
-                    self.offscreen_canvas.SetImage(self.image)
+                    self.offscreen_canvas.SetImage(self._scan_compensated(self.image))
 
                 # Swap buffers immediately. framerate_fraction holds the frame
                 # for N refreshes; SwapOnVSync blocks for all of them, which is
@@ -827,6 +829,48 @@ class DisplayManager:
                 self._write_snapshot_if_due(frame_checksum)
         except Exception as e:
             logger.error(f"Error updating display: {e}")
+
+    def _setup_scan_order_compensation(self) -> None:
+        """Work out which rows to show a refresh behind while scrolling.
+
+        See src/scan_order.py. Only on real hardware: the emulator has no scan
+        order, so there the lag would add the very step it removes elsewhere.
+        """
+        self._scan_lag_bands = None
+        self._scan_history = deque(maxlen=1)
+        if (self.matrix is None or self._double_sided is not None
+                or os.environ.get('EMULATOR', 'false') == 'true'):
+            return
+        display = self.config.get('display') or {}
+        bands = scan_order.scan_lag_bands(
+            display.get('hardware') or {}, self.height,
+            display.get('scan_order_compensation', 'auto'))
+        if not bands:
+            return
+        self._scan_lag_bands = bands
+        self._scan_history = deque(maxlen=max(lag for _, _, lag in bands))
+        logger.info(
+            "Scan-order compensation on: while scrolling, %s",
+            ", ".join(f"rows {top}-{bottom - 1} show {lag} refresh(es) behind"
+                      for top, bottom, lag in bands))
+
+    def _scan_compensated(self, image: Image.Image) -> Image.Image:
+        """The frame to present, with lagging rows taken from earlier frames.
+
+        Only mid-scroll at one frame per refresh: that is when consecutive
+        frames are consecutive refreshes. At a longer hold, or on a static
+        screen, the history is dropped and the frame goes out as it is.
+        """
+        bands = getattr(self, '_scan_lag_bands', None)
+        if not bands:
+            return image
+        if self._frame_hold != 1 or not self.is_currently_scrolling():
+            self._scan_history.clear()
+            return image
+        presented = scan_order.compose(image, self._scan_history, bands)
+        # A copy: plugins draw into the same image object frame after frame.
+        self._scan_history.appendleft(image.copy())
+        return presented
 
     def clear(self):
         """Clear the display completely."""
