@@ -15,6 +15,7 @@ from web_interface.blueprints.api_v3 import (
 )
 from src.common.path_safety import safe_path_component
 from src import error_aggregator as _errors
+from web_interface import display_preview
 import web_interface.blueprints.api_v3 as _pkg
 # Read through the module rather than bound by value: tests patch these
 # as module attributes, and a value binding would not see the patch.
@@ -94,7 +95,7 @@ def get_health():
 
         # Check hardware connectivity (if display manager available)
         try:
-            snapshot_path = "/tmp/led_matrix_preview.png"
+            snapshot_path = display_preview.SNAPSHOT_PATH
             if os.path.exists(snapshot_path):
                 # Check if snapshot is recent (updated in last 60 seconds)
                 mtime = os.path.getmtime(snapshot_path)

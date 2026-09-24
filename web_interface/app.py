@@ -46,6 +46,7 @@ _JOURNALCTL = shutil.which('journalctl')
 _SYSTEMCTL = shutil.which('systemctl')
 _VCGENCMD = shutil.which('vcgencmd')
 
+from web_interface import display_preview
 from web_interface.system_metrics import collect_system_metrics
 
 # Create Flask app
@@ -707,9 +708,7 @@ def system_status_generator():
 # Display preview generator for SSE
 def display_preview_generator():
     """Generate display preview updates from snapshot file"""
-    import base64
-
-    snapshot_path = "/tmp/led_matrix_preview.png"  # nosec B108 - fixed path matches display_manager; only read here
+    snapshot_path = display_preview.SNAPSHOT_PATH
     # Viewer marker: this generator only runs while the broadcaster has
     # subscribers (it exits with no clients), so touching the marker each
     # loop tells the DISPLAY service a browser is actually watching — it
@@ -744,20 +743,8 @@ def display_preview_generator():
                 # Only read if file is new or has been updated
                 if last_modified is None or current_modified > last_modified:
                     try:
-                        # The snapshot is already a PNG, written atomically by
-                        # the display service (tmp + os.replace in
-                        # display_manager), so pass the raw bytes straight
-                        # through instead of PIL-decoding and re-encoding —
-                        # identical payload, much less CPU on the Pi.
-                        with open(snapshot_path, 'rb') as f:
-                            img_str = base64.b64encode(f.read()).decode('utf-8')
-
-                        preview_data = {
-                            'timestamp': time.time(),
-                            'width': width,
-                            'height': height,
-                            'image': img_str
-                        }
+                        preview_data = display_preview.preview_payload(
+                            width, height, display_preview.read_snapshot_base64(snapshot_path))
                         last_modified = current_modified
                         yield preview_data
                     except OSError:
@@ -765,13 +752,7 @@ def display_preview_generator():
                         # between mtime check and read); skip this update.
                         app.logger.debug("Preview snapshot read failed; skipping frame", exc_info=True)
             else:
-                # No snapshot available
-                yield {
-                    'timestamp': time.time(),
-                    'width': width,
-                    'height': height,
-                    'image': None
-                }
+                yield display_preview.preview_payload(width, height, None)
                 
         except Exception as e:
             app.logger.error("SSE generator error", exc_info=True)
