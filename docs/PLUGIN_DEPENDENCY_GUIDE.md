@@ -157,5 +157,6 @@ For more, see the [Plugin Dependency Troubleshooting Guide](PLUGIN_DEPENDENCY_TR
 - Store installs: `src/plugin_system/store_manager.py` (`_install_dependencies`)
 - Root install helper: `src/common/permission_utils.py` (`install_requirements_file`), `scripts/fix_perms/safe_pip_install.sh`
 - Load-time installs: `src/plugin_system/plugin_loader.py` (`install_dependencies`)
-- Sudo rules: `scripts/install/configure_web_sudo.sh`
+- Sudo rules: `scripts/install/lib_sudoers.sh` (written by `first_time_install.sh`
+  and `scripts/install/configure_web_sudo.sh`)
 - Manual installer: `scripts/install_plugin_dependencies.sh`

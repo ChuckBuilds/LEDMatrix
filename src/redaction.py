@@ -24,8 +24,13 @@ _REDACT_CREDENTIAL = re.compile(
 # silently leak the ones nobody thought of. Not covered by the generic pattern
 # above, whose value part stops at whitespace and so would keep the credential
 # once a space follows the scheme.
+#
+# The opening quote and the whitespace after it are one optional unit. Written
+# `\s*["\']?\s*`, a whitespace run with no quote in it could be split between
+# the two `\s*` in every possible way, and a header with no credential after
+# it tried them all: quadratic, 8s for 20k spaces.
 _REDACT_AUTH_HEADER = re.compile(
-    r'((?:proxy-)?authorization["\']?\s*[=:]\s*["\']?\s*'
+    r'((?:proxy-)?authorization["\']?\s*[=:]\s*(?:["\']\s*)?'
     r'(?:[A-Za-z][\w.+-]*[ \t]+)?)'          # optional scheme name, kept
     r'([^\s,"\'<>}]+)',                       # the credential, redacted
     re.IGNORECASE,
@@ -34,8 +39,16 @@ _REDACT_AUTH_HEADER = re.compile(
 # Credentials embedded in a URL: https://user:password@host. requests quotes
 # the full URL in its exceptions, so this is a realistic leak. The username is
 # kept -- it identifies which account failed without being the secret.
-_REDACT_URL_USERINFO = re.compile(r'([a-z][a-z0-9+.-]*://[^/\s:@]+:)([^/\s@]+)(@)',
-                                  re.IGNORECASE)
+#
+# A match may only start where a run of scheme characters starts. Unanchored,
+# `[a-z][a-z0-9+.-]*://` was tried from every letter of a long run (a hex
+# digest, an ID, a blob of response body), each attempt reading to the end of
+# the run: quadratic, 1.6s for 20k characters, all of it holding the GIL.
+# Leading digits and `+.-` sit inside group 1 so the substitution puts them
+# back; the scheme proper still has to start with a letter.
+_REDACT_URL_USERINFO = re.compile(
+    r'((?<![a-z0-9+.-])[0-9+.-]*[a-z][a-z0-9+.-]*://[^/\s:@]+:)([^/\s@]+)(@)',
+    re.IGNORECASE)
 
 
 def redact_credentials(text: str) -> str:

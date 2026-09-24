@@ -15,7 +15,7 @@ every api_v3 endpoint actually calls.
 import pytest
 from flask import Flask
 
-from src.web_interface.api_helpers import success_response
+from src.web_interface.api_helpers import exception_error_response, success_response
 from src.web_interface.error_handler import (
     create_error_response,
     create_success_response,
@@ -62,6 +62,59 @@ class TestCreateErrorResponse:
             response, _ = create_error_response(
                 ErrorCode.SYSTEM_ERROR, "boom", suggested_fixes=["Try again"])
         assert response.get_json()["suggested_fixes"] == ["Try again"]
+
+
+class TestExceptionErrorResponse:
+    """The one-call form of from_exception() + error_response().
+
+    Nine plugin routes spelled the pair out by hand; these pin that the helper
+    answers exactly what that spelling did, so folding them changed nothing a
+    client sees.
+    """
+
+    @staticmethod
+    def _by_hand(exc, code, with_context):
+        from src.web_interface.api_helpers import error_response
+        error = WebInterfaceError.from_exception(exc, code)
+        if with_context:
+            return error_response(error.error_code, error.message,
+                                  details=error.details, context=error.context,
+                                  status_code=500)
+        return error_response(error.error_code, error.message,
+                              details=error.details, status_code=500)
+
+    @pytest.mark.parametrize("with_context", [True, False])
+    @pytest.mark.parametrize("code", [ErrorCode.SYSTEM_ERROR,
+                                      ErrorCode.CONFIG_SAVE_FAILED,
+                                      ErrorCode.PLUGIN_UPDATE_FAILED])
+    def test_same_answer_as_the_hand_written_pair(self, app, code, with_context):
+        exc = ValueError("token=SECRET boom")
+        exc.context = {"config_path": "/etc/x.json"}
+        with app.test_request_context():
+            got, got_status = exception_error_response(
+                exc, code, with_context=with_context)
+            want, want_status = self._by_hand(exc, code, with_context)
+        assert got_status == want_status == 500
+        assert got.get_json() == want.get_json()
+
+    def test_shape(self, app):
+        with app.test_request_context():
+            response, status = exception_error_response(
+                RuntimeError("token=SECRET"), ErrorCode.SYSTEM_ERROR)
+        assert status == 500
+        assert response.get_json() == {
+            "status": "error",
+            "error_code": "SYSTEM_ERROR",
+            "message": "A system error occurred",
+            "context": {"exception_type": "RuntimeError"},
+            "suggested_fixes": ["Review error details and try again"],
+        }
+
+    def test_without_context(self, app):
+        with app.test_request_context():
+            response, _ = exception_error_response(
+                RuntimeError("x"), ErrorCode.SYSTEM_ERROR, with_context=False)
+        assert "context" not in response.get_json()
 
 
 class TestCreateSuccessResponse:

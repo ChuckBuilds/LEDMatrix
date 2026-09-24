@@ -26,6 +26,7 @@ from enum import Enum
 from concurrent.futures import ThreadPoolExecutor
 import pytz
 from src.cache_manager import CacheManager
+from src.common.json_body import response_json
 from src.common.espn_dates import (
     RANGE_RETRY_SECONDS,
     _note_range_rejected,
@@ -389,7 +390,7 @@ class BackgroundDataService:
                         response.raise_for_status()
                 else:
                     response.raise_for_status()
-                    data = response.json()
+                    data = response_json(response)
             
             # Validate data structure
             if not isinstance(data, dict):
