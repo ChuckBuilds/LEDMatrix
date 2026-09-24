@@ -231,6 +231,9 @@ advances by elapsed time at `scroll_speed / scroll_delay` px/s.
 
 ## Diagnosing a juddery scroller
 
+To check a whole rig rather than one scroller, soak it -- see *Soaking a rig*
+below.
+
 **An average will lie to you.** A 2 ms duplicate frame and a 21 ms double-wait
 mean exactly 10 ms, so a ticker stalling on half its frames still averages to a
 healthy 100 fps. The stats line reports the tail for that reason — read the
@@ -302,6 +305,49 @@ journalctl -u ledmatrix --since "-5min" --no-pager | grep -iE "px/s|px/frame"
 
 If a plugin logs its scroll config **twice** with different modes, the second
 line is what is running.
+
+## Soaking a rig
+
+The per-scroller lines above tell you *which* scroller misbehaves. The soak
+answers the question a release has to answer for each rig: **over a long run,
+how often did a moving frame reach the panel late?**
+
+Every frame reaches the panel through `DisplayManager.update_display`, so it is
+timed there once, whoever drew it -- Vegas, a ticker plugin, anything. The
+render thread only appends a tuple; a worker thread aggregates and rewrites
+`/dev/shm/ledmatrix_frame_stats.json` every 10 seconds (RAM, so no SD-card
+wear). `src/common/frame_timing.py` has the details.
+
+```bash
+python3 scripts/frame_soak.py                 # 10 minutes, as the display is now
+python3 scripts/frame_soak.py --preview       # with the web preview open
+python3 scripts/frame_soak.py --show          # totals since the service started
+python3 scripts/frame_soak.py --json a.json   # keep the report to compare later
+```
+
+It runs as any user next to the display service and stops nothing. It needs
+something to *scroll* during the run: a live game holding a static scoreboard
+on screen gives no verdict. `--preview` keeps the web preview's viewer marker
+fresh, which puts the preview's PNG encoding at full rate -- run it as the web
+service's user.
+
+| line | what it tells you |
+|---|---|
+| **Late frames** | Frames presented one or more refreshes after they were due: the panel showed the previous frame again, a visible hitch. **The pass/fail number**, 0.1% by default (`--max-late-pct`). Only intervals between two scrolling frames count, and a frame held for `frame_hold` refreshes is due `frame_hold` refreshes after the last. |
+| **Freezes** | Gaps of 250 ms or more inside a scroll: recomposes, plugin handovers, blocking calls on the render thread. Reported but not failed on, because some are handovers between plugins rather than faults. |
+| **blit** | Copying the frame into the matrix canvas (`SetImage`). It grows with width × height × `pwm_bits`: ~5.5 ms at 512×64 with 8 bits on a Pi 4. It is the biggest fixed cost, and it sets the refresh rates a rig can hold one pixel per refresh at. |
+| **wait** | Time blocked in `SwapOnVSync`, i.e. the slack left in each refresh. A p50 near zero means the rig has no headroom and anything extra lands a frame late. |
+| **work** | Everything else between two frames: drawing, scrolling, and waiting for the GIL. A wide gap between its p50 and p99 is another thread getting in the way. |
+| **Binding** | `STOCK` means the rgbmatrix binding holds the GIL through the vsync wait, which starves every other thread. See *Rebuilding the binding*. |
+
+The refresh rate is estimated from the frames themselves (swaps that block on
+vsync can only land on refresh boundaries). Cross-check it with
+`scroll_speeds.py --measure` if it looks wrong. It can read high on a rig where
+nothing ever presented at the full refresh rate.
+
+A soak is only meaningful against a fixed workload. Compare runs with the same
+content and `--preview` setting, and alternate which build goes first when you
+A/B two of them. A live-API workload drifts over time.
 
 ## Rebuilding the binding
 
