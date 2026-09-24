@@ -77,8 +77,9 @@ def load_config() -> dict:
         config = ConfigManager().config
         if isinstance(config, dict) and config:
             return config
-    except Exception:
-        pass
+    except Exception as exc:  # noqa: BLE001 - any failure means use the plain read
+        print(f"ConfigManager unavailable ({exc}); reading {CONFIG} directly",
+              file=sys.stderr)
     # ConfigManager pulls in a lot; a plain read is enough to drive the panel
     # and keeps the benchmark usable on a half-installed machine.
     try:
