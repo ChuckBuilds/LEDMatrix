@@ -39,6 +39,14 @@ from datetime import date, timedelta
 from functools import partial
 from typing import Any, Dict, List, Optional, Tuple
 
+try:
+    from src.common.json_body import response_json
+except ImportError:
+    # Plugins bundle copies of this module for older cores, which predate
+    # json_body; the stdlib parse is what those cores always used.
+    def response_json(response: Any) -> Any:
+        return response.json()
+
 # Above this, ESPN returns a truncated list instead of an error. See module
 # docstring: 500 is the largest value measured to return complete data.
 ESPN_MAX_LIMIT = 500
@@ -194,7 +202,7 @@ def _fetch_one_chunk(
             timeout=timeout,
         )
         response.raise_for_status()
-        return response.json()
+        return response_json(response)
     except Exception as exc:  # noqa: BLE001 - see docstring
         if logger:
             logger.warning("ESPN chunk %s failed, skipping it: %s", chunk, exc)
@@ -371,4 +379,4 @@ def fetch_espn_scoreboard(
         if data is not None:
             return data
     response.raise_for_status()
-    return response.json()
+    return response_json(response)

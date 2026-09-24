@@ -19,6 +19,14 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+- The web service (`ledmatrix-web`) logs through `src.logging_config` like the
+  display service, so `journalctl -p err -u ledmatrix-web` works. Successful
+  GET/HEAD/OPTIONS requests (the UI's polling) are logged at DEBUG instead of
+  INFO; 4xx at WARNING, 5xx at ERROR. `LEDMATRIX_DEBUG=true` shows them again.
+  `web_interface/logging_config.py` is removed. The web cache
+  (`web_interface/cache.py`) now honours the TTL a value was stored with and is
+  thread-safe.
+
 - One plugin-directory resolver, `src/plugin_system/plugin_dirs.py`, behind
   discovery, `PluginManager.get_plugin_directory`, `PluginLoader`, the store and
   state reconciliation. A manifest's `id` wins over a directory merely named for
@@ -41,6 +49,16 @@ accepts both, but the store flags the old spelling as deprecated
   its own default (a failed lookup is retried after 30 minutes). Clearing an
   app's location in the web UI now actually clears it; the save used to drop
   the blank field, so the old value stayed.
+- `src.common.bdf_font` — `load_bdf_face(path, size)` (a cached
+  `freetype.Face` plus the pixel size it really renders at, falling back to
+  the file's native strike) and `draw_bdf_text(draw, text, x, y, face, color)`.
+  `DisplayManager`, `FontManager`, `element_style` and the plugin test harness
+  now all load and draw BDF text through it; the panel's pixels are unchanged
+  and BDF text draws 10-250x faster. The plugin test harness's
+  `calendar_font` / `bdf_5x7_font` now has the panel's 7px size set: it used
+  to be an unsized face, so in golden images and `check_plugin` /
+  `dev_server` previews its text sat 6px above where the panel draws it (off
+  the canvas entirely near the top) and `get_font_height()` returned 0.
 
 - The web UI's Fonts tab has a **Used by** column: the loaded plugins that
   registered each font with `FontManager.register_manager_font()`, published
@@ -89,6 +107,23 @@ floor on the release that ships them):
 - `src.common.api_helper`: `USER_AGENT`, `DEFAULT_HTTP_HEADERS` (read-only).
 - `src.logo_downloader`: `fetch_logo`, `save_png_atomically`,
   `shared_downloader`.
+- `src.common.sports_card.unshare_element_fonts` takes an optional third
+  argument, `element_for_font` (default: the module's `ELEMENT_FOR_FONT`, so
+  existing calls are unchanged).
+
+### Sports twins
+
+- The `SportsCoreSharedMixin` helpers that behave identically to their
+  `sports_card` twins (`_card_option`, `_vs_text`, `_format_game_time`,
+  `_coerce_rgb`, `_crisp_size`, `_unshare_element_fonts`, the colour/month/
+  weekday/font-grid tables) are now thin wrappers over the `sports_card`
+  functions, and `_format_game_date` / `_schema_font_size` share its
+  formatting body and schema parser. No method was removed or renamed and
+  nothing renders differently: `test/test_sports_twins.py` checks each pair
+  against the same inputs, and the old and new mixin agree on every input
+  there. The pairs that do differ -- favourite-result colours on nested
+  payloads, the weekday's timezone, the element-name map, per-mode colours --
+  are left as they are and pinned in that test.
 
 ### Logo downloads
 
@@ -128,6 +163,13 @@ floor on the release that ships them):
   when the count is only known to the display service.
 - The Logs tab has a **Plugin errors** panel: per-plugin counts, repeating
   errors and a Clear button.
+- Credential redaction in exception text (`src/redaction.py`) takes time
+  proportional to the text, not its square. Two patterns were quadratic: URL
+  `user:password@`, on a long unbroken run of letters or digits (a hex digest,
+  an ID), and `Authorization:` followed by a long run of whitespace. Either
+  used to stall every thread of the display service for up to seconds each
+  time the snapshot was published: about 0.5s for 20k characters of hex, 8s
+  for 20k spaces. What gets redacted is unchanged.
 
 ### Removed
 
