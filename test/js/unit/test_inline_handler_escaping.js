@@ -7,9 +7,8 @@
 //
 // JSON.stringify makes a valid JS string but leaves `'` alone, so an entry id
 // of  x' onmouseover='alert(1)  closed the single-quoted attribute and added a
-// handler of its own. The live window.updateImageList (plugins_manager.js loads
-// last, so its copy beats the file-upload widget's) put the uploaded file's
-// original name into the markup unescaped.
+// handler of its own. (The uploaded-image list is no longer built here: the
+// file-upload widget owns it, and test_file_upload_widget.js covers it.)
 //
 // Each case renders with the shipped function, parses the tag the way a browser
 // does (quoted attribute values, entities decoded), and checks two things: no
@@ -68,8 +67,6 @@ eval([
 ].map(extract).join('\n') + '\nglobal.jsStringAttr = jsStringAttr; global.escapeHtml = escapeHtml;'
   + '\nglobal.renderPluginStore = renderPluginStore; global.renderSavedRepositories = renderSavedRepositories;'
   + '\nglobal.renderCustomRegistryPlugins = renderCustomRegistryPlugins; global.escapeAttribute = escapeAttribute;');
-// eslint-disable-next-line no-eval
-eval(extract('window.updateImageList = function(fieldId, images) {'));
 
 // ── minimal HTML start-tag tokenizer ───────────────────────────────────────
 function decodeEntities(s) {
@@ -188,27 +185,6 @@ for (const hostile of [SQ, DQ, AMP]) {
   try { calls = runHandler(attr(b, 'onclick')); } catch (e) { calls = [['threw', String(e)]]; }
   ok(`${JSON.stringify(hostile)}: handler gets the url intact`,
      calls.length === 1 && calls[0][0] === 'removeSavedRepository' && calls[0][1] === hostile, calls);
-}
-
-console.log('\n5. live window.updateImageList escapes the uploaded file name');
-window.getUploadConfig = () => ({ plugin_id: SQ });
-window.currentPluginConfig = null;
-{
-  const name = '<img src=x onerror=alert(1)>' + DQ + '.png';
-  window.updateImageList('f', [{ id: SQ, path: 'assets/x".png', filename: DQ, original_filename: name, size: 1 }]);
-  const html = els['f_image_list'].innerHTML;
-  ok('no raw markup from original_filename', !html.includes('<img src=x onerror'), html);
-  const imgs = tags(html, 'img');
-  ok('one <img>, only the template attributes',
-     imgs.length === 1 && names(imgs[0]).join(',') === 'src,alt,loading,decoding,class,onerror', imgs.map(names));
-  ok('alt carries the stored filename as text', attr(imgs[0], 'alt') === DQ, imgs[0]);
-  const buttons = tags(html, 'button');
-  ok('two buttons, no extra attributes',
-     buttons.length === 2 && buttons.every(b => names(b).join(',') === 'type,onclick,class,title,aria-label'),
-     buttons.map(names));
-  const del = runHandler(attr(buttons[1], 'onclick'));
-  ok('delete handler gets field, image and plugin ids intact',
-     del.length === 1 && del[0][0] === 'deleteUploadedImage' && del[0][1] === 'f' && del[0][2] === SQ && del[0][3] === SQ, del);
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);
