@@ -9,7 +9,7 @@ from typing import Any, Optional, Dict, Tuple
 from flask import jsonify, request
 
 from src.web_interface.error_handler import create_error_response, create_success_response
-from src.web_interface.errors import ErrorCode
+from src.web_interface.errors import ErrorCode, WebInterfaceError
 
 
 def success_response(
@@ -71,6 +71,40 @@ def error_response(
         details=details,
         context=context,
         suggested_fixes=suggested_fixes,
+        status_code=status_code
+    )
+
+
+def exception_error_response(
+    exc: Exception,
+    error_code: ErrorCode,
+    *,
+    with_context: bool = True,
+    status_code: int = 500
+):
+    """
+    error_response() for a caught exception, built by WebInterfaceError.
+
+    The message is the code's fixed, user-facing one -- never the exception
+    text. `details` comes from the exception's own `context` dict when it has
+    one, and `context` records the exception type. with_context=False leaves
+    the context out, as the operation-history routes always have.
+
+    Args:
+        exc: The exception being reported
+        error_code: Error code
+        with_context: Whether to include the context (exception type)
+        status_code: HTTP status code
+
+    Returns:
+        Flask jsonify response with status code
+    """
+    error = WebInterfaceError.from_exception(exc, error_code)
+    return error_response(
+        error.error_code,
+        error.message,
+        details=error.details,
+        context=error.context if with_context else None,
         status_code=status_code
     )
 

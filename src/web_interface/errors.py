@@ -1,23 +1,12 @@
 """
 Structured error handling for web interface.
 
-Provides error codes, categories, and consistent error response formatting.
+Provides error codes and consistent error response formatting.
 """
 
 from enum import Enum
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
-
-
-class ErrorCategory(Enum):
-    """Error categories for classification."""
-    CONFIGURATION = "configuration"
-    PLUGIN = "plugin"
-    VALIDATION = "validation"
-    NETWORK = "network"
-    PERMISSION = "permission"
-    SYSTEM = "system"
-    UNKNOWN = "unknown"
 
 
 class ErrorCode(Enum):
@@ -63,12 +52,11 @@ class WebInterfaceError:
     """
     Structured error for web interface responses.
     
-    Provides consistent error format with error codes, categories,
-    messages, and context.
+    Provides consistent error format with error codes, messages, and
+    context.
     """
     error_code: ErrorCode
     message: str
-    category: ErrorCategory
     details: Optional[str] = None
     context: Optional[Dict[str, Any]] = None
     suggested_fixes: Optional[List[str]] = None
@@ -78,7 +66,6 @@ class WebInterfaceError:
         self,
         error_code: ErrorCode,
         message: str,
-        category: Optional[ErrorCategory] = None,
         details: Optional[str] = None,
         context: Optional[Dict[str, Any]] = None,
         suggested_fixes: Optional[List[str]] = None,
@@ -86,7 +73,6 @@ class WebInterfaceError:
     ):
         self.error_code = error_code
         self.message = message
-        self.category = category or self._infer_category(error_code)
         self.details = details
         self.context = context or {}
         # `is None`, not truthiness: an explicit [] means "this caller has
@@ -95,25 +81,6 @@ class WebInterfaceError:
             suggested_fixes if suggested_fixes is not None
             else self._get_default_suggestions(error_code))
         self.original_error = original_error
-    
-    def _infer_category(self, error_code: ErrorCode) -> ErrorCategory:
-        """Infer error category from error code."""
-        code_str = error_code.value
-        
-        if code_str.startswith("CONFIG_"):
-            return ErrorCategory.CONFIGURATION
-        elif code_str.startswith("PLUGIN_"):
-            return ErrorCategory.PLUGIN
-        elif code_str.startswith("VALIDATION_") or code_str.startswith("SCHEMA_") or code_str == "INVALID_INPUT":
-            return ErrorCategory.VALIDATION
-        elif code_str.startswith("NETWORK_") or code_str == "API_ERROR" or code_str == "TIMEOUT":
-            return ErrorCategory.NETWORK
-        elif code_str.startswith("PERMISSION_") or code_str == "FILE_PERMISSION_ERROR":
-            return ErrorCategory.PERMISSION
-        elif code_str.startswith("SYSTEM_") or code_str == "SERVICE_UNAVAILABLE":
-            return ErrorCategory.SYSTEM
-        else:
-            return ErrorCategory.UNKNOWN
     
     def _get_default_suggestions(self, error_code: ErrorCode) -> List[str]:
         """Get default suggested fixes for error code."""
@@ -178,7 +145,6 @@ class WebInterfaceError:
         result = {
             "status": "error",
             "error_code": self.error_code.value,
-            "error_category": self.category.value,
             "message": self.message,
         }
         
@@ -197,7 +163,7 @@ class WebInterfaceError:
     def from_exception(
         cls,
         exception: Exception,
-        error_code: Optional[ErrorCode] = None,
+        error_code: ErrorCode,
         context: Optional[Dict[str, Any]] = None
     ) -> 'WebInterfaceError':
         """
@@ -205,13 +171,9 @@ class WebInterfaceError:
         
         Args:
             exception: Exception to convert
-            error_code: Optional specific error code
+            error_code: The error code to report
             context: Optional additional context
         """
-        # Infer error code from exception type if not provided
-        if not error_code:
-            error_code = cls._infer_error_code(exception)
-        
         # Build context
         error_context = context or {}
         error_context['exception_type'] = type(exception).__name__
@@ -252,26 +214,6 @@ class WebInterfaceError:
         }
         return messages.get(error_code, "An unexpected error occurred")
 
-    @classmethod
-    def _infer_error_code(cls, exception: Exception) -> ErrorCode:
-        """Infer error code from exception type."""
-        exception_name = type(exception).__name__
-        
-        if "Config" in exception_name:
-            return ErrorCode.CONFIG_LOAD_FAILED
-        elif "Plugin" in exception_name:
-            return ErrorCode.PLUGIN_LOAD_FAILED
-        elif "Permission" in exception_name or "Access" in exception_name:
-            return ErrorCode.PERMISSION_DENIED
-        elif "Validation" in exception_name or "Schema" in exception_name:
-            return ErrorCode.VALIDATION_ERROR
-        elif "Network" in exception_name or "Connection" in exception_name:
-            return ErrorCode.NETWORK_ERROR
-        elif "Timeout" in exception_name:
-            return ErrorCode.TIMEOUT
-        else:
-            return ErrorCode.UNKNOWN_ERROR
-    
     @classmethod
     def _get_exception_details(cls, exception: Exception) -> Optional[str]:
         """Get additional details from exception."""
