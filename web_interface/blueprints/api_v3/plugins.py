@@ -179,8 +179,7 @@ def get_plugin_health():
     if not api_v3.plugin_manager:
         return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
 
-    # Check if health tracker is available
-    if not hasattr(api_v3.plugin_manager, 'health_tracker') or not api_v3.plugin_manager.health_tracker:
+    if not api_v3.plugin_manager.health_tracker:
         return jsonify({
             'status': 'success',
             'data': {},
@@ -215,8 +214,7 @@ def get_plugin_health_single(plugin_id):
     if not api_v3.plugin_manager:
         return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
 
-    # Check if health tracker is available
-    if not hasattr(api_v3.plugin_manager, 'health_tracker') or not api_v3.plugin_manager.health_tracker:
+    if not api_v3.plugin_manager.health_tracker:
         return jsonify({
             'status': 'error',
             'message': 'Health tracking not available'
@@ -236,8 +234,7 @@ def reset_plugin_health(plugin_id):
     if not api_v3.plugin_manager:
         return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
 
-    # Check if health tracker is available
-    if not hasattr(api_v3.plugin_manager, 'health_tracker') or not api_v3.plugin_manager.health_tracker:
+    if not api_v3.plugin_manager.health_tracker:
         return jsonify({
             'status': 'error',
             'message': 'Health tracking not available'
@@ -256,8 +253,7 @@ def get_plugin_metrics():
     if not api_v3.plugin_manager:
         return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
 
-    # Check if resource monitor is available
-    if not hasattr(api_v3.plugin_manager, 'resource_monitor') or not api_v3.plugin_manager.resource_monitor:
+    if not api_v3.plugin_manager.resource_monitor:
         return jsonify({
             'status': 'success',
             'data': {},
@@ -291,8 +287,7 @@ def get_plugin_metrics_single(plugin_id):
     if not api_v3.plugin_manager:
         return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
 
-    # Check if resource monitor is available
-    if not hasattr(api_v3.plugin_manager, 'resource_monitor') or not api_v3.plugin_manager.resource_monitor:
+    if not api_v3.plugin_manager.resource_monitor:
         return jsonify({
             'status': 'error',
             'message': 'Resource monitoring not available'
@@ -312,8 +307,7 @@ def reset_plugin_metrics(plugin_id):
     if not api_v3.plugin_manager:
         return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
 
-    # Check if resource monitor is available
-    if not hasattr(api_v3.plugin_manager, 'resource_monitor') or not api_v3.plugin_manager.resource_monitor:
+    if not api_v3.plugin_manager.resource_monitor:
         return jsonify({
             'status': 'error',
             'message': 'Resource monitoring not available'
@@ -332,8 +326,7 @@ def manage_plugin_limits(plugin_id):
     if not api_v3.plugin_manager:
         return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
 
-    # Check if resource monitor is available
-    if not hasattr(api_v3.plugin_manager, 'resource_monitor') or not api_v3.plugin_manager.resource_monitor:
+    if not api_v3.plugin_manager.resource_monitor:
         return jsonify({
             'status': 'error',
             'message': 'Resource monitoring not available'
