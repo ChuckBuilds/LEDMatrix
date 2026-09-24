@@ -449,7 +449,7 @@ window.handleGitHubPluginInstall = function() {
         debugLog('[handleGitHubPluginInstall] Response data:', data);
         if (data.status === 'success') {
             if (statusDiv) {
-                statusDiv.innerHTML = `<span class="text-green-600"><i class="fas fa-check-circle mr-1"></i>Successfully installed: ${data.plugin_id}</span>`;
+                statusDiv.innerHTML = `<span class="text-green-600"><i class="fas fa-check-circle mr-1"></i>Successfully installed: ${window.escapeHtml(data.plugin_id)}</span>`;
             }
             urlInput.value = '';
 
@@ -468,7 +468,7 @@ window.handleGitHubPluginInstall = function() {
             }, 1000);
         } else {
             if (statusDiv) {
-                statusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>${data.message || 'Installation failed'}</span>`;
+                statusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>${window.escapeHtml(data.message || 'Installation failed')}</span>`;
             }
             if (typeof showNotification === 'function') {
                 showNotification(data.message || 'Installation failed', 'error');
@@ -478,7 +478,7 @@ window.handleGitHubPluginInstall = function() {
     .catch(error => {
         console.error('[handleGitHubPluginInstall] Error:', error);
         if (statusDiv) {
-            statusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>Error: ${error.message}</span>`;
+            statusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>Error: ${window.escapeHtml(error.message)}</span>`;
         }
         if (typeof showNotification === 'function') {
             showNotification('Error installing plugin: ' + error.message, 'error');
@@ -2966,7 +2966,7 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
         .then(response => response.json())
         .then(data => {
             if (data.status === 'success') {
-                statusDiv.innerHTML = `<div class="text-green-600"><i class="fas fa-check-circle mr-2"></i>${data.message}</div>`;
+                statusDiv.innerHTML = `<div class="text-green-600"><i class="fas fa-check-circle mr-2"></i>${escapeHtml(data.message || 'Action completed successfully')}</div>`;
                 btn.innerHTML = originalText;
                 btn.disabled = false;
                 delete btn.dataset.step;
@@ -2984,7 +2984,7 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
             }
         })
         .catch(error => {
-            statusDiv.innerHTML = `<div class="text-red-600"><i class="fas fa-exclamation-circle mr-2"></i>Error: ${error.message}</div>`;
+            statusDiv.innerHTML = `<div class="text-red-600"><i class="fas fa-exclamation-circle mr-2"></i>Error: ${escapeHtml(error.message)}</div>`;
             btn.innerHTML = originalText;
             btn.disabled = false;
             delete btn.dataset.step;
@@ -3016,7 +3016,7 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
                 statusDiv.innerHTML = `
                     <div class="bg-blue-50 border border-blue-200 rounded p-3">
                         <div class="text-blue-900 font-medium mb-2">
-                            <i class="fas fa-link mr-2"></i>${data.message || 'Authorization URL Generated'}
+                            <i class="fas fa-link mr-2"></i>${escapeHtml(data.message || 'Authorization URL Generated')}
                         </div>
                         <div class="mb-3">
                             <p class="text-sm text-blue-700 mb-2">1. Click the link below to authorize:</p>
@@ -3030,7 +3030,7 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
                         </div>
                     </div>
                 `;
-                btn.innerHTML = action.step2_button_text || 'Complete Authentication';
+                btn.textContent = action.step2_button_text || 'Complete Authentication';
                 btn.dataset.step = '2';
                 btn.disabled = false;
                 if (typeof showNotification === 'function') {
@@ -3041,7 +3041,7 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
                 statusDiv.innerHTML = `
                     <div class="bg-green-50 border border-green-200 rounded p-3">
                         <div class="text-green-900 font-medium mb-2">
-                            <i class="fas fa-check-circle mr-2"></i>${data.message || 'Action completed successfully'}
+                            <i class="fas fa-check-circle mr-2"></i>${escapeHtml(data.message || 'Action completed successfully')}
                         </div>
                         ${data.output ? `<pre class="mt-2 text-xs bg-green-50 p-2 rounded overflow-auto max-h-32">${escapeHtml(data.output)}</pre>` : ''}
                     </div>
@@ -3066,7 +3066,7 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
         }
     })
     .catch(error => {
-        statusDiv.innerHTML = `<div class="text-red-600"><i class="fas fa-exclamation-circle mr-2"></i>Error: ${error.message}</div>`;
+        statusDiv.innerHTML = `<div class="text-red-600"><i class="fas fa-exclamation-circle mr-2"></i>Error: ${escapeHtml(error.message)}</div>`;
         btn.innerHTML = originalText;
         btn.disabled = false;
     });
@@ -3820,7 +3820,7 @@ function attachInstallButtonHandler() {
                     debugLog('[attachInstallButtonHandler] Response data:', data);
                     if (data.status === 'success') {
                         if (pluginStatusDiv) {
-                            pluginStatusDiv.innerHTML = `<span class="text-green-600"><i class="fas fa-check-circle mr-1"></i>Successfully installed: ${data.plugin_id}</span>`;
+                            pluginStatusDiv.innerHTML = `<span class="text-green-600"><i class="fas fa-check-circle mr-1"></i>Successfully installed: ${escapeHtml(data.plugin_id)}</span>`;
                         }
                         pluginUrlInput.value = '';
 
@@ -3830,14 +3830,14 @@ function attachInstallButtonHandler() {
                         }, 1000);
                     } else {
                         if (pluginStatusDiv) {
-                            pluginStatusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>${data.message || 'Installation failed'}</span>`;
+                            pluginStatusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>${escapeHtml(data.message || 'Installation failed')}</span>`;
                         }
                     }
                 })
                 .catch(error => {
                     console.error('[attachInstallButtonHandler] Error:', error);
                     if (pluginStatusDiv) {
-                        pluginStatusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>Error: ${error.message}</span>`;
+                        pluginStatusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>Error: ${escapeHtml(error.message)}</span>`;
                     }
                 })
                 .finally(() => {
@@ -3986,7 +3986,7 @@ function setupGitHubInstallHandlers() {
                 }
             })
             .catch(error => {
-                registryStatusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>Error: ${error.message}</span>`;
+                registryStatusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>Error: ${escapeHtml(error.message)}</span>`;
                 customRegistryPlugins.classList.add('hidden');
             })
             .finally(() => {
