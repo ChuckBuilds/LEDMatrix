@@ -47,13 +47,13 @@ import threading
 import time
 from collections import OrderedDict
 from typing import Dict, Any, List, Optional, Tuple
-import logging
 import math
 import zlib
 import freetype
 
 from src.common import snapshot_policy
 from src.deprecation import deprecated
+from src.logging_config import get_logger
 from src.common.permission_utils import (
     ensure_directory_permissions,
     ensure_file_permissions,
@@ -61,9 +61,7 @@ from src.common.permission_utils import (
     get_assets_file_mode,
 )
 
-# Get logger without configuring
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)  # Set to INFO level
+logger = get_logger(__name__)
 
 #: The strike 5x7.bdf is drawn at. FreeType renders a BDF at its own fixed
 #: size regardless, but a Face needs an active size before its metrics --
