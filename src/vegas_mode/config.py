@@ -58,12 +58,21 @@ class VegasModeConfig:
     # switched off at the start of every cycle.
     lead_in_width: int = 0
 
-    # Blend between neighbouring pixel positions so motion happens at the frame
-    # rate rather than the scroll speed. With integer positioning the number of
-    # distinct frames per second equals scroll_speed, so at 50px/s the motion is
-    # 50 discrete 1px steps however fast the loop runs. The trade is a slight
-    # horizontal softening of text, since each frame is a blend of two positions.
+    # Lock motion to the panel: a whole number of pixels per presented frame,
+    # each frame held for a whole number of refreshes, with SwapOnVSync as the
+    # clock (see src/common/scroll_config.py). scroll_speed is snapped to the
+    # nearest speed the panel can show that way. Off falls back to advancing by
+    # elapsed time, which drifts against the refresh and judders.
     smooth_scroll: bool = True
+
+    # The older way of smoothing: advance by elapsed time and blend the two
+    # neighbouring pixel positions each frame. It looks anti-aliased in the web
+    # preview, but on the panel the blended columns shimmer (the library's
+    # brightness curve makes a 50% blend far dimmer than half), text softens,
+    # and the loop is not tied to the refresh, so it still misses frames.
+    # Measured on a 512x64 chain at 95Hz: 73-89fps, p99 20-28ms. Takes
+    # precedence over smooth_scroll's whole-pixel pacing when on.
+    sub_pixel_blend: bool = False
 
     # Keep one continuous strip, extending it with the next group of plugins as
     # the scroll approaches the end, instead of composing a fresh strip and
@@ -196,6 +205,7 @@ class VegasModeConfig:
                 get('min_content_separation', d.min_content_separation)),
             min_cut_gap=int(get('min_cut_gap', d.min_cut_gap)),
             smooth_scroll=get('smooth_scroll', d.smooth_scroll),
+            sub_pixel_blend=bool(get('sub_pixel_blend', d.sub_pixel_blend)),
             continuous_scroll=get('continuous_scroll', d.continuous_scroll),
             extend_threshold_screens=float(
                 get('extend_threshold_screens', d.extend_threshold_screens)),
@@ -238,6 +248,7 @@ class VegasModeConfig:
             'min_content_separation': self.min_content_separation,
             'min_cut_gap': self.min_cut_gap,
             'smooth_scroll': self.smooth_scroll,
+            'sub_pixel_blend': self.sub_pixel_blend,
             'continuous_scroll': self.continuous_scroll,
             'extend_threshold_screens': self.extend_threshold_screens,
             'auto_trim': self.auto_trim,
