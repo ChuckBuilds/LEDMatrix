@@ -18,7 +18,7 @@ get_font_height, get_text_width, draw_text,
 draw_text_with_icons, draw_weather_icon (and the _draw_sun/_draw_cloud/
 _draw_rain/_draw_snow/_draw_storm family), format_date_with_ordinal,
 capture_mode, set_scrolling_state, is_currently_scrolling,
-process_deferred_updates, update_display, render_size. A behavior
+process_deferred_updates, update_display, render_size, offscreen. A behavior
 change to any of those in DisplayManager must be mirrored here, or
 plugin visual tests will pass against stale behavior.
 
@@ -243,11 +243,39 @@ class VisualTestDisplayManager:
         wraps every off-screen content fetch in this context, so the harness
         must provide it for that code path to be exercisable in tests.
         """
+        was_active = self._capture_mode_active
         self._capture_mode_active = True
         try:
             yield
         finally:
-            self._capture_mode_active = False
+            self._capture_mode_active = was_active
+
+    @contextmanager
+    def offscreen(self, width: Optional[int] = None, height: Optional[int] = None):
+        """
+        Interface parity with DisplayManager.offscreen().
+
+        Vegas mode's PluginAdapter draws every plugin on a canvas of its own.
+        The real display manager keeps that canvas per thread; the harness is
+        single-threaded, so it swaps a fresh canvas in and restores the old one,
+        which is all a test can observe.
+        """
+        prev = (self.image, self.draw, self._width, self._height,
+                self.matrix, self._capture_mode_active)
+        target_w = max(1, min(int(width), self._width)) if width else self._width
+        target_h = max(1, min(int(height), self._height)) if height else self._height
+        try:
+            self._width, self._height = target_w, target_h
+            self.matrix = _MatrixProxy(target_w, target_h)
+            self.image = Image.new('RGB', (target_w, target_h), (0, 0, 0))
+            self.draw = ImageDraw.Draw(self.image)
+            # Match production: 1-bit text, so goldens show what the panel shows.
+            self.draw.fontmode = "1"
+            self._capture_mode_active = True
+            yield self
+        finally:
+            (self.image, self.draw, self._width, self._height,
+             self.matrix, self._capture_mode_active) = prev
 
     def draw_text(self, text: str, x: Optional[int] = None, y: Optional[int] = None,
                   color: Tuple[int, int, int] = (255, 255, 255), small_font: bool = False,

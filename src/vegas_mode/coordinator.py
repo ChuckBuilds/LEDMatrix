@@ -13,10 +13,12 @@ Supports three display modes per plugin:
 
 import logging
 import math
+import sys
 import time
 import threading
 from typing import Optional, Dict, Any, List, Callable, TYPE_CHECKING
 
+from src.common import render_gate
 from src.vegas_mode.config import VegasModeConfig
 from src.vegas_mode.plugin_adapter import PluginAdapter
 from src.vegas_mode.stream_manager import StreamManager
@@ -101,7 +103,8 @@ class VegasModeCoordinator:
         self.plugin_manager = plugin_manager
 
         # Initialize components
-        self.plugin_adapter = PluginAdapter(display_manager, self.vegas_config)
+        self.plugin_adapter = PluginAdapter(
+            display_manager, self.vegas_config, plugin_manager=plugin_manager)
         self.stream_manager = StreamManager(
             self.vegas_config,
             plugin_manager,
@@ -276,6 +279,8 @@ class VegasModeCoordinator:
             # due immediately so the first sample confirms the marquee is up.
             self._fps_last_health_log = 0.0
             self._fps_was_degraded = False
+            self._apply_switch_interval()
+            self._install_render_gate()
 
         # Line up the next group immediately, so the first extension is already
         # warm rather than stalling the scroll to fetch it.
@@ -298,12 +303,66 @@ class VegasModeCoordinator:
                 self.stats['total_runtime_seconds'] += time.time() - self._start_time
                 self._start_time = None
 
+        self._restore_switch_interval()
+        self._remove_render_gate()
+
         # Cleanup components
         self.render_pipeline.reset()
         self.stream_manager.reset()
         self.display_manager.set_scrolling_state(False)
 
         logger.info("Vegas mode stopped")
+
+    def _apply_switch_interval(self) -> None:
+        """Shorten the GIL switch interval for the run; see VegasModeConfig."""
+        ms = self.vegas_config.switch_interval_ms
+        if not ms or ms <= 0:
+            return
+        if getattr(self, '_saved_switch_interval', None) is None:
+            self._saved_switch_interval = sys.getswitchinterval()
+        sys.setswitchinterval(ms / 1000.0)
+        logger.info("Vegas: GIL switch interval %.1fms (was %.1fms)",
+                    ms, self._saved_switch_interval * 1000.0)
+
+    def _restore_switch_interval(self) -> None:
+        saved = getattr(self, '_saved_switch_interval', None)
+        if saved is not None:
+            sys.setswitchinterval(saved)
+            self._saved_switch_interval = None
+
+    def _install_render_gate(self) -> None:
+        """Gate the prefetch thread on the render thread's swaps; see VegasModeConfig."""
+        if not self.vegas_config.prefetch_gate:
+            return
+        if getattr(self.display_manager, 'render_gate', None) is not None:
+            return
+        releases = render_gate.swap_releases_gil()
+        if releases is None:
+            logger.debug("Vegas: no prefetch gate -- no hardware binding loaded")
+            return
+        if not releases:
+            # On by default, so this is every stock install: say so once per
+            # run, not as a warning.
+            logger.info("Vegas: no prefetch gate -- this rgbmatrix binding keeps "
+                        "the GIL in SwapOnVSync (scripts/build_rgbmatrix_nogil.sh)")
+            return
+        gate = render_gate.RenderGate()
+        # Locks the render thread takes too: never park the prefetch holding one.
+        gate.guard(self._state_lock,
+                   getattr(self.stream_manager, '_buffer_lock', None),
+                   getattr(self.render_pipeline, '_buffer_lock', None),
+                   getattr(self.render_pipeline, '_prefetch_lock', None),
+                   getattr(self.plugin_adapter, '_cache_lock', None))
+        self.display_manager.render_gate = gate
+        logger.info("Vegas: prefetch gated on vsync")
+
+    def _remove_render_gate(self) -> None:
+        gate = getattr(self.display_manager, 'render_gate', None)
+        if gate is None:
+            return
+        self.display_manager.render_gate = None
+        logger.info("Vegas: prefetch gate parked the prefetch %d times, %.1fs in all",
+                    gate.parks, gate.parked_seconds)
 
     def pause(self) -> None:
         """Pause Vegas mode (for live priority interruption)."""
@@ -524,6 +583,10 @@ class VegasModeCoordinator:
                         fps, target, fps_frame_count,
                         p99 * 1000.0, frame_worst * 1000.0
                     )
+                    gate = getattr(self.display_manager, 'render_gate', None)
+                    if gate is not None:
+                        logger.info("Vegas: prefetch parked %d times, %.1fs in all",
+                                    gate.parks, gate.parked_seconds)
                     self._fps_last_health_log = current_time
                 else:
                     logger.debug(

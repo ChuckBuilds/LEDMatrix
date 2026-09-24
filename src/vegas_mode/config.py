@@ -74,6 +74,31 @@ class VegasModeConfig:
     # precedence over smooth_scroll's whole-pixel pacing when on.
     sub_pixel_blend: bool = False
 
+    # Render every plugin's ticker content on the background prefetch thread,
+    # each on a canvas of its own (DisplayManager.offscreen), instead of
+    # handing plugins that draw on the display canvas to the render thread one
+    # at a time. Each of those cost the scroll a 40-600ms pause. False restores
+    # that path; it is kept for one release in case a plugin misbehaves when
+    # drawn off the render thread. See docs/OFFSCREEN_RENDERING.md.
+    offscreen_prefetch: bool = True
+
+    # How long another thread may hold the GIL before the render thread's
+    # request forces it to yield, in ms, while Vegas runs. CPython's default is
+    # 5ms. Plugin rendering on the prefetch thread and plugin updates hold the
+    # GIL in Pillow and Python code, and a frame waiting its turn for 5ms at a
+    # time misses its refresh. 0 leaves the interpreter default alone.
+    # Experimental. On hdpi it did less than prefetch_gate (0.90% -> 0.78% late
+    # against 0.60%; see docs/OFFSCREEN_RENDERING.md), so it stays off.
+    switch_interval_ms: float = 0.0
+
+    # Let the prefetch thread run Python only while the render thread is
+    # blocked waiting for vsync, and park it the rest of the time, so the
+    # render thread never waits for the GIL when its refresh comes round. Needs
+    # a binding that releases the GIL in SwapOnVSync; off otherwise. On hdpi
+    # it cut frames two or more refreshes late eightfold, and late frames
+    # overall from 0.90% to 0.60%. See src/common/render_gate.py.
+    prefetch_gate: bool = True
+
     # Keep one continuous strip, extending it with the next group of plugins as
     # the scroll approaches the end, instead of composing a fresh strip and
     # swapping it in. A swap stops the motion, substitutes every pixel at once
@@ -207,6 +232,9 @@ class VegasModeConfig:
             smooth_scroll=get('smooth_scroll', d.smooth_scroll),
             sub_pixel_blend=bool(get('sub_pixel_blend', d.sub_pixel_blend)),
             continuous_scroll=get('continuous_scroll', d.continuous_scroll),
+            offscreen_prefetch=bool(get('offscreen_prefetch', d.offscreen_prefetch)),
+            switch_interval_ms=float(get('switch_interval_ms', d.switch_interval_ms) or 0.0),
+            prefetch_gate=bool(get('prefetch_gate', d.prefetch_gate)),
             extend_threshold_screens=float(
                 get('extend_threshold_screens', d.extend_threshold_screens)),
             auto_trim=get('auto_trim', d.auto_trim),
@@ -250,6 +278,9 @@ class VegasModeConfig:
             'smooth_scroll': self.smooth_scroll,
             'sub_pixel_blend': self.sub_pixel_blend,
             'continuous_scroll': self.continuous_scroll,
+            'offscreen_prefetch': self.offscreen_prefetch,
+            'switch_interval_ms': self.switch_interval_ms,
+            'prefetch_gate': self.prefetch_gate,
             'extend_threshold_screens': self.extend_threshold_screens,
             'auto_trim': self.auto_trim,
             'trim_threshold': self.trim_threshold,
