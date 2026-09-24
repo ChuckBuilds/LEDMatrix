@@ -126,8 +126,10 @@
 </div>
 
 <script>
-// Global variables - use window properties to avoid redeclaration errors with HTMX reloads
-// Initialize only if not already defined
+// Scoped: this script runs at global scope after every HTMX swap, and the
+// Cache partial has helpers with the same names (showError, escapeHtml). State
+// that must survive a reload of this partial lives on window._logs* instead.
+(function() {
 if (typeof window._logsEventSource === 'undefined') {
     window._logsEventSource = null;
 }
@@ -946,4 +948,5 @@ window.addEventListener('beforeunload', function() {
         window._pluginErrorsPollTimer = null;
     }
 });
+})();
 </script>

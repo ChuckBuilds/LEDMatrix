@@ -55,13 +55,12 @@
 </div>
 
 <script>
-// Initialize cache management when partial loads
+// Scoped: this script runs at global scope after every HTMX swap, and the Logs
+// partial has helpers with the same names (showError, escapeHtml). Only
+// deleteCacheFile, which the row buttons call from onclick, is exported.
 (function() {
-    loadCacheFiles();
-    
-    // Event listeners
-    document.getElementById('refresh-cache-btn').addEventListener('click', loadCacheFiles);
-})();
+loadCacheFiles();
+document.getElementById('refresh-cache-btn').addEventListener('click', loadCacheFiles);
 
 function loadCacheFiles() {
     const tbody = document.getElementById('cache-files-tbody');
@@ -231,6 +230,6 @@ function escapeHtml(text) {
         .replace(/'/g, '&#39;');
 }
 
-// Make deleteCacheFile available globally for onclick handlers
 window.deleteCacheFile = deleteCacheFile;
+})();
 </script>
