@@ -63,6 +63,15 @@ class TestValidateConfig:
         assert "Missing required configuration key: display" in errors
         assert "Missing required configuration key: timezone" in errors
 
+    @pytest.mark.parametrize("config,expected", [
+        ({'timezone': 'UTC'}, "Missing required configuration key: display"),
+        ({'display': {}, 'timezone': 'UTC'}, "Display configuration is empty"),
+    ])
+    def test_a_missing_display_section_is_reported_once(self, good_cache, config, expected):
+        validator = StartupValidator(make_config_manager(config))
+        _, errors, _ = validator.validate_all()
+        assert errors == [expected]
+
     def test_config_error_does_not_propagate(self, good_cache):
         mgr = make_config_manager(GOOD_CONFIG)
         mgr.load_config.side_effect = ConfigError("bad json")
