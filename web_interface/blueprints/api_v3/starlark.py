@@ -11,6 +11,7 @@ from web_interface.blueprints.api_v3 import (
     _PIXLET_EDITOR_DEFAULT_TIMEOUT, _PIXLET_EDITOR_MAX_TIMEOUT,
     _PIXLET_EDITOR_SCRIPT, _PIXLET_EDITOR_STATE, _clear_pixlet_editor_state,
     _find_pixlet_binary, _install_star_file, _pixlet_editor_alive,
+    _run_systemctl_command,
     _pixlet_editor_status, _read_pixlet_editor_state,
     _STARLARK_APPS_DIR, _standalone_render_starlark_app,
     _starlark_github_token, _starlark_manifest_lock,
