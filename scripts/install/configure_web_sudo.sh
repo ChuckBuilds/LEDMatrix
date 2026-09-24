@@ -79,14 +79,24 @@ echo "  Journalctl: ${JOURNALCTL_PATH:-(not found, skipping)}"
 echo "  Safe plugin rm: $SAFE_RM_PATH"
 echo "  Safe pip install: $SAFE_PIP_INSTALL_PATH"
 
-# Create a temporary sudoers file
-TEMP_SUDOERS="/tmp/ledmatrix_web_sudoers_$$"
+# Create a temporary sudoers file. A predictable name in a world-writable
+# directory is a symlink target, and these rules end up in /etc/sudoers.d, so
+# let mktemp pick the name; the trap removes it however the script ends.
+TEMP_SUDOERS=$(mktemp "${TMPDIR:-/tmp}/ledmatrix_web_sudoers.XXXXXX") || {
+    echo "Error: could not create a temporary file" >&2
+    exit 1
+}
+trap 'rm -f "$TEMP_SUDOERS"' EXIT
 
 web_sudoers_rules "$WEB_USER" "$PROJECT_ROOT" "$SYSTEMCTL_PATH" "$BASH_PATH" \
     "$REBOOT_PATH" "$POWEROFF_PATH" "$JOURNALCTL_PATH" > "$TEMP_SUDOERS"
 
 # Never offer to install rules we have not parsed. A malformed drop-in in
 # /etc/sudoers.d makes sudo refuse every command for every user.
+# visudo lives in /usr/sbin, which is not on every user's PATH.
+if ! command -v visudo >/dev/null 2>&1 && [ -x /usr/sbin/visudo ]; then
+    PATH="$PATH:/usr/sbin"
+fi
 if command -v visudo >/dev/null 2>&1; then
     if ! visudo -c -f "$TEMP_SUDOERS" >/dev/null 2>&1; then
         echo ""
@@ -96,6 +106,8 @@ if command -v visudo >/dev/null 2>&1; then
         rm -f "$TEMP_SUDOERS"
         exit 1
     fi
+else
+    echo "⚠ visudo not found; the rules below have not been validated"
 fi
 
 echo ""
@@ -143,6 +155,11 @@ if ! sudo chmod 755 "$SAFE_PIP_INSTALL_PATH"; then
 fi
 
 if sudo cp "$TEMP_SUDOERS" /etc/sudoers.d/ledmatrix_web; then
+    # sudo reads /etc/sudoers.d files that are root-owned and not writable by
+    # group or other; 440 is the mode visudo and first_time_install.sh use.
+    if ! sudo chmod 440 /etc/sudoers.d/ledmatrix_web; then
+        echo "Warning: could not set mode 440 on /etc/sudoers.d/ledmatrix_web"
+    fi
     echo "Configuration applied successfully!"
     echo ""
     echo "Testing sudo access..."
