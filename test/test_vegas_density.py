@@ -837,6 +837,10 @@ class TestCycleEndsBeforeWrap:
         return p
 
     def _advance_to(self, pipeline, distance):
+        # render_frame() steps before it checks, and a whole-pixel pace steps
+        # a fixed amount; start one step short so the checked frame is at
+        # `distance`.
+        distance -= pipeline.scroll_helper.fixed_pixels_per_frame or 0
         pipeline.scroll_helper.total_distance_scrolled = distance
         pipeline.scroll_helper.scroll_position = float(distance)
 

@@ -128,7 +128,8 @@ Read by `src/vegas_mode/config.py` (`VegasScrollConfig.from_config`). See
 | `min_content_separation` | int, `24` |
 | `min_cut_gap` | int, `6` |
 | `continuous_scroll` | bool, `true` |
-| `smooth_scroll` | bool, `true` |
+| `smooth_scroll` | bool, `true` — move a whole number of pixels per panel refresh, locked to vsync. `scroll_speed` is snapped to the nearest speed the panel can show that way (at 95Hz: 95, 47.5, 31.7 px/s…), measured against the panel's real refresh rate once scrolling starts |
+| `sub_pixel_blend` | bool, `false` — the older smoothing: advance by elapsed time and blend neighbouring pixel columns. Looks anti-aliased in the web preview but shimmers on the panel and is not locked to the refresh. Overrides `smooth_scroll` when on |
 | `extend_threshold_screens` | float, `2.0` |
 | `auto_trim` | bool, `true` |
 | `trim_threshold` | int, `10` |

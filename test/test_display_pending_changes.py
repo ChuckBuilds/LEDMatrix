@@ -140,6 +140,9 @@ def vegas_coordinator(controller):
         'enabled': True, 'max_cycle_duration': VEGAS_ITERATION_SECONDS}}})
     assert coord.vegas_config.continuous_scroll
     coord.render_pipeline = MagicMock()
+    # Real numbers: the loop sleeps and reports against these.
+    coord.render_pipeline.frame_interval = coord.vegas_config.get_frame_interval()
+    coord.render_pipeline.target_fps = float(coord.vegas_config.target_fps)
     coord.stream_manager = MagicMock()
     coord.display_manager = controller.display_manager
     coord.stats = {'cycles_completed': 0, 'interruptions': 0}

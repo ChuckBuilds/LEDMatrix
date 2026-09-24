@@ -21,6 +21,9 @@ def _coordinator(plugins):
     coord.vegas_config = VegasModeConfig.from_config({'display': {'vegas_scroll': {
         'enabled': True, 'max_cycle_duration': 0}}})
     coord.render_pipeline = MagicMock()
+    # The loop paces itself from these (#628); a MagicMock can't be compared.
+    coord.render_pipeline.frame_interval = 0.0
+    coord.render_pipeline.target_fps = 90
     coord.stream_manager = MagicMock()
     coord.display_manager = MagicMock()
     coord.plugin_manager = SimpleNamespace(plugins=plugins, get_plugin=plugins.get)
