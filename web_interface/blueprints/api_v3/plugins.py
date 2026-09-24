@@ -23,6 +23,7 @@ from web_interface.blueprints.api_v3 import (
 from src.common.path_safety import (
     resolve_under, safe_path_component, safe_relative_parts,
 )
+from src.web_interface.validators import dedup_unique_arrays
 import web_interface.blueprints.api_v3 as _pkg
 # Read through the module rather than bound by value: tests patch these
 # as module attributes, and a value binding would not see the patch.
@@ -2554,6 +2555,12 @@ def _prepare_plugin_config_for_save(plugin_id, plugin_config, schema, schema_mgr
     if 'rotation_settings' in plugin_config and 'random_seed' in plugin_config.get('rotation_settings', {}):
         seed_value = plugin_config['rotation_settings']['random_seed']
         logger.debug(f"After normalization, random_seed value: {repr(seed_value)}, type: {type(seed_value)}")
+
+    # A uniqueItems array can arrive with a repeat -- the form merges onto
+    # the stored list, so a stock symbol already saved and submitted again
+    # appears twice -- and validation would refuse the whole save for it.
+    if schema:
+        dedup_unique_arrays(plugin_config, schema)
 
     # Validate configuration against schema before saving
     if schema:
