@@ -5,6 +5,7 @@ Handles plugin module imports, dependency installation, and class instantiation.
 Extracted from PluginManager to improve separation of concerns.
 """
 
+import errno
 import importlib
 import importlib.metadata
 import importlib.util
@@ -184,6 +185,46 @@ def find_trusted_subdir(trusted_dir: str, name: str) -> Optional[str]:
     return None
 
 
+def contained_plugin_dir(plugin_dir: Path, plugins_dir: Path) -> Optional[str]:
+    """``plugin_dir`` rebuilt from an entry enumerated under ``plugins_dir``.
+
+    Returns None when ``plugin_dir`` is not a subdirectory of ``plugins_dir``.
+    Callers derive ``plugin_dir`` from a manifest-declared id, so the path is
+    rebuilt from :func:`find_trusted_subdir`'s answer rather than trusted: a
+    name that came out of ``os.scandir()`` on the trusted root carries no
+    taint, which is a real containment guarantee (and one CodeQL's
+    path-injection query can follow), not a string sanitiser.
+    """
+    plugin_dir_real = os.path.realpath(str(plugin_dir))
+    plugins_dir_real = os.path.realpath(str(plugins_dir))
+    matched_name = find_trusted_subdir(plugins_dir_real, os.path.basename(plugin_dir_real))
+    if matched_name is None:
+        return None
+    return os.path.join(plugins_dir_real, matched_name)
+
+
+def requirements_to_install(plugin_dir: str, logger: logging.Logger,
+                            label: str) -> Optional[str]:
+    """The plugin's requirements.txt if pip has work to do, else None.
+
+    None when there is no requirements.txt, when it lists nothing (plugins
+    whose dependencies ship with core often keep an all-comments file), or
+    when every requirement is already installed. Shared by the loader and the
+    store so both skip pip for the same reasons; they differ only in how they
+    run it.
+    """
+    requirements_file = os.path.join(plugin_dir, "requirements.txt")
+    if not os.path.isfile(requirements_file):
+        return None
+    if not requirements_has_real_deps(requirements_file):
+        logger.debug("requirements.txt for %s has no real dependencies, skipping pip", label)
+        return None
+    if requirements_are_satisfied(requirements_file):
+        logger.debug("Dependencies for %s already satisfied, skipping pip", label)
+        return None
+    return requirements_file
+
+
 class PluginLoader:
     """Handles plugin module loading and class instantiation."""
 
@@ -273,43 +314,15 @@ class PluginLoader:
         if not plugin_id:
             return False
 
-        # Resolve to a canonical absolute path (normalises .. and symlinks)
-        plugin_dir_real = os.path.realpath(str(plugin_dir))
-        plugins_dir_real = os.path.realpath(str(plugins_dir))
-        requested_name = os.path.basename(plugin_dir_real)
-
-        # Match the requested directory against an entry actually enumerated
-        # from the trusted plugins_dir, and build the path from that entry --
-        # not from requested_name. A name that came out of os.scandir() on a
-        # trusted root carries no taint regardless of what the caller asked
-        # for, so this is a real containment guarantee (an allowlist check
-        # against a trusted source), not a string-sanitisation of untrusted
-        # input that a static analyzer has to trust blindly.
-        matched_name = find_trusted_subdir(plugins_dir_real, requested_name)
-        if matched_name is None:
+        safe_plugin_dir = contained_plugin_dir(plugin_dir, plugins_dir)
+        if safe_plugin_dir is None:
             self.logger.error(
                 "Plugin directory for %s not found inside plugins dir", plugin_id
             )
             return False
 
-        safe_plugin_dir = os.path.join(plugins_dir_real, matched_name)
-        requirements_file = os.path.join(safe_plugin_dir, "requirements.txt")
-
-        if not os.path.isfile(requirements_file):
-            return True  # No dependencies needed
-
-        if not requirements_has_real_deps(requirements_file):
-            self.logger.debug(
-                "requirements.txt for %s has no real dependencies (comments/blank only), skipping pip",
-                plugin_id
-            )
-            return True
-
-        if requirements_are_satisfied(requirements_file):
-            self.logger.debug(
-                "Dependencies for %s already satisfied in current environment, skipping pip",
-                plugin_id
-            )
+        requirements_file = requirements_to_install(safe_plugin_dir, self.logger, plugin_id)
+        if requirements_file is None:
             return True
 
         try:
@@ -348,8 +361,8 @@ class PluginLoader:
                     # below).
                     try:
                         # sys.executable is this process's own interpreter (not
-                        # attacker-influenced), and requirements_file is a path
-                        # built internally by find_plugin_directory, never raw
+                        # attacker-influenced), and requirements_file is rebuilt
+                        # by contained_plugin_dir() from a trusted listing, never raw
                         # external input.
                         retry_result = subprocess.run(  # nosec B603 - no shell invoked (list-form argv)  # nosemgrep
                             [sys.executable, "-m", "pip", "install", "--break-system-packages",
@@ -384,10 +397,10 @@ class PluginLoader:
         except FileNotFoundError:
             self.logger.warning("pip not found. Skipping dependency installation for %s", plugin_id)
             return True
-        except (BrokenPipeError, OSError) as e:
-            # Handle broken pipe errors (errno 32) which can occur during pip downloads
-            # Often caused by network interruptions or output buffer issues
-            if isinstance(e, OSError) and e.errno == 32:
+        except OSError as e:
+            # A broken pipe (EPIPE) happens when pip's output pipe closes
+            # mid-download, usually a network interruption.
+            if e.errno == errno.EPIPE:
                 self.logger.error(
                     "Broken pipe error during dependency installation for %s. "
                     "This usually indicates a network interruption or pip output buffer issue. "
@@ -528,7 +541,7 @@ class PluginLoader:
         plugin_id: str,
         plugin_dir: Path,
         entry_point: str
-    ) -> Optional[Any]:
+    ) -> Any:
         """
         Load a plugin module from file.
 
@@ -547,7 +560,12 @@ class PluginLoader:
             entry_point: Entry point filename (e.g., 'manager.py')
 
         Returns:
-            Loaded module or None on error
+            The loaded module
+
+        Raises:
+            PluginError: If the plugin id, directory or entry point is
+                invalid. Whatever the module raises while executing
+                propagates unchanged.
         """
         plugin_id = os.path.basename(plugin_id or '')
         if not plugin_id:
@@ -782,9 +800,7 @@ class PluginLoader:
         # Load module
         entry_point = manifest.get('entry_point', 'manager.py')
         module = self.load_module(plugin_id, plugin_dir, entry_point)
-        if module is None:
-            raise PluginError(f"Failed to load module for plugin {plugin_id}", plugin_id=plugin_id)
-        
+
         # Get plugin class
         class_name = manifest.get('class_name')
         if not class_name:

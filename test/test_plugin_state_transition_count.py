@@ -115,5 +115,22 @@ def test_get_state_info_is_a_consistent_snapshot():
     assert not inconsistent, f"observed a torn snapshot: {inconsistent[:1]}"
 
 
+def test_state_info_reports_only_what_something_records():
+    """No field that is always null.
+
+    ``last_display`` was reported here, but nothing ever recorded a display()
+    call, so it was null for every plugin. Its only reader is the web process,
+    whose PluginManager never calls display(), so recording it in the display
+    process could not have filled it either.
+    """
+    manager = PluginStateManager()
+    manager.set_state("clock", PluginState.ENABLED)
+    manager.record_update("clock")
+
+    info = manager.get_state_info("clock")
+    assert "last_display" not in info
+    assert info["last_update"] is not None
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

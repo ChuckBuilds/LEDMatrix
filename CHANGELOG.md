@@ -33,6 +33,15 @@ accepts both, but the store flags the old spelling as deprecated
   - `src/common/README.md` covers every module.
   - Stale setup, service and troubleshooting claims are corrected.
 
+- Plugin store and plugin manager fixes:
+  - Updating a plugin that was installed from a ZIP no longer tries to reinstall it from the LEDMatrix repository's own URL.
+  - Repository URLs with `.git` in the middle are no longer mangled. The URL helpers now live in `src/plugin_system/repo_urls.py`.
+  - Installing from a URL works when the repository's only branch isn't `main` or `master`.
+  - A missing required config field is reported once, by name.
+  - A plugin that went over `max_memory_mb` once is no longer refused on every call after that.
+  - `reload_plugin` reads the manifest from the plugin's discovered directory.
+  - Removed: `last_display` from plugin state info and `get_last_display()` (nothing recorded them); `PluginOperationQueue`'s `history_file` and `lazy_load` arguments; and `data/plugin_operations.json`, which nothing read.
+
 - The web service (`ledmatrix-web`) logs through `src.logging_config` like the
   display service, so `journalctl -p err -u ledmatrix-web` works. Successful
   GET/HEAD/OPTIONS requests (the UI's polling) are logged at DEBUG instead of

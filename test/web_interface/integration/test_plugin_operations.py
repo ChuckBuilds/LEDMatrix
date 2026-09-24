@@ -21,10 +21,7 @@ class TestPluginOperationsIntegration(unittest.TestCase):
         self.temp_dir = Path(tempfile.mkdtemp())
         
         # Initialize components
-        self.operation_queue = PluginOperationQueue(
-            history_file=str(self.temp_dir / "operations.json"),
-            max_history=100
-        )
+        self.operation_queue = PluginOperationQueue(max_history=100)
         
         self.state_manager = PluginStateManager(
             state_file=str(self.temp_dir / "state.json"),
