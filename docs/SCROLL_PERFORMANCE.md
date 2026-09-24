@@ -207,7 +207,10 @@ Fixed by rebuilding the binding: `scripts/build_rgbmatrix_nogil.sh`.
 ### 3. Sub-pixel blending was wrong for this display
 
 Enabling it made things worse, not better — see the rule at the top. It is off
-by default and only Vegas mode opts in via `set_sub_pixel_scrolling(True)`.
+by default everywhere. Vegas mode used to opt in; it now scrolls in whole
+pixels locked to the refresh like the plugin tickers, and keeps the blend only
+behind `display.vegas_scroll.sub_pixel_blend` (default `false`). The blend is
+also why text looked anti-aliased in the web preview while the panel shimmered.
 
 ### 4. Frame-based stepping raced the vsync clock
 
