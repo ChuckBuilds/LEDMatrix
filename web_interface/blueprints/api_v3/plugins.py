@@ -9,6 +9,7 @@ from web_interface.blueprints.api_v3 import (
     _do_transactional_uninstall, _enhance_schema_with_core_properties,
     _filter_config_by_schema, _get_plugin_version, _get_schema_property,
     _hidden_array_item_property, _installed_plugin_ids, _is_plugin_update_available,
+    _plugin_directory,
     _parse_form_value_with_schema, _prune_credential_backups,
     _run_calendar_registration, _schema_allows_null, _schema_type_is,
     _set_missing_booleans_to_false,
@@ -741,20 +742,12 @@ def get_plugin_config():
 
         # Special handling for of-the-day plugin: populate uploaded_files and categories from disk
         if plugin_id == 'of-the-day' or plugin_id == 'ledmatrix-of-the-day':
-            # Get plugin directory - plugin_id in manifest is 'of-the-day', but directory is 'ledmatrix-of-the-day'
-            plugin_dir_name = 'ledmatrix-of-the-day'
-            if api_v3.plugin_manager:
-                plugin_dir = api_v3.plugin_manager.get_plugin_directory(plugin_dir_name)
-                # If not found, try with the plugin_id
-                if not plugin_dir or not Path(plugin_dir).exists():
-                    plugin_dir = api_v3.plugin_manager.get_plugin_directory(plugin_id)
-            else:
-                plugin_dir = PROJECT_ROOT / 'plugins' / plugin_dir_name
-                if not plugin_dir.exists():
-                    plugin_dir = PROJECT_ROOT / 'plugins' / plugin_id
-
-            if plugin_dir and Path(plugin_dir).exists():
-                data_dir = Path(plugin_dir) / 'of_the_day'
+            # The manifest id is 'of-the-day'; the directory is usually
+            # 'ledmatrix-of-the-day'.
+            plugin_dir = (_plugin_directory('ledmatrix-of-the-day')
+                          or _plugin_directory(plugin_id))
+            if plugin_dir:
+                data_dir = plugin_dir / 'of_the_day'
                 if data_dir.exists():
                     # Scan for JSON files
                     uploaded_files = []
@@ -2417,13 +2410,8 @@ def execute_plugin_action():
         if plugin_id is None:
             return jsonify({'status': 'error', 'message': 'Invalid plugin_id'}), 400
 
-        # Get plugin directory
-        if api_v3.plugin_manager:
-            plugin_dir = api_v3.plugin_manager.get_plugin_directory(plugin_id)
-        else:
-            plugin_dir = PROJECT_ROOT / 'plugins' / plugin_id
-
-        if not plugin_dir or not Path(plugin_dir).exists():
+        plugin_dir = _plugin_directory(plugin_id)
+        if not plugin_dir:
             return jsonify({'status': 'error', 'message': 'Plugin not found'}), 404
 
         # Load manifest to get action definition
@@ -2882,13 +2870,8 @@ def serve_plugin_static(plugin_id, file_path):
     if not safe_parts:
         return jsonify({'status': 'error', 'message': 'Invalid file path'}), 400
 
-    # Get plugin directory
-    if api_v3.plugin_manager:
-        plugin_dir = api_v3.plugin_manager.get_plugin_directory(safe_plugin_id)
-    else:
-        plugin_dir = PROJECT_ROOT / 'plugins' / safe_plugin_id
-
-    if not plugin_dir or not Path(plugin_dir).exists():
+    plugin_dir = _plugin_directory(safe_plugin_id)
+    if not plugin_dir:
         return jsonify({'status': 'error', 'message': 'Plugin not found'}), 404
 
     # Containment is still checked after resolving: name validation cannot
@@ -2960,14 +2943,8 @@ def upload_calendar_credentials():
             'message': 'File does not appear to be a valid Google OAuth credentials file'
         }), 400
 
-    # Get plugin directory
-    plugin_id = 'calendar'
-    if api_v3.plugin_manager:
-        plugin_dir = api_v3.plugin_manager.get_plugin_directory(plugin_id)
-    else:
-        plugin_dir = PROJECT_ROOT / 'plugins' / plugin_id
-
-    if not plugin_dir or not Path(plugin_dir).exists():
+    plugin_dir = _plugin_directory('calendar')
+    if not plugin_dir:
         return jsonify({'status': 'error', 'message': 'Plugin not found'}), 404
 
     # Save file to plugin directory

@@ -1382,16 +1382,24 @@ def _prune_credential_backups(plugin_dir: Path) -> None:
 # calendarList.list pages at 250 entries maximum. Ten pages is far past any
 # real account and exists only so a malformed nextPageToken cannot spin here.
 _CALENDAR_LIST_MAX_PAGES = 10
+def _plugin_directory(plugin_id: str) -> Optional[Path]:
+    """An installed plugin's directory, or None when it has none on disk.
+
+    Only the plugin manager is asked, so no plugin manager means None. There
+    is no fallback to the legacy plugins/ directory: the loader never scans
+    it, so a plugin found only there is one that never runs.
+    """
+    if not api_v3.plugin_manager:
+        return None
+    plugin_dir = api_v3.plugin_manager.get_plugin_directory(plugin_id)
+    if not plugin_dir or not Path(plugin_dir).exists():
+        return None
+    return Path(plugin_dir)
+
+
 def _calendar_plugin_dir() -> Optional[Path]:
     """Where the calendar plugin is installed, or None if it is not."""
-    if api_v3.plugin_manager:
-        plugin_dir = api_v3.plugin_manager.get_plugin_directory('calendar')
-    else:
-        plugin_dir = PROJECT_ROOT / 'plugins' / 'calendar'
-    if not plugin_dir:
-        return None
-    plugin_dir = Path(plugin_dir)
-    return plugin_dir if plugin_dir.exists() else None
+    return _plugin_directory('calendar')
 def _run_calendar_registration(plugin_dir: Path, stdin_payload: str):
     """Run the plugin's OAuth script and return the JSON object it prints.
 
