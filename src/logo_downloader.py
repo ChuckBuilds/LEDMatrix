@@ -370,22 +370,15 @@ class LogoDownloader:
     
     @staticmethod
     def get_logo_filename_variations(abbreviation: str) -> list:
-        """Get possible filename variations for a team abbreviation."""
-        variations = []
+        """Filenames a logo for ``abbreviation`` may be stored under: the
+        upper-cased abbreviation as given, then its normalize_abbreviation()
+        form (``TA&M.png``, then ``TAANDM.png``)."""
         original = abbreviation.upper()
         normalized = LogoDownloader.normalize_abbreviation(abbreviation)
-        
-        # Add original and normalized versions
-        variations.extend([f"{original}.png", f"{normalized}.png"])
-        
-        # Special handling for known cases
-        if original == 'TA&M':
-            # TA&M has a file named TA&M.png, but normalize creates TAANDM.png
-            variations = [f"{original}.png", f"{normalized}.png"]
-        
-        return variations
+        return [f"{original}.png", f"{normalized}.png"]
     
-    # Allowlist for league names used in filesystem paths: alphanumerics, underscores, dashes only
+    # Allowlist for a league name or code that goes into a filesystem path or
+    # an ESPN URL: lower-case alphanumerics, underscores and dashes only.
     _SAFE_LEAGUE_RE = re.compile(r'^[a-z0-9_-]+$')
 
     def get_logo_directory(self, league: str) -> str:
@@ -462,15 +455,12 @@ class LogoDownloader:
             logger.error(f"Unexpected error downloading logo for {team_abbreviation}: {e}")
             return False
 
-    # Allowlist for the league_code segment interpolated into ESPN API URLs
-    _SAFE_LEAGUE_CODE_RE = re.compile(r'^[a-z0-9_-]+$')
-
     def _resolve_api_url(self, league: str) -> Optional[str]:
         """Resolve the ESPN API teams URL for a league, with dynamic fallback for custom soccer leagues."""
         api_url = self.API_ENDPOINTS.get(league)
         if not api_url and league.startswith('soccer_'):
             league_code = league[len('soccer_'):]
-            if not self._SAFE_LEAGUE_CODE_RE.match(league_code):
+            if not self._SAFE_LEAGUE_RE.match(league_code):
                 logger.warning(f"Rejecting unsafe league_code for ESPN URL construction: {league_code!r}")
                 return None
             api_url = f'https://site.api.espn.com/apis/site/v2/sports/soccer/{league_code}/teams'
@@ -501,7 +491,8 @@ class LogoDownloader:
             return None
     
     def fetch_single_team(self, league: str, team_id: str) -> Optional[Dict]:
-        """Fetch team data from ESPN API for a specific league."""
+        """Fetch one team's record (``<teams endpoint>/<team_id>``) from the
+        ESPN API; None on any request or parse failure."""
         api_url = self._resolve_api_url(league)
         if not api_url:
             logger.error(f"No API endpoint configured for league: {league}")
@@ -520,7 +511,7 @@ class LogoDownloader:
             logger.error(f"Error fetching team data for {team_id} in {league}: {e}")
             return None
         except json.JSONDecodeError as e:
-            logger.error(f"Error parsing JSON response for{team_id} in {league}: {e}")
+            logger.error(f"Error parsing JSON response for {team_id} in {league}: {e}")
             return None
     
     def extract_teams_from_data(self, data: Dict, league: str) -> List[Dict[str, str]]:
@@ -625,42 +616,6 @@ class LogoDownloader:
         
         # Default to FBS for unknown conferences
         return 'FBS'
-    
-    def _get_team_name_variations(self, abbreviation: str) -> List[str]:
-        """Generate common variations of a team abbreviation for matching."""
-        variations = set()
-        abbr = abbreviation.upper()
-        variations.add(abbr)
-        
-        # Add normalized version
-        variations.add(self.normalize_abbreviation(abbr))
-        
-        # Common substitutions
-        substitutions = {
-            '&': ['AND', 'A'],
-            'A&M': ['TAMU', 'TA&M', 'TEXASAM'],
-            'STATE': ['ST', 'ST.'],
-            'UNIVERSITY': ['U', 'UNIV'],
-            'COLLEGE': ['C', 'COL'],
-            'TECHNICAL': ['TECH', 'T'],
-            'NORTHERN': ['NORTH', 'N'],
-            'SOUTHERN': ['SOUTH', 'S'],
-            'EASTERN': ['EAST', 'E'],
-            'WESTERN': ['WEST', 'W']
-        }
-        
-        # Apply substitutions
-        for original, replacements in substitutions.items():
-            if original in abbr:
-                for replacement in replacements:
-                    variations.add(abbr.replace(original, replacement))
-                    variations.add(abbr.replace(original, ''))  # Remove the word entirely
-        
-        # Add common abbreviations for Texas A&M
-        if 'A&M' in abbr or 'TAMU' in abbr:
-            variations.update(['TAMU', 'TA&M', 'TEXASAM', 'TEXAS_A&M', 'TEXAS_AM'])
-        
-        return list(variations)
     
     def download_missing_logos_for_league(self, league: str, force_download: bool = False) -> Tuple[int, int]:
         """Download missing logos for a specific league."""
