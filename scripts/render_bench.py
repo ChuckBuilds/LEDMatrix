@@ -346,8 +346,8 @@ def main(argv=None) -> int:
         display.set_scrolling_state(False)
         try:
             display.clear()
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001 - a lit panel is harmless; say so and go on
+            print(f"could not blank the panel: {exc}", file=sys.stderr)
 
     if before is None:
         print("interrupted during warm-up; nothing was graded", file=sys.stderr)
