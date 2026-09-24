@@ -1415,13 +1415,16 @@ class DisplayManager:
         that does not care gets a new frame every refresh.
         """
         current_time = time.time()
+        # Scrolling callers set this every frame; log transitions only.
+        changed = self._scrolling_state['is_scrolling'] != is_scrolling
         self._scrolling_state['is_scrolling'] = is_scrolling
         if is_scrolling:
             self._scrolling_state['last_scroll_activity'] = current_time
             self.set_frame_hold(frame_hold)
         else:
             self._frame_hold = 1
-        logger.debug(f"Scrolling state set to: {is_scrolling}")
+        if changed:
+            logger.debug("Scrolling state set to: %s", is_scrolling)
 
     def is_currently_scrolling(self) -> bool:
         """Check if the display is currently in a scrolling state."""
