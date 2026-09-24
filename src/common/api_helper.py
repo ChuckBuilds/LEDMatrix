@@ -1,8 +1,9 @@
 """
 API Helper
 
-Handles HTTP requests, caching, and ESPN API integration for LED matrix plugins.
-Extracted from LEDMatrix core to provide reusable functionality for plugins.
+HTTP requests, response caching and ESPN fetch helpers for plugins
+(``from src.common import APIHelper``), plus the headers every core request
+sends (:data:`USER_AGENT`, :data:`DEFAULT_HTTP_HEADERS`).
 """
 
 import logging
@@ -80,13 +81,7 @@ class APIHelper:
         self.session.mount("https://", adapter)
         self.session.mount("http://", adapter)
         
-        # Default headers
-        self.session.headers.update({
-            'User-Agent': USER_AGENT,
-            'Accept': 'application/json',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Connection': 'keep-alive'
-        })
+        self.session.headers.update({**DEFAULT_HTTP_HEADERS, 'Connection': 'keep-alive'})
         
         # Rate limiting
         self._last_request_time = 0
@@ -297,10 +292,8 @@ class APIHelper:
         """
         Clear cache data.
 
-        Uses CacheManager's real surface (clear_cache / delete /
-        list_cache_files); safely no-ops on managers without it. The old
-        implementation guarded on a nonexistent ``clear`` method, so it
-        silently never cleared anything.
+        Uses CacheManager's clear_cache(), or list_cache_files() and delete()
+        for a pattern. A cache manager without those methods is left alone.
 
         Args:
             pattern: Optional substring to match cache keys; only matching
@@ -321,8 +314,6 @@ class APIHelper:
                     "cannot clear by pattern")
         elif hasattr(self.cache_manager, 'clear_cache'):
             self.cache_manager.clear_cache()
-        elif hasattr(self.cache_manager, 'clear'):
-            self.cache_manager.clear()
         else:
             self.logger.debug("Cache manager exposes no clear method; no-op")
     

@@ -257,15 +257,6 @@ class TestClearCache:
 
         manager.clear_cache.assert_called_once_with()
 
-    def test_no_pattern_falls_back_to_clear(self):
-        manager = types.SimpleNamespace(clear=Mock())
-        helper = APIHelper(cache_manager=manager)
-        helper.set_rate_limit(0)
-
-        helper.clear_cache()
-
-        manager.clear.assert_called_once_with()
-
     def test_no_pattern_manager_without_any_clear_is_noop(self):
         helper = APIHelper(cache_manager=object())
         helper.set_rate_limit(0)
