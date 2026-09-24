@@ -16,9 +16,13 @@ change to the fallback chains is a deliberate one.
 
 The `.standalone-backup-` contract: store_manager renames a plugin dir aside
 with that substring during install/rollback; discovery MUST skip such dirs
-or a half-finished install would surface a ghost plugin. The substring is
-duplicated as a literal in both files — this test breaks if either side
-changes it unilaterally.
+or a half-finished install would surface a ghost plugin. The substring now
+lives once, as plugin_dirs.BACKUP_MARKER, which both sides import; its value
+is pinned because debris already on devices carries exactly that text.
+
+All of them now resolve through src/plugin_system/plugin_dirs.py; the
+per-caller differences pinned here are explicit arguments there. The rules
+themselves are covered table-style in test_plugin_dirs.py.
 """
 
 import json
@@ -198,14 +202,16 @@ class TestStandaloneBackupContract:
         found = _scanner()._scan_directory_for_plugins(plugins_dir)
         assert found == ["real-plugin"]
 
-    def test_backup_substring_literal_matches_across_files(self):
-        """The substring is duplicated in plugin_manager (skip check) and
-        store_manager (rename-aside names). If either side changes it, the
-        other silently stops honoring the contract — this test is the
-        tripwire."""
+    def test_backup_marker_is_shared_and_unchanged(self):
+        """store_manager (rename-aside names) and every lookup (skip check)
+        must agree on the marker. Both now import one constant; the value is
+        pinned because renaming it would make existing debris on devices
+        visible as plugins again."""
+        from src.plugin_system import plugin_dirs
+        assert plugin_dirs.BACKUP_MARKER == '.standalone-backup-'
         root = Path(__file__).resolve().parents[1]
-        pm_text = (root / "src/plugin_system/plugin_manager.py").read_text()
-        sm_text = (root / "src/plugin_system/store_manager.py").read_text()
-        assert "'.standalone-backup-'" in pm_text.replace('"', "'")
-        assert ".standalone-backup-" in sm_text
-
+        sm_text = (root / "src/plugin_system/store_manager.py").read_text(encoding="utf-8")
+        assert "{BACKUP_MARKER}preinstall" in sm_text
+        assert "{BACKUP_MARKER}migrating" in sm_text
+        assert plugin_dirs.is_ignored_dir_name(
+            "demo" + plugin_dirs.BACKUP_MARKER + "preinstall")

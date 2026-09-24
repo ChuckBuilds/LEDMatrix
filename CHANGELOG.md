@@ -27,6 +27,14 @@ accepts both, but the store flags the old spelling as deprecated
   (`web_interface/cache.py`) now honours the TTL a value was stored with and is
   thread-safe.
 
+- One plugin-directory resolver, `src/plugin_system/plugin_dirs.py`, behind
+  discovery, `PluginManager.get_plugin_directory`, `PluginLoader`, the store and
+  state reconciliation. A manifest's `id` wins over a directory merely named for
+  the id; hidden and `.standalone-backup-` directories are never treated as
+  plugins (auto-update could previously try to update a backup); ids like
+  `a/b` or `..` resolve to nothing everywhere. Installs where each directory is
+  named for its manifest id, the installer's layout, behave as before.
+
 - `FontManager.get_font()` returns a BDF font at its native size when asked for
   a size the file doesn't contain (5x7.bdf at 8 or 10px, say). It used to
   return PIL's default font, a different typeface, so a plugin that relied on
