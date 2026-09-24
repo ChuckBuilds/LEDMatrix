@@ -27,6 +27,16 @@ import web_interface.blueprints.api_v3 as _pkg
 #: that a missing checkbox was unchecked, not merely left out of an API call.
 FORM_SECTION_FIELD = '__form_section'
 
+#: Fields of the General tab. Any one of them in a /config/main post means the
+#: General form was submitted, so its unchecked checkboxes read as False.
+GENERAL_FIELDS = ('timezone', 'city', 'state', 'country', 'web_display_autostart',
+                  'plugins_directory', 'auto_update_enabled')
+
+#: Top-level fields save_main_config stores somewhere of its own (location,
+#: plugin_system, ...), never as a config key of the same name.
+_MAPPED_TOP_LEVEL_FIELDS = GENERAL_FIELDS + (
+    'auto_discover', 'auto_load_enabled', 'development_mode', 'target_fps')
+
 
 def _plugin_id_list(raw, field_name):
     """``(ids, None)`` for a list of plugin ids, or ``(None, message)``.
@@ -492,11 +502,7 @@ def save_main_config():
         current_config = api_v3.config_manager.load_config()
         was_auto_update_enabled = bool((current_config.get('auto_update') or {}).get('enabled'))
 
-        # Handle general settings
-        # Note: Checkboxes don't send data when unchecked, so we need to check if we're updating general settings
-        # If any general setting is present, we're updating the general tab
-        is_general_update = any(k in data for k in ['timezone', 'city', 'state', 'country', 'web_display_autostart',
-                                                     'plugins_directory', 'auto_update_enabled'])
+        is_general_update = any(k in data for k in GENERAL_FIELDS)
 
         if is_general_update:
             # For checkbox: if not present in data during a general *form*
@@ -1063,27 +1069,15 @@ def save_main_config():
         for key in plugin_keys_to_remove:
             del data[key]
 
-        # Handle any remaining config keys
-        # System settings (timezone, city, etc.) are already handled above
-        # Plugin configs should use /api/v3/plugins/config endpoint, but we'll handle them here too for flexibility
+        # Whatever no section above claimed is stored as a top-level key, a
+        # dict merged onto the stored one. Plugin sections were handled and
+        # removed above. Form field names the sections above already stored
+        # elsewhere are skipped, or each would land as a top-level key too.
+        mapped_fields = set(_MAPPED_TOP_LEVEL_FIELDS).union(
+            display_fields, sync_fields, vegas_fields, double_sided_fields)
         for key in data:
-            # Skip system settings that are already handled above
-            if key in ['timezone', 'city', 'state', 'country',
-                       'web_display_autostart', 'auto_discover',
-                       'auto_load_enabled', 'development_mode',
-                       'plugins_directory', 'target_fps', 'auto_update_enabled']:
+            if key in mapped_fields:
                 continue
-            # Skip fields that are already handled above in their own named sections.
-            # Without this, every form field name lands as a top-level config key too.
-            if key in display_fields:
-                continue
-            if key in sync_fields:
-                continue
-            if key in vegas_fields:
-                continue
-            if key in double_sided_fields:
-                continue
-            # For any remaining keys (including plugin keys), use deep merge to preserve existing settings
             if key in current_config and isinstance(current_config[key], dict) and isinstance(data[key], dict):
                 # Deep merge to preserve existing settings
                 current_config[key] = deep_merge(current_config[key], data[key])
