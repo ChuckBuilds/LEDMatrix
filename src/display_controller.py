@@ -363,7 +363,7 @@ class DisplayController:
                     
                     if result['success']:
                         plugin_id = result['plugin_id']
-                        logger.info("✓ Loaded plugin %s in %.3f seconds (%d/%d)", 
+                        logger.info("Loaded plugin %s in %.3f seconds (%d/%d)", 
                                   plugin_id, result['load_time'], loaded_count, enabled_count)
                         
                         # Register the loaded plugin's modes, config subscription
@@ -376,7 +376,7 @@ class DisplayController:
                         logger.info("Progress: %d%% (%d/%d plugins, %.1fs elapsed)", 
                                   progress_pct, loaded_count, enabled_count, elapsed)
                     else:
-                        logger.warning("✗ Failed to load plugin %s: %s", 
+                        logger.warning("Failed to load plugin %s: %s", 
                                      result['plugin_id'], result['error'])
             
             # Log disabled plugins
@@ -1758,7 +1758,7 @@ class DisplayController:
 
         self.rotation_resume_index = None
         self.force_change = True
-        logger.info("✓ ON-DEMAND MODE CLEARED (reason=%s), resuming normal rotation to mode: %s", 
+        logger.info("On-demand mode cleared (reason=%s), resuming normal rotation to mode: %s", 
                    reason, self.current_display_mode)
         self._publish_on_demand_state()
 
