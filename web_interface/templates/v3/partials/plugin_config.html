@@ -423,11 +423,10 @@
                                             {% if img.get('size') %}{{ (img.get('size') / 1024)|round }} KB{% endif %}
                                             {% if img.get('uploaded_at') %} • {{ img.get('uploaded_at') }}{% endif %}
                                         </p>
-                                        {% if has_schedule %}
-                                        <p class="text-xs text-blue-600 mt-1">
-                                            <i class="fas fa-clock mr-1"></i>Scheduled
+                                        {# file-upload.js rewrites .image-schedule-summary in place when the schedule is edited #}
+                                        <p class="text-xs text-blue-600 mt-1 image-schedule-summary">
+                                            <i class="fas fa-clock mr-1"></i>{{ 'Scheduled' if has_schedule else 'Always shown' }}
                                         </p>
-                                        {% endif %}
                                     </div>
                                 </div>
                                 <div class="flex items-center space-x-2 ml-4">

@@ -25,12 +25,7 @@
 
     const base = window.BaseWidget ? new window.BaseWidget('TimePicker', '1.0.0') : null;
 
-    function escapeHtml(text) {
-        if (base) return base.escapeHtml(text);
-        const div = document.createElement('div');
-        div.textContent = String(text);
-        return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-    }
+    function escapeHtml(text) { return window.LEDEscape.html(text); }
 
     function sanitizeId(id) {
         if (base) return base.sanitizeId(id);

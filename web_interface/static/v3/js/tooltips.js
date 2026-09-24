@@ -1,3 +1,4 @@
+/* global debugLog */
 /*
  * tooltips.js — accessible, delegated tooltip controller for the v3 web UI.
  *
@@ -157,5 +158,5 @@
         if (currentTrigger && !document.body.contains(currentTrigger)) hide();
     });
 
-    console.log('[Tooltips] controller registered');
+    debugLog('[Tooltips] controller registered');
 })();

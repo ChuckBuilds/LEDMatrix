@@ -48,15 +48,8 @@ class PluginAdapter:
             from src.vegas_mode.config import VegasModeConfig
             config = VegasModeConfig()
         self.config = config
-        # Handle both property and method access patterns
-        self.display_width = (
-            display_manager.width() if callable(display_manager.width)
-            else display_manager.width
-        )
-        self.display_height = (
-            display_manager.height() if callable(display_manager.height)
-            else display_manager.height
-        )
+        self.display_width = display_manager.width
+        self.display_height = display_manager.height
 
         # Cache for recently fetched content (prevents redundant fetch)
         self._content_cache: dict = {}
@@ -185,13 +178,14 @@ class PluginAdapter:
         Trim dead space off a segment, then cache it.
 
         Every content path funnels through here so trimming is applied
-        uniformly. Previously only the scroll_helper path had its margins
-        stripped, which left plugins that render onto a full-display canvas
-        contributing their entire blank canvas to the ticker.
+        uniformly; a plugin that renders onto a full-display canvas would
+        otherwise contribute its whole blank canvas to the ticker.
 
-        Each image is trimmed independently because compose_scroll_content()
-        treats every image as its own item and inserts separator_width between
-        them — so a per-image trim is what makes that separator the real gap.
+        Each image is trimmed independently. The render pipeline joins one
+        plugin's images with a gap measured from their ink
+        (RenderPipeline._join_plugin_rows) and puts separator_width only
+        between plugins, so the margins a row keeps are content_padding, not
+        whatever blank canvas the plugin happened to draw it on.
 
         Args:
             images: Raw content from one of the fetch paths
@@ -602,8 +596,11 @@ class PluginAdapter:
         Narrow a single oversized image to the budget, advancing a window
         through it across cycles.
 
-        The cut is snapped to the nearest blank column so it does not slice
-        through a glyph or logo and leave half a character at the panel edge.
+        Cuts land only at item boundaries: the middle of a blank run at least
+        ``min_cut_gap`` columns wide. The window ends at the last boundary
+        inside the budget, or overruns to the next one when there is none, so
+        an item is never sliced. An image with no such runs (a map, a chart)
+        is continuous content and is cropped to the budget exactly.
 
         Rotation is tracked as an index into the strip's item boundaries rather
         than as a pixel column, because a ticker re-renders between fetches. A

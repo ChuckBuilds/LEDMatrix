@@ -1,4 +1,56 @@
 /* global debugLog */
+/*
+ * plugins_manager.js -- the Plugin Manager tab and everything that acts on
+ * installed plugins: the installed grid (toggle, configure, update,
+ * uninstall), the plugin store and custom registries, GitHub-URL installs
+ * and the GitHub token panel, on-demand runs, the array-of-objects and
+ * key/value config fields, plugin web-UI actions, and the Starlark apps
+ * section.
+ *
+ * Deferred and loaded last, after the widget bundle, so everything it uses
+ * (PluginAPI, ListFilter, LEDDialog, the widgets, app-shell.js's
+ * updatePlugin) already exists.
+ *
+ * Load order (templates/v3/base.html):
+ *   <head>, blocking:  debugLog and theme inline scripts; the htmx loader
+ *                      (injects htmx.min.js with a dynamic <script>);
+ *                      js/htmx-config.js; the loadPartialDirect fallback;
+ *                      js/app-early.js
+ *   <head>, defer:     js/app-shell.js, then js/alpinejs.min.js (Alpine
+ *                      starts as soon as it runs, so app-shell.js's app()
+ *                      is the one Alpine uses)
+ *   end of <body>, defer, in this order: app.js, js/tooltips.js,
+ *                      js/settings-search.js, js/utils/dialog.js,
+ *                      js/utils/error_handler.js, js/plugins/api_client.js,
+ *                      state_manager.js, install_manager.js, list_filter.js,
+ *                      the widget bundle (web_interface/widget_bundle.py),
+ *                      plugins_manager.js
+ *   Tab partials arrive later through htmx; their inline scripts run on
+ *   htmx:afterSwap (js/htmx-config.js).
+ *
+ * Layout: a few handlers defined up front, outside any IIFE, because the
+ * cards and other scripts call them through window (configurePlugin,
+ * togglePlugin, the GitHub token helpers, handleGitHubPluginInstall,
+ * checkGitHubAuthStatus); then the plugin-manager IIFE (private state:
+ * installedPlugins, the store cache, the on-demand poller); then the
+ * array-of-objects field helpers; then the Starlark IIFE.
+ *
+ * The installed list is published only by renderInstalledPlugins: it sets
+ * window.installedPlugins and dispatches one `pluginsUpdated` event, which
+ * app-shell.js's app() uses to draw the plugin tabs.
+ *
+ * Globals include: window.pluginManager (loadInstalledPlugins,
+ * searchPluginStore, init flags), initPluginsPage, handlePluginAction,
+ * configurePlugin, togglePlugin, uninstallPlugin, installPlugin,
+ * installFromCustomRegistry, removeSavedRepository, executePluginAction,
+ * openOnDemandModal, requestOnDemandStop, loadOnDemandStatus,
+ * renderArrayObjectItem, addArrayObjectItem, removeArrayObjectItem,
+ * updateArrayObjectData, handleArrayObjectFileUpload, removeArrayObjectFile,
+ * removeKeyValuePair, updateKeyValuePairData, getSchemaProperty,
+ * installStarlarkApp, installPixlet, the GitHub token functions,
+ * window.installedPlugins and window.currentPluginConfig.
+ */
+
 // ─── LocalStorage Safety Wrappers ────────────────────────────────────────────
 // Handles environments where localStorage is unavailable or restricted (private browsing, etc.)
 const safeLocalStorage = {
@@ -36,51 +88,34 @@ const safeLocalStorage = {
     }
 };
 
-// Define critical functions immediately so they're available before any HTML is rendered
-// Debug logging controlled by safeLocalStorage.setItem('pluginDebug', 'true')
-const _PLUGIN_DEBUG_EARLY = safeLocalStorage.getItem('pluginDebug') === 'true';
-if (_PLUGIN_DEBUG_EARLY) debugLog('[PLUGINS SCRIPT] Defining configurePlugin and togglePlugin at top level...');
-
 // Define configurePlugin early to ensure it's always available
 window.configurePlugin = window.configurePlugin || async function(pluginId) {
-    if (_PLUGIN_DEBUG_EARLY) debugLog('[PLUGINS STUB] configurePlugin called for', pluginId);
+    debugLog('[PLUGINS] configurePlugin called for', pluginId);
 
-    // Switch to the plugin's configuration tab instead of opening a modal
-    // This matches the behavior of clicking the plugin tab at the top
-    function getAppComponent() {
-        if (window.Alpine) {
-            const appElement = document.querySelector('[x-data="app()"]');
-            if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
-                return appElement._x_dataStack[0];
-            }
-        }
-        return null;
-    }
-
-    const appComponent = getAppComponent();
+    // Opens the plugin's own tab, the same as clicking it in the tab row.
+    const appComponent = window.getApp();
     if (appComponent) {
         // Set the active tab to the plugin ID
         appComponent.activeTab = pluginId;
-        if (_PLUGIN_DEBUG_EARLY) debugLog('[PLUGINS STUB] Switched to plugin tab:', pluginId);
+        debugLog('[PLUGINS] Switched to plugin tab:', pluginId);
 
         // Scroll to top of page to ensure the tab is visible
         window.scrollTo({ top: 0, behavior: 'smooth' });
     } else {
         console.error('Alpine.js app instance not found');
-        if (typeof showNotification === 'function') {
-            showNotification('Unable to switch to plugin configuration. Please refresh the page.', 'error');
-        }
+        showNotification('Unable to switch to plugin configuration. Please refresh the page.', 'error');
     }
 };
 
-// Initialize per-plugin toggle request token map for race condition protection
+// Latest toggle request per plugin, so a slow response to an earlier click
+// cannot overwrite the outcome of a later one.
 if (!window._pluginToggleRequests) {
     window._pluginToggleRequests = {};
 }
 
 // Define togglePlugin early to ensure it's always available
 window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
-    if (_PLUGIN_DEBUG_EARLY) debugLog('[PLUGINS STUB] togglePlugin called for', pluginId, 'enabled:', enabled);
+    debugLog('[PLUGINS] togglePlugin called for', pluginId, 'enabled:', enabled);
 
     const plugin = (window.installedPlugins || []).find(p => p.id === pluginId);
     const pluginName = plugin ? (plugin.name || pluginId) : pluginId;
@@ -104,12 +139,10 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
         toggleCheckbox.classList.add('opacity-50', 'cursor-not-allowed');
     }
 
-    // Disable wrapper to provide visual feedback
     if (wrapperDiv) {
         wrapperDiv.classList.add('opacity-50', 'pointer-events-none');
     }
 
-    // Update wrapper background and border
     if (wrapperDiv) {
         if (enabled) {
             wrapperDiv.classList.remove('bg-gray-50', 'border-gray-300');
@@ -120,7 +153,6 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
         }
     }
 
-    // Update toggle track
     if (toggleTrack) {
         if (enabled) {
             toggleTrack.classList.remove('bg-gray-300');
@@ -131,7 +163,6 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
         }
     }
 
-    // Update toggle handle
     if (toggleHandle) {
         if (enabled) {
             toggleHandle.classList.add('translate-x-full', 'border-green-500');
@@ -144,7 +175,6 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
         }
     }
 
-    // Update label with icon and text
     if (toggleLabel) {
         if (enabled) {
             toggleLabel.className = 'text-sm font-semibold text-green-700 flex items-center gap-1.5';
@@ -155,9 +185,13 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
         }
     }
 
-    if (typeof showNotification === 'function') {
-        showNotification(`${action.charAt(0).toUpperCase() + action.slice(1)} ${pluginName}...`, 'info');
-    }
+    // The card was just edited in place, so the grid no longer matches the
+    // markup setGridHtmlIfChanged last wrote; forget that so the next render
+    // (a failed toggle's revert, below) rebuilds it instead of skipping.
+    const installedGrid = document.getElementById('installed-plugins-grid');
+    if (installedGrid) installedGrid._lastRenderedHtml = null;
+
+    showNotification(`${action.charAt(0).toUpperCase() + action.slice(1)} ${pluginName}...`, 'info');
 
     return fetch('/api/v3/plugins/toggle', {
         method: 'POST',
@@ -172,26 +206,19 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
             return;
         }
 
-        if (typeof showNotification === 'function') {
-            showNotification(data.message, data.status);
-        }
+        showNotification(data.message, data.status);
         if (data.status === 'success') {
-            // Update local state
+            // The switch was already drawn in its new state above; keep it
+            // (and keyboard focus) rather than re-rendering the grid.
             if (plugin) {
                 plugin.enabled = enabled;
             }
-            // Refresh the list to ensure consistency
-            if (typeof loadInstalledPlugins === 'function') {
-                loadInstalledPlugins();
-            }
         } else {
-            // Revert the toggle if API call failed
+            // Re-render so the switch goes back to the state the server kept.
             if (plugin) {
                 plugin.enabled = !enabled;
             }
-            if (typeof loadInstalledPlugins === 'function') {
-                loadInstalledPlugins();
-            }
+            window.pluginManager.loadInstalledPlugins();
         }
 
         // Clear token and re-enable UI
@@ -214,16 +241,12 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
             return;
         }
 
-        if (typeof showNotification === 'function') {
-            showNotification('Error toggling plugin: ' + error.message, 'error');
-        }
-        // Revert the toggle if API call failed
+        showNotification('Error toggling plugin: ' + error.message, 'error');
+        // Re-render so the switch goes back to the state the server kept.
         if (plugin) {
             plugin.enabled = !enabled;
         }
-        if (typeof loadInstalledPlugins === 'function') {
-            loadInstalledPlugins();
-        }
+        window.pluginManager.loadInstalledPlugins();
 
         // Clear token and re-enable UI
         delete window._pluginToggleRequests[pluginId];
@@ -241,15 +264,11 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
 // Track pending render data for when DOM isn't ready yet
 window.__pendingInstalledPlugins = window.__pendingInstalledPlugins || null;
 window.__pendingStorePlugins = window.__pendingStorePlugins || null;
-window.__pluginDomReady = window.__pluginDomReady || false;
 
 // Document-level delegation for plugin card actions, so a card works even if
 // it was rendered before the grid's own listener was attached. It hands the
 // event to handlePluginAction, which the plugin-manager IIFE below exposes on
-// window. (It used to test `typeof handlePluginAction`, which is IIFE-scoped
-// and so never visible here: every click took a copied fallback instead, which
-// asked to confirm an uninstall twice and sent Starlark app uninstalls to the
-// plugin endpoint.)
+// window (the function itself is IIFE-scoped and not visible from here).
 (function setupGlobalEventDelegation() {
     const handleGlobalPluginAction = function(event) {
         const target = event.target;
@@ -266,23 +285,6 @@ window.__pluginDomReady = window.__pluginDomReady || false;
     document.addEventListener('change', handleGlobalPluginAction, true);
     debugLog('[PLUGINS SCRIPT] Global event delegation set up');
 })();
-
-// Note: configurePlugin and togglePlugin are now defined at the top of the file (after uninstallPlugin)
-// to ensure they're available immediately when the script loads
-
-// Verify functions are defined (debug only)
-if (_PLUGIN_DEBUG_EARLY) {
-    debugLog('[PLUGINS SCRIPT] Functions defined:', {
-        configurePlugin: typeof window.configurePlugin,
-        togglePlugin: typeof window.togglePlugin
-    });
-    if (typeof window.configurePlugin === 'function') {
-        debugLog('[PLUGINS SCRIPT] ✓ configurePlugin ready');
-    }
-    if (typeof window.togglePlugin === 'function') {
-        debugLog('[PLUGINS SCRIPT] ✓ togglePlugin ready');
-    }
-}
 
 // GitHub Token Collapse Handler - Define early so it's available before IIFE
 debugLog('[DEFINE] Defining attachGithubTokenCollapseHandler function...');
@@ -449,40 +451,27 @@ window.handleGitHubPluginInstall = function() {
         debugLog('[handleGitHubPluginInstall] Response data:', data);
         if (data.status === 'success') {
             if (statusDiv) {
-                statusDiv.innerHTML = `<span class="text-green-600"><i class="fas fa-check-circle mr-1"></i>Successfully installed: ${data.plugin_id}</span>`;
+                statusDiv.innerHTML = `<span class="text-green-600"><i class="fas fa-check-circle mr-1"></i>Successfully installed: ${window.LEDEscape.html(data.plugin_id)}</span>`;
             }
             urlInput.value = '';
 
             // Show notification if available
-            if (typeof showNotification === 'function') {
-                showNotification(`Plugin ${data.plugin_id} installed successfully`, 'success');
-            }
+            showNotification(`Plugin ${data.plugin_id} installed successfully`, 'success');
 
-            // Refresh installed plugins list if function available
-            setTimeout(() => {
-                if (typeof loadInstalledPlugins === 'function') {
-                    loadInstalledPlugins();
-                } else if (typeof window.loadInstalledPlugins === 'function') {
-                    window.loadInstalledPlugins();
-                }
-            }, 1000);
+            setTimeout(() => window.pluginManager.loadInstalledPlugins(true), 1000);
         } else {
             if (statusDiv) {
-                statusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>${data.message || 'Installation failed'}</span>`;
+                statusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>${window.LEDEscape.html(data.message || 'Installation failed')}</span>`;
             }
-            if (typeof showNotification === 'function') {
-                showNotification(data.message || 'Installation failed', 'error');
-            }
+            showNotification(data.message || 'Installation failed', 'error');
         }
     })
     .catch(error => {
         console.error('[handleGitHubPluginInstall] Error:', error);
         if (statusDiv) {
-            statusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>Error: ${error.message}</span>`;
+            statusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>Error: ${window.LEDEscape.html(error.message)}</span>`;
         }
-        if (typeof showNotification === 'function') {
-            showNotification('Error installing plugin: ' + error.message, 'error');
-        }
+        showNotification('Error installing plugin: ' + error.message, 'error');
     })
     .finally(() => {
         if (installBtn) {
@@ -619,7 +608,7 @@ window.checkGitHubAuthStatus = function checkGitHubAuthStatus() {
 (function() {
     'use strict';
 
-    if (_PLUGIN_DEBUG_EARLY) debugLog('Plugin manager script starting...');
+    debugLog('Plugin manager script starting...');
 
     // Local variables for this instance
 let installedPlugins = [];
@@ -729,7 +718,6 @@ window.initPluginsPage = function() {
         return;
     }
 
-    // Check if required elements exist
     const installedGrid = document.getElementById('installed-plugins-grid');
     if (!installedGrid) {
         debugLog('Plugin elements not ready yet');
@@ -737,7 +725,6 @@ window.initPluginsPage = function() {
     }
 
     window.pluginManager.initializing = true;
-    window.__pluginDomReady = true;
 
     // Check GitHub auth status immediately (don't wait for full initialization)
     // This can run in parallel with other initialization
@@ -749,8 +736,8 @@ window.initPluginsPage = function() {
     // If we fetched data before the DOM existed, render it now
     if (window.__pendingInstalledPlugins) {
         debugLog('[RENDER] Applying pending installed plugins data');
-        renderInstalledPlugins(window.__pendingInstalledPlugins);
         window.__pendingInstalledPlugins = null;
+        applyInstalledFiltersAndRender();
     }
     if (window.__pendingStorePlugins) {
         debugLog('[RENDER] Applying pending plugin store data');
@@ -803,7 +790,6 @@ window.initPluginsPage = function() {
     return true;
 }
 
-// Consolidated initialization function
 function initializePluginPageWhenReady() {
     return window.initPluginsPage();
 }
@@ -813,13 +799,11 @@ function initializePluginPageWhenReady() {
     let initTimer = null;
 
     function attemptInit() {
-        // Clear any pending timer
         if (initTimer) {
             clearTimeout(initTimer);
             initTimer = null;
         }
 
-        // Try immediate initialization
         initializePluginPageWhenReady();
     }
 
@@ -854,7 +838,6 @@ function initializePluginPageWhenReady() {
     }, { once: false }); // Allow multiple swaps
 })();
 
-// Initialization guard to prevent multiple initializations
 let pluginsInitialized = false;
 
 function initializePlugins() {
@@ -863,34 +846,16 @@ function initializePlugins() {
     if (pluginsInitialized) {
         debugLog('[initializePlugins] Already initialized, skipping (but still setting up handlers)');
         // Still set up handlers even if already initialized (in case page was HTMX swapped)
-        debugLog('[initializePlugins] Force setting up GitHub handlers anyway...');
-        if (typeof setupGitHubInstallHandlers === 'function') {
-            setupGitHubInstallHandlers();
-        } else {
-            console.error('[initializePlugins] setupGitHubInstallHandlers not found!');
-        }
+        setupGitHubInstallHandlers();
         return;
     }
     pluginsInitialized = true;
 
     debugLog('[initializePlugins] Starting initialization...');
-    pluginLog('[INIT] Initializing plugins...');
+    debugLog('[INIT] Initializing plugins...');
 
-    // Check GitHub authentication status
-    debugLog('[INIT] Checking for checkGitHubAuthStatus function...', {
-        exists: typeof window.checkGitHubAuthStatus,
-        type: typeof window.checkGitHubAuthStatus
-    });
-    if (window.checkGitHubAuthStatus) {
-        debugLog('[INIT] Calling checkGitHubAuthStatus...');
-        try {
-            window.checkGitHubAuthStatus();
-        } catch (error) {
-            console.error('[INIT] Error calling checkGitHubAuthStatus:', error);
-        }
-    } else {
-        console.warn('[INIT] checkGitHubAuthStatus not available yet');
-    }
+    // Returns a promise and handles its own errors.
+    window.checkGitHubAuthStatus();
 
     // Load both installed plugins and plugin store.
     // On HTMX re-swaps with a still-warm cache, skip GitHub metadata to avoid
@@ -909,38 +874,23 @@ function initializePlugins() {
         .then(() => {
             // Re-render store from cache to update install/update/reinstall badges now
             // that window.installedPlugins is populated. No network call — instant.
-            if (typeof applyStoreFiltersAndSort === 'function') {
-                applyStoreFiltersAndSort(true);
-            }
+            applyStoreFiltersAndSort(true);
         });
 
-    // #plugin-search and #plugin-category are wired by the store's ListFilter
-    // controller (setupStoreFilterListeners). They used to ALSO be bound here to
-    // searchPluginStore; because that binding passed the DOM event as the
-    // `fetchCommitInfo` argument, every keystroke and category change skipped the
-    // cached-filter fast path and refetched /api/v3/plugins/store/list with commit
-    // info. Filtering the cached list is the controller's job — leave it to it.
+    // #plugin-search and #plugin-category belong to the store's ListFilter
+    // controller (setupStoreFilterListeners), which filters the cached list.
+    // Do not bind searchPluginStore to them as well: it would receive the DOM
+    // event as `fetchCommitInfo` and refetch the whole store on every keystroke.
 
-    // Setup GitHub installation handlers
-    debugLog('[initializePlugins] About to call setupGitHubInstallHandlers...');
-    if (typeof setupGitHubInstallHandlers === 'function') {
-        debugLog('[initializePlugins] setupGitHubInstallHandlers is a function, calling it...');
-        setupGitHubInstallHandlers();
-        debugLog('[initializePlugins] setupGitHubInstallHandlers called');
-    } else {
-        console.error('[initializePlugins] ERROR: setupGitHubInstallHandlers is not a function! Type:', typeof setupGitHubInstallHandlers);
-    }
+    setupGitHubInstallHandlers();
 
-    // Setup collapsible section handlers
     setupCollapsibleSections();
 
-    // Load saved repositories
     loadSavedRepositories();
 
-    pluginLog('[INIT] Plugins initialized');
+    debugLog('[INIT] Plugins initialized');
 }
 
-// Track in-flight requests to prevent duplicates
 // ===== PLUGIN LOADING WITH REQUEST DEDUPLICATION & CACHING =====
 // Prevents redundant API calls by caching results for a short time
 const pluginLoadCache = {
@@ -957,35 +907,21 @@ const pluginLoadCache = {
     }
 };
 
-// Debug flag - set via safeLocalStorage.setItem('pluginDebug', 'true')
-const PLUGIN_DEBUG = typeof localStorage !== 'undefined' && safeLocalStorage.getItem('pluginDebug') === 'true';
-function pluginLog(...args) {
-    if (PLUGIN_DEBUG) debugLog(...args);
-}
-
 function loadInstalledPlugins(forceRefresh = false) {
     // Return cached data if valid and not forcing refresh
     if (!forceRefresh && pluginLoadCache.isValid()) {
-        pluginLog('[CACHE] Returning cached plugin data');
-        // Update window.installedPlugins from cache
-        window.installedPlugins = pluginLoadCache.data;
-        // Dispatch event to notify Alpine component
-        document.dispatchEvent(new CustomEvent('pluginsUpdated', {
-            detail: { plugins: pluginLoadCache.data }
-        }));
-        pluginLog('[CACHE] Dispatched pluginsUpdated event from cache');
-        // Still render to ensure UI is updated
+        debugLog('[CACHE] Returning cached plugin data');
         renderInstalledPlugins(pluginLoadCache.data);
         return Promise.resolve(pluginLoadCache.data);
     }
 
     // If a request is already in progress, return the existing promise
     if (pluginLoadCache.promise) {
-        pluginLog('[CACHE] Request in progress, returning existing promise');
+        debugLog('[CACHE] Request in progress, returning existing promise');
         return pluginLoadCache.promise;
     }
 
-    pluginLog('[FETCH] Loading installed plugins...');
+    debugLog('[FETCH] Loading installed plugins...');
 
     // Use PluginAPI if available, otherwise fall back to direct fetch
     const fetchPromise = (window.PluginAPI && window.PluginAPI.getInstalledPlugins) ?
@@ -995,56 +931,41 @@ function loadInstalledPlugins(forceRefresh = false) {
         }) :
         fetch('/api/v3/plugins/installed').then(response => response.json());
 
-    // Store the promise
     pluginLoadCache.promise = fetchPromise
         .then(data => {
             if (data.status === 'success') {
                 const pluginsData = data.data?.plugins;
                 installedPlugins = Array.isArray(pluginsData) ? pluginsData : [];
 
-                // Update cache
                 pluginLoadCache.data = installedPlugins;
                 pluginLoadCache.timestamp = Date.now();
 
-                // Always update window.installedPlugins to ensure Alpine component can detect changes
-                window.installedPlugins = installedPlugins;
-
-                // Dispatch event to notify Alpine component to update tabs
-                document.dispatchEvent(new CustomEvent('pluginsUpdated', {
-                    detail: { plugins: installedPlugins }
-                }));
-                pluginLog('[FETCH] Dispatched pluginsUpdated event with', installedPlugins.length, 'plugins');
-
-                pluginLog('[FETCH] Loaded', installedPlugins.length, 'plugins');
-
-                // Debug logging only when enabled
-                if (PLUGIN_DEBUG) {
-                    installedPlugins.forEach(plugin => {
-                        debugLog(`[DEBUG] Plugin ${plugin.id}: enabled=${plugin.enabled}`);
-                    });
-                }
+                debugLog('[FETCH] Loaded', installedPlugins.length, 'plugins');
 
                 // Also refreshes the '#installed-count' text via the filter controller.
                 renderInstalledPlugins(installedPlugins);
 
                 return installedPlugins;
             } else {
-                const errorMsg = 'Failed to load installed plugins: ' + data.message;
-                showError(errorMsg);
-                throw new Error(errorMsg);
+                throw new Error('Failed to load installed plugins: ' + data.message);
             }
         })
         .catch(error => {
             console.error('Error loading installed plugins:', error);
             let errorMsg = 'Error loading plugins: ' + error.message;
-            if (error.message && error.message.includes('Failed to Fetch')) {
+            if (isNetworkFailure(error)) {
                 errorMsg += ' - Please try refreshing your browser.';
             }
-            showError(errorMsg);
+            // Replace the whole panel only when there is nothing to show yet; a
+            // failed refresh keeps the grid and the store the user is looking at.
+            if (pluginLoadCache.data === null) {
+                showInstalledLoadError(errorMsg);
+            } else {
+                showNotification(errorMsg, 'error');
+            }
             throw error;
         })
         .finally(() => {
-            // Clear the in-flight promise (but keep cache data)
             pluginLoadCache.promise = null;
         });
 
@@ -1193,40 +1114,23 @@ function setupInstalledFilterListeners() {
     ctl.syncControls();
 }
 
-// Publishes the canonical installed-plugin list, then renders through the
-// active filters. Everything that reads window.installedPlugins (the toggle
-// handler, isStorePluginInstalled, runUpdateAllPlugins, the Alpine config tabs)
-// depends on this receiving the FULL list — never a filtered subset.
+// The one place the installed-plugin list is published, then rendered
+// through the active filters. It sets window.installedPlugins, which the
+// toggle handler, isStorePluginInstalled and runUpdateAllPlugins read, and
+// dispatches one pluginsUpdated event, on which the Alpine app (app-shell.js)
+// takes the list and rebuilds the plugin tab row. Both must get the FULL
+// list, never a filtered subset.
 function renderInstalledPlugins(plugins) {
-    const container = document.getElementById('installed-plugins-grid');
-    if (!container) {
-        console.warn('[RENDER] installed-plugins-grid not yet available, deferring render until plugin tab loads');
+    window.installedPlugins = plugins;
+    document.dispatchEvent(new CustomEvent('pluginsUpdated', { detail: { plugins: plugins } }));
+
+    // The Plugin Manager tab may not be loaded yet; initPluginsPage renders
+    // when it is.
+    if (!document.getElementById('installed-plugins-grid')) {
+        debugLog('[RENDER] installed-plugins-grid not loaded yet, rendering when the tab loads');
         window.__pendingInstalledPlugins = plugins;
         return;
     }
-
-    // Always update window.installedPlugins to ensure Alpine component reactivity
-    window.installedPlugins = plugins;
-    pluginLog('[RENDER] Set window.installedPlugins to:', plugins.length, 'plugins');
-
-    // Dispatch event to notify Alpine component to update tabs
-    document.dispatchEvent(new CustomEvent('pluginsUpdated', {
-        detail: { plugins: plugins }
-    }));
-    pluginLog('[RENDER] Dispatched pluginsUpdated event');
-
-    // Also try direct Alpine update as fallback
-    if (window.Alpine && document.querySelector('[x-data="app()"]')) {
-        const appElement = document.querySelector('[x-data="app()"]');
-        if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
-            appElement._x_dataStack[0].installedPlugins = plugins;
-            if (typeof appElement._x_dataStack[0].updatePluginTabs === 'function') {
-                appElement._x_dataStack[0].updatePluginTabs();
-                pluginLog('[RENDER] Triggered Alpine.js to update plugin tabs directly');
-            }
-        }
-    }
-
     applyInstalledFiltersAndRender();
 }
 
@@ -1269,33 +1173,12 @@ function renderInstalledCards(plugins, total) {
         return;
     }
 
-    // Helper function to escape values for use in HTML attributes
-    const escapeAttr = (text) => {
-        return (text || '')
-            .replace(/&/g, '&amp;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;');
-    };
-
-    // Helper function to escape for JavaScript strings (use JSON.stringify for proper escaping)
-    // JSON.stringify returns a quoted string, so we can use it directly in JavaScript
-    const escapeJs = (text) => {
-        return JSON.stringify(text || '');
-    };
-
     setGridHtmlIfChanged(container, plugins.map(plugin => {
         // Convert enabled to boolean for consistent rendering
         const enabledBool = Boolean(plugin.enabled);
 
-        // Debug: Log enabled status during rendering (only when debug enabled)
-        if (PLUGIN_DEBUG) {
-            debugLog(`[DEBUG RENDER] Plugin ${plugin.id}: enabled=${enabledBool}`);
-        }
-
         // Escape plugin ID for use in HTML attributes and JavaScript
-        const escapedPluginId = escapeAttr(plugin.id);
+        const escapedPluginId = escapeAttribute(plugin.id);
 
         return `
         <div class="plugin-card">
@@ -1317,7 +1200,7 @@ function renderInstalledCards(plugins, total) {
                         <input type="checkbox"
                                class="sr-only peer"
                                role="switch"
-                               aria-label="Enable ${escapeAttr(plugin.name || plugin.id)}"
+                               aria-label="Enable ${escapeAttribute(plugin.name || plugin.id)}"
                                id="toggle-${escapedPluginId}"
                                ${enabledBool ? 'checked' : ''}
                                data-plugin-id="${escapedPluginId}"
@@ -1340,7 +1223,7 @@ function renderInstalledCards(plugins, total) {
                 </div>
                 <div class="text-sm text-gray-600 space-y-1.5 mb-3">
                     <p class="flex items-center"><i class="fas fa-user mr-2 text-gray-400 w-4"></i>${escapeHtml(plugin.author || 'Unknown')}</p>
-                    ${plugin.version ? `<p class="flex items-center flex-wrap gap-1.5"><i class="fas fa-tag mr-2 text-gray-400 w-4"></i>v${escapeHtml(plugin.version)}${plugin.update_available && plugin.latest_version ? `<span class="badge badge-info" title="Installed v${escapeAttr(plugin.version)} → latest v${escapeAttr(plugin.latest_version)}"><i class="fas fa-arrow-circle-up mr-1"></i>v${escapeHtml(plugin.latest_version)} available</span>` : ''}</p>` : ''}
+                    ${plugin.version ? `<p class="flex items-center flex-wrap gap-1.5"><i class="fas fa-tag mr-2 text-gray-400 w-4"></i>v${escapeHtml(plugin.version)}${plugin.update_available && plugin.latest_version ? `<span class="badge badge-info" title="Installed v${escapeAttribute(plugin.version)} → latest v${escapeAttribute(plugin.latest_version)}"><i class="fas fa-arrow-circle-up mr-1"></i>v${escapeHtml(plugin.latest_version)} available</span>` : ''}</p>` : ''}
                     <p class="flex items-center"><i class="fas fa-folder mr-2 text-gray-400 w-4"></i>${escapeHtml(plugin.category || 'General')}</p>
                 </div>
                 <p class="text-sm text-gray-700 leading-relaxed">${escapeHtml(plugin.description || 'No description available')}</p>
@@ -1366,7 +1249,7 @@ function renderInstalledCards(plugins, total) {
                             style="flex: 1;"
                             data-plugin-id="${escapedPluginId}"
                             data-action="update"
-                            title="${plugin.update_available && plugin.latest_version ? 'Update to v' + escapeAttr(plugin.latest_version) : 'Reinstall the latest published version'}">
+                            title="${plugin.update_available && plugin.latest_version ? 'Update to v' + escapeAttribute(plugin.latest_version) : 'Reinstall the latest published version'}">
                         <i class="fas ${plugin.update_available ? 'fa-arrow-circle-up' : 'fa-sync'} mr-2"></i>${plugin.update_available && plugin.latest_version ? 'Update to v' + escapeHtml(plugin.latest_version) : 'Update'}
                     </button>
                     <button class="btn bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-semibold"
@@ -1409,28 +1292,24 @@ window.__pmSetGridHtmlIfChanged = setGridHtmlIfChanged;
 function setupInstalledEventDelegation() {
     const container = document.getElementById('installed-plugins-grid');
     if (!container) {
-        pluginLog('[RENDER] installed-plugins-grid not found for event delegation');
+        debugLog('[RENDER] installed-plugins-grid not found for event delegation');
         return;
     }
 
-    // Skip if already set up (guard against multiple calls)
     if (container._eventDelegationSetup) {
         return;
     }
 
-    // Mark as set up
     container._eventDelegationSetup = true;
     container._pluginActionHandler = handlePluginAction;
 
-    // Add listeners for both click and change events
     container.addEventListener('click', handlePluginAction, true);
     container.addEventListener('change', handlePluginAction, true);
-    pluginLog('[RENDER] Event delegation set up for installed-plugins-grid');
+    debugLog('[RENDER] Event delegation set up for installed-plugins-grid');
 }
 
 
 function handlePluginAction(event) {
-    // Check for both button and input (for toggle)
     const button = event.target.closest('button[data-action]') || event.target.closest('input[data-action]');
     if (!button) return;
 
@@ -1453,24 +1332,6 @@ function handlePluginAction(event) {
 
     debugLog('[EVENT DELEGATION] Plugin action:', action, 'Plugin ID:', pluginId);
 
-    // Helper function to wait for a function to be available
-    const waitForFunction = (funcName, maxAttempts = 10, delay = 50) => {
-        return new Promise((resolve, reject) => {
-            let attempts = 0;
-            const check = () => {
-                attempts++;
-                if (window[funcName] && typeof window[funcName] === 'function') {
-                    resolve(window[funcName]);
-                } else if (attempts >= maxAttempts) {
-                    reject(new Error(`${funcName} not available after ${maxAttempts} attempts`));
-                } else {
-                    setTimeout(check, delay);
-                }
-            };
-            check();
-        });
-    };
-
     switch(action) {
         case 'toggle':
             // Toggling under an Enabled/Disabled filter would otherwise make the
@@ -1480,24 +1341,11 @@ function handlePluginAction(event) {
                 const ctl = getInstalledFilter();
                 if (ctl) ctl.sticky.add(pluginId);
             }
-            // Get the current enabled state from plugin data (source of truth)
-            // rather than from the checkbox DOM which might be out of sync
+            // The new state is the opposite of the stored one. The plugin data
+            // is the source of truth; the checkbox is only a fallback, and
+            // because the click was preventDefault()ed it still shows the old
+            // state too.
             const plugin = (window.installedPlugins || []).find(p => p.id === pluginId);
-
-            // Special handling: If plugin data isn't found or is stale, fallback to DOM but be careful
-            // If the user clicked the checkbox, the 'checked' property has *already* toggled in the DOM
-            // (even though we preventDefault later, sometimes it's too late for the property read)
-            // However, we used preventDefault() in the global handler, so the checkbox state *should* be reliable if we didn't touch it.
-
-            // BUT: The issue is that 'currentEnabled' calculation might be wrong if window.installedPlugins is outdated.
-            // If the user toggles ON, enabled becomes true. If they click again, we want enabled=false.
-
-            // Let's try a simpler approach: Use the checkbox state as the source of truth for the *desired* state
-            // Since we preventDefault(), the checkbox state reflects the *old* state (before the click)
-            // wait... if we preventDefault() on 'click', the checkbox does NOT change visually or internally.
-            // So button.checked is the OLD state.
-            // We want the NEW state to be !button.checked.
-
             let currentEnabled;
 
             if (plugin) {
@@ -1508,51 +1356,17 @@ function handlePluginAction(event) {
                 currentEnabled = false;
             }
 
-            // Toggle the state - we want the opposite of current state
             const isChecked = !currentEnabled;
 
             debugLog('[DEBUG toggle] Plugin:', pluginId, 'Current enabled (from data):', currentEnabled, 'New state:', isChecked, 'Event type:', event.type);
 
-            waitForFunction('togglePlugin', 10, 50)
-                .then(toggleFunc => {
-                    toggleFunc(pluginId, isChecked);
-                })
-                .catch(error => {
-                    console.error('[EVENT DELEGATION]', error.message);
-                    if (typeof showNotification === 'function') {
-                        showNotification('Toggle function not loaded. Please refresh the page.', 'error');
-                    } else {
-                        alert('Toggle function not loaded. Please refresh the page.');
-                    }
-                });
+            window.togglePlugin(pluginId, isChecked);
             break;
         case 'configure':
-            waitForFunction('configurePlugin', 10, 50)
-                .then(configureFunc => {
-                    configureFunc(pluginId);
-                })
-                .catch(error => {
-                    console.error('[EVENT DELEGATION]', error.message);
-                    if (typeof showNotification === 'function') {
-                        showNotification('Configure function not loaded. Please refresh the page.', 'error');
-                    } else {
-                        alert('Configure function not loaded. Please refresh the page.');
-                    }
-                });
+            window.configurePlugin(pluginId);
             break;
         case 'update':
-            waitForFunction('updatePlugin', 10, 50)
-                .then(updateFunc => {
-                    updateFunc(pluginId);
-                })
-                .catch(error => {
-                    console.error('[EVENT DELEGATION]', error.message);
-                    if (typeof showNotification === 'function') {
-                        showNotification('Update function not loaded. Please refresh the page.', 'error');
-                    } else {
-                        alert('Update function not loaded. Please refresh the page.');
-                    }
-                });
+            window.updatePlugin(pluginId);
             break;
         case 'uninstall':
             if (pluginId.startsWith('starlark:')) {
@@ -1563,28 +1377,15 @@ function handlePluginAction(event) {
                     .then(r => r.json())
                     .then(data => {
                         if (data.status === 'success') {
-                            if (typeof showNotification === 'function') showNotification('Starlark app uninstalled', 'success');
-                            else alert('Starlark app uninstalled');
-                            if (typeof loadInstalledPlugins === 'function') loadInstalledPlugins();
-                            else if (typeof window.loadInstalledPlugins === 'function') window.loadInstalledPlugins();
+                            showNotification('Starlark app uninstalled', 'success');
+                            loadInstalledPlugins(true);
                         } else {
                             alert('Uninstall failed: ' + (data.message || 'Unknown error'));
                         }
                     })
                     .catch(err => alert('Uninstall failed: ' + err.message));
             } else {
-                waitForFunction('uninstallPlugin', 10, 50)
-                    .then(uninstallFunc => {
-                        uninstallFunc(pluginId);
-                    })
-                    .catch(error => {
-                        console.error('[EVENT DELEGATION]', error.message);
-                        if (typeof showNotification === 'function') {
-                            showNotification('Uninstall function not loaded. Please refresh the page.', 'error');
-                        } else {
-                            alert('Uninstall function not loaded. Please refresh the page.');
-                        }
-                    });
+                window.uninstallPlugin(pluginId);
             }
             break;
     }
@@ -1618,23 +1419,19 @@ function loadOnDemandStatus(fromRefreshButton = false) {
             if (result.status === 'success') {
                 updateOnDemandStore(result.data);
                 hasLoadedOnDemandStatus = true;
-                if (fromRefreshButton && typeof showNotification === 'function') {
+                if (fromRefreshButton) {
                     showNotification('On-demand status refreshed', 'success');
                 }
             } else {
                 const message = result.message || 'Failed to load on-demand status';
                 setOnDemandError(message);
-                if (typeof showNotification === 'function') {
-                    showNotification(message, 'error');
-                }
+                showNotification(message, 'error');
             }
         })
         .catch(error => {
             console.error('Error fetching on-demand status:', error);
             setOnDemandError(error?.message || 'Error fetching on-demand status');
-            if (typeof showNotification === 'function') {
-                showNotification('Error fetching on-demand status: ' + error.message, 'error');
-            }
+            showNotification('Error fetching on-demand status: ' + error.message, 'error');
         });
 }
 
@@ -1761,9 +1558,7 @@ function runUpdateAllPlugins() {
         })
         .catch(error => {
             console.error('Error updating all plugins:', error);
-            if (typeof showNotification === 'function') {
-                showNotification('Error updating all plugins: ' + error.message, 'error');
-            }
+            showNotification('Error updating all plugins: ' + error.message, 'error');
         })
         .finally(() => {
             button.innerHTML = originalContent;
@@ -1817,9 +1612,7 @@ window.__openOnDemandModalImpl = function(pluginId) {
     debugLog('[__openOnDemandModalImpl] Found plugin:', plugin ? plugin.id : 'NOT FOUND');
     if (!plugin) {
         console.warn('[__openOnDemandModalImpl] Plugin not found, installedPlugins:', window.installedPlugins?.length || 0);
-        if (typeof showNotification === 'function') {
-            showNotification(`Plugin ${pluginId} not found`, 'error');
-        }
+        showNotification(`Plugin ${pluginId} not found`, 'error');
         return;
     }
 
@@ -1989,9 +1782,7 @@ function submitOnDemandRequest(event) {
 
     if (!currentOnDemandPluginId) {
         console.error('[submitOnDemandRequest] No plugin ID set');
-        if (typeof showNotification === 'function') {
-            showNotification('Select a plugin before starting on-demand mode.', 'error');
-        }
+        showNotification('Select a plugin before starting on-demand mode.', 'error');
         return;
     }
 
@@ -2040,24 +1831,18 @@ function submitOnDemandRequest(event) {
         .then(result => {
             debugLog('[submitOnDemandRequest] Response data:', result);
             if (result.status === 'success') {
-                if (typeof showNotification === 'function') {
-                    const pluginName = resolvePluginDisplayName(currentOnDemandPluginId);
-                    showNotification(`Requested on-demand mode for ${pluginName}`, 'success');
-                }
+                const pluginName = resolvePluginDisplayName(currentOnDemandPluginId);
+                showNotification(`Requested on-demand mode for ${pluginName}`, 'success');
                 closeOnDemandModal();
                 setTimeout(() => loadOnDemandStatus(true), 700);
             } else {
                 console.error('[submitOnDemandRequest] Request failed:', result);
-                if (typeof showNotification === 'function') {
-                    showNotification(result.message || 'Failed to start on-demand mode', 'error');
-                }
+                showNotification(result.message || 'Failed to start on-demand mode', 'error');
             }
         })
         .catch(error => {
             console.error('[submitOnDemandRequest] Error starting on-demand mode:', error);
-            if (typeof showNotification === 'function') {
-                showNotification('Error starting on-demand mode: ' + error.message, 'error');
-            }
+            showNotification('Error starting on-demand mode: ' + error.message, 'error');
         });
 }
 
@@ -2075,30 +1860,19 @@ function requestOnDemandStop({ stopService = false } = {}) {
         .then(response => response.json())
         .then(result => {
             if (result.status === 'success') {
-                if (typeof showNotification === 'function') {
-                    const message = stopService
-                        ? 'On-demand mode stop requested and display service will be stopped.'
-                        : 'On-demand mode stop requested';
-                    showNotification(message, 'success');
-                }
+                const message = stopService
+                    ? 'On-demand mode stop requested and display service will be stopped.'
+                    : 'On-demand mode stop requested';
+                showNotification(message, 'success');
                 setTimeout(() => loadOnDemandStatus(true), 700);
             } else {
-                if (typeof showNotification === 'function') {
-                    showNotification(result.message || 'Failed to stop on-demand mode', 'error');
-                }
+                showNotification(result.message || 'Failed to stop on-demand mode', 'error');
             }
         })
         .catch(error => {
             console.error('Error stopping on-demand mode:', error);
-            if (typeof showNotification === 'function') {
-                showNotification('Error stopping on-demand mode: ' + error.message, 'error');
-            }
+            showNotification('Error stopping on-demand mode: ' + error.message, 'error');
         });
-}
-
-function stopOnDemand(event) {
-    const stopService = event && event.shiftKey;
-    requestOnDemandStop({ stopService });
 }
 
 window.requestOnDemandStop = requestOnDemandStop;
@@ -2108,9 +1882,6 @@ function closeOnDemandModalOnBackdrop(event) {
         closeOnDemandModal();
     }
 }
-
-// configurePlugin is already defined at the top of the script - no need to redefine
-
 
 // Helper function to get the full property object from schema
 // Uses greedy longest-match to handle schema keys containing dots (e.g., "eng.1")
@@ -2503,26 +2274,20 @@ window.handleArrayObjectFileUpload = async function(event, fieldId, itemIndex, p
     // Validate file type using uploadConfig
     const allowedTypes = uploadConfig.allowed_types || ['image/png', 'image/jpeg', 'image/jpg', 'image/bmp'];
     if (!allowedTypes.includes(file.type)) {
-        if (typeof showNotification === 'function') {
-            showNotification(`File ${file.name} is not a valid image type`, 'error');
-        }
+        showNotification(`File ${file.name} is not a valid image type`, 'error');
         return;
     }
 
     // Validate file size using uploadConfig
     const maxSizeMB = uploadConfig.max_size_mb || 5;
     if (file.size > maxSizeMB * 1024 * 1024) {
-        if (typeof showNotification === 'function') {
-            showNotification(`File ${file.name} exceeds ${maxSizeMB}MB limit`, 'error');
-        }
+        showNotification(`File ${file.name} exceeds ${maxSizeMB}MB limit`, 'error');
         return;
     }
 
     // Validate pluginId before upload (fail fast)
     if (!pluginId || pluginId === 'null' || pluginId === 'undefined' || (typeof pluginId === 'string' && pluginId.trim() === '')) {
-        if (typeof showNotification === 'function') {
-            showNotification('Plugin ID is required for file upload', 'error');
-        }
+        showNotification('Plugin ID is required for file upload', 'error');
         console.error('File upload failed: pluginId is required');
         return;
     }
@@ -2551,9 +2316,7 @@ window.handleArrayObjectFileUpload = async function(event, fieldId, itemIndex, p
                     errorMessage = `Upload failed: ${errorText}`;
                 }
             }
-            if (typeof showNotification === 'function') {
-                showNotification(errorMessage, 'error');
-            }
+            showNotification(errorMessage, 'error');
             return;
         }
 
@@ -2594,19 +2357,13 @@ window.handleArrayObjectFileUpload = async function(event, fieldId, itemIndex, p
             // Update the hidden input with the new file data
             updateArrayObjectData(fieldId);
 
-            if (typeof showNotification === 'function') {
-                showNotification('Logo uploaded successfully', 'success');
-            }
+            showNotification('Logo uploaded successfully', 'success');
         } else {
-            if (typeof showNotification === 'function') {
-                showNotification(`Upload failed: ${data.message || 'Unknown error'}`, 'error');
-            }
+            showNotification(`Upload failed: ${data.message || 'Unknown error'}`, 'error');
         }
     } catch (error) {
         console.error('Upload error:', error);
-        if (typeof showNotification === 'function') {
-            showNotification(`Upload error: ${error.message}`, 'error');
-        }
+        showNotification(`Upload error: ${error.message}`, 'error');
     }
 
     // Clear file input
@@ -2633,144 +2390,8 @@ window.removeArrayObjectFile = function(fieldId, itemIndex, propKey) {
     // Update the hidden input to remove the file data
     updateArrayObjectData(fieldId);
 
-    if (typeof showNotification === 'function') {
-        showNotification('Logo removed', 'success');
-    }
+    showNotification('Logo removed', 'success');
 };
-
-// Function to toggle nested sections
-window.toggleNestedSection = function(sectionId, event) {
-    // Prevent event bubbling if event is provided
-    if (event) {
-        event.stopPropagation();
-        event.preventDefault();
-    }
-
-    const content = document.getElementById(sectionId);
-    const icon = document.getElementById(sectionId + '-icon');
-
-    if (!content || !icon) return;
-
-    // Prevent multiple simultaneous toggles
-    if (content.dataset.toggling === 'true') {
-        return;
-    }
-
-    // Mark as toggling
-    content.dataset.toggling = 'true';
-
-    // Check current state before making changes
-    const hasCollapsed = content.classList.contains('collapsed');
-    const hasExpanded = content.classList.contains('expanded');
-    const displayStyle = content.style.display;
-    const computedDisplay = window.getComputedStyle(content).display;
-
-    // Check if content is currently collapsed - prioritize class over display style
-    const isCollapsed = hasCollapsed || (!hasExpanded && (displayStyle === 'none' || computedDisplay === 'none'));
-
-    if (isCollapsed) {
-        // Expand the section
-        content.classList.remove('collapsed');
-        content.classList.add('expanded');
-        content.style.display = 'block';
-        content.style.overflow = 'hidden'; // Prevent content jumping during animation
-
-        // CRITICAL FIX: Use setTimeout to ensure browser has time to layout the element
-        // When element goes from display:none to display:block, scrollHeight might be 0
-        // We need to wait for the browser to calculate the layout
-        setTimeout(() => {
-            // Force reflow to ensure transition works
-            void content.offsetHeight;
-
-            // Now measure the actual content height after layout
-            const scrollHeight = content.scrollHeight;
-            if (scrollHeight > 0) {
-                content.style.maxHeight = scrollHeight + 'px';
-            } else {
-                // Fallback: if scrollHeight is still 0, try measuring again after a brief delay
-                setTimeout(() => {
-                    const retryHeight = content.scrollHeight;
-                    content.style.maxHeight = retryHeight > 0 ? retryHeight + 'px' : '500px';
-                }, 10);
-            }
-        }, 10);
-
-        icon.classList.remove('fa-chevron-right');
-        icon.classList.add('fa-chevron-down');
-
-        // Allow parent section to show overflow when expanded
-        const sectionElement = content.closest('.nested-section');
-        if (sectionElement) {
-            sectionElement.style.overflow = 'visible';
-        }
-
-        // After animation completes, remove max-height constraint to allow natural expansion
-        // This allows parent sections to automatically expand
-        setTimeout(() => {
-            // Only set to none if still expanded (prevent race condition)
-            if (content.classList.contains('expanded') && !content.classList.contains('collapsed')) {
-                content.style.maxHeight = 'none';
-                content.style.overflow = '';
-            }
-            // Clear toggling flag
-            content.dataset.toggling = 'false';
-        }, 320); // Slightly longer than transition duration
-
-        // Scroll the expanded content into view after a short delay to allow animation
-        setTimeout(() => {
-            if (sectionElement) {
-                // Find the modal container
-                const modalContent = sectionElement.closest('.modal-content');
-                if (modalContent) {
-                    // Scroll the section header into view within the modal
-                    const headerButton = sectionElement.querySelector('button');
-                    if (headerButton) {
-                        headerButton.scrollIntoView({ behavior: 'smooth', block: 'start', inline: 'nearest' });
-                    }
-                } else {
-                    // If not in a modal, just scroll the section
-                    sectionElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                }
-            }
-        }, 350); // Wait for animation to complete
-    } else {
-        // Collapse the section
-        content.classList.add('collapsed');
-        content.classList.remove('expanded');
-        content.style.overflow = 'hidden'; // Prevent content jumping during animation
-
-        // Set max-height to current scroll height first (required for smooth animation)
-        const currentHeight = content.scrollHeight;
-        content.style.maxHeight = currentHeight + 'px';
-
-        // Force reflow to apply the height
-        void content.offsetHeight;
-
-        // Then animate to 0
-        setTimeout(() => {
-            content.style.maxHeight = '0';
-        }, 10);
-
-        // Restore parent section overflow when collapsed
-        const sectionElement = content.closest('.nested-section');
-        if (sectionElement) {
-            sectionElement.style.overflow = 'hidden';
-        }
-
-        // Use setTimeout to set display:none after transition completes
-        setTimeout(() => {
-            if (content.classList.contains('collapsed')) {
-                content.style.display = 'none';
-                content.style.overflow = '';
-            }
-            // Clear toggling flag
-            content.dataset.toggling = 'false';
-        }, 320); // Match the CSS transition duration + small buffer
-        icon.classList.remove('fa-chevron-down');
-        icon.classList.add('fa-chevron-right');
-    }
-}
-
 
 // Generic Plugin Action Handler
 window.executePluginAction = function(actionId, actionIndex, pluginIdParam = null) {
@@ -2831,19 +2452,12 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
         }
     }
 
-    // Fallback 5: Try to get from Alpine.js context (activeTab)
-    if (!pluginId && window.Alpine) {
-        try {
-            const appElement = document.querySelector('[x-data="app()"]');
-            if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
-                const appData = appElement._x_dataStack[0];
-                if (appData.activeTab && appData.activeTab !== 'overview' && appData.activeTab !== 'plugins' && appData.activeTab !== 'wifi') {
-                    pluginId = appData.activeTab;
-                    debugLog('[DEBUG] Got pluginId from Alpine activeTab:', pluginId);
-                }
-            }
-        } catch (e) {
-            console.warn('[DEBUG] Error accessing Alpine context:', e);
+    // Fallback 5: the active tab, when it is a plugin's tab
+    if (!pluginId) {
+        const appData = window.getApp();
+        if (appData && appData.activeTab && appData.activeTab !== 'overview' && appData.activeTab !== 'plugins' && appData.activeTab !== 'wifi') {
+            pluginId = appData.activeTab;
+            debugLog('[DEBUG] Got pluginId from Alpine activeTab:', pluginId);
         }
     }
 
@@ -2898,9 +2512,7 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
         console.error('No plugin ID available after all fallbacks. actionId:', actionId, 'actionIndex:', actionIndex);
         console.error('[DEBUG] Button found:', !!btn);
         console.error('[DEBUG] currentPluginConfig:', currentPluginConfig);
-        if (typeof showNotification === 'function') {
-            showNotification('Unable to determine plugin ID. Please refresh the page.', 'error');
-        }
+        showNotification('Unable to determine plugin ID. Please refresh the page.', 'error');
         return;
     }
 
@@ -2928,9 +2540,7 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
         console.error(`Action not found: ${actionId} for plugin ${pluginId}`);
         debugLog('[DEBUG] currentPluginConfig:', currentPluginConfig);
         debugLog('[DEBUG] installedPlugins:', window.installedPlugins);
-        if (typeof showNotification === 'function') {
-            showNotification(`Action ${actionId} not found. Please refresh the page.`, 'error');
-        }
+        showNotification(`Action ${actionId} not found. Please refresh the page.`, 'error');
         return;
     }
 
@@ -2962,13 +2572,11 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
         .then(response => response.json())
         .then(data => {
             if (data.status === 'success') {
-                statusDiv.innerHTML = `<div class="text-green-600"><i class="fas fa-check-circle mr-2"></i>${data.message}</div>`;
+                statusDiv.innerHTML = `<div class="text-green-600"><i class="fas fa-check-circle mr-2"></i>${escapeHtml(data.message || 'Action completed successfully')}</div>`;
                 btn.innerHTML = originalText;
                 btn.disabled = false;
                 delete btn.dataset.step;
-                if (typeof showNotification === 'function') {
-                    showNotification(data.message || 'Action completed successfully!', 'success');
-                }
+                showNotification(data.message || 'Action completed successfully!', 'success');
             } else {
                 statusDiv.innerHTML = `<div class="text-red-600"><i class="fas fa-exclamation-circle mr-2"></i>${escapeHtml(data.message || 'Error')}</div>`;
                 if (data.output) {
@@ -2980,7 +2588,7 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
             }
         })
         .catch(error => {
-            statusDiv.innerHTML = `<div class="text-red-600"><i class="fas fa-exclamation-circle mr-2"></i>Error: ${error.message}</div>`;
+            statusDiv.innerHTML = `<div class="text-red-600"><i class="fas fa-exclamation-circle mr-2"></i>Error: ${escapeHtml(error.message)}</div>`;
             btn.innerHTML = originalText;
             btn.disabled = false;
             delete btn.dataset.step;
@@ -3012,7 +2620,7 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
                 statusDiv.innerHTML = `
                     <div class="bg-blue-50 border border-blue-200 rounded p-3">
                         <div class="text-blue-900 font-medium mb-2">
-                            <i class="fas fa-link mr-2"></i>${data.message || 'Authorization URL Generated'}
+                            <i class="fas fa-link mr-2"></i>${escapeHtml(data.message || 'Authorization URL Generated')}
                         </div>
                         <div class="mb-3">
                             <p class="text-sm text-blue-700 mb-2">1. Click the link below to authorize:</p>
@@ -3026,27 +2634,23 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
                         </div>
                     </div>
                 `;
-                btn.innerHTML = action.step2_button_text || 'Complete Authentication';
+                btn.textContent = action.step2_button_text || 'Complete Authentication';
                 btn.dataset.step = '2';
                 btn.disabled = false;
-                if (typeof showNotification === 'function') {
-                    showNotification(data.message || 'Authorization URL generated. Please authorize and paste the redirect URL.', 'info');
-                }
+                showNotification(data.message || 'Authorization URL generated. Please authorize and paste the redirect URL.', 'info');
             } else {
                 // Simple success
                 statusDiv.innerHTML = `
                     <div class="bg-green-50 border border-green-200 rounded p-3">
                         <div class="text-green-900 font-medium mb-2">
-                            <i class="fas fa-check-circle mr-2"></i>${data.message || 'Action completed successfully'}
+                            <i class="fas fa-check-circle mr-2"></i>${escapeHtml(data.message || 'Action completed successfully')}
                         </div>
                         ${data.output ? `<pre class="mt-2 text-xs bg-green-50 p-2 rounded overflow-auto max-h-32">${escapeHtml(data.output)}</pre>` : ''}
                     </div>
                 `;
                 btn.innerHTML = originalText;
                 btn.disabled = false;
-                if (typeof showNotification === 'function') {
-                    showNotification(data.message || 'Action completed successfully!', 'success');
-                }
+                showNotification(data.message || 'Action completed successfully!', 'success');
             }
         } else {
             statusDiv.innerHTML = `
@@ -3062,13 +2666,11 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
         }
     })
     .catch(error => {
-        statusDiv.innerHTML = `<div class="text-red-600"><i class="fas fa-exclamation-circle mr-2"></i>Error: ${error.message}</div>`;
+        statusDiv.innerHTML = `<div class="text-red-600"><i class="fas fa-exclamation-circle mr-2"></i>Error: ${escapeHtml(error.message)}</div>`;
         btn.innerHTML = originalText;
         btn.disabled = false;
     });
 }
-
-// togglePlugin is already defined at the top of the script - no need to redefine
 
 window.uninstallPlugin = function(pluginId) {
     const plugin = (window.installedPlugins || installedPlugins || []).find(p => p.id === pluginId);
@@ -3164,11 +2766,7 @@ function handleUninstallSuccess(pluginId) {
     // Remove from local array immediately for better UX
     const currentPlugins = window.installedPlugins || installedPlugins || [];
     const updatedPlugins = currentPlugins.filter(p => p.id !== pluginId);
-    // Only update if list actually changed (setter will check, but we know it changed here)
-    window.installedPlugins = updatedPlugins;
-    if (typeof installedPlugins !== 'undefined') {
-        installedPlugins = updatedPlugins;
-    }
+    installedPlugins = updatedPlugins;
     renderInstalledPlugins(updatedPlugins);
     showNotification(`Plugin uninstalled successfully`, 'success');
 
@@ -3212,7 +2810,7 @@ function restartDisplay() {
 }
 
 function searchPluginStore(fetchCommitInfo = true) {
-    pluginLog('[STORE] Searching plugin store...', { fetchCommitInfo });
+    debugLog('[STORE] Searching plugin store...', { fetchCommitInfo });
 
     const now = Date.now();
     const isCacheValid = pluginStoreCache && cacheTimestamp && (now - cacheTimestamp < CACHE_DURATION);
@@ -3227,11 +2825,7 @@ function searchPluginStore(fetchCommitInfo = true) {
         }
     }
 
-    // Show loading state
-    try {
-        const countEl = document.getElementById('store-count');
-        if (countEl) countEl.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>Loading...';
-    } catch (e) { /* ignore */ }
+    setStoreCount('<i class="fas fa-spinner fa-spin mr-1"></i>Loading...');
     showStoreLoading(true);
 
     let url = '/api/v3/plugins/store/list';
@@ -3255,45 +2849,37 @@ function searchPluginStore(fetchCommitInfo = true) {
 
                 const storeGrid = document.getElementById('plugin-store-grid');
                 if (!storeGrid) {
-                    pluginLog('[STORE] plugin-store-grid not ready, deferring render');
+                    debugLog('[STORE] plugin-store-grid not ready, deferring render');
                     window.__pendingStorePlugins = plugins;
                     return;
                 }
 
                 // Update total count
-                try {
-                    const countEl = document.getElementById('store-count');
-                    if (countEl) countEl.innerHTML = `${plugins.length} available`;
-                } catch (e) { /* ignore */ }
+                setStoreCount(`${plugins.length} available`);
 
                 applyStoreFiltersAndSort();
 
                 // Re-attach GitHub token collapse handler after store render
-                if (window.attachGithubTokenCollapseHandler) {
-                    requestAnimationFrame(() => {
-                        try { window.attachGithubTokenCollapseHandler(); } catch (e) { /* ignore */ }
-                        if (window.checkGitHubAuthStatus) {
-                            try { window.checkGitHubAuthStatus(); } catch (e) { /* ignore */ }
-                        }
-                    });
-                }
+                requestAnimationFrame(() => {
+                    window.attachGithubTokenCollapseHandler();
+                    window.checkGitHubAuthStatus();
+                });
             } else {
-                showError('Failed to search plugin store: ' + data.message);
-                try {
-                    const countEl = document.getElementById('store-count');
-                    if (countEl) countEl.innerHTML = 'Error loading';
-                } catch (e) { /* ignore */ }
+                showNotification('Failed to search plugin store: ' + data.message, 'error');
+                setStoreCount('Error loading');
             }
         })
         .catch(error => {
             console.error('Error searching plugin store:', error);
             showStoreLoading(false);
-            showError('Error searching plugin store: ' + error.message);
-            try {
-                const countEl = document.getElementById('store-count');
-                if (countEl) countEl.innerHTML = 'Error loading';
-            } catch (e) { /* ignore */ }
+            showNotification('Error searching plugin store: ' + error.message, 'error');
+            setStoreCount('Error loading');
         });
+}
+
+function setStoreCount(html) {
+    const countEl = document.getElementById('store-count');
+    if (countEl) countEl.innerHTML = html;
 }
 
 function showStoreLoading(show) {
@@ -3319,8 +2905,7 @@ function isStorePluginInstalled(pluginIdOrPlugin) {
 }
 
 // ── Plugin Store: search / filter / sort ────────────────────────────────
-// Behaviour, element ids and localStorage keys are unchanged from the
-// hand-rolled version this replaces — only the machinery is now shared.
+// Driven by the shared ListFilter controller (js/plugins/list_filter.js).
 const STORE_COMPARATORS = {
     'a-z': (a, b) => storeSortName(a).localeCompare(storeSortName(b)),
     'z-a': (a, b) => storeSortName(b).localeCompare(storeSortName(a)),
@@ -3451,7 +3036,7 @@ window.pluginManager.searchPluginStore = searchPluginStore;
 function renderPluginStore(plugins) {
     const container = document.getElementById('plugin-store-grid');
     if (!container) {
-        pluginLog('[RENDER] plugin-store-grid not yet available, deferring render');
+        debugLog('[RENDER] plugin-store-grid not yet available, deferring render');
         window.__pendingStorePlugins = plugins;
         return;
     }
@@ -3469,10 +3054,6 @@ function renderPluginStore(plugins) {
         return;
     }
 
-    // JS string literal for an inline handler; see jsStringAttr
-    const escapeJs = (text) => {
-        return jsStringAttr(text || '');
-    };
 
     setGridHtmlIfChanged(container, plugins.map(plugin => {
         const installed = isStorePluginInstalled(plugin);
@@ -3516,10 +3097,10 @@ function renderPluginStore(plugins) {
                            class="flex-1 px-2 py-1 text-xs border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
                 </div>
                 <div class="flex gap-2">
-                    <button onclick='if(window.installPlugin){const branchInput = document.getElementById("branch-input-${plugin.id.replace(/[^a-zA-Z0-9]/g, '-')}"); window.installPlugin(${escapeJs(plugin.id)}, branchInput?.value?.trim() || null)}else{console.error("installPlugin not available")}' class="btn ${installed ? 'bg-gray-500 hover:bg-gray-600' : 'bg-green-600 hover:bg-green-700'} text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold">
+                    <button onclick='if(window.installPlugin){const branchInput = document.getElementById("branch-input-${plugin.id.replace(/[^a-zA-Z0-9]/g, '-')}"); window.installPlugin(${jsStringAttr(plugin.id)}, branchInput?.value?.trim() || null)}else{console.error("installPlugin not available")}' class="btn ${installed ? 'bg-gray-500 hover:bg-gray-600' : 'bg-green-600 hover:bg-green-700'} text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold">
                         <i class="fas ${installed ? 'fa-redo' : 'fa-download'} mr-2"></i>${installed ? 'Reinstall' : 'Install'}
                     </button>
-                    <button onclick='${repoLink ? `window.open(${escapeJs(plugin.plugin_path ? repoLink + "/tree/" + encodeURIComponent(plugin.default_branch || plugin.branch || "main") + "/" + plugin.plugin_path.split("/").map(encodeURIComponent).join("/") : repoLink)}, "_blank")` : `void(0)`}' ${repoLink ? '' : 'disabled'} class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold${repoLink ? '' : ' opacity-50 cursor-not-allowed'}">
+                    <button onclick='${repoLink ? `window.open(${jsStringAttr(plugin.plugin_path ? repoLink + "/tree/" + encodeURIComponent(plugin.default_branch || plugin.branch || "main") + "/" + plugin.plugin_path.split("/").map(encodeURIComponent).join("/") : repoLink)}, "_blank")` : `void(0)`}' ${repoLink ? '' : 'disabled'} class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md text-sm flex-1 font-semibold${repoLink ? '' : ' opacity-50 cursor-not-allowed'}">
                         <i class="fas fa-external-link-alt mr-2"></i>View
                     </button>
                 </div>
@@ -3617,7 +3198,7 @@ window.installFromCustomRegistry = function(pluginId, registryUrl, pluginPath, b
     .then(response => response.json())
     .then(data => {
         if (data.status === 'success') {
-            showSuccess(`Plugin ${data.plugin_id} installed successfully`);
+            showNotification(`Plugin ${data.plugin_id} installed successfully`, 'success');
             // Refresh installed plugins and re-render custom registry
             loadInstalledPlugins();
             // Re-render custom registry to update install buttons
@@ -3626,28 +3207,23 @@ window.installFromCustomRegistry = function(pluginId, registryUrl, pluginPath, b
                 document.getElementById('load-registry-from-url').click();
             }
         } else {
-            showError(data.message || 'Installation failed');
+            showNotification(data.message || 'Installation failed', 'error');
         }
     })
     .catch(error => {
         let errorMsg = 'Error installing plugin: ' + error.message;
-        if (error.message && error.message.includes('Failed to Fetch')) {
+        if (isNetworkFailure(error)) {
             errorMsg += ' - Please try refreshing your browser.';
         }
-        showError(errorMsg);
+        showNotification(errorMsg, 'error');
     });
 }
 
 function setupCollapsibleSections() {
     debugLog('[setupCollapsibleSections] Setting up collapsible sections...');
 
-    // Installed Plugins and Plugin Store sections no longer have collapse buttons
-    // They are always visible
-
-    // Functions are now defined outside IIFE, just attach the handler
-    if (window.attachGithubTokenCollapseHandler) {
-        window.attachGithubTokenCollapseHandler();
-    }
+    // The GitHub token panel is the only collapsible section left.
+    window.attachGithubTokenCollapseHandler();
 
     debugLog('[setupCollapsibleSections] Collapsible sections setup complete');
 }
@@ -3680,10 +3256,6 @@ function renderSavedRepositories(repositories) {
         return;
     }
 
-    // JS string literal for an inline handler; see jsStringAttr
-    const escapeJs = (text) => {
-        return jsStringAttr(text || '');
-    };
 
     container.innerHTML = repositories.map(repo => {
         const repoUrl = repo.url || '';
@@ -3699,7 +3271,7 @@ function renderSavedRepositories(repositories) {
                     </div>
                     <p class="text-xs text-gray-500 truncate" title="${escapeAttribute(repoUrl)}">${escapeHtml(repoUrl)}</p>
                 </div>
-                <button onclick='if(window.removeSavedRepository){window.removeSavedRepository(${escapeJs(repoUrl)})}else{console.error("removeSavedRepository not available")}' class="ml-2 text-red-600 hover:text-red-800 text-xs px-2 py-1" title="Remove repository" aria-label="Remove saved repository ${escapeAttribute(repoName)}">
+                <button onclick='if(window.removeSavedRepository){window.removeSavedRepository(${jsStringAttr(repoUrl)})}else{console.error("removeSavedRepository not available")}' class="ml-2 text-red-600 hover:text-red-800 text-xs px-2 py-1" title="Remove repository" aria-label="Remove saved repository ${escapeAttribute(repoName)}">
                     <i class="fas fa-trash" aria-hidden="true"></i>
                 </button>
             </div>
@@ -3722,16 +3294,16 @@ window.removeSavedRepository = function(repoUrl) {
     .then(response => response.json())
     .then(data => {
         if (data.status === 'success') {
-            showSuccess('Repository removed successfully');
+            showNotification('Repository removed successfully', 'success');
             renderSavedRepositories(data.data.repositories || []);
             // Refresh plugin store to remove plugins from deleted repo
             searchPluginStore();
         } else {
-            showError(data.message || 'Failed to remove repository');
+            showNotification(data.message || 'Failed to remove repository', 'error');
         }
     })
     .catch(error => {
-        showError('Error removing repository: ' + error.message);
+        showNotification('Error removing repository: ' + error.message, 'error');
     });
 }
 
@@ -3816,7 +3388,7 @@ function attachInstallButtonHandler() {
                     debugLog('[attachInstallButtonHandler] Response data:', data);
                     if (data.status === 'success') {
                         if (pluginStatusDiv) {
-                            pluginStatusDiv.innerHTML = `<span class="text-green-600"><i class="fas fa-check-circle mr-1"></i>Successfully installed: ${data.plugin_id}</span>`;
+                            pluginStatusDiv.innerHTML = `<span class="text-green-600"><i class="fas fa-check-circle mr-1"></i>Successfully installed: ${escapeHtml(data.plugin_id)}</span>`;
                         }
                         pluginUrlInput.value = '';
 
@@ -3826,14 +3398,14 @@ function attachInstallButtonHandler() {
                         }, 1000);
                     } else {
                         if (pluginStatusDiv) {
-                            pluginStatusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>${data.message || 'Installation failed'}</span>`;
+                            pluginStatusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>${escapeHtml(data.message || 'Installation failed')}</span>`;
                         }
                     }
                 })
                 .catch(error => {
                     console.error('[attachInstallButtonHandler] Error:', error);
                     if (pluginStatusDiv) {
-                        pluginStatusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>Error: ${error.message}</span>`;
+                        pluginStatusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>Error: ${escapeHtml(error.message)}</span>`;
                     }
                 })
                 .finally(() => {
@@ -3982,7 +3554,7 @@ function setupGitHubInstallHandlers() {
                 }
             })
             .catch(error => {
-                registryStatusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>Error: ${error.message}</span>`;
+                registryStatusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>Error: ${escapeHtml(error.message)}</span>`;
                 customRegistryPlugins.classList.add('hidden');
             })
             .finally(() => {
@@ -4005,12 +3577,12 @@ function setupGitHubInstallHandlers() {
         saveRegistryBtn.addEventListener('click', function() {
             const repoUrl = registryUrlInput.value.trim();
             if (!repoUrl) {
-                showError('Please enter a repository URL first');
+                showNotification('Please enter a repository URL first', 'error');
                 return;
             }
 
             if (!isGithubUrl(repoUrl)) {
-                showError('Please enter a valid GitHub URL');
+                showNotification('Please enter a valid GitHub URL', 'error');
                 return;
             }
 
@@ -4027,16 +3599,16 @@ function setupGitHubInstallHandlers() {
             .then(response => response.json())
             .then(data => {
                 if (data.status === 'success') {
-                    showSuccess('Repository saved successfully! Its plugins will appear in the Plugin Store.');
+                    showNotification('Repository saved successfully! Its plugins will appear in the Plugin Store.', 'success');
                     renderSavedRepositories(data.data.repositories || []);
                     // Refresh plugin store to include new repo
                     searchPluginStore();
                 } else {
-                    showError(data.message || 'Failed to save repository');
+                    showNotification(data.message || 'Failed to save repository', 'error');
                 }
             })
             .catch(error => {
-                showError('Error saving repository: ' + error.message);
+                showNotification('Error saving repository: ' + error.message, 'error');
             })
             .finally(() => {
                 saveRegistryBtn.disabled = false;
@@ -4051,7 +3623,7 @@ function setupGitHubInstallHandlers() {
         refreshSavedReposBtn.addEventListener('click', function() {
             loadSavedRepositories();
             searchPluginStore(); // Also refresh plugin store
-            showSuccess('Repositories refreshed');
+            showNotification('Repositories refreshed', 'success');
         });
     }
 }
@@ -4065,27 +3637,12 @@ function renderCustomRegistryPlugins(plugins, registryUrl) {
         return;
     }
 
-    // Escape HTML helper. Quotes too: the result lands in quoted attribute
-    // values, and the textContent/innerHTML round-trip only escapes &, < and >.
-    const escapeHtml = (text) => {
-        if (!text) return '';
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-    };
-
-    // JS string literal for an inline handler; see jsStringAttr
-    const escapeJs = (text) => {
-        return jsStringAttr(text || '');
-    };
 
     container.innerHTML = plugins.map(plugin => {
         const isInstalled = isStorePluginInstalled(plugin);
-        const pluginIdJs = escapeJs(plugin.id);
-        const escapedUrlJs = escapeJs(registryUrl);
-        const pluginPathJs = escapeJs(plugin.plugin_path || '');
+        const pluginIdJs = jsStringAttr(plugin.id);
+        const escapedUrlJs = jsStringAttr(registryUrl);
+        const pluginPathJs = jsStringAttr(plugin.plugin_path || '');
         const branchInputId = `branch-input-custom-${plugin.id.replace(/[^a-zA-Z0-9]/g, '-')}`;
 
         const installBtn = isInstalled
@@ -4119,32 +3676,13 @@ function renderCustomRegistryPlugins(plugins, registryUrl) {
     }).join('');
 }
 
-function showSuccess(message) {
-    // Try to use notification system if available, otherwise use alert
-    if (typeof showNotification === 'function') {
-        showNotification(message, 'success');
-    } else {
-        debugLog('Success: ' + message);
-        // Show a temporary success message
-        const statusDiv = document.getElementById('github-plugin-status') || document.getElementById('registry-status');
-        if (statusDiv) {
-            statusDiv.innerHTML = `<span class="text-green-600"><i class="fas fa-check-circle mr-1"></i>${message}</span>`;
-            setTimeout(() => {
-                if (statusDiv) statusDiv.innerHTML = '';
-            }, 5000);
-        }
-    }
-}
-
-function showError(message) {
+// Replaces the whole Plugin Manager panel. Only for a first load of the
+// installed list that failed, when there is nothing else worth keeping on
+// screen; every other failure is a notification.
+function showInstalledLoadError(message) {
     const content = document.getElementById('plugins-content');
     if (!content) {
-        console.error('plugins-content element not found');
-        if (typeof showNotification === 'function') {
-            showNotification(message, 'error');
-        } else {
-            console.error('Error: ' + message);
-        }
+        showNotification(message, 'error');
         return;
     }
     content.innerHTML = `
@@ -4155,6 +3693,11 @@ function showError(message) {
     `;
 }
 
+// fetch() rejects with a TypeError when no HTTP answer arrives at all
+// (connection refused, offline); PluginAPI wraps that as NETWORK_ERROR.
+function isNetworkFailure(error) {
+    return error instanceof TypeError || (error && error.error_code === 'NETWORK_ERROR');
+}
 
 // Validate that a URL's actual host is github.com (not just a substring
 // match, which 'evil.com/github.com' or 'github.com.evil.com' would pass).
@@ -4169,40 +3712,11 @@ function isGithubUrl(url) {
     }
 }
 
-// Utility function to escape HTML. Quotes too: most call sites interpolate the
-// result into a quoted attribute value, and the textContent/innerHTML
-// round-trip only escapes &, < and >.
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-}
-
-// Utility function to escape text for use in HTML attributes
-// Escapes quotes, ampersands, and other special characters that could break attributes
-function escapeAttribute(text) {
-    if (text == null) {
-        return '';
-    }
-    const str = String(text);
-    return str
-        .replace(/&/g, '&amp;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
-}
-
-// A quoted JS string literal that is safe inside an inline handler attribute
-// (onclick='f(${jsStringAttr(id)})' or onclick="..."). JSON.stringify alone
-// makes a valid JS string but leaves ' and & untouched, so a registry entry
-// id containing ' closed a single-quoted attribute and added its own
-// handlers. The browser decodes the entities before the JS is parsed.
-function jsStringAttr(value) {
-    return escapeAttribute(JSON.stringify(value == null ? '' : String(value)));
-}
+// Short local names for window.LEDEscape (app-early.js), which says what each
+// one is for. Function declarations, so they are usable anywhere in this IIFE.
+function escapeHtml(text) { return window.LEDEscape.html(text); }
+function escapeAttribute(text) { return window.LEDEscape.attr(text); }
+function jsStringAttr(value) { return window.LEDEscape.jsStringAttr(value); }
 
 function isNewPlugin(lastUpdated) {
     if (!lastUpdated) return false;
@@ -4219,20 +3733,8 @@ function isNewPlugin(lastUpdated) {
     }
 }
 
-// Debounce utility
-function debounce(func, wait) {
-    let timeout;
-    return function executedFunction(...args) {
-        const later = () => {
-            clearTimeout(timeout);
-            func(...args);
-        };
-        clearTimeout(timeout);
-        timeout = setTimeout(later, wait);
-    };
-}
-
-// Toggle password visibility for secret fields
+// Opens the GitHub token panel (the warning banner's "Configure Token" link),
+// expanded, and reports whether a token is saved.
 window.openGithubTokenSettings = function() {
     const settings = document.getElementById('github-token-settings');
     const warning = document.getElementById('github-auth-warning');
@@ -4476,482 +3978,19 @@ window.dismissGithubWarning = function() {
 }
 
 
-// ==================== File Upload Functions ====================
-// Note: handleFileDrop, handleFileSelect, and handleFiles are defined in
-// file-upload.js widget which loads first. We only define supplementary
-// functions here that file-upload.js doesn't provide.
-
-window.handleCredentialsUpload = async function(event, fieldId, uploadEndpoint, targetFilename) {
-    const file = event.target.files[0];
-    if (!file) {
-        return;
-    }
-
-    // Validate file extension
-    const fileExt = '.' + file.name.split('.').pop().toLowerCase();
-    if (!fileExt || fileExt === '.') {
-        showNotification('Please select a valid file', 'error');
-        return;
-    }
-
-    // Validate file size (1MB max)
-    if (file.size > 1024 * 1024) {
-        showNotification('File exceeds 1MB limit', 'error');
-        return;
-    }
-
-    // Show upload status
-    const statusEl = document.getElementById(fieldId + '_status');
-    if (statusEl) {
-        statusEl.textContent = '';
-        const spinner = document.createElement('i');
-        spinner.className = 'fas fa-spinner fa-spin mr-2';
-        statusEl.appendChild(spinner);
-        statusEl.appendChild(document.createTextNode('Uploading...'));
-    }
-
-    // Create form data
-    const formData = new FormData();
-    formData.append('file', file);
-
-    try {
-        const response = await fetch(uploadEndpoint, {
-            method: 'POST',
-            body: formData
-        });
-
-        if (!response.ok) {
-            const body = await response.text();
-            throw new Error(`Server error ${response.status}: ${body}`);
-        }
-
-        const data = await response.json();
-
-        if (data.status === 'success') {
-            // Update hidden input with filename
-            const hiddenInput = document.getElementById(fieldId + '_hidden');
-            if (hiddenInput) {
-                hiddenInput.value = targetFilename || file.name;
-            }
-
-            // Update status
-            if (statusEl) {
-                statusEl.textContent = `✓ Uploaded: ${targetFilename || file.name}`;
-                statusEl.className = 'text-sm text-green-600';
-            }
-
-            showNotification('Credentials file uploaded successfully', 'success');
-        } else {
-            if (statusEl) {
-                statusEl.textContent = 'Upload failed - click to try again';
-                statusEl.className = 'text-sm text-gray-600';
-            }
-            showNotification(data.message || 'Upload failed', 'error');
-        }
-    } catch (error) {
-        if (statusEl) {
-            statusEl.textContent = 'Upload failed - click to try again';
-            statusEl.className = 'text-sm text-gray-600';
-        }
-        showNotification('Error uploading file: ' + error.message, 'error');
-    } finally {
-        // Allow re-selecting the same file on the next attempt
-        event.target.value = '';
-    }
-}
-
-// handleFiles is now defined exclusively in file-upload.js widget
-
-window.deleteUploadedFile = async function(fieldId, fileId, pluginId, fileType, customDeleteEndpoint) {
-    const fileTypeLabel = fileType === 'json' ? 'file' : 'image';
-    if (!confirm(`Are you sure you want to delete this ${fileTypeLabel}?`)) {
-        return;
-    }
-
-    try {
-        const deleteEndpoint = customDeleteEndpoint || (fileType === 'json' ? '/api/v3/plugins/of-the-day/json/delete' : '/api/v3/plugins/assets/delete');
-        const requestBody = fileType === 'json'
-            ? { file_id: fileId }
-            : { plugin_id: pluginId, image_id: fileId };
-
-        const response = await fetch(deleteEndpoint, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(requestBody)
-        });
-
-        if (!response.ok) {
-            const body = await response.text();
-            throw new Error(`Server error ${response.status}: ${body}`);
-        }
-
-        const data = await response.json();
-
-        if (data.status === 'success') {
-            if (fileType === 'json') {
-                // For JSON files, remove the item's DOM element directly since
-                // updateImageList renders image-specific cards (thumbnails, scheduling).
-                const fileEl = document.getElementById(`file_${fileId}`);
-                if (fileEl) fileEl.remove();
-                // Update hidden data input — normalize identifiers to strings
-                // since JSON files may use id, file_id, or category_name
-                const currentFiles = window.getCurrentImages ? window.getCurrentImages(fieldId) : [];
-                const fileIdStr = String(fileId);
-                const newFiles = currentFiles.filter(f => {
-                    // Match the same identifier logic as the renderer:
-                    // file.id || file.category_name || idx (see renderArrayField)
-                    const fid = String(f.id || f.category_name || '');
-                    return fid !== fileIdStr;
-                });
-                const hiddenInput = document.getElementById(`${fieldId}_images_data`);
-                if (hiddenInput) hiddenInput.value = JSON.stringify(newFiles);
-            } else {
-                // For images, use the full image list re-renderer — normalize to strings
-                const currentFiles = window.getCurrentImages ? window.getCurrentImages(fieldId) : [];
-                const fileIdStr = String(fileId);
-                const newFiles = currentFiles.filter(file => {
-                    const fid = String(file.id || file.category_name || '');
-                    return fid !== fileIdStr;
-                });
-                window.updateImageList(fieldId, newFiles);
-            }
-
-            showNotification(`${fileType === 'json' ? 'File' : 'Image'} deleted successfully`, 'success');
-        } else {
-            showNotification(`Delete failed: ${data.message}`, 'error');
-        }
-    } catch (error) {
-        console.error('Delete error:', error);
-        showNotification(`Delete error: ${error.message}`, 'error');
-    }
-}
-
-// getUploadConfig is defined in file-upload.js widget which loads first.
-// No override needed here — file-upload.js owns this function.
-
-window.updateImageList = function(fieldId, images) {
-    const hiddenInput = document.getElementById(`${fieldId}_images_data`);
-    if (hiddenInput) {
-        hiddenInput.value = JSON.stringify(images);
-    }
-
-    // Update the display
-    const imageList = document.getElementById(`${fieldId}_image_list`);
-    if (imageList) {
-        const uploadConfig = window.getUploadConfig(fieldId);
-        const pluginId = uploadConfig.plugin_id || window.currentPluginConfig?.pluginId || 'static-image';
-
-        imageList.innerHTML = images.map((img, idx) => {
-            const imgSchedule = img.schedule || {};
-            const hasSchedule = imgSchedule.enabled && imgSchedule.mode && imgSchedule.mode !== 'always';
-            const scheduleSummary = hasSchedule ? (window.getScheduleSummary ? window.getScheduleSummary(imgSchedule) : 'Scheduled') : 'Always shown';
-
-            return `
-            <div id="img_${escapeAttribute(img.id || idx)}" class="bg-gray-50 p-3 rounded-lg border border-gray-200">
-                <div class="flex items-center justify-between mb-2">
-                    <div class="flex items-center space-x-3 flex-1">
-                        <img src="/${escapeAttribute(String(img.path || '').replace(/^\/+/, ''))}"
-                             alt="${escapeAttribute(img.filename || '')}"
-                             loading="lazy" decoding="async"
-                             class="w-16 h-16 object-cover rounded"
-                             onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
-                        <div style="display:none;" class="w-16 h-16 bg-gray-200 rounded flex items-center justify-center">
-                            <i class="fas fa-image text-gray-400"></i>
-                        </div>
-                        <div class="flex-1 min-w-0">
-                            <p class="text-sm font-medium text-gray-900 truncate">${escapeHtml(img.original_filename || img.filename || 'Image')}</p>
-                            <p class="text-xs text-gray-500">${window.formatFileSize ? window.formatFileSize(img.size || 0) : (Math.round((img.size || 0) / 1024) + ' KB')} • ${window.formatDate ? window.formatDate(img.uploaded_at) : (img.uploaded_at || '')}</p>
-                            <p class="text-xs text-blue-600 mt-1">
-                                <i class="fas fa-clock mr-1"></i>${scheduleSummary}
-                            </p>
-                        </div>
-                    </div>
-                    <div class="flex items-center space-x-2 ml-4">
-                        <button type="button"
-                                onclick="window.openImageSchedule(${jsStringAttr(fieldId)}, ${jsStringAttr(img.id)}, ${idx})"
-                                class="text-blue-600 hover:text-blue-800 p-2"
-                                title="Schedule this image"
-                                aria-label="Schedule image ${escapeAttribute(img.original_filename || img.filename || '')}">
-                            <i class="fas fa-calendar-alt" aria-hidden="true"></i>
-                        </button>
-                        <button type="button"
-                                onclick="window.deleteUploadedImage(${jsStringAttr(fieldId)}, ${jsStringAttr(img.id)}, ${jsStringAttr(pluginId)})"
-                                class="text-red-600 hover:text-red-800 p-2"
-                                title="Delete image"
-                                aria-label="Delete image ${escapeAttribute(img.original_filename || img.filename || '')}">
-                            <i class="fas fa-trash" aria-hidden="true"></i>
-                        </button>
-                    </div>
-                </div>
-                <!-- Schedule widget will be inserted here when opened -->
-                <div id="schedule_${escapeAttribute(img.id || idx)}" class="hidden mt-3 pt-3 border-t border-gray-300"></div>
-            </div>
-            `;
-        }).join('');
-    }
-}
-
-window.hideUploadProgress = function(fieldId) {
-    const uploadConfig = window.getUploadConfig(fieldId);
-    const maxFiles = uploadConfig.max_files || 10;
-    const maxSizeMB = uploadConfig.max_size_mb || 5;
-    const allowedTypes = uploadConfig.allowed_types || ['image/png', 'image/jpeg', 'image/bmp', 'image/gif'];
-
-    const dropZone = document.getElementById(`${fieldId}_drop_zone`);
-    if (dropZone) {
-        dropZone.innerHTML = `
-            <i class="fas fa-cloud-upload-alt text-3xl text-gray-400 mb-2"></i>
-            <p class="text-sm text-gray-600">Drag and drop images here or click to browse</p>
-            <p class="text-xs text-gray-500 mt-1">Max ${maxFiles} files, ${maxSizeMB}MB each (PNG, JPG, GIF, BMP)</p>
-        `;
-        dropZone.style.pointerEvents = 'auto';
-    }
-}
-
-function formatDate(dateString) {
-    if (!dateString) return 'Unknown date';
-    try {
-        const date = new Date(dateString);
-        return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    } catch (e) {
-        return dateString;
-    }
-}
-
-window.openImageSchedule = function(fieldId, imageId, imageIdx) {
-    const currentImages = getCurrentImages(fieldId);
-    const image = currentImages[imageIdx];
-    if (!image) return;
-
-    const scheduleContainer = document.getElementById(`schedule_${imageId || imageIdx}`);
-    if (!scheduleContainer) return;
-
-    // Toggle visibility
-    const isVisible = !scheduleContainer.classList.contains('hidden');
-
-    if (isVisible) {
-        scheduleContainer.classList.add('hidden');
-        return;
-    }
-
-    scheduleContainer.classList.remove('hidden');
-
-    const schedule = image.schedule || { enabled: false, mode: 'always', start_time: '08:00', end_time: '18:00', days: {} };
-
-    scheduleContainer.innerHTML = `
-        <div class="bg-white rounded-lg border border-blue-200 p-4">
-            <h4 class="text-sm font-semibold text-gray-900 mb-3">
-                <i class="fas fa-clock mr-2"></i>Schedule Settings
-            </h4>
-
-            <!-- Enable Schedule -->
-            <div class="mb-4">
-                <label class="flex items-center">
-                    <input type="checkbox"
-                           id="schedule_enabled_${imageId}"
-                           ${schedule.enabled ? 'checked' : ''}
-                           onchange="window.toggleImageScheduleEnabled('${fieldId}', '${imageId}', ${imageIdx})"
-                           class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
-                    <span class="ml-2 text-sm font-medium text-gray-700">Enable schedule for this image</span>
-                </label>
-                <p class="ml-6 text-xs text-gray-500 mt-1">When enabled, this image will only display during scheduled times</p>
-            </div>
-
-            <!-- Schedule Mode -->
-            <div id="schedule_options_${imageId}" class="space-y-4" style="display: ${schedule.enabled ? 'block' : 'none'};">
-                <div>
-                    <label for="schedule_mode_${imageId}" class="block text-sm font-medium text-gray-700 mb-2">Schedule Type</label>
-                    <select id="schedule_mode_${imageId}"
-                            onchange="window.updateImageScheduleMode('${fieldId}', '${imageId}', ${imageIdx})"
-                            class="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
-                        <option value="always" ${schedule.mode === 'always' ? 'selected' : ''}>Always Show (No Schedule)</option>
-                        <option value="time_range" ${schedule.mode === 'time_range' ? 'selected' : ''}>Same Time Every Day</option>
-                        <option value="per_day" ${schedule.mode === 'per_day' ? 'selected' : ''}>Different Times Per Day</option>
-                    </select>
-                </div>
-
-                <!-- Time Range Mode -->
-                <div id="time_range_${imageId}" class="grid grid-cols-2 gap-4" style="display: ${schedule.mode === 'time_range' ? 'grid' : 'none'};">
-                    <div>
-                        <label for="schedule_start_${imageId}" class="block text-xs font-medium text-gray-700 mb-1">Start Time</label>
-                        <input type="time"
-                               id="schedule_start_${imageId}"
-                               value="${schedule.start_time || '08:00'}"
-                               onchange="window.updateImageScheduleTime('${fieldId}', '${imageId}', ${imageIdx})"
-                               class="block w-full px-2 py-1 text-sm border border-gray-300 rounded-md">
-                    </div>
-                    <div>
-                        <label for="schedule_end_${imageId}" class="block text-xs font-medium text-gray-700 mb-1">End Time</label>
-                        <input type="time"
-                               id="schedule_end_${imageId}"
-                               value="${schedule.end_time || '18:00'}"
-                               onchange="window.updateImageScheduleTime('${fieldId}', '${imageId}', ${imageIdx})"
-                               class="block w-full px-2 py-1 text-sm border border-gray-300 rounded-md">
-                    </div>
-                </div>
-
-                <!-- Per-Day Mode -->
-                <div id="per_day_${imageId}" style="display: ${schedule.mode === 'per_day' ? 'block' : 'none'};">
-                    <label class="block text-xs font-medium text-gray-700 mb-2">Day-Specific Times</label>
-                    <div class="bg-gray-50 rounded p-3 space-y-2 max-h-64 overflow-y-auto">
-                        ${['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'].map(day => {
-                            const dayConfig = (schedule.days && schedule.days[day]) || { enabled: true, start_time: '08:00', end_time: '18:00' };
-                            return `
-                            <div class="bg-white rounded p-2 border border-gray-200">
-                                <div class="flex items-center justify-between mb-2">
-                                    <label class="flex items-center">
-                                        <input type="checkbox"
-                                               id="day_${day}_${imageId}"
-                                               ${dayConfig.enabled ? 'checked' : ''}
-                                               onchange="window.updateImageScheduleDay('${fieldId}', '${imageId}', ${imageIdx}, '${day}')"
-                                               class="h-3 w-3 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
-                                        <span class="ml-2 text-xs font-medium text-gray-700 capitalize">${day}</span>
-                                    </label>
-                                </div>
-                                <div class="grid grid-cols-2 gap-2 ml-5" id="day_times_${day}_${imageId}" style="display: ${dayConfig.enabled ? 'grid' : 'none'};">
-                                    <input type="time"
-                                           id="day_${day}_start_${imageId}"
-                                           aria-label="${day} start time"
-                                           value="${dayConfig.start_time || '08:00'}"
-                                           onchange="updateImageScheduleDay('${fieldId}', '${imageId}', ${imageIdx}, '${day}')"
-                                           class="text-xs px-2 py-1 border border-gray-300 rounded"
-                                           ${!dayConfig.enabled ? 'disabled' : ''}>
-                                    <input type="time"
-                                           id="day_${day}_end_${imageId}"
-                                           aria-label="${day} end time"
-                                           value="${dayConfig.end_time || '18:00'}"
-                                           onchange="updateImageScheduleDay('${fieldId}', '${imageId}', ${imageIdx}, '${day}')"
-                                           class="text-xs px-2 py-1 border border-gray-300 rounded"
-                                           ${!dayConfig.enabled ? 'disabled' : ''}>
-                                </div>
-                            </div>
-                            `;
-                        }).join('')}
-                    </div>
-                </div>
-            </div>
-        </div>
-    `;
-}
-
-window.toggleImageScheduleEnabled = function(fieldId, imageId, imageIdx) {
-    const currentImages = window.getCurrentImages(fieldId);
-    const image = currentImages[imageIdx];
-    if (!image) return;
-
-    const checkbox = document.getElementById(`schedule_enabled_${imageId}`);
-    const enabled = checkbox.checked;
-
-    if (!image.schedule) {
-        image.schedule = { enabled: false, mode: 'always', start_time: '08:00', end_time: '18:00', days: {} };
-    }
-
-    image.schedule.enabled = enabled;
-
-    const optionsDiv = document.getElementById(`schedule_options_${imageId}`);
-    if (optionsDiv) {
-        optionsDiv.style.display = enabled ? 'block' : 'none';
-    }
-
-    window.updateImageList(fieldId, currentImages);
-}
-
-window.updateImageScheduleMode = function(fieldId, imageId, imageIdx) {
-    const currentImages = window.getCurrentImages(fieldId);
-    const image = currentImages[imageIdx];
-    if (!image) return;
-
-    if (!image.schedule) {
-        image.schedule = { enabled: true, mode: 'always', start_time: '08:00', end_time: '18:00', days: {} };
-    }
-
-    const modeSelect = document.getElementById(`schedule_mode_${imageId}`);
-    const mode = modeSelect.value;
-
-    image.schedule.mode = mode;
-
-    const timeRangeDiv = document.getElementById(`time_range_${imageId}`);
-    const perDayDiv = document.getElementById(`per_day_${imageId}`);
-
-    if (timeRangeDiv) timeRangeDiv.style.display = mode === 'time_range' ? 'grid' : 'none';
-    if (perDayDiv) perDayDiv.style.display = mode === 'per_day' ? 'block' : 'none';
-
-    window.updateImageList(fieldId, currentImages);
-}
-
-window.updateImageScheduleTime = function(fieldId, imageId, imageIdx) {
-    const currentImages = window.getCurrentImages(fieldId);
-    const image = currentImages[imageIdx];
-    if (!image) return;
-
-    if (!image.schedule) {
-        image.schedule = { enabled: true, mode: 'time_range', start_time: '08:00', end_time: '18:00' };
-    }
-
-    const startInput = document.getElementById(`schedule_start_${imageId}`);
-    const endInput = document.getElementById(`schedule_end_${imageId}`);
-
-    if (startInput) image.schedule.start_time = startInput.value || '08:00';
-    if (endInput) image.schedule.end_time = endInput.value || '18:00';
-
-    window.updateImageList(fieldId, currentImages);
-}
-
-window.updateImageScheduleDay = function(fieldId, imageId, imageIdx, day) {
-    const currentImages = window.getCurrentImages(fieldId);
-    const image = currentImages[imageIdx];
-    if (!image) return;
-
-    if (!image.schedule) {
-        image.schedule = { enabled: true, mode: 'per_day', days: {} };
-    }
-
-    if (!image.schedule.days) {
-        image.schedule.days = {};
-    }
-
-    const checkbox = document.getElementById(`day_${day}_${imageId}`);
-    const startInput = document.getElementById(`day_${day}_start_${imageId}`);
-    const endInput = document.getElementById(`day_${day}_end_${imageId}`);
-
-    const enabled = checkbox ? checkbox.checked : true;
-
-    if (!image.schedule.days[day]) {
-        image.schedule.days[day] = { enabled: true, start_time: '08:00', end_time: '18:00' };
-    }
-
-    image.schedule.days[day].enabled = enabled;
-
-    if (startInput) image.schedule.days[day].start_time = startInput.value || '08:00';
-    if (endInput) image.schedule.days[day].end_time = endInput.value || '18:00';
-
-    const timesDiv = document.getElementById(`day_times_${day}_${imageId}`);
-    if (timesDiv) {
-        timesDiv.style.display = enabled ? 'grid' : 'none';
-        if (startInput) startInput.disabled = !enabled;
-        if (endInput) endInput.disabled = !enabled;
-    }
-
-    window.updateImageList(fieldId, currentImages);
-}
-
-// Expose renderArrayObjectItem, getSchemaProperty, and escapeHtml to window for use by global functions
+// Used by the array-of-objects helpers below, which live outside this IIFE.
 window.renderArrayObjectItem = renderArrayObjectItem;
 window.getSchemaProperty = getSchemaProperty;
-window.escapeHtml = escapeHtml;
-window.escapeAttribute = escapeAttribute;
 
-// Expose GitHub install handlers. These must be assigned inside the IIFE —
-// from outside the IIFE, `typeof attachInstallButtonHandler` evaluates to
-// 'undefined' and the fallback path at the bottom of this file fires a
-// [FALLBACK] attachInstallButtonHandler not available on window warning.
+// Assigned here because the functions are IIFE-local; the load-time and
+// htmx:afterSettle wiring below, outside the IIFE, reaches them through window.
 window.attachInstallButtonHandler = attachInstallButtonHandler;
 window.setupGitHubInstallHandlers = setupGitHubInstallHandlers;
 
 })(); // End IIFE
 
-// Functions to handle array-of-objects
-// Define these at the top level (outside any IIFE) to ensure they're always available
+// Array-of-objects config fields: add and remove items (the inline onclick
+// handlers that renderArrayObjectItem writes call these).
 if (typeof window !== 'undefined') {
     window.addArrayObjectItem = function(fieldId, fullKey, maxItems) {
         const itemsContainer = document.getElementById(fieldId + '_items');
@@ -4983,35 +4022,8 @@ if (typeof window !== 'undefined') {
         if (!itemsSchema || !itemsSchema.properties) return;
 
         const newIndex = currentItems.length;
-        // Use renderArrayObjectItem if available, otherwise create basic HTML
-        let itemHtml = '';
-        if (typeof window.renderArrayObjectItem === 'function') {
-            itemHtml = window.renderArrayObjectItem(fieldId, fullKey, itemsSchema.properties, {}, newIndex, itemsSchema);
-        } else {
-            // Fallback: create basic HTML structure
-            // Note: newItem is {} for newly added items, so this will use schema defaults
-            const newItem = {};
-            itemHtml = `<div class="border border-gray-300 rounded-lg p-4 bg-gray-50 array-object-item" data-index="${newIndex}">`;
-            Object.keys(itemsSchema.properties || {}).forEach(propKey => {
-                const propSchema = itemsSchema.properties[propKey];
-                if (propSchema && propSchema['x-display'] === 'hidden') return;
-                const propValue = newItem[propKey] !== undefined ? newItem[propKey] : propSchema.default;
-                const propLabel = propSchema.title || propKey.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-                itemHtml += `<div class="mb-3"><label class="block text-sm font-medium text-gray-700 mb-1">${escapeHtml(propLabel)}</label>`;
-                if (propSchema.type === 'boolean') {
-                    const checked = propValue ? 'checked' : '';
-                    // No name attribute - rely solely on _data field to prevent key leakage
-                    itemHtml += `<input type="checkbox" data-prop-key="${propKey}" aria-label="${escapeHtml(propLabel)}" ${checked} class="h-4 w-4 text-blue-600" onchange="window.updateArrayObjectData('${fieldId}')">`;
-                } else {
-                    // Escape HTML to prevent XSS
-                    // No name attribute - rely solely on _data field to prevent key leakage
-                    const escapedValue = typeof propValue === 'string' ? propValue.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;') : (propValue || '');
-                    itemHtml += `<input type="text" data-prop-key="${propKey}" aria-label="${escapeHtml(propLabel)}" value="${escapedValue}" class="block w-full px-3 py-2 border border-gray-300 rounded-md" onchange="window.updateArrayObjectData('${fieldId}')">`;
-                }
-                itemHtml += `</div>`;
-            });
-            itemHtml += `<button type="button" onclick="window.removeArrayObjectItem('${fieldId}', ${newIndex})" class="mt-2 px-3 py-2 text-red-600 hover:text-red-800">Remove</button></div>`;
-        }
+        // renderArrayObjectItem is exported by the plugin-manager IIFE above.
+        const itemHtml = window.renderArrayObjectItem(fieldId, fullKey, itemsSchema.properties, {}, newIndex, itemsSchema);
         itemsContainer.insertAdjacentHTML('beforeend', itemHtml);
         window.updateArrayObjectData(fieldId);
 
@@ -5053,9 +4065,8 @@ if (typeof window !== 'undefined') {
                         input.id = newId;
                     }
                 });
-                // Update button onclick attributes - only update the index parameter
-                // Since we use data-index for tracking, we can compute index from closest('.array-object-item')
-                // For now, update onclick strings but be more careful with the regex
+                // The buttons' inline onclick handlers carry the item index, so
+                // rewrite it in each one.
                 itemEl.querySelectorAll('button[onclick]').forEach(button => {
                     const onclick = button.getAttribute('onclick');
                     if (onclick) {
@@ -5104,52 +4115,10 @@ if (typeof window !== 'undefined') {
         }
     };
 
-    window.updateCheckboxGroupData = function(fieldId) {
-        // Update hidden _data input with currently checked values
-        const hiddenInput = document.getElementById(fieldId + '_data');
-        if (!hiddenInput) return;
-
-        const checkboxes = document.querySelectorAll(`input[type="checkbox"][data-checkbox-group="${fieldId}"]`);
-        const selectedValues = [];
-
-        checkboxes.forEach(checkbox => {
-            if (checkbox.checked) {
-                const optionValue = checkbox.getAttribute('data-option-value') || checkbox.value;
-                selectedValues.push(optionValue);
-            }
-        });
-
-        hiddenInput.value = JSON.stringify(selectedValues);
-    };
-
-    // Debug logging (only if pluginDebug is enabled)
-    if (_PLUGIN_DEBUG_EARLY) {
-        debugLog('[ARRAY-OBJECTS] Functions defined on window:', {
-            addArrayObjectItem: typeof window.addArrayObjectItem,
-            removeArrayObjectItem: typeof window.removeArrayObjectItem,
-            updateArrayObjectData: typeof window.updateArrayObjectData,
-            handleArrayObjectFileUpload: typeof window.handleArrayObjectFileUpload,
-            removeArrayObjectFile: typeof window.removeArrayObjectFile
-        });
-    }
 }
-
-// Make currentPluginConfig globally accessible (outside IIFE)
-window.currentPluginConfig = null;
 
 // Force initialization immediately when script loads (for HTMX swapped content)
 debugLog('Plugins script loaded, checking for elements...');
-
-// Verify critical functions are available
-if (_PLUGIN_DEBUG_EARLY) {
-    debugLog('Plugin functions available:', {
-        configurePlugin: typeof window.configurePlugin,
-        togglePlugin: typeof window.togglePlugin,
-        initializePlugins: typeof window.initializePlugins,
-        loadInstalledPlugins: typeof window.loadInstalledPlugins,
-        searchPluginStore: typeof window.searchPluginStore
-    });
-}
 
 // Check GitHub auth status immediately if elements exist (don't wait for full initialization)
 if (window.checkGitHubAuthStatus && document.getElementById('github-auth-warning')) {
@@ -5162,11 +4131,7 @@ setTimeout(function() {
     if (installedGrid) {
         debugLog('Found installed-plugins-grid, forcing initialization...');
         window.pluginManager.initialized = false;
-        if (typeof initializePluginPageWhenReady === 'function') {
-            initializePluginPageWhenReady();
-        } else if (typeof window.initPluginsPage === 'function') {
-            window.initPluginsPage();
-        }
+        window.initPluginsPage();
     } else {
         debugLog('installed-plugins-grid not found yet, will retry via event listeners');
     }
@@ -5203,16 +4168,7 @@ document.addEventListener('htmx:afterSettle', function() {
     let starlarkDataLoaded = false;
 
     // ── Helpers ─────────────────────────────────────────────────────────────
-    // Quotes too: the result lands in quoted attribute values (data-app-id=,
-    // title=), and the textContent/innerHTML round-trip only escapes &, < and >.
-    function escapeHtml(str) {
-        if (!str) return '';
-        const div = document.createElement('div');
-        div.textContent = str;
-        return div.innerHTML
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-    }
+    function escapeHtml(str) { return window.LEDEscape.html(str); }
 
     function isStarlarkInstalled(appId) {
         // Check window.installedPlugins (populated by loadInstalledPlugins)
@@ -5344,11 +4300,8 @@ document.addEventListener('htmx:afterSettle', function() {
             });
     }
 
-    // ── Apply Filters + Sort ────────────────────────────────────────────────
     // ── Filter / Sort / Paginate ────────────────────────────────────────────
-    // Same behaviour, element ids and localStorage keys as the hand-rolled
-    // version this replaces; the machinery is now shared with the store and
-    // the installed-plugins list.
+    // The same ListFilter controller as the store and the installed list.
     function starlarkSortName(app) {
         return (app.name || app.id || '').toLowerCase();
     }
@@ -5532,7 +4485,6 @@ document.addEventListener('htmx:afterSettle', function() {
         }
     }
 
-    // ── Filter UI Updates ───────────────────────────────────────────────────
     // ── Event Listeners ─────────────────────────────────────────────────────
     function setupStarlarkFilterListeners() {
         const ctl = getStarlarkFilter();
@@ -5542,6 +4494,15 @@ document.addEventListener('htmx:afterSettle', function() {
     }
 
     // ── Install / Upload / Pixlet ───────────────────────────────────────────
+    // Reload the installed list (the new app joins it as starlark:<id>), then
+    // redraw the current page of apps so its Installed badge shows. A failed
+    // reload has already been reported by loadInstalledPlugins.
+    function refreshAfterStarlarkChange() {
+        window.pluginManager.loadInstalledPlugins(true)
+            .catch(() => {})
+            .then(() => applyStarlarkFiltersAndSort(true));
+    }
+
     window.installStarlarkApp = function(appId) {
         if (!confirm(`Install Starlark app "${appId}" from Tronbyte repository?`)) return;
 
@@ -5554,11 +4515,7 @@ document.addEventListener('htmx:afterSettle', function() {
         .then(data => {
             if (data.status === 'success') {
                 alert(`Installed: ${data.message || appId}`);
-                // Refresh installed plugins list
-                if (typeof loadInstalledPlugins === 'function') loadInstalledPlugins();
-                else if (typeof window.loadInstalledPlugins === 'function') window.loadInstalledPlugins();
-                // Re-render current page to update installed badges
-                setTimeout(() => applyStarlarkFiltersAndSort(true), 500);
+                refreshAfterStarlarkChange();
             } else {
                 alert(`Install failed: ${data.message || 'Unknown error'}`);
             }
@@ -5598,9 +4555,7 @@ document.addEventListener('htmx:afterSettle', function() {
             .then(data => {
                 if (data.status === 'success') {
                     alert(`Uploaded: ${data.app_id}`);
-                    if (typeof loadInstalledPlugins === 'function') loadInstalledPlugins();
-                    else if (typeof window.loadInstalledPlugins === 'function') window.loadInstalledPlugins();
-                    setTimeout(() => applyStarlarkFiltersAndSort(true), 500);
+                    refreshAfterStarlarkChange();
                 } else {
                     alert('Upload failed: ' + (data.message || 'Unknown error'));
                 }
@@ -5609,12 +4564,6 @@ document.addEventListener('htmx:afterSettle', function() {
     }
 
     // ── Bootstrap ───────────────────────────────────────────────────────────
-    const origInit = window.initializePlugins;
-    window.initializePlugins = function() {
-        if (origInit) origInit();
-        initStarlarkSection();
-    };
-
     document.addEventListener('DOMContentLoaded', initStarlarkSection);
     document.addEventListener('htmx:afterSwap', function(e) {
         if (e.detail && e.detail.target && e.detail.target.id === 'plugins-content') {

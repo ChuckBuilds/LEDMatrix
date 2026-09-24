@@ -105,7 +105,6 @@ def _reset_display_manager_globals():
     # An instance left here is what the next module's DisplayManager() call
     # gets back -- potentially one built against a MagicMock matrix.
     dm_mod.DisplayManager._instance = None
-    dm_mod.DisplayManager._initialized = False
 
     # Put a binding back if a patch outlived the module that started it.
     # Restoring rather than failing: a leak reported against an innocent module

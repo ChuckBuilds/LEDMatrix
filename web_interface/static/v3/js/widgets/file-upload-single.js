@@ -33,12 +33,7 @@
 
     const base = window.BaseWidget ? new window.BaseWidget('FileUploadSingle', '1.0.0') : null;
 
-    function escapeHtml(text) {
-        if (base) return base.escapeHtml(text);
-        const div = document.createElement('div');
-        div.textContent = String(text);
-        return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-    }
+    function escapeHtml(text) { return window.LEDEscape.html(text); }
 
     function sanitizeId(id) {
         if (base) return base.sanitizeId(id);
@@ -199,7 +194,6 @@
                 const safeId = sanitizeId(fieldId);
                 const fileInput = document.getElementById(`${safeId}_file_input`);
                 const statusDiv = document.getElementById(`${safeId}_status`);
-                const notifyFn = window.showNotification || console.log;
 
                 // Read config from the file input data attributes
                 const pluginId = (fileInput && fileInput.dataset.pluginId) || '';
@@ -208,19 +202,19 @@
                     .split(',').map(t => t.trim());
 
                 if (!pluginId) {
-                    notifyFn('Plugin ID not set — cannot upload', 'error');
+                    window.showNotification('Plugin ID not set — cannot upload', 'error');
                     return;
                 }
 
                 // Validate type
                 if (!allowedTypes.includes(file.type)) {
-                    notifyFn(`File type "${file.type}" not allowed`, 'error');
+                    window.showNotification(`File type "${file.type}" not allowed`, 'error');
                     return;
                 }
 
                 // Validate size
                 if (file.size > maxSizeMb * 1024 * 1024) {
-                    notifyFn(`File exceeds ${maxSizeMb}MB limit`, 'error');
+                    window.showNotification(`File exceeds ${maxSizeMb}MB limit`, 'error');
                     return;
                 }
 
@@ -266,7 +260,7 @@
                             statusDiv.appendChild(document.createTextNode('Uploaded successfully'));
                             setTimeout(() => { statusDiv.className = 'mt-1 text-xs hidden'; statusDiv.textContent = ''; }, 3000);
                         }
-                        notifyFn('Image uploaded successfully', 'success');
+                        window.showNotification('Image uploaded successfully', 'success');
                     } else {
                         throw new Error(data.message || 'Upload failed');
                     }
@@ -279,7 +273,7 @@
                         statusDiv.appendChild(errIcon);
                         statusDiv.appendChild(document.createTextNode(error.message || 'Upload failed'));
                     }
-                    notifyFn(`Upload error: ${error.message}`, 'error');
+                    window.showNotification(`Upload error: ${error.message}`, 'error');
                 } finally {
                     if (fileInput) fileInput.value = '';
                 }
