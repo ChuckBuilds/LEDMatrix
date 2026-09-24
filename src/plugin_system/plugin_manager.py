@@ -661,9 +661,15 @@ class PluginManager:
             if not self.unload_plugin(plugin_id):
                 return False
         
-        # Re-discover to get updated manifest
-        manifest_path = self.plugins_dir / plugin_id / "manifest.json"
-        if manifest_path.exists():
+        # Re-read the manifest so an edit to it takes effect, from the
+        # directory discovery found the plugin in: a directory's name need not
+        # be the id its manifest declares.
+        with self._discovery_lock:
+            directories = dict(self.plugin_directories)
+        plugin_dir = self.plugin_loader.find_plugin_directory(
+            plugin_id, self.plugins_dir, directories)
+        manifest_path = plugin_dir / "manifest.json" if plugin_dir is not None else None
+        if manifest_path is not None and manifest_path.exists():
             try:
                 with open(manifest_path, 'r', encoding='utf-8') as f:
                     manifest = json.load(f)
