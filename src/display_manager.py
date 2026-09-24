@@ -1282,8 +1282,6 @@ class DisplayManager:
 
     def cleanup(self):
         """Clean up resources."""
-        if getattr(self, 'frame_timing', None) is not None:
-            self.frame_timing.close()
         if hasattr(self, 'matrix') and self.matrix is not None:
             try:
                 self.matrix.Clear()
@@ -1295,6 +1293,9 @@ class DisplayManager:
                 self._new_canvas(self.width, self.height)
             except (OSError, RuntimeError, ValueError, MemoryError):
                 logger.debug("Canvas reset during cleanup failed", exc_info=True)
+        # The stall watchdog would otherwise outlive this manager.
+        if getattr(self, 'frame_timing', None) is not None:
+            self.frame_timing.close()
         # Reset the singleton state when cleaning up
         DisplayManager._instance = None
 
