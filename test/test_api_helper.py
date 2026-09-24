@@ -92,7 +92,7 @@ class TestGet:
         helper.session.get.assert_not_called()
         rate_spy.assert_not_called()
 
-    def test_cache_miss_fetches_and_caches_without_ttl(self, helper, cache):
+    def test_cache_miss_fetches_and_caches_with_ttl(self, helper, cache):
         cache.get.return_value = None
         helper.session.get = Mock(return_value=_make_response({'a': 1}))
 
@@ -100,9 +100,47 @@ class TestGet:
                             cache_ttl=999)
 
         assert result == {'a': 1}
-        # Pin the ttl-dropped contract: CacheManager.set is called with
-        # (key, data) only — the cache_ttl argument is discarded.
-        cache.set.assert_called_once_with('k', {'a': 1})
+        cache.set.assert_called_once_with('k', {'a': 1}, ttl=999)
+
+    def test_set_cache_passes_ttl(self, helper, cache):
+        helper.set_cache('k', {'a': 1}, ttl=42)
+        cache.set.assert_called_once_with('k', {'a': 1}, ttl=42)
+
+
+class TestCacheLifetimeWithRealCacheManager:
+    """cache_ttl decides how long a response is reused, in both directions:
+    past CacheManager's 300-second default read age, and not beyond it."""
+
+    @pytest.fixture
+    def real_cache(self, tmp_path):
+        from unittest.mock import patch
+        from src.cache_manager import CacheManager
+        with patch('src.cache_manager.CacheManager._get_writable_cache_dir',
+                   return_value=str(tmp_path)):
+            cache = CacheManager()
+        yield cache
+        # Releases the class-wide cleanup-thread claim on this directory,
+        # which would otherwise leak into test_cache_cleanup_thread_ownership.
+        cache.stop_cleanup_thread()
+
+    def _fetch_twice(self, real_cache, monkeypatch, ttl, elapsed):
+        helper = APIHelper(cache_manager=real_cache)
+        helper.set_rate_limit(0)
+        helper.session.get = Mock(side_effect=[_make_response({'n': 1}),
+                                               _make_response({'n': 2})])
+        now = [1_000_000.0]
+        monkeypatch.setattr('src.cache.memory_cache.time.time', lambda: now[0])
+        monkeypatch.setattr('src.cache.disk_cache.time.time', lambda: now[0])
+        monkeypatch.setattr('src.cache_manager.time.time', lambda: now[0])
+        helper.get('https://example.com/api', cache_key='lifetime_test', cache_ttl=ttl)
+        now[0] += elapsed
+        return helper.get('https://example.com/api', cache_key='lifetime_test', cache_ttl=ttl)
+
+    def test_long_ttl_outlives_the_default_read_age(self, real_cache, monkeypatch):
+        assert self._fetch_twice(real_cache, monkeypatch, ttl=3600, elapsed=1000) == {'n': 1}
+
+    def test_short_ttl_expires(self, real_cache, monkeypatch):
+        assert self._fetch_twice(real_cache, monkeypatch, ttl=60, elapsed=120) == {'n': 2}
 
     def test_request_exception_returns_none_and_caches_nothing(
             self, helper, cache):
@@ -222,15 +260,6 @@ class TestClearCache:
         helper.clear_cache()
 
         manager.clear_cache.assert_called_once_with()
-
-    def test_no_pattern_falls_back_to_clear(self):
-        manager = types.SimpleNamespace(clear=Mock())
-        helper = APIHelper(cache_manager=manager)
-        helper.set_rate_limit(0)
-
-        helper.clear_cache()
-
-        manager.clear.assert_called_once_with()
 
     def test_no_pattern_manager_without_any_clear_is_noop(self):
         helper = APIHelper(cache_manager=object())

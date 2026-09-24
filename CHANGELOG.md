@@ -42,6 +42,18 @@ accepts both, but the store flags the old spelling as deprecated
   - `reload_plugin` reads the manifest from the plugin's discovered directory.
   - Removed: `last_display` from plugin state info and `get_last_display()` (nothing recorded them); `PluginOperationQueue`'s `history_file` and `lazy_load` arguments; and `data/plugin_operations.json`, which nothing read.
 
+- Core service fixes:
+  - `/api/v3/errors` shows each exception's real stack trace instead of `NoneType: None`.
+  - Wi-Fi disconnect takes the saved connection profile down.
+  - `wifi_config.json` is written atomically, and a save that fails now gets a 500.
+  - `plugin://` fonts load from the plugin's own install directory. `FontManager.register_plugin_fonts()` takes an optional `plugin_dir`.
+  - `APIHelper` keeps cached responses for the `cache_ttl` it was given, instead of always 300 s.
+  - Logo scales from 0.1 to 10 are honoured everywhere; values outside that range are clamped.
+  - `LogoHelper` and `logo_downloader`: an empty ESPN logo list counts as a failed download, and the placeholder is written at the requested path.
+  - Bundled font paths no longer depend on the directory the process was started from.
+  - Backups record `src.__version__`.
+  - Removed: `BackgroundDataService`'s `queue_size` stat and `clear_completed_requests()`.
+
 - The web service (`ledmatrix-web`) logs through `src.logging_config` like the
   display service, so `journalctl -p err -u ledmatrix-web` works. Successful
   GET/HEAD/OPTIONS requests (the UI's polling) are logged at DEBUG instead of
