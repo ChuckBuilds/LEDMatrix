@@ -299,60 +299,6 @@ class TestWhoIsGated:
         assert kept and final is None
 
 
-class TestActiveGate:
-    @pytest.fixture(autouse=True)
-    def no_gate_left_behind(self):
-        yield
-        render_gate.set_active(None)
-
-    def test_without_a_vegas_run_nothing_is_gated(self):
-        render_gate.set_active(None)
-        with render_gate.yielding():
-            assert sys.getprofile() is None
-
-    def test_with_one_background_work_gives_way(self):
-        gate = RenderGate()
-        render_gate.set_active(gate)
-        with render_gate.yielding():
-            assert sys.getprofile() == gate._hook
-        assert sys.getprofile() is None
-
-    def test_espn_chunk_fetches_give_way(self):
-        from src.common import espn_dates
-        gate = RenderGate()
-        render_gate.set_active(gate)
-        seen = []
-
-        class Response:
-            content = b'{"events": []}'
-
-            def raise_for_status(self):
-                pass
-
-            def json(self):
-                return {"events": []}
-
-        class Session:
-            def get(self, *args, **kwargs):
-                seen.append(sys.getprofile() == gate._hook)
-                return Response()
-        assert espn_dates._fetch_one_chunk(
-            Session(), "http://x", {}, {}, 5, None, "20260924") == {"events": []}
-        assert seen == [True]
-
-    def test_background_data_fetches_give_way(self):
-        from src.background_data_service import BackgroundDataService
-        gate = RenderGate()
-        render_gate.set_active(gate)
-        service = BackgroundDataService.__new__(BackgroundDataService)
-        service._shutdown = True        # never started: nothing for __del__ to stop
-        seen = []
-        service._fetch_data = lambda request: seen.append(
-            sys.getprofile() == gate._hook) or "result"
-        assert service._fetch_data_worker(object()) == "result"
-        assert seen == [True]
-
-
 class TestDisplayManager:
     @pytest.fixture
     def dm(self):
@@ -443,10 +389,8 @@ class TestVegasWiring:
         assert c._state_lock in gate._guarded
         assert c.stream_manager._buffer_lock in gate._guarded
         assert c.plugin_adapter._cache_lock in gate._guarded
-        assert render_gate.active() is gate       # background fetches use it too
         c._remove_render_gate()
         assert c.display_manager.render_gate is None
-        assert render_gate.active() is None
 
     @pytest.mark.parametrize("releases", [False, None])
     def test_ignored_without_a_binding_that_releases_the_gil(self, monkeypatch, releases):

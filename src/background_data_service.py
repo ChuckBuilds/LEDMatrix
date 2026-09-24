@@ -26,7 +26,6 @@ from enum import Enum
 from concurrent.futures import ThreadPoolExecutor
 import pytz
 from src.cache_manager import CacheManager
-from src.common import render_gate
 from src.common.json_body import response_json
 from src.common.espn_dates import (
     RANGE_RETRY_SECONDS,
@@ -318,12 +317,6 @@ class BackgroundDataService:
         return request_id
     
     def _fetch_data_worker(self, request: FetchRequest) -> FetchResult:
-        """Fetch one request on a worker thread, giving way to Vegas's render
-        thread while it scrolls (src/common/render_gate.py)."""
-        with render_gate.yielding():
-            return self._fetch_data(request)
-
-    def _fetch_data(self, request: FetchRequest) -> FetchResult:
         """
         Worker function that performs the actual data fetching.
         
