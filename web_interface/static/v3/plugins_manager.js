@@ -241,7 +241,6 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
 // Track pending render data for when DOM isn't ready yet
 window.__pendingInstalledPlugins = window.__pendingInstalledPlugins || null;
 window.__pendingStorePlugins = window.__pendingStorePlugins || null;
-window.__pluginDomReady = window.__pluginDomReady || false;
 
 // Document-level delegation for plugin card actions, so a card works even if
 // it was rendered before the grid's own listener was attached. It hands the
@@ -737,7 +736,6 @@ window.initPluginsPage = function() {
     }
 
     window.pluginManager.initializing = true;
-    window.__pluginDomReady = true;
 
     // Check GitHub auth status immediately (don't wait for full initialization)
     // This can run in parallel with other initialization
@@ -2641,140 +2639,6 @@ window.removeArrayObjectFile = function(fieldId, itemIndex, propKey) {
         showNotification('Logo removed', 'success');
     }
 };
-
-// Function to toggle nested sections
-window.toggleNestedSection = function(sectionId, event) {
-    // Prevent event bubbling if event is provided
-    if (event) {
-        event.stopPropagation();
-        event.preventDefault();
-    }
-
-    const content = document.getElementById(sectionId);
-    const icon = document.getElementById(sectionId + '-icon');
-
-    if (!content || !icon) return;
-
-    // Prevent multiple simultaneous toggles
-    if (content.dataset.toggling === 'true') {
-        return;
-    }
-
-    // Mark as toggling
-    content.dataset.toggling = 'true';
-
-    // Check current state before making changes
-    const hasCollapsed = content.classList.contains('collapsed');
-    const hasExpanded = content.classList.contains('expanded');
-    const displayStyle = content.style.display;
-    const computedDisplay = window.getComputedStyle(content).display;
-
-    // Check if content is currently collapsed - prioritize class over display style
-    const isCollapsed = hasCollapsed || (!hasExpanded && (displayStyle === 'none' || computedDisplay === 'none'));
-
-    if (isCollapsed) {
-        // Expand the section
-        content.classList.remove('collapsed');
-        content.classList.add('expanded');
-        content.style.display = 'block';
-        content.style.overflow = 'hidden'; // Prevent content jumping during animation
-
-        // CRITICAL FIX: Use setTimeout to ensure browser has time to layout the element
-        // When element goes from display:none to display:block, scrollHeight might be 0
-        // We need to wait for the browser to calculate the layout
-        setTimeout(() => {
-            // Force reflow to ensure transition works
-            void content.offsetHeight;
-
-            // Now measure the actual content height after layout
-            const scrollHeight = content.scrollHeight;
-            if (scrollHeight > 0) {
-                content.style.maxHeight = scrollHeight + 'px';
-            } else {
-                // Fallback: if scrollHeight is still 0, try measuring again after a brief delay
-                setTimeout(() => {
-                    const retryHeight = content.scrollHeight;
-                    content.style.maxHeight = retryHeight > 0 ? retryHeight + 'px' : '500px';
-                }, 10);
-            }
-        }, 10);
-
-        icon.classList.remove('fa-chevron-right');
-        icon.classList.add('fa-chevron-down');
-
-        // Allow parent section to show overflow when expanded
-        const sectionElement = content.closest('.nested-section');
-        if (sectionElement) {
-            sectionElement.style.overflow = 'visible';
-        }
-
-        // After animation completes, remove max-height constraint to allow natural expansion
-        // This allows parent sections to automatically expand
-        setTimeout(() => {
-            // Only set to none if still expanded (prevent race condition)
-            if (content.classList.contains('expanded') && !content.classList.contains('collapsed')) {
-                content.style.maxHeight = 'none';
-                content.style.overflow = '';
-            }
-            // Clear toggling flag
-            content.dataset.toggling = 'false';
-        }, 320); // Slightly longer than transition duration
-
-        // Scroll the expanded content into view after a short delay to allow animation
-        setTimeout(() => {
-            if (sectionElement) {
-                // Find the modal container
-                const modalContent = sectionElement.closest('.modal-content');
-                if (modalContent) {
-                    // Scroll the section header into view within the modal
-                    const headerButton = sectionElement.querySelector('button');
-                    if (headerButton) {
-                        headerButton.scrollIntoView({ behavior: 'smooth', block: 'start', inline: 'nearest' });
-                    }
-                } else {
-                    // If not in a modal, just scroll the section
-                    sectionElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                }
-            }
-        }, 350); // Wait for animation to complete
-    } else {
-        // Collapse the section
-        content.classList.add('collapsed');
-        content.classList.remove('expanded');
-        content.style.overflow = 'hidden'; // Prevent content jumping during animation
-
-        // Set max-height to current scroll height first (required for smooth animation)
-        const currentHeight = content.scrollHeight;
-        content.style.maxHeight = currentHeight + 'px';
-
-        // Force reflow to apply the height
-        void content.offsetHeight;
-
-        // Then animate to 0
-        setTimeout(() => {
-            content.style.maxHeight = '0';
-        }, 10);
-
-        // Restore parent section overflow when collapsed
-        const sectionElement = content.closest('.nested-section');
-        if (sectionElement) {
-            sectionElement.style.overflow = 'hidden';
-        }
-
-        // Use setTimeout to set display:none after transition completes
-        setTimeout(() => {
-            if (content.classList.contains('collapsed')) {
-                content.style.display = 'none';
-                content.style.overflow = '';
-            }
-            // Clear toggling flag
-            content.dataset.toggling = 'false';
-        }, 320); // Match the CSS transition duration + small buffer
-        icon.classList.remove('fa-chevron-down');
-        icon.classList.add('fa-chevron-right');
-    }
-}
-
 
 // Generic Plugin Action Handler
 window.executePluginAction = function(actionId, actionIndex, pluginIdParam = null) {
@@ -5122,12 +4986,6 @@ document.addEventListener('htmx:afterSettle', function() {
     }
 
     // ── Bootstrap ───────────────────────────────────────────────────────────
-    const origInit = window.initializePlugins;
-    window.initializePlugins = function() {
-        if (origInit) origInit();
-        initStarlarkSection();
-    };
-
     document.addEventListener('DOMContentLoaded', initStarlarkSection);
     document.addEventListener('htmx:afterSwap', function(e) {
         if (e.detail && e.detail.target && e.detail.target.id === 'plugins-content') {

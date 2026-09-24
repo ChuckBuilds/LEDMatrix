@@ -301,45 +301,6 @@
         });
     </script>
 
-    <!-- CodeMirror for JSON editing - lazy loaded when needed -->
-    <link rel="preload" href="{{ url_for('static', filename='v3/vendor/codemirror/codemirror.min.css') }}" as="style" onload="this.onload=null;this.rel='stylesheet'">
-    <noscript><link rel="stylesheet" href="{{ url_for('static', filename='v3/vendor/codemirror/codemirror.min.css') }}"></noscript>
-    <link rel="preload" href="{{ url_for('static', filename='v3/vendor/codemirror/theme/monokai.min.css') }}" as="style" onload="this.onload=null;this.rel='stylesheet'">
-    <noscript><link rel="stylesheet" href="{{ url_for('static', filename='v3/vendor/codemirror/theme/monokai.min.css') }}"></noscript>
-    <!-- CodeMirror scripts loaded on demand when JSON editor is opened -->
-    <script>
-        // Lazy load CodeMirror when needed
-        window.loadCodeMirror = function() {
-            if (window.CodeMirror) return Promise.resolve();
-            
-            return new Promise((resolve, reject) => {
-                // Vendored CodeMirror 5.65.2 (note: the previously listed CDN
-                // mode/json/json.min.js never existed — it 404'd on every
-                // editor open; JSON highlighting comes from the javascript
-                // mode, so it's simply dropped here)
-                const scripts = [
-                    '/static/v3/vendor/codemirror/codemirror.min.js',
-                    '/static/v3/vendor/codemirror/mode/javascript/javascript.min.js',
-                    '/static/v3/vendor/codemirror/addon/edit/closebrackets.min.js',
-                    '/static/v3/vendor/codemirror/addon/edit/matchbrackets.min.js'
-                ];
-                
-                let loaded = 0;
-                scripts.forEach((src, index) => {
-                    const script = document.createElement('script');
-                    script.src = src;
-                    script.defer = true;
-                    script.onload = () => {
-                        loaded++;
-                        if (loaded === scripts.length) resolve();
-                    };
-                    script.onerror = reject;
-                    document.head.appendChild(script);
-                });
-            });
-        };
-    </script>
-
     <!-- Font Awesome icons (vendored 6.0.0 — css/all.min.css references
          ../webfonts/ relatively, so both live under v3/vendor/fontawesome/) -->
     <link rel="stylesheet" href="{{ url_for('static', filename='v3/vendor/fontawesome/css/all.min.css') }}">

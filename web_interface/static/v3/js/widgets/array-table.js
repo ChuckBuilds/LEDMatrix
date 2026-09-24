@@ -853,7 +853,6 @@
         addButton.style.opacity = isAtMax ? '0.5' : '';
     }
 
-    window.updateArrayTableAddButtonState = updateAddButtonState;
 
     window.addArrayTableRow = function(button) {
         const fieldId        = button.getAttribute('data-field-id');
