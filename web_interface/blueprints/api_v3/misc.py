@@ -5,7 +5,7 @@ Routes decorate the shared `api_v3` Blueprint from ._common, so their
 endpoint names are unchanged by living here.
 """
 from web_interface.blueprints.api_v3 import (
-    _coerce_to_bool,
+    _coerce_to_bool, _discovered_plugin_manifests,
     ErrorCode, Path, _JOURNALCTL, _MQTT_BRIDGE_CONFIG, _MQTT_BRIDGE_DEFAULTS,
     _MQTT_BRIDGE_DIR, _SUDO, _coerce_mqtt_bridge_value,
     _get_display_service_status, _mqtt_bridge_service_state,
@@ -65,7 +65,8 @@ def get_health():
                     'status': 'unknown',
                     'readable': False
                 }
-        except Exception as e:
+        except Exception:
+            logger.warning("Health check could not read the config file", exc_info=True)
             health_status['checks']['config_file'] = {
                 'status': 'error',
                 'readable': False,
@@ -75,8 +76,7 @@ def get_health():
         # Check plugin system
         try:
             if api_v3.plugin_manager:
-                # Try to discover plugins (lightweight check)
-                plugin_count = len(api_v3.plugin_manager.get_available_plugins()) if hasattr(api_v3.plugin_manager, 'get_available_plugins') else 0
+                plugin_count = len(_discovered_plugin_manifests())
                 health_status['checks']['plugin_system'] = {
                     'status': 'operational',
                     'plugin_count': plugin_count
@@ -85,7 +85,8 @@ def get_health():
                 health_status['checks']['plugin_system'] = {
                     'status': 'not_initialized'
                 }
-        except Exception as e:
+        except Exception:
+            logger.warning("Health check could not count plugins", exc_info=True)
             health_status['checks']['plugin_system'] = {
                 'status': 'error',
                 'error': 'see logs for details'
@@ -107,7 +108,8 @@ def get_health():
                     'status': 'no_snapshot',
                     'note': 'Display service may not be running'
                 }
-        except Exception as e:
+        except Exception:
+            logger.warning("Health check could not read the preview snapshot", exc_info=True)
             health_status['checks']['hardware'] = {
                 'status': 'unknown',
                 'error': 'see logs for details'
