@@ -90,6 +90,9 @@ def _cache_put(key: Tuple[str, int], value: Tuple[Any, int]) -> None:
 # Config keys a style element block carries, in schema/UI order.
 _STYLE_KEYS = ('font', 'font_size', 'text_color', 'visible', 'align')
 
+# Title of every generated `layout` (x/y offset) group in the config form.
+_LAYOUT_TITLE = 'Layout Offsets'
+
 #: Bounds on a user-set ``customization.layout.<element>.scale``. They are the
 #: Scale field's minimum and maximum in the generated schema, and every reader
 #: (coerce_scale, element_scale, LogoHelper.load_logo) clamps to them, so the
@@ -309,7 +312,7 @@ def expand_style_elements(schema: Dict[str, Any]) -> Dict[str, Any]:
         if layout_props:
             layout = props.setdefault('layout', {
                 'type': 'object',
-                'title': 'Layout Offsets',
+                'title': _LAYOUT_TITLE,
                 'description': 'Pixel offsets applied to each element '
                                '(positive x moves right, positive y moves down)',
                 'x-advanced': True,
@@ -353,16 +356,14 @@ def _element_block_from_spec(element_key: str,
             'type': 'string',
             'title': 'Font Family',
             'x-advanced': True,
-            # The core already ships this widget and the config form already
-            # allowlists it; without the hint the field rendered as a bare
-            # text box the user had to type a filename into.
+            # The core's font picker; without the hint the form renders a
+            # bare text box the user has to type a filename into.
             'x-widget': 'font-selector',
         }
         # A bitmap font ignores font_size and renders at its own baked-in
         # size, so the size ceiling has to be enforced when picking the
         # font, not when setting the size.
-        max_size = (size_spec or {}).get('max') if isinstance(
-            spec.get('size'), dict) else None
+        max_size = size_spec.get('max') if size_spec else None
         if isinstance(max_size, (int, float)):
             font_prop['x-options'] = {'maxFixedSize': max_size}
         if 'default' in font_spec:
@@ -547,7 +548,7 @@ def _modes_block(declaration: Dict[str, Any],
         if layout_props:
             element_props['layout'] = {
                 'type': 'object',
-                'title': 'Layout Offsets',
+                'title': _LAYOUT_TITLE,
                 'x-advanced': True,
                 'additionalProperties': False,
                 'properties': layout_props,
@@ -688,7 +689,7 @@ def _modes_block_from_properties(props: Dict[str, Any], element_keys: list,
         if layout_props:
             element_props['layout'] = {
                 'type': 'object',
-                'title': 'Layout Offsets',
+                'title': _LAYOUT_TITLE,
                 'x-advanced': True,
                 'additionalProperties': False,
                 'properties': layout_props,
@@ -1381,12 +1382,6 @@ class ElementStyleResolver:
         if not isinstance(block, dict):
             return {}
         return _lookup_element(block.get('layout'), element_key)
-
-    @classmethod
-    def _layout_axis(cls, block: Dict[str, Any], element_key: str,
-                     axis: str) -> Any:
-        """``block['layout'][element][axis]``, or None if absent anywhere."""
-        return cls._layout_element(block, element_key).get(axis)
 
 
     # -- resolution internals -----------------------------------------------
