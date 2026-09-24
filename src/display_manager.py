@@ -236,6 +236,7 @@ class DisplayManager:
         # Timing of every presented frame, whoever drew it, for
         # scripts/frame_soak.py. See src/common/frame_timing.py.
         self.frame_timing = FrameTimingRecorder(info=self._frame_timing_info())
+        self.frame_timing.scrolling_now = self._scrolling_now
 
         self._scrolling_state = {
             'is_scrolling': False,
@@ -1458,6 +1459,15 @@ class DisplayManager:
         except (TypeError, ValueError):
             value = 0.0
         return value if value > 0 else 100.0
+
+    def _scrolling_now(self) -> bool:
+        """Whether a scroll is running, without is_currently_scrolling()'s
+        side effect of expiring the state -- safe from the stall watchdog's
+        thread."""
+        state = self._scrolling_state
+        return bool(state['is_scrolling']) and (
+            time.time() - state['last_scroll_activity']
+            <= state['scroll_inactivity_threshold'])
 
     def _frame_timing_info(self) -> Dict[str, Any]:
         """What the frame-timing stats were measured on, for the soak report."""

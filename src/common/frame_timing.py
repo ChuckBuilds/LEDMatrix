@@ -44,6 +44,17 @@ seen so far, over windows with enough frames to trust -- except that a window
 cutting it by more than ``MAX_REFRESH_DROP`` is ignored. A panel's refresh does
 not jump like that; swaps that stopped blocking do, and adopting their period
 would make every early frame look on time.
+
+Stall watchdog
+--------------
+Counting a freeze says that it happened, not why. ``StallWatchdog`` watches the
+same frames from its own thread and, when a scroll's last frame is more than
+``STALL_SECONDS`` old, logs the stack of the thread that presented it and the
+top of every other thread's, so the log names what the render thread was
+waiting on. It also measures how late its own wake-up was: if the watchdog was
+held up as long as the render thread, the whole interpreter was blocked (C
+code holding the GIL, or the process not scheduled), not one thread on a lock.
+Set ``LEDMATRIX_STALL_WATCHDOG=0`` to turn it off.
 """
 
 from __future__ import annotations
@@ -56,7 +67,8 @@ import sys
 import tempfile
 import threading
 import time
-from typing import Any, Dict, List, Optional, Tuple
+import traceback
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +101,14 @@ MAX_REFRESH_DROP = 0.2
 MIN_FRAMES_FOR_REFRESH = 90
 
 FLUSH_INTERVAL = 10.0
+
+#: A scroll's last frame older than this is a stall worth a stack dump.
+STALL_SECONDS = 0.25
+#: How often the watchdog looks. Also the resolution of its starvation check.
+WATCHDOG_POLL_SECONDS = 0.05
+#: At most one stack dump per this many seconds: a stall that repeats every
+#: extension would otherwise write the same stacks to the SD card all day.
+STALL_LOG_INTERVAL = 30.0
 
 #: Written by the display service, read by scripts/frame_soak.py and anything
 #: else that wants the numbers. The web UI's viewer marker lives in /tmp; this
@@ -181,6 +201,15 @@ class FrameTimingRecorder:
         self._binding_gil: Optional[bool] = None
         self._binding_checked = False
 
+        # Read by the stall watchdog from its own thread: one tuple assignment,
+        # so it always sees a consistent (time, scrolling, thread) triple.
+        self.last_frame: Optional[Tuple[float, bool, int]] = None
+        #: Whether a scroll is running *now*, supplied by the display manager.
+        #: The last frame's flag alone would call the end of every scroll a
+        #: stall.
+        self.scrolling_now: Optional[Callable[[], bool]] = None
+        self.watchdog: Optional["StallWatchdog"] = None
+
     # -- render thread ------------------------------------------------------
 
     def record(self, blit: float, wait: float, hold: int, scrolling: bool,
@@ -195,8 +224,13 @@ class FrameTimingRecorder:
         """
         previous = self._previous
         self._previous = (presented_at, scrolling, hold)
+        self.last_frame = (presented_at, scrolling, threading.get_ident())
         if not scrolling:
             self._static_frames += 1
+        elif self.watchdog is None and self.scrolling_now is not None \
+                and os.environ.get("LEDMATRIX_STALL_WATCHDOG", "1") != "0":
+            self.watchdog = StallWatchdog(self)
+            self.watchdog.start()
         elif previous is not None and previous[1]:
             interval = presented_at - previous[0]
             if interval < GAP_SECONDS:
@@ -315,3 +349,102 @@ class FrameTimingRecorder:
             except OSError:
                 pass
             raise
+
+
+class StallWatchdog:
+    """Log what the render thread is doing when a scroll stops presenting.
+
+    See the module docstring. Polls; never touches the render thread.
+    """
+
+    def __init__(
+        self,
+        recorder: FrameTimingRecorder,
+        threshold: float = STALL_SECONDS,
+        poll: float = WATCHDOG_POLL_SECONDS,
+        log_interval: float = STALL_LOG_INTERVAL,
+        clock: Callable[[], float] = time.perf_counter,
+    ):
+        self.recorder = recorder
+        self.threshold = threshold
+        self.poll = poll
+        self.log_interval = log_interval
+        self.clock = clock
+        self.stalls = 0
+        self._last_dump: Optional[float] = None
+        self._thread: Optional[threading.Thread] = None
+
+    def start(self) -> None:
+        self._thread = threading.Thread(
+            target=self._run, daemon=True, name="stall-watchdog")
+        self._thread.start()
+
+    def _run(self) -> None:
+        last_wake = self.clock()
+        stall_from: Optional[float] = None   # presented_at of the stalled frame
+        dumped = False
+        while True:
+            time.sleep(self.poll)
+            now = self.clock()
+            late = max(0.0, now - last_wake - self.poll)
+            last_wake = now
+            try:
+                stall_from, dumped = self.check(now, late, stall_from, dumped)
+            except Exception:  # never let a diagnostic take anything down
+                logger.debug("Stall watchdog check failed", exc_info=True)
+
+    def check(self, now: float, late: float, stall_from: Optional[float],
+              dumped: bool) -> Tuple[Optional[float], bool]:
+        """One look. Returns the updated (stall_from, dumped) state."""
+        frame = self.recorder.last_frame
+        if frame is None:
+            return None, False
+        presented_at, scrolling, ident = frame
+
+        if stall_from is not None and presented_at != stall_from:
+            # A frame arrived: the stall is over.
+            if dumped:
+                logger.warning(
+                    "Render stall over: no frame for %.0fms",
+                    (presented_at - stall_from) * 1000.0)
+            return None, False
+
+        scrolling_now = self.recorder.scrolling_now
+        if stall_from is not None and (scrolling_now is None or not scrolling_now()):
+            # The scroll ended without another frame: nothing more to time.
+            return None, False
+        age = now - presented_at
+        if (stall_from is None and scrolling and age >= self.threshold
+                and scrolling_now is not None and scrolling_now()):
+            self.stalls += 1
+            if self._last_dump is None or now - self._last_dump >= self.log_interval:
+                self._last_dump = now
+                logger.warning(self.describe(ident, age, late))
+                return presented_at, True
+            return presented_at, False
+        return stall_from, dumped
+
+    def describe(self, ident: int, age: float, late: float) -> str:
+        """The stack dump: the stalled thread in full, the rest in brief."""
+        names = {t.ident: t.name for t in threading.enumerate()}
+        frames = sys._current_frames()
+        lines = [
+            f"Render stall: no frame for {age * 1000.0:.0f}ms mid-scroll "
+            f"(watchdog woke {late * 1000.0:.0f}ms late"
+            + ("; the interpreter itself was blocked" if late >= age / 2 else "")
+            + ")",
+            f"-- {names.get(ident, ident)} (presents frames):",
+        ]
+        stalled = frames.get(ident)
+        if stalled is not None:
+            lines.extend(line.rstrip() for line in
+                         traceback.format_stack(stalled, limit=12))
+        for other, frame in frames.items():
+            if other in (ident, threading.get_ident()):
+                continue
+            top = traceback.extract_stack(frame, limit=3)
+            where = " <- ".join(
+                f"{os.path.basename(f.filename)}:{f.lineno} {f.name}"
+                for f in reversed(top))
+            lines.append(f"-- {names.get(other, other)}: {where}")
+        return "\n".join(lines)

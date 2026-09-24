@@ -222,3 +222,82 @@ def test_display_manager_records_every_presented_frame():
         dm.set_scrolling_state(False)
         DisplayManager._instance = None
         DisplayManager._initialized = False
+
+
+# --- stall watchdog ----------------------------------------------------------
+
+class _FakeRecorder:
+    def __init__(self):
+        self.last_frame = None
+        self.scrolling = True
+        self.scrolling_now = lambda: self.scrolling
+
+
+def test_watchdog_reports_a_stall_once_and_its_end(caplog):
+    rec = _FakeRecorder()
+    dog = frame_timing.StallWatchdog(rec, threshold=0.25, log_interval=0.0)
+    ident = __import__("threading").get_ident()
+    rec.last_frame = (10.0, True, ident)
+    with caplog.at_level("WARNING", logger="src.common.frame_timing"):
+        state = dog.check(10.1, 0.0, None, False)          # 100ms: fine
+        assert state == (None, False)
+        state = dog.check(10.4, 0.0, *state)               # 400ms: stall
+        assert state == (10.0, True)
+        state = dog.check(10.9, 0.0, *state)               # still stalled: no repeat
+        rec.last_frame = (11.2, True, ident)
+        state = dog.check(11.25, 0.0, *state)              # a frame arrived
+    assert state == (None, False)
+    messages = [r.getMessage() for r in caplog.records]
+    assert len(messages) == 2
+    assert messages[0].startswith("Render stall: no frame for 400ms")
+    assert "test_watchdog_reports_a_stall_once_and_its_end" in messages[0]
+    assert messages[1] == "Render stall over: no frame for 1200ms"
+    assert dog.stalls == 1
+
+
+def test_watchdog_ignores_a_scroll_that_ended(caplog):
+    rec = _FakeRecorder()
+    dog = frame_timing.StallWatchdog(rec, threshold=0.25, log_interval=0.0)
+    rec.last_frame = (10.0, True, 1)
+    rec.scrolling = False                  # the scroll handed over
+    with caplog.at_level("WARNING", logger="src.common.frame_timing"):
+        assert dog.check(12.0, 0.0, None, False) == (None, False)
+    assert not caplog.records
+
+
+def test_watchdog_names_what_the_stalled_thread_is_waiting_on():
+    import threading
+    rec = _FakeRecorder()
+    dog = frame_timing.StallWatchdog(rec)
+    blocked, release = threading.Event(), threading.Event()
+
+    def render_loop_waiting_on_a_lock():
+        blocked.set()
+        release.wait(5)
+
+    t = threading.Thread(target=render_loop_waiting_on_a_lock, name="render")
+    t.start()
+    try:
+        assert blocked.wait(5)
+        text = dog.describe(t.ident, 1.5, 1.4)
+    finally:
+        release.set()
+        t.join(5)
+    assert "no frame for 1500ms" in text
+    assert "the interpreter itself was blocked" in text
+    assert "-- render (presents frames):" in text
+    assert "render_loop_waiting_on_a_lock" in text
+
+
+def test_watchdog_rate_limits_its_dumps(caplog):
+    rec = _FakeRecorder()
+    dog = frame_timing.StallWatchdog(rec, threshold=0.25, log_interval=30.0)
+    with caplog.at_level("WARNING", logger="src.common.frame_timing"):
+        for start in (10.0, 20.0):          # two stalls 10s apart
+            rec.last_frame = (start, True, 1)
+            state = dog.check(start + 0.5, 0.0, None, False)
+            rec.last_frame = (start + 0.6, True, 1)
+            dog.check(start + 0.65, 0.0, *state)
+    dumps = [r for r in caplog.records if r.getMessage().startswith("Render stall:")]
+    assert len(dumps) == 1
+    assert dog.stalls == 2
