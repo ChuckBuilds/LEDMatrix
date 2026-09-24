@@ -81,6 +81,23 @@ floor on the release that ships them):
 - `src.common.api_helper`: `USER_AGENT`, `DEFAULT_HTTP_HEADERS` (read-only).
 - `src.logo_downloader`: `fetch_logo`, `save_png_atomically`,
   `shared_downloader`.
+- `src.common.sports_card.unshare_element_fonts` takes an optional third
+  argument, `element_for_font` (default: the module's `ELEMENT_FOR_FONT`, so
+  existing calls are unchanged).
+
+### Sports twins
+
+- The `SportsCoreSharedMixin` helpers that behave identically to their
+  `sports_card` twins (`_card_option`, `_vs_text`, `_format_game_time`,
+  `_coerce_rgb`, `_crisp_size`, `_unshare_element_fonts`, the colour/month/
+  weekday/font-grid tables) are now thin wrappers over the `sports_card`
+  functions, and `_format_game_date` / `_schema_font_size` share its
+  formatting body and schema parser. No method was removed or renamed and
+  nothing renders differently: `test/test_sports_twins.py` checks each pair
+  against the same inputs, and the old and new mixin agree on every input
+  there. The pairs that do differ -- favourite-result colours on nested
+  payloads, the weekday's timezone, the element-name map, per-mode colours --
+  are left as they are and pinned in that test.
 
 ### Logo downloads
 
