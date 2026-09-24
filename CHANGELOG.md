@@ -19,6 +19,17 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+- `src.common.frame_pacing` — grades a run of presented frames against the
+  panel's real refresh rate: how many slipped a whole refresh, and whether the
+  loop was locked to the panel at all. `scripts/render_bench.py` drives a real
+  `DisplayManager`/`ScrollHelper` scroll through it and exits non-zero when a
+  rig misses more than 0.1% of frames, so a rig can be measured before a
+  release rather than eyeballed. The panel's refresh is read back out of the
+  frames rather than taken from the idle measurement: a Pi 4 driving 512x64
+  holds 100.4Hz idle and 96.3Hz while rendering, and grading against the idle
+  figure reports misses a perfectly locked loop never had. See
+  `docs/SCROLL_PERFORMANCE.md`, "Measuring a rig".
+
 - `FontManager.get_font()` returns a BDF font at its native size when asked for
   a size the file doesn't contain (5x7.bdf at 8 or 10px, say). It used to
   return PIL's default font, a different typeface, so a plugin that relied on
