@@ -396,7 +396,8 @@ class PluginManager:
                 self.font_manager, 'register_plugin_fonts'
             ):
                 try:
-                    self.font_manager.register_plugin_fonts(plugin_id, font_manifest)
+                    self.font_manager.register_plugin_fonts(
+                        plugin_id, font_manifest, plugin_dir=plugin_dir)
                 except Exception as e:
                     self.logger.warning(
                         "Failed to register fonts for plugin %s: %s", plugin_id, e

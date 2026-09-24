@@ -209,16 +209,23 @@ class FontManager:
 
     # ==================== Plugin Font Management ====================
 
-    def register_plugin_fonts(self, plugin_id: str, font_manifest: Dict[str, Any]) -> bool:
+    def register_plugin_fonts(self, plugin_id: str, font_manifest: Dict[str, Any],
+                              plugin_dir: Optional[Union[str, Path]] = None) -> bool:
         """
         Register fonts for a specific plugin.
 
         Args:
             plugin_id: Unique identifier for the plugin
-            font_manifest: Font manifest from plugin's manifest.json
+            font_manifest: The ``fonts`` block of the plugin's manifest.json
+            plugin_dir: The plugin's directory, which ``plugin://`` sources
+                are relative to. PluginManager passes the directory it loaded
+                the plugin from. When omitted, the plugin is looked up in the
+                configured ``plugin_system.plugins_directory`` and then in
+                ``plugins/``.
 
         Returns:
-            True if registration successful, False otherwise
+            True if the manifest was valid (individual fonts that fail to load
+            are logged and skipped), False otherwise
         """
         try:
             # Validate font manifest structure
@@ -235,7 +242,7 @@ class FontManager:
             # Process font definitions
             fonts = font_manifest.get("fonts", [])
             for font_def in fonts:
-                if self._register_plugin_font(plugin_id, font_def):
+                if self._register_plugin_font(plugin_id, font_def, plugin_dir):
                     logger.info(f"Successfully registered font {font_def.get('family')} for plugin {plugin_id}")
 
             logger.info(f"Registered {len(fonts)} fonts for plugin {plugin_id}")
@@ -270,7 +277,8 @@ class FontManager:
 
         return True
 
-    def _register_plugin_font(self, plugin_id: str, font_def: Dict[str, Any]) -> bool:
+    def _register_plugin_font(self, plugin_id: str, font_def: Dict[str, Any],
+                              plugin_dir: Optional[Union[str, Path]] = None) -> bool:
         """Register a single font from a plugin."""
         try:
             family = font_def["family"]
@@ -284,7 +292,7 @@ class FontManager:
             elif source.startswith("plugin://"):
                 # Relative to plugin directory
                 relative_path = source.replace("plugin://", "")
-                font_path = self._resolve_plugin_font_path(plugin_id, relative_path)
+                font_path = self._resolve_plugin_font_path(plugin_id, relative_path, plugin_dir)
             else:
                 # Absolute or relative path
                 font_path = source
@@ -367,17 +375,33 @@ class FontManager:
             return '.zip'
         return '.ttf'  # default
 
-    def _resolve_plugin_font_path(self, plugin_id: str, relative_path: str) -> Optional[str]:
-        """Resolve a plugin-relative font path."""
-        # Assume plugins are in a 'plugins' directory
-        plugin_dir = Path("plugins") / plugin_id
-        font_path = plugin_dir / relative_path
+    def _resolve_plugin_font_path(self, plugin_id: str, relative_path: str,
+                                  plugin_dir: Optional[Union[str, Path]] = None) -> Optional[str]:
+        """Resolve a ``plugin://`` font path against the plugin's directory."""
+        if plugin_dir is None:
+            plugin_dir = self._find_plugin_dir(plugin_id)
+            if plugin_dir is None:
+                logger.error(f"Plugin font {relative_path}: directory for plugin {plugin_id} not found")
+                return None
+        font_path = Path(plugin_dir) / relative_path
 
         if font_path.exists():
             return str(font_path)
 
         logger.error(f"Plugin font not found: {font_path}")
         return None
+
+    def _find_plugin_dir(self, plugin_id: str) -> Optional[Path]:
+        """The installed directory of ``plugin_id``, for callers of
+        register_plugin_fonts that do not pass one: the configured plugins
+        directory (relative paths are relative to the install root), then the
+        legacy ``plugins/`` directory."""
+        # Imported here: src.plugin_system's package import loads PluginManager.
+        from src.plugin_system.plugin_dirs import resolve_plugin_dir
+
+        configured = (self.config.get("plugin_system") or {}).get("plugins_directory") or "plugin-repos"
+        search_dirs = [Path(resolve_asset_path(configured)), Path(resolve_asset_path("plugins"))]
+        return resolve_plugin_dir(plugin_id, search_dirs, prefix=True)
 
     @deprecated("3.7.0")
     def unregister_plugin_fonts(self, plugin_id: str) -> bool:
