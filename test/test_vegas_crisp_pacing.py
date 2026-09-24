@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -120,6 +121,31 @@ def test_a_panel_that_keeps_up_with_its_cap_is_left_alone():
     _run_swaps(p, p._frame_hold / 99.5, frames)
     assert p._measured_hz == 100.0
     assert p._crisp == crisp
+
+
+def test_a_window_of_mostly_late_frames_still_measures_the_panel():
+    # A late swap only lengthens its gap, by whole refreshes. A window where
+    # most frames missed a vsync (startup, a prefetch) must not read as a
+    # slower panel: with 7 frames in 10 a refresh late, the median would say
+    # 76Hz here and the speed would be solved for a panel that isn't there.
+    p = _pipeline(FakeDM(refresh_hz=120.0), scroll_speed=90)
+    period, hold = 1 / 95.0, p._frame_hold
+    gaps = [(hold + 1) * period if i % 10 < 7 else hold * period for i in range(400)]
+    clock = [1000.0]
+    with patch.object(rp_module.time, 'monotonic', lambda: clock[0]):
+        for gap in gaps:
+            p.render_frame()
+            clock[0] += gap
+            if p._measured_hz is not None:
+                break
+    assert p._measured_hz == pytest.approx(95.0)
+
+
+def test_re_solving_the_pacing_drops_samples_timed_under_the_old_hold():
+    p = _pipeline(FakeDM(refresh_hz=120.0), scroll_speed=90)
+    p._swap_times.extend([1.0, 1.01, 1.02])
+    p._configure_scroll_helper()
+    assert len(p._swap_times) == 0
 
 
 def test_no_measurement_without_hardware():

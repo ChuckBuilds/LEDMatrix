@@ -137,6 +137,8 @@ class RenderPipeline:
         # a 95Hz panel, p99 21-28ms -- a visible hitch every few frames.
         self._crisp = None
         self._frame_hold = 1
+        # Gaps timed under the old hold would be divided by the new one.
+        self._swap_times.clear()
         if self.config.smooth_scroll and not self.config.sub_pixel_blend:
             self._crisp = solve_crisp(self.config.scroll_speed, self._refresh_hz())
             self._frame_hold = self._crisp.frame_hold
@@ -197,10 +199,15 @@ class RenderPipeline:
         refresh the panel never delivers -- 90px/s at "120Hz" is 3px every 4
         refreshes, visibly jumpy, where the real 95Hz allows 1px every refresh.
 
-        SwapOnVSync blocks for frame_hold refreshes, so the median gap between
-        swaps is frame_hold refresh periods. The median ignores the odd frame
-        that missed its vsync or waited on a recompose. Measured once: the
-        refresh only changes with the hardware config, which restarts us.
+        SwapOnVSync blocks for frame_hold refreshes, and a swap can only come
+        back late -- a missed vsync lengthens its gap by whole refreshes, never
+        shortens one -- so the low end of the gaps is frame_hold refresh
+        periods: the 10th percentile, as src/common/frame_timing.py uses. The
+        median would track the render loop instead once most frames in the
+        window were late (startup, a prefetch, a recompose), lock in a rate
+        too low, and scroll faster than configured until restart. Measured
+        once: the refresh only changes with the hardware config, which
+        restarts us.
         """
         if self._crisp is None or self._measured_hz is not None:
             return
@@ -214,11 +221,11 @@ class RenderPipeline:
 
         times = list(self._swap_times)
         gaps = sorted(b - a for a, b in zip(times, times[1:]))
-        median = gaps[len(gaps) // 2]
+        period = gaps[len(gaps) // 10]
         self._swap_times.clear()
-        if median <= 0:
+        if period <= 0:
             return
-        measured = self._frame_hold / median
+        measured = self._frame_hold / period
         cap = self._cap_hz()
         if measured >= cap * (1.0 - self.REFRESH_TOLERANCE):
             self._measured_hz = cap
