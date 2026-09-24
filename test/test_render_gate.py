@@ -141,27 +141,42 @@ class TestWhenToPark:
             done.set()
             other.join()
 
-    @pytest.mark.parametrize("filename", [
-        "/usr/lib/python3.11/logging/__init__.py",
-        "/usr/lib/python3.11/threading.py",
-        "<frozen importlib._bootstrap>",
-        "/home/pi/LEDMatrix/src/cache/disk_cache.py",
-        "/home/pi/LEDMatrix/src/cache_manager.py",
+    @staticmethod
+    def _frame_in(module):
+        namespace = {"__name__": module}
+        exec("import sys\ndef here():\n    return sys._getframe()\n", namespace)
+        return namespace["here"]()
+
+    @pytest.mark.parametrize("module", [
+        "logging", "logging.handlers", "threading", "importlib",
+        "_frozen_importlib", "_frozen_importlib_external",
+        "src.cache_manager", "src.cache.disk_cache",
     ])
-    def test_never_inside_code_that_takes_shared_locks(self, gate, filename):
-        namespace = {}
-        exec(compile("import sys\ndef here():\n    return sys._getframe()\n",
-                     filename, "exec"), namespace)
-        frame = namespace["here"]()
+    def test_never_inside_code_that_takes_shared_locks(self, gate, module):
+        frame = self._frame_in(module)
         assert render_gate._unsafe(frame, None)
         assert not gate._should_park(frame, gate._open_until + 0.0001)
+
+    @pytest.mark.parametrize("module", [
+        "src.cache_helpers", "plugin_logging_ticker", "src.vegas_mode.render_pipeline",
+    ])
+    def test_modules_that_only_sound_alike_are_fine(self, module):
+        assert not render_gate._unsafe(self._frame_in(module), None)
+
+    def test_where_python_is_installed_does_not_matter(self):
+        # GitHub's runners keep Python under /opt/hostedtoolcache; matching
+        # paths for "cache" made every stdlib frame unsafe there.
+        namespace = {"__name__": "json.decoder"}
+        exec(compile("import sys\ndef here():\n    return sys._getframe()\n",
+                     "/opt/hostedtoolcache/Python/3.11/lib/json/decoder.py", "exec"),
+             namespace)
+        assert not render_gate._unsafe(namespace["here"](), None)
 
     def test_what_lies_below_the_yielding_block_does_not_count(self):
         # A thread's stack always starts in threading.py; only frames above
         # the one that entered yielding() matter.
-        namespace = {}
-        exec(compile("def bootstrap(fn):\n    return fn()\n",
-                     "/usr/lib/python3.11/threading.py", "exec"), namespace)
+        namespace = {"__name__": "threading"}
+        exec("def bootstrap(fn):\n    return fn()\n", namespace)
 
         def entered():
             base = sys._getframe()

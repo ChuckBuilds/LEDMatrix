@@ -67,15 +67,16 @@ STALE_SECONDS = 0.05
 #: Swaps needed before the refresh period is trusted enough to open a window.
 MIN_SAMPLES = 8
 
-#: Parking with any of these on the stack could hold a lock the render
-#: thread takes: logging handler locks, Condition and Event internals, the
-#: module import locks, and the disk and memory cache locks.
-_UNSAFE_PATHS = (
-    "logging",
-    "threading.py",
-    "importlib",
-    "cache",
-)
+#: Parking inside any of these modules could hold a lock the render thread
+#: takes: logging handler locks, Condition and Event internals, the module
+#: import locks, and the disk and memory cache locks. Matched by module name,
+#: not file path: a path can say "cache" or "logging" for reasons of its own --
+#: a virtualenv under ~/.cache, or GitHub's /opt/hostedtoolcache, where every
+#: stdlib frame would otherwise count and the gate would never park anything.
+_UNSAFE_MODULES = frozenset({
+    "logging", "threading", "importlib", "src.cache_manager", "src.cache",
+})
+_UNSAFE_PREFIXES = ("logging.", "importlib.", "_frozen_importlib", "src.cache.")
 
 
 def _unsafe(frame: Any, base: Any) -> bool:
@@ -85,10 +86,9 @@ def _unsafe(frame: Any, base: Any) -> bool:
     thread's own bootstrap in threading.py) holds nothing.
     """
     while frame is not None and frame is not base:
-        filename = frame.f_code.co_filename
-        for part in _UNSAFE_PATHS:
-            if part in filename:
-                return True
+        name = frame.f_globals.get("__name__") or ""
+        if name in _UNSAFE_MODULES or name.startswith(_UNSAFE_PREFIXES):
+            return True
         frame = frame.f_back
     return False
 
