@@ -1,6 +1,5 @@
 from flask import Blueprint, Response, render_template, jsonify, url_for
 from jinja2 import TemplateNotFound
-from markupsafe import escape
 from html.parser import HTMLParser
 import json
 import logging
@@ -163,41 +162,13 @@ def index():
 
 @pages_v3.route('/partials/<partial_name>')
 def load_partial(partial_name):
-    """Load HTMX partials dynamically"""
+    """One tab's HTML for HTMX, by the names in _PARTIAL_LOADERS; 404 otherwise."""
+    loader = _PARTIAL_LOADERS.get(partial_name)
+    if loader is None:
+        return "Partial not found", 404
     try:
-        # Map partial names to specific data loading
-        if partial_name == 'overview':
-            return _load_overview_partial()
-        elif partial_name == 'general':
-            return _load_general_partial()
-        elif partial_name == 'display':
-            return _load_display_partial()
-        elif partial_name == 'durations':
-            return _load_durations_partial()
-        elif partial_name == 'schedule':
-            return _load_schedule_partial()
-        elif partial_name == 'plugins':
-            return _load_plugins_partial()
-        elif partial_name == 'fonts':
-            return _load_fonts_partial()
-        elif partial_name == 'logs':
-            return _load_logs_partial()
-        elif partial_name == 'raw-json':
-            return _load_raw_json_partial()
-        elif partial_name == 'backup-restore':
-            return _load_backup_restore_partial()
-        elif partial_name == 'wifi':
-            return _load_wifi_partial()
-        elif partial_name == 'cache':
-            return _load_cache_partial()
-        elif partial_name == 'operation-history':
-            return _load_operation_history_partial()
-        elif partial_name == 'tools':
-            return _load_tools_partial()
-        else:
-            return "Partial not found", 404
-
-    except Exception as e:
+        return loader()
+    except Exception:
         logger.error("Error loading partial %s", partial_name, exc_info=True)
         return "Error loading partial", 500
 
@@ -297,19 +268,7 @@ def serve_plugin_web_ui(plugin_id, filename):
         return 'Plugin manager not available', 503, {'Content-Type': 'text/plain'}
 
     try:
-        _plugins_base = Path(pages_v3.plugin_manager.plugins_dir).resolve()
-
-        _plugin_dir = resolve_under(_plugins_base, safe_id)
-        if _plugin_dir is None:
-            return 'Forbidden', 403, {'Content-Type': 'text/plain'}
-
-        # Mirror PluginManager's ledmatrix- prefix fallback.
-        if not _plugin_dir.exists():
-            _alt = resolve_under(_plugins_base, f'ledmatrix-{safe_id}')
-            if _alt is not None:
-                _plugin_dir = _alt
-
-        web_ui_path = resolve_under(_plugin_dir / 'web_ui', safe_fn)
+        web_ui_path = resolve_under(_plugin_dir_for(safe_id) / 'web_ui', safe_fn)
         if web_ui_path is None:
             return 'Forbidden', 403, {'Content-Type': 'text/plain'}
 
@@ -362,10 +321,11 @@ def serve_plugin_web_ui(plugin_id, filename):
 
 
 def _plugin_dir_for(safe_id):
-    """Resolve a sanitised plugin id to its directory, or None.
+    """A sanitised plugin id's directory, which may not exist.
 
-    Mirrors serve_plugin_web_ui: containment-guarded against the configured
-    plugins directory, with PluginManager's ``ledmatrix-`` prefix fallback.
+    Contained under the configured plugins directory, with PluginManager's
+    ``ledmatrix-`` prefix fallback. Raises ValueError for an id that would
+    leave it; the routes answer that with a 403.
     """
     plugins_base = Path(pages_v3.plugin_manager.plugins_dir).resolve()
     plugin_dir = resolve_under(plugins_base, safe_id)
@@ -479,45 +439,33 @@ def serve_plugin_widget(plugin_id, widget_name):
 
 def _load_overview_partial():
     """Load overview partial with system stats"""
-    try:
-        if pages_v3.config_manager:
-            main_config = pages_v3.config_manager.load_config()
-            # This would be populated with real system stats via SSE
-            return render_template('v3/partials/overview.html',
-                                 main_config=main_config)
-    except Exception as e:
-        logger.error("Error loading partial", exc_info=True)
-        return "Error loading partial", 500
+    if pages_v3.config_manager:
+        main_config = pages_v3.config_manager.load_config()
+        # This would be populated with real system stats via SSE
+        return render_template('v3/partials/overview.html',
+                             main_config=main_config)
 
 def _load_general_partial():
     """Load general settings partial"""
-    try:
-        if pages_v3.config_manager:
-            main_config = pages_v3.config_manager.load_config()
-            try:
-                from web_interface.auto_update import describe_status
-                auto_update_status = describe_status(main_config)
-            except Exception:
-                logger.debug("Could not read auto-update status", exc_info=True)
-                auto_update_status = None
-            return render_template('v3/partials/general.html',
-                                 main_config=main_config,
-                                 auto_update_status=auto_update_status)
-    except Exception as e:
-        logger.error("Error loading partial", exc_info=True)
-        return "Error loading partial", 500
+    if pages_v3.config_manager:
+        main_config = pages_v3.config_manager.load_config()
+        try:
+            from web_interface.auto_update import describe_status
+            auto_update_status = describe_status(main_config)
+        except Exception:
+            logger.debug("Could not read auto-update status", exc_info=True)
+            auto_update_status = None
+        return render_template('v3/partials/general.html',
+                             main_config=main_config,
+                             auto_update_status=auto_update_status)
 
 def _load_display_partial():
     """Load display settings partial"""
-    try:
-        if pages_v3.config_manager:
-            main_config = pages_v3.config_manager.load_config()
-            return render_template('v3/partials/display.html',
-                                 main_config=main_config,
-                                 is_pi5=is_raspberry_pi_5())
-    except Exception as e:
-        logger.error("Error loading partial", exc_info=True)
-        return "Error loading partial", 500
+    if pages_v3.config_manager:
+        main_config = pages_v3.config_manager.load_config()
+        return render_template('v3/partials/display.html',
+                             main_config=main_config,
+                             is_pi5=is_raspberry_pi_5())
 
 def _plugin_default_duration(plugin_id, plugin_config):
     """Seconds a plugin shows each screen when the Rotation page sets none.
@@ -553,199 +501,168 @@ def _load_durations_partial():
     value overrides the plugin (see DisplayController._get_display_duration).
     Pre-filling every mode would pin them all on the first save.
     """
-    try:
-        if pages_v3.config_manager:
-            main_config = pages_v3.config_manager.load_config()
-            duration_groups = []
-            covered_keys = set()
-            if pages_v3.plugin_manager:
-                try:
-                    pages_v3.plugin_manager.discover_plugins()
-                    saved = (main_config.get('display', {}) or {}).get('display_durations', {}) or {}
-                    infos = sorted(pages_v3.plugin_manager.get_all_plugin_info(),
-                                   key=lambda i: (i.get('name') or i.get('id') or '').lower())
-                    for info in infos:
-                        pid = info.get('id')
-                        if not pid or not (main_config.get(pid, {}) or {}).get('enabled', False):
-                            continue
-                        modes = pages_v3.plugin_manager.get_plugin_display_modes(pid) or [pid]
-                        covered_keys.update(modes)
-                        default = _plugin_default_duration(pid, main_config.get(pid, {}) or {})
-                        duration_groups.append({
-                            'plugin_id': pid,
-                            'plugin_name': info.get('name') or pid,
-                            'modes': [{'key': m, 'value': saved.get(m, ''), 'default': default}
-                                      for m in modes],
-                        })
-                    # Saved keys not owned by any enabled plugin (disabled or
-                    # uninstalled plugins) stay visible rather than vanishing.
-                    leftovers = [{'key': k, 'value': v} for k, v in saved.items()
-                                 if k not in covered_keys]
-                    if leftovers:
-                        duration_groups.append({
-                            'plugin_id': '',
-                            'plugin_name': 'Other saved entries',
-                            'modes': leftovers,
-                        })
-                except Exception:
-                    logger.warning("durations: could not enumerate plugin modes", exc_info=True)
-            return render_template('v3/partials/durations.html',
-                                 main_config=main_config,
-                                 duration_groups=duration_groups)
-    except Exception as e:
-        logger.error("Error loading partial", exc_info=True)
-        return "Error loading partial", 500
+    if pages_v3.config_manager:
+        main_config = pages_v3.config_manager.load_config()
+        duration_groups = []
+        covered_keys = set()
+        if pages_v3.plugin_manager:
+            try:
+                pages_v3.plugin_manager.discover_plugins()
+                saved = (main_config.get('display', {}) or {}).get('display_durations', {}) or {}
+                infos = sorted(pages_v3.plugin_manager.get_all_plugin_info(),
+                               key=lambda i: (i.get('name') or i.get('id') or '').lower())
+                for info in infos:
+                    pid = info.get('id')
+                    if not pid or not (main_config.get(pid, {}) or {}).get('enabled', False):
+                        continue
+                    modes = pages_v3.plugin_manager.get_plugin_display_modes(pid) or [pid]
+                    covered_keys.update(modes)
+                    default = _plugin_default_duration(pid, main_config.get(pid, {}) or {})
+                    duration_groups.append({
+                        'plugin_id': pid,
+                        'plugin_name': info.get('name') or pid,
+                        'modes': [{'key': m, 'value': saved.get(m, ''), 'default': default}
+                                  for m in modes],
+                    })
+                # Saved keys not owned by any enabled plugin (disabled or
+                # uninstalled plugins) stay visible rather than vanishing.
+                leftovers = [{'key': k, 'value': v} for k, v in saved.items()
+                             if k not in covered_keys]
+                if leftovers:
+                    duration_groups.append({
+                        'plugin_id': '',
+                        'plugin_name': 'Other saved entries',
+                        'modes': leftovers,
+                    })
+            except Exception:
+                logger.warning("durations: could not enumerate plugin modes", exc_info=True)
+        return render_template('v3/partials/durations.html',
+                             main_config=main_config,
+                             duration_groups=duration_groups)
 
 def _load_schedule_partial():
     """Load schedule settings partial"""
-    try:
-        if pages_v3.config_manager:
-            main_config = pages_v3.config_manager.load_config()
-            schedule_config = main_config.get('schedule', {})
-            dim_schedule_config = main_config.get('dim_schedule', {})
-            # Get normal brightness for display in dim schedule UI
-            normal_brightness = main_config.get('display', {}).get('hardware', {}).get('brightness', 90)
-            return render_template('v3/partials/schedule.html',
-                                 schedule_config=schedule_config,
-                                 dim_schedule_config=dim_schedule_config,
-                                 normal_brightness=normal_brightness)
-    except Exception as e:
-        logger.error("Error loading partial", exc_info=True)
-        return "Error loading partial", 500
+    if pages_v3.config_manager:
+        main_config = pages_v3.config_manager.load_config()
+        schedule_config = main_config.get('schedule', {})
+        dim_schedule_config = main_config.get('dim_schedule', {})
+        # Get normal brightness for display in dim schedule UI
+        normal_brightness = main_config.get('display', {}).get('hardware', {}).get('brightness', 90)
+        return render_template('v3/partials/schedule.html',
+                             schedule_config=schedule_config,
+                             dim_schedule_config=dim_schedule_config,
+                             normal_brightness=normal_brightness)
 
 
 def _load_plugins_partial():
     """Load plugins management partial"""
-    try:
-        import json
-        from pathlib import Path
-        
-        # Load plugin data from the plugin system
-        plugins_data = []
+    # Load plugin data from the plugin system
+    plugins_data = []
 
-        # Get installed plugins if managers are available
-        if pages_v3.plugin_manager and pages_v3.plugin_store_manager:
-            try:
-                # Get all installed plugin info
-                all_plugin_info = pages_v3.plugin_manager.get_all_plugin_info()
+    # Get installed plugins if managers are available
+    if pages_v3.plugin_manager and pages_v3.plugin_store_manager:
+        try:
+            # Get all installed plugin info
+            all_plugin_info = pages_v3.plugin_manager.get_all_plugin_info()
 
-                # Load config once before the loop (not per-plugin)
-                full_config = pages_v3.config_manager.load_config() if pages_v3.config_manager else {}
+            # Load config once before the loop (not per-plugin)
+            full_config = pages_v3.config_manager.load_config() if pages_v3.config_manager else {}
 
-                # Format for the web interface
-                for plugin_info in all_plugin_info:
-                    plugin_id = plugin_info.get('id')
+            # Format for the web interface
+            for plugin_info in all_plugin_info:
+                plugin_id = plugin_info.get('id')
 
-                    # Re-read manifest from disk to ensure we have the latest metadata
-                    manifest_path = Path(pages_v3.plugin_manager.plugins_dir) / plugin_id / "manifest.json"
-                    if manifest_path.exists():
-                        try:
-                            with open(manifest_path, 'r', encoding='utf-8') as f:
-                                fresh_manifest = json.load(f)
-                            # Update plugin_info with fresh manifest data
-                            plugin_info.update(fresh_manifest)
-                        except Exception as e:
-                            # If we can't read the fresh manifest, use the cached one
-                            logger.warning("Could not read fresh manifest for plugin: %s", plugin_id)
+                # Re-read manifest from disk to ensure we have the latest metadata
+                manifest_path = Path(pages_v3.plugin_manager.plugins_dir) / plugin_id / "manifest.json"
+                if manifest_path.exists():
+                    try:
+                        with open(manifest_path, 'r', encoding='utf-8') as f:
+                            fresh_manifest = json.load(f)
+                        # Update plugin_info with fresh manifest data
+                        plugin_info.update(fresh_manifest)
+                    except Exception:
+                        # If we can't read the fresh manifest, use the cached one
+                        logger.warning("Could not read fresh manifest for plugin: %s", plugin_id)
 
-                    # Get enabled status from config (source of truth)
-                    # Read from config file first, fall back to plugin instance if config doesn't have the key
-                    enabled = None
-                    if pages_v3.config_manager:
-                        plugin_config = full_config.get(plugin_id, {})
-                        # Check if 'enabled' key exists in config (even if False)
-                        if 'enabled' in plugin_config:
-                            enabled = bool(plugin_config['enabled'])
-                    
-                    # Fallback to plugin instance if config doesn't have enabled key
-                    if enabled is None:
-                        plugin_instance = pages_v3.plugin_manager.get_plugin(plugin_id)
-                        if plugin_instance:
-                            enabled = plugin_instance.enabled
-                        else:
-                            # Default to True if no config key and plugin not loaded (matches BasePlugin default)
-                            enabled = True
+                # Get enabled status from config (source of truth)
+                # Read from config file first, fall back to plugin instance if config doesn't have the key
+                enabled = None
+                if pages_v3.config_manager:
+                    plugin_config = full_config.get(plugin_id, {})
+                    # Check if 'enabled' key exists in config (even if False)
+                    if 'enabled' in plugin_config:
+                        enabled = bool(plugin_config['enabled'])
+                
+                # Fallback to plugin instance if config doesn't have enabled key
+                if enabled is None:
+                    plugin_instance = pages_v3.plugin_manager.get_plugin(plugin_id)
+                    if plugin_instance:
+                        enabled = plugin_instance.enabled
+                    else:
+                        # Default to True if no config key and plugin not loaded (matches BasePlugin default)
+                        enabled = True
 
-                    # Get verified status from store registry (no GitHub API calls needed)
-                    store_info = pages_v3.plugin_store_manager.get_registry_info(plugin_id)
-                    verified = store_info.get('verified', False) if store_info else False
+                # Get verified status from store registry (no GitHub API calls needed)
+                store_info = pages_v3.plugin_store_manager.get_registry_info(plugin_id)
+                verified = store_info.get('verified', False) if store_info else False
 
-                    last_updated = plugin_info.get('last_updated')
-                    last_commit = plugin_info.get('last_commit') or plugin_info.get('last_commit_sha')
-                    branch = plugin_info.get('branch')
+                last_updated = plugin_info.get('last_updated')
+                last_commit = plugin_info.get('last_commit') or plugin_info.get('last_commit_sha')
+                branch = plugin_info.get('branch')
 
-                    if store_info:
-                        last_updated = last_updated or store_info.get('last_updated') or store_info.get('last_updated_iso')
-                        last_commit = last_commit or store_info.get('last_commit') or store_info.get('last_commit_sha')
-                        branch = branch or store_info.get('branch') or store_info.get('default_branch')
+                if store_info:
+                    last_updated = last_updated or store_info.get('last_updated') or store_info.get('last_updated_iso')
+                    last_commit = last_commit or store_info.get('last_commit') or store_info.get('last_commit_sha')
+                    branch = branch or store_info.get('branch') or store_info.get('default_branch')
 
-                    plugins_data.append({
-                        'id': plugin_id,
-                        'name': plugin_info.get('name', plugin_id),
-                        'author': plugin_info.get('author', 'Unknown'),
-                        'category': plugin_info.get('category', 'General'),
-                        'description': plugin_info.get('description', 'No description available'),
-                        'tags': plugin_info.get('tags', []),
-                        'enabled': enabled,
-                        'verified': verified,
-                        'loaded': plugin_info.get('loaded', False),
-                        'last_updated': last_updated,
-                        'last_commit': last_commit,
-                        'branch': branch
-                    })
-            except Exception as e:
-                logger.error("Error loading plugin data", exc_info=True)
+                plugins_data.append({
+                    'id': plugin_id,
+                    'name': plugin_info.get('name', plugin_id),
+                    'author': plugin_info.get('author', 'Unknown'),
+                    'category': plugin_info.get('category', 'General'),
+                    'description': plugin_info.get('description', 'No description available'),
+                    'tags': plugin_info.get('tags', []),
+                    'enabled': enabled,
+                    'verified': verified,
+                    'loaded': plugin_info.get('loaded', False),
+                    'last_updated': last_updated,
+                    'last_commit': last_commit,
+                    'branch': branch
+                })
+        except Exception:
+            logger.error("Error loading plugin data", exc_info=True)
 
-        return render_template('v3/partials/plugins.html',
-                             plugins=plugins_data)
-    except Exception as e:
-        logger.error("Error loading partial", exc_info=True)
-        return "Error loading partial", 500
+    return render_template('v3/partials/plugins.html',
+                         plugins=plugins_data)
 
 def _load_fonts_partial():
     """Load fonts management partial"""
-    try:
-        # This would load font data from the font system
-        fonts_data = {}  # Placeholder for font data
-        return render_template('v3/partials/fonts.html',
-                             fonts=fonts_data)
-    except Exception as e:
-        logger.error("Error loading partial", exc_info=True)
-        return "Error loading partial", 500
+    # This would load font data from the font system
+    fonts_data = {}  # Placeholder for font data
+    return render_template('v3/partials/fonts.html',
+                         fonts=fonts_data)
 
 def _load_logs_partial():
     """Load logs viewer partial"""
-    try:
-        return render_template('v3/partials/logs.html')
-    except Exception as e:
-        logger.error("Error loading partial", exc_info=True)
-        return "Error loading partial", 500
+    return render_template('v3/partials/logs.html')
 
 def _load_raw_json_partial():
     """Load raw JSON editor partial"""
-    try:
-        if pages_v3.config_manager:
-            main_config_data = pages_v3.config_manager.get_raw_file_content('main')
-            secrets_config_data = pages_v3.config_manager.get_raw_file_content('secrets')
-            main_config_json = json.dumps(main_config_data, indent=4)
-            secrets_config_json = json.dumps(secrets_config_data, indent=4)
+    if pages_v3.config_manager:
+        main_config_data = pages_v3.config_manager.get_raw_file_content('main')
+        secrets_config_data = pages_v3.config_manager.get_raw_file_content('secrets')
+        main_config_json = json.dumps(main_config_data, indent=4)
+        secrets_config_json = json.dumps(secrets_config_data, indent=4)
 
-            return render_template('v3/partials/raw_json.html',
-                                 main_config_json=main_config_json,
-                                 secrets_config_json=secrets_config_json,
-                                 main_config_path=pages_v3.config_manager.get_config_path(),
-                                 secrets_config_path=pages_v3.config_manager.get_secrets_path())
-    except Exception as e:
-        logger.error("Error loading partial", exc_info=True)
-        return "Error loading partial", 500
+        return render_template('v3/partials/raw_json.html',
+                             main_config_json=main_config_json,
+                             secrets_config_json=secrets_config_json,
+                             main_config_path=pages_v3.config_manager.get_config_path(),
+                             secrets_config_path=pages_v3.config_manager.get_secrets_path())
 
 def _load_backup_restore_partial():
     """Load backup & restore partial."""
-    try:
-        return render_template('v3/partials/backup_restore.html')
-    except Exception as e:
-        logger.error("Error loading partial", exc_info=True)
-        return "Error loading partial", 500
+    return render_template('v3/partials/backup_restore.html')
 
 @pages_v3.route('/setup')
 def captive_setup():
@@ -754,27 +671,15 @@ def captive_setup():
 
 def _load_wifi_partial():
     """Load WiFi setup partial"""
-    try:
-        return render_template('v3/partials/wifi.html')
-    except Exception as e:
-        logger.error("Error loading partial", exc_info=True)
-        return "Error loading partial", 500
+    return render_template('v3/partials/wifi.html')
 
 def _load_cache_partial():
     """Load cache management partial"""
-    try:
-        return render_template('v3/partials/cache.html')
-    except Exception as e:
-        logger.error("Error loading partial", exc_info=True)
-        return "Error loading partial", 500
+    return render_template('v3/partials/cache.html')
 
 def _load_operation_history_partial():
     """Load operation history partial"""
-    try:
-        return render_template('v3/partials/operation_history.html')
-    except Exception as e:
-        logger.error("Error loading partial", exc_info=True)
-        return "Error loading partial", 500
+    return render_template('v3/partials/operation_history.html')
 
 
 def _load_tools_partial():
@@ -787,6 +692,24 @@ def _load_tools_partial():
     except OSError as exc:
         logger.error("[Pages V3][Tools] I/O error loading tools partial: %s", exc, exc_info=True)
         return "[Pages V3][Tools] Failed to load due to a file system error. Check logs.", 500
+
+
+_PARTIAL_LOADERS = {
+    'overview': _load_overview_partial,
+    'general': _load_general_partial,
+    'display': _load_display_partial,
+    'durations': _load_durations_partial,
+    'schedule': _load_schedule_partial,
+    'plugins': _load_plugins_partial,
+    'fonts': _load_fonts_partial,
+    'logs': _load_logs_partial,
+    'raw-json': _load_raw_json_partial,
+    'backup-restore': _load_backup_restore_partial,
+    'wifi': _load_wifi_partial,
+    'cache': _load_cache_partial,
+    'operation-history': _load_operation_history_partial,
+    'tools': _load_tools_partial,
+}
 
 
 def _load_plugin_config_partial(plugin_id):
@@ -960,7 +883,7 @@ def _load_plugin_config_partial(plugin_id):
             web_ui_actions=web_ui_actions
         )
         
-    except Exception as e:
+    except Exception:
         logger.error("Error loading plugin config partial for %s", plugin_id, exc_info=True)
         return '<div class="text-red-500 p-4">Error loading plugin config; see logs for details</div>', 500
 
@@ -1041,6 +964,6 @@ def _load_starlark_config_partial(app_id):
             last_render_time=None,
         )
 
-    except Exception as e:
+    except Exception:
         logger.error("[Pages V3] Error loading starlark config for app", exc_info=True)
         return '<div class="text-red-500 p-4">Error loading starlark config; see logs for details</div>', 500
