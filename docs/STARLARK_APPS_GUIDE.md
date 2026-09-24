@@ -102,9 +102,16 @@ cd /path/to/LEDMatrix
 bash scripts/download_pixlet.sh
 ```
 
+The script downloads only the Linux ARM64 build (Raspberry Pi OS 64-bit),
+from the `tronbyt/pixlet` releases, to `bin/pixlet/pixlet-linux-arm64`. On
+any other platform (32-bit Pi OS, x86_64, macOS), put a `pixlet` binary on
+your `PATH`, or set the plugin's `pixlet_path`, or place it in `bin/pixlet/`
+under the name `_find_pixlet_binary()` looks for
+([`web_interface/blueprints/api_v3/__init__.py`](../web_interface/blueprints/api_v3/__init__.py)).
+
 Verify installation:
 ```bash
-./bin/pixlet/pixlet-linux-amd64 version
+./bin/pixlet/pixlet-linux-arm64 version
 # Pixlet 0.50.2 (or later)
 ```
 
@@ -276,10 +283,8 @@ LEDMatrix/
 │           ├── hour_hand.png
 │           └── minute_hand.png
 │
-├── bin/pixlet/                     # Pixlet binaries
-│   ├── pixlet-linux-amd64
-│   ├── pixlet-linux-arm64
-│   └── pixlet-darwin-arm64
+├── bin/pixlet/                     # Pixlet binary
+│   └── pixlet-linux-arm64          # the only one download_pixlet.sh fetches
 │
 └── scripts/
     └── download_pixlet.sh          # Pixlet installer
@@ -324,7 +329,7 @@ Many apps require API keys for external services:
 **Solutions**:
 1. Check logs: `journalctl -u ledmatrix | grep -i pixlet`
 2. Verify config: Ensure all required fields are filled
-3. Test manually: `./bin/pixlet/pixlet-linux-amd64 render starlark-apps/{app-id}/{app-id}.star`
+3. Test manually: `./bin/pixlet/pixlet-linux-arm64 render starlark-apps/{app-id}/{app-id}.star`
 4. Missing assets: Some apps need images/fonts that may fail to download
 5. API issues: Check API keys and rate limits
 

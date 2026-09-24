@@ -1,20 +1,63 @@
 # LEDMatrix Widget Development Guide
 
-## Overview
+Widgets are the controls the web UI draws for fields in a plugin's
+`config_schema.json`. A field picks one with `"x-widget": "<name>"`. This
+directory holds the built-in widgets, the registry they register with, and
+the loader for widgets a plugin ships itself.
 
-The LEDMatrix Widget Registry system allows plugins to use reusable UI components (widgets) for configuration forms. This system enables:
+The page loads every file here as one bundle, `/assets/widgets.js`, built by
+[`web_interface/widget_bundle.py`](../../../../widget_bundle.py) in the order
+set by `BUNDLE_ORDER` there.
 
-- **Reusable Components**: Use existing widgets (file upload, checkboxes, etc.) without custom code
-- **Custom Widgets**: Create plugin-specific widgets without modifying the LEDMatrix codebase
-- **Backwards Compatibility**: Existing plugins continue to work without changes
+## Built-in widgets
 
-## Available Core Widgets
+| `x-widget` | Field type | What it draws |
+|---|---|---|
+| `text-input` | string | Text field with optional length limits |
+| `textarea` | string | Multi-line text |
+| `email-input` | string | Email field with format check |
+| `url-input` | string | URL field with format check |
+| `password-input` | string | Password field with show/hide toggle |
+| `select-dropdown` | string | Dropdown for an `enum` |
+| `radio-group` | string | Radio buttons for an `enum` |
+| `date-picker` | string | Date input |
+| `time-picker` | string | Time input, `HH:MM` (24-hour) |
+| `color-picker` | string or array | Colour picker; hex string, or `[r, g, b]` on an array field |
+| `font-selector` | string | Font from `assets/fonts/` (TTF and BDF), fetched from the API |
+| `timezone-selector` | string | IANA timezone, grouped by region |
+| `file-upload-single` | string | One image upload; stores the uploaded file's relative path |
+| `google-oauth` | string | Step 2 of the calendar plugin's Google sign-in |
+| `plugin-file-manager` | null | Inline file manager driven by the plugin's `web_ui_actions` |
+| `json-file-manager` | null | JSON data-file manager driven by `web_ui_actions` |
+| `toggle-switch` | boolean | On/off switch |
+| `slider` | integer / number | Range slider using `minimum` / `maximum` |
+| `number-input` | integer / number | Number field with min/max check |
+| `file-upload` | array | Multi-image upload with preview, delete and scheduling |
+| `checkbox-group` | array | Checkboxes for an array of `enum` items |
+| `day-selector` | array | Days of the week |
+| `custom-feeds` | array | RSS feed table with per-feed logo upload |
+| `array-table` | array | Table editor for an array of objects |
+| `google-calendar-picker` | array | Calendars from the user's Google account |
+| `schedule-picker` | object | Enable toggle, global/per-day mode and times |
+| `time-range` | object | Start and end time pair |
+| `style-editor` | object | One row per display element: font, size, colour, alignment, offsets |
 
-### 1. File Upload Widget (`file-upload`)
+Other files here:
 
-Upload and manage image files with drag-and-drop support, preview, delete, and scheduling.
+| File | Purpose |
+|---|---|
+| `registry.js` | `window.LEDMatrixWidgets`: `register()`, `get()` |
+| `base-widget.js` | Shared helpers (`escapeHtml`, `sanitizeId`) other widgets use |
+| `notification.js` | Toast notifications; owns `window.showNotification` |
+| `plugin-order-list.js` | Drag-and-drop plugin order list used by the Display and Durations tabs (`window.PluginOrderList`) |
+| `plugin-loader.js` | Loads a plugin-supplied widget on demand |
+| `example-color-picker.js` | Example custom widget. Not bundled: it registers `color-picker` and would replace the real one |
 
-**Schema Configuration:**
+Each widget file's header comment gives its schema options. The sections
+below cover the ones that need more than a line.
+
+### `file-upload`
+
 ```json
 {
   "type": "array",
@@ -28,45 +71,39 @@ Upload and manage image files with drag-and-drop support, preview, delete, and s
 }
 ```
 
-**Features:**
-- Drag and drop file upload
-- Image preview with thumbnails
-- Delete functionality
-- Schedule images to show at specific times
-- Progress indicators during upload
+### `file-upload-single`
 
-### 2. Checkbox Group Widget (`checkbox-group`)
+Uploads one image to the plugin's asset folder
+(`assets/plugins/<plugin_id>/uploads/`) and stores the returned relative path
+in a string field. `plugin_id` is filled in from the page; don't put it in
+the schema. Use it for per-row images inside an `array-table`.
 
-Multi-select checkboxes for array fields with enum items.
-
-**Schema Configuration:**
 ```json
 {
-  "type": "array",
-  "x-widget": "checkbox-group",
-  "items": {
+  "image_path": {
     "type": "string",
-    "enum": ["option1", "option2", "option3"]
-  },
-  "x-options": {
-    "labels": {
-      "option1": "Option 1 Label",
-      "option2": "Option 2 Label"
+    "x-widget": "file-upload-single",
+    "x-upload-config": {
+      "allowed_types": ["image/png", "image/jpeg", "image/bmp", "image/gif"],
+      "max_size_mb": 5
     }
   }
 }
 ```
 
-**Features:**
-- Multiple selection from enum list
-- Custom labels for each option
-- Automatic JSON array serialization
+### `checkbox-group`
 
-### 3. Custom Feeds Widget (`custom-feeds`)
+```json
+{
+  "type": "array",
+  "x-widget": "checkbox-group",
+  "items": {"type": "string", "enum": ["option1", "option2", "option3"]},
+  "x-options": {"labels": {"option1": "Option 1 Label", "option2": "Option 2 Label"}}
+}
+```
 
-Table-based RSS feed editor with logo uploads.
+### `custom-feeds`
 
-**Schema Configuration:**
 ```json
 {
   "type": "array",
@@ -74,539 +111,259 @@ Table-based RSS feed editor with logo uploads.
   "items": {
     "type": "object",
     "properties": {
-      "name": { "type": "string" },
-      "url": { "type": "string", "format": "uri" },
-      "enabled": { "type": "boolean" },
-      "logo": { "type": "object" }
+      "name": {"type": "string"},
+      "url": {"type": "string", "format": "uri"},
+      "enabled": {"type": "boolean"},
+      "logo": {"type": "object"}
     }
   },
   "maxItems": 50
 }
 ```
 
-**Features:**
-- Add/remove feed rows
-- Logo upload per feed
-- Enable/disable individual feeds
-- Automatic row re-indexing
+### `plugin-file-manager`
 
-### Other Built-in Widgets
-
-In addition to the three documented above, these widgets are
-registered and ready to use via `x-widget`:
-
-**Inputs:**
-- `text-input` — Plain text field with optional length constraints
-- `textarea` — Multi-line text input
-- `number-input` — Numeric input with min/max validation
-- `email-input` — Email field with format validation
-- `url-input` — URL field with format validation
-- `password-input` — Password field with show/hide toggle
-
-**Selectors:**
-- `select-dropdown` — Single-select dropdown for `enum` fields
-- `radio-group` — Radio buttons for `enum` fields (alternative to dropdown)
-- `toggle-switch` — Boolean toggle (alternative to a checkbox)
-- `slider` — Numeric range slider for `integer`/`number` with `min`/`max`
-- `color-picker` — RGB color picker; outputs `[r, g, b]` arrays
-- `font-selector` — Picks from fonts in `assets/fonts/` (TTF + BDF)
-- `timezone-selector` — IANA timezone picker
-
-**Date / time / scheduling:**
-- `date-picker` — Single date input
-- `day-selector` — Days-of-week multi-select (Mon–Sun checkboxes)
-- `time-range` — Start/end time pair (e.g. for dim schedules)
-- `schedule-picker` — Full cron-style or weekday/time schedule editor
-
-**Composite / data-source:**
-- `array-table` — Generic table editor for arrays of objects
-- `google-calendar-picker` — Picks from the user's authenticated Google
-  Calendars (used by the calendar plugin)
-
-**Internal (typically not used directly by plugins):**
-- `notification` — Toast notification helper
-- `base-widget` — Base class other widgets extend
-
-The canonical source for each widget's exact schema and options is the
-file in this directory (e.g., `slider.js`, `color-picker.js`). If you
-need a feature one of these doesn't support, see "Creating Custom
-Widgets" below.
-
-## Using Existing Widgets
-
-To use an existing widget in your plugin's `config_schema.json`, simply add the `x-widget` property to your field definition:
+A card grid, upload zone, create/delete dialogs and a table editor for the
+plugin's data files, rendered inline. File operations call
+`/api/v3/plugins/action` as soon as the user acts; they are not part of
+**Save Configuration**. `plugin_id` is filled in from the page.
 
 ```json
 {
-  "properties": {
-    "my_images": {
-      "type": "array",
-      "x-widget": "file-upload",
-      "x-upload-config": {
-        "plugin_id": "my-plugin",
-        "max_files": 5
-      }
+  "file_manager": {
+    "type": "null",
+    "title": "Data Files",
+    "x-widget": "plugin-file-manager",
+    "x-widget-config": {
+      "actions": {
+        "list": "list-files",
+        "get": "get-file",
+        "save": "save-file",
+        "upload": "upload-file",
+        "delete": "delete-file",
+        "create": "create-file",
+        "toggle": "toggle-category"
+      },
+      "upload_hint": "JSON files with day numbers 1–365 as keys",
+      "directory_label": "my_data/",
+      "create_fields": [
+        {"key": "category_name", "label": "Category Name",
+         "pattern": "^[a-z0-9_]+$", "hint": "Lowercase letters, numbers, underscores"},
+        {"key": "display_name", "label": "Display Name", "hint": "Optional"}
+      ]
     }
   }
 }
 ```
 
-The widget will be automatically rendered when the plugin configuration form is loaded.
+The action ids refer to entries in the plugin's `web_ui_actions`
+([docs/PLUGIN_WEB_UI_ACTIONS.md](../../../../../docs/PLUGIN_WEB_UI_ACTIONS.md)).
+`list` is required: without it the widget stays on its loading state. Leave
+out any other action to hide its control. The editor shows a table when a
+file is an object of objects with the same keys, otherwise a JSON text area.
 
-## Creating Custom Widgets
+## Schema keywords the form understands
 
-### Step 1: Create Widget File
+These work on any field, with or without a widget.
 
-Create a JavaScript file in your plugin directory (e.g., `widgets/my-widget.js`):
+### Option labels: `x-options.labels`
+
+A plain `enum` renders as a dropdown whose option text is the value with
+underscores replaced and title case applied (`day_first` → "Day First").
+`x-options.labels` sets the visible text instead:
+
+```json
+{
+  "date_format": {
+    "type": "string",
+    "enum": ["abbrev", "numeric", "day_first"],
+    "default": "abbrev",
+    "x-options": {"labels": {"abbrev": "Sep 19", "numeric": "9/19", "day_first": "19 Sep"}}
+  }
+}
+```
+
+Labels are display only; the stored value is still the enum value. The map
+may be partial. Older cores ignore `x-options` and show the fallback text.
+`array-table` columns accept the same `x-options.labels`, but their fallback
+is the raw value (so a ticker symbol `aapl` stays `aapl`).
+
+### Advanced settings: `x-advanced`
+
+`"x-advanced": true` on a top-level, non-object property moves it into a
+collapsed **Advanced Settings** section at the bottom of the plugin's page.
+Use it for settings most users never change (timeouts, cache TTLs, styling
+overrides); keep anything needed to get the plugin working in the main form.
+The settings search still finds and expands advanced fields. It is ignored
+on `object` properties and by older cores.
+
+### Hidden fields: `x-display: "hidden"`
+
+`"x-display": "hidden"` keeps a property in the schema without drawing a
+control, for a deprecated key that existing configs still carry or an
+internal value such as a generated row id.
+
+- Not rendered at any depth: top level, inside an object section, or as a
+  column or row-editor field of an array of objects. Hidden fields are left
+  out of Advanced Settings and the settings search.
+- Saving the form never changes a hidden value. Array rows carry it through;
+  a new row gets no value.
+- A JSON `POST /api/v3/plugins/config` can still set it.
+- Older cores ignore the flag and render the field.
+
+## Creating a custom widget
+
+### 1. Write the widget
+
+Put it in your plugin's `widgets/` directory as `widgets/<name>.js`. That
+directory is the only place the core serves plugin widgets from.
 
 ```javascript
-// Ensure LEDMatrixWidgets registry is available
-if (typeof window.LEDMatrixWidgets === 'undefined') {
-    console.error('LEDMatrixWidgets registry not found');
-    return;
-}
+(function () {
+    'use strict';
+    if (typeof window.LEDMatrixWidgets === 'undefined') {
+        console.error('LEDMatrixWidgets registry not found');
+        return;
+    }
 
-// Register your widget
-window.LEDMatrixWidgets.register('my-custom-widget', {
-    name: 'My Custom Widget',
-    version: '1.0.0',
-    
-    /**
-     * Render the widget HTML
-     * @param {HTMLElement} container - Container element to render into
-     * @param {Object} config - Widget configuration from schema
-     * @param {*} value - Current value
-     * @param {Object} options - Additional options (fieldId, pluginId, etc.)
-     */
-    render: function(container, config, value, options) {
-        const fieldId = options.fieldId || container.id;
-        // Sanitize fieldId for safe use in DOM IDs and selectors
-        const sanitizeId = (id) => String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
-        const safeFieldId = sanitizeId(fieldId);
-        
-        const html = `
-            <div class="my-custom-widget">
-                <input type="text" 
-                       id="${safeFieldId}_input" 
-                       value="${this.escapeHtml(value || '')}"
-                       class="w-full px-3 py-2 border border-gray-300 rounded">
-            </div>
-        `;
-        container.innerHTML = html;
-        
-        // Attach event listeners
-        const input = container.querySelector(`#${safeFieldId}_input`);
-        if (input) {
+    const sanitizeId = (id) => String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
+    // The page's shared escaper covers HTML content and quoted attribute
+    // values. A textContent/innerHTML round trip leaves quotes alone, so it
+    // is not safe inside value="...".
+    const escapeHtml = (text) => window.LEDEscape.html(text);
+
+    window.LEDMatrixWidgets.register('my-custom-widget', {
+        name: 'My Custom Widget',
+        version: '1.0.0',
+
+        render: function (container, config, value, options) {
+            const fieldId = options.fieldId || container.id;
+            const safeId = sanitizeId(fieldId);
+            container.innerHTML = `
+                <input type="text" id="${safeId}_input"
+                       value="${escapeHtml(value || '')}"
+                       class="w-full px-3 py-2 border border-gray-300 rounded">`;
+            const input = container.querySelector(`#${safeId}_input`);
             input.addEventListener('change', (e) => {
                 this.handlers.onChange(fieldId, e.target.value);
             });
+        },
+
+        getValue: function (fieldId) {
+            const input = document.querySelector(`#${sanitizeId(fieldId)}_input`);
+            return input ? input.value : null;
+        },
+
+        setValue: function (fieldId, value) {
+            const input = document.querySelector(`#${sanitizeId(fieldId)}_input`);
+            if (input) input.value = value || '';
+        },
+
+        handlers: {
+            onChange: function (fieldId, value) {
+                document.dispatchEvent(new CustomEvent('widget-change', {
+                    detail: { fieldId, value }, bubbles: true
+                }));
+            }
         }
-    },
-    
-    /**
-     * Get current value from widget
-     * @param {string} fieldId - Field ID
-     * @returns {*} Current value
-     */
-    getValue: function(fieldId) {
-        // Sanitize fieldId for safe selector use
-        const sanitizeId = (id) => String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
-        const safeFieldId = sanitizeId(fieldId);
-        const input = document.querySelector(`#${safeFieldId}_input`);
-        return input ? input.value : null;
-    },
-    
-    /**
-     * Set value programmatically
-     * @param {string} fieldId - Field ID
-     * @param {*} value - Value to set
-     */
-    setValue: function(fieldId, value) {
-        // Sanitize fieldId for safe selector use
-        const sanitizeId = (id) => String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
-        const safeFieldId = sanitizeId(fieldId);
-        const input = document.querySelector(`#${safeFieldId}_input`);
-        if (input) {
-            input.value = value || '';
-        }
-    },
-    
-    /**
-     * Event handlers
-     */
-    handlers: {
-        onChange: function(fieldId, value) {
-            // Trigger form change event
-            const event = new CustomEvent('widget-change', {
-                detail: { fieldId, value },
-                bubbles: true
-            });
-            document.dispatchEvent(event);
-        }
-    },
-    
-    /**
-     * Helper: escape text for HTML content or a quoted attribute value.
-     * Use the page's shared escaper; a textContent/innerHTML round trip
-     * leaves quotes alone and is not safe inside value="...".
-     */
-    escapeHtml: function(text) {
-        return window.LEDEscape.html(text);
-    },
-    
-    /**
-     * Helper: Sanitize identifier for use in DOM IDs and CSS selectors
-     */
-    sanitizeId: function(id) {
-        return String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
-    }
-});
+    });
+})();
 ```
 
-### Step 2: Reference Widget in Schema
+[`example-color-picker.js`](example-color-picker.js) is a longer example.
 
-In your plugin's `config_schema.json`:
+### 2. Reference it in the schema
 
 ```json
 {
   "properties": {
-    "my_field": {
-      "type": "string",
-      "description": "My custom field",
-      "x-widget": "my-custom-widget",
-      "default": ""
-    }
+    "my_field": {"type": "string", "x-widget": "my-custom-widget", "default": ""}
   }
 }
 ```
 
-### Step 3: Declare the Widget in `manifest.json`
+### 3. Declare it in `manifest.json`
 
-The manifest is the allowlist -- a widget is served only if the plugin declares
-it, so shipping a file under `widgets/` does not by itself publish it:
+The manifest is the allowlist: a widget is served only if the plugin
+declares it.
 
 ```json
 {
   "widgets": [
-    { "name": "my-custom-widget", "script": "my-custom-widget.js" }
+    {"name": "my-custom-widget", "script": "my-custom-widget.js",
+     "description": "What this widget is for"}
   ]
 }
 ```
 
-`script` is optional and defaults to `[name].js`. It must be a plain filename
-directly inside the plugin's `widgets/` directory.
+`name` is what `x-widget` uses. `script` is optional, defaults to
+`<name>.js`, and must be a plain filename directly inside `widgets/`. Both
+are validated against `schema/manifest_schema.json`.
 
-### Step 4: Widget Loading
+### 4. How it loads
 
-The widget is loaded on demand when the config form renders a field that
-references it. The system will:
+When the config form reaches a field whose `x-widget` is not a built-in:
 
-1. Check if the widget is registered in the core registry
-2. If not, fetch `/static/plugin-widgets/[plugin-id]/[widget-name].js`, which
-   serves the declared script from the plugin's `widgets/` directory
-3. Render the widget using the registered `render` function
+1. If the name is already registered, that widget renders the field.
+2. Otherwise the page fetches `/static/plugin-widgets/<plugin-id>/<name>.js`
+   (`serve_plugin_widget` in
+   [`web_interface/blueprints/pages_v3.py`](../../../../blueprints/pages_v3.py)),
+   which serves the declared script from the plugin's `widgets/` directory.
+3. The widget's `render()` draws the field.
 
-The fetch is a dynamic `import()`, so the file must parse as an ES module (a
-plain IIFE does). If anything fails, the field falls back to a plain text input
+The fetch is a dynamic `import()`, so the file must parse as an ES module.
+An IIFE does; modules are strict mode, and a `return` outside a function is a
+syntax error.
+
+If the widget fails to load (not declared, file missing, script throws, or
+it never calls `register`), the field falls back to a plain text input
 holding the current value, so a broken widget never costs the user their
-configured value.
+setting.
 
-Only `string`-typed fields take this path today; see `docs/widget-guide.md`
-for the full details and limitations.
+**Limitation:** only `string` fields without an `enum` take this path.
+[`plugin_config.html`](../../../../templates/v3/partials/plugin_config.html)
+renders `object`, `array`, `boolean`, `integer`, `number` and `enum` fields
+with its own branches, which only know the built-in names, so a plugin's own
+widget on one of those is ignored.
 
-## Widget API Reference
-
-### Widget Definition Object
+## Widget API
 
 ```javascript
 {
-    name: string,           // Human-readable widget name
-    version: string,        // Widget version
-    render: function,       // Required: Render function
-    getValue: function,     // Optional: Get current value
-    setValue: function,     // Optional: Set value programmatically
-    handlers: object        // Optional: Event handlers
+    name: string,        // human-readable name
+    version: string,
+    render: function,    // required: render(container, config, value, options)
+    getValue: function,  // optional: getValue(fieldId) -> value
+    setValue: function,  // optional: setValue(fieldId, value)
+    handlers: object     // optional: e.g. onChange(fieldId, value)
 }
 ```
 
-### Render Function
+`render()` arguments:
 
-```javascript
-render(container, config, value, options)
-```
+- `container` — element to render into
+- `config` — the field's schema, including `x-widget-config` / `x-options`
+- `value` — current value
+- `options` — `fieldId`, `pluginId`, `fullKey` (dotted path of the field)
 
-**Parameters:**
-- `container` (HTMLElement): Container element to render into
-- `config` (Object): Widget configuration from schema (`x-widget-config` or schema properties)
-- `value` (*): Current field value
-- `options` (Object): Additional options
-  - `fieldId` (string): Field ID
-  - `pluginId` (string): Plugin ID
-  - `fullKey` (string): Full field key path
+## Guidelines
 
-### Get Value Function
-
-```javascript
-getValue(fieldId)
-```
-
-**Returns:** Current widget value
-
-### Set Value Function
-
-```javascript
-setValue(fieldId, value)
-```
-
-**Parameters:**
-- `fieldId` (string): Field ID
-- `value` (*): Value to set
-
-### Event Handlers
-
-Widgets can define custom event handlers in the `handlers` object:
-
-```javascript
-handlers: {
-    onChange: function(fieldId, value) {
-        // Handle value change
-    },
-    onFocus: function(fieldId) {
-        // Handle focus
-    }
-}
-```
-
-## Best Practices
-
-### Security
-
-1. **Always escape HTML**: Use `escapeHtml()` or `textContent` to prevent XSS
-2. **Validate inputs**: Validate user input before processing
-3. **Sanitize values**: Clean values before storing
-4. **Sanitize identifiers**: Always sanitize identifiers (like `fieldId`) used as element IDs and in CSS selectors to prevent selector injection/XSS:
-   - Use `sanitizeId()` helper function (available in BaseWidget) or create your own
-   - Allow only safe characters: `[A-Za-z0-9_-]`
-   - Replace or remove invalid characters before using in:
-     - `getElementById()`, `querySelector()`, `querySelectorAll()`
-     - Setting `id` attributes
-     - Building CSS selectors
-   - Never interpolate raw `fieldId` into HTML strings or selectors without sanitization
-   - Example: `const safeId = fieldId.replace(/[^a-zA-Z0-9_-]/g, '_');`
-
-### Performance
-
-1. **Lazy loading**: Load widget scripts only when needed
-2. **Event delegation**: Use event delegation for dynamic content
-3. **Debounce**: Debounce frequent events (e.g., input changes)
-
-### Accessibility
-
-1. **Labels**: Always associate labels with inputs
-2. **ARIA attributes**: Use appropriate ARIA attributes
-3. **Keyboard navigation**: Ensure keyboard accessibility
-
-### Error Handling
-
-1. **Graceful degradation**: Handle missing dependencies
-2. **User feedback**: Show clear error messages
-3. **Logging**: Log errors for debugging
-
-## Examples
-
-### Example 1: Color Picker Widget
-
-```javascript
-window.LEDMatrixWidgets.register('color-picker', {
-    name: 'Color Picker',
-    version: '1.0.0',
-    
-    render: function(container, config, value, options) {
-        const fieldId = options.fieldId;
-        // Sanitize fieldId for safe use in DOM IDs and selectors
-        const sanitizeId = (id) => String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
-        const sanitizedFieldId = sanitizeId(fieldId);
-        
-        container.innerHTML = `
-            <div class="flex items-center space-x-2">
-                <input type="color" 
-                       id="${sanitizedFieldId}_color" 
-                       value="${value || '#000000'}"
-                       class="h-10 w-20">
-                <input type="text" 
-                       id="${sanitizedFieldId}_hex" 
-                       value="${value || '#000000'}"
-                       pattern="^#[0-9A-Fa-f]{6}$"
-                       class="px-2 py-1 border rounded">
-            </div>
-        `;
-        
-        const colorInput = container.querySelector(`#${sanitizedFieldId}_color`);
-        const hexInput = container.querySelector(`#${sanitizedFieldId}_hex`);
-        
-        if (colorInput && hexInput) {
-            colorInput.addEventListener('change', (e) => {
-                hexInput.value = e.target.value;
-                this.handlers.onChange(fieldId, e.target.value);
-            });
-            
-            hexInput.addEventListener('change', (e) => {
-                if (/^#[0-9A-Fa-f]{6}$/.test(e.target.value)) {
-                    colorInput.value = e.target.value;
-                    this.handlers.onChange(fieldId, e.target.value);
-                }
-            });
-        }
-    },
-    
-    getValue: function(fieldId) {
-        // Sanitize fieldId for safe selector use
-        const sanitizeId = (id) => String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
-        const sanitizedFieldId = sanitizeId(fieldId);
-        const colorInput = document.querySelector(`#${sanitizedFieldId}_color`);
-        return colorInput ? colorInput.value : null;
-    },
-    
-    setValue: function(fieldId, value) {
-        // Sanitize fieldId for safe selector use
-        const sanitizeId = (id) => String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
-        const sanitizedFieldId = sanitizeId(fieldId);
-        const colorInput = document.querySelector(`#${sanitizedFieldId}_color`);
-        const hexInput = document.querySelector(`#${sanitizedFieldId}_hex`);
-        if (colorInput && hexInput) {
-            colorInput.value = value;
-            hexInput.value = value;
-        }
-    },
-    
-    handlers: {
-        onChange: function(fieldId, value) {
-            const event = new CustomEvent('widget-change', {
-                detail: { fieldId, value },
-                bubbles: true
-            });
-            document.dispatchEvent(event);
-        }
-    }
-});
-```
-
-### Example 2: Slider Widget
-
-```javascript
-window.LEDMatrixWidgets.register('slider', {
-    name: 'Slider Widget',
-    version: '1.0.0',
-    
-    render: function(container, config, value, options) {
-        const fieldId = options.fieldId;
-        // Sanitize fieldId for safe use in DOM IDs and selectors
-        const sanitizeId = (id) => String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
-        const sanitizedFieldId = sanitizeId(fieldId);
-        
-        const min = config.minimum || 0;
-        const max = config.maximum || 100;
-        const step = config.step || 1;
-        const currentValue = value !== undefined ? value : (config.default || min);
-        
-        container.innerHTML = `
-            <div class="slider-widget">
-                <input type="range" 
-                       id="${sanitizedFieldId}_slider"
-                       min="${min}"
-                       max="${max}"
-                       step="${step}"
-                       value="${currentValue}"
-                       class="w-full">
-                <div class="flex justify-between text-xs text-gray-500 mt-1">
-                    <span>${min}</span>
-                    <span id="${sanitizedFieldId}_value">${currentValue}</span>
-                    <span>${max}</span>
-                </div>
-            </div>
-        `;
-        
-        const slider = container.querySelector(`#${sanitizedFieldId}_slider`);
-        const valueDisplay = container.querySelector(`#${sanitizedFieldId}_value`);
-        
-        if (slider && valueDisplay) {
-            slider.addEventListener('input', (e) => {
-                valueDisplay.textContent = e.target.value;
-                this.handlers.onChange(fieldId, parseFloat(e.target.value));
-            });
-        }
-    },
-    
-    getValue: function(fieldId) {
-        // Sanitize fieldId for safe selector use
-        const sanitizeId = (id) => String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
-        const sanitizedFieldId = sanitizeId(fieldId);
-        const slider = document.querySelector(`#${sanitizedFieldId}_slider`);
-        return slider ? parseFloat(slider.value) : null;
-    },
-    
-    setValue: function(fieldId, value) {
-        // Sanitize fieldId for safe selector use
-        const sanitizeId = (id) => String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
-        const sanitizedFieldId = sanitizeId(fieldId);
-        const slider = document.querySelector(`#${sanitizedFieldId}_slider`);
-        const valueDisplay = document.querySelector(`#${sanitizedFieldId}_value`);
-        if (slider) {
-            slider.value = value;
-            if (valueDisplay) {
-                valueDisplay.textContent = value;
-            }
-        }
-    },
-    
-    handlers: {
-        onChange: function(fieldId, value) {
-            const event = new CustomEvent('widget-change', {
-                detail: { fieldId, value },
-                bubbles: true
-            });
-            document.dispatchEvent(event);
-        }
-    }
-});
-```
+- Escape values before putting them in HTML (`textContent` or an
+  `escapeHtml` helper).
+- Sanitise `fieldId` before using it in an `id`, `getElementById()` or a CSS
+  selector: allow only `[A-Za-z0-9_-]`. `BaseWidget` has `sanitizeId()`.
+- Associate labels with inputs and keep the widget usable from the keyboard.
+- Debounce events that fire on every keystroke.
 
 ## Troubleshooting
 
-### Widget Not Loading
+**Widget not loading**
+- Check the browser console.
+- The widget must be declared in `manifest.json` and live in `widgets/`.
+- The name passed to `register()` must match `x-widget`.
+- The field must be a non-enum `string` (see the limitation above).
 
-1. Check browser console for errors
-2. Verify widget file path is correct
-3. Ensure `LEDMatrixWidgets.register()` is called
-4. Check that widget name matches schema `x-widget` value
-
-### Widget Not Rendering
-
-1. Verify `render` function is defined
-2. Check container element exists
-3. Ensure widget is registered before form loads
-4. Check for JavaScript errors in console
-
-### Value Not Saving
-
-1. Ensure widget triggers `widget-change` event
-2. Verify form submission includes widget value
-3. Check `getValue` function returns correct type
-4. Verify field name matches schema property
-
-## Migration from Server-Side Rendering
-
-Currently, widgets are server-side rendered via Jinja2 templates. The registry system provides:
-
-1. **Backwards Compatibility**: Existing server-side rendered widgets continue to work
-2. **Future Enhancement**: Client-side rendering support for custom widgets
-3. **Handler Availability**: All widget handlers are available globally
-
-Future versions may support full client-side rendering, but server-side rendering remains the primary method for core widgets.
-
-## Support
-
-For questions or issues:
-- Check existing widget implementations for examples
-- Review browser console for errors
-- Test with simple widget first before complex implementations
+**Value not saving**
+- Fire a `widget-change` event on change.
+- `getValue()` must return the type the schema expects.
+- Check the field name matches the schema property.

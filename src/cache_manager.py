@@ -32,7 +32,6 @@ from typing import Any, Dict, List, Optional
 import logging
 import threading
 import tempfile
-from src.exceptions import CacheError
 from src.cache.memory_cache import MemoryCache, default_max_size
 from src.cache.disk_cache import DiskCache
 from src.cache.cache_strategy import CacheStrategy
@@ -272,12 +271,9 @@ class CacheManager:
         # Update memory cache first
         self._memory_cache_component.set(key, data)
         
-        # Save to disk cache
-        try:
-            self._disk_cache_component.set(key, data)
-        except CacheError:
-            # Disk cache errors are already logged and raised by DiskCache
-            raise
+        # DiskCache logs a failed write and raises CacheError, which the
+        # caller gets as is.
+        self._disk_cache_component.set(key, data)
 
     def load_cache(self, key: str) -> Optional[Dict[str, Any]]:
         """Load data from cache with memory caching."""

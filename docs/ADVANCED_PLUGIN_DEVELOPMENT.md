@@ -13,7 +13,7 @@ Advanced patterns, examples, and best practices for developing LEDMatrix plugins
 - [Using Weather Icons](#using-weather-icons)
 - [Implementing Scrolling with Deferred Updates](#implementing-scrolling-with-deferred-updates)
 - [Cache Strategy Patterns](#cache-strategy-patterns)
-- [Font Management and Overrides](#font-management-and-overrides)
+- [Font Management](#font-management)
 - [Error Handling Best Practices](#error-handling-best-practices)
 - [Performance Optimization](#performance-optimization)
 - [Testing Plugins with Mocks](#testing-plugins-with-mocks)
@@ -25,69 +25,12 @@ Advanced patterns, examples, and best practices for developing LEDMatrix plugins
 
 ## Using Weather Icons
 
-The Display Manager provides built-in weather icon drawing methods for easy visual representation of weather conditions.
-
-### Basic Weather Icon Usage
-
-```python
-def display(self, force_clear=False):
-    if force_clear:
-        self.display_manager.clear()
-    
-    # Draw weather icon based on condition
-    condition = self.data.get('condition', 'clear')
-    self.display_manager.draw_weather_icon(condition, x=5, y=5, size=16)
-    
-    # Draw temperature next to icon
-    temp = self.data.get('temp', 72)
-    self.display_manager.draw_text(
-        f"{temp}°F",
-        x=25, y=10,
-        color=(255, 255, 255)
-    )
-    
-    self.display_manager.update_display()
-```
-
-### Supported Weather Conditions
-
-The `draw_weather_icon()` method automatically maps condition strings to appropriate icons:
-
-- `"clear"`, `"sunny"` → Sun icon
-- `"clouds"`, `"cloudy"`, `"partly cloudy"` → Cloud icon
-- `"rain"`, `"drizzle"`, `"shower"` → Rain icon
-- `"snow"`, `"sleet"`, `"hail"` → Snow icon
-- `"thunderstorm"`, `"storm"` → Storm icon
-
-### Custom Weather Icons
-
-For more control, use individual icon methods:
-
-```python
-# Draw specific icons
-self.display_manager.draw_sun(x=10, y=10, size=16)
-self.display_manager.draw_cloud(x=10, y=10, size=16, color=(150, 150, 150))
-self.display_manager.draw_rain(x=10, y=10, size=16)
-self.display_manager.draw_snow(x=10, y=10, size=16)
-```
-
-### Text with Weather Icons
-
-Use `draw_text_with_icons()` to combine text and icons:
-
-```python
-icons = [
-    ("sun", 5, 5),      # Sun icon at (5, 5)
-    ("cloud", 100, 5)   # Cloud icon at (100, 5)
-]
-
-self.display_manager.draw_text_with_icons(
-    "Weather: Sunny, Cloudy",
-    icons=icons,
-    x=10, y=20,
-    color=(255, 255, 255)
-)
-```
+The Display Manager's icon methods — `draw_weather_icon()`, `draw_sun()`,
+`draw_cloud()`, `draw_rain()`, `draw_snow()` and `draw_text_with_icons()` —
+are deprecated, removed in 3.7.0. Draw your own icons instead: render them
+onto a PIL image and paste it onto `self.display_manager.image`, or ship
+icon images with the plugin. The weather plugin's `WeatherIcons` class is an
+example. See [Deprecated APIs](PLUGIN_API_REFERENCE.md#deprecated-apis).
 
 ---
 
@@ -251,11 +194,8 @@ def update(self):
     sport_key = "nhl"
     cache_key = f"{self.plugin_id}_{sport_key}_games"
     
-    # Uses sport-specific live_update_interval from config
-    cached = self.cache_manager.get_background_cached_data(
-        cache_key,
-        sport_key=sport_key
-    )
+    # get_background_cached_data() is deprecated, removed in 3.7.0 — use get()
+    cached = self.cache_manager.get(cache_key, max_age=60)
     
     if cached:
         self.games = cached
@@ -282,9 +222,9 @@ def on_config_change(self, new_config):
 
 ---
 
-## Font Management and Overrides
+## Font Management
 
-Use the Font Manager for advanced font handling and user customization.
+The display manager's built-in fonts and text measurement. For fonts shipped with a plugin, see [FONT_MANAGER.md](FONT_MANAGER.md).
 
 ### Using Different Fonts
 
@@ -656,14 +596,12 @@ def update(self):
 
 ```python
 def update(self):
-    # Check if another plugin is enabled
-    enabled_plugins = self.plugin_manager.get_enabled_plugins()
-    if "weather" in enabled_plugins:
-        # Weather plugin is available
-        weather_plugin = self.plugin_manager.get_plugin("weather")
-        if weather_plugin:
-            # Use weather data
-            pass
+    # get_enabled_plugins() is deprecated, removed in 3.7.0 — check the
+    # instance's `enabled` flag instead
+    weather_plugin = self.plugin_manager.get_plugin("weather")
+    if weather_plugin is not None and weather_plugin.enabled:
+        # Use weather data
+        pass
 ```
 
 ### Sharing Data Between Plugins

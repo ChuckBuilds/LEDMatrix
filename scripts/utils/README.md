@@ -9,6 +9,7 @@ This directory contains utility scripts for maintenance and system operations.
 - **`wifi_monitor_daemon.py`** - Background daemon that monitors WiFi/Ethernet connection and manages access point mode
 - **`pixlet_config_editor.sh`** - Opens Pixlet's own config UI for one installed Starlark app
 - **`apply_dns_single_request.sh`** - Adds `options single-request` to the resolver (run by `ledmatrix-dns-fix.service`)
+- **`auto_update_verify.py`** - Health check after an automatic update, rolling back if it fails (the updater copies it to `data/` before pulling and `ledmatrix-update-verify.service` runs that copy)
 
 ## Usage
 

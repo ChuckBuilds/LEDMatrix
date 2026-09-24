@@ -161,7 +161,11 @@ duration, and related settings — so you can configure Vegas mode
 entirely from the web UI without hand-editing JSON. See
 [ADVANCED_FEATURES.md](ADVANCED_FEATURES.md) for what the options do.
 
-Changes require **Restart Display Service** from the Overview tab.
+Brightness and the Vegas Scroll settings apply to the running display
+within a few seconds. Matrix hardware settings (rows, columns, chain length,
+mapping, GPIO slowdown, PWM and refresh settings) are only read when the
+display starts, so those need **Restart Display Service** from the Overview
+tab.
 
 ### Plugin Manager Tab
 
@@ -248,16 +252,16 @@ View real-time system logs:
 
 1. Open the **Display** tab
 2. Adjust the **Brightness** slider (1–100)
-3. Click **Save**
-4. Click **Restart Display Service** on the **Overview** tab
+3. Click **Save**. The panel picks up the new brightness within a few
+   seconds; no restart is needed
 
 ### Installing a New Plugin
 
 1. Open the **Plugin Manager** tab
 2. Scroll to the **Plugin Store** section and browse or search
 3. Click **Install** next to the plugin
-4. Toggle the plugin on in **Installed Plugins**
-5. Click **Restart Display Service** on **Overview**
+4. Toggle the plugin on in **Installed Plugins**. The running display
+   loads it within a few seconds; no restart is needed
 
 ### Configuring a Plugin
 

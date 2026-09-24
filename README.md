@@ -328,6 +328,7 @@ This one-shot installer will automatically:
 - Install required system packages (git, python3, build tools, etc.)
 - Clone or update the LEDMatrix repository
 - Run the complete first-time installation script
+- Print the web interface address, then **reboot the Pi automatically** (your SSH session will disconnect; give it a few minutes to come back)
 
 The installation process typically takes 10-30 minutes depending on your internet connection and Pi model. Pi 3B/3B+ and other 1GB boards land at the top of that range, because the C++ library is compiled serially to stay within available memory. All errors are reported explicitly with actionable fixes.
 
@@ -689,9 +690,10 @@ Controls how long each installed plugin stays visible in seconds before switchin
 ### Display Format Settings
 
 - **`use_short_date_format`** (boolean, default: true)
-  - Use short date format (e.g., "Jan 15") instead of long format (e.g., "January 15th")
-  - Set to `false` for longer, more readable dates
-  - Set to `true` to save space and show more information
+  - Currently has no effect. The web UI still saves it, but no core code
+    reads it. Scoreboard plugins that offer a short date format read the
+    setting from their own plugin config instead. See
+    [CONFIG_REFERENCE.md](docs/CONFIG_REFERENCE.md#display--other-keys).
 
 ### Dynamic Duration Settings (`display.dynamic_duration`)
 
@@ -779,15 +781,21 @@ Controls how long each installed plugin stays visible in seconds before switchin
 <details>
 <summary>Manual SSH Commands (for reference)</summary>
 
-The quick actions essentially just execute the following commands on the Pi.
+The web interface's quick actions (Start/Stop/Restart Display) call
+`sudo systemctl start|stop|restart ledmatrix.service` — see
+`execute_system_action()` in
+[`web_interface/blueprints/api_v3/system.py`](web_interface/blueprints/api_v3/system.py).
+The service runs [`run.py`](run.py) as root.
 
-From the project root directory (ex: /home/ledpi/LEDMatrix):
+To run the display in the foreground instead (for debugging), stop the service
+first, then from the project root (e.g. `/home/ledpi/LEDMatrix`):
 
 ```bash
-sudo python3 display_controller.py
+sudo systemctl stop ledmatrix.service
+sudo python3 run.py          # add -d for debug logging
 ```
 
-This will start the display cycle but only stays active as long as your ssh session is active.
+This only runs as long as your SSH session stays open.
 
 ### Convenience Scripts
 
@@ -957,9 +965,10 @@ sudo systemctl enable ledmatrix-web.service
 3. Check if another service is using port 5000
 
 **Service Fails to Start:**
-1. Check Python dependencies are installed
-2. Verify the virtual environment is set up correctly
-3. Check file permissions and ownership
+1. Check Python dependencies are installed. The installer puts them in the
+   system Python with `pip install --break-system-packages` (there is no
+   virtual environment), so `python3 -c "import flask"` should succeed.
+2. Check file permissions and ownership
 
 </details>
 

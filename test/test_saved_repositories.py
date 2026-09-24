@@ -5,7 +5,7 @@ SavedRepositoriesManager contract.
 Covers: the three accepted on-disk load shapes (bare list, wrapped
 {"repositories": [...]}, anything else -> []) and that saves always write
 the bare-list form; add/remove/has round trips through a fresh manager;
-URL normalization post-fix (_clean_url strips only a TRAILING '.git' after
+URL normalization post-fix (normalize_repo_url strips only a TRAILING '.git' after
 trailing slashes — the old unanchored .replace('.git', '') mangled URLs
 like my.github.io); name derivation and registry-vs-single type
 classification (the ledmatrix-plugins check is lowercased, the

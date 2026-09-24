@@ -14,6 +14,7 @@ import jsonschema
 from jsonschema import Draft7Validator, ValidationError
 
 from src.core_config_keys import CORE_CONFIG_KEYS
+from src.element_style import expand_style_elements
 
 
 def _renders_as_object(prop: Dict[str, Any]) -> bool:
@@ -452,11 +453,7 @@ class SchemaManager:
             # full per-element style blocks (font/size/color + layout
             # offsets) the web-UI config form renders. No-op for schemas
             # without the declaration; never raises.
-            try:
-                from src.element_style import expand_style_elements
-                schema = expand_style_elements(schema)
-            except ImportError:
-                pass
+            schema = expand_style_elements(schema)
 
             # Cache the schema
             self._schema_cache[plugin_id] = schema
@@ -643,20 +640,12 @@ class SchemaManager:
                     [name for name in CORE_PLUGIN_PROPERTIES if name not in declared]
                 )
 
-            # Create validator with enhanced schema
+            # iter_errors reports every violation, including one ``required``
+            # error per missing field at every depth.
             validator = Draft7Validator(enhanced_schema)
-            
-            # Collect all validation errors
             for error in validator.iter_errors(config):
-                error_msg = self._format_validation_error(error, plugin_id)
-                errors.append(error_msg)
-            
-            # Check required fields
-            required_fields = enhanced_schema.get('required', [])
-            for field in required_fields:
-                if field not in config:
-                    errors.append(f"Missing required field: '{field}'")
-            
+                errors.append(self._format_validation_error(error, plugin_id))
+
             if errors:
                 return False, errors
             
@@ -687,7 +676,15 @@ class SchemaManager:
         field_path = f"'{path}'" if path else "root"
         
         if error.validator == 'required':
-            missing = error.validator_value
+            # validator_value is the schema's whole ``required`` list; the
+            # error itself is about one field, which jsonschema names only in
+            # its message ("'api_key' is a required property").
+            missing = next(
+                (name for name in error.validator_value
+                 if error.message.startswith(f"{name!r} ")),
+                None)
+            if missing is None:
+                return f"Field {field_path}: {error.message}"
             return f"Field {field_path}: Missing required property '{missing}'"
         elif error.validator == 'type':
             expected = error.validator_value

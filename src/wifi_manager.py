@@ -9,24 +9,18 @@ Tested and optimized for:
 - Raspberry Pi OS Bookworm (Debian 12) with NetworkManager
 - Raspberry Pi 3B+, 4, 5 with built-in WiFi
 
-Sudoers Requirements:
-    The following sudoers entries are required for passwordless operation.
-    Add to /etc/sudoers.d/ledmatrix_wifi:
-
-    ledpi ALL=(ALL) NOPASSWD: /usr/bin/nmcli
-    ledpi ALL=(ALL) NOPASSWD: /usr/bin/systemctl start hostapd
-    ledpi ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop hostapd
-    ledpi ALL=(ALL) NOPASSWD: /usr/bin/systemctl start dnsmasq
-    ledpi ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop dnsmasq
-    ledpi ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart NetworkManager
-    ledpi ALL=(ALL) NOPASSWD: /usr/sbin/ip
-    ledpi ALL=(ALL) NOPASSWD: /sbin/ip
-    ledpi ALL=(ALL) NOPASSWD: /usr/sbin/rfkill
-    ledpi ALL=(ALL) NOPASSWD: /usr/sbin/iptables
-    ledpi ALL=(ALL) NOPASSWD: /usr/sbin/sysctl
-    ledpi ALL=(ALL) NOPASSWD: /usr/bin/cp /tmp/hostapd.conf /etc/hostapd/hostapd.conf
-    ledpi ALL=(ALL) NOPASSWD: /usr/bin/cp /tmp/dnsmasq.conf /etc/dnsmasq.d/ledmatrix-captive.conf
-    ledpi ALL=(ALL) NOPASSWD: /usr/bin/rm -f /etc/dnsmasq.d/ledmatrix-captive.conf
+Privileges:
+    The web interface runs as an unprivileged user and reaches nmcli,
+    systemctl, sysctl, nft and rfkill through exact-command sudo rules.
+    scripts/install/configure_wifi_permissions.sh writes those rules (and a
+    PolicyKit rule for NetworkManager); first_time_install.sh runs it. Use
+    that script rather than granting commands by hand. It deliberately
+    grants neither ``iptables`` nor ``ip``: their rules take a live interface
+    name, so they would need a wildcard, and ``iptables --modprobe=<path>``
+    and ``ip netns exec`` both run an arbitrary program as root. The code
+    paths that call them with sudo therefore only work where the user has
+    broader sudo rights (a stock Raspberry Pi image grants the default user
+    blanket NOPASSWD).
 """
 
 import subprocess
@@ -38,6 +32,8 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass
+
+from src.config_manager_atomic import atomic_write_json
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +73,22 @@ DNSMASQ_SERVICE = "dnsmasq"
 # Default AP settings
 DEFAULT_AP_SSID = "LEDMatrix-Setup"
 DEFAULT_AP_CHANNEL = 7
+
+#: The access point's own address. Clients get 192.168.4.2-20 from dnsmasq
+#: (hostapd mode) and every DNS name resolves here, which is what makes phones
+#: show the captive-portal page.
+AP_IP = "192.168.4.1"
+
+#: The web interface's port. The captive portal redirects port 80 to it.
+PORTAL_PORT = 5000
+
+#: The NetworkManager profile this module creates for the access point.
+AP_PROFILE_NAME = "LEDMatrix-Setup-AP"
+
+#: AP profiles taken down and deleted before a new one is created and when AP
+#: mode ends: ours, NetworkManager's default hotspot name, and an older name.
+#: Deleted by name only, never by SSID, so a saved home network is never hit.
+AP_PROFILE_NAMES = (AP_PROFILE_NAME, "Hotspot", "TickerSetup-AP")
 
 # LED status message file (for display_controller integration)
 LED_STATUS_FILE = None  # Will be set dynamically
@@ -198,30 +210,8 @@ class WiFiManager:
             logger.debug(f"Could not clear LED status message: {e}")
     
     def _check_command(self, command: str) -> bool:
-        """Check if a command is available"""
-        try:
-            # First try 'which' command
-            result = subprocess.run(
-                ["which", command],
-                capture_output=True,
-                timeout=2
-            )
-            if result.returncode == 0:
-                return True
-            
-            # Check common sbin paths (not in standard user PATH)
-            sbin_paths = [
-                f"/usr/sbin/{command}",
-                f"/sbin/{command}",
-                f"/usr/local/sbin/{command}"
-            ]
-            for path in sbin_paths:
-                if os.path.isfile(path) and os.access(path, os.X_OK):
-                    return True
-            
-            return False
-        except (subprocess.TimeoutExpired, subprocess.SubprocessError, OSError):
-            return False
+        """Whether ``command`` is installed (see _find_command_path)."""
+        return self._find_command_path(command) is not None
 
     def _find_command_path(self, command: str) -> Optional[str]:
         """
@@ -321,14 +311,22 @@ class WiFiManager:
             del self.config["saved_networks"]
             self._save_config()
     
-    def _save_config(self):
-        """Save WiFi configuration to file"""
+    def _save_config(self) -> bool:
+        """Write ``self.config`` to ``self.config_path``.
+
+        The write is atomic and keeps the file's owner and shared group (see
+        atomic_write_json), so a save by the root display service does not
+        lock the web user out of the file. Returns False when the file could
+        not be written, for example when an older root-run save left it
+        owned by root; the in-memory config is kept either way.
+        """
         try:
-            with open(self.config_path, 'w') as f:
-                json.dump(self.config, f, indent=2)
-            logger.info(f"Saved WiFi config to {self.config_path}")
-        except Exception as e:
-            logger.error(f"Failed to save WiFi config: {e}")
+            atomic_write_json(self.config_path, self.config)
+        except (OSError, TypeError, ValueError) as e:
+            logger.error(f"Failed to save WiFi config to {self.config_path}: {e}")
+            return False
+        logger.info(f"Saved WiFi config to {self.config_path}")
+        return True
     
     def get_wifi_status(self) -> WiFiStatus:
         """
@@ -402,8 +400,6 @@ class WiFiManager:
                     for line in result.stdout.strip().split('\n'):
                         if '802-11-wireless.ssid:' in line:
                             ssid = line.split(':', 1)[1].strip()
-                            if ssid:
-                                continue
                         elif 'WIFI.SIGNAL:' in line:
                             try:
                                 signal = int(line.split(':', 1)[1].strip())
@@ -425,24 +421,7 @@ class WiFiManager:
                                 ssid = parts[1].strip()
                                 if ssid:
                                     break
-                
-                # Fallback: Get signal strength if not already retrieved
-                if signal == 0 and wlan_device:
-                    result = subprocess.run(
-                        ["nmcli", "-t", "-f", "WIFI.SIGNAL", "device", "show", wlan_device],
-                        capture_output=True,
-                        text=True,
-                        timeout=5
-                    )
-                    if result.returncode == 0:
-                        for line in result.stdout.strip().split('\n'):
-                            if 'WIFI.SIGNAL:' in line:
-                                try:
-                                    signal = int(line.split(':', 1)[1].strip())
-                                    break
-                                except (ValueError, IndexError):
-                                    pass
-            
+
             # Get IP address if connected
             if wifi_connected and wlan_device:
                 result = subprocess.run(
@@ -536,7 +515,7 @@ class WiFiManager:
                 if result.returncode == 0:
                     ips = result.stdout.strip().split()
                     for ip in ips:
-                        if not ip.startswith('192.168.4.1'):  # Exclude AP IP
+                        if ip != AP_IP:
                             ip_address = ip
                             break
             
@@ -778,13 +757,13 @@ class WiFiManager:
         if subprocess.run(
             ["sudo", iptables, "-t", "nat", "-C", "PREROUTING",
              "-i", self._wifi_interface, "-p", "tcp", "--dport", "80",
-             "-j", "REDIRECT", "--to-port", "5000"],
+             "-j", "REDIRECT", "--to-port", str(PORTAL_PORT)],
             capture_output=True, timeout=5
         ).returncode != 0:
             r = subprocess.run(
                 ["sudo", iptables, "-t", "nat", "-A", "PREROUTING",
                  "-i", self._wifi_interface, "-p", "tcp", "--dport", "80",
-                 "-j", "REDIRECT", "--to-port", "5000"],
+                 "-j", "REDIRECT", "--to-port", str(PORTAL_PORT)],
                 capture_output=True, text=True, timeout=5
             )
             if r.returncode != 0:
@@ -794,12 +773,12 @@ class WiFiManager:
 
         if subprocess.run(
             ["sudo", iptables, "-C", "INPUT",
-             "-i", self._wifi_interface, "-p", "tcp", "--dport", "5000", "-j", "ACCEPT"],
+             "-i", self._wifi_interface, "-p", "tcp", "--dport", str(PORTAL_PORT), "-j", "ACCEPT"],
             capture_output=True, timeout=5
         ).returncode != 0:
             r = subprocess.run(
                 ["sudo", iptables, "-A", "INPUT",
-                 "-i", self._wifi_interface, "-p", "tcp", "--dport", "5000", "-j", "ACCEPT"],
+                 "-i", self._wifi_interface, "-p", "tcp", "--dport", str(PORTAL_PORT), "-j", "ACCEPT"],
                 capture_output=True, text=True, timeout=5
             )
             if r.returncode != 0:
@@ -808,7 +787,7 @@ class WiFiManager:
                 return False
 
         self._redirect_backend = "iptables"
-        logger.info("iptables: port 80→5000 redirect rules added")
+        logger.info(f"iptables: port 80→{PORTAL_PORT} redirect rules added")
         return True
 
     def _setup_iptables_redirect_nftables(self, nft: str) -> bool:
@@ -819,7 +798,7 @@ class WiFiManager:
             ["sudo", nft, "add", "chain", "ip", "ledmatrix", "prerouting",
              "{", "type", "nat", "hook", "prerouting", "priority", "-100", ";", "}"],
             ["sudo", nft, "add", "rule", "ip", "ledmatrix", "prerouting",
-             "iif", self._wifi_interface, "tcp", "dport", "80", "redirect", "to", ":5000"],
+             "iif", self._wifi_interface, "tcp", "dport", "80", "redirect", "to", f":{PORTAL_PORT}"],
         ]
         for cmd in cmds:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
@@ -832,7 +811,7 @@ class WiFiManager:
                 logger.debug(f"nft cmd non-zero (may already exist): {r.stderr.strip()}")
 
         self._redirect_backend = "nftables"
-        logger.info("nftables: port 80→5000 redirect rule added")
+        logger.info(f"nftables: port 80→{PORTAL_PORT} redirect rule added")
         return True
 
     def _teardown_iptables_redirect(self) -> None:
@@ -847,12 +826,12 @@ class WiFiManager:
                     subprocess.run(
                         ["sudo", iptables, "-t", "nat", "-D", "PREROUTING",
                          "-i", self._wifi_interface, "-p", "tcp", "--dport", "80",
-                         "-j", "REDIRECT", "--to-port", "5000"],
+                         "-j", "REDIRECT", "--to-port", str(PORTAL_PORT)],
                         capture_output=True, timeout=5
                     )
                     subprocess.run(
                         ["sudo", iptables, "-D", "INPUT",
-                         "-i", self._wifi_interface, "-p", "tcp", "--dport", "5000",
+                         "-i", self._wifi_interface, "-p", "tcp", "--dport", str(PORTAL_PORT),
                          "-j", "ACCEPT"],
                         capture_output=True, timeout=5
                     )
@@ -887,7 +866,7 @@ class WiFiManager:
         except Exception as e:
             logger.warning(f"Could not tear down port redirect: {e}")
 
-    def _write_nm_dnsmasq_captive_conf(self, ap_ip: str = "192.168.4.1") -> None:
+    def _write_nm_dnsmasq_captive_conf(self, ap_ip: str = AP_IP) -> None:
         """
         Write the NM dnsmasq-shared.d drop-in that makes NM's built-in dnsmasq
         resolve every hostname to the AP IP.  This triggers the OS captive-portal
@@ -1026,37 +1005,51 @@ class WiFiManager:
             )
             if result.returncode != 0:
                 return []
-
-            seen_ssids = set()
-            for line in result.stdout.strip().split('\n'):
-                if not line or ':' not in line:
-                    continue
-                parts = line.split(':')
-                if len(parts) >= 3:
-                    ssid = parts[0].strip()
-                    if not ssid or ssid in seen_ssids:
-                        continue
-                    seen_ssids.add(ssid)
-                    try:
-                        signal = int(parts[1].strip())
-                        security = parts[2].strip() if len(parts) > 2 else "open"
-                        frequency_str = parts[3].strip() if len(parts) > 3 else "0"
-                        frequency_str = frequency_str.replace(" MHz", "").replace("MHz", "").strip()
-                        frequency = float(frequency_str) if frequency_str else 0.0
-                        if "WPA3" in security:
-                            sec_type = "wpa3"
-                        elif "WPA2" in security:
-                            sec_type = "wpa2"
-                        elif "WPA" in security:
-                            sec_type = "wpa"
-                        else:
-                            sec_type = "open"
-                        networks.append(WiFiNetwork(ssid=ssid, signal=signal, security=sec_type, frequency=frequency))
-                    except (ValueError, IndexError):
-                        continue
-            networks.sort(key=lambda x: x.signal, reverse=True)
+            networks = self._parse_nmcli_wifi_list(result.stdout)
         except Exception as e:
             logger.debug(f"nmcli cached list failed: {e}")
+        return networks
+
+    @staticmethod
+    def _parse_nmcli_wifi_list(stdout: str) -> List[WiFiNetwork]:
+        """Parse ``nmcli -t -f SSID,SIGNAL,SECURITY,FREQ device wifi list``.
+
+        One entry per SSID (the first line seen for it; hidden networks with
+        an empty SSID are skipped), security reduced to wpa3/wpa2/wpa/open,
+        sorted strongest first. Unparseable lines are skipped.
+        """
+        networks = []
+        seen_ssids = set()
+        for line in stdout.strip().split('\n'):
+            if not line or ':' not in line:
+                continue
+            parts = line.split(':')
+            if len(parts) < 3:
+                continue
+            ssid = parts[0].strip()
+            if not ssid or ssid in seen_ssids:
+                continue
+            seen_ssids.add(ssid)
+            try:
+                signal = int(parts[1].strip())
+                security = parts[2].strip()
+                frequency_str = parts[3].strip() if len(parts) > 3 else "0"
+                frequency_str = frequency_str.replace(" MHz", "").replace("MHz", "").strip()
+                frequency = float(frequency_str) if frequency_str else 0.0
+            except (ValueError, IndexError) as e:
+                logger.debug(f"Skipping network line due to parsing error: {line[:50]}... Error: {e}")
+                continue
+            if "WPA3" in security:
+                sec_type = "wpa3"
+            elif "WPA2" in security:
+                sec_type = "wpa2"
+            elif "WPA" in security:
+                sec_type = "wpa"
+            else:
+                sec_type = "open"
+            networks.append(WiFiNetwork(ssid=ssid, signal=signal, security=sec_type,
+                                        frequency=frequency))
+        networks.sort(key=lambda x: x.signal, reverse=True)
         return networks
 
     def _save_cached_scan(self, networks: List[WiFiNetwork]) -> None:
@@ -1088,7 +1081,6 @@ class WiFiManager:
 
     def _scan_nmcli(self) -> List[WiFiNetwork]:
         """Scan networks using nmcli"""
-        networks = []
         try:
             # Trigger scan
             subprocess.run(
@@ -1108,52 +1100,7 @@ class WiFiManager:
             
             if result.returncode != 0:
                 return []
-            
-            seen_ssids = set()
-            for line in result.stdout.strip().split('\n'):
-                if not line or ':' not in line:
-                    continue
-                
-                parts = line.split(':')
-                if len(parts) >= 3:
-                    ssid = parts[0].strip()
-                    if not ssid or ssid in seen_ssids:
-                        continue
-                    
-                    seen_ssids.add(ssid)
-                    
-                    try:
-                        signal = int(parts[1].strip())
-                        security = parts[2].strip() if len(parts) > 2 else "open"
-                        
-                        # Parse frequency - strip " MHz" if present
-                        frequency_str = parts[3].strip() if len(parts) > 3 else "0"
-                        frequency_str = frequency_str.replace(" MHz", "").replace("MHz", "").strip()
-                        frequency = float(frequency_str) if frequency_str else 0.0
-                        
-                        # Normalize security type
-                        if "WPA3" in security:
-                            sec_type = "wpa3"
-                        elif "WPA2" in security:
-                            sec_type = "wpa2"
-                        elif "WPA" in security:
-                            sec_type = "wpa"
-                        else:
-                            sec_type = "open"
-                        
-                        networks.append(WiFiNetwork(
-                            ssid=ssid,
-                            signal=signal,
-                            security=sec_type,
-                            frequency=frequency
-                        ))
-                    except (ValueError, IndexError) as e:
-                        logger.debug(f"Skipping network line due to parsing error: {line[:50]}... Error: {e}")
-                        continue
-            
-            # Sort by signal strength
-            networks.sort(key=lambda x: x.signal, reverse=True)
-            return networks
+            return self._parse_nmcli_wifi_list(result.stdout)
         except Exception as e:
             logger.error(f"Error scanning with nmcli: {e}")
             return []
@@ -1357,27 +1304,7 @@ class WiFiManager:
                 disconnect_success, disconnect_msg = self.disconnect_from_network(skip_ap_check=True)
                 if disconnect_success:
                     logger.info(f"Disconnected from {original_ssid}: {disconnect_msg}")
-                    # Wait for device to be ready for new connection
-                    # Check device state before proceeding
-                    max_wait = 5
-                    wait_count = 0
-                    while wait_count < max_wait:
-                        time.sleep(1)
-                        result = subprocess.run(
-                            ["nmcli", "-t", "-f", "STATE", "device", "status", self._wifi_interface],
-                            capture_output=True,
-                            text=True,
-                            timeout=5
-                        )
-                        if result.returncode == 0:
-                            state = result.stdout.strip().split(':')[-1] if ':' in result.stdout else result.stdout.strip()
-                            # Device is ready if it's disconnected or unavailable (not connecting/connected)
-                            if state in ["disconnected", "unavailable", "unmanaged"]:
-                                logger.info(f"Device ready for new connection (state: {state})")
-                                break
-                        wait_count += 1
-                    
-                    if wait_count >= max_wait:
+                    if not self._wait_for_device_idle(5):
                         logger.warning("Device may not be ready, but proceeding with connection attempt")
                 else:
                     logger.warning(f"Failed to disconnect from {original_ssid}: {disconnect_msg}")
@@ -1403,26 +1330,15 @@ class WiFiManager:
                         return False, f"Failed to connect to {ssid}, restored {original_ssid}"
                     else:
                         logger.error(f"Failed to restore original connection: {original_ssid}")
-                        # Trigger AP mode as last resort
-                        self._show_led_message("Enabling AP mode...", duration=5)
-                        ap_success, ap_msg = self.enable_ap_mode(force=True)
-                        if ap_success:
-                            logger.info("AP mode enabled as failsafe")
-                            return False, "Connection failed and restoration failed. AP mode enabled."
-                        else:
-                            logger.error(f"Failed to enable AP mode: {ap_msg}")
-                            return False, f"Connection failed, restoration failed, and AP mode failed: {ap_msg}"
+                        return self._failsafe_ap(
+                            "Connection failed and restoration failed. AP mode enabled.",
+                            "Connection failed, restoration failed, and AP mode failed")
                 
                 # If connection failed and no original connection to restore, enable AP mode
                 elif not success:
                     logger.warning(f"Connection to {ssid} failed and no original connection to restore")
-                    self._show_led_message("Enabling AP mode...", duration=5)
-                    ap_success, ap_msg = self.enable_ap_mode(force=True)
-                    if ap_success:
-                        logger.info("AP mode enabled as failsafe")
-                        return False, "Connection failed. AP mode enabled."
-                    else:
-                        return False, f"Connection failed and AP mode failed: {ap_msg}"
+                    return self._failsafe_ap("Connection failed. AP mode enabled.",
+                                             "Connection failed and AP mode failed")
                 
                 return success, message
             else:
@@ -1443,6 +1359,22 @@ class WiFiManager:
                         logger.error("Last-resort AP mode enable failed in recovery path: %s", ap_error, exc_info=True)
             return False, str(e)
     
+    def _failsafe_ap(self, enabled_msg: str, failed_msg: str) -> Tuple[bool, str]:
+        """Force the setup AP up after a connect that left no working network,
+        so the user can still reach the device.
+
+        Returns the (False, message) result for connect_to_network:
+        ``enabled_msg`` when the AP came up, else ``failed_msg`` plus the
+        reason it did not.
+        """
+        self._show_led_message("Enabling AP mode...", duration=5)
+        ap_success, ap_msg = self.enable_ap_mode(force=True)
+        if ap_success:
+            logger.info("AP mode enabled as failsafe")
+            return False, enabled_msg
+        logger.error(f"Failed to enable AP mode: {ap_msg}")
+        return False, f"{failed_msg}: {ap_msg}"
+
     def _restore_original_connection(self, connection_name: str, ssid: str) -> bool:
         """
         Restore a previously active WiFi connection.
@@ -1496,68 +1428,96 @@ class WiFiManager:
             logger.error(f"Error restoring connection: {e}")
             return False
     
+    def _find_profile_for_ssid(self, ssid: str) -> Optional[str]:
+        """Name of the saved NetworkManager profile for ``ssid``, or None.
+
+        ``802-11-wireless.ssid`` is not a column ``nmcli connection show``
+        can list, so this lists the Wi-Fi profiles and asks each one for its
+        SSID. A profile named after the SSID is the fallback, for when the
+        listing fails.
+        """
+        list_result = subprocess.run(  # nosec B603 B607 - fixed args, no user input
+            ["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show"],
+            capture_output=True, text=True, timeout=5
+        )
+        if list_result.returncode == 0:
+            for line in list_result.stdout.strip().split('\n'):
+                # Terse output escapes a colon inside a field as "\:". TYPE
+                # never contains one, so the last colon ends the name.
+                conn_name, sep, conn_type = line.rpartition(':')
+                if not sep or conn_type.strip() != '802-11-wireless':
+                    continue
+                conn_name = conn_name.replace('\\:', ':').replace('\\\\', '\\')
+                ssid_r = subprocess.run(  # nosec B603 B607 - conn_name from nmcli output, not user input
+                    ["nmcli", "-g", "802-11-wireless.ssid", "connection", "show", conn_name],
+                    capture_output=True, text=True, timeout=5
+                )
+                if ssid_r.returncode == 0 and ssid_r.stdout.strip() == ssid:
+                    return conn_name
+
+        direct_check = subprocess.run(  # nosec B603 B607 - list args, no shell
+            ["nmcli", "connection", "show", ssid],
+            capture_output=True, text=True, timeout=5
+        )
+        if direct_check.returncode == 0:
+            return ssid
+        return None
+
+    def _wait_for_device_idle(self, attempts: int) -> bool:
+        """Poll the Wi-Fi device, once a second for up to ``attempts`` checks,
+        until it is disconnected, unavailable or unmanaged: a profile
+        activated while the device is still connecting or tearing down an
+        old link can fail. True if it went idle, False on timeout."""
+        for attempt in range(attempts):
+            result = subprocess.run(
+                ["nmcli", "-t", "-f", "STATE", "device", "status", self._wifi_interface],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                state = result.stdout.strip().split(':')[-1]
+                if state in ("disconnected", "unavailable", "unmanaged"):
+                    logger.debug(f"Wi-Fi device idle (state: {state})")
+                    return True
+            if attempt < attempts - 1:
+                time.sleep(1)
+        return False
+
+    def _verify_connected(self, ssid: str, attempts: int = 5, delay: float = 2.0,
+                          stop_on_other_network: bool = False) -> Optional[WiFiStatus]:
+        """Wait for the device to report a connection to ``ssid``.
+
+        nmcli returns before DHCP finishes, so the status is polled every
+        ``delay`` seconds, up to ``attempts`` times. Returns that status, or
+        None if it never showed ``ssid``. With ``stop_on_other_network`` a
+        connection to a different SSID ends the wait at once as a failure.
+        """
+        for _ in range(attempts):
+            time.sleep(delay)
+            status = self.get_wifi_status()
+            if not status.connected:
+                continue
+            if status.ssid == ssid:
+                return status
+            if stop_on_other_network and status.ssid:
+                logger.warning(f"Connected to wrong network: {status.ssid} instead of {ssid}")
+                return None
+        return None
+
     def _connect_nmcli(self, ssid: str, password: str) -> Tuple[bool, str]:
         """Connect using nmcli"""
         try:
             # Show LED message
             self._show_led_message(f"Connecting to {ssid}...", duration=10)
             
-            # Find existing NM connection for this SSID.
-            # 802-11-wireless.ssid is not a valid column in 'nmcli connection show',
-            # so list all wifi connections then query each one's SSID individually.
-            list_result = subprocess.run(  # nosec B603 B607 - fixed args, no user input
-                ["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show"],
-                capture_output=True, text=True, timeout=5
-            )
-            existing_conn_name = None
-            if list_result.returncode == 0:
-                for line in list_result.stdout.strip().split('\n'):
-                    if ':' not in line:
-                        continue
-                    parts = line.split(':')
-                    if len(parts) < 2 or parts[1].strip() != '802-11-wireless':
-                        continue
-                    conn_name = parts[0].strip()
-                    ssid_r = subprocess.run(  # nosec B603 B607 - conn_name from nmcli output, not user input
-                        ["nmcli", "-g", "802-11-wireless.ssid", "connection", "show", conn_name],
-                        capture_output=True, text=True, timeout=5
-                    )
-                    if ssid_r.returncode == 0 and ssid_r.stdout.strip() == ssid:
-                        existing_conn_name = conn_name
-                        break
-            
-            # Also try direct lookup by SSID (in case connection name matches SSID)
-            if not existing_conn_name:
-                direct_check = subprocess.run(
-                    ["nmcli", "connection", "show", ssid],
-                    capture_output=True,
-                    text=True,
-                    timeout=5
-                )
-                if direct_check.returncode == 0:
-                    existing_conn_name = ssid
-            
+            existing_conn_name = self._find_profile_for_ssid(ssid)
             if existing_conn_name:
                 # Connection exists, try to activate it first (faster and more reliable)
                 logger.info(f"Found existing connection for {ssid}, activating...")
                 
-                # Ensure device is ready before activating
-                # Wait for device to be in disconnected/unavailable state
-                max_wait = 3
-                for wait_attempt in range(max_wait):
-                    device_result = subprocess.run(
-                        ["nmcli", "-t", "-f", "STATE", "device", "status", self._wifi_interface],
-                        capture_output=True,
-                        text=True,
-                        timeout=5
-                    )
-                    if device_result.returncode == 0:
-                        state = device_result.stdout.strip().split(':')[-1] if ':' in device_result.stdout else device_result.stdout.strip()
-                        if state in ["disconnected", "unavailable", "unmanaged"]:
-                            break
-                    if wait_attempt < max_wait - 1:
-                        time.sleep(1)
-                
+                self._wait_for_device_idle(3)
+
                 result = subprocess.run(
                     ["nmcli", "connection", "up", existing_conn_name],
                     capture_output=True,
@@ -1566,19 +1526,8 @@ class WiFiManager:
                 )
                 
                 if result.returncode == 0:
-                    # Wait longer for connection to stabilize and verify multiple times
-                    max_verification_attempts = 5
-                    verification_delay = 2
-                    connected = False
-                    
-                    for attempt in range(max_verification_attempts):
-                        time.sleep(verification_delay)
-                        status = self.get_wifi_status()
-                        if status.connected and status.ssid == ssid:
-                            connected = True
-                            break
-                    
-                    if connected:
+                    status = self._verify_connected(ssid)
+                    if status is not None:
                         ip = status.ip_address or "Unknown"
                         self._show_led_message(f"Connected! {ip}", duration=5)
                         logger.info(f"Successfully connected to {ssid} with IP {ip}")
@@ -1605,25 +1554,8 @@ class WiFiManager:
             )
             
             if result.returncode == 0:
-                # Wait longer for connection to stabilize and verify multiple times
-                max_verification_attempts = 5
-                verification_delay = 2
-                connected = False
-                
-                for attempt in range(max_verification_attempts):
-                    time.sleep(verification_delay)
-                    status = self.get_wifi_status()
-                    if status.connected:
-                        # Verify we're connected to the correct SSID
-                        if status.ssid == ssid:
-                            connected = True
-                            break
-                        elif status.ssid:
-                            # Connected to different network - this is a failure
-                            logger.warning(f"Connected to wrong network: {status.ssid} instead of {ssid}")
-                            break
-                
-                if connected:
+                status = self._verify_connected(ssid, stop_on_other_network=True)
+                if status is not None:
                     ip = status.ip_address or "Unknown"
                     self._show_led_message(f"Connected! {ip}", duration=5)
                     logger.info(f"Successfully connected to {ssid} with IP {ip}")
@@ -1717,14 +1649,10 @@ class WiFiManager:
         return any(ind in lower for ind in indicators)
 
     def _connect_wpa_supplicant(self, ssid: str, password: str) -> Tuple[bool, str]:
-        """Connect using wpa_supplicant (fallback)"""
-        try:
-            # This would require modifying /etc/wpa_supplicant/wpa_supplicant.conf
-            # For now, return not implemented
-            return False, "wpa_supplicant connection not yet implemented. Please use NetworkManager (nmcli)."
-        except Exception as e:
-            logger.error(f"Error connecting with wpa_supplicant: {e}")
-            return False, str(e)
+        """Without NetworkManager there is no supported way to connect: doing it
+        through wpa_supplicant would mean editing its config file, which is
+        not implemented. Always returns (False, reason)."""
+        return False, "wpa_supplicant connection not yet implemented. Please use NetworkManager (nmcli)."
     
     def disconnect_from_network(self, skip_ap_check: bool = False) -> Tuple[bool, str]:
         """
@@ -1745,33 +1673,18 @@ class WiFiManager:
             
             # Disconnect using nmcli
             if self.has_nmcli:
-                # Try to disconnect the specific connection first (more reliable)
+                # Take the profile down first, then the device, so the
+                # device ends up disconnected even when no profile is found.
                 if status.ssid:
-                    # Find the connection name for this SSID
-                    conn_result = subprocess.run(
-                        ["nmcli", "-t", "-f", "NAME,802-11-wireless.ssid", "connection", "show"],
-                        capture_output=True,
-                        text=True,
-                        timeout=5
-                    )
-                    if conn_result.returncode == 0:
-                        for line in conn_result.stdout.strip().split('\n'):
-                            if ':' in line:
-                                parts = line.split(':')
-                                if len(parts) >= 2:
-                                    conn_name = parts[0].strip()
-                                    conn_ssid = parts[1].strip() if len(parts) > 1 else ""
-                                    if conn_ssid == status.ssid:
-                                        # Disconnect this specific connection
-                                        subprocess.run(
-                                            ["nmcli", "connection", "down", conn_name],
-                                            capture_output=True,
-                                            timeout=10
-                                        )
-                                        logger.info(f"Disconnected connection {conn_name} for {status.ssid}")
-                                        break
-                
-                # Also disconnect the device to ensure clean state
+                    conn_name = self._find_profile_for_ssid(status.ssid)
+                    if conn_name:
+                        subprocess.run(  # nosec B603 B607 - list args, no shell
+                            ["nmcli", "connection", "down", conn_name],
+                            capture_output=True,
+                            timeout=10
+                        )
+                        logger.info(f"Disconnected connection {conn_name} for {status.ssid}")
+
                 result = subprocess.run(
                     ["nmcli", "device", "disconnect", self._wifi_interface],
                     capture_output=True,
@@ -1814,7 +1727,11 @@ class WiFiManager:
             max_retries: Maximum number of retry attempts to enable WiFi radio
             
         Returns:
-            True if WiFi is enabled or was successfully enabled, False otherwise
+            True if the radio is enabled or was enabled here. Also True when
+            the state could not be checked at all (nmcli or rfkill raised on
+            every attempt): callers go ahead rather than refusing to act on a
+            radio that is probably fine. False only when the radio was seen
+            disabled or blocked and could not be turned on.
         """
         for attempt in range(max_retries):
             try:
@@ -2062,11 +1979,7 @@ class WiFiManager:
                 if result[0]:
                     self._ap_enabled_at = time.time()
                     if force:
-                        try:
-                            self._FORCE_AP_FLAG_PATH.touch()
-                            logger.debug(f"Force-AP flag created: {self._FORCE_AP_FLAG_PATH}")
-                        except OSError as exc:
-                            logger.warning(f"Failed to create force-AP flag {self._FORCE_AP_FLAG_PATH}: {exc}")
+                        self._mark_forced()
                     return result
 
             # Fallback to nmcli hotspot (simpler, no captive portal)
@@ -2077,11 +1990,7 @@ class WiFiManager:
                 if result[0]:
                     self._ap_enabled_at = time.time()
                     if force:
-                        try:
-                            self._FORCE_AP_FLAG_PATH.touch()
-                            logger.debug(f"Force-AP flag created: {self._FORCE_AP_FLAG_PATH}")
-                        except OSError as exc:
-                            logger.warning(f"Failed to create force-AP flag {self._FORCE_AP_FLAG_PATH}: {exc}")
+                        self._mark_forced()
                 return result
 
             return False, "No WiFi tools available (nmcli, hostapd, or dnsmasq required)"
@@ -2089,6 +1998,15 @@ class WiFiManager:
             logger.error(f"Error in enable_ap_mode: {e}")
             return False, str(e)
     
+    def _mark_forced(self) -> None:
+        """Record that AP mode was forced on, so the periodic check leaves it
+        up even when Ethernet is connected (see _manage_ap_mode)."""
+        try:
+            self._FORCE_AP_FLAG_PATH.touch()
+            logger.debug(f"Force-AP flag created: {self._FORCE_AP_FLAG_PATH}")
+        except OSError as exc:
+            logger.warning(f"Failed to create force-AP flag {self._FORCE_AP_FLAG_PATH}: {exc}")
+
     def _enable_ap_mode_hostapd(self) -> Tuple[bool, str]:
         """Enable AP mode using hostapd and dnsmasq (captive portal)"""
         try:
@@ -2115,7 +2033,7 @@ class WiFiManager:
                     timeout=10
                 )
                 subprocess.run(
-                    ["sudo", "ip", "addr", "add", "192.168.4.1/24", "dev", self._wifi_interface],
+                    ["sudo", "ip", "addr", "add", f"{AP_IP}/24", "dev", self._wifi_interface],
                     capture_output=True,
                     timeout=10
                 )
@@ -2124,7 +2042,7 @@ class WiFiManager:
                     capture_output=True,
                     timeout=10
                 )
-                logger.info(f"Configured {self._wifi_interface} with IP 192.168.4.1 for AP mode")
+                logger.info(f"Configured {self._wifi_interface} with IP {AP_IP} for AP mode")
             except (subprocess.TimeoutExpired, subprocess.SubprocessError, OSError) as e:
                 logger.warning(f"Error setting up {self._wifi_interface} IP: {e}")
             
@@ -2168,7 +2086,7 @@ class WiFiManager:
                 # Use the validated SSID so the displayed name matches what hostapd broadcast
                 ap_ssid, _ = self._validate_ap_config()
                 self._show_led_message(
-                    f"WiFi Setup\n{ap_ssid}\nNo password\n192.168.4.1:5000", duration=10
+                    f"WiFi Setup\n{ap_ssid}\nNo password\n{AP_IP}:{PORTAL_PORT}", duration=10
                 )
                 return True, "AP mode enabled"
             except Exception as e:
@@ -2198,7 +2116,7 @@ class WiFiManager:
 
             # Delete only the specific application-managed AP profiles by name.
             # Never delete by SSID — that would destroy a user's saved home network.
-            for conn_name in ["Hotspot", "LEDMatrix-Setup-AP", "TickerSetup-AP"]:
+            for conn_name in AP_PROFILE_NAMES:
                 subprocess.run(["nmcli", "connection", "down", conn_name],
                                 capture_output=True, timeout=5)
                 subprocess.run(["nmcli", "connection", "delete", conn_name],
@@ -2215,14 +2133,14 @@ class WiFiManager:
             cmd = [
                 "nmcli", "connection", "add",
                 "type", "wifi",
-                "con-name", "LEDMatrix-Setup-AP",
+                "con-name", AP_PROFILE_NAME,
                 "ifname", self._wifi_interface,
                 "ssid", ap_ssid,
                 "802-11-wireless.mode", "ap",
                 "802-11-wireless.band", "bg",   # 2.4 GHz for maximum compatibility
                 "802-11-wireless.channel", str(ap_channel),
                 "ipv4.method", "shared",
-                "ipv4.addresses", "192.168.4.1/24",
+                "ipv4.addresses", f"{AP_IP}/24",
                 # No 802-11-wireless-security section → open network
             ]
 
@@ -2247,14 +2165,14 @@ class WiFiManager:
 
             logger.info("AP connection profile created, bringing it up...")
             up_result = subprocess.run(
-                ["nmcli", "connection", "up", "LEDMatrix-Setup-AP"],
+                ["nmcli", "connection", "up", AP_PROFILE_NAME],
                 capture_output=True, text=True, timeout=20
             )
             if up_result.returncode != 0:
                 error_msg = up_result.stderr.strip() or up_result.stdout.strip()
                 logger.error(f"Failed to bring up AP connection: {error_msg}")
                 self._remove_nm_dnsmasq_captive_conf()
-                subprocess.run(["nmcli", "connection", "delete", "LEDMatrix-Setup-AP"],
+                subprocess.run(["nmcli", "connection", "delete", AP_PROFILE_NAME],
                                capture_output=True, timeout=10)
                 self._show_led_message("AP mode failed", duration=5)
                 return False, f"Failed to start AP: {error_msg}"
@@ -2266,9 +2184,9 @@ class WiFiManager:
             if not self._setup_iptables_redirect():
                 logger.error("Captive-portal redirect setup failed; rolling back AP profile")
                 self._remove_nm_dnsmasq_captive_conf()
-                subprocess.run(["nmcli", "connection", "down", "LEDMatrix-Setup-AP"],
+                subprocess.run(["nmcli", "connection", "down", AP_PROFILE_NAME],
                                capture_output=True, timeout=10)
-                subprocess.run(["nmcli", "connection", "delete", "LEDMatrix-Setup-AP"],
+                subprocess.run(["nmcli", "connection", "delete", AP_PROFILE_NAME],
                                capture_output=True, timeout=10)
                 self._clear_led_message()
                 return False, "AP started but captive-portal redirect setup failed"
@@ -2282,17 +2200,17 @@ class WiFiManager:
                 logger.debug(f"AP verification attempt {_attempt + 1}/5 not yet active, waiting 2s")
                 time.sleep(2)
             if status.get('active'):
-                ip = status.get('ip', '192.168.4.1')
+                ip = status.get('ip', AP_IP)
                 logger.info(f"AP mode confirmed active at {ip} (open network, no password)")
-                self._show_led_message(f"WiFi Setup\n{ap_ssid}\nNo password\n{ip}:5000", duration=10)
-                return True, f"AP mode enabled (open network) - Access at {ip}:5000"
+                self._show_led_message(f"WiFi Setup\n{ap_ssid}\nNo password\n{ip}:{PORTAL_PORT}", duration=10)
+                return True, f"AP mode enabled (open network) - Access at {ip}:{PORTAL_PORT}"
             else:
                 logger.error("AP mode started but not verified by status check — rolling back")
                 self._teardown_iptables_redirect()
                 self._remove_nm_dnsmasq_captive_conf()
-                subprocess.run(["nmcli", "connection", "down", "LEDMatrix-Setup-AP"],
+                subprocess.run(["nmcli", "connection", "down", AP_PROFILE_NAME],
                                capture_output=True, timeout=10)
-                subprocess.run(["nmcli", "connection", "delete", "LEDMatrix-Setup-AP"],
+                subprocess.run(["nmcli", "connection", "delete", AP_PROFILE_NAME],
                                capture_output=True, timeout=10)
                 self._clear_led_message()
                 return False, "AP mode started but verification failed"
@@ -2326,9 +2244,9 @@ class WiFiManager:
                 conn_name = parts[0].strip()
                 conn_type = parts[1].strip().lower()
                 # Match our known AP profile name OR the legacy nmcli hotspot type
-                if conn_name == "LEDMatrix-Setup-AP" or 'hotspot' in conn_type:
+                if conn_name == AP_PROFILE_NAME or 'hotspot' in conn_type:
                     # Get actual IP address (may be 192.168.4.1 or 10.42.0.1 depending on config)
-                    ip = '192.168.4.1'
+                    ip = AP_IP
                     interface = parts[2] if len(parts) > 2 else self._wifi_interface
                     try:
                         ip_result = subprocess.run(
@@ -2399,7 +2317,7 @@ class WiFiManager:
                     )
                 else:
                     # Disable nmcli hotspot mode (fallback)
-                    for conn_name in ["LEDMatrix-Setup-AP", "Hotspot", "TickerSetup-AP"]:
+                    for conn_name in AP_PROFILE_NAMES:
                         subprocess.run(
                             ["nmcli", "connection", "down", conn_name],
                             capture_output=True,
@@ -2428,7 +2346,7 @@ class WiFiManager:
 
                     # Clean up WiFi interface IP configuration
                     subprocess.run(
-                        ["sudo", "ip", "addr", "del", "192.168.4.1/24", "dev", self._wifi_interface],
+                        ["sudo", "ip", "addr", "del", f"{AP_IP}/24", "dev", self._wifi_interface],
                         capture_output=True,
                         timeout=10
                     )
@@ -2541,13 +2459,13 @@ ignore_broadcast_ssid=0
 dhcp-range=192.168.4.2,192.168.4.20,255.255.255.0,24h
 
 # Captive portal: Redirect all DNS queries to Pi
-address=/#/192.168.4.1
+address=/#/{AP_IP}
 
 # Captive portal detection endpoints
-address=/captive.apple.com/192.168.4.1
-address=/connectivitycheck.gstatic.com/192.168.4.1
-address=/www.msftconnecttest.com/192.168.4.1
-address=/detectportal.firefox.com/192.168.4.1
+address=/captive.apple.com/{AP_IP}
+address=/connectivitycheck.gstatic.com/{AP_IP}
+address=/www.msftconnecttest.com/{AP_IP}
+address=/detectportal.firefox.com/{AP_IP}
 """
 
             # Write config (requires sudo)
@@ -2651,9 +2569,10 @@ address=/detectportal.firefox.com/192.168.4.1
                 # Pre-cache a WiFi scan so the captive portal can show networks
                 try:
                     logger.info("Running pre-AP WiFi scan for captive portal cache...")
+                    # AP mode is not up yet, so this is a live scan, and
+                    # scan_networks saves its result for the portal.
                     networks, _cached = self.scan_networks(allow_cached=False)
                     if networks:
-                        self._save_cached_scan(networks)
                         logger.info(f"Cached {len(networks)} networks for captive portal")
                 except Exception as scan_err:
                     logger.debug(f"Pre-AP scan failed (non-critical): {scan_err}")

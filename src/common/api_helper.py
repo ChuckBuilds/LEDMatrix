@@ -1,8 +1,9 @@
 """
 API Helper
 
-Handles HTTP requests, caching, and ESPN API integration for LED matrix plugins.
-Extracted from LEDMatrix core to provide reusable functionality for plugins.
+HTTP requests, response caching and ESPN fetch helpers for plugins
+(``from src.common import APIHelper``), plus the headers every core request
+sends (:data:`USER_AGENT`, :data:`DEFAULT_HTTP_HEADERS`).
 """
 
 import logging
@@ -36,13 +37,20 @@ DEFAULT_HTTP_HEADERS: Mapping[str, str] = MappingProxyType({
 
 class APIHelper:
     """
-    Helper class for HTTP requests, caching, and ESPN API integration.
-    
-    Provides functionality for:
-    - HTTP requests with retry logic and timeouts
-    - Response caching with TTL support
-    - ESPN API integration for sports data
-    - Request rate limiting and throttling
+    HTTP requests with retries, response caching and ESPN helpers.
+
+    - Requests go through one ``requests.Session`` that retries GET, HEAD
+      and OPTIONS on 429 and 5xx with exponential backoff, and sends
+      :data:`DEFAULT_HTTP_HEADERS`.
+    - Consecutive requests from one helper are spaced at least
+      ``set_rate_limit()`` seconds apart (1 second by default). A cache hit
+      does not count.
+    - With a ``cache_manager``, :meth:`get` caches the parsed JSON under
+      ``cache_key`` for ``cache_ttl`` seconds. The lifetime is stored with
+      the entry, so CacheManager honours it on every later read, whatever
+      max_age that read asks for.
+    - Failed requests are logged and return None; nothing here raises for a
+      network or HTTP error.
     """
     
     def __init__(self, cache_manager=None, default_timeout: int = 30,
@@ -73,13 +81,7 @@ class APIHelper:
         self.session.mount("https://", adapter)
         self.session.mount("http://", adapter)
         
-        # Default headers
-        self.session.headers.update({
-            'User-Agent': USER_AGENT,
-            'Accept': 'application/json',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Connection': 'keep-alive'
-        })
+        self.session.headers.update({**DEFAULT_HTTP_HEADERS, 'Connection': 'keep-alive'})
         
         # Rate limiting
         self._last_request_time = 0
@@ -102,9 +104,8 @@ class APIHelper:
         Returns:
             Response data as dictionary or None if request fails
         """
-        # Check cache first
         if cache_key and self.cache_manager:
-            cached = self._get_from_cache(cache_key)
+            cached = self._get_from_cache(cache_key, cache_ttl)
             if cached is not None:
                 self.logger.debug(f"Using cached response for {cache_key}")
                 return cached
@@ -268,33 +269,31 @@ class APIHelper:
         Args:
             key: Cache key
             data: Data to cache
-            ttl: Time-to-live in seconds (ignored - CacheManager doesn't support TTL)
+            ttl: Seconds the entry stays valid. Stored with the entry, so
+                it applies to every later read of ``key``.
         """
-        if self.cache_manager:
-            self.cache_manager.set(key, data)
+        self._set_cache(key, data, ttl)
     
     def get_cache(self, key: str) -> Optional[Any]:
         """
         Get cached data.
-        
+
         Args:
             key: Cache key
-            
+
         Returns:
-            Cached data or None if not found
+            Cached data, or None if there is none or it has expired. An
+            entry written with a ttl (set_cache, get) expires after that ttl;
+            one written without expires after CacheManager's default max_age.
         """
-        if self.cache_manager:
-            return self.cache_manager.get(key)
-        return None
+        return self._get_from_cache(key)
     
     def clear_cache(self, pattern: Optional[str] = None) -> None:
         """
         Clear cache data.
 
-        Uses CacheManager's real surface (clear_cache / delete /
-        list_cache_files); safely no-ops on managers without it. The old
-        implementation guarded on a nonexistent ``clear`` method, so it
-        silently never cleared anything.
+        Uses CacheManager's clear_cache(), or list_cache_files() and delete()
+        for a pattern. A cache manager without those methods is left alone.
 
         Args:
             pattern: Optional substring to match cache keys; only matching
@@ -315,21 +314,22 @@ class APIHelper:
                     "cannot clear by pattern")
         elif hasattr(self.cache_manager, 'clear_cache'):
             self.cache_manager.clear_cache()
-        elif hasattr(self.cache_manager, 'clear'):
-            self.cache_manager.clear()
         else:
             self.logger.debug("Cache manager exposes no clear method; no-op")
     
-    def _get_from_cache(self, key: str) -> Optional[Any]:
-        """Get data from cache."""
-        if self.cache_manager:
+    def _get_from_cache(self, key: str, max_age: Optional[int] = None) -> Optional[Any]:
+        """Cached data for ``key``, or None. ``max_age`` only matters for an
+        entry stored without a ttl; one stored with a ttl uses that."""
+        if not self.cache_manager:
+            return None
+        if max_age is None:
             return self.cache_manager.get(key)
-        return None
-    
-    def _set_cache(self, key: str, data: Any, ttl: int) -> None:
-        """Set data in cache."""
+        return self.cache_manager.get(key, max_age=max_age)
+
+    def _set_cache(self, key: str, data: Any, ttl: Optional[int]) -> None:
+        """Store ``data`` under ``key`` for ``ttl`` seconds."""
         if self.cache_manager:
-            self.cache_manager.set(key, data)
+            self.cache_manager.set(key, data, ttl=ttl)
     
     def _enforce_rate_limit(self) -> None:
         """Enforce rate limiting between requests."""

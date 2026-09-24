@@ -101,11 +101,10 @@ def element_color(config: Optional[Dict[str, Any]], element: str,
                   mode: Optional[str] = None):
     """Per-element text colour from customization.<element>.text_color.
 
-    Delegated rather than reimplemented: there were two copies of this
-    read and three of the offset read, and the shared one also resolves
-    the element under the names plugins actually use (the layout block
-    says `score` where the style block says `score_text`) and honours a
-    per-mode override. Hex strings are still accepted.
+    Delegates to src.element_style.element_color, which also resolves the
+    element under the names plugins actually use (the layout block says
+    `score` where the style block says `score_text`) and honours a per-mode
+    override. Hex strings are accepted.
     """
     from src.element_style import element_color as _shared
     return _shared(config, element, default, mode)
@@ -125,12 +124,11 @@ def resolve_font_color(config: Optional[Dict[str, Any]],
     One object can legitimately belong to several elements -- a size resolver
     can land two of them on the same face, and a BDF face cannot be un-shared
     at all because ``freetype.Face`` objects cannot be rebuilt from a path.
-    Those draws used to go out white, which is how an element rendered in any
-    of the 32 shipped bitmap fonts could silently lose a colour the user had
-    set. So ambiguity is now narrowed before it is given up on: among the
+    Ambiguity is therefore narrowed before it is given up on: among the
     elements sharing a face, a single configured colour is the only thing the
     user can have meant, and several that agree mean the same thing. Only a
-    genuine disagreement falls back to *default*.
+    genuine disagreement falls back to *default* -- otherwise an element
+    drawn in any of the shipped bitmap fonts could lose a colour the user set.
 
     The element vocabulary is a parameter because the two callers disagree
     about it -- the mixin's map says ``team_text`` where this module's says
@@ -483,7 +481,7 @@ def unshare_element_fonts(logger, fonts, element_for_font=None):
     with identical metrics, so nothing about the rendering changes; only
     the ability to tell two elements apart does. Faces that cannot be
     rebuilt (a BDF loaded through freetype.Face, anything without a usable
-    path) are left shared, and their draws stay white as before.
+    path) are left shared; resolve_font_color then picks their colour.
 
     *element_for_font* names the font keys to consider, in order (the first
     holder of a face keeps it); it defaults to this module's
@@ -491,10 +489,8 @@ def unshare_element_fonts(logger, fonts, element_for_font=None):
     which names different keys -- see ``resolve_font_color`` for why the two
     vocabularies are kept apart.
     """
-    try:
-        from src.common.font_layout import load_truetype as _load
-    except ImportError:  # pragma: no cover
-        return fonts
+    # Looked up at call time so tests can spy on the pinned loader.
+    from src.common.font_layout import load_truetype
     if element_for_font is None:
         element_for_font = ELEMENT_FOR_FONT
     seen = {}
@@ -509,7 +505,7 @@ def unshare_element_fonts(logger, fonts, element_for_font=None):
         if not path or not size:
             continue
         try:
-            fonts[key] = _load(path, size)
+            fonts[key] = load_truetype(path, size)
         except (OSError, ValueError, TypeError):
             logger.debug(
                 "Could not un-share the %s face; it keeps the default colour", key)
