@@ -162,11 +162,7 @@
     // --- Navigation to a setting ---------------------------------------------
 
     function getAppData() {
-        var appEl = document.querySelector('[x-data="app()"]') || document.querySelector('[x-data]');
-        if (!appEl) return null;
-        if (appEl._x_dataStack && appEl._x_dataStack[0]) return appEl._x_dataStack[0];
-        if (appEl.__x && appEl.__x.$data) return appEl.__x.$data;
-        return null;
+        return window.getApp();
     }
 
     function setActiveTab(tab) {

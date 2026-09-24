@@ -28,6 +28,17 @@
             }
             return Object.freeze({ html: html, attr: html, jsStringAttr: jsStringAttr });
         })();
+
+        // ===== window.getApp(): the root Alpine component =====
+        // The data of <body x-data="app()"> (activeTab, installedPlugins, ...),
+        // read through Alpine's public Alpine.$data rather than the private
+        // el._x_dataStack. Null until Alpine has initialised the app.
+        window.getApp = function() {
+            const el = document.querySelector('[x-data="app()"]');
+            if (!el || !window.Alpine) return null;
+            const data = window.Alpine.$data(el);
+            return data && 'activeTab' in data ? data : null;
+        };
         // Helper function to get installed plugins with fallback
         // Must be defined before app() function that uses it
         async function getInstalledPluginsSafe() {
@@ -47,32 +58,19 @@
             return await response.json();
         }
 
-        // Global event listener for pluginsUpdated - works even if Alpine isn't ready yet
-        // This ensures tabs update when plugins_manager.js loads plugins
+        // Builds the plugin tab row from a pluginsUpdated event while the app is
+        // not app-shell.js's full implementation (Alpine not started yet, or
+        // still on the stub below). The full app() has its own pluginsUpdated
+        // listener, registered in its init().
         document.addEventListener('pluginsUpdated', function(event) {
+            const appComponent = window.getApp();
+            if (appComponent && typeof appComponent._doUpdatePluginTabs === 'function') return;
             debugLog('[GLOBAL] Received pluginsUpdated event:', event.detail?.plugins?.length || 0, 'plugins');
             const plugins = event.detail?.plugins || [];
-            
-            // Update window.installedPlugins
-            window.installedPlugins = plugins;
-            
-            // Try to update Alpine component if it exists (only if using full implementation)
-            if (window.Alpine) {
-                const appElement = document.querySelector('[x-data="app()"]');
-                if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
-                    const appComponent = appElement._x_dataStack[0];
-                    appComponent.installedPlugins = plugins;
-                    // Only call updatePluginTabs if it's the full implementation (has _doUpdatePluginTabs)
-                    if (typeof appComponent.updatePluginTabs === 'function' && 
-                        appComponent.updatePluginTabs.toString().includes('_doUpdatePluginTabs')) {
-                        debugLog('[GLOBAL] Updating plugin tabs via Alpine component (full implementation)');
-                        appComponent.updatePluginTabs();
-                        return; // Full implementation handles it, don't do direct update
-                    }
-                }
+            if (appComponent) {
+                appComponent.installedPlugins = plugins;
             }
-            
-            // Only do direct DOM update if full implementation isn't available yet
+
             const pluginTabsRow = document.getElementById('plugin-tabs-row');
             const pluginTabsNav = pluginTabsRow?.querySelector('nav');
             if (pluginTabsRow && pluginTabsNav && plugins.length > 0) {
@@ -87,15 +85,11 @@
                     tabButton.setAttribute('data-plugin-id', plugin.id);
                     tabButton.className = `plugin-tab nav-tab`;
                     tabButton.onclick = function() {
-                        // Try to set activeTab via Alpine if available
-                        if (window.Alpine) {
-                            const appElement = document.querySelector('[x-data="app()"]');
-                            if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
-                                appElement._x_dataStack[0].activeTab = plugin.id;
-                                // Only call updatePluginTabStates if it exists
-                                if (typeof appElement._x_dataStack[0].updatePluginTabStates === 'function') {
-                                    appElement._x_dataStack[0].updatePluginTabStates();
-                                }
+                        const app = window.getApp();
+                        if (app) {
+                            app.activeTab = plugin.id;
+                            if (typeof app.updatePluginTabStates === 'function') {
+                                app.updatePluginTabStates();
                             }
                         }
                     };

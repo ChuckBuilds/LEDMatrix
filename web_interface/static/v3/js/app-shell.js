@@ -61,9 +61,8 @@
             let lastTab = null;
 
             function activeTab() {
-                const el = document.querySelector('[x-data="app()"]');
-                const data = el && el._x_dataStack && el._x_dataStack[0];
-                return (data && data.activeTab) || lastTab;
+                const app = window.getApp();
+                return (app && app.activeTab) || lastTab;
             }
             function isActive(tab) {
                 return !document.hidden && activeTab() === tab;
@@ -390,15 +389,6 @@
 
         // Alpine.js app function - full implementation
         function app() {
-            // If Alpine is already initialized, get the current component and enhance it
-            let baseComponent = {};
-            if (window.Alpine) {
-                const appElement = document.querySelector('[x-data]');
-                if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
-                    baseComponent = appElement._x_dataStack[0];
-                }
-            }
-            
             const fullImplementation = {
                 activeTab: (function() {
                     // Auto-open WiFi tab when in AP mode (192.168.4.x)
@@ -629,25 +619,13 @@
                     }
                 },
 
+                // Rebuilds the plugin tab row now. app-early.js recognises the
+                // full implementation by the _doUpdatePluginTabs name in this
+                // method's source, so keep the call spelled out.
                 updatePluginTabs(retryCount = 0) {
-                    debugLog('[FULL] updatePluginTabs called (retryCount:', retryCount, ')');
-                    const maxRetries = 5;
-
-                    // Debounce: Clear any pending update
-                    if (this._updatePluginTabsTimeout) {
-                        clearTimeout(this._updatePluginTabsTimeout);
-                    }
-                    
-                    // For first call or retries, execute immediately to ensure tabs appear quickly
-                    if (retryCount === 0) {
-                        // First call - execute immediately, then debounce subsequent calls
-                        this._doUpdatePluginTabs(retryCount);
-                    } else {
-                        // Retry - execute immediately
-                        this._doUpdatePluginTabs(retryCount);
-                    }
+                    this._doUpdatePluginTabs(retryCount);
                 },
-                
+
                 _doUpdatePluginTabs(retryCount = 0) {
                     const maxRetries = 5;
 
@@ -793,9 +771,8 @@
                     const isAPMode = window.location.hostname === '192.168.4.1' ||
                                    window.location.hostname.startsWith('192.168.4.');
                     const defaultTab = isAPMode ? 'wifi' : 'overview';
-                    const appElement = document.querySelector('[x-data]');
-                    if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
-                        const existingComponent = appElement._x_dataStack[0];
+                    const existingComponent = window.getApp();
+                    if (existingComponent) {
                         // Preserve runtime state that should not be reset
                         const preservedPlugins = existingComponent.installedPlugins;
                         const preservedTab = existingComponent.activeTab;
@@ -1370,16 +1347,6 @@
             };
         }
 
-        function getAppComponent() {
-            if (window.Alpine) {
-                const appElement = document.querySelector('[x-data="app()"]');
-                if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
-                    return appElement._x_dataStack[0];
-                }
-            }
-            return null;
-        }
-
         async function updatePlugin(pluginId) {
             try {
                 showNotification(`Updating ${pluginId}...`, 'info');
@@ -1395,7 +1362,7 @@
 
                 if (data.status === 'success') {
                     // Refresh the plugin list
-                    const appComponent = getAppComponent();
+                    const appComponent = window.getApp();
                     if (appComponent && typeof appComponent.loadInstalledPlugins === 'function') {
                         await appComponent.loadInstalledPlugins();
                     }

@@ -45,19 +45,8 @@ if (_PLUGIN_DEBUG_EARLY) debugLog('[PLUGINS SCRIPT] Defining configurePlugin and
 window.configurePlugin = window.configurePlugin || async function(pluginId) {
     if (_PLUGIN_DEBUG_EARLY) debugLog('[PLUGINS STUB] configurePlugin called for', pluginId);
 
-    // Switch to the plugin's configuration tab instead of opening a modal
-    // This matches the behavior of clicking the plugin tab at the top
-    function getAppComponent() {
-        if (window.Alpine) {
-            const appElement = document.querySelector('[x-data="app()"]');
-            if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
-                return appElement._x_dataStack[0];
-            }
-        }
-        return null;
-    }
-
-    const appComponent = getAppComponent();
+    // Opens the plugin's own tab, the same as clicking it in the tab row.
+    const appComponent = window.getApp();
     if (appComponent) {
         // Set the active tab to the plugin ID
         appComponent.activeTab = pluginId;
@@ -733,8 +722,8 @@ window.initPluginsPage = function() {
     // If we fetched data before the DOM existed, render it now
     if (window.__pendingInstalledPlugins) {
         debugLog('[RENDER] Applying pending installed plugins data');
-        renderInstalledPlugins(window.__pendingInstalledPlugins);
         window.__pendingInstalledPlugins = null;
+        applyInstalledFiltersAndRender();
     }
     if (window.__pendingStorePlugins) {
         debugLog('[RENDER] Applying pending plugin store data');
@@ -951,14 +940,6 @@ function loadInstalledPlugins(forceRefresh = false) {
     // Return cached data if valid and not forcing refresh
     if (!forceRefresh && pluginLoadCache.isValid()) {
         pluginLog('[CACHE] Returning cached plugin data');
-        // Update window.installedPlugins from cache
-        window.installedPlugins = pluginLoadCache.data;
-        // Dispatch event to notify Alpine component
-        document.dispatchEvent(new CustomEvent('pluginsUpdated', {
-            detail: { plugins: pluginLoadCache.data }
-        }));
-        pluginLog('[CACHE] Dispatched pluginsUpdated event from cache');
-        // Still render to ensure UI is updated
         renderInstalledPlugins(pluginLoadCache.data);
         return Promise.resolve(pluginLoadCache.data);
     }
@@ -989,15 +970,6 @@ function loadInstalledPlugins(forceRefresh = false) {
                 // Update cache
                 pluginLoadCache.data = installedPlugins;
                 pluginLoadCache.timestamp = Date.now();
-
-                // Always update window.installedPlugins to ensure Alpine component can detect changes
-                window.installedPlugins = installedPlugins;
-
-                // Dispatch event to notify Alpine component to update tabs
-                document.dispatchEvent(new CustomEvent('pluginsUpdated', {
-                    detail: { plugins: installedPlugins }
-                }));
-                pluginLog('[FETCH] Dispatched pluginsUpdated event with', installedPlugins.length, 'plugins');
 
                 pluginLog('[FETCH] Loaded', installedPlugins.length, 'plugins');
 
@@ -1181,40 +1153,23 @@ function setupInstalledFilterListeners() {
     ctl.syncControls();
 }
 
-// Publishes the canonical installed-plugin list, then renders through the
-// active filters. Everything that reads window.installedPlugins (the toggle
-// handler, isStorePluginInstalled, runUpdateAllPlugins, the Alpine config tabs)
-// depends on this receiving the FULL list — never a filtered subset.
+// The one place the installed-plugin list is published, then rendered
+// through the active filters. It sets window.installedPlugins, which the
+// toggle handler, isStorePluginInstalled and runUpdateAllPlugins read, and
+// dispatches one pluginsUpdated event, on which the Alpine app (app-shell.js)
+// takes the list and rebuilds the plugin tab row. Both must get the FULL
+// list, never a filtered subset.
 function renderInstalledPlugins(plugins) {
-    const container = document.getElementById('installed-plugins-grid');
-    if (!container) {
-        console.warn('[RENDER] installed-plugins-grid not yet available, deferring render until plugin tab loads');
+    window.installedPlugins = plugins;
+    document.dispatchEvent(new CustomEvent('pluginsUpdated', { detail: { plugins: plugins } }));
+
+    // The Plugin Manager tab may not be loaded yet; initPluginsPage renders
+    // when it is.
+    if (!document.getElementById('installed-plugins-grid')) {
+        pluginLog('[RENDER] installed-plugins-grid not loaded yet, rendering when the tab loads');
         window.__pendingInstalledPlugins = plugins;
         return;
     }
-
-    // Always update window.installedPlugins to ensure Alpine component reactivity
-    window.installedPlugins = plugins;
-    pluginLog('[RENDER] Set window.installedPlugins to:', plugins.length, 'plugins');
-
-    // Dispatch event to notify Alpine component to update tabs
-    document.dispatchEvent(new CustomEvent('pluginsUpdated', {
-        detail: { plugins: plugins }
-    }));
-    pluginLog('[RENDER] Dispatched pluginsUpdated event');
-
-    // Also try direct Alpine update as fallback
-    if (window.Alpine && document.querySelector('[x-data="app()"]')) {
-        const appElement = document.querySelector('[x-data="app()"]');
-        if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
-            appElement._x_dataStack[0].installedPlugins = plugins;
-            if (typeof appElement._x_dataStack[0].updatePluginTabs === 'function') {
-                appElement._x_dataStack[0].updatePluginTabs();
-                pluginLog('[RENDER] Triggered Alpine.js to update plugin tabs directly');
-            }
-        }
-    }
-
     applyInstalledFiltersAndRender();
 }
 
@@ -2614,19 +2569,12 @@ window.executePluginAction = function(actionId, actionIndex, pluginIdParam = nul
         }
     }
 
-    // Fallback 5: Try to get from Alpine.js context (activeTab)
-    if (!pluginId && window.Alpine) {
-        try {
-            const appElement = document.querySelector('[x-data="app()"]');
-            if (appElement && appElement._x_dataStack && appElement._x_dataStack[0]) {
-                const appData = appElement._x_dataStack[0];
-                if (appData.activeTab && appData.activeTab !== 'overview' && appData.activeTab !== 'plugins' && appData.activeTab !== 'wifi') {
-                    pluginId = appData.activeTab;
-                    debugLog('[DEBUG] Got pluginId from Alpine activeTab:', pluginId);
-                }
-            }
-        } catch (e) {
-            console.warn('[DEBUG] Error accessing Alpine context:', e);
+    // Fallback 5: the active tab, when it is a plugin's tab
+    if (!pluginId) {
+        const appData = window.getApp();
+        if (appData && appData.activeTab && appData.activeTab !== 'overview' && appData.activeTab !== 'plugins' && appData.activeTab !== 'wifi') {
+            pluginId = appData.activeTab;
+            debugLog('[DEBUG] Got pluginId from Alpine activeTab:', pluginId);
         }
     }
 
@@ -2937,11 +2885,7 @@ function handleUninstallSuccess(pluginId) {
     // Remove from local array immediately for better UX
     const currentPlugins = window.installedPlugins || installedPlugins || [];
     const updatedPlugins = currentPlugins.filter(p => p.id !== pluginId);
-    // Only update if list actually changed (setter will check, but we know it changed here)
-    window.installedPlugins = updatedPlugins;
-    if (typeof installedPlugins !== 'undefined') {
-        installedPlugins = updatedPlugins;
-    }
+    installedPlugins = updatedPlugins;
     renderInstalledPlugins(updatedPlugins);
     showNotification(`Plugin uninstalled successfully`, 'success');
 

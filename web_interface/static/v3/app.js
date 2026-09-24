@@ -242,9 +242,8 @@ window.updateFloatingPreviewVisibility = function(tab) {
     if (!panel || !toggle) return;
     let active = tab;
     if (!active) {
-        const el = document.querySelector('[x-data="app()"]') || document.querySelector('[x-data]');
-        const data = el && el._x_dataStack && el._x_dataStack[0];
-        active = data && data.activeTab;
+        const app = window.getApp();
+        active = app && app.activeTab;
     }
     const onOverview = active === 'overview';
     let open = false;
@@ -308,13 +307,9 @@ window.updateNavAriaCurrent = function(tab) {
 // Escape closes the mobile nav drawer and returns focus to the hamburger;
 // opening the drawer moves focus to its first tab.
 (function() {
-    function appData() {
-        const el = document.querySelector('[x-data="app()"]') || document.querySelector('[x-data]');
-        return el && el._x_dataStack && el._x_dataStack[0];
-    }
     document.addEventListener('keydown', function(e) {
         if (e.key !== 'Escape') return;
-        const data = appData();
+        const data = window.getApp();
         if (data && data.mobileNavOpen) {
             data.mobileNavOpen = false;
             const burger = document.querySelector('[aria-controls="site-nav"]');
@@ -328,7 +323,7 @@ window.updateNavAriaCurrent = function(tab) {
         // The click handler toggles mobileNavOpen; focus the first tab once
         // the drawer has slid in (matches the CSS transition timing).
         setTimeout(function() {
-            const data = appData();
+            const data = window.getApp();
             if (data && data.mobileNavOpen) {
                 const first = document.querySelector('#site-nav .nav-tab');
                 if (first) first.focus();
