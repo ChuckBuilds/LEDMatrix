@@ -24,8 +24,16 @@ _REDACT_CREDENTIAL = re.compile(
 # silently leak the ones nobody thought of. Not covered by the generic pattern
 # above, whose value part stops at whitespace and so would keep the credential
 # once a space follows the scheme.
+#
+# The optional quote after the separator owns the whitespace behind it,
+# `\s*(?:["\']\s*)?`, rather than sitting between two `\s*`: with no quote
+# there, `\s*["\']?\s*` can split one whitespace run n+1 ways, and a failed
+# match tries every split -- `authorization:` followed by 20,000 spaces and no
+# credential took eight seconds. Same matches, one way to reach each. The
+# scheme group needs no such care: each of its runs is followed by a class it
+# shares no character with.
 _REDACT_AUTH_HEADER = re.compile(
-    r'((?:proxy-)?authorization["\']?\s*[=:]\s*["\']?\s*'
+    r'((?:proxy-)?authorization["\']?\s*[=:]\s*(?:["\']\s*)?'
     r'(?:[A-Za-z][\w.+-]*[ \t]+)?)'          # optional scheme name, kept
     r'([^\s,"\'<>}]+)',                       # the credential, redacted
     re.IGNORECASE,
