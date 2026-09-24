@@ -96,14 +96,42 @@ def test_static_frames_and_the_start_of_a_scroll_are_not_timed(tmp_path):
 def test_freezes_are_separate_from_late_frames_and_gaps_are_ignored(tmp_path):
     r = _recorder(tmp_path)
     intervals = [PERIOD] * 200
-    intervals[80] = 0.400   # a recompose: freeze
-    intervals[150] = 3.0    # one scroll ended, another began later: ignored
+    intervals[80] = 0.400   # a render-thread plugin fetch: freeze
+    intervals[120] = 1.5    # a longer stall, still inside the scroll: freeze
+    intervals[150] = 6.0    # past any scroll's inactivity window: ignored
     _feed(r, intervals)
     totals = _aggregate(r)
-    assert totals["freezes"] == 1
-    assert abs(totals["freeze_seconds"] - 0.4) < 1e-9
+    assert totals["freezes"] == 2
+    assert abs(totals["freeze_seconds"] - 1.9) < 1e-9
+    assert totals["freeze_by"] == {"<0.5s": 1, "0.5-1s": 0, "1-2s": 1, "2s+": 0}
     assert totals["late_frames"] == 0
-    assert totals["scroll_frames"] == 198
+    assert totals["scroll_frames"] == 197
+
+
+def test_a_stall_between_one_and_two_seconds_is_not_lost(tmp_path):
+    # Two "scrolling" frames can be up to DisplayManager's 2s inactivity
+    # threshold apart. The first version ignored everything past 1s, so a
+    # 1.4s render-thread stall vanished from the report.
+    r = _recorder(tmp_path)
+    intervals = [PERIOD] * 100
+    intervals[40] = 1.4
+    _feed(r, intervals)
+    assert _aggregate(r)["freezes"] == 1
+
+
+def test_early_frames_are_counted(tmp_path):
+    # Hold 2 on a 100Hz panel: frames are due every 20ms. A swap that returns
+    # after 10ms did not wait out the hold.
+    r = _recorder(tmp_path)
+    _feed(r, [2 * PERIOD] * 200, hold=2)
+    _aggregate(r)
+    intervals = [2 * PERIOD] * 200
+    for i in range(0, 200, 20):
+        intervals[i] = PERIOD
+    _feed(r, intervals, hold=2, start=1000.0)
+    totals = _aggregate(r)
+    assert totals["early_frames"] == 10
+    assert totals["late_frames"] == 0
 
 
 def test_refresh_estimate_survives_a_window_full_of_misses(tmp_path):
@@ -149,6 +177,21 @@ def test_soak_report_is_the_difference_between_snapshots(tmp_path):
     assert report["late_pct"] == 0.1
     assert report["timing_ms"]["blit"]["p50"] == 2.25   # 2ms lands in [2, 2.25)
     assert report["timing_ms"]["interval_per_hold"]["max"] == 20.25
+
+
+def test_soak_fails_a_run_that_was_not_locked(tmp_path):
+    r = _recorder(tmp_path)
+    _feed(r, [2 * PERIOD] * 200, hold=2)
+    _aggregate(r)
+    before = json.loads(json.dumps(r.snapshot()))
+    _feed(r, [PERIOD] * 1000, hold=2, start=500.0)   # never waited out the hold
+    _aggregate(r)
+    after = json.loads(json.dumps(r.snapshot()))
+    after["updated"] = before["updated"] + 10.0
+    report = frame_soak.build_report(before, after, preview=False)
+    assert report["late_pct"] == 0.0
+    assert report["early_pct"] == 100.0
+    assert not frame_soak.passed(report, 0.1)
 
 
 def test_soak_percentiles_mark_the_overflow_bucket():

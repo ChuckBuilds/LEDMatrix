@@ -84,14 +84,15 @@ def diff(before: Dict[str, Any], after: Dict[str, Any]) -> Dict[str, Any]:
     tb, ta = before["totals"], after["totals"]
     totals = {}
     for key, value in ta.items():
-        if key == "late_by":
-            totals[key] = {k: v - tb[key].get(k, 0) for k, v in value.items()}
+        if isinstance(value, dict):
+            totals[key] = {k: v - tb.get(key, {}).get(k, 0)
+                           for k, v in value.items()}
         elif key == "worst_interval_ms":
             # A running maximum can't be differenced; it is reported as the
             # worst since the service started.
             totals[key] = value
         else:
-            totals[key] = value - tb[key]
+            totals[key] = value - tb.get(key, 0)
     histograms = {}
     for name in (after.get("histograms") or {}):
         hb, ha = _histogram(before, name), _histogram(after, name)
@@ -143,6 +144,10 @@ def build_report(before, after, preview: bool) -> Dict[str, Any]:
         "late_pct": round(100.0 * totals["late_frames"] / frames, 3) if frames else None,
         "missed_refreshes": totals["missed_refreshes"],
         "late_by": totals["late_by"],
+        "early_frames": totals.get("early_frames", 0),
+        "early_pct": (round(100.0 * totals.get("early_frames", 0) / frames, 3)
+                      if frames else None),
+        "freeze_by": totals.get("freeze_by", {}),
         "freezes": totals["freezes"],
         "freezes_per_hour": round(totals["freezes"] / hours, 1) if hours else None,
         "freeze_seconds": round(totals["freeze_seconds"], 2),
@@ -178,9 +183,15 @@ def print_report(report: Dict[str, Any], limit: float) -> None:
               f"  missed refreshes {report['missed_refreshes']}"
               f"  [by 1: {late_by['1']}, 2: {late_by['2']}, "
               f"3-5: {late_by['3-5']}, 6+: {late_by['6+']}]")
+        if report["early_frames"]:
+            print(f"Early frames       {report['early_frames']} "
+                  f"({report['early_pct']}%)  swaps returned a refresh early")
     print(f"Freezes >=250ms    {report['freezes']}"
           f" ({report['freezes_per_hour']}/h, {report['freeze_seconds']}s total)"
           f"  worst gap since start {report['worst_interval_ms'] or '-'} ms")
+    if report["freezes"]:
+        print("                   by length: " + ", ".join(
+            f"{k}: {v}" for k, v in report["freeze_by"].items()))
     print()
     print(f"{'ms':<18}{'p50':>8}{'p95':>8}{'p99':>8}{'max':>8}")
     for name in ("blit", "wait", "work", "interval_per_hold"):
@@ -190,10 +201,24 @@ def print_report(report: Dict[str, Any], limit: float) -> None:
     print()
     if report["late_pct"] is None:
         print("RESULT  nothing scrolled - no verdict")
+    elif not locked(report, limit):
+        print(f"RESULT  FAIL  NOT LOCKED: {report['early_pct']}% of frames came a "
+              "refresh early, so the swaps were not waiting for the panel and "
+              "the late count means nothing")
     elif report["late_pct"] <= limit:
         print(f"RESULT  PASS  {report['late_pct']}% late <= {limit}%")
     else:
         print(f"RESULT  FAIL  {report['late_pct']}% late > {limit}%")
+
+
+def locked(report: Dict[str, Any], limit: float) -> bool:
+    """Whether the loop was paced by the panel at all."""
+    return (report.get("early_pct") or 0.0) <= limit
+
+
+def passed(report: Dict[str, Any], limit: float) -> bool:
+    return (report["late_pct"] is not None and locked(report, limit)
+            and report["late_pct"] <= limit)
 
 
 def touch_marker() -> bool:
@@ -302,7 +327,7 @@ def main(argv=None) -> int:
             json.dump(report, handle, indent=2)
     if report["late_pct"] is None:
         return 2
-    return 0 if report["late_pct"] <= args.max_late_pct else 1
+    return 0 if passed(report, args.max_late_pct) else 1
 
 
 if __name__ == "__main__":

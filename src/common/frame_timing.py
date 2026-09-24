@@ -28,14 +28,22 @@ An interval of ``FREEZE_SECONDS`` or more is a **freeze** instead -- a
 recompose, a plugin handover, a blocking call on the render thread. Those are
 counted separately, both because they are a different fault and because
 folding a single 400ms handover into the late count as "40 missed refreshes"
-would drown the jitter the late count exists to measure. Intervals of
-``GAP_SECONDS`` or more are not frames at all (one scroll ending, another
-starting later) and are ignored.
+would drown the jitter the late count exists to measure. ``freeze_by`` splits
+them by length. Intervals of ``GAP_SECONDS`` or more are ignored as not being
+frames of one scroll at all.
+
+A frame that arrives a whole refresh or more *early* means the swap did not
+wait for the panel: the emulator, the fallback display, or a hold that was not
+the one in effect. Those are counted as **early**, and a run with more than a
+trace of them was not locked to the panel, so its late count means nothing.
 
 The refresh period is estimated from the frames themselves: swaps that block
 on vsync can only land on refresh boundaries, so the low end of
 interval / hold is the period. It is the smallest per-window 10th percentile
-seen so far, over windows with enough frames to trust.
+seen so far, over windows with enough frames to trust -- except that a window
+cutting it by more than ``MAX_REFRESH_DROP`` is ignored. A panel's refresh does
+not jump like that; swaps that stopped blocking do, and adopting their period
+would make every early frame look on time.
 """
 
 from __future__ import annotations
@@ -62,7 +70,19 @@ BUCKET_COUNT = 256
 
 #: See the module docstring.
 FREEZE_SECONDS = 0.25
-GAP_SECONDS = 1.0
+
+#: Two frames that are both "scrolling" can be at most DisplayManager's
+#: scroll_inactivity_threshold (2s) apart: after that the second is recorded
+#: as static. This used to be 1s, which silently dropped every 1-2s stall
+#: inside a scroll. It is now only a sanity bound.
+GAP_SECONDS = 5.0
+
+#: Buckets for freeze length, as cumulative counters a soak can difference.
+FREEZE_BUCKETS = ((0.5, "<0.5s"), (1.0, "0.5-1s"), (2.0, "1-2s"),
+                  (float("inf"), "2s+"))
+
+#: A window may lower the refresh-period estimate by at most this fraction.
+MAX_REFRESH_DROP = 0.2
 
 #: A window needs this many scrolling frames before its refresh estimate is
 #: trusted -- about a second of scrolling.
@@ -149,8 +169,10 @@ class FrameTimingRecorder:
             "late_frames": 0,
             "missed_refreshes": 0,
             "late_by": {"1": 0, "2": 0, "3-5": 0, "6+": 0},
+            "early_frames": 0,
             "freezes": 0,
             "freeze_seconds": 0.0,
+            "freeze_by": {label: 0 for _, label in FREEZE_BUCKETS},
             "worst_interval_ms": 0.0,
         }
         self.histograms: Dict[str, Dict[int, int]] = {
@@ -217,8 +239,10 @@ class FrameTimingRecorder:
                           if interval < FREEZE_SECONDS)
         if len(per_hold) >= MIN_FRAMES_FOR_REFRESH:
             estimate = per_hold[len(per_hold) // 10]
-            if estimate > 0 and (self.refresh_period is None
-                                 or estimate < self.refresh_period):
+            current = self.refresh_period
+            if estimate > 0 and (
+                    current is None
+                    or current * (1.0 - MAX_REFRESH_DROP) <= estimate < current):
                 self.refresh_period = estimate
         period = self.refresh_period
 
@@ -229,6 +253,9 @@ class FrameTimingRecorder:
             if interval >= FREEZE_SECONDS:
                 totals["freezes"] += 1
                 totals["freeze_seconds"] += interval
+                label = next(name for limit, name in FREEZE_BUCKETS
+                             if interval < limit)
+                totals["freeze_by"][label] += 1
                 continue
             totals["scroll_frames"] += 1
             for name, value in (("blit", blit), ("wait", wait),
@@ -245,6 +272,8 @@ class FrameTimingRecorder:
                     key = ("1" if missed == 1 else "2" if missed == 2
                            else "3-5" if missed <= 5 else "6+")
                     totals["late_by"][key] += 1
+                elif missed <= -1:
+                    totals["early_frames"] += 1
 
     def snapshot(self) -> Dict[str, Any]:
         """The JSON document: cumulative since this process started."""
