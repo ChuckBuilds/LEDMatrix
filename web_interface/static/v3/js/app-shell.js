@@ -1,4 +1,4 @@
-/* global debugLog, showNotification */
+/* global debugLog, showNotification, htmx */
 /*
  * app-shell.js -- the page shell: the Alpine app(), tab loading, live
  * streams, header stats, and the handlers the plugin config tab calls.

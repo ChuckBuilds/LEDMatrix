@@ -790,12 +790,57 @@
     // empty (boolean) attribute; `false`, null and undefined leave it off.
     function h(tag, attrs, children) {
         const node = document.createElement(tag);
-        Object.entries(attrs || {}).forEach(([name, value]) => {
-            if (value === false || value == null) return;
+        for (const [name, value] of Object.entries(attrs || {})) {
+            if (value === false || value == null) continue;
             node.setAttribute(name, value === true ? '' : String(value));
-        });
-        (children || []).forEach(child => node.append(child));
+        }
+        for (const child of children || []) node.append(child);
         return node;
+    }
+
+    function displayStyle(visible, shown) {
+        return `display: ${visible ? shown : 'none'};`;
+    }
+
+    function scheduleModeOption(schedule, value, label) {
+        return h('option', { value: value, selected: schedule.mode === value }, [label]);
+    }
+
+    function scheduleRangeTime(which, label, value, domId, ids) {
+        return h('div', {}, [
+            h('label', { for: `schedule_${which}_${domId}`, class: 'block text-xs font-medium text-gray-700 mb-1' }, [label]),
+            h('input', {
+                type: 'time', id: `schedule_${which}_${domId}`, 'data-schedule-control': 'time', ...ids,
+                value: value, class: 'block w-full px-2 py-1 text-sm border border-gray-300 rounded-md',
+            }),
+        ]);
+    }
+
+    function scheduleDayTime(day, which, value, enabled, domId, dayIds) {
+        return h('input', {
+            type: 'time', id: `day_${day}_${which}_${domId}`, 'aria-label': `${day} ${which} time`, ...dayIds,
+            value: value, class: 'text-xs px-2 py-1 border border-gray-300 rounded', disabled: !enabled,
+        });
+    }
+
+    function scheduleDayRow(schedule, day, domId, ids) {
+        const dayConfig = (schedule.days && schedule.days[day]) || { enabled: true, start_time: '08:00', end_time: '18:00' };
+        const dayIds = { 'data-schedule-control': 'day', 'data-day': day, ...ids };
+        return h('div', { class: 'bg-white rounded p-2 border border-gray-200' }, [
+            h('div', { class: 'flex items-center justify-between mb-2' }, [
+                h('label', { class: 'flex items-center' }, [
+                    h('input', {
+                        type: 'checkbox', id: `day_${day}_${domId}`, ...dayIds, checked: !!dayConfig.enabled,
+                        class: 'h-3 w-3 text-blue-600 focus:ring-blue-500 border-gray-300 rounded',
+                    }),
+                    h('span', { class: 'ml-2 text-xs font-medium text-gray-700 capitalize' }, [day]),
+                ]),
+            ]),
+            h('div', { class: 'grid grid-cols-2 gap-2 ml-5', id: `day_times_${day}_${domId}`, style: displayStyle(dayConfig.enabled, 'grid') }, [
+                scheduleDayTime(day, 'start', dayConfig.start_time || '08:00', dayConfig.enabled, domId, dayIds),
+                scheduleDayTime(day, 'end', dayConfig.end_time || '18:00', dayConfig.enabled, domId, dayIds),
+            ]),
+        ]);
     }
 
     // Builds the schedule editor. Controls carry data-schedule-control and
@@ -805,41 +850,8 @@
         const schedule = savedSchedule || { enabled: false, mode: 'always', start_time: '08:00', end_time: '18:00', days: {} };
         const domId = imageDomId(imageId);
         const ids = { 'data-field-id': fieldId, 'data-image-id': imageId, 'data-image-idx': Number(imageIdx) };
-        const display = (visible, shown) => `display: ${visible ? shown : 'none'};`;
-
-        const modeOption = (value, label) => h('option', { value: value, selected: schedule.mode === value }, [label]);
-
-        const rangeTime = (which, label, value) => h('div', {}, [
-            h('label', { for: `schedule_${which}_${domId}`, class: 'block text-xs font-medium text-gray-700 mb-1' }, [label]),
-            h('input', {
-                type: 'time', id: `schedule_${which}_${domId}`, 'data-schedule-control': 'time', ...ids,
-                value: value, class: 'block w-full px-2 py-1 text-sm border border-gray-300 rounded-md',
-            }),
-        ]);
-
-        const dayRow = day => {
-            const dayConfig = (schedule.days && schedule.days[day]) || { enabled: true, start_time: '08:00', end_time: '18:00' };
-            const dayIds = { 'data-schedule-control': 'day', 'data-day': day, ...ids };
-            const dayTime = (which, value) => h('input', {
-                type: 'time', id: `day_${day}_${which}_${domId}`, 'aria-label': `${day} ${which} time`, ...dayIds,
-                value: value, class: 'text-xs px-2 py-1 border border-gray-300 rounded', disabled: !dayConfig.enabled,
-            });
-            return h('div', { class: 'bg-white rounded p-2 border border-gray-200' }, [
-                h('div', { class: 'flex items-center justify-between mb-2' }, [
-                    h('label', { class: 'flex items-center' }, [
-                        h('input', {
-                            type: 'checkbox', id: `day_${day}_${domId}`, ...dayIds, checked: !!dayConfig.enabled,
-                            class: 'h-3 w-3 text-blue-600 focus:ring-blue-500 border-gray-300 rounded',
-                        }),
-                        h('span', { class: 'ml-2 text-xs font-medium text-gray-700 capitalize' }, [day]),
-                    ]),
-                ]),
-                h('div', { class: 'grid grid-cols-2 gap-2 ml-5', id: `day_times_${day}_${domId}`, style: display(dayConfig.enabled, 'grid') }, [
-                    dayTime('start', dayConfig.start_time || '08:00'),
-                    dayTime('end', dayConfig.end_time || '18:00'),
-                ]),
-            ]);
-        };
+        const dayRows = [];
+        for (const day of DAYS) dayRows.push(scheduleDayRow(schedule, day, domId, ids));
 
         container.replaceChildren(h('div', { class: 'bg-white rounded-lg border border-blue-200 p-4' }, [
             h('h4', { class: 'text-sm font-semibold text-gray-900 mb-3' }, [
@@ -855,25 +867,25 @@
                 ]),
                 h('p', { class: 'ml-6 text-xs text-gray-500 mt-1' }, ['When enabled, this image will only display during scheduled times']),
             ]),
-            h('div', { id: `schedule_options_${domId}`, class: 'space-y-4', style: display(schedule.enabled, 'block') }, [
+            h('div', { id: `schedule_options_${domId}`, class: 'space-y-4', style: displayStyle(schedule.enabled, 'block') }, [
                 h('div', {}, [
                     h('label', { for: `schedule_mode_${domId}`, class: 'block text-sm font-medium text-gray-700 mb-2' }, ['Schedule Type']),
                     h('select', {
                         id: `schedule_mode_${domId}`, 'data-schedule-control': 'mode', ...ids,
                         class: 'block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm',
                     }, [
-                        modeOption('always', 'Always Show (No Schedule)'),
-                        modeOption('time_range', 'Same Time Every Day'),
-                        modeOption('per_day', 'Different Times Per Day'),
+                        scheduleModeOption(schedule, 'always', 'Always Show (No Schedule)'),
+                        scheduleModeOption(schedule, 'time_range', 'Same Time Every Day'),
+                        scheduleModeOption(schedule, 'per_day', 'Different Times Per Day'),
                     ]),
                 ]),
-                h('div', { id: `time_range_${domId}`, class: 'grid grid-cols-2 gap-4', style: display(schedule.mode === 'time_range', 'grid') }, [
-                    rangeTime('start', 'Start Time', schedule.start_time || '08:00'),
-                    rangeTime('end', 'End Time', schedule.end_time || '18:00'),
+                h('div', { id: `time_range_${domId}`, class: 'grid grid-cols-2 gap-4', style: displayStyle(schedule.mode === 'time_range', 'grid') }, [
+                    scheduleRangeTime('start', 'Start Time', schedule.start_time || '08:00', domId, ids),
+                    scheduleRangeTime('end', 'End Time', schedule.end_time || '18:00', domId, ids),
                 ]),
-                h('div', { id: `per_day_${domId}`, style: display(schedule.mode === 'per_day', 'block') }, [
+                h('div', { id: `per_day_${domId}`, style: displayStyle(schedule.mode === 'per_day', 'block') }, [
                     h('label', { class: 'block text-xs font-medium text-gray-700 mb-2' }, ['Day-Specific Times']),
-                    h('div', { class: 'bg-gray-50 rounded p-3 space-y-2 max-h-64 overflow-y-auto' }, DAYS.map(dayRow)),
+                    h('div', { class: 'bg-gray-50 rounded p-3 space-y-2 max-h-64 overflow-y-auto' }, dayRows),
                 ]),
             ]),
         ]));
