@@ -144,12 +144,32 @@ $WEB_USER ALL=(ALL) NOPASSWD: $MKDIR_PATH -p /etc/NetworkManager/dnsmasq-shared.
 $WEB_USER ALL=(ALL) NOPASSWD: /usr/bin/cp /tmp/hostapd.conf /etc/hostapd/hostapd.conf
 $WEB_USER ALL=(ALL) NOPASSWD: /usr/bin/cp /tmp/dnsmasq.conf /etc/dnsmasq.d/ledmatrix-captive.conf
 $WEB_USER ALL=(ALL) NOPASSWD: /usr/bin/rm -f /etc/dnsmasq.d/ledmatrix-captive.conf
+# The same captive-portal DNS drop-in for NetworkManager's shared-mode dnsmasq
+# (wifi_manager._write_nm_dnsmasq_captive_conf / _remove_nm_dnsmasq_captive_conf),
+# exact paths.
+$WEB_USER ALL=(ALL) NOPASSWD: /usr/bin/cp /tmp/ledmatrix-nm-dnsmasq.conf /etc/NetworkManager/dnsmasq-shared.d/ledmatrix-captive.conf
+$WEB_USER ALL=(ALL) NOPASSWD: /usr/bin/rm -f /etc/NetworkManager/dnsmasq-shared.d/ledmatrix-captive.conf
 EOF
 
 echo "Generated sudoers configuration:"
 echo "--------------------------------"
 cat "$TEMP_SUDOERS"
 echo "--------------------------------"
+
+# Never install rules we have not parsed. A malformed drop-in in
+# /etc/sudoers.d makes sudo refuse every command for every user, which on a
+# headless Pi leaves no way in at all. first_time_install.sh and
+# configure_web_sudo.sh check their rules the same way.
+if command -v visudo >/dev/null 2>&1; then
+    if ! visudo -c -f "$TEMP_SUDOERS" >/dev/null 2>&1; then
+        echo "✗ The generated sudoers rules did not parse:" >&2
+        visudo -c -f "$TEMP_SUDOERS" >&2 || true
+        echo "  Leaving $SUDOERS_FILE unchanged." >&2
+        exit 1
+    fi
+else
+    echo "⚠ visudo not found; installing the sudoers rules unvalidated"
+fi
 
 # Apply the sudoers configuration
 echo ""
@@ -213,11 +233,14 @@ rm -f "$TEMP_POLKIT"
 echo ""
 echo "Step 3: Testing permissions..."
 
-# Test sudo access
-if sudo -n "$NMCLI_PATH" device status > /dev/null 2>&1; then
-    echo "✓ nmcli device status - OK"
+# Ask sudo whether one of the new rules lets this user in without a password.
+# `sudo -l CMD` answers from the rules without running CMD, so the radio is
+# left alone. (This used to run `nmcli device status`, which is not granted,
+# so it could only ever report a failure.)
+if sudo -n -l "$NMCLI_PATH" radio wifi on > /dev/null 2>&1; then
+    echo "✓ nmcli radio wifi on - OK"
 else
-    echo "✗ nmcli device status - Failed (this is expected if not connected)"
+    echo "✗ nmcli radio wifi on - not allowed without a password"
 fi
 
 echo ""

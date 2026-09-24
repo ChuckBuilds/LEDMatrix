@@ -6,6 +6,8 @@ This directory contains scripts and utilities for development and testing.
 
 - **`dev_plugin_setup.sh`** - Sets up plugin development environment by linking plugin repositories
 - **`run_emulator.sh`** - Runs the LED Matrix display in emulator mode (for development without hardware)
+- **`vegas_audit.py`** - Measures how much of the Vegas ticker strip actually shows content (dead-frame ratio)
+- **`test_pillow_compat.py`** - Pillow API smoke test to run after upgrading Pillow (`python3 scripts/dev/test_pillow_compat.py`)
 
 ## Usage
 

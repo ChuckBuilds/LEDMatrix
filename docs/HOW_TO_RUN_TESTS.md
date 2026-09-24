@@ -52,10 +52,10 @@ pytest test/test_display_controller.py test/test_plugin_system.py
 
 ```bash
 # Run a specific test class
-pytest test/test_display_controller.py::TestDisplayControllerModeRotation
+pytest test/test_display_controller.py::TestDisplayControllerLivePriority
 
 # Run a specific test function
-pytest test/test_display_controller.py::TestDisplayControllerModeRotation::test_basic_rotation
+pytest test/test_display_controller.py::TestDisplayControllerSchedule::test_active_hours
 ```
 
 ### Run Tests by Marker
@@ -98,7 +98,7 @@ When you run `pytest`, you'll see:
 
 ```
 test/test_display_controller.py::TestDisplayControllerInitialization::test_init_success PASSED
-test/test_display_controller.py::TestDisplayControllerModeRotation::test_basic_rotation PASSED
+test/test_display_controller.py::TestDisplayControllerOnDemand::test_activate_on_demand PASSED
 ...
 ```
 
@@ -174,10 +174,10 @@ pytest
 
 ```bash
 # Run with maximum verbosity and show print statements
-pytest -vv -s test/test_display_controller.py::TestDisplayControllerModeRotation::test_basic_rotation
+pytest -vv -s test/test_display_controller.py::TestDisplayControllerSchedule::test_active_hours
 
 # Run with Python debugger (pdb)
-pytest --pdb test/test_display_controller.py::TestDisplayControllerModeRotation::test_basic_rotation
+pytest --pdb test/test_display_controller.py::TestDisplayControllerSchedule::test_active_hours
 ```
 
 ### Run Tests in Parallel (Faster)

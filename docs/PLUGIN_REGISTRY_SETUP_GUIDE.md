@@ -67,9 +67,9 @@ Don't edit `latest_version` or `last_updated` by hand for monorepo plugins:
 
 ## Adding or changing an official plugin
 
-1. Add or edit `plugins/<your-plugin-id>/` in the monorepo. The store refuses
-   a manifest without `id`, `name`, `class_name` and `display_modes`; also
-   set `version`.
+1. Add or edit `plugins/<your-plugin-id>/` in the monorepo, with the
+   manifest fields listed in
+   [PLUGIN_API_REFERENCE.md](PLUGIN_API_REFERENCE.md#manifest-required-fields).
 2. Bump `version` in the plugin's `manifest.json` for every change, or users
    won't be offered the update.
 3. Run `python update_registry.py` in ledmatrix-plugins and commit the

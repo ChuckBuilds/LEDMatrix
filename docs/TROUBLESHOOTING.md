@@ -201,10 +201,11 @@ sudo systemctl restart ledmatrix-web
 
 **Solutions:**
 
-1. **Install dependencies:**
+1. **Install dependencies** as root, so the root display service can import
+   them:
    ```bash
-   pip3 install --break-system-packages -r requirements.txt
-   pip3 install --break-system-packages -r web_interface/requirements.txt
+   sudo python3 -m pip install --break-system-packages --no-cache-dir -r requirements.txt
+   sudo python3 -m pip install --break-system-packages --no-cache-dir -r web_interface/requirements.txt
    ```
 
 2. **Test imports step-by-step:**
@@ -250,15 +251,18 @@ sudo systemctl restart ledmatrix-web
 
 **Solutions:**
 
-```bash
-# Fix ownership of LEDMatrix directory
-sudo chown -R ledpi:ledpi /home/ledpi/LEDMatrix
+[PERMISSIONS.md](PERMISSIONS.md) lists the expected owner and mode of every
+file and directory, and which `scripts/fix_perms/` script to run as which
+user. Don't `chown -R` the whole project: the two sudo helper scripts in
+`scripts/fix_perms/` must stay owned by root.
 
-# Fix config file permissions
+```bash
+# Config files: web user owns both; secrets must stay 640
+stat -c '%U:%G %a %n' config/config.json config/config_secrets.json
 sudo chmod 644 config/config.json
 sudo chmod 640 config/config_secrets.json
 
-# Verify service runs as correct user
+# Which user the web interface runs as
 sudo systemctl cat ledmatrix-web | grep User
 ```
 
@@ -462,15 +466,17 @@ sudo systemctl cat ledmatrix-web | grep User
    }
    ```
 
-2. **Restart display:**
-   ```bash
-   sudo systemctl restart ledmatrix
-   ```
+   Or toggle the plugin on in the **Plugin Manager** tab, which writes the
+   same flag.
 
-3. **Verify in web interface:**
-   - Open the **Plugin Manager** tab
-   - Toggle the plugin switch to enable
-   - From **Overview**, click **Restart Display Service**
+2. **Wait a few seconds.** The display service watches `config.json` and
+   loads a newly enabled plugin without a restart
+   (`DisplayController._reconcile_enabled_plugins()` in
+   [`src/display_controller.py`](../src/display_controller.py)). This
+   needs hot reload, which is on unless `LEDMATRIX_HOT_RELOAD=false` is set.
+
+3. **If it still does not appear**, check the logs for a config validation
+   error, then restart: `sudo systemctl restart ledmatrix`
 
 #### Plugin Not Loading
 
@@ -491,10 +497,12 @@ sudo systemctl cat ledmatrix-web | grep User
    # Verify all required fields present
    ```
 
-3. **Check dependencies installed:**
+3. **Check dependencies installed.** Install them with `sudo`: the display
+   service runs as root and does not see packages pip put in your user's
+   `~/.local` (see [PLUGIN_DEPENDENCY_GUIDE.md](PLUGIN_DEPENDENCY_GUIDE.md)):
    ```bash
    if [ -f plugin-repos/plugin-id/requirements.txt ]; then
-     pip3 install --break-system-packages -r plugin-repos/plugin-id/requirements.txt
+     sudo python3 -m pip install --break-system-packages --no-cache-dir -r plugin-repos/plugin-id/requirements.txt
    fi
    ```
 
@@ -503,14 +511,9 @@ sudo systemctl cat ledmatrix-web | grep User
    sudo journalctl -u ledmatrix -f | grep plugin-id
    ```
 
-5. **Test plugin import:**
+5. **Load and render the plugin headlessly:**
    ```bash
-   python3 -c "
-   import sys
-   sys.path.insert(0, 'plugin-repos/plugin-id')
-   from manager import PluginClass
-   print('Plugin imports successfully')
-   "
+   python3 scripts/check_plugin.py --plugin plugin-id
    ```
 
 #### Stale Cache Data
@@ -540,10 +543,12 @@ sudo systemctl cat ledmatrix-web | grep User
    sudo systemctl restart ledmatrix
    ```
 
-2. **Check cache permissions:**
+2. **Check cache permissions.** Expected: `root:ledmatrix`, `drwxrwsr-x`.
+   `setup_cache.sh` restores that layout (see
+   [PERMISSIONS.md](PERMISSIONS.md#repair-scripts)):
    ```bash
    ls -ld /var/cache/ledmatrix
-   sudo ./scripts/fix_perms/fix_cache_permissions.sh
+   sudo bash scripts/install/setup_cache.sh
    ```
 
 ---

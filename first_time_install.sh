@@ -18,7 +18,7 @@ on_error() {
         echo "-- Last 100 lines from log --" >&2
         tail -n 100 "$LOG_FILE" >&2 || true
     fi
-    echo "\nCommon fixes:" >&2
+    printf '\nCommon fixes:\n' >&2
     echo "- Ensure the Pi is online (try: ping -c1 8.8.8.8)." >&2
     echo "- If you saw an APT lock error: wait a minute, close other installers, then run: sudo dpkg --configure -a" >&2
     echo "- Re-run this script. It is safe to run multiple times." >&2
@@ -115,7 +115,8 @@ fi
 echo "✓ OS requirements met"
 echo ""
 
-# Get the actual user who invoked sudo (set after we ensure sudo below)
+# The user who ran the installer: SUDO_USER once we are running under sudo
+# (the re-exec below guarantees that), otherwise whoever we are now.
 if [ -n "${SUDO_USER:-}" ]; then
     ACTUAL_USER="$SUDO_USER"
 else
@@ -202,7 +203,7 @@ echo ""
 # Check if running as root; if not, try to elevate automatically for novices
 if [ "$EUID" -ne 0 ]; then
     echo "This script needs administrator privileges. Attempting to re-run with sudo..."
-    exec sudo -E env LEDMATRIX_ELEVATED=1 bash "$0" "$@"
+    exec sudo -E bash "$0" "$@"
 fi
 echo "✓ Running as root (required for installation)"
 
@@ -507,8 +508,11 @@ print_rgbmatrix_build_failure() {
 # it. The logic was pasted three times, identically, and is kept verbatim here.
 # Note: install_web_service.sh and install_service.sh no longer contain the
 # "User=root" / "User=${ACTUAL_USER}" strings grepped for below (the units come
-# from systemd/*.service templates with User=__USER__), so until Step 8 has
-# installed the unit this yields "root".
+# from systemd/*.service templates with User=__USER__). So once the unit is
+# installed (Step 7.5, by install_service.sh) the first branch reads its real
+# User=; before that the second branch is taken whenever
+# install_web_service.sh exists, matches neither string, and yields "root" --
+# the later branches are reached only if that script is missing.
 detect_web_service_user() {
     WEB_SERVICE_USER="root"
     if [ -f "/etc/systemd/system/ledmatrix-web.service" ]; then
@@ -669,8 +673,9 @@ else
     echo "Setting ownership of assets directory..."
     chown -R "$ACTUAL_USER:$ACTUAL_USER" "$PROJECT_ROOT_DIR/assets"
     
-    # Set permissions to allow read/write for owner, group, and others (for root service user)
-    # Note: 777 allows root (service user) to write, which is necessary when service runs as root
+    # 777: read/write for owner, group and every other account. Root (the
+    # display service) does not need it -- root ignores mode bits -- so the
+    # "other" bits only matter to accounts that are neither the owner nor root.
     echo "Setting permissions for assets directory..."
     chmod -R 777 "$PROJECT_ROOT_DIR/assets"
     
@@ -782,8 +787,8 @@ else
     chown -R root:"$ACTUAL_USER" "$PLUGIN_REPOS_DIR"
 fi
 
-# Set directory permissions (775: rwxrwxr-x)
-echo "Setting plugin-repos directory permissions to 2775 (sticky bit)..."
+# Set directory permissions (2775: rwxrwsr-x, setgid so new entries inherit the group)
+echo "Setting plugin-repos directory permissions to 2775 (setgid)..."
 find "$PLUGIN_REPOS_DIR" -type d -exec chmod 2775 {} \;
 
 # Set file permissions (664: rw-rw-r--)
@@ -990,9 +995,9 @@ if [ -f "$PROJECT_ROOT_DIR/requirements.txt" ]; then
         PACKAGE_NUM=$((PACKAGE_NUM + 1))
         echo "[$PACKAGE_NUM/$TOTAL_PACKAGES] Installing: $line"
         
-        # Check if package is already installed (basic check - may not catch all cases)
-        # Try installing with verbose output and timeout (if available)
-        # Use --no-cache-dir to avoid cache issues, --verbose for diagnostics
+        # Install with a timeout where available. --verbose output goes to
+        # $INSTALL_OUTPUT (filtered below, full copy in the log); --no-cache-dir
+        # avoids pip cache issues.
         INSTALL_OUTPUT=$(mktemp)
         INSTALL_SUCCESS=false
         
@@ -1297,7 +1302,11 @@ else
             WEB_DEPS_OK=false
         fi
     else
-        echo "Web dependencies already installed from web_interface/requirements.txt in Step 5"
+        # No marker means Step 5 did not install web_interface/requirements.txt,
+        # and without the smart installer there is nothing else to try here.
+        echo "⚠ scripts/install_dependencies_apt.py not found, and Step 5 did not install"
+        echo "  web_interface/requirements.txt, so web interface dependencies may be missing."
+        WEB_DEPS_OK=false
     fi
 
     # Create the marker only when installation actually succeeded, so a
@@ -1562,11 +1571,12 @@ echo "-----------------------------------------------------"
 if [ -f "$PROJECT_ROOT_DIR/scripts/install/configure_wifi_permissions.sh" ]; then
     echo "Configuring WiFi management permissions..."
     # Run as the actual user (not root) since the script checks for that
-    sudo -u "$ACTUAL_USER" bash "$PROJECT_ROOT_DIR/scripts/install/configure_wifi_permissions.sh" || {
+    if sudo -u "$ACTUAL_USER" bash "$PROJECT_ROOT_DIR/scripts/install/configure_wifi_permissions.sh"; then
+        echo "✓ WiFi management permissions configured"
+    else
         echo "⚠ WiFi permissions configuration failed, but continuing installation"
         echo "  You can run it manually later: ./scripts/install/configure_wifi_permissions.sh"
-    }
-    echo "✓ WiFi management permissions configured"
+    fi
 else
     echo "⚠ configure_wifi_permissions.sh not found; skipping WiFi permissions configuration"
     echo "  You can configure WiFi permissions later by running:"
@@ -1736,10 +1746,11 @@ echo "-------------------------------------"
 echo "Removing potential conflicting services (bluetooth and others)..."
 if [ "$SKIP_SOUND" = "1" ]; then
     echo "Skipping sound module configuration as requested (--skip-sound)."
-elif apt_remove bluez bluez-firmware pi-bluetooth triggerhappy pigpio; then
-    echo "✓ Unnecessary services removed (or not present)"
 else
-    echo "⚠ Some packages could not be removed; continuing"
+    # apt_remove never fails (it ends in `|| true`); apt itself reports any
+    # package it could not remove.
+    apt_remove bluez bluez-firmware pi-bluetooth triggerhappy pigpio
+    echo "✓ Unnecessary services removed (or not present)"
 fi
 
 # Blacklist onboard sound module (idempotent)
@@ -1954,20 +1965,6 @@ if systemctl list-unit-files | grep -q "ledmatrix-wifi-monitor.service"; then
 fi
 
 echo ""
-if [ "$SKIP_REBOOT_PROMPT" = "1" ]; then
-    echo "Skipping reboot prompt as requested (--no-reboot-prompt)."
-elif [ "$ASSUME_YES" = "1" ]; then
-    echo "Non-interactive mode: rebooting now to apply changes..."
-    reboot
-else
-    read -p "A reboot is recommended to apply kernel and audio changes. Reboot now? (y/N): " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        echo "Rebooting now..."
-        reboot
-    fi
-fi
-
 echo "=========================================="
 echo "Installation Complete!"
 echo "=========================================="
@@ -2013,7 +2010,7 @@ if command -v nmcli >/dev/null 2>&1; then
     if [ -n "$WIFI_STATUS" ]; then
         echo "$WIFI_STATUS" | while IFS=':' read -r _ _ state; do
             if [ "$state" = "connected" ]; then
-                SSID=$(nmcli -t -f active,ssid device wifi 2>/dev/null | grep "^yes:" | cut -d: -f2 | head -1)
+                SSID=$(nmcli -t -f active,ssid device wifi 2>/dev/null | grep "^yes:" | cut -d: -f2 | head -1 || true)
                 if [ -n "$SSID" ]; then
                     echo "  ✓ Connected to: $SSID"
                 else
@@ -2037,7 +2034,7 @@ echo "AP Mode Status:"
 if systemctl is-active --quiet hostapd 2>/dev/null; then
     echo "  ✓ AP Mode is ACTIVE"
     echo "  → Connect to WiFi network: LEDMatrix-Setup"
-    echo "  → Password: ledmatrix123"
+    echo "  → Open network, no password"
     echo "  → Access web UI at: http://192.168.4.1:5000"
     AP_MODE_ACTIVE=true
 else
@@ -2045,7 +2042,7 @@ else
     if ip addr show wlan0 2>/dev/null | grep -q "192.168.4.1"; then
         echo "  ✓ AP Mode is ACTIVE (IP detected)"
         echo "  → Connect to WiFi network: LEDMatrix-Setup"
-        echo "  → Password: ledmatrix123"
+        echo "  → Open network, no password"
         echo "  → Access web UI at: http://192.168.4.1:5000"
         AP_MODE_ACTIVE=true
     else
@@ -2147,3 +2144,22 @@ echo "   - Main config: $PROJECT_ROOT_DIR/config/config.json"
 echo "   - Secrets: $PROJECT_ROOT_DIR/config/config_secrets.json"
 echo ""
 echo "Enjoy your LED Matrix display!"
+
+# Reboot last. It used to come before the summary above, so with -y (and
+# the one-shot installer, which always passes -y) the reboot was already
+# under way while the summary printed, and the SSH session usually dropped
+# before any of it -- the web UI address included -- could be read.
+echo ""
+if [ "$SKIP_REBOOT_PROMPT" = "1" ]; then
+    echo "Skipping reboot prompt as requested (--no-reboot-prompt)."
+elif [ "$ASSUME_YES" = "1" ]; then
+    echo "Non-interactive mode: rebooting now to apply changes..."
+    reboot
+else
+    read -p "A reboot is recommended to apply kernel and audio changes. Reboot now? (y/N): " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        echo "Rebooting now..."
+        reboot
+    fi
+fi

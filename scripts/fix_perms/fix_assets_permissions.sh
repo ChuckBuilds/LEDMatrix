@@ -36,11 +36,12 @@ else
     exit 1
 fi
 
-# Set permissions to allow read/write for owner, group, and others (for root service user)
-# Note: 777 allows root (service user) to write, which is necessary when service runs as root
+# 777: read/write for owner, group and every other account. Root (the display
+# service) does not need it -- root ignores mode bits -- so the "other" bits
+# only matter to accounts that are neither $REAL_USER nor root.
 echo "Setting permissions for assets directory..."
 if sudo chmod -R 777 "$ASSETS_DIR"; then
-    echo "✓ Set assets directory permissions to 777 (writable by root service user)"
+    echo "✓ Set assets directory permissions to 777"
 else
     echo "✗ Failed to set assets directory permissions"
     exit 1
@@ -70,8 +71,7 @@ for SPORTS_DIR in "${SPORTS_DIRS[@]}"; do
         echo "  - Current permissions:"
         ls -ld "$FULL_PATH"
         
-        # Ensure the directory is writable by both the real user and root (service user)
-        # Use 777 permissions to allow root (service) to write, or set group ownership
+        # Owned by the real user; 777 as above (root can write here regardless)
         sudo chmod 777 "$FULL_PATH"
         sudo chown "$REAL_USER:$REAL_GROUP" "$FULL_PATH"
         
