@@ -45,7 +45,8 @@ LEDMatrix/
 
 ### 1. Minimal Plugin Structure
 
-**manifest.json**:
+**manifest.json** (the required fields are explained in
+[PLUGIN_API_REFERENCE.md](PLUGIN_API_REFERENCE.md#manifest-required-fields)):
 ```json
 {
   "id": "my-plugin",
@@ -54,6 +55,8 @@ LEDMatrix/
   "author": "YourName",
   "entry_point": "manager.py",
   "class_name": "MyPlugin",
+  "display_modes": ["my-plugin"],
+  "compatible_versions": [">=2.0.0"],
   "category": "custom"
 }
 ```

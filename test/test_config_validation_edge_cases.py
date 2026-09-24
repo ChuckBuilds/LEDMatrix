@@ -299,3 +299,48 @@ class TestDefaultMerging:
 
         assert merged["enabled"] is False
         assert merged["display_duration"] == 60
+
+
+class TestMissingRequiredFields:
+    """One message per missing field, naming that field.
+
+    A manual ``required`` loop used to run after Draft7Validator, which already
+    reports ``required``, so every missing top-level field was listed twice --
+    and the validator's copy printed the schema's whole ``required`` list as
+    if it were the field name.
+    """
+
+    SCHEMA = {
+        "type": "object",
+        "properties": {
+            "api_key": {"type": "string"},
+            "city": {"type": "string"},
+            "units": {"type": "string"},
+        },
+        "required": ["api_key", "city", "units"],
+    }
+
+    def test_each_missing_field_is_reported_once_by_name(self):
+        ok, errors = SchemaManager().validate_config_against_schema(
+            {"units": "metric"}, self.SCHEMA, "test-plugin")
+
+        assert not ok
+        assert errors == [
+            "Field root: Missing required property 'api_key'",
+            "Field root: Missing required property 'city'",
+        ]
+
+    def test_nested_missing_field_names_the_field_and_its_parent(self):
+        schema = {
+            "type": "object",
+            "properties": {"nfl": {
+                "type": "object",
+                "properties": {"api_key": {"type": "string"}},
+                "required": ["api_key"],
+            }},
+        }
+        ok, errors = SchemaManager().validate_config_against_schema(
+            {"nfl": {}}, schema, "test-plugin")
+
+        assert not ok
+        assert errors == ["Field 'nfl': Missing required property 'api_key'"]

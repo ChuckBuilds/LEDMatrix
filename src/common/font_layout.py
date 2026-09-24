@@ -67,10 +67,11 @@ _INSTALL_ROOT = Path(__file__).resolve().parents[2]
 def resolve_asset_path(relative_path: str) -> str:
     """Resolve a repo-relative asset path independently of the process cwd.
 
-    Prefers the path as given — so an absolute path is returned untouched and
-    behaviour is unchanged wherever the cwd already happened to be the install
-    root — then the install root derived above, then the original string so a
-    caller that wants to raise and fall back still can.
+    In order: an absolute path that exists is returned untouched; otherwise
+    ``relative_path`` under the install root derived above, if that exists;
+    otherwise ``relative_path`` unchanged, so a caller that wants to raise
+    and fall back still can. The cwd is never consulted, so a relative path
+    means the same file whichever directory the process started in.
 
     Without the fallback, any process started outside the install root (the
     plugin safety harness, a manual ``python run.py`` from ``$HOME``, a unit

@@ -520,19 +520,22 @@ When developing plugins, you'll need to use the APIs provided by the LEDMatrix s
   `display_manager.image` (a PIL Image) and call `update_display()`;
   there is no `draw_image()` helper method.
 - `draw_weather_icon()`, `draw_sun()`, `draw_cloud()` - Weather icons
+  (deprecated, removed in 3.7.0 — draw your own icons)
 - `get_text_width()`, `get_font_height()` - Text utilities
 - `set_scrolling_state()`, `defer_update()` - Scrolling state management
 
 **Cache Manager** (`self.cache_manager`):
 - `get()`, `set()`, `delete()` - Basic caching
 - `get_cached_data_with_strategy()` - Advanced caching with strategies
-- `get_background_cached_data()` - Background service caching
+- `get_background_cached_data()` - deprecated, removed in 3.7.0 — use `get()`
 
 **Plugin Manager** (`self.plugin_manager`):
 - `get_plugin()`, `get_all_plugins()` - Access other plugins
 - `get_plugin_info()` - Get plugin information
 
-See [PLUGIN_API_REFERENCE.md](PLUGIN_API_REFERENCE.md) for complete documentation.
+See [PLUGIN_API_REFERENCE.md](PLUGIN_API_REFERENCE.md) for complete
+documentation, and its [Deprecated APIs](PLUGIN_API_REFERENCE.md#deprecated-apis)
+table for everything removed in 3.7.0.
 
 ## 3rd Party Plugin Development
 
@@ -577,12 +580,14 @@ Your plugin must:
            pass
    ```
 
-2. **Include manifest.json** with required fields:
+2. **Include manifest.json** with the required fields listed in
+   [PLUGIN_API_REFERENCE.md](PLUGIN_API_REFERENCE.md#manifest-required-fields):
    ```json
    {
      "id": "my-plugin",
      "name": "My Plugin",
      "version": "1.0.0",
+     "author": "YourName",
      "class_name": "MyPlugin",
      "entry_point": "manager.py",
      "display_modes": ["my_plugin"],
@@ -658,7 +663,7 @@ For your plugin to work well in the plugin store:
   with the registry's `latest_version`; releases and tags are not read
 - **README.md**: Clear installation and configuration instructions
 - **config_schema.json**: Recommended for web UI configuration
-- **manifest.json**: Required with all required fields
+- **manifest.json**: Required, with the [required fields](PLUGIN_API_REFERENCE.md#manifest-required-fields)
 - **requirements.txt**: If your plugin has Python dependencies
 
 ### Distribution Options

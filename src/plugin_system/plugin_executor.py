@@ -93,7 +93,7 @@ class PluginExecutor:
         if result_container['exception']:
             error = result_container['exception']
             error_msg = f"{plugin_context} operation failed: {error}"
-            self.logger.error(error_msg, exc_info=True)
+            self.logger.error(error_msg, exc_info=error)
             record_error(error, plugin_id=plugin_id, operation="execute")
             raise PluginError(error_msg, plugin_id=plugin_id) from error
         

@@ -131,19 +131,14 @@ class BackgroundDataService:
         
         # Thread management
         self.executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="BackgroundData")
-        # cache_key -> request_id for fetches currently in flight. Submitting
-        # the same key twice used to start two identical fetches: request_id
-        # carries a millisecond timestamp, so every submit looked new, and
-        # active_requests is keyed by it rather than by what is being fetched.
-        # On a real board the season-schedule key is requested by both the
-        # Recent and the Upcoming manager, which miss the cache in the same
-        # millisecond and each download and parse the same payload.
+        # cache_key -> request_id for fetches currently in flight, so a second
+        # submit for the same key joins the running fetch instead of starting
+        # another. It is the normal case: a sport's Recent and Upcoming
+        # managers miss the cache for the same season schedule together.
         self._inflight_by_cache_key: Dict[str, str] = {}
-        # request_id was sport_year_milliseconds, which is not unique: two
-        # submits inside the same millisecond produced the SAME id, so one
-        # silently replaced the other in active_requests and completed_requests.
-        # Rare before, but dedupe hands this id back to every joiner as their
-        # handle for get_result(), so it has to be unique. A counter is enough.
+        # Makes every request_id unique. The id also carries a millisecond
+        # timestamp, but two submits can share a millisecond, and a joiner
+        # uses the id as its handle for get_result().
         self._request_seq = itertools.count()
         self.active_requests: Dict[str, FetchRequest] = {}
         self.completed_requests: Dict[str, FetchResult] = {}
@@ -186,9 +181,9 @@ class BackgroundDataService:
         This ensures Recent/Upcoming managers and background service
         use the same cache keys.
         """
-        # Same format as CacheManager.generate_sport_cache_key(). This used to
-        # build a whole CacheManager to call it -- config load, cache-dir
-        # probing with test writes -- on every submit without a cache_key.
+        # Same format as CacheManager.generate_sport_cache_key(), built here
+        # rather than by constructing a CacheManager (config load, cache-dir
+        # probing) on every submit without a cache_key.
         if date_str is None:
             date_str = datetime.now(pytz.utc).strftime('%Y%m%d')
         return f"{sport}_{date_str}"
@@ -331,10 +326,8 @@ class BackgroundDataService:
         
         try:
             with self._lock:
-                # A request cancelled while it sat in the executor queue must
-                # stay cancelled. Overwriting the status here undid the cancel
-                # outright: the worker went on to download, cache and call back
-                # for work the caller had already withdrawn.
+                # A request cancelled while it sat in the executor queue stays
+                # cancelled: no download, no cache write, no callback.
                 if request.status == FetchStatus.CANCELLED:
                     cancelled_before_start = True
                 else:
@@ -463,10 +456,9 @@ class BackgroundDataService:
             logger.error(f"Failed to fetch {request.sport} {request.year} data: {error_msg}")
             
             with self._lock:
-                # Don't relabel a cancelled request. The callback gate in the
-                # finally block only suppresses CANCELLED, so promoting it to
-                # FAILED here delivered an error callback for a fetch nobody
-                # was waiting on any more.
+                # A cancelled request stays CANCELLED even when its fetch
+                # failed: the finally block skips callbacks only for
+                # CANCELLED, and nobody is waiting on this fetch any more.
                 if request.status != FetchStatus.CANCELLED:
                     request.status = FetchStatus.FAILED
                 request.error = error_msg
@@ -526,20 +518,13 @@ class BackgroundDataService:
                 except Exception as e:
                     logger.error(f"Error in callback for request {request.id}: {e}")
 
-            # Released AFTER the loop, not inside it. Every callback here holds
-            # the same FetchResult, so releasing per-delivery handed the first
-            # one the data and every joiner `result.data is None` -- which is
-            # not a quiet degradation: they read `result.data.get('events')` and
-            # raise AttributeError, which this very loop catches and logs, so
-            # the symptom was one ERROR line and a manager that silently never
-            # got its schedule. Deduplication is the normal case, not a corner:
-            # a sport's recent, upcoming and live managers all ride one season
-            # fetch.
+            # Released after the loop, never inside it: every callback holds
+            # the same FetchResult (a sport's recent, upcoming and live
+            # managers usually share one fetch), so a release between
+            # deliveries would hand the later ones `result.data is None`.
             #
-            # Guarded on `callbacks`, because a request submitted without one
-            # has no other way to collect its payload than polling get_result().
-            # The old per-delivery release got that right by accident: an empty
-            # list never entered the loop body.
+            # Only when there were callbacks: a request submitted without one
+            # collects its payload by polling get_result().
             if callbacks:
                 self._release_payload(result)
                 request.result = None
@@ -721,9 +706,6 @@ class BackgroundDataService:
                 'completed_requests_count': len(self.completed_requests),
                 'max_completed_requests': self._max_completed_requests,
                 'completed_requests_usage_percent': (len(self.completed_requests) / self._max_completed_requests * 100) if self._max_completed_requests > 0 else 0,
-                # Nothing is queued outside the executor; kept for callers
-                # that read the key.
-                'queue_size': 0,
                 'last_cleanup': self._last_completed_requests_cleanup,
                 'cleanup_interval': self._completed_requests_cleanup_interval
             }
@@ -792,27 +774,6 @@ class BackgroundDataService:
                 logger.debug(f"Cleaned up {removed_count} old completed requests (remaining: {len(self.completed_requests)})")
             
             return removed_count
-    
-    def clear_completed_requests(self, older_than_hours: int = 24):
-        """
-        Clear completed requests older than specified time.
-        
-        Args:
-            older_than_hours: Clear requests older than this many hours
-        """
-        cutoff_time = time.time() - (older_than_hours * 3600)
-        
-        with self._lock:
-            to_remove = []
-            for request_id, result in self.completed_requests.items():
-                if result.completed_at < cutoff_time:
-                    to_remove.append(request_id)
-            
-            for request_id in to_remove:
-                del self.completed_requests[request_id]
-            
-            if to_remove:
-                logger.info(f"Cleared {len(to_remove)} old completed requests")
     
     def shutdown(self, wait: bool = True):
         """

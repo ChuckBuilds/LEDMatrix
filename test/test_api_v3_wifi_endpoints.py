@@ -408,6 +408,14 @@ class TestAutoEnableApMode:
         assert response.status_code == 400
         assert "auto_enable_ap_mode" not in wifi_manager.config
 
+    def test_a_failed_save_is_reported(self, api_v3_client, wifi_manager):
+        # wifi_config.json left owned by root is the usual cause.
+        wifi_manager.config = {}
+        wifi_manager._save_config.return_value = False
+        response = api_v3_client.post(self.URL, json={"auto_enable_ap_mode": False})
+        assert response.status_code == 500
+        assert response.get_json()["status"] == "error"
+
 
 class TestRadioEnabledAndForceAcceptIntegers:
     """`{"enabled": 1}` / `{"enabled": 0}` used to be mishandled: the old

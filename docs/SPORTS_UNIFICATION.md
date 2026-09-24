@@ -73,14 +73,16 @@ B2 below promoted code into it (`SportsCore`, the mode classes,
 capabilities sections record that design, but none of it ships in core any
 more. Shared sports code lives in `src/common`:
 
-```
-src/common/
-  sports_scroll.py       SportsScrollDisplay / …Manager — scroll orchestration
-                         (content building stays in the plugins)
-  sports_helpers.py      clamp/logo/rotation free functions + SportsHelpersMixin
-                         (3.5.0) — the helpers byte-identical in the
-                         plugins' sports.py, and the _favorite_key seam
-```
+| Module | Since | Holds |
+|---|---|---|
+| `sports_scroll.py` | 3.2.0 | `SportsScrollDisplay` / `SportsScrollDisplayManager` — scroll orchestration (content building stays in the plugins) |
+| `sports_card.py` | 3.3.0 | Free functions for card settings, colours, favourite-team rules, dates and font sizes |
+| `sports_game_renderer.py` | 3.3.0 | `SportsGameRendererMixin` — scroll/Vegas card geometry |
+| `sports_shared.py` | 3.3.0 | `SportsCoreSharedMixin`, `SportsLiveSharedMixin`, `SportsRecentSharedMixin` — the sport-independent `sports.py` methods |
+| `sports_helpers.py` | 3.5.0 | clamp/logo/rotation free functions and `SportsHelpersMixin`, plus the `_favorite_key` seam |
+| `espn_dates.py` | 3.5.0 | ESPN date-range and `limit` workarounds |
+
+Each is described in [src/common/README.md](../src/common/README.md).
 
 ### Converging on `src/common`
 
@@ -90,7 +92,7 @@ modules taken from the plugin copies, each a **new module** rather than growth
 on an existing one: a plugin that deletes a method copy and relies on an older
 module having gained it fails at runtime with an `AttributeError`, while a
 missing module fails at load, where the version checks can see it.
-`sports_helpers.py` is the first (it holds `_favorite_key`, the override point
+`sports_helpers.py` is the newest (it holds `_favorite_key`, the override point
 listed below, for later phases); its parity test compares every body against
 the plugin copies when `LEDMATRIX_PLUGINS` points at a checkout, and
 `test/test_common_is_hardware_free.py` keeps `src/common` free of

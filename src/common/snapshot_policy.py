@@ -5,7 +5,7 @@ serves two consumers with different needs:
 
 - The web UI's live preview (SSE reader in web_interface/app.py) wants
   fresh frames — but only while a browser is actually watching.
-- The health check (web_interface/blueprints/api_v3.py, hardware status)
+- The health check (web_interface/blueprints/api_v3/misc.py, hardware status)
   uses the file's AGE as a liveness proxy: age >= 60s reads as degraded.
 
 PNG-encoding every frame at 5 fps forever — identical frames, no viewers —
@@ -27,7 +27,7 @@ Policy:
   TOUCH_INTERVAL so the health check (60s threshold) never degrades.
 
 If any constant here changes, re-check the health threshold in
-api_v3.py (get_hardware_status) — TOUCH_INTERVAL must stay well under it.
+api_v3/misc.py (get_hardware_status) — TOUCH_INTERVAL must stay well under it.
 """
 
 from enum import Enum
@@ -37,7 +37,7 @@ VIEWER_INTERVAL = 0.2
 # Snapshot cadence with no viewers — cheap freshness for page-open (seconds).
 IDLE_INTERVAL = 30.0
 # Max age of the last write/touch before bumping mtime for the health
-# check. MUST stay well under api_v3's 60s degraded threshold.
+# check. MUST stay well under get_hardware_status's 60s degraded threshold.
 TOUCH_INTERVAL = 20.0
 # A viewer marker older than this no longer counts as a live viewer.
 VIEWER_MARKER_FRESH_SEC = 5.0

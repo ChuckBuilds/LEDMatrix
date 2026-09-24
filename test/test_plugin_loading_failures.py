@@ -294,6 +294,31 @@ class TestValidateConfigFailure:
                     assert result is False
 
 
+class TestPluginFontRegistration:
+    """A manifest's fonts block is registered against the directory the
+    plugin was loaded from, which plugin:// font sources are relative to."""
+
+    def test_plugin_dir_is_passed_to_the_font_manager(self, temp_plugin_dir, mock_managers):
+        plugin_dir = temp_plugin_dir / "test-plugin"
+        plugin_dir.mkdir()
+        fonts = {"fonts": [{"family": "f", "source": "plugin://f.ttf"}]}
+        manifest = {"id": "test-plugin", "name": "Test Plugin",
+                    "entry_point": "manager.py", "class_name": "TestPlugin",
+                    "fonts": fonts}
+
+        with patch('src.common.permission_utils.ensure_directory_permissions'):
+            manager = PluginManager(plugins_dir=str(temp_plugin_dir), **mock_managers)
+            manager.plugin_manifests["test-plugin"] = manifest
+            with patch.object(manager.plugin_loader, 'load_plugin',
+                              return_value=(MagicMock(), MagicMock())):
+                with patch.object(manager.plugin_loader, 'find_plugin_directory',
+                                  return_value=plugin_dir):
+                    manager.load_plugin("test-plugin")
+
+        mock_managers["font_manager"].register_plugin_fonts.assert_called_once_with(
+            "test-plugin", fonts, plugin_dir=plugin_dir)
+
+
 class TestPluginStateOnFailure:
     """Test that plugin state is correctly set on various failures."""
 

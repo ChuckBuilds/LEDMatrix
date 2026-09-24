@@ -19,6 +19,41 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+- Scripts and installer:
+  - `fix_web_permissions.sh` makes `safe_plugin_rm.sh` and `safe_pip_install.sh` root-owned again after resetting ownership. A web-user-owned copy of either is a root shell, since sudo lets the web user run them as root. It also restores `config_secrets.json` to mode 640.
+  - `configure_wifi_permissions.sh` checks its rules with `visudo -c` before installing them, and grants the NetworkManager captive-portal `cp` and `rm` commands `wifi_manager` runs.
+  - `configure_web_sudo.sh` uses a random temp file and installs its rules with mode 440.
+  - The installer prints its completion summary before the `-y` reboot, and describes the setup access point as an open network (it was shown with a password it doesn't have).
+  - `fix_cache_permissions.sh` applies `setup_cache.sh`'s `ledmatrix`-group model instead of setting 777.
+  - `check_system_compatibility.sh` reports anything but Debian 13 (Trixie) as unsupported, and reaches its summary.
+  - New `scripts/README.md` lists every script.
+- Docs:
+  - New `docs/ARCHITECTURE.md` (processes, shared state, display loop, plugin system, web UI) and `docs/PERMISSIONS.md` (owners, modes, both sudoers files, repair scripts).
+  - Deprecated plugin APIs are marked in the plugin docs.
+  - `src/common/README.md` covers every module.
+  - Stale setup, service and troubleshooting claims are corrected.
+
+- Plugin store and plugin manager fixes:
+  - Updating a plugin that was installed from a ZIP no longer tries to reinstall it from the LEDMatrix repository's own URL.
+  - Repository URLs with `.git` in the middle are no longer mangled. The URL helpers now live in `src/plugin_system/repo_urls.py`.
+  - Installing from a URL works when the repository's only branch isn't `main` or `master`.
+  - A missing required config field is reported once, by name.
+  - A plugin that went over `max_memory_mb` once is no longer refused on every call after that.
+  - `reload_plugin` reads the manifest from the plugin's discovered directory.
+  - Removed: `last_display` from plugin state info and `get_last_display()` (nothing recorded them); `PluginOperationQueue`'s `history_file` and `lazy_load` arguments; and `data/plugin_operations.json`, which nothing read.
+
+- Core service fixes:
+  - `/api/v3/errors` shows each exception's real stack trace instead of `NoneType: None`.
+  - Wi-Fi disconnect takes the saved connection profile down.
+  - `wifi_config.json` is written atomically, and a save that fails now gets a 500.
+  - `plugin://` fonts load from the plugin's own install directory. `FontManager.register_plugin_fonts()` takes an optional `plugin_dir`.
+  - `APIHelper` keeps cached responses for the `cache_ttl` it was given, instead of always 300 s.
+  - Logo scales from 0.1 to 10 are honoured everywhere; values outside that range are clamped.
+  - `LogoHelper` and `logo_downloader`: an empty ESPN logo list counts as a failed download, and the placeholder is written at the requested path.
+  - Bundled font paths no longer depend on the directory the process was started from.
+  - Backups record `src.__version__`.
+  - Removed: `BackgroundDataService`'s `queue_size` stat and `clear_completed_requests()`.
+
 - The web service (`ledmatrix-web`) logs through `src.logging_config` like the
   display service, so `journalctl -p err -u ledmatrix-web` works. Successful
   GET/HEAD/OPTIONS requests (the UI's polling) are logged at DEBUG instead of

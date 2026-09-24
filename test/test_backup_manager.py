@@ -180,6 +180,31 @@ def test_create_backup_manifest(project: Path, tmp_path: Path) -> None:
     assert set(manifest["contents"]) >= {"config", "secrets", "wifi", "fonts", "plugin_uploads", "plugins"}
 
 
+def test_manifest_version_is_the_core_release(project: Path, tmp_path: Path) -> None:
+    """Not a git sha or a truncated "ref: refs/he..." read from .git/HEAD."""
+    from src import __version__
+    git = project / ".git"
+    git.mkdir()
+    (git / "HEAD").write_text("ref: refs/heads/some-branch-that-is-not-there\n", encoding="utf-8")
+    zip_path = create_backup(project, output_dir=tmp_path / "exports")
+    with zipfile.ZipFile(zip_path) as zf:
+        manifest = json.loads(zf.read("manifest.json"))
+    assert manifest["ledmatrix_version"] == __version__
+
+
+def test_installed_plugins_come_from_the_configured_directory(tmp_path: Path) -> None:
+    root = tmp_path / "proj"
+    (root / "config").mkdir(parents=True)
+    (root / "config" / "config.json").write_text(
+        json.dumps({"plugin_system": {"plugins_directory": "plugins"}}), encoding="utf-8")
+    plugin_dir = root / "plugins" / "dev-plugin"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "manifest.json").write_text(
+        json.dumps({"id": "dev-plugin", "version": "0.3.0"}), encoding="utf-8")
+
+    assert [p["plugin_id"] for p in list_installed_plugins(root)] == ["dev-plugin"]
+
+
 # ---------------------------------------------------------------------------
 # Validate
 # ---------------------------------------------------------------------------
