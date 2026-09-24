@@ -105,6 +105,7 @@ logical image to multiple chained physical panels.
 | `display_durations` | object, `{}` | Per-plugin display duration in seconds, keyed by plugin id (e.g. `"clock": 15`) | `DisplayController._get_display_duration()` (`src/display_controller.py`) |
 | `plugin_rotation_order` | array, `[]` | Explicit rotation order of plugin ids; empty = all enabled plugins in discovery order | `DisplayController._apply_plugin_rotation_order()` (`src/display_controller.py`) |
 | `use_short_date_format` | bool, `true` | Compact date rendering in sports scoreboards | Nothing since `src/base_classes` was removed; scoreboards read `display.use_short_date_format` from their own plugin config |
+| `scan_order_compensation` | string, `"auto"` | `"auto"` shows one half of each panel a refresh behind while something scrolls at one frame per refresh, which removes the 1px step a 1:N-scan panel shows across its middle; `"off"` disables it. Applies only to layouts whose row order is known: plain or parallel chains, 0 or 180 degree orientation, `multiplexing` 0, `scan_mode` 0, and not in the emulator | `DisplayManager._setup_scan_order_compensation()` (`src/display_manager.py`, `src/scan_order.py`) |
 | `dynamic_duration.max_duration_seconds` | int, optional | Cap for plugins that request dynamic display time | `DisplayController._get_global_dynamic_cap()` (`src/display_controller.py`) |
 
 ## `display.vegas_scroll` — continuous scroll mode
