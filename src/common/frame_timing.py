@@ -19,6 +19,19 @@ Only intervals between two consecutive *scrolling* frames count: a static
 screen that changes once a second has no timing to get wrong, and the first
 frame of a scroll has no predecessor worth measuring against.
 
+"Scrolling" is DisplayManager's scroll state when the frame is presented, and
+that state can go missing in the middle of a scroll. It expires after 2s
+without scroll activity, which a long enough stall outlasts, and any thread can
+clear it: plugins call ``set_scrolling_state(False)`` from their own
+``display()``, and Vegas captures some of those on the render thread between
+two of its frames. The frame after that is recorded as static, and the interval
+it ends -- the stall, or the capture -- would vanish from the report. So a
+single static frame between two scrolling ones, with the scroll picking up
+again within ``RESUME_SECONDS``, is treated as a frame of the scroll: both of
+its intervals count. A second static frame in a row means the scroll really
+ended. (On hdpi on 2026-09-24 the watchdog logged a 1.9s stall that the soak
+report did not have; this is how.)
+
 A frame held for ``hold`` refreshes should arrive ``hold`` refresh periods
 after the one before it. One that arrives a whole refresh or more after that is
 **late**: the panel showed the previous frame again, which on a moving strip is
@@ -94,11 +107,15 @@ BUCKET_COUNT = 256
 #: See the module docstring.
 FREEZE_SECONDS = 0.25
 
-#: Two frames that are both "scrolling" can be at most DisplayManager's
-#: scroll_inactivity_threshold (2s) apart: after that the second is recorded
-#: as static. This used to be 1s, which silently dropped every 1-2s stall
-#: inside a scroll. It is now only a sanity bound.
+#: Intervals this long are not frames of one scroll. This used to be 1s,
+#: which silently dropped every 1-2s stall inside a scroll. It is now only a
+#: sanity bound.
 GAP_SECONDS = 5.0
+
+#: A frame recorded as static between two scrolling frames is a frame of the
+#: scroll whose state went missing, if the scroll resumes within this long.
+#: See "What is counted".
+RESUME_SECONDS = 1.0
 
 #: Buckets for freeze length, as cumulative counters a soak can difference.
 FREEZE_BUCKETS = ((0.5, "<0.5s"), (1.0, "0.5-1s"), (2.0, "1-2s"),
@@ -232,6 +249,9 @@ class FrameTimingRecorder:
         self._pending: List[Tuple[float, float, float, int]] = []
         self._static_frames = 0
         self._previous: Optional[Tuple[float, bool, int]] = None
+        # The interval ended by a static frame that followed a scrolling one,
+        # until the next frame shows whether the scroll went on.
+        self._unsure: Optional[Tuple[float, float, float, int]] = None
         self._last_flush: Optional[float] = None
         self._queue: "queue.SimpleQueue" = queue.SimpleQueue()
         self._worker: Optional[threading.Thread] = None
@@ -284,13 +304,28 @@ class FrameTimingRecorder:
         self.last_frame = (presented_at, scrolling, threading.get_ident())
         if not scrolling:
             self._static_frames += 1
+            # The scroll ended, or its state went missing for this frame: the
+            # next frame says which. Its hold may have been dropped with the
+            # state, so the interval is due at the scroll's own.
+            self._unsure = None
+            if previous is not None and previous[1]:
+                self._unsure = (presented_at - previous[0], blit, wait, previous[2])
         elif self.watchdog is None and self.scrolling_now is not None \
                 and os.environ.get("LEDMATRIX_STALL_WATCHDOG", "1") != "0":
             self.watchdog = StallWatchdog(self, **watchdog_settings())
             self.watchdog.start()
-        elif previous is not None and previous[1]:
+        elif previous is not None:
             interval = presented_at - previous[0]
-            if interval < GAP_SECONDS:
+            unsure, self._unsure = self._unsure, None
+            if previous[1]:
+                if interval < GAP_SECONDS:
+                    self._pending.append((interval, blit, wait, hold))
+            elif unsure is not None and interval < RESUME_SECONDS:
+                # One static frame between two scrolling ones: the scroll never
+                # stopped, only its state did. Both intervals were motion.
+                self._static_frames -= 1
+                if unsure[0] < GAP_SECONDS:
+                    self._pending.append(unsure)
                 self._pending.append((interval, blit, wait, hold))
 
         if self._last_flush is None:

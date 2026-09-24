@@ -121,6 +121,72 @@ def test_a_stall_between_one_and_two_seconds_is_not_lost(tmp_path):
     assert _aggregate(r)["freezes"] == 1
 
 
+def test_a_stall_whose_scroll_state_went_missing_still_counts(tmp_path):
+    # hdpi, 14:48: the watchdog logged a 1.9s stall the soak never reported.
+    # A plugin captured between two Vegas frames cleared the scroll state, so
+    # the frame that ended the stall was recorded as static and its interval
+    # dropped. Vegas set the state again right after, as it does every frame.
+    r = _recorder(tmp_path)
+    t = _feed(r, [PERIOD] * 100)
+    t += 1.911
+    r.record(0.002, 0.004, 1, False, t)          # state missing: "static"
+    _feed(r, [PERIOD] * 100, start=t + PERIOD)   # the scroll carries on
+    totals = _aggregate(r)
+    assert totals["freezes"] == 1
+    assert totals["freeze_by"]["1-2s"] == 1
+    assert totals["static_frames"] == 0
+    # 100 before, the step back into the scroll, 100 after: all but the freeze.
+    assert totals["scroll_frames"] == 100 + 1 + 100
+
+
+def test_a_frame_with_its_scroll_state_missing_is_still_timed(tmp_path):
+    # No stall at all -- the state was cleared and the frame went out on
+    # time. Nothing is late and no interval is lost.
+    r = _recorder(tmp_path)
+    t = _feed(r, [PERIOD] * 100)
+    r.record(0.002, 0.004, 1, False, t + PERIOD)
+    _feed(r, [PERIOD] * 100, start=t + 2 * PERIOD)
+    totals = _aggregate(r)
+    assert totals["scroll_frames"] == 202
+    assert totals["late_frames"] == totals["freezes"] == totals["static_frames"] == 0
+
+
+def test_a_scroll_that_really_ended_is_not_a_freeze(tmp_path):
+    # Two static frames in a row, then a new scroll: the gaps between them
+    # were a static screen, not a stall.
+    r = _recorder(tmp_path)
+    t = _feed(r, [PERIOD] * 100)
+    t = _feed(r, [0.5], scrolling=False, start=t + 0.3)
+    _feed(r, [PERIOD] * 100, start=t + 0.4)
+    totals = _aggregate(r)
+    assert totals["freezes"] == 0
+    assert totals["static_frames"] == 2
+    assert totals["scroll_frames"] == 200
+
+
+def test_one_static_frame_then_a_scroll_much_later_is_a_new_scroll(tmp_path):
+    r = _recorder(tmp_path)
+    t = _feed(r, [PERIOD] * 100)
+    r.record(0.002, 0.004, 1, False, t + 0.3)
+    _feed(r, [PERIOD] * 100, start=t + 0.3 + frame_timing.RESUME_SECONDS + 0.1)
+    totals = _aggregate(r)
+    assert totals["freezes"] == 0
+    assert totals["static_frames"] == 1
+    assert totals["scroll_frames"] == 200
+
+
+def test_a_missing_state_interval_is_due_at_the_scrolls_own_hold(tmp_path):
+    # Clearing the state drops the hold to 1 as well, so the "static" frame
+    # reports hold 1. Its interval is still due two refreshes after the last.
+    r = _recorder(tmp_path)
+    t = _feed(r, [2 * PERIOD] * 100, hold=2)
+    r.record(0.002, 0.004, 1, False, t + 2 * PERIOD)
+    _feed(r, [2 * PERIOD] * 100, hold=2, start=t + 4 * PERIOD)
+    totals = _aggregate(r)
+    assert totals["late_frames"] == totals["early_frames"] == 0
+    assert totals["scroll_frames"] == 202
+
+
 def test_early_frames_are_counted(tmp_path):
     # Hold 2 on a 100Hz panel: frames are due every 20ms. A swap that returns
     # after 10ms did not wait out the hold.
