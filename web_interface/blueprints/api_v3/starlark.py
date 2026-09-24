@@ -1,7 +1,7 @@
 """Starlark / Tronbyte app management routes.
 
-Routes decorate the shared `api_v3` Blueprint from ._common, so their
-endpoint names are unchanged by living here.
+Routes decorate the shared `api_v3` Blueprint from the package `__init__`,
+so their endpoint names are unchanged by living here.
 """
 import signal
 import threading

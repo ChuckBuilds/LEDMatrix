@@ -1,8 +1,8 @@
 """Routes with no larger group of their own: errors, integrations,
 cache, sync, logs, health and hardware.
 
-Routes decorate the shared `api_v3` Blueprint from ._common, so their
-endpoint names are unchanged by living here.
+Routes decorate the shared `api_v3` Blueprint from the package `__init__`,
+so their endpoint names are unchanged by living here.
 """
 from web_interface.blueprints.api_v3 import (
     _coerce_to_bool, _discovered_plugin_manifests,
@@ -34,11 +34,9 @@ def get_health():
             'checks': {}
         }
 
-        # Check web interface service
-        # Stamp the start _pkg.time before measuring against it -- reading it with a
-        # fallback of _pkg.time.time() and only assigning afterwards made the very
-        # first call subtract two separate clock reads, reporting a small
-        # negative uptime.
+        # Stamp the start time before measuring against it: reading it with a
+        # fallback of time.time() and assigning it afterwards made the first
+        # call subtract two separate clock reads, a small negative uptime.
         if not hasattr(get_health, '_start_time'):
             get_health._start_time = _pkg.time.time()
         health_status['services']['web_interface'] = {

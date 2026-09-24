@@ -95,13 +95,11 @@ def _scrub_git_remote_url(url: str) -> str:
 # `config_manager` used to resolve to a None that was never assigned, which
 # silently disabled the /health checks and made /display/current fall back
 # to a hardcoded 128x64.
-# Get project root directory (web_interface/../..)
-# web_interface/blueprints/api_v3/_common.py -> up four to the project root.
-# This was three levels when everything lived in web_interface/blueprints/api_v3.py;
-# the split moved the file one directory deeper and silently pointed PROJECT_ROOT
-# at web_interface/ instead. Nothing failed at import -- it surfaced as routes
-# 404ing and "installation script not found", because every path built from it
-# was wrong. Asserted in test_api_v3_url_map.py so the next move cannot repeat it.
+# The project root, three directories above this package. The split from a
+# single api_v3.py moved this file one directory deeper, and a count left at
+# the old depth pointed PROJECT_ROOT at web_interface/ without failing at
+# import: routes 404ed and reported "installation script not found".
+# test_api_v3_url_map.py asserts it so the next move cannot repeat that.
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 # System fonts that cannot be deleted (used by catalog API and delete endpoint)
 SYSTEM_FONTS = frozenset([
@@ -415,9 +413,9 @@ def resolve_pull_command(project_dir):
     is: first_time_install.sh chmods five scripts that git tracked as 644, so
     every machine that ran the installer carries five permanent mode changes
     and the update button reports "cannot pull with rebase: You have unstaged
-    changes". Those modes are corrected in this commit, but a user cannot pull
-    the correction while the pull is what is blocked, and any other local edit
-    would reproduce it anyway. Autostash reapplies the changes afterwards.
+    changes". The repository now tracks those modes, but a user cannot pull
+    that correction while the pull is what is blocked, and any other local
+    edit would reproduce it anyway. Autostash reapplies the changes afterwards.
 
     Returns ``(args, note, error)``. When ``origin/<branch>`` exists the pull
     is made explicit against it, so the update proceeds and the branch is

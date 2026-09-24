@@ -1,7 +1,7 @@
 """Display control, on-demand playback and preview.
 
-Routes decorate the shared `api_v3` Blueprint from ._common, so their
-endpoint names are unchanged by living here.
+Routes decorate the shared `api_v3` Blueprint from the package `__init__`,
+so their endpoint names are unchanged by living here.
 """
 from web_interface.blueprints.api_v3 import (
     _ensure_display_service_running,
