@@ -1,3 +1,4 @@
+/* global debugLog */
 /*
  * settings-search.js — global settings search + per-tab filter for the v3 UI.
  *
@@ -474,5 +475,5 @@
         navigateToSetting: navigateToSetting
     };
 
-    console.log('[SettingsSearch] registered');
+    debugLog('[SettingsSearch] registered');
 })();

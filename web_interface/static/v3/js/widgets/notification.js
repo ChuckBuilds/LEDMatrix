@@ -1,3 +1,4 @@
+/* global debugLog */
 /**
  * LEDMatrix Notification Widget
  *
@@ -353,8 +354,7 @@
             });
         }
 
-        // Log for debugging
-        console.log(`[${type.toUpperCase()}]`, message);
+        debugLog(`[${type.toUpperCase()}]`, message);
 
         return notificationId;
     }

@@ -36,21 +36,16 @@ const safeLocalStorage = {
     }
 };
 
-// Define critical functions immediately so they're available before any HTML is rendered
-// Debug logging controlled by safeLocalStorage.setItem('pluginDebug', 'true')
-const _PLUGIN_DEBUG_EARLY = safeLocalStorage.getItem('pluginDebug') === 'true';
-if (_PLUGIN_DEBUG_EARLY) debugLog('[PLUGINS SCRIPT] Defining configurePlugin and togglePlugin at top level...');
-
 // Define configurePlugin early to ensure it's always available
 window.configurePlugin = window.configurePlugin || async function(pluginId) {
-    if (_PLUGIN_DEBUG_EARLY) debugLog('[PLUGINS STUB] configurePlugin called for', pluginId);
+    debugLog('[PLUGINS] configurePlugin called for', pluginId);
 
     // Opens the plugin's own tab, the same as clicking it in the tab row.
     const appComponent = window.getApp();
     if (appComponent) {
         // Set the active tab to the plugin ID
         appComponent.activeTab = pluginId;
-        if (_PLUGIN_DEBUG_EARLY) debugLog('[PLUGINS STUB] Switched to plugin tab:', pluginId);
+        debugLog('[PLUGINS] Switched to plugin tab:', pluginId);
 
         // Scroll to top of page to ensure the tab is visible
         window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -67,7 +62,7 @@ if (!window._pluginToggleRequests) {
 
 // Define togglePlugin early to ensure it's always available
 window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
-    if (_PLUGIN_DEBUG_EARLY) debugLog('[PLUGINS STUB] togglePlugin called for', pluginId, 'enabled:', enabled);
+    debugLog('[PLUGINS] togglePlugin called for', pluginId, 'enabled:', enabled);
 
     const plugin = (window.installedPlugins || []).find(p => p.id === pluginId);
     const pluginName = plugin ? (plugin.name || pluginId) : pluginId;
@@ -248,20 +243,6 @@ window.__pendingStorePlugins = window.__pendingStorePlugins || null;
 
 // Note: configurePlugin and togglePlugin are now defined at the top of the file (after uninstallPlugin)
 // to ensure they're available immediately when the script loads
-
-// Verify functions are defined (debug only)
-if (_PLUGIN_DEBUG_EARLY) {
-    debugLog('[PLUGINS SCRIPT] Functions defined:', {
-        configurePlugin: typeof window.configurePlugin,
-        togglePlugin: typeof window.togglePlugin
-    });
-    if (typeof window.configurePlugin === 'function') {
-        debugLog('[PLUGINS SCRIPT] ✓ configurePlugin ready');
-    }
-    if (typeof window.togglePlugin === 'function') {
-        debugLog('[PLUGINS SCRIPT] ✓ togglePlugin ready');
-    }
-}
 
 // GitHub Token Collapse Handler - Define early so it's available before IIFE
 debugLog('[DEFINE] Defining attachGithubTokenCollapseHandler function...');
@@ -585,7 +566,7 @@ window.checkGitHubAuthStatus = function checkGitHubAuthStatus() {
 (function() {
     'use strict';
 
-    if (_PLUGIN_DEBUG_EARLY) debugLog('Plugin manager script starting...');
+    debugLog('Plugin manager script starting...');
 
     // Local variables for this instance
 let installedPlugins = [];
@@ -839,7 +820,7 @@ function initializePlugins() {
     pluginsInitialized = true;
 
     debugLog('[initializePlugins] Starting initialization...');
-    pluginLog('[INIT] Initializing plugins...');
+    debugLog('[INIT] Initializing plugins...');
 
     // Check GitHub authentication status
     debugLog('[INIT] Checking for checkGitHubAuthStatus function...', {
@@ -902,7 +883,7 @@ function initializePlugins() {
     // Load saved repositories
     loadSavedRepositories();
 
-    pluginLog('[INIT] Plugins initialized');
+    debugLog('[INIT] Plugins initialized');
 }
 
 // Track in-flight requests to prevent duplicates
@@ -922,27 +903,21 @@ const pluginLoadCache = {
     }
 };
 
-// Debug flag - set via safeLocalStorage.setItem('pluginDebug', 'true')
-const PLUGIN_DEBUG = typeof localStorage !== 'undefined' && safeLocalStorage.getItem('pluginDebug') === 'true';
-function pluginLog(...args) {
-    if (PLUGIN_DEBUG) debugLog(...args);
-}
-
 function loadInstalledPlugins(forceRefresh = false) {
     // Return cached data if valid and not forcing refresh
     if (!forceRefresh && pluginLoadCache.isValid()) {
-        pluginLog('[CACHE] Returning cached plugin data');
+        debugLog('[CACHE] Returning cached plugin data');
         renderInstalledPlugins(pluginLoadCache.data);
         return Promise.resolve(pluginLoadCache.data);
     }
 
     // If a request is already in progress, return the existing promise
     if (pluginLoadCache.promise) {
-        pluginLog('[CACHE] Request in progress, returning existing promise');
+        debugLog('[CACHE] Request in progress, returning existing promise');
         return pluginLoadCache.promise;
     }
 
-    pluginLog('[FETCH] Loading installed plugins...');
+    debugLog('[FETCH] Loading installed plugins...');
 
     // Use PluginAPI if available, otherwise fall back to direct fetch
     const fetchPromise = (window.PluginAPI && window.PluginAPI.getInstalledPlugins) ?
@@ -963,14 +938,7 @@ function loadInstalledPlugins(forceRefresh = false) {
                 pluginLoadCache.data = installedPlugins;
                 pluginLoadCache.timestamp = Date.now();
 
-                pluginLog('[FETCH] Loaded', installedPlugins.length, 'plugins');
-
-                // Debug logging only when enabled
-                if (PLUGIN_DEBUG) {
-                    installedPlugins.forEach(plugin => {
-                        debugLog(`[DEBUG] Plugin ${plugin.id}: enabled=${plugin.enabled}`);
-                    });
-                }
+                debugLog('[FETCH] Loaded', installedPlugins.length, 'plugins');
 
                 // Also refreshes the '#installed-count' text via the filter controller.
                 renderInstalledPlugins(installedPlugins);
@@ -1158,7 +1126,7 @@ function renderInstalledPlugins(plugins) {
     // The Plugin Manager tab may not be loaded yet; initPluginsPage renders
     // when it is.
     if (!document.getElementById('installed-plugins-grid')) {
-        pluginLog('[RENDER] installed-plugins-grid not loaded yet, rendering when the tab loads');
+        debugLog('[RENDER] installed-plugins-grid not loaded yet, rendering when the tab loads');
         window.__pendingInstalledPlugins = plugins;
         return;
     }
@@ -1207,11 +1175,6 @@ function renderInstalledCards(plugins, total) {
     setGridHtmlIfChanged(container, plugins.map(plugin => {
         // Convert enabled to boolean for consistent rendering
         const enabledBool = Boolean(plugin.enabled);
-
-        // Debug: Log enabled status during rendering (only when debug enabled)
-        if (PLUGIN_DEBUG) {
-            debugLog(`[DEBUG RENDER] Plugin ${plugin.id}: enabled=${enabledBool}`);
-        }
 
         // Escape plugin ID for use in HTML attributes and JavaScript
         const escapedPluginId = escapeAttribute(plugin.id);
@@ -1328,7 +1291,7 @@ window.__pmSetGridHtmlIfChanged = setGridHtmlIfChanged;
 function setupInstalledEventDelegation() {
     const container = document.getElementById('installed-plugins-grid');
     if (!container) {
-        pluginLog('[RENDER] installed-plugins-grid not found for event delegation');
+        debugLog('[RENDER] installed-plugins-grid not found for event delegation');
         return;
     }
 
@@ -1344,7 +1307,7 @@ function setupInstalledEventDelegation() {
     // Add listeners for both click and change events
     container.addEventListener('click', handlePluginAction, true);
     container.addEventListener('change', handlePluginAction, true);
-    pluginLog('[RENDER] Event delegation set up for installed-plugins-grid');
+    debugLog('[RENDER] Event delegation set up for installed-plugins-grid');
 }
 
 
@@ -2920,7 +2883,7 @@ function restartDisplay() {
 }
 
 function searchPluginStore(fetchCommitInfo = true) {
-    pluginLog('[STORE] Searching plugin store...', { fetchCommitInfo });
+    debugLog('[STORE] Searching plugin store...', { fetchCommitInfo });
 
     const now = Date.now();
     const isCacheValid = pluginStoreCache && cacheTimestamp && (now - cacheTimestamp < CACHE_DURATION);
@@ -2963,7 +2926,7 @@ function searchPluginStore(fetchCommitInfo = true) {
 
                 const storeGrid = document.getElementById('plugin-store-grid');
                 if (!storeGrid) {
-                    pluginLog('[STORE] plugin-store-grid not ready, deferring render');
+                    debugLog('[STORE] plugin-store-grid not ready, deferring render');
                     window.__pendingStorePlugins = plugins;
                     return;
                 }
@@ -3159,7 +3122,7 @@ window.pluginManager.searchPluginStore = searchPluginStore;
 function renderPluginStore(plugins) {
     const container = document.getElementById('plugin-store-grid');
     if (!container) {
-        pluginLog('[RENDER] plugin-store-grid not yet available, deferring render');
+        debugLog('[RENDER] plugin-store-grid not yet available, deferring render');
         window.__pendingStorePlugins = plugins;
         return;
     }
@@ -4258,16 +4221,6 @@ if (typeof window !== 'undefined') {
         }
     };
 
-    // Debug logging (only if pluginDebug is enabled)
-    if (_PLUGIN_DEBUG_EARLY) {
-        debugLog('[ARRAY-OBJECTS] Functions defined on window:', {
-            addArrayObjectItem: typeof window.addArrayObjectItem,
-            removeArrayObjectItem: typeof window.removeArrayObjectItem,
-            updateArrayObjectData: typeof window.updateArrayObjectData,
-            handleArrayObjectFileUpload: typeof window.handleArrayObjectFileUpload,
-            removeArrayObjectFile: typeof window.removeArrayObjectFile
-        });
-    }
 }
 
 // Make currentPluginConfig globally accessible (outside IIFE)
@@ -4275,17 +4228,6 @@ window.currentPluginConfig = null;
 
 // Force initialization immediately when script loads (for HTMX swapped content)
 debugLog('Plugins script loaded, checking for elements...');
-
-// Verify critical functions are available
-if (_PLUGIN_DEBUG_EARLY) {
-    debugLog('Plugin functions available:', {
-        configurePlugin: typeof window.configurePlugin,
-        togglePlugin: typeof window.togglePlugin,
-        initializePlugins: typeof window.initializePlugins,
-        loadInstalledPlugins: typeof window.loadInstalledPlugins,
-        searchPluginStore: typeof window.searchPluginStore
-    });
-}
 
 // Check GitHub auth status immediately if elements exist (don't wait for full initialization)
 if (window.checkGitHubAuthStatus && document.getElementById('github-auth-warning')) {
