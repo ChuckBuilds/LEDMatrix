@@ -15,7 +15,7 @@ from web_interface.blueprints.api_v3 import (
     _set_nested_value, _starlark_virtual_plugins, _toggle_starlark_app,
     api_v3, datetime, deep_merge, describe_exception, error_response,
     exception_error_response,
-    find_secret_fields, hashlib, json, jsonify, logger, logging,
+    find_secret_fields, hashlib, json, jsonify, logger,
     merge_secrets, os, redact_text, remove_empty_secrets, request,
     separate_secrets, shutil, stat, subprocess, success_response,
     tempfile, uuid, validate_request_json,
@@ -1210,10 +1210,7 @@ def install_plugin():
         return jsonify({'status': 'error',
                         'message': f"{plugin_id} is a {registry_entry.get('type')!r} entry, not a plugin"}), 400
 
-    # Install the plugin
-    # Log the plugins directory being used for debugging
     plugins_dir = api_v3.plugin_store_manager.plugins_dir
-    branch_info = f" (branch: {branch})" if branch else ""
     logger.info("Installing plugin to directory: %s", plugins_dir)
 
     # Use operation queue if available
@@ -2784,7 +2781,7 @@ def upload_plugin_asset():
         if total_size + file_size > max_total_size:
             return jsonify({
                 'status': 'error',
-                'message': f'Upload would exceed 50MB total storage limit'
+                'message': 'Upload would exceed 50MB total storage limit'
             }), 400
 
         # Validate file is actually an image (check magic bytes)

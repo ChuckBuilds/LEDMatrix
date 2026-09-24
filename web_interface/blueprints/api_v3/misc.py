@@ -6,7 +6,7 @@ so their endpoint names are unchanged by living here.
 """
 from web_interface.blueprints.api_v3 import (
     _coerce_to_bool, _discovered_plugin_manifests,
-    ErrorCode, Path, _JOURNALCTL, _MQTT_BRIDGE_CONFIG, _MQTT_BRIDGE_DEFAULTS,
+    ErrorCode, _JOURNALCTL, _MQTT_BRIDGE_CONFIG, _MQTT_BRIDGE_DEFAULTS,
     _MQTT_BRIDGE_DIR, _SUDO, _coerce_mqtt_bridge_value,
     _get_display_service_status, _mqtt_bridge_service_state,
     _read_mqtt_bridge_config, api_v3, contextlib, describe_exception,
@@ -54,7 +54,7 @@ def get_health():
         # Check config file accessibility
         try:
             if api_v3.config_manager:
-                test_config = api_v3.config_manager.load_config()
+                api_v3.config_manager.load_config()
                 health_status['checks']['config_file'] = {
                     'status': 'accessible',
                     'readable': True

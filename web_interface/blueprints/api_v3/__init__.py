@@ -49,7 +49,6 @@ from src.plugin_system.operation_types import OperationType
 from src.web_interface.validators import (
     validate_file_upload
 )
-from src.error_aggregator import get_error_aggregator
 from src.common.permission_utils import install_requirements_file
 from src.common.path_safety import resolve_under
 from src.device_location import DeviceLocationResolver, apply_device_location
@@ -592,12 +591,7 @@ def _installed_plugin_ids():
     enumerate the installed plugins and read each one's persisted summary by ID
     instead of relying on the tracker's in-memory `get_all_*` view.
     """
-    manifests = _discovered_plugin_manifests()
-    try:
-        return list(manifests.keys()) if manifests else []
-    except Exception:
-        logger.debug('listing plugin_manifests failed while building plugin ids', exc_info=True)
-        return []
+    return list(_discovered_plugin_manifests())
 def _discovered_plugin_manifests(plugin_id=None, rescan=False):
     """The plugin manager's manifests, discovering plugins first if needed.
 

@@ -4,12 +4,11 @@ Routes decorate the shared `api_v3` Blueprint from the package `__init__`,
 so their endpoint names are unchanged by living here.
 """
 from web_interface.blueprints.api_v3 import (
-    ErrorCode, Optional, PROJECT_ROOT, Path, _coerce_to_bool,
+    ErrorCode, Optional, _coerce_to_bool,
     _redact_credentials, _validate_time_format, api_v3, deep_merge,
-    describe_exception, error_response, find_secret_fields, json, jsonify,
-    logger, logging, mask_all_secret_values, merge_secrets, os,
-    remove_empty_secrets, request, separate_secrets, strip_masked_values,
-    success_response,
+    describe_exception, error_response, json, jsonify,
+    logger, mask_all_secret_values, merge_secrets,
+    request, strip_masked_values, success_response,
 )
 from src.common.path_safety import resolve_under
 from src.display_geometry import ORIENTATION_ROTATE_DEGREES
