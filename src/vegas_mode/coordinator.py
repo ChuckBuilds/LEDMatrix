@@ -13,6 +13,7 @@ Supports three display modes per plugin:
 
 import logging
 import math
+import sys
 import time
 import threading
 from typing import Optional, Dict, Any, List, Callable, TYPE_CHECKING
@@ -280,6 +281,7 @@ class VegasModeCoordinator:
             # due immediately so the first sample confirms the marquee is up.
             self._fps_last_health_log = 0.0
             self._fps_was_degraded = False
+            self._apply_switch_interval()
 
         # Line up the next group immediately, so the first extension is already
         # warm rather than stalling the scroll to fetch it.
@@ -302,12 +304,31 @@ class VegasModeCoordinator:
                 self.stats['total_runtime_seconds'] += time.time() - self._start_time
                 self._start_time = None
 
+        self._restore_switch_interval()
+
         # Cleanup components
         self.render_pipeline.reset()
         self.stream_manager.reset()
         self.display_manager.set_scrolling_state(False)
 
         logger.info("Vegas mode stopped")
+
+    def _apply_switch_interval(self) -> None:
+        """Shorten the GIL switch interval for the run; see VegasModeConfig."""
+        ms = self.vegas_config.switch_interval_ms
+        if not ms or ms <= 0:
+            return
+        if getattr(self, '_saved_switch_interval', None) is None:
+            self._saved_switch_interval = sys.getswitchinterval()
+        sys.setswitchinterval(ms / 1000.0)
+        logger.info("Vegas: GIL switch interval %.1fms (was %.1fms)",
+                    ms, self._saved_switch_interval * 1000.0)
+
+    def _restore_switch_interval(self) -> None:
+        saved = getattr(self, '_saved_switch_interval', None)
+        if saved is not None:
+            sys.setswitchinterval(saved)
+            self._saved_switch_interval = None
 
     def pause(self) -> None:
         """Pause Vegas mode (for live priority interruption)."""

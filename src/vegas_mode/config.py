@@ -82,6 +82,14 @@ class VegasModeConfig:
     # drawn off the render thread. See docs/OFFSCREEN_RENDERING.md.
     offscreen_prefetch: bool = True
 
+    # How long another thread may hold the GIL before the render thread's
+    # request forces it to yield, in ms, while Vegas runs. CPython's default is
+    # 5ms. Plugin rendering on the prefetch thread and plugin updates hold the
+    # GIL in Pillow and Python code, and a frame waiting its turn for 5ms at a
+    # time misses its refresh. 0 leaves the interpreter default alone.
+    # Experimental: measured with scripts/frame_soak.py before it gets a default.
+    switch_interval_ms: float = 0.0
+
     # Keep one continuous strip, extending it with the next group of plugins as
     # the scroll approaches the end, instead of composing a fresh strip and
     # swapping it in. A swap stops the motion, substitutes every pixel at once
@@ -212,6 +220,7 @@ class VegasModeConfig:
             sub_pixel_blend=bool(vegas_config.get('sub_pixel_blend', False)),
             continuous_scroll=vegas_config.get('continuous_scroll', True),
             offscreen_prefetch=bool(vegas_config.get('offscreen_prefetch', True)),
+            switch_interval_ms=float(vegas_config.get('switch_interval_ms', 0.0) or 0.0),
             extend_threshold_screens=float(
                 vegas_config.get('extend_threshold_screens', 2.0)),
             auto_trim=vegas_config.get('auto_trim', True),
@@ -254,6 +263,7 @@ class VegasModeConfig:
             'sub_pixel_blend': self.sub_pixel_blend,
             'continuous_scroll': self.continuous_scroll,
             'offscreen_prefetch': self.offscreen_prefetch,
+            'switch_interval_ms': self.switch_interval_ms,
             'extend_threshold_screens': self.extend_threshold_screens,
             'auto_trim': self.auto_trim,
             'trim_threshold': self.trim_threshold,
