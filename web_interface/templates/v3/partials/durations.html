@@ -11,7 +11,7 @@
           hx-ext="json-enc"
           hx-headers='{"Content-Type": "application/json"}'
           hx-swap="none"
-          hx-on:htmx:after-request="showNotification(event.detail.xhr.responseJSON?.message || 'Durations saved', event.detail.xhr.responseJSON?.status || 'success')"
+          hx-on:htmx:after-request="showSaveResult(event.detail.xhr, 'Durations saved', 'Durations were not saved. Check your connection and try again.')"
           class="space-y-6"
           novalidate
           onsubmit="fixInvalidNumberInputs(this); return true;">

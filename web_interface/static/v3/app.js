@@ -22,9 +22,15 @@ document.body.addEventListener('htmx:afterRequest', function(event) {
         if (textEl) textEl.style.opacity = '1';
     }
 
-    // Handle response notifications
+    // Show the server's message, unless the element that made the request
+    // (or its form) has its own after-request handler: every such handler in
+    // the templates reports the result itself, and this used to repeat it,
+    // so each save showed two toasts.
     const response = event.detail.xhr;
-    if (response && response.responseText) {
+    const elt = event.detail.elt;
+    const reportsItself = elt && elt.closest &&
+        elt.closest('[hx-on\\:\\:after-request], [hx-on\\:htmx\\:after-request]');
+    if (!reportsItself && response && response.responseText) {
         try {
             const data = JSON.parse(response.responseText);
             if (data.message) {
@@ -47,6 +53,30 @@ document.body.addEventListener('htmx:afterRequest', function(event) {
         }
     } catch { /* banner is best-effort */ }
 });
+
+/**
+ * Shows the outcome of a settings form save as one notification. Used by the
+ * hx-on:htmx:after-request of the Display, Rotation & Durations and General
+ * forms. Only a 2xx response counts as saved (a network failure is status 0);
+ * the server's message is shown when there is one, and its status can refine
+ * a success but never overturn a failure.
+ * @param {XMLHttpRequest} xhr - event.detail.xhr
+ * @param {string} savedText - message for a success without one
+ * @param {string} failedText - message for a failure without one
+ */
+window.showSaveResult = function(xhr, savedText, failedText) {
+    const httpSuccess = xhr.status >= 200 && xhr.status < 300;
+    let message = httpSuccess ? savedText : failedText;
+    let status = httpSuccess ? 'success' : 'error';
+    try {
+        const data = JSON.parse(xhr.responseText);
+        if (data.message) message = data.message;
+        if (httpSuccess && data.status) status = data.status;
+    } catch {
+        // Non-JSON body: keep the status-code verdict.
+    }
+    showNotification(message, status);
+};
 
 // ===== Unsaved-changes guard =====
 // Plugin config panels are Alpine x-if templates: navigating away DESTROYS
