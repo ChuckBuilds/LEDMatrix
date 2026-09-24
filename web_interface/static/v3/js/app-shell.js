@@ -296,46 +296,33 @@
             }
         }
 
+        // A metric the server could not read arrives as null (off a Pi there is
+        // no CPU temperature); show the same '--' placeholder the page starts
+        // with rather than "null°C".
+        function statText(value, unit) {
+            return (value == null ? '--' : value) + unit;
+        }
+
         function updateSystemStats(data) {
-            // Update CPU in header
-            const cpuEl = document.getElementById('cpu-stat');
-            if (cpuEl && data.cpu_percent !== undefined) {
-                const spans = cpuEl.querySelectorAll('span');
-                if (spans.length > 0) spans[spans.length - 1].textContent = data.cpu_percent + '%';
-            }
+            // Header: the value is the last <span> inside each stat.
+            const header = [['cpu-stat', data.cpu_percent, '%'],
+                            ['memory-stat', data.memory_used_percent, '%'],
+                            ['temp-stat', data.cpu_temp, '°C']];
+            header.forEach(([id, value, unit]) => {
+                const spans = document.getElementById(id)?.querySelectorAll('span');
+                if (spans && spans.length > 0) spans[spans.length - 1].textContent = statText(value, unit);
+            });
 
-            // Update Memory in header
-            const memEl = document.getElementById('memory-stat');
-            if (memEl && data.memory_used_percent !== undefined) {
-                const spans = memEl.querySelectorAll('span');
-                if (spans.length > 0) spans[spans.length - 1].textContent = data.memory_used_percent + '%';
-            }
-
-            // Update Temperature in header
-            const tempEl = document.getElementById('temp-stat');
-            if (tempEl && data.cpu_temp !== undefined) {
-                const spans = tempEl.querySelectorAll('span');
-                if (spans.length > 0) spans[spans.length - 1].textContent = data.cpu_temp + '°C';
-            }
-
-            // Update Power (under-voltage / throttling) status in header + banner
             updatePowerStatus(data.power);
 
-            // Update Overview tab stats (if visible)
-            const cpuUsageEl = document.getElementById('cpu-usage');
-            if (cpuUsageEl && data.cpu_percent !== undefined) {
-                cpuUsageEl.textContent = data.cpu_percent + '%';
-            }
-
-            const memUsageEl = document.getElementById('memory-usage');
-            if (memUsageEl && data.memory_used_percent !== undefined) {
-                memUsageEl.textContent = data.memory_used_percent + '%';
-            }
-
-            const cpuTempEl = document.getElementById('cpu-temp');
-            if (cpuTempEl && data.cpu_temp !== undefined) {
-                cpuTempEl.textContent = data.cpu_temp + '°C';
-            }
+            // Overview tab (only present while it is loaded)
+            const overview = [['cpu-usage', data.cpu_percent, '%'],
+                              ['memory-usage', data.memory_used_percent, '%'],
+                              ['cpu-temp', data.cpu_temp, '°C']];
+            overview.forEach(([id, value, unit]) => {
+                const el = document.getElementById(id);
+                if (el) el.textContent = statText(value, unit);
+            });
 
             const displayStatusEl = document.getElementById('display-status');
             if (displayStatusEl) {
