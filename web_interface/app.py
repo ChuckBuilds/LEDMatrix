@@ -139,12 +139,7 @@ schema_manager = SchemaManager(
 )
 
 # Initialize operation queue for plugin operations
-# Use lazy_load=True to defer file loading until first use (improves startup time)
-operation_queue = PluginOperationQueue(
-    history_file=str(project_root / "data" / "plugin_operations.json"),
-    max_history=500,
-    lazy_load=True
-)
+operation_queue = PluginOperationQueue(max_history=500)
 
 # Initialize plugin state manager
 # Use lazy_load=True to defer file loading until first use (improves startup time)

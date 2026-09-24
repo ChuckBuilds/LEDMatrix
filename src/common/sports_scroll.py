@@ -487,9 +487,9 @@ class SportsScrollDisplayManager:
             )
         except Exception:
             # prepare_scroll_content is subclass-implemented and builds cards
-            # straight from feed data, which is exactly where this PR's other
-            # crashes came from. One sport's bad payload must not take down the
-            # shared orchestration for the others.
+            # straight from feed data, so it can raise on a malformed payload.
+            # One sport's bad payload must not take down the shared
+            # orchestration for the others.
             self.logger.exception(
                 "Error preparing scroll content for game_type=%s", game_type
             )

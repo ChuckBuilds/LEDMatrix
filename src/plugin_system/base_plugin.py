@@ -11,7 +11,6 @@ Stability: Stable - maintains backward compatibility
 from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Dict, Any, Optional, List
-import logging
 import os
 import sys
 from src.logging_config import get_logger
@@ -511,104 +510,53 @@ class BasePlugin(ABC):
         """
         Get the display duration for this plugin instance.
 
-        Automatically detects duration from:
-        1. self.display_duration instance variable (if exists)
-        2. self.config.get("display_duration", 15.0) (fallback)
+        Uses, in order, the first positive number among:
+        1. ``self.display_duration`` (a common pattern in scoreboard plugins)
+        2. ``self.config["display_duration"]``
+        3. 15.0
 
-        Can be overridden by plugins to provide dynamic durations based
-        on content (e.g., longer duration for more complex displays).
+        Numeric strings count as numbers. Can be overridden by plugins to
+        provide dynamic durations based on content (e.g., longer duration for
+        more complex displays).
 
         Returns:
             Duration in seconds to display this plugin's content
         """
-        # Check for instance variable first (common pattern in scoreboard plugins)
-        if hasattr(self, 'display_duration'):
-            try:
-                duration = getattr(self, 'display_duration')
-                # Handle None case
-                if duration is None:
-                    pass  # Fall through to config
-                # Try to convert to float if it's a number or numeric string.
-                # bool is excluded: it's an int subclass, and True would
-                # otherwise read as a 1-second duration.
-                elif isinstance(duration, (int, float)) and not isinstance(duration, bool):
-                    if duration > 0:
-                        return float(duration)
-                    else:
-                        self.logger.debug(
-                            "display_duration instance variable is non-positive (%s), using config fallback",
-                            duration
-                        )
-                # Try converting string representations of numbers
-                elif isinstance(duration, str):
-                    try:
-                        duration_float = float(duration)
-                        if duration_float > 0:
-                            return duration_float
-                        else:
-                            self.logger.debug(
-                                "display_duration string value is non-positive (%s), using config fallback",
-                                duration
-                            )
-                    except (ValueError, TypeError):
-                        self.logger.warning(
-                            "display_duration instance variable has invalid string value '%s', using config fallback",
-                            duration
-                        )
-                else:
-                    self.logger.warning(
-                        "display_duration instance variable has unexpected type %s (value: %s), using config fallback",
-                        type(duration).__name__, duration
-                    )
-            except (TypeError, ValueError, AttributeError) as e:
-                self.logger.warning(
-                    "Error reading display_duration instance variable: %s, using config fallback",
-                    e
-                )
-
-        # Fall back to config
-        config_duration = self.config.get("display_duration", 15.0)
         try:
-            # Ensure config value is also a valid float (bool excluded — an
-            # int subclass that would otherwise read True as 1 second)
-            if isinstance(config_duration, (int, float)) and not isinstance(config_duration, bool):
-                if config_duration > 0:
-                    return float(config_duration)
-                else:
-                    self.logger.debug(
-                        "Config display_duration is non-positive (%s), using default 15.0",
-                        config_duration
-                    )
-                    return 15.0
-            elif isinstance(config_duration, str):
-                try:
-                    duration_float = float(config_duration)
-                    if duration_float > 0:
-                        return duration_float
-                    else:
-                        self.logger.debug(
-                            "Config display_duration string is non-positive (%s), using default 15.0",
-                            config_duration
-                        )
-                        return 15.0
-                except ValueError:
-                    self.logger.warning(
-                        "Config display_duration has invalid string value '%s', using default 15.0",
-                        config_duration
-                    )
-                    return 15.0
-            else:
-                self.logger.warning(
-                    "Config display_duration has unexpected type %s (value: %s), using default 15.0",
-                    type(config_duration).__name__, config_duration
-                )
-        except (ValueError, TypeError) as e:
+            duration = getattr(self, 'display_duration', None)
+        except (TypeError, ValueError, AttributeError) as e:
+            # A plugin may define display_duration as a property that raises.
             self.logger.warning(
-                "Error processing config display_duration: %s, using default 15.0",
-                e
-            )
+                "Error reading display_duration instance variable: %s, using config fallback", e)
+            duration = None
+        if duration is not None:
+            seconds = self._positive_seconds(duration, "display_duration instance variable")
+            if seconds is not None:
+                return seconds
 
-        return 15.0
+        seconds = self._positive_seconds(
+            self.config.get("display_duration", 15.0), "config display_duration")
+        return seconds if seconds is not None else 15.0
+
+    def _positive_seconds(self, value: Any, source: str) -> Optional[float]:
+        """``value`` as a positive float, or None (with a log line) if it is not one.
+
+        bool is rejected although it is an int subclass: True would otherwise
+        read as a 1-second duration.
+        """
+        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            self.logger.warning("%s has unexpected type %s (value: %s), ignoring it",
+                                source, type(value).__name__, value)
+            return None
+        try:
+            seconds = float(value)
+        except ValueError:
+            self.logger.warning("%s has invalid value %r, ignoring it", source, value)
+            return None
+        if seconds > 0:
+            return seconds
+        self.logger.debug("%s is non-positive (%s), ignoring it", source, value)
+        return None
 
     # ---------------------------------------------------------------------
     # Dynamic duration support hooks
@@ -926,25 +874,20 @@ class BasePlugin(ABC):
                     config_mode, self.plugin_id
                 )
 
-        # Fall back to mapping legacy content_type
-        content_type = self.get_vegas_content_type()
-        if content_type == 'multi':
+        # Fall back to mapping legacy content_type. 'none' (excluded from
+        # Vegas) also maps to FIXED_SEGMENT: exclusion is decided by checking
+        # get_vegas_content_type() separately.
+        if self.get_vegas_content_type() == 'multi':
             return VegasDisplayMode.SCROLL
-        elif content_type == 'static':
-            return VegasDisplayMode.FIXED_SEGMENT
-        elif content_type == 'none':
-            # 'none' means excluded - return FIXED_SEGMENT as default
-            # The exclusion is handled by checking get_vegas_content_type() separately
-            return VegasDisplayMode.FIXED_SEGMENT
-
         return VegasDisplayMode.FIXED_SEGMENT
 
     def get_supported_vegas_modes(self) -> List[VegasDisplayMode]:
         """
         Return list of Vegas display modes this plugin supports.
 
-        Used by the web UI to show available mode options for user configuration.
-        Override to customize which modes are available for this plugin.
+        Not currently consulted by core: neither Vegas mode nor the web UI
+        calls it. It is kept, and plugins override it, as the declared set of
+        modes a future mode picker would offer.
 
         By default:
         - 'multi' content type plugins support SCROLL and FIXED_SEGMENT
@@ -971,6 +914,10 @@ class BasePlugin(ABC):
     def get_vegas_segment_width(self) -> Optional[int]:
         """
         Get the preferred width for this plugin in Vegas FIXED_SEGMENT mode.
+
+        Not currently consulted by core: Vegas mode sizes a card from the
+        ``vegas_width_pct`` / ``vegas_scroll.render_width_pct`` settings
+        (see get_vegas_render_width()). Kept because plugins override it.
 
         Returns the number of panels this plugin should occupy when displayed
         as a fixed segment. The actual pixel width is calculated as:
@@ -1025,7 +972,7 @@ class BasePlugin(ABC):
                 required_fields = ['api_key', 'city']
                 for field in required_fields:
                     if field not in self.config:
-                self.logger.error("Missing required field: %s", field)
+                        self.logger.error("Missing required field: %s", field)
                         return False
                 return True
         """

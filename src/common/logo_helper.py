@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Union
 
 import requests
-from PIL import Image
+from PIL import Image, ImageDraw
 from src.common.api_helper import USER_AGENT
 from src.common.permission_utils import (
     ensure_directory_permissions,
@@ -32,34 +32,13 @@ from src.common.permission_utils import (
 # trade for not re-warning about a file nobody is going to add.
 MISSING_LOGO_RECHECK_SECONDS = 3600.0
 
-#: Bounds on a user-supplied logo scale. Wide enough to be useful, closed
-#: enough that a typo cannot ask for a 4000px image on a 64px panel.
-MIN_LOGO_SCALE = 0.05
-MAX_LOGO_SCALE = 8.0
-
-
-def _usable_scale(scale) -> float:
-    """A scale that can be applied, or 1.0.
-
-    Anything unusable -- None, a string, zero, a negative, NaN, infinity --
-    means "as shipped", because the alternative is a blank panel from a
-    mistyped number.
-    """
-    try:
-        value = float(scale)
-    except (TypeError, ValueError):
-        return 1.0
-    if value != value or value in (float('inf'), float('-inf')):
-        return 1.0
-    if value < MIN_LOGO_SCALE or value > MAX_LOGO_SCALE:
-        return 1.0
-    return value
-
-
-
 # Well above any real team logo; bounds what a remote URL can write to disk.
 # The cap for every logo download: src.logo_downloader.fetch_logo uses it too.
 MAX_LOGO_BYTES = 10 * 1024 * 1024
+
+#: A logo's default bounding box, as a multiple of the panel's width and
+#: height, when the caller gives no max_width / max_height.
+DEFAULT_LOGO_BOX_FACTOR = 1.5
 
 
 class LogoHelper:
@@ -119,12 +98,16 @@ class LogoHelper:
         Args:
             team_abbr: Team abbreviation for caching
             logo_path: Path to the logo file
-            max_width: Maximum width (defaults to display_width * 1.5)
-            max_height: Maximum height (defaults to display_height * 1.5)
+            max_width: Maximum width (default display_width *
+                DEFAULT_LOGO_BOX_FACTOR)
+            max_height: Maximum height (default display_height *
+                DEFAULT_LOGO_BOX_FACTOR)
             scale: User's size multiplier for this image, from
-                ``customization.layout.<element>.scale``. 1.0 is untouched and
-                takes exactly the path it always did. Callers hold the config,
-                so they resolve the element name; this only applies the number.
+                ``customization.layout.<element>.scale``; 1.0 leaves the box
+                as is. Callers hold the config, so they resolve the element
+                name; this only applies the number, clamped to
+                src.element_style's MIN_ELEMENT_SCALE..MAX_ELEMENT_SCALE.
+                A value that is not a finite positive number means 1.0.
 
         Returns:
             PIL Image object or None if loading fails
@@ -138,10 +121,13 @@ class LogoHelper:
         # key is size-qualified — a panel-size change must not return a
         # logo resized for the old dimensions.
         if max_width is None:
-            max_width = int(self.display_width * 1.5)
+            max_width = int(self.display_width * DEFAULT_LOGO_BOX_FACTOR)
         if max_height is None:
-            max_height = int(self.display_height * 1.5)
-        scale = _usable_scale(scale)
+            max_height = int(self.display_height * DEFAULT_LOGO_BOX_FACTOR)
+        # Imported here: src.element_style imports src.common (for bdf_font),
+        # whose __init__ imports this module.
+        from src.element_style import coerce_scale
+        scale = coerce_scale(scale, 1.0)
         if scale != 1.0:
             max_width = max(1, int(round(max_width * scale)))
             max_height = max(1, int(round(max_height * scale)))
@@ -374,9 +360,9 @@ class LogoHelper:
         nobody asked to grow would change every existing render.
         """
         if max_width is None:
-            max_width = int(self.display_width * 1.5)
+            max_width = int(self.display_width * DEFAULT_LOGO_BOX_FACTOR)
         if max_height is None:
-            max_height = int(self.display_height * 1.5)
+            max_height = int(self.display_height * DEFAULT_LOGO_BOX_FACTOR)
 
         # Only resize if necessary
         if logo.width <= max_width and logo.height <= max_height:
@@ -429,31 +415,26 @@ class LogoHelper:
                                max_width: Optional[int] = None,
                                max_height: Optional[int] = None) -> Optional[Image.Image]:
         """
-        Create a placeholder logo with team abbreviation.
-        
+        A stand-in for a logo that could not be loaded or downloaded: a
+        translucent grey box with a light outline, filling the logo box.
+        No text is drawn; ``team_abbr`` is only used in log messages.
+
         Args:
-            team_abbr: Team abbreviation to display
-            max_width: Maximum width
-            max_height: Maximum height
-            
+            team_abbr: Team the placeholder stands in for
+            max_width: Width (default display_width * DEFAULT_LOGO_BOX_FACTOR)
+            max_height: Height (default display_height * DEFAULT_LOGO_BOX_FACTOR)
+
         Returns:
-            PIL Image with placeholder logo
+            The RGBA placeholder, or None if it could not be created
         """
         try:
             if max_width is None:
-                max_width = int(self.display_width * 1.5)
+                max_width = int(self.display_width * DEFAULT_LOGO_BOX_FACTOR)
             if max_height is None:
-                max_height = int(self.display_height * 1.5)
+                max_height = int(self.display_height * DEFAULT_LOGO_BOX_FACTOR)
             
-            # Create placeholder image
             placeholder = Image.new('RGBA', (max_width, max_height), (0, 0, 0, 0))
-            
-            # This would require a font, so we'll create a simple colored rectangle
-            # In a real implementation, you'd want to add text rendering here
-            from PIL import ImageDraw
             draw = ImageDraw.Draw(placeholder)
-            
-            # Draw a simple rectangle with team abbreviation
             draw.rectangle([0, 0, max_width-1, max_height-1], 
                           fill=(100, 100, 100, 200), outline=(200, 200, 200, 255))
             

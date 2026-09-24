@@ -124,6 +124,45 @@ class TestErrorRecording:
         assert aggregator._plugin_error_counts["plugin-a"]["ValueError"] == 2
         assert aggregator._plugin_error_counts["plugin-b"]["ValueError"] == 1
 
+    def test_stack_trace_recorded_outside_except_block(self):
+        """The trace comes from the exception, not from the handler in progress.
+
+        plugin_executor records exceptions caught on a worker thread after
+        its except block has ended, where format_exc() only says
+        "NoneType: None".
+        """
+        def failing_plugin_update():
+            raise ValueError("boom")
+
+        caught = []
+
+        def worker():
+            try:
+                failing_plugin_update()
+            except ValueError as e:
+                caught.append(e)
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+        thread.join()
+
+        record = ErrorAggregator().record_error(caught[0], plugin_id="p")
+
+        assert "NoneType: None" not in record.stack_trace
+        assert "failing_plugin_update" in record.stack_trace
+        assert "ValueError: boom" in record.stack_trace
+
+    def test_record_error_leaves_caller_context_unchanged(self):
+        """LEDMatrixError context is merged into a copy of the caller's dict."""
+        context = {"caller": "value"}
+        error = PluginError("failed", plugin_id="p", context={"extra": 1})
+
+        record = ErrorAggregator().record_error(error, context=context)
+
+        assert context == {"caller": "value"}
+        assert record.context["caller"] == "value"
+        assert record.context["extra"] == 1
+
 
 class TestPatternDetection:
     """Test error pattern detection."""

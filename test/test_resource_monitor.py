@@ -93,6 +93,27 @@ class TestResourceLimits:
         with pytest.raises(ResourceLimitExceeded):
             mon.monitor_call("p", lambda: time.sleep(0.02))
 
+    def test_memory_limit_judges_each_call_on_its_own_growth(self):
+        """One expensive call must not fail every call after it.
+
+        The check used to compare the stored high-water mark, which never
+        decreases, so after one call grew memory past the limit every later
+        call raised too and the plugin never updated again.
+        """
+        mon = PluginResourceMonitor(_cache(), enable_monitoring=False)
+        mon.enable_monitoring = True  # measure without needing psutil
+        readings = iter([100.0, 200.0,   # first call grows RSS by 100 MB
+                         200.0, 201.0])  # second call grows it by 1 MB
+        mon._get_process_memory_mb = lambda: next(readings)
+        mon._get_process_cpu_percent = lambda: 0.0
+        mon.set_limits("p", ResourceLimits(max_memory_mb=50))
+
+        with pytest.raises(ResourceLimitExceeded):
+            mon.monitor_call("p", lambda: None)
+        assert mon.monitor_call("p", lambda: "ok") == "ok"
+        # The high-water mark is still reported.
+        assert mon.get_metrics("p").memory_mb == 100.0
+
     def test_reset_metrics_clears_counts(self):
         cache = _cache()
         mon = PluginResourceMonitor(cache, enable_monitoring=False)

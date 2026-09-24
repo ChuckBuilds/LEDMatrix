@@ -172,10 +172,14 @@ ERROR - Plugin football-scoreboard configuration validation failed: 'api_key' is
 
 ### Enable Debug Logging
 
-Set environment variable:
+Run the display in the foreground with `-d`, or set `LEDMATRIX_DEBUG=true`
+(the value must be `true`; `1` is ignored — see `setup_logging()` in
+[`src/logging_config.py`](../src/logging_config.py)):
 ```bash
-export LEDMATRIX_DEBUG=1
-python run.py
+sudo systemctl stop ledmatrix.service
+sudo python3 run.py -d
+# or
+sudo LEDMATRIX_DEBUG=true python3 run.py
 ```
 
 ### Check Merged Configuration
@@ -321,8 +325,10 @@ cp config/backups/config.json.backup.20240115_120000_000000 config/config.json
 
 ## Getting Help
 
-1. Check logs: `tail -f logs/ledmatrix.log`
-2. Enable debug: `LEDMATRIX_DEBUG=1`
+1. Check logs. Both services log to journald, not to a file:
+   `sudo journalctl -u ledmatrix.service -f` (display) and
+   `sudo journalctl -u ledmatrix-web.service -f` (web interface)
+2. Enable debug: `LEDMATRIX_DEBUG=true` or `python3 run.py -d`
 3. Check error dashboard: `/api/v3/errors/summary`
 4. Validate JSON: https://jsonlint.com/
 5. File an issue: https://github.com/ChuckBuilds/LEDMatrix/issues

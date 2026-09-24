@@ -14,6 +14,7 @@ from web_interface.blueprints.api_v3 import (
     subprocess, success_response, tempfile,
 )
 from src.common.path_safety import safe_path_component
+from src.common import sync_manager as _sync
 from src import error_aggregator as _errors
 from web_interface import display_preview
 import web_interface.blueprints.api_v3 as _pkg
@@ -191,16 +192,17 @@ def get_logs():
 @api_v3.route('/sync/status', methods=['GET'])
 def get_sync_status():
     """Return live multi-display sync status written by the display process."""
-    status_file = "/tmp/led_matrix_sync_status.json"
+    # The display process writes this file; read it where it is written.
+    status_file = _sync.STATUS_FILE
     # Also surface config so the UI can show the configured role even before
     # the display process has written a status file.
     cfg_role = "standalone"
-    cfg_port = 5765
+    cfg_port = _sync.SYNC_PORT
     if api_v3.config_manager:
         try:
             cfg = api_v3.config_manager.load_config().get("sync", {})
             cfg_role = cfg.get("role", "standalone")
-            cfg_port = int(cfg.get("port", 5765))
+            cfg_port = int(cfg.get("port", _sync.SYNC_PORT))
         except Exception:
             pass
 

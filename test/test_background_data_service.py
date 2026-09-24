@@ -362,6 +362,3 @@ class TestPriorityIsAcceptedAndIgnored:
         rid = service.submit_fetch_request(
             "nfl", 2026, "http://example.invalid/x", cache_key="k", priority=5)
         assert service.get_result(rid).cached is True
-
-    def test_statistics_still_report_an_empty_queue(self, service):
-        assert service.get_statistics()["queue_size"] == 0

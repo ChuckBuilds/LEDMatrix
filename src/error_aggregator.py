@@ -26,6 +26,19 @@ from src.exceptions import LEDMatrixError
 from src.redaction import redact_credentials
 
 
+def _format_trace(error: BaseException) -> str:
+    """The traceback carried by ``error`` itself.
+
+    Callers often record an exception after its ``except`` block has ended,
+    or from another thread than the one that raised it (plugin_executor runs
+    plugins on worker threads), where ``traceback.format_exc()`` has nothing
+    to report. The exception object keeps its own ``__traceback__``, so the
+    trace is built from that. An exception that was created but never raised
+    has no traceback, and the result is just its type and message.
+    """
+    return "".join(traceback.format_exception(type(error), error, error.__traceback__))
+
+
 @dataclass
 class ErrorRecord:
     """Record of a single error occurrence."""
@@ -145,8 +158,8 @@ class ErrorAggregator:
         with self._lock:
             error_type = type(error).__name__
 
-            # Extract additional context from LEDMatrixError subclasses
-            error_context = context or {}
+            # A copy, so the caller's dict is not changed behind its back.
+            error_context = dict(context) if context else {}
             if isinstance(error, LEDMatrixError) and error.context:
                 error_context.update(error.context)
 
@@ -157,7 +170,7 @@ class ErrorAggregator:
                 context=error_context,
                 plugin_id=plugin_id,
                 operation=operation,
-                stack_trace=traceback.format_exc()
+                stack_trace=_format_trace(error)
             )
 
             # Add record (with size limit)

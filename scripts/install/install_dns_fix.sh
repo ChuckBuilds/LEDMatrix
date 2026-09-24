@@ -10,6 +10,10 @@
 set -e
 
 PROJECT_ROOT_DIR=$(cd "$(dirname "$0")/../.." && pwd)
+
+# shellcheck source=scripts/install/lib_systemd_render.sh
+source "$PROJECT_ROOT_DIR/scripts/install/lib_systemd_render.sh"
+
 SERVICE_NAME="ledmatrix-dns-fix"
 UNIT_SRC="$PROJECT_ROOT_DIR/systemd/$SERVICE_NAME.service"
 UNIT_DEST="/etc/systemd/system/$SERVICE_NAME.service"
@@ -34,7 +38,8 @@ fi
 chmod +x "$PROJECT_ROOT_DIR/scripts/utils/apply_dns_single_request.sh"
 
 echo "Installing $UNIT_DEST..."
-sed "s|__PROJECT_ROOT_DIR__|$PROJECT_ROOT_DIR|g" "$UNIT_SRC" \
+ESCAPED_PROJECT_ROOT_DIR=$(sed_escape_replacement "$PROJECT_ROOT_DIR")
+sed "s|__PROJECT_ROOT_DIR__|$ESCAPED_PROJECT_ROOT_DIR|g" "$UNIT_SRC" \
     | $SUDO tee "$UNIT_DEST" > /dev/null
 
 # Order ledmatrix.service after the fix. `Before=` in the unit itself only
