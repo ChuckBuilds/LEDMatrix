@@ -205,27 +205,6 @@ check_sudo() {
     print_success "Sudo access confirmed"
 }
 
-# Fix /tmp permissions if needed (common issue when running via curl | bash)
-# Note: /tmp permission fixing is now done inline before running first_time_install.sh
-# This function is kept for backward compatibility but not actively used
-fix_tmp_permissions() {
-    CURRENT_STEP="TMP directory check"
-    # Only fix if /tmp is actually not writable (don't preemptively fix)
-    if [ ! -w /tmp ]; then
-        print_warning "/tmp is not writable, attempting to fix..."
-        if [ "$EUID" -eq 0 ]; then
-            chmod 1777 /tmp 2>/dev/null || true
-        else
-            sudo chmod 1777 /tmp 2>/dev/null || true
-        fi
-    fi
-    
-    # Ensure TMPDIR is set correctly
-    if [ -z "${TMPDIR:-}" ] || [ ! -w "${TMPDIR:-/tmp}" ]; then
-        export TMPDIR=/tmp
-    fi
-}
-
 # Main installation function
 main() {
     print_step "LED Matrix One-Shot Installation"

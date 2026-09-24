@@ -26,7 +26,6 @@ fi
 # Get the full paths to commands and validate each one
 MISSING_CMDS=()
 
-PYTHON_PATH=$(command -v python3)   || true
 SYSTEMCTL_PATH=$(command -v systemctl) || true
 REBOOT_PATH=$(command -v reboot)    || true
 POWEROFF_PATH=$(command -v poweroff)  || true
@@ -35,8 +34,8 @@ JOURNALCTL_PATH=$(command -v journalctl) || true
 SAFE_RM_PATH="$PROJECT_ROOT/scripts/fix_perms/safe_plugin_rm.sh"
 SAFE_PIP_INSTALL_PATH="$PROJECT_ROOT/scripts/fix_perms/safe_pip_install.sh"
 
-# Validate required commands (systemctl, bash, python3 are essential)
-for CMD_NAME in SYSTEMCTL_PATH BASH_PATH PYTHON_PATH; do
+# Validate required commands (systemctl and bash are essential)
+for CMD_NAME in SYSTEMCTL_PATH BASH_PATH; do
     CMD_VAL="${!CMD_NAME}"
     if [ -z "$CMD_VAL" ]; then
         MISSING_CMDS+=("$CMD_NAME")
@@ -70,7 +69,6 @@ fi
 . "$SUDOERS_LIB"
 
 echo "Command paths:"
-echo "  Python: $PYTHON_PATH"
 echo "  Systemctl: $SYSTEMCTL_PATH"
 echo "  Reboot: ${REBOOT_PATH:-(not found, skipping)}"
 echo "  Poweroff: ${POWEROFF_PATH:-(not found, skipping)}"
@@ -136,7 +134,7 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
     exit 0
 fi
 
-# Apply the configuration using visudo
+# Apply the configuration
 echo "Applying sudoers configuration..."
 # Harden the helper script: root-owned, not writable by web user
 echo "Hardening safe_plugin_rm.sh ownership..."
