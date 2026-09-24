@@ -42,7 +42,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.common import scroll_config  # noqa: E402
+from src.common import frame_timing, scroll_config  # noqa: E402
 
 CONFIG = Path(__file__).resolve().parent.parent / "config" / "config.json"
 
@@ -99,20 +99,13 @@ def open_matrix(config, refresh_override=None):
 def measure_refresh(config, seconds=6.0):
     """Actual refresh rate, by running uncapped and timing the swaps.
 
-    SwapOnVSync blocks until the panel's next refresh, so an unthrottled loop
-    runs at exactly the panel's rate. This is what an older Pi or a longer
-    chain will really give you, as opposed to whatever limit_refresh_rate_hz
-    optimistically asks for.
+    What an older Pi or a longer chain will really give you, as opposed to
+    whatever limit_refresh_rate_hz optimistically asks for. The timing loop
+    itself lives in src.common.frame_timing so the benchmark grades against
+    the same measurement this ladder is built from.
     """
     matrix = open_matrix(config, refresh_override=0)
-    canvas = matrix.CreateFrameCanvas()
-    canvas = matrix.SwapOnVSync(canvas)  # discard the first, it includes setup
-    frames = 0
-    started = time.perf_counter()
-    while time.perf_counter() - started < seconds:
-        canvas = matrix.SwapOnVSync(canvas)
-        frames += 1
-    measured = frames / (time.perf_counter() - started)
+    measured = frame_timing.measure_refresh_hz(matrix, seconds)
     matrix.Clear()
     return measured
 

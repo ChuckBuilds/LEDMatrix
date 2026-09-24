@@ -257,6 +257,15 @@ floor on the release that ships them):
   `api_extractors`). No known plugin imports it. A plugin that does must use
   `src.common` or its own copy of the code.
 
+- `src.common.frame_timing` -- times every frame the display presents, whoever
+  drew it, and writes cumulative counters to `/dev/shm`. Two tools read it:
+  `scripts/frame_soak.py` judges a running service (late frames, freezes,
+  where the time goes), and `scripts/render_bench.py` judges the hardware and
+  render path alone on a synthetic strip. Both fail a run above 0.1% late
+  frames, and both call a loop that never waited for the panel NOT LOCKED. A
+  stall watchdog logs the stack of whatever holds a scroll up for 250 ms or
+  more. See `docs/SCROLL_PERFORMANCE.md`, "Soaking a rig".
+
 ## 3.5.0
 
 New modules a plugin may import via `src.*` (floor on 3.5.0):

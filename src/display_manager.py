@@ -51,6 +51,7 @@ import zlib
 import freetype
 
 from src.common import snapshot_policy
+from src.common.frame_timing import FrameTimingRecorder
 from src.deprecation import deprecated
 from src.logging_config import get_logger
 from src.common.permission_utils import (
@@ -235,6 +236,11 @@ class DisplayManager:
         # advances a whole pixel every Nth refresh instead of every one.
         # See src/common/scroll_config.py and scripts/scroll_speeds.py.
         self._frame_hold = 1
+
+        # Timing of every presented frame, whoever drew it, for
+        # scripts/frame_soak.py. See src/common/frame_timing.py.
+        self.frame_timing = FrameTimingRecorder(info=self._frame_timing_info())
+        self.frame_timing.scrolling_now = self._scrolling_now
 
         self._scrolling_state = {
             'is_scrolling': False,
@@ -798,15 +804,21 @@ class DisplayManager:
 
                 # Copy the current image to the offscreen canvas. In double-sided
                 # mode the logical screen is first tiled across the full chain.
+                blit_started = time.perf_counter()
                 if self._double_sided is not None:
                     self.offscreen_canvas.SetImage(self._composite_double_sided())
                 else:
                     self.offscreen_canvas.SetImage(self.image)
+                blit_done = time.perf_counter()
 
                 # Swap buffers immediately. framerate_fraction holds the frame
                 # for N refreshes; SwapOnVSync blocks for all of them, which is
                 # what paces the render loop to the chosen frame rate.
                 self.matrix.SwapOnVSync(self.offscreen_canvas, self._frame_hold)
+                presented_at = time.perf_counter()
+                self.frame_timing.record(
+                    blit_done - blit_started, presented_at - blit_done,
+                    self._frame_hold, self.is_currently_scrolling(), presented_at)
 
                 # Swap our canvas references
                 self.offscreen_canvas, self.current_canvas = self.current_canvas, self.offscreen_canvas
@@ -1295,6 +1307,9 @@ class DisplayManager:
                 self._new_canvas(self.width, self.height)
             except (OSError, RuntimeError, ValueError, MemoryError):
                 logger.debug("Canvas reset during cleanup failed", exc_info=True)
+        # The stall watchdog would otherwise outlive this manager.
+        if getattr(self, 'frame_timing', None) is not None:
+            self.frame_timing.close()
         # Reset the singleton state when cleaning up
         DisplayManager._instance = None
 
@@ -1389,6 +1404,27 @@ class DisplayManager:
         except (TypeError, ValueError):
             value = 0.0
         return value if value > 0 else 100.0
+
+    def _scrolling_now(self) -> bool:
+        """Whether a scroll is running, without is_currently_scrolling()'s
+        side effect of expiring the state -- safe from the stall watchdog's
+        thread."""
+        state = self._scrolling_state
+        return bool(state['is_scrolling']) and (
+            time.time() - state['last_scroll_activity']
+            <= state['scroll_inactivity_threshold'])
+
+    def _frame_timing_info(self) -> Dict[str, Any]:
+        """What the frame-timing stats were measured on, for the soak report."""
+        display = self.config.get('display') or {}
+        hardware = display.get('hardware') or {}
+        runtime = display.get('runtime') or {}
+        info = {key: hardware.get(key) for key in (
+            'rows', 'cols', 'chain_length', 'parallel', 'pwm_bits',
+            'hardware_mapping', 'limit_refresh_rate_hz', 'pixel_mapper_config')}
+        info['gpio_slowdown'] = runtime.get('gpio_slowdown')
+        info['emulator'] = os.environ.get('EMULATOR', 'false') == 'true'
+        return info
 
     def set_frame_hold(self, refreshes: int) -> None:
         """Hold each pushed frame for this many panel refreshes (>=1).
