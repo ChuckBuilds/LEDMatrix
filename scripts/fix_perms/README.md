@@ -18,12 +18,12 @@ system user.
   permissions on the `assets/` tree so plugins can download and cache
   team logos, fonts, and other static content.
 
-- **`fix_cache_permissions.sh`** — Creates (if missing) and fixes
-  permissions on `/var/cache/ledmatrix/` and `~/.ledmatrix_cache/` of the
-  user running `sudo`, and creates
-  `/var/cache/ledmatrix/placeholder_logos/` for the sports plugins. It does
-  not touch the cache manager's other fallbacks (`/opt/ledmatrix/cache`,
-  `$TMPDIR/ledmatrix_cache`).
+- **`fix_cache_permissions.sh`** — Restores `/var/cache/ledmatrix/` to the
+  shared `ledmatrix`-group setup by running
+  `scripts/install/setup_cache.sh` (the same script the installer uses),
+  and creates/fixes `~/.ledmatrix_cache/` of the user running `sudo`. It
+  does not touch the cache manager's other fallbacks
+  (`/opt/ledmatrix/cache`, `$TMPDIR/ledmatrix_cache`).
 
 - **`fix_plugin_permissions.sh`** — Fixes ownership on the plugins
   directory so both the root display service and the web service user
