@@ -2922,24 +2922,28 @@ class PluginStoreManager:
                     self.logger.warning(f"Git update timed out for {plugin_id}")
                     return False
             
-            # Not a git repository - try to get repo URL from git config if it exists
-            # (in case .git directory was removed but remote URL is still in config)
+            # A plugin with its own .git that _get_local_git_info could not
+            # read (e.g. no commits yet) may still name a remote to reinstall
+            # from. Without its own .git, `git -C <plugin>` walks up and finds
+            # the enclosing LEDMatrix checkout when plugins live in
+            # plugin-repos/ -- `--local` does not prevent that -- and the
+            # "plugin's" remote would be LEDMatrix itself.
             repo_url = None
-            try:
-                # Use --local to avoid inheriting the parent LEDMatrix repo's git config
-                # when the plugin directory lives inside the main repo (e.g. plugin-repos/).
-                remote_url_result = subprocess.run(
-                    ['git', '-C', str(plugin_path), 'config', '--local', '--get', 'remote.origin.url'],
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                    check=False
-                )
-                if remote_url_result.returncode == 0:
-                    repo_url = remote_url_result.stdout.strip()
-                    self.logger.info(f"Found git remote URL for {plugin_id}: {repo_url}")
-            except Exception as e:
-                self.logger.debug(f"Could not get git remote URL: {e}")
+            if (plugin_path / '.git').exists():
+                try:
+                    remote_url_result = subprocess.run(
+                        ['git', '-C', str(plugin_path), 'config', '--local', '--get', 'remote.origin.url'],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                        check=False
+                    )
+                    if remote_url_result.returncode == 0:
+                        repo_url = remote_url_result.stdout.strip() or None
+                        if repo_url:
+                            self.logger.info(f"Found git remote URL for {plugin_id}: {repo_url}")
+                except (OSError, subprocess.SubprocessError) as e:
+                    self.logger.debug(f"Could not get git remote URL: {e}")
             
             # Try registry-based update
             self.logger.info(f"Plugin {plugin_id} is not a git repository, checking registry...")
