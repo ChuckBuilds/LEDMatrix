@@ -34,6 +34,7 @@ else:
 from contextlib import contextmanager
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
+from src.common.bdf_font import draw_bdf_text, load_bdf_face
 from src.common.font_layout import crisp_size, load_truetype, resolve_asset_path
 from src.display_geometry import (
     DEFAULT_CHAIN_LENGTH, DEFAULT_COLS, DEFAULT_PARALLEL, DEFAULT_ROWS,
@@ -884,43 +885,16 @@ class DisplayManager:
             logger.error(f"Error clearing display: {e}")
 
     def _draw_bdf_text(self, text, x, y, color=(255, 255, 255), font=None):
-        """Draw text using BDF font with proper bitmap handling."""
+        """Draw text in a BDF ``freetype.Face`` with (x, y) as its top-left.
+
+        Delegates to :func:`src.common.bdf_font.draw_bdf_text`, which the
+        plugin test harness uses too, so previews and golden images show the
+        pixels the panel does. Clipped to the logical display size.
+        """
         try:
-            # Use the passed font or fall back to calendar_font
             face = font if font else self.calendar_font
-            
-            # Compute baseline from font ascender so caller can pass top-left y
-            try:
-                ascender_px = face.size.ascender >> 6
-            except Exception:
-                ascender_px = 0
-            baseline_y = y + ascender_px
-            
-            for char in text:
-                face.load_char(char)
-                bitmap = face.glyph.bitmap
-                
-                # Get glyph metrics
-                glyph_left = face.glyph.bitmap_left
-                glyph_top = face.glyph.bitmap_top
-                
-                # Draw the character
-                for i in range(bitmap.rows):
-                    for j in range(bitmap.width):
-                        byte_index = i * bitmap.pitch + (j // 8)
-                        if byte_index < len(bitmap.buffer):
-                            byte = bitmap.buffer[byte_index]
-                            if byte & (1 << (7 - (j % 8))):
-                                # Calculate actual pixel position
-                                pixel_x = x + glyph_left + j
-                                pixel_y = baseline_y - glyph_top + i
-                                # Only draw if within bounds
-                                if (0 <= pixel_x < self.width and 0 <= pixel_y < self.height):
-                                    self.draw.point((pixel_x, pixel_y), fill=color)
-                
-                # Move to next character
-                x += face.glyph.advance.x >> 6
-                
+            draw_bdf_text(self.draw, text, x, y, face, color,
+                          clip=(self.width, self.height))
         except Exception as e:
             logger.error(f"Error drawing BDF text: {e}", exc_info=True)
 
@@ -969,19 +943,13 @@ class DisplayManager:
                 if not os.path.exists(self.calendar_font_path):
                     raise FileNotFoundError(f"Font file not found at {self.calendar_font_path}")
                 
-                # Load with freetype for proper BDF handling
-                face = freetype.Face(self.calendar_font_path)
-                # A freshly constructed Face has no active size, so
-                # face.size.height is 0 until set_char_size is called -- and
-                # get_font_height() reads exactly that. Without this, every
-                # caller measuring the 5x7 face got 0 and stacked rows on top
-                # of one another; the "Calendar font size: 0 pixels" line
-                # below has been printing the symptom on every start-up.
-                # font_manager._load_bdf_font already does this; the two paths
-                # disagreed about whether a Face was usable for measurement.
-                # 5x7.bdf is a fixed strike, so FreeType renders 7px whatever
-                # is asked for -- this sets the metrics, not the raster.
-                face.set_char_size(_CALENDAR_FONT_PX * 64, _CALENDAR_FONT_PX * 64, 72, 72)
+                # load_bdf_face sets the size: a Face built without
+                # set_char_size reports face.size.height 0, and every caller
+                # measuring the 5x7 face with get_font_height() got 0 and
+                # stacked rows on top of one another. 5x7.bdf is a fixed
+                # strike, so FreeType renders 7px whatever is asked for --
+                # the size sets the metrics, not the raster.
+                face, _ = load_bdf_face(self.calendar_font_path, _CALENDAR_FONT_PX)
                 logger.info(f"5x7 calendar font loaded successfully from {self.calendar_font_path}")
                 logger.info(f"Calendar font size: {face.size.height >> 6} pixels")
                 

@@ -14,13 +14,16 @@ PIL Image canvas and draws text using the actual project fonts.
 MAINTENANCE WARNING: this class is a deliberate fork of
 src/display_manager.py so it can run without hardware. It mirrors
 these DisplayManager methods by name and behavior: _load_fonts,
-_draw_bdf_text, get_font_height, get_text_width, draw_text,
+get_font_height, get_text_width, draw_text,
 draw_text_with_icons, draw_weather_icon (and the _draw_sun/_draw_cloud/
 _draw_rain/_draw_snow/_draw_storm family), format_date_with_ordinal,
 capture_mode, set_scrolling_state, is_currently_scrolling,
 process_deferred_updates, update_display, render_size. A behavior
 change to any of those in DisplayManager must be mirrored here, or
 plugin visual tests will pass against stale behavior.
+
+BDF text is not mirrored: both classes load BDF faces and draw BDF glyphs
+through src/common/bdf_font.py, so those pixels cannot drift.
 """
 
 import math
@@ -31,6 +34,7 @@ from pathlib import Path
 from typing import Any, List, Optional, Tuple
 
 from PIL import Image, ImageDraw, ImageFont
+from src.common.bdf_font import draw_bdf_text, load_bdf_face
 from src.common.font_layout import crisp_size, load_truetype
 
 from src.logging_config import get_logger
@@ -147,16 +151,18 @@ class VisualTestDisplayManager:
             self.small_font = load_truetype(ttf_path, crisp_size(press_start, 8))
             self.font = self.regular_font  # alias used by some code paths
 
-            # 5x7 BDF font via freetype
+            # 5x7 BDF font, loaded exactly as DisplayManager._load_fonts does
+            # (same loader, same 7px request as its _CALENDAR_FONT_PX). A bare
+            # freetype.Face has no active size, so its ascender reads 0 and
+            # every line drew a baseline too high.
             try:
-                import freetype
                 bdf_path = str(fonts_dir / '5x7.bdf')
                 if not os.path.exists(bdf_path):
                     raise FileNotFoundError(f"BDF font not found: {bdf_path}")
-                face = freetype.Face(bdf_path)
+                face, _ = load_bdf_face(bdf_path, 7)
                 self.calendar_font = face
                 self.bdf_5x7_font = face
-            except (ImportError, FileNotFoundError, OSError) as e:
+            except Exception as e:  # freetype missing or the file unloadable
                 logger.debug("BDF font not available, using small_font as fallback: %s", e)
                 self.calendar_font = self.small_font
                 self.bdf_5x7_font = self.small_font
@@ -300,41 +306,18 @@ class VisualTestDisplayManager:
             logger.debug(f"Error drawing image: {e}")
 
     def _draw_bdf_text(self, text, x, y, color=(255, 255, 255), font=None):
-        """Draw text using BDF font with proper bitmap handling.
+        """Draw text in a BDF ``freetype.Face`` with (x, y) as its top-left.
 
-        Replicated from DisplayManager._draw_bdf_text().
+        Not a copy: DisplayManager._draw_bdf_text calls the same
+        :func:`src.common.bdf_font.draw_bdf_text`, so what this draws is
+        what the panel draws.
         """
         try:
             if isinstance(color, list):
                 color = tuple(color)
             face = font if font else self.calendar_font
-
-            # Compute baseline from font ascender
-            try:
-                ascender_px = face.size.ascender >> 6
-            except Exception:
-                ascender_px = 0
-            baseline_y = y + ascender_px
-
-            for char in text:
-                face.load_char(char)
-                bitmap = face.glyph.bitmap
-
-                glyph_left = face.glyph.bitmap_left
-                glyph_top = face.glyph.bitmap_top
-
-                for i in range(bitmap.rows):
-                    for j in range(bitmap.width):
-                        byte_index = i * bitmap.pitch + (j // 8)
-                        if byte_index < len(bitmap.buffer):
-                            byte = bitmap.buffer[byte_index]
-                            if byte & (1 << (7 - (j % 8))):
-                                pixel_x = x + glyph_left + j
-                                pixel_y = baseline_y - glyph_top + i
-                                if 0 <= pixel_x < self.width and 0 <= pixel_y < self.height:
-                                    self.draw.point((pixel_x, pixel_y), fill=color)
-
-                x += face.glyph.advance.x >> 6
+            draw_bdf_text(self.draw, text, x, y, face, color,
+                          clip=(self.width, self.height))
         except Exception as e:
             logger.debug(f"Error drawing BDF text: {e}")
 
