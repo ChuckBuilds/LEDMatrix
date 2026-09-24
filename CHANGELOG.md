@@ -19,6 +19,16 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+- Web API fixes:
+  - A plugin save drops repeated entries in lists whose schema says `uniqueItems`, instead of failing validation.
+  - `/api/v3/health` reports the real plugin count.
+  - A malformed `vegas_plugin_order` or `vegas_excluded_plugins` is refused with a 400 and nothing is saved. It used to wipe the saved list.
+  - The per-plugin health and metrics routes return the display service's latest state.
+  - Resetting a plugin's config takes a backup first and reports a failed save.
+  - System metrics that can't be read are `null` everywhere: `cpu_temp` off a Pi, and every metric without psutil, where `/system/status` now answers 200 instead of 503.
+  - `/plugins/store/refresh` no longer claims a commit-metadata refresh it doesn't do.
+  - The plugin-config list repair code is in one place, `src/web_interface/config_arrays.py`.
+
 - The web service (`ledmatrix-web`) logs through `src.logging_config` like the
   display service, so `journalctl -p err -u ledmatrix-web` works. Successful
   GET/HEAD/OPTIONS requests (the UI's polling) are logged at DEBUG instead of
