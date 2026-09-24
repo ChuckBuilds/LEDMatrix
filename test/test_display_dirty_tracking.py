@@ -425,6 +425,32 @@ class TestSnapshotOffRenderThread:
             dm.set_scrolling_state(False)
         assert dm._last_snapshot_digest is None
 
+    def test_a_frame_not_yet_on_disk_is_written_not_touched(
+            self, dm, tmp_path, monkeypatch):
+        # The digest is recorded when a frame is queued. Until the writer has
+        # saved it, an unchanged frame must not mtime-touch the older file on
+        # disk into looking current.
+        import zlib
+        from src.common import snapshot_policy
+        touched, saved = [], []
+        self._due(dm, tmp_path, (9, 9, 9))
+        digest = zlib.adler32(dm.image.tobytes())
+        dm._last_snapshot_digest = digest        # queued earlier...
+        dm._saved_snapshot_digest = 12345        # ...but an older frame is on disk
+        monkeypatch.setattr(snapshot_policy, "decide",
+                            lambda *a, **k: snapshot_policy.SnapshotAction.TOUCH)
+        monkeypatch.setattr(os, "utime", lambda *a, **k: touched.append(a))
+        monkeypatch.setattr(dm, "_save_snapshot", lambda image: saved.append(image))
+        dm.set_scrolling_state(False)
+        dm._write_snapshot_if_due(digest)
+        assert touched == []
+        assert len(saved) == 1
+        assert dm._saved_snapshot_digest == digest
+
+        # Once it is on disk, the same frame is only touched.
+        dm._write_snapshot_if_due(digest)
+        assert len(touched) == 1 and len(saved) == 1
+
     def test_a_static_frame_lands_after_a_queued_one_still_being_written(
             self, dm, tmp_path, monkeypatch):
         # The last frame of a scroll can still be encoding when the first
