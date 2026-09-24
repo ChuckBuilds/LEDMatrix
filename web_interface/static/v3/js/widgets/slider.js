@@ -28,17 +28,9 @@
 
     const base = window.BaseWidget ? new window.BaseWidget('Slider', '1.0.0') : null;
 
-    function escapeHtml(text) {
-        if (base) return base.escapeHtml(text);
-        const div = document.createElement('div');
-        div.textContent = String(text);
-        return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-    }
+    function escapeHtml(text) { return window.LEDEscape.html(text); }
 
-    // Escape for use in HTML attributes (also escapes quotes)
-    function escapeAttr(text) {
-        return escapeHtml(text).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-    }
+    function escapeAttr(text) { return window.LEDEscape.attr(text); }
 
     function sanitizeId(id) {
         if (base) return base.sanitizeId(id);

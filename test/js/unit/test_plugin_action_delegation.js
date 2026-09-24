@@ -24,7 +24,7 @@ function slice(startMarker, endMarker) {
   return SRC.slice(a, b);
 }
 
-const GLOBAL_DELEGATION = slice('(function setupGlobalEventDelegation() {', '// Note: configurePlugin');
+const GLOBAL_DELEGATION = slice('(function setupGlobalEventDelegation() {', '// GitHub Token Collapse Handler');
 const HANDLER = slice('function handlePluginAction(event) {', 'function findInstalledPlugin(pluginId)');
 
 let pass = 0, fail = 0;

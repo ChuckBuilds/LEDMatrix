@@ -50,6 +50,7 @@ const get = p => new Promise((res, rej) =>
   const s0 = window.document.createElement('script');
   s0.textContent = `
     window.debugLog = function () {};
+    ${require('../led_escape').source}
     window.showNotification = function () {};
     window.showError = function () {};
     window.updateSystemStatus = function () {};

@@ -55,13 +55,12 @@
 </div>
 
 <script>
-// Initialize cache management when partial loads
+// Scoped: this script runs at global scope after every HTMX swap, and the Logs
+// partial has helpers with the same names (showError, escapeHtml). Only
+// deleteCacheFile, which the row buttons call from onclick, is exported.
 (function() {
-    loadCacheFiles();
-    
-    // Event listeners
-    document.getElementById('refresh-cache-btn').addEventListener('click', loadCacheFiles);
-})();
+loadCacheFiles();
+document.getElementById('refresh-cache-btn').addEventListener('click', loadCacheFiles);
 
 function loadCacheFiles() {
     const tbody = document.getElementById('cache-files-tbody');
@@ -190,21 +189,15 @@ function deleteCacheFile(key) {
     .then(response => response.json())
     .then(data => {
         if (data.status === 'success') {
-            if (typeof showNotification !== 'undefined') {
-                showNotification(data.message || 'Cache file deleted successfully', 'success');
-            }
+            showNotification(data.message || 'Cache file deleted successfully', 'success');
             // Reload cache files list
             loadCacheFiles();
         } else {
-            if (typeof showNotification !== 'undefined') {
-                showNotification(data.message || 'Failed to delete cache file', 'error');
-            }
+            showNotification(data.message || 'Failed to delete cache file', 'error');
         }
     })
     .catch(error => {
-        if (typeof showNotification !== 'undefined') {
-            showNotification('Error deleting cache file: ' + error.message, 'error');
-        }
+        showNotification('Error deleting cache file: ' + error.message, 'error');
     });
 }
 
@@ -220,17 +213,8 @@ function showError(message) {
     errorMessage.textContent = message;
 }
 
-// Utility function to escape HTML
-// Quotes too: the result is interpolated into quoted attribute values, and the
-// textContent/innerHTML round-trip only escapes &, < and >.
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-}
+function escapeHtml(text) { return window.LEDEscape.html(text); }
 
-// Make deleteCacheFile available globally for onclick handlers
 window.deleteCacheFile = deleteCacheFile;
+})();
 </script>

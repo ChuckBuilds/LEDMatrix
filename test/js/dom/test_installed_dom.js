@@ -43,12 +43,7 @@ function get(path) {
   window.debugLog = () => {};
   window.PLUGIN_DEBUG = false;
   window.installedPlugins = installed;
-  window.escapeHtml = function (text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-  };
+  require('../led_escape').install(window);
 
   // Load the helper as a real <script>.
   const s = document.createElement('script');
@@ -69,7 +64,8 @@ function get(path) {
   const s2 = document.createElement('script');
   s2.textContent = `
     var installedPlugins = window.installedPlugins;
-    var escapeHtml = window.escapeHtml, pluginLog = window.pluginLog, debugLog = window.debugLog;
+    var escapeHtml = window.LEDEscape.html, escapeAttribute = window.LEDEscape.attr;
+    var pluginLog = window.pluginLog, debugLog = window.debugLog;
     var PLUGIN_DEBUG = false;
     ${src.slice(a, b)}
     ${src.slice(b, c)}
