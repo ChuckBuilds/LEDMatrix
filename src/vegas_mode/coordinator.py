@@ -420,7 +420,6 @@ class VegasModeCoordinator:
         # Update static mode plugin list on iteration start
         self._update_static_mode_plugins()
 
-        frame_interval = self.vegas_config.get_frame_interval()
         if self.vegas_config.continuous_scroll:
             # The strip is continuously extended and trimmed, so its width says
             # nothing about how long to run. This is only how often control
@@ -488,7 +487,10 @@ class VegasModeCoordinator:
             # quarter of the budget spent not rendering. Subtracting the work
             # already done keeps the pacing target while reclaiming that time,
             # and yields the GIL either way so other threads still run.
+            # Read every frame: a config change applied mid-iteration can
+            # switch between crisp and blended pacing.
             frame_elapsed = time.monotonic() - frame_started
+            frame_interval = self.render_pipeline.frame_interval
             time.sleep(max(0.0, frame_interval - frame_elapsed))
 
             # Measured before the sleep: time spent working, not pacing.
@@ -518,20 +520,20 @@ class VegasModeCoordinator:
             if current_time - last_fps_log_time >= fps_log_interval:
                 fps = fps_frame_count / (current_time - last_fps_log_time)
                 p99 = _percentile(sorted(frame_times), 0.99)
-                target = self.vegas_config.target_fps
+                target = self.render_pipeline.target_fps
                 degraded = target > 0 and fps < target * _FPS_HEALTHY_FRACTION
                 due = (current_time - self._fps_last_health_log
                        >= _FPS_HEARTBEAT_INTERVAL)
                 if degraded or self._fps_was_degraded or due:
                     logger.info(
-                        "Vegas FPS: %.1f (target: %d, frames: %d) p99 %.1fms worst %.1fms",
+                        "Vegas FPS: %.1f (target: %.0f, frames: %d) p99 %.1fms worst %.1fms",
                         fps, target, fps_frame_count,
                         p99 * 1000.0, frame_worst * 1000.0
                     )
                     self._fps_last_health_log = current_time
                 else:
                     logger.debug(
-                        "Vegas FPS: %.1f (target: %d, frames: %d) p99 %.1fms worst %.1fms",
+                        "Vegas FPS: %.1f (target: %.0f, frames: %d) p99 %.1fms worst %.1fms",
                         fps, target, fps_frame_count,
                         p99 * 1000.0, frame_worst * 1000.0
                     )
@@ -559,7 +561,7 @@ class VegasModeCoordinator:
             # main loop's _tick_plugin_updates() finds all intervals already
             # satisfied on return, so the inter-iteration gap is <1 ms and the
             # display never shows a frozen frame between iterations.
-            _UPDATE_TICK_FRAMES = max(1, int(self.vegas_config.target_fps * 4))  # every 4 s regardless of FPS
+            _UPDATE_TICK_FRAMES = max(1, int(self.render_pipeline.target_fps * 4))  # every 4 s regardless of FPS
             if (self._update_callback and
                     frame_count % _UPDATE_TICK_FRAMES == 0 and
                     not self._update_tick_running):

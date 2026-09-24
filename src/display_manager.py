@@ -203,6 +203,10 @@ class DisplayManager:
         self._last_snapshot_touch_ts = 0.0
         self._last_snapshot_digest: Optional[int] = None
         self._snapshot_dir_prepared = False
+        # Background writer used mid-scroll; see _write_snapshot_if_due.
+        self._snapshot_cond = threading.Condition()
+        self._snapshot_pending: Optional[Image.Image] = None
+        self._snapshot_thread: Optional[threading.Thread] = None
         self._viewer_check_ts = 0.0
         self._viewer_fresh = False
         self._viewer_was_fresh = False
@@ -1669,60 +1673,105 @@ class DisplayManager:
                 self._last_snapshot_touch_ts = now
                 return
 
-            # WRITE: ensure directory permissions once, not per frame
-            snapshot_path_obj = Path(self._snapshot_path)
-            if not self._snapshot_dir_prepared:
-                # Never modify /tmp permissions - it has special system
-                # permissions (1777) that must not be changed or it breaks
-                # apt and other system tools
-                parent_dir = snapshot_path_obj.parent
-                if parent_dir and str(parent_dir) != '/tmp':  # nosec B108 - guard to skip /tmp for permission ops
-                    ensure_directory_permissions(parent_dir, get_assets_dir_mode())
-                self._snapshot_dir_prepared = True
-            # Write atomically: temp then replace. The temp name must be
-            # unique, not "<snapshot>.tmp": /tmp is world-writable and sticky,
-            # and this file is written by whichever user the display service
-            # runs as while tests and tooling run as someone else. A leftover
-            # fixed-name temp owned by another user is then unopenable even by
-            # root (fs.protected_regular refuses O_CREAT on a foreign file in a
-            # sticky dir), which froze the preview and the health check's
-            # liveness proxy until somebody deleted it by hand. Same pattern as
-            # the hardware-status write above.
-            _fd, tmp_path = tempfile.mkstemp(
-                dir=str(snapshot_path_obj.parent),
-                prefix=f".{snapshot_path_obj.name}.", suffix=".tmp")
-            try:
-                with os.fdopen(_fd, "wb") as _f:
-                    self.image.save(_f, format='PNG')
-                os.chmod(tmp_path, 0o644)
-                os.replace(tmp_path, self._snapshot_path)
-            except Exception:
-                # Never leave the temp behind -- that is what made the failure
-                # permanent rather than transient.
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
-                # Fallback to direct save if replace not supported
-                self.image.save(self._snapshot_path, format='PNG')
-            # Set proper file permissions after saving
-            try:
-                ensure_file_permissions(snapshot_path_obj, get_assets_file_mode())
-            except Exception:
-                pass
+            # WRITE. Mid-scroll the PNG encode goes to a background thread: at
+            # 512x64 it takes 12-14ms on a Pi 4, longer than a 95Hz refresh,
+            # so on the render thread every preview write made the next swap
+            # miss its vsync -- five visible hitches a second, but only while
+            # someone had the web preview open. Pillow releases the GIL while
+            # it compresses, so the encode no longer holds the loop up. Static
+            # frames still write inline: nothing is moving to disturb.
+            if self.is_currently_scrolling():
+                self._queue_snapshot(self.image.copy())
+            else:
+                self._save_snapshot(self.image)
             self._last_snapshot_ts = now
             self._last_snapshot_touch_ts = now
             self._last_snapshot_digest = digest
         except Exception as e:
-            # Snapshot failures must never break display — but they must not
-            # be silent either: the snapshot's mtime is the web UI's display
-            # mirror AND its hardware-liveness proxy, so a quietly failing
-            # write freezes the mirror and makes health checks lie (seen in
-            # the field: a stale root-owned /tmp file froze it for a day).
-            # Warn at most once per 5 minutes to avoid log spam.
-            if (now - self._snapshot_fail_log_ts) > 300:
-                self._snapshot_fail_log_ts = now
-                logger.warning("Snapshot write failing (web preview/health "
-                               "mirror is stale): %s", e)
-            else:
-                logger.debug(f"Snapshot write skipped: {e}")
+            self._log_snapshot_failure(e)
+
+    def _log_snapshot_failure(self, error: Exception) -> None:
+        # Snapshot failures must never break display — but they must not
+        # be silent either: the snapshot's mtime is the web UI's display
+        # mirror AND its hardware-liveness proxy, so a quietly failing
+        # write freezes the mirror and makes health checks lie (seen in
+        # the field: a stale root-owned /tmp file froze it for a day).
+        # Warn at most once per 5 minutes to avoid log spam.
+        now = time.time()
+        if (now - self._snapshot_fail_log_ts) > 300:
+            self._snapshot_fail_log_ts = now
+            logger.warning("Snapshot write failing (web preview/health "
+                           "mirror is stale): %s", error)
+        else:
+            logger.debug(f"Snapshot write skipped: {error}")
+
+    def _save_snapshot(self, image: Image.Image) -> None:
+        """Encode ``image`` to the snapshot path atomically. Raises on failure."""
+        # Ensure directory permissions once, not per frame
+        snapshot_path_obj = Path(self._snapshot_path)
+        if not self._snapshot_dir_prepared:
+            # Never modify /tmp permissions - it has special system
+            # permissions (1777) that must not be changed or it breaks
+            # apt and other system tools
+            parent_dir = snapshot_path_obj.parent
+            if parent_dir and str(parent_dir) != '/tmp':  # nosec B108 - guard to skip /tmp for permission ops
+                ensure_directory_permissions(parent_dir, get_assets_dir_mode())
+            self._snapshot_dir_prepared = True
+        # Write atomically: temp then replace. The temp name must be
+        # unique, not "<snapshot>.tmp": /tmp is world-writable and sticky,
+        # and this file is written by whichever user the display service
+        # runs as while tests and tooling run as someone else. A leftover
+        # fixed-name temp owned by another user is then unopenable even by
+        # root (fs.protected_regular refuses O_CREAT on a foreign file in a
+        # sticky dir), which froze the preview and the health check's
+        # liveness proxy until somebody deleted it by hand. Same pattern as
+        # the hardware-status write above.
+        _fd, tmp_path = tempfile.mkstemp(
+            dir=str(snapshot_path_obj.parent),
+            prefix=f".{snapshot_path_obj.name}.", suffix=".tmp")
+        try:
+            with os.fdopen(_fd, "wb") as _f:
+                image.save(_f, format='PNG')
+            os.chmod(tmp_path, 0o644)
+            os.replace(tmp_path, self._snapshot_path)
+        except Exception:
+            # Never leave the temp behind -- that is what made the failure
+            # permanent rather than transient.
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            # Fallback to direct save if replace not supported
+            image.save(self._snapshot_path, format='PNG')
+        # Set proper file permissions after saving
+        try:
+            ensure_file_permissions(snapshot_path_obj, get_assets_file_mode())
+        except Exception:
+            pass
+
+    def _queue_snapshot(self, image: Image.Image) -> None:
+        """Hand a frame to the snapshot writer thread; the newest frame wins.
+
+        One slot, not a queue: if the writer is still encoding when the next
+        frame is due, the waiting frame is simply replaced. The preview wants
+        the latest frame, and a backlog would only cost memory and CPU.
+        """
+        with self._snapshot_cond:
+            self._snapshot_pending = image
+            if self._snapshot_thread is None or not self._snapshot_thread.is_alive():
+                self._snapshot_thread = threading.Thread(
+                    target=self._snapshot_writer, daemon=True,
+                    name="snapshot-writer")
+                self._snapshot_thread.start()
+            self._snapshot_cond.notify()
+
+    def _snapshot_writer(self) -> None:
+        while True:
+            with self._snapshot_cond:
+                while self._snapshot_pending is None:
+                    self._snapshot_cond.wait()
+                image, self._snapshot_pending = self._snapshot_pending, None
+            try:
+                self._save_snapshot(image)
+            except Exception as e:
+                self._log_snapshot_failure(e)

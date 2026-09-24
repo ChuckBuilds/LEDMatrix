@@ -357,3 +357,57 @@ class TestFrameHoldLifetime:
             assert dm._frame_hold == 1
         finally:
             dm.set_scrolling_state(False)
+
+
+class TestSnapshotOffRenderThread:
+    """Mid-scroll, the preview PNG is encoded off the render thread.
+
+    At 512x64 the encode takes 12-14ms on a Pi 4 -- longer than a refresh --
+    so doing it inline made the next swap miss its vsync five times a second
+    whenever the web preview was open.
+    """
+
+    def _record_saves(self, dm, monkeypatch):
+        import threading
+        threads = []
+        done = threading.Event()
+        real = dm._save_snapshot
+
+        def recording(image):
+            threads.append(threading.current_thread().name)
+            real(image)
+            done.set()
+
+        monkeypatch.setattr(dm, "_save_snapshot", recording)
+        return threads, done
+
+    def _due(self, dm, tmp_path, colour):
+        dm._snapshot_path = str(tmp_path / "snap.png")
+        dm._last_snapshot_ts = 0.0
+        dm._last_snapshot_touch_ts = 0.0
+        dm._last_snapshot_digest = None
+        dm.draw.rectangle([0, 0, 10, 4], fill=colour)
+
+    def test_scrolling_frames_are_encoded_on_the_writer_thread(
+            self, dm, tmp_path, monkeypatch):
+        import threading
+        threads, done = self._record_saves(dm, monkeypatch)
+        self._due(dm, tmp_path, (0, 255, 255))
+        dm.set_scrolling_state(True)
+        try:
+            dm.update_display()
+            assert done.wait(5), "the snapshot writer never wrote the frame"
+        finally:
+            dm.set_scrolling_state(False)
+        assert threads == ["snapshot-writer"]
+        assert threads[0] != threading.current_thread().name
+        assert os.path.exists(dm._snapshot_path)
+
+    def test_static_frames_are_still_written_inline(
+            self, dm, tmp_path, monkeypatch):
+        import threading
+        threads, _ = self._record_saves(dm, monkeypatch)
+        self._due(dm, tmp_path, (255, 0, 255))
+        dm.set_scrolling_state(False)
+        dm.update_display()
+        assert threads == [threading.current_thread().name]

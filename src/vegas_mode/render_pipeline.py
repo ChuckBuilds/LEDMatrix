@@ -13,6 +13,7 @@ from collections import deque
 from typing import Optional, List, Any, Dict, Deque, TYPE_CHECKING
 from PIL import Image
 
+from src.common.scroll_config import solve_crisp
 from src.common.scroll_helper import ScrollHelper
 from src.vegas_mode.config import VegasModeConfig
 from src.vegas_mode.geometry import separation_gap
@@ -39,6 +40,13 @@ class RenderPipeline:
     # Minimum gap between fetches of canvas-bound plugins, so their individual
     # stalls land in separate moments rather than one run of hitches.
     DEFERRED_DRAIN_INTERVAL = 2.0
+
+    # Swaps timed before trusting a refresh measurement: about a second.
+    REFRESH_SAMPLES = 96
+    # Frames skipped first, while the hold from whatever ran before settles.
+    REFRESH_WARMUP_FRAMES = 8
+    # A panel measured within this fraction of its cap is keeping up with it.
+    REFRESH_TOLERANCE = 0.03
 
     def __init__(
         self,
@@ -78,6 +86,11 @@ class RenderPipeline:
             self.display_height,
             logger
         )
+
+        # The panel's real refresh rate, measured from our own vsync-blocked
+        # swaps once scrolling starts. None until then; see _measure_refresh.
+        self._measured_hz: Optional[float] = None
+        self._swap_times: Deque[float] = deque(maxlen=self.REFRESH_SAMPLES + 1)
 
         # Configure scroll helper
         self._configure_scroll_helper()
@@ -122,9 +135,35 @@ class RenderPipeline:
 
     def _configure_scroll_helper(self) -> None:
         """Configure ScrollHelper with current settings."""
-        self.scroll_helper.set_frame_based_scrolling(self.config.frame_based_scrolling)
         self.scroll_helper.set_scroll_delay(self.config.scroll_delay)
-        self.scroll_helper.set_sub_pixel_scrolling(self.config.smooth_scroll)
+        self.scroll_helper.set_sub_pixel_scrolling(self.config.sub_pixel_blend)
+
+        # With smooth_scroll the strip moves a whole number of pixels per
+        # presented frame, each frame held for frame_hold panel refreshes, and
+        # SwapOnVSync is the clock -- the same crisp pacing the plugin tickers
+        # use (src/common/scroll_config.py). The time-based path below has no
+        # fixed relation to the refresh: at 90px/s on a panel refreshing at
+        # 95Hz every frame lands 0.95px on, so text is re-blended at a
+        # different phase each refresh, and any frame that misses a vsync is
+        # followed by a double step. Measured on a 512x64 chain: 73fps against
+        # a 95Hz panel, p99 21-28ms -- a visible hitch every few frames.
+        self._crisp = None
+        self._frame_hold = 1
+        if self.config.smooth_scroll and not self.config.sub_pixel_blend:
+            self._crisp = solve_crisp(self.config.scroll_speed, self._refresh_hz())
+            self._frame_hold = self._crisp.frame_hold
+            self.scroll_helper.set_frame_based_scrolling(False)
+            self.scroll_helper.set_scroll_speed(self._crisp.pixels_per_second)
+            self.scroll_helper.set_pixels_per_frame(self._crisp.pixels_per_frame)
+            logger.info(
+                "Vegas scroll: %s (asked for %d px/s on a %.0fHz panel)",
+                self._crisp.describe(), self.config.scroll_speed, self._refresh_hz()
+            )
+            self._apply_dynamic_duration_settings()
+            return
+
+        self.scroll_helper.set_pixels_per_frame(None)
+        self.scroll_helper.set_frame_based_scrolling(self.config.frame_based_scrolling)
 
         # Config scroll_speed is always pixels per second, but ScrollHelper
         # takes it in different units depending on frame_based_scrolling:
@@ -139,12 +178,96 @@ class RenderPipeline:
             self.scroll_helper.set_scroll_speed(pixels_per_frame)
         else:
             self.scroll_helper.set_scroll_speed(self.config.scroll_speed)
+        self._apply_dynamic_duration_settings()
+
+    def _apply_dynamic_duration_settings(self) -> None:
         self.scroll_helper.set_dynamic_duration_settings(
             enabled=self.config.dynamic_duration_enabled,
             min_duration=self.config.min_cycle_duration,
             max_duration=self.config.max_cycle_duration,
             buffer=0.1  # 10% buffer
         )
+
+    def _cap_hz(self) -> float:
+        """The panel's refresh cap, as the display manager reports it."""
+        try:
+            hz = float(getattr(self.display_manager, 'refresh_hz', 0) or 0)
+        except (TypeError, ValueError):
+            hz = 0.0
+        return hz if hz > 0 else 100.0
+
+    def _refresh_hz(self) -> float:
+        """The refresh to solve the crisp speed against: measured, else the cap."""
+        return self._measured_hz or self._cap_hz()
+
+    def _measure_refresh(self) -> None:
+        """Time our swaps to learn the rate the panel really refreshes at.
+
+        limit_refresh_rate_hz is a cap, not a rate. A long single chain cannot
+        reach a high one: 4x128x64 at pwm_bits 8 refreshes at ~95Hz under a
+        120Hz cap. Solving against the cap then picks a speed built for a
+        refresh the panel never delivers -- 90px/s at "120Hz" is 3px every 4
+        refreshes, visibly jumpy, where the real 95Hz allows 1px every refresh.
+
+        SwapOnVSync blocks for frame_hold refreshes, so the median gap between
+        swaps is frame_hold refresh periods. The median ignores the odd frame
+        that missed its vsync or waited on a recompose. Measured once: the
+        refresh only changes with the hardware config, which restarts us.
+        """
+        if self._crisp is None or self._measured_hz is not None:
+            return
+        if getattr(self.display_manager, 'matrix', None) is None:
+            return  # No hardware: nothing blocks, so there is nothing to time.
+        if self.stats['frames_rendered'] < self.REFRESH_WARMUP_FRAMES:
+            return
+        self._swap_times.append(time.monotonic())
+        if len(self._swap_times) <= self.REFRESH_SAMPLES:
+            return
+
+        times = list(self._swap_times)
+        gaps = sorted(b - a for a, b in zip(times, times[1:]))
+        median = gaps[len(gaps) // 2]
+        self._swap_times.clear()
+        if median <= 0:
+            return
+        measured = self._frame_hold / median
+        cap = self._cap_hz()
+        if measured >= cap * (1.0 - self.REFRESH_TOLERANCE):
+            self._measured_hz = cap
+            return
+        self._measured_hz = round(measured, 1)
+        logger.info(
+            "Vegas: panel refreshes at %.1fHz, below its %.0fHz cap; "
+            "re-solving the scroll speed for the real rate",
+            self._measured_hz, cap
+        )
+        self._configure_scroll_helper()
+
+    @property
+    def target_fps(self) -> float:
+        """Frames per second this scroll presents when it keeps up."""
+        if self._crisp is not None:
+            return self._crisp.frames_per_second
+        return float(self.config.target_fps)
+
+    @property
+    def frame_interval(self) -> float:
+        """Shortest time the render loop should spend on one frame.
+
+        With crisp pacing SwapOnVSync already blocks for frame_hold refreshes,
+        so this is only a floor for when the swap does not block (no hardware,
+        or the emulator). It must not exceed the real refresh period: a loop
+        that sleeps even slightly longer than the panel drifts against it and
+        misses a refresh every few frames -- which is what target_fps 90 on a
+        95Hz panel did. The configured cap is at least the real refresh, so
+        hold / cap never exceeds hold real periods -- the measured rate is
+        deliberately not used here.
+        """
+        if self._crisp is not None:
+            # 0.9: the floor must sit strictly below the real period, or the
+            # surplus accumulates frame over frame until one misses.
+            return 0.9 * self._frame_hold / self._cap_hz()
+        return self._frame_interval
 
     def compose_scroll_content(self) -> bool:
         """
@@ -570,10 +693,11 @@ class RenderPipeline:
                     self.sync_manager.send_scroll_x(self.scroll_helper.scroll_position)
 
             # Update scrolling state
-            self.display_manager.set_scrolling_state(True)
+            self.display_manager.set_scrolling_state(True, self._frame_hold)
 
             # Track statistics
             self.stats['frames_rendered'] += 1
+            self._measure_refresh()
             frame_time = time.time() - frame_start
             self._track_frame_time(frame_time)
 

@@ -523,7 +523,7 @@
 
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div class="form-group" id="setting-display-vegas_target_fps" data-setting-key="display.vegas_scroll.target_fps">
-                        <label for="vegas_target_fps" class="block text-sm font-medium text-gray-700">Target FPS{{ ui.help_tip('Frames per second the Vegas ticker aims to render.\nHigher = smoother scrolling but more CPU. Default: 125 (smoothest). Drop to 60/90 if the Pi runs hot.', 'Target FPS') }}</label>
+                        <label for="vegas_target_fps" class="block text-sm font-medium text-gray-700">Target FPS{{ ui.help_tip('Only used when Smooth motion is off; with it on, the panel refresh sets the frame rate.\nFrames per second the Vegas ticker aims to render. Default: 125.', 'Target FPS') }}</label>
                         <select id="vegas_target_fps" name="vegas_target_fps" class="form-control">
                             <option value="60" {% if main_config.display.get('vegas_scroll', {}).get('target_fps', 125) == 60 %}selected{% endif %}>60 FPS (Lower CPU)</option>
                             <option value="90" {% if main_config.display.get('vegas_scroll', {}).get('target_fps', 125) == 90 %}selected{% endif %}>90 FPS (Balanced)</option>
@@ -564,7 +564,7 @@
                                    name="vegas_smooth_scroll"
                                    {% if main_config.display.get('vegas_scroll', {}).get('smooth_scroll', True) %}checked{% endif %}
                                    class="form-checkbox">
-                            <span class="ml-2 text-sm text-gray-700">Smooth sub-pixel motion{{ ui.help_tip('Blend between neighbouring pixel positions so the ticker moves once per rendered frame instead of once per pixel. Default: on.\nWithout it, motion happens only as often as the scroll speed in pixels per second — at 50 px/s that is 50 steps a second however fast the display renders, which reads as a slight judder. The trade is that text softens very slightly horizontally, since each frame blends two positions. Turn it off if you prefer maximum crispness.', 'Smooth Scrolling') }}</span>
+                            <span class="ml-2 text-sm text-gray-700">Smooth motion{{ ui.help_tip('Move the ticker a whole pixel at a time in step with the panel refresh, so every frame moves the same distance and text stays sharp. Default: on.\nThe scroll speed snaps to the nearest speed the panel can show this way: on a 100Hz panel, 100 px/s is one pixel every refresh and 50 px/s one pixel every second refresh. The real refresh rate is measured once scrolling starts, since a long chain often cannot reach its refresh cap.\nWith this off the ticker moves by elapsed time instead, which drifts against the refresh and judders.', 'Smooth Scrolling') }}</span>
                         </label>
                     </div>
 
