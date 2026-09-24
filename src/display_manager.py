@@ -133,6 +133,81 @@ class _LogicalMatrix:
         setattr(object.__getattribute__(self, "_matrix"), name, value)
 
 
+class _OffscreenMatrix(_LogicalMatrix):
+    """``display_manager.matrix`` as a thread drawing off-screen sees it.
+
+    Reports the surface's size, so plugins that lay out from ``matrix.width``
+    follow it, and swallows every write that would reach the hardware. Nothing
+    drawn off-screen may touch the panel the render loop is driving.
+    """
+
+    __slots__ = ()
+
+    def SetImage(self, *args: Any, **kwargs: Any) -> None:
+        """Inert: off-screen drawing never reaches the panel."""
+
+    def SetPixel(self, *args: Any, **kwargs: Any) -> None:
+        """Inert: off-screen drawing never reaches the panel."""
+
+    def Clear(self) -> None:
+        """Inert: off-screen drawing never reaches the panel."""
+
+    def Fill(self, *args: Any, **kwargs: Any) -> None:
+        """Inert: off-screen drawing never reaches the panel."""
+
+    def SwapOnVSync(self, canvas: Any, *args: Any, **kwargs: Any) -> Any:
+        """Inert: hands the canvas straight back without waiting on the panel."""
+        return canvas
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Inert: brightness and other writes stay off the real matrix."""
+
+
+class _OffscreenSurface:
+    """One thread's private canvas while it renders off-screen.
+
+    See :meth:`DisplayManager.offscreen`.
+    """
+
+    __slots__ = ("draw", "image", "matrix")
+
+    def __init__(self, width: int, height: int, real_matrix: Any) -> None:
+        self.image = Image.new('RGB', (width, height))
+        self.draw = ImageDraw.Draw(self.image)
+        self.draw.fontmode = "1"  # 1-bit text: the panel has no partial brightness, so AA only smears glyphs.
+        self.matrix = (_OffscreenMatrix(real_matrix, width, height)
+                       if real_matrix is not None else None)
+
+
+def _per_thread_canvas_attr(name: str) -> property:
+    """A DisplayManager attribute that resolves per thread.
+
+    A thread inside :meth:`DisplayManager.offscreen` reads and writes its own
+    surface's ``name``; every other thread reads and writes the shared value,
+    exactly as when this was a plain attribute. Existing ``self.image = ...``
+    assignments therefore keep working and become thread-correct as they are.
+    """
+    shared = "_shared_" + name
+
+    def fget(self: "DisplayManager") -> Any:
+        surface = self._current_surface()
+        if surface is not None:
+            return getattr(surface, name)
+        try:
+            return self.__dict__[shared]
+        except KeyError:
+            raise AttributeError(name) from None
+
+    def fset(self: "DisplayManager", value: Any) -> None:
+        surface = self._current_surface()
+        if surface is not None:
+            setattr(surface, name, value)
+        else:
+            self.__dict__[shared] = value
+
+    return property(fget, fset, doc=f"The plugin-facing ``{name}``, per thread.")
+
+
 # Moved to src/display_geometry.py so the web preview, Starlark magnify and
 # sync handshake compute the display size exactly as DisplayManager does
 # without importing rgbmatrix. Aliased here for existing callers.
@@ -166,6 +241,11 @@ class DisplayManager:
             cls._instance = super(DisplayManager, cls).__new__(cls)
         return cls._instance
 
+    # The plugin-facing canvas. Per thread: see offscreen().
+    image = _per_thread_canvas_attr("image")
+    draw = _per_thread_canvas_attr("draw")
+    matrix = _per_thread_canvas_attr("matrix")
+
     def __init__(self, config: Dict[str, Any] = None, force_fallback: bool = False, suppress_test_pattern: bool = False):
         start_time = time.time()
         self.config = config or {}
@@ -179,6 +259,9 @@ class DisplayManager:
         # suppress the render loop's own frame pushes for the duration, freezing
         # the panel exactly when the point was to avoid a freeze.
         self._capture_state = threading.local()
+        # Per-thread off-screen surface. While a thread is inside offscreen(),
+        # image, draw and matrix resolve to its own canvas; see offscreen().
+        self._surface_state = threading.local()
         # Double-sided mode state (resolved in _setup_matrix). When disabled,
         # the logical image is blitted to the matrix unchanged.
         self._double_sided = None  # dict {copies, axis, logical_width, logical_height} or None
@@ -664,11 +747,67 @@ class DisplayManager:
         Entering this context prevents those writes without affecting the PIL
         image buffer, which the adapter reads to extract content.
         """
+        # Restore rather than clear: capture_mode() inside offscreen() must not
+        # switch suppression off for the rest of the off-screen block.
+        was_active = self._capture_mode_active
         self._capture_mode_active = True
         try:
             yield
         finally:
-            self._capture_mode_active = False
+            self._capture_mode_active = was_active
+
+    def _current_surface(self) -> Optional[_OffscreenSurface]:
+        """The calling thread's off-screen surface, or None."""
+        state = self.__dict__.get('_surface_state')
+        return getattr(state, 'surface', None) if state is not None else None
+
+    def _writes_suppressed(self) -> bool:
+        """True when the calling thread must not touch the panel or its pacing."""
+        return self._capture_mode_active or self._current_surface() is not None
+
+    @contextmanager
+    def offscreen(self, width: Optional[int] = None, height: Optional[int] = None):
+        """Give the calling thread its own canvas to draw on.
+
+        Inside the block, for the calling thread only, ``image``, ``draw`` and
+        ``matrix`` (and so ``width``/``height``) are a fresh black canvas of the
+        requested size, and nothing reaches the hardware: ``update_display()``
+        and the hardware half of ``clear()`` are skipped, and
+        ``set_scrolling_state()``/``set_frame_hold()`` cannot re-pace the live
+        scroll. Every other thread, the render loop above all, keeps seeing the
+        real canvas.
+
+        That is what lets Vegas mode render a plugin on its background prefetch
+        thread. The shared canvas used to be the only one, so any plugin that
+        drew on it (display capture, scroll-content generation, narrowed
+        rendering) had to be fetched on the render thread, stalling the scroll
+        for 40-600ms each. See docs/OFFSCREEN_RENDERING.md.
+
+        Blocks nest; each restores the one outside it, also on an exception.
+
+        Args:
+            width: Width of the surface, clamped to the size this thread sees
+                now. Defaults to that size.
+            height: Height, likewise.
+
+        Yields:
+            The surface. ``surface.image`` is what the plugin drew.
+        """
+        state = self.__dict__.get('_surface_state')
+        if state is None:
+            state = self._surface_state = threading.local()
+
+        current_w, current_h = self.width, self.height
+        target_w = max(1, min(int(width), current_w)) if width else current_w
+        target_h = max(1, min(int(height), current_h)) if height else current_h
+
+        surface = _OffscreenSurface(target_w, target_h, self.matrix)
+        previous = getattr(state, 'surface', None)
+        state.surface = surface
+        try:
+            yield surface
+        finally:
+            state.surface = previous
 
     @contextmanager
     def render_size(self, width: int, height: Optional[int] = None):
@@ -688,18 +827,14 @@ class DisplayManager:
         indirection that double-sided mode relies on, so plugins see a
         consistent size from every accessor.
 
-        Only meaningful inside :meth:`capture_mode` — this swaps the shared
-        image buffer, so the render loop must not be writing to it concurrently.
+        Built on :meth:`offscreen`, so the narrower canvas belongs to the
+        calling thread alone; the render loop keeps drawing on the real one.
 
         Args:
             width: Logical width to report, clamped to at least 1 and to the
                 real panel width (a larger canvas would overflow the hardware).
             height: Logical height, defaulting to the current height.
         """
-        real_matrix = self.matrix
-        prev_image = getattr(self, 'image', None)
-        prev_draw = getattr(self, 'draw', None)
-
         current_w = self.width
         current_h = self.height
         target_w = max(1, min(int(width), current_w))
@@ -710,21 +845,8 @@ class DisplayManager:
             yield
             return
 
-        try:
-            if real_matrix is not None:
-                self.matrix = _LogicalMatrix(real_matrix, target_w, target_h)
-            # With no hardware, the width/height properties fall through to
-            # self.image, so swapping the buffer below is enough on its own.
-            self.image = Image.new('RGB', (target_w, target_h))
-            self.draw = ImageDraw.Draw(self.image)
-            self.draw.fontmode = "1"  # 1-bit text: the panel has no partial brightness, so AA only smears glyphs.
+        with self.offscreen(target_w, target_h):
             yield
-        finally:
-            self.matrix = real_matrix
-            if prev_image is not None:
-                self.image = prev_image
-            if prev_draw is not None:
-                self.draw = prev_draw
 
     def _composite_double_sided(self):
         """Tile the logical screen across the full physical chain.
@@ -769,6 +891,12 @@ class DisplayManager:
         need to know about it.
         """
         try:
+            if self._writes_suppressed():
+                # This thread is drawing off-screen. Checked before the lock,
+                # so it never contends with the render loop's swap, and before
+                # the fallback branch, so captured content never reaches the
+                # web preview either.
+                return
             with self._update_lock:
                 if self.matrix is None:
                     # Fallback mode - no actual hardware to update
@@ -776,9 +904,6 @@ class DisplayManager:
                     # Still write a snapshot so the web UI can preview
                     self._write_snapshot_if_due()
                     return
-
-                if self._capture_mode_active:
-                    return  # Skip hardware write — content is being captured off-screen
 
                 digest = None
                 frame_checksum = None
@@ -860,7 +985,7 @@ class DisplayManager:
             self.draw = ImageDraw.Draw(self.image)
             self.draw.fontmode = "1"  # 1-bit text: the panel has no partial brightness, so AA only smears glyphs.
 
-            if not self._capture_mode_active:
+            if not self._writes_suppressed():
                 # Clear both canvases and the underlying matrix to ensure no artifacts.
                 # Failures are non-fatal — the image buffer is already black above, so
                 # the next update_display() call will push clean content regardless.
@@ -1462,6 +1587,8 @@ class DisplayManager:
         Reset to 1 whenever scrolling stops, so one plugin's pacing cannot
         leak into the next thing on screen.
         """
+        if self._writes_suppressed():
+            return  # a plugin drawing off-screen cannot re-pace the live scroll
         try:
             value = int(refreshes)
         except (TypeError, ValueError):
@@ -1490,6 +1617,10 @@ class DisplayManager:
         the lifetime exactly the scroll, and the default of 1 means any caller
         that does not care gets a new frame every refresh.
         """
+        if self._writes_suppressed():
+            # A plugin captured for Vegas calls this from its own display();
+            # it must not change the live scroll's state or frame hold.
+            return
         current_time = time.time()
         self._scrolling_state['is_scrolling'] = is_scrolling
         if is_scrolling:

@@ -74,6 +74,14 @@ class VegasModeConfig:
     # precedence over smooth_scroll's whole-pixel pacing when on.
     sub_pixel_blend: bool = False
 
+    # Render every plugin's ticker content on the background prefetch thread,
+    # each on a canvas of its own (DisplayManager.offscreen), instead of
+    # handing plugins that draw on the display canvas to the render thread one
+    # at a time. Each of those cost the scroll a 40-600ms pause. False restores
+    # that path; it is kept for one release in case a plugin misbehaves when
+    # drawn off the render thread. See docs/OFFSCREEN_RENDERING.md.
+    offscreen_prefetch: bool = True
+
     # Keep one continuous strip, extending it with the next group of plugins as
     # the scroll approaches the end, instead of composing a fresh strip and
     # swapping it in. A swap stops the motion, substitutes every pixel at once
@@ -203,6 +211,7 @@ class VegasModeConfig:
             smooth_scroll=vegas_config.get('smooth_scroll', True),
             sub_pixel_blend=bool(vegas_config.get('sub_pixel_blend', False)),
             continuous_scroll=vegas_config.get('continuous_scroll', True),
+            offscreen_prefetch=bool(vegas_config.get('offscreen_prefetch', True)),
             extend_threshold_screens=float(
                 vegas_config.get('extend_threshold_screens', 2.0)),
             auto_trim=vegas_config.get('auto_trim', True),
@@ -244,6 +253,7 @@ class VegasModeConfig:
             'smooth_scroll': self.smooth_scroll,
             'sub_pixel_blend': self.sub_pixel_blend,
             'continuous_scroll': self.continuous_scroll,
+            'offscreen_prefetch': self.offscreen_prefetch,
             'extend_threshold_screens': self.extend_threshold_screens,
             'auto_trim': self.auto_trim,
             'trim_threshold': self.trim_threshold,

@@ -101,7 +101,8 @@ class VegasModeCoordinator:
         self.plugin_manager = plugin_manager
 
         # Initialize components
-        self.plugin_adapter = PluginAdapter(display_manager, self.vegas_config)
+        self.plugin_adapter = PluginAdapter(
+            display_manager, self.vegas_config, plugin_manager=plugin_manager)
         self.stream_manager = StreamManager(
             self.vegas_config,
             plugin_manager,

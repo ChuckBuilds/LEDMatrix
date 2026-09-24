@@ -763,6 +763,10 @@ class StreamManager:
             Ordered list of (plugin_id, images). ``images`` is None when the
             plugin could not be served under ``offscreen_only``, so the caller
             can fetch just those on the render thread while keeping the order.
+            That only happens with ``offscreen_prefetch`` switched off: every
+            content path now draws on a canvas of its own, so a background
+            fetch that comes back empty had nothing to show, and ``images``
+            is an empty list rather than a request for the render thread.
         """
         if count is None:
             count = self.config.plugins_per_cycle
@@ -780,6 +784,9 @@ class StreamManager:
 
         plugins = getattr(self.plugin_manager, 'plugins', {})
         group: List[Tuple[str, Optional[List[Image.Image]]]] = []
+        # Only the old contract hands anything back to the render thread.
+        defer_empty = offscreen_only and not getattr(
+            self.config, 'offscreen_prefetch', True)
 
         for plugin_id in ids:
             plugin = plugins.get(plugin_id)
@@ -794,7 +801,10 @@ class StreamManager:
                 continue
             if images:
                 self.stats['segments_fetched'] += 1
-            group.append((plugin_id, images if images else None))
+            if images:
+                group.append((plugin_id, images))
+            else:
+                group.append((plugin_id, None if defer_empty else []))
 
         return group
 

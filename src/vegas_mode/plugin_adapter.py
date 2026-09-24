@@ -8,7 +8,7 @@ implement get_vegas_content() and fallback capture of display() output.
 import logging
 import threading
 import time
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from typing import Optional, List, Any, Tuple, Union, TYPE_CHECKING
 from PIL import Image
 
@@ -33,7 +33,13 @@ class PluginAdapter:
     2. Fallback: Capture display_manager.image after calling plugin.display()
     """
 
-    def __init__(self, display_manager: Any, config: Optional[Any] = None):
+    #: How long a background fetch waits for a plugin's update() to finish
+    #: before skipping the plugin this round. Off the render thread waiting
+    #: costs nothing visible; it only delays that one plugin's content.
+    PLUGIN_LOCK_TIMEOUT = 2.0
+
+    def __init__(self, display_manager: Any, config: Optional[Any] = None,
+                 plugin_manager: Optional[Any] = None):
         """
         Initialize the plugin adapter.
 
@@ -42,8 +48,13 @@ class PluginAdapter:
             config: VegasModeConfig controlling trim behaviour. When omitted,
                 trimming runs with the dataclass defaults, so existing callers
                 and tests keep working unchanged.
+            plugin_manager: Source of the per-plugin lock that keeps a
+                background fetch from running a plugin's display() while its
+                update() is mid-flight. Optional: without it, fetches take no
+                lock, as they always did.
         """
         self.display_manager = display_manager
+        self.plugin_manager = plugin_manager
         if config is None:
             from src.vegas_mode.config import VegasModeConfig
             config = VegasModeConfig()
@@ -98,13 +109,14 @@ class PluginAdapter:
         Args:
             plugin: Plugin instance to get content from
             plugin_id: Plugin identifier for logging
-            offscreen_only: Skip every path that touches the shared display
-                canvas, for callers running off the render thread. The canvas
-                and the matrix proxy are process-wide mutable state, so
-                narrowing or capturing through them from another thread would
-                corrupt the frame the render loop is pushing. Returns None when
-                the plugin can only be served that way, leaving the caller to
-                fetch it on the render thread.
+            offscreen_only: The caller is off the render thread. Every content
+                path draws on a canvas of its own (DisplayManager.offscreen),
+                so all of them are safe there; the fetch also takes the
+                plugin's lock, waiting up to PLUGIN_LOCK_TIMEOUT for a running
+                update() to finish. With ``offscreen_prefetch`` switched off,
+                the old behaviour applies instead: paths that need a canvas
+                return None, leaving the caller to fetch the plugin on the
+                render thread.
 
         Returns:
             List of PIL Images representing plugin content, or None if no content
@@ -124,11 +136,78 @@ class PluginAdapter:
             )
             return cached
 
+        # The old contract, kept behind the switch: background callers may
+        # not draw, so anything needing a canvas is left for the render thread.
+        restricted = offscreen_only and not getattr(
+            self.config, 'offscreen_prefetch', True)
+        if not offscreen_only or restricted:
+            return self._fetch_content(plugin, plugin_id, restricted)
+
+        with self._plugin_lock(plugin_id) as acquired:
+            if not acquired:
+                logger.warning(
+                    "[%s] update() still running after %.0fs; skipping it this "
+                    "round", plugin_id, self.PLUGIN_LOCK_TIMEOUT
+                )
+                return None
+            return self._fetch_content(plugin, plugin_id, restricted=False)
+
+    @contextmanager
+    def _plugin_lock(self, plugin_id: str):
+        """Hold the plugin's update/display lock, waiting a bounded time.
+
+        Yields whether it was acquired. Yields True, holding nothing, when
+        there is no plugin manager to ask -- the behaviour before the lock was
+        taken here at all.
+        """
+        get_lock = getattr(self.plugin_manager, 'get_plugin_lock', None)
+        if get_lock is None:
+            yield True
+            return
+        lock = get_lock(plugin_id)
+        acquired = lock.acquire(timeout=self.PLUGIN_LOCK_TIMEOUT)
+        try:
+            yield acquired
+        finally:
+            if acquired:
+                lock.release()
+
+    @contextmanager
+    def _isolated_canvas(self, width: Optional[int] = None):
+        """A canvas for the plugin to draw on that nothing else sees.
+
+        DisplayManager.offscreen() gives the calling thread its own canvas, so
+        this is safe on any thread and leaves the shared canvas untouched.
+        Older display managers and test doubles without it get the previous
+        behaviour: capture on the shared canvas, narrowed with render_size,
+        then restore it -- which is only safe on the render thread.
+        """
+        offscreen = getattr(self.display_manager, 'offscreen', None)
+        if offscreen is not None:
+            with offscreen(width):
+                yield
+            return
+
+        original_image = self.display_manager.image.copy()
+        try:
+            with self._capture(), self._render_at(width or self.display_width):
+                yield
+        finally:
+            self.display_manager.image = original_image
+
+    def _fetch_content(
+        self, plugin: 'BasePlugin', plugin_id: str, restricted: bool
+    ) -> Optional[List[Image.Image]]:
+        """Every content path in order: native, scroll helper, display capture.
+
+        ``restricted`` is the pre-offscreen contract for background callers:
+        skip every path that needs a canvas and return None instead.
+        """
         # Try native Vegas content method first
         has_native = hasattr(plugin, 'get_vegas_content')
         logger.debug("[%s] Has get_vegas_content: %s", plugin_id, has_native)
         if has_native:
-            content = self._get_native_content(plugin, plugin_id, offscreen_only)
+            content = self._get_native_content(plugin, plugin_id, restricted)
             if content:
                 total_width = sum(img.width for img in content)
                 logger.debug(
@@ -141,7 +220,7 @@ class PluginAdapter:
         # Try to get scroll_helper's cached image (for scrolling plugins like stocks/odds)
         has_scroll_helper = hasattr(plugin, 'scroll_helper')
         logger.debug("[%s] Has scroll_helper: %s", plugin_id, has_scroll_helper)
-        content = self._get_scroll_helper_content(plugin, plugin_id, offscreen_only)
+        content = self._get_scroll_helper_content(plugin, plugin_id, restricted)
         if content:
             total_width = sum(img.width for img in content)
             logger.debug(
@@ -152,8 +231,8 @@ class PluginAdapter:
         if has_scroll_helper:
             logger.debug("[%s] ScrollHelper content returned None", plugin_id)
 
-        if offscreen_only:
-            # Display capture needs the shared canvas; leave it to the caller.
+        if restricted:
+            # Display capture needs a canvas; leave it to the caller.
             logger.debug(
                 "[%s] Needs display capture, deferring to the render thread",
                 plugin_id
@@ -685,7 +764,7 @@ class PluginAdapter:
         return img.crop((start, 0, end, img.height))
 
     def _get_native_content(
-        self, plugin: 'BasePlugin', plugin_id: str, offscreen_only: bool = False
+        self, plugin: 'BasePlugin', plugin_id: str, restricted: bool = False
     ) -> Optional[List[Image.Image]]:
         """
         Get content via plugin's native get_vegas_content() method.
@@ -714,22 +793,21 @@ class PluginAdapter:
 
             plugin._vegas_render_width = render_width
             try:
-                # capture_mode unconditionally, even at full width. Building
-                # Vegas content is an off-screen operation, but a plugin is free
-                # to call update_display() while doing it — and outside
-                # capture_mode that write lands on the hardware, flashing the
-                # panel mid-scroll. The narrowing context is separate because it
-                # is a no-op at full width.
-                if offscreen_only:
-                    # _render_at swaps the shared canvas, so it is unsafe here.
-                    # _vegas_render_width is set regardless: a plugin reading
-                    # get_vegas_render_width() still gets its narrow size, and
-                    # one that only reads matrix.width renders full width and is
-                    # trimmed instead.
+                # On a canvas of its own even at full width. Building Vegas
+                # content is an off-screen operation, but a plugin is free to
+                # call update_display() while doing it, and on the shared canvas
+                # that write would land on the hardware, flashing the panel
+                # mid-scroll.
+                if restricted:
+                    # Restricted (offscreen_prefetch off): no canvas of our own,
+                    # so no narrowing. _vegas_render_width is set regardless: a
+                    # plugin reading get_vegas_render_width() still gets its
+                    # narrow size, and one that only reads matrix.width renders
+                    # full width and is trimmed instead.
                     with self._capture():
                         result = plugin.get_vegas_content()
                 else:
-                    with self._capture(), self._render_at(render_width):
+                    with self._isolated_canvas(render_width):
                         result = plugin.get_vegas_content()
             finally:
                 plugin._vegas_render_width = None
@@ -810,7 +888,7 @@ class PluginAdapter:
             return None
 
     def _get_scroll_helper_content(
-        self, plugin: 'BasePlugin', plugin_id: str, offscreen_only: bool = False
+        self, plugin: 'BasePlugin', plugin_id: str, restricted: bool = False
     ) -> Optional[List[Image.Image]]:
         """
         Get content from plugin's scroll_helper if available.
@@ -844,7 +922,7 @@ class PluginAdapter:
                     "[%s] scroll_helper.cached_image is None, triggering content generation",
                     plugin_id
                 )
-                if offscreen_only:
+                if restricted:
                     # Generating it calls display(), which needs the canvas.
                     logger.debug(
                         "[%s] scroll_helper cache empty; deferring generation "
@@ -994,12 +1072,8 @@ class PluginAdapter:
         Returns:
             The generated cached_image or None
         """
-        original_image = None
         try:
-            # Save display state to restore after
-            original_image = self.display_manager.image.copy()
-
-            with self._capture():
+            with self._isolated_canvas():
                 # Method 1: Try _create_scrolling_display (stocks pattern)
                 if hasattr(plugin, '_create_scrolling_display'):
                     logger.debug(
@@ -1055,11 +1129,6 @@ class PluginAdapter:
             logger.exception("[%s] Error triggering scroll content", plugin_id)
             return None
 
-        finally:
-            # Restore original display state
-            if original_image is not None:
-                self.display_manager.image = original_image
-
     def _capture_display_content(
         self, plugin: 'BasePlugin', plugin_id: str
     ) -> Optional[List[Image.Image]]:
@@ -1073,12 +1142,7 @@ class PluginAdapter:
         Returns:
             List with single captured image, or None
         """
-        original_image = None
         try:
-            # Save current display state
-            original_image = self.display_manager.image.copy()
-            logger.debug("[%s] Fallback: saved original display state", plugin_id)
-
             # Ensure plugin has fresh data before capturing
             has_update_data = hasattr(plugin, 'update_data')
             logger.debug("[%s] Fallback: has update_data=%s", plugin_id, has_update_data)
@@ -1089,12 +1153,12 @@ class PluginAdapter:
                 except (AttributeError, RuntimeError, OSError):
                     logger.exception("[%s] Fallback: update_data() failed", plugin_id)
 
-            # Clear and call plugin display — use capture_mode to suppress hardware writes
-            # that plugins may trigger internally via update_display().
+            # Clear and call plugin display on a canvas of its own: nothing it
+            # draws, and no update_display() it calls, reaches the panel.
             #
-            # render_size narrows the canvas the plugin lays out against, so a
-            # plugin that spreads across the whole panel produces a compact
-            # arrangement rather than one that has to be cropped afterwards.
+            # The canvas is render_width wide, so a plugin that spreads across
+            # the whole panel produces a compact arrangement rather than one
+            # that has to be cropped afterwards.
             render_width = self.resolve_render_width(plugin, plugin_id)
             if render_width != self.display_width:
                 logger.debug(
@@ -1102,7 +1166,7 @@ class PluginAdapter:
                     plugin_id, render_width, self.display_width
                 )
 
-            with self._capture(), self._render_at(render_width):
+            with self._isolated_canvas(render_width):
                 self.display_manager.clear()
                 logger.debug("[%s] Fallback: display cleared, calling display()", plugin_id)
 
@@ -1136,7 +1200,7 @@ class PluginAdapter:
                     plugin_id
                 )
                 # Try once more with force_clear=True
-                with self._capture(), self._render_at(render_width):
+                with self._isolated_canvas(render_width):
                     self.display_manager.clear()
                     plugin.display(force_clear=True)
                     captured = self.display_manager.image.copy()
@@ -1172,12 +1236,6 @@ class PluginAdapter:
                 plugin_id, e
             )
             return None
-
-        finally:
-            # Always restore original image to prevent display corruption
-            if original_image is not None:
-                self.display_manager.image = original_image
-                logger.debug("[%s] Fallback: restored original display state", plugin_id)
 
     def _is_blank_image(
         self, img: Image.Image, return_ratio: bool = False

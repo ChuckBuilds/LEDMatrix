@@ -520,9 +520,12 @@ class RenderPipeline:
             grouped = [(pid, imgs) for pid, imgs in grouped if imgs]
 
             if not grouped:
-                # Everything in this group is queued; the queue will extend the
-                # strip as it drains, so this is not a failure.
-                logger.info("Whole group deferred; strip will extend as it drains")
+                if deferred:
+                    # Everything in this group is queued; the queue will extend
+                    # the strip as it drains, so this is not a failure.
+                    logger.info("Whole group deferred; strip will extend as it drains")
+                else:
+                    logger.info("Nothing to show in this group; fetching the next")
                 self.start_prefetch()
                 return bool(deferred)
 
