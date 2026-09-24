@@ -1,7 +1,7 @@
 """Plugin install, update, enable/disable, config and store routes.
 
-Routes decorate the shared `api_v3` Blueprint from ._common, so their
-endpoint names are unchanged by living here.
+Routes decorate the shared `api_v3` Blueprint from the package `__init__`,
+so their endpoint names are unchanged by living here.
 """
 from web_interface.blueprints.api_v3 import (
     ErrorCode, OperationType, PROJECT_ROOT, Path, Response,
@@ -9,13 +9,14 @@ from web_interface.blueprints.api_v3 import (
     _do_transactional_uninstall, _enhance_schema_with_core_properties,
     _filter_config_by_schema, _get_plugin_version, _get_schema_property,
     _hidden_array_item_property, _installed_plugin_ids, _is_plugin_update_available,
+    _plugin_directory,
     _parse_form_value_with_schema, _prune_credential_backups,
     _run_calendar_registration, _schema_allows_null, _schema_type_is,
     _set_missing_booleans_to_false,
     _set_nested_value, _starlark_virtual_plugins, _toggle_starlark_app,
     api_v3, datetime, deep_merge, describe_exception, error_response,
     exception_error_response,
-    find_secret_fields, hashlib, json, jsonify, logger, logging,
+    find_secret_fields, hashlib, json, jsonify, logger,
     merge_secrets, os, redact_text, remove_empty_secrets, request,
     separate_secrets, shutil, stat, subprocess, success_response,
     tempfile, uuid, validate_request_json,
@@ -23,6 +24,8 @@ from web_interface.blueprints.api_v3 import (
 from src.common.path_safety import (
     resolve_under, safe_path_component, safe_relative_parts,
 )
+from src.web_interface.config_arrays import coerce_array_shapes
+from src.web_interface.validators import dedup_unique_arrays
 import web_interface.blueprints.api_v3 as _pkg
 # Read through the module rather than bound by value: tests patch these
 # as module attributes, and a value binding would not see the patch.
@@ -35,9 +38,6 @@ def get_installed_plugins():
     """Get installed plugins"""
     if not api_v3.plugin_manager or not api_v3.plugin_store_manager:
         return jsonify({'status': 'error', 'message': 'Plugin managers not initialized'}), 500
-
-    import json
-    from pathlib import Path
 
     # Re-discover plugins to ensure we have the latest list
     # This handles cases where plugins are added/removed after app startup
@@ -180,8 +180,7 @@ def get_plugin_health():
     if not api_v3.plugin_manager:
         return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
 
-    # Check if health tracker is available
-    if not hasattr(api_v3.plugin_manager, 'health_tracker') or not api_v3.plugin_manager.health_tracker:
+    if not api_v3.plugin_manager.health_tracker:
         return jsonify({
             'status': 'success',
             'data': {},
@@ -216,15 +215,15 @@ def get_plugin_health_single(plugin_id):
     if not api_v3.plugin_manager:
         return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
 
-    # Check if health tracker is available
-    if not hasattr(api_v3.plugin_manager, 'health_tracker') or not api_v3.plugin_manager.health_tracker:
+    if not api_v3.plugin_manager.health_tracker:
         return jsonify({
             'status': 'error',
             'message': 'Health tracking not available'
         }), 503
 
-    # Get health summary for specific plugin
-    health_summary = api_v3.plugin_manager.health_tracker.get_health_summary(plugin_id)
+    # force_reload for the same reason as the list route above.
+    health_summary = api_v3.plugin_manager.health_tracker.get_health_summary(
+        plugin_id, force_reload=True)
 
     return jsonify({
         'status': 'success',
@@ -236,8 +235,7 @@ def reset_plugin_health(plugin_id):
     if not api_v3.plugin_manager:
         return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
 
-    # Check if health tracker is available
-    if not hasattr(api_v3.plugin_manager, 'health_tracker') or not api_v3.plugin_manager.health_tracker:
+    if not api_v3.plugin_manager.health_tracker:
         return jsonify({
             'status': 'error',
             'message': 'Health tracking not available'
@@ -256,8 +254,7 @@ def get_plugin_metrics():
     if not api_v3.plugin_manager:
         return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
 
-    # Check if resource monitor is available
-    if not hasattr(api_v3.plugin_manager, 'resource_monitor') or not api_v3.plugin_manager.resource_monitor:
+    if not api_v3.plugin_manager.resource_monitor:
         return jsonify({
             'status': 'success',
             'data': {},
@@ -291,15 +288,15 @@ def get_plugin_metrics_single(plugin_id):
     if not api_v3.plugin_manager:
         return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
 
-    # Check if resource monitor is available
-    if not hasattr(api_v3.plugin_manager, 'resource_monitor') or not api_v3.plugin_manager.resource_monitor:
+    if not api_v3.plugin_manager.resource_monitor:
         return jsonify({
             'status': 'error',
             'message': 'Resource monitoring not available'
         }), 503
 
-    # Get metrics summary for specific plugin
-    metrics_summary = api_v3.plugin_manager.resource_monitor.get_metrics_summary(plugin_id)
+    # force_reload for the same reason as the list route above.
+    metrics_summary = api_v3.plugin_manager.resource_monitor.get_metrics_summary(
+        plugin_id, force_reload=True)
 
     return jsonify({
         'status': 'success',
@@ -311,8 +308,7 @@ def reset_plugin_metrics(plugin_id):
     if not api_v3.plugin_manager:
         return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
 
-    # Check if resource monitor is available
-    if not hasattr(api_v3.plugin_manager, 'resource_monitor') or not api_v3.plugin_manager.resource_monitor:
+    if not api_v3.plugin_manager.resource_monitor:
         return jsonify({
             'status': 'error',
             'message': 'Resource monitoring not available'
@@ -331,8 +327,7 @@ def manage_plugin_limits(plugin_id):
     if not api_v3.plugin_manager:
         return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
 
-    # Check if resource monitor is available
-    if not hasattr(api_v3.plugin_manager, 'resource_monitor') or not api_v3.plugin_manager.resource_monitor:
+    if not api_v3.plugin_manager.resource_monitor:
         return jsonify({
             'status': 'error',
             'message': 'Resource monitoring not available'
@@ -433,17 +428,13 @@ def toggle_plugin():
             config[plugin_id] = {}
         config[plugin_id]['enabled'] = enabled
 
-        # Use atomic save if available
-        if hasattr(api_v3.config_manager, 'save_config_atomic'):
-            result = api_v3.config_manager.save_config_atomic(config, create_backup=True)
-            if result.status.value != 'success':
-                return error_response(
-                    ErrorCode.CONFIG_SAVE_FAILED,
-                    f"Failed to save configuration: {result.message}",
-                    status_code=500
-                )
-        else:
-            api_v3.config_manager.save_config(config)
+        success, error_msg = _pkg._save_config_atomic(api_v3.config_manager, config, create_backup=True)
+        if not success:
+            return error_response(
+                ErrorCode.CONFIG_SAVE_FAILED,
+                f"Failed to save configuration: {error_msg}",
+                status_code=500
+            )
 
         # Update state manager if available
         if api_v3.plugin_state_manager:
@@ -470,8 +461,7 @@ def toggle_plugin():
                         plugin.on_disable()
             except Exception as lifecycle_error:
                 # Log the error but don't fail the toggle - config is already saved
-                import logging
-                logging.warning(f"Lifecycle method error for {plugin_id}: {lifecycle_error}", exc_info=True)
+                logger.warning("Lifecycle method error for %s: %s", plugin_id, lifecycle_error, exc_info=True)
 
         return success_response(
             message=f"Plugin {plugin_id} {'enabled' if enabled else 'disabled'} successfully"
@@ -748,25 +738,16 @@ def get_plugin_config():
                     plugin_config, schema_mgr.load_schema(plugin_id, use_cache=True), defaults)
             except Exception as e:
                 # Log but don't fail - defaults merge is best effort
-                import logging
-                logging.warning(f"Could not merge defaults for {plugin_id}: {e}")
+                logger.warning("Could not merge defaults for %s: %s", plugin_id, e)
 
         # Special handling for of-the-day plugin: populate uploaded_files and categories from disk
         if plugin_id == 'of-the-day' or plugin_id == 'ledmatrix-of-the-day':
-            # Get plugin directory - plugin_id in manifest is 'of-the-day', but directory is 'ledmatrix-of-the-day'
-            plugin_dir_name = 'ledmatrix-of-the-day'
-            if api_v3.plugin_manager:
-                plugin_dir = api_v3.plugin_manager.get_plugin_directory(plugin_dir_name)
-                # If not found, try with the plugin_id
-                if not plugin_dir or not Path(plugin_dir).exists():
-                    plugin_dir = api_v3.plugin_manager.get_plugin_directory(plugin_id)
-            else:
-                plugin_dir = PROJECT_ROOT / 'plugins' / plugin_dir_name
-                if not plugin_dir.exists():
-                    plugin_dir = PROJECT_ROOT / 'plugins' / plugin_id
-
-            if plugin_dir and Path(plugin_dir).exists():
-                data_dir = Path(plugin_dir) / 'of_the_day'
+            # The manifest id is 'of-the-day'; the directory is usually
+            # 'ledmatrix-of-the-day'.
+            plugin_dir = (_plugin_directory('ledmatrix-of-the-day')
+                          or _plugin_directory(plugin_id))
+            if plugin_dir:
+                data_dir = plugin_dir / 'of_the_day'
                 if data_dir.exists():
                     # Scan for JSON files
                     uploaded_files = []
@@ -934,7 +915,6 @@ def update_plugin():
 
         if manifest_path.exists():
             try:
-                import json
                 with open(manifest_path, 'r', encoding='utf-8') as f:
                     manifest = json.load(f)
                     current_last_updated = manifest.get('last_updated')
@@ -983,7 +963,6 @@ def update_plugin():
             updated_version = current_version
             try:
                 if manifest_path.exists():
-                    import json
                     with open(manifest_path, 'r', encoding='utf-8') as f:
                         manifest = json.load(f)
                         updated_last_updated = manifest.get('last_updated', current_last_updated)
@@ -1224,10 +1203,7 @@ def install_plugin():
         return jsonify({'status': 'error',
                         'message': f"{plugin_id} is a {registry_entry.get('type')!r} entry, not a plugin"}), 400
 
-    # Install the plugin
-    # Log the plugins directory being used for debugging
     plugins_dir = api_v3.plugin_store_manager.plugins_dir
-    branch_info = f" (branch: {branch})" if branch else ""
     logger.info("Installing plugin to directory: %s", plugins_dir)
 
     # Use operation queue if available
@@ -1590,24 +1566,21 @@ def get_github_auth_status():
         })
 @api_v3.route('/plugins/store/refresh', methods=['POST'])
 def refresh_plugin_store():
-    """Refresh plugin store repository"""
+    """Re-download the plugin registry, bypassing its cache.
+
+    Takes no body. Answers ``{status, message, plugin_count}``, the count
+    being the registry's entries. Commit metadata is not refreshed here: the
+    store list fetches it per plugin when it is shown.
+    """
     if not api_v3.plugin_store_manager:
         return jsonify({'status': 'error', 'message': 'Plugin store manager not initialized'}), 500
 
-    data = request.get_json(silent=True) or {}
-    fetch_commit_info = data.get('fetch_commit_info', data.get('fetch_latest_versions', False))
-
-    # Force refresh the registry
     registry = api_v3.plugin_store_manager.fetch_registry(force_refresh=True)
     plugin_count = len(registry.get('plugins', []))
 
-    message = 'Plugin store refreshed'
-    if fetch_commit_info:
-        message += ' (with refreshed commit metadata from GitHub)'
-
     return jsonify({
         'status': 'success',
-        'message': message,
+        'message': 'Plugin store refreshed',
         'plugin_count': plugin_count
     })
 @api_v3.route('/plugins/config', methods=['POST'])
@@ -1699,7 +1672,6 @@ def save_plugin_config():
             
             # Process bracket notation fields and set directly in plugin_config
             # Use JSON encoding instead of comma-join to handle values containing commas
-            import json
             for base_path, values in bracket_array_fields.items():
                 # Get schema property to verify it's an array
                 base_prop = _get_schema_property(schema, base_path)
@@ -1797,254 +1769,11 @@ def save_plugin_config():
                         if parsed_value is not _SKIP_FIELD:
                             _set_nested_value(plugin_config, key, parsed_value)
             
-            # Post-process: Fix array fields that might have been incorrectly structured
-            # This handles cases where array fields are stored as dicts (e.g., from indexed form fields)
-            def fix_array_structures(config_dict, schema_props, prefix=''):
-                """Recursively fix array structures (convert dicts with numeric keys to arrays, fix length issues)"""
-                for prop_key, prop_schema in schema_props.items():
-                    prop_type = prop_schema.get('type')
-
-                    if prop_type == 'array':
-                        # Navigate to the field location
-                        if prefix:
-                            parent_parts = prefix.split('.')
-                            parent = config_dict
-                            for part in parent_parts:
-                                if isinstance(parent, dict) and part in parent:
-                                    parent = parent[part]
-                                else:
-                                    parent = None
-                                    break
-
-                            if parent is not None and isinstance(parent, dict) and prop_key in parent:
-                                current_value = parent[prop_key]
-                                # If it's a dict with numeric string keys, convert to array
-                                if isinstance(current_value, dict) and not isinstance(current_value, list):
-                                    try:
-                                        # Check if all keys are numeric strings (array indices)
-                                        keys = [k for k in current_value.keys()]
-                                        if all(k.isdigit() for k in keys):
-                                            # Convert to sorted array by index
-                                            sorted_keys = sorted(keys, key=int)
-                                            array_value = [current_value[k] for k in sorted_keys]
-                                            # Convert array elements to correct types based on schema
-                                            items_schema = prop_schema.get('items', {})
-                                            item_type = items_schema.get('type')
-                                            if item_type in ('number', 'integer'):
-                                                converted_array = []
-                                                for v in array_value:
-                                                    if isinstance(v, str):
-                                                        try:
-                                                            if item_type == 'integer':
-                                                                converted_array.append(int(v))
-                                                            else:
-                                                                converted_array.append(float(v))
-                                                        except (ValueError, TypeError, OverflowError):
-                                                            converted_array.append(v)
-                                                    else:
-                                                        converted_array.append(v)
-                                                array_value = converted_array
-                                            parent[prop_key] = array_value
-                                            current_value = array_value  # Update for length check below
-                                    except (ValueError, KeyError, TypeError):
-                                        # Conversion failed, check if we should use default
-                                        pass
-
-                                # If it's an array, ensure correct types and check minItems
-                                if isinstance(current_value, list):
-                                    # First, ensure array elements are correct types
-                                    items_schema = prop_schema.get('items', {})
-                                    item_type = items_schema.get('type')
-                                    if item_type in ('number', 'integer'):
-                                        converted_array = []
-                                        for v in current_value:
-                                            if isinstance(v, str):
-                                                try:
-                                                    if item_type == 'integer':
-                                                        converted_array.append(int(v))
-                                                    else:
-                                                        converted_array.append(float(v))
-                                                except (ValueError, TypeError, OverflowError):
-                                                    converted_array.append(v)
-                                            else:
-                                                converted_array.append(v)
-                                        parent[prop_key] = converted_array
-                                        current_value = converted_array
-
-                                    # Then check minItems
-                                    min_items = prop_schema.get('minItems')
-                                    if min_items is not None and len(current_value) < min_items:
-                                        # Use default if available, otherwise keep as-is (validation will catch it)
-                                        default = prop_schema.get('default')
-                                        if default and isinstance(default, list) and len(default) >= min_items:
-                                            parent[prop_key] = default
-                        else:
-                            # Top-level field
-                            if prop_key in config_dict:
-                                current_value = config_dict[prop_key]
-                                # If it's a dict with numeric string keys, convert to array
-                                if isinstance(current_value, dict) and not isinstance(current_value, list):
-                                    try:
-                                        keys = list(current_value.keys())
-                                        if keys and all(str(k).isdigit() for k in keys):
-                                            sorted_keys = sorted(keys, key=lambda x: int(str(x)))
-                                            array_value = [current_value[k] for k in sorted_keys]
-                                            # Convert array elements to correct types based on schema
-                                            items_schema = prop_schema.get('items', {})
-                                            item_type = items_schema.get('type')
-                                            if item_type in ('number', 'integer'):
-                                                converted_array = []
-                                                for v in array_value:
-                                                    if isinstance(v, str):
-                                                        try:
-                                                            if item_type == 'integer':
-                                                                converted_array.append(int(v))
-                                                            else:
-                                                                converted_array.append(float(v))
-                                                        except (ValueError, TypeError, OverflowError):
-                                                            converted_array.append(v)
-                                                    else:
-                                                        converted_array.append(v)
-                                                array_value = converted_array
-                                            config_dict[prop_key] = array_value
-                                            current_value = array_value  # Update for length check below
-                                    except (ValueError, KeyError, TypeError) as e:
-                                        logger.debug(f"Failed to convert {prop_key} to array: {e}")
-
-                                # If it's an array, ensure correct types and check minItems
-                                if isinstance(current_value, list):
-                                    # First, ensure array elements are correct types
-                                    items_schema = prop_schema.get('items', {})
-                                    item_type = items_schema.get('type')
-                                    if item_type in ('number', 'integer'):
-                                        converted_array = []
-                                        for v in current_value:
-                                            if isinstance(v, str):
-                                                try:
-                                                    if item_type == 'integer':
-                                                        converted_array.append(int(v))
-                                                    else:
-                                                        converted_array.append(float(v))
-                                                except (ValueError, TypeError, OverflowError):
-                                                    converted_array.append(v)
-                                            else:
-                                                converted_array.append(v)
-                                        config_dict[prop_key] = converted_array
-                                        current_value = converted_array
-
-                                    # Then check minItems
-                                    min_items = prop_schema.get('minItems')
-                                    if min_items is not None and len(current_value) < min_items:
-                                        default = prop_schema.get('default')
-                                        if default and isinstance(default, list) and len(default) >= min_items:
-                                            config_dict[prop_key] = default
-
-                    # Recurse into nested objects
-                    elif prop_type == 'object' and 'properties' in prop_schema:
-                        nested_prefix = f"{prefix}.{prop_key}" if prefix else prop_key
-                        if prefix:
-                            parent_parts = prefix.split('.')
-                            parent = config_dict
-                            for part in parent_parts:
-                                if isinstance(parent, dict) and part in parent:
-                                    parent = parent[part]
-                                else:
-                                    parent = None
-                                    break
-                            nested_dict = parent.get(prop_key) if parent is not None and isinstance(parent, dict) else None
-                        else:
-                            nested_dict = config_dict.get(prop_key)
-
-                        if isinstance(nested_dict, dict):
-                            # Pass no prefix: config_dict is already the navigated sub-dict,
-                            # so path segments from the parent would mis-navigate it.
-                            fix_array_structures(nested_dict, prop_schema['properties'])
-
-            # Also ensure array fields that are None get converted to empty arrays
-            def ensure_array_defaults(config_dict, schema_props, prefix=''):
-                """Recursively ensure array fields have defaults if None"""
-                for prop_key, prop_schema in schema_props.items():
-                    prop_type = prop_schema.get('type')
-
-                    if prop_type == 'array':
-                        if prefix:
-                            parent_parts = prefix.split('.')
-                            parent = config_dict
-                            for part in parent_parts:
-                                if isinstance(parent, dict) and part in parent:
-                                    parent = parent[part]
-                                else:
-                                    parent = None
-                                    break
-
-                            if parent is not None and isinstance(parent, dict):
-                                if prop_key not in parent or parent[prop_key] is None:
-                                    default = prop_schema.get('default', [])
-                                    parent[prop_key] = default if default else []
-                        else:
-                            if prop_key not in config_dict or config_dict[prop_key] is None:
-                                default = prop_schema.get('default', [])
-                                config_dict[prop_key] = default if default else []
-
-                    elif prop_type == 'object' and 'properties' in prop_schema:
-                        nested_prefix = f"{prefix}.{prop_key}" if prefix else prop_key
-                        if prefix:
-                            parent_parts = prefix.split('.')
-                            parent = config_dict
-                            for part in parent_parts:
-                                if isinstance(parent, dict) and part in parent:
-                                    parent = parent[part]
-                                else:
-                                    parent = None
-                                    break
-                            nested_dict = parent.get(prop_key) if parent is not None and isinstance(parent, dict) else None
-                        else:
-                            nested_dict = config_dict.get(prop_key)
-
-                        if nested_dict is None:
-                            if prefix:
-                                parent_parts = prefix.split('.')
-                                parent = config_dict
-                                for part in parent_parts:
-                                    if part not in parent:
-                                        parent[part] = {}
-                                    parent = parent[part]
-                                if prop_key not in parent:
-                                    parent[prop_key] = {}
-                                nested_dict = parent[prop_key]
-                            else:
-                                if prop_key not in config_dict:
-                                    config_dict[prop_key] = {}
-                                nested_dict = config_dict[prop_key]
-
-                        if isinstance(nested_dict, dict):
-                            # Pass no prefix: config_dict is already navigated.
-                            ensure_array_defaults(nested_dict, prop_schema['properties'])
-
+            # Before the booleans below: that walk replaces anything it
+            # expects to be a list and finds is not one.
             if schema and 'properties' in schema:
-                # First, fix any dict structures that should be arrays
-                # This must be called BEFORE validation to convert dicts with numeric keys to arrays
-                fix_array_structures(plugin_config, schema['properties'])
-                # Then, ensure None arrays get defaults
-                ensure_array_defaults(plugin_config, schema['properties'])
-                
-                # Debug: Log the structure after fixing
-                if 'feeds' in plugin_config and 'custom_feeds' in plugin_config.get('feeds', {}):
-                    custom_feeds = plugin_config['feeds']['custom_feeds']
-                    logger.debug(f"After fix_array_structures: custom_feeds type={type(custom_feeds)}, value={custom_feeds}")
-                
-                # Force fix for feeds.custom_feeds if it's still a dict (fallback)
-                if 'feeds' in plugin_config:
-                    feeds_config = plugin_config.get('feeds') or {}
-                    if feeds_config and 'custom_feeds' in feeds_config and isinstance(feeds_config['custom_feeds'], dict):
-                        custom_feeds_dict = feeds_config['custom_feeds']
-                        # Check if all keys are numeric
-                        keys = list(custom_feeds_dict.keys())
-                        if keys and all(str(k).isdigit() for k in keys):
-                            # Convert to array
-                            sorted_keys = sorted(keys, key=lambda x: int(str(x)))
-                            feeds_config['custom_feeds'] = [custom_feeds_dict[k] for k in sorted_keys]
-                            logger.info(f"Force-converted feeds.custom_feeds from dict to array: {len(feeds_config['custom_feeds'])} items")
+                coerce_array_shapes(plugin_config, schema['properties'],
+                                    short_lists_take_default=True)
 
             # Fix unchecked boolean checkboxes: HTML checkboxes don't submit values
             # when unchecked, so the existing config value (potentially True) persists.
@@ -2104,8 +1833,6 @@ def save_plugin_config():
             try:
                 api_v3.config_manager.save_raw_file_content('secrets', current_secrets)
             except PermissionError as e:
-                # Log the error with more details
-                import os
                 secrets_path = api_v3.config_manager.secrets_path
                 secrets_dir = os.path.dirname(secrets_path) if secrets_path else None
                 
@@ -2126,12 +1853,9 @@ def save_plugin_config():
                     f"Failed to save secrets configuration: Permission denied. Check file permissions on {secrets_path}",
                     status_code=500
                 )
-            except Exception as e:
-                # Log the error but don't fail the entire config save
-                import os
+            except Exception:
                 secrets_path = api_v3.config_manager.secrets_path
                 logger.error("Error saving secrets config for %s (path=%s)", plugin_id, secrets_path, exc_info=True)
-                # Return error response with more context
                 return error_response(
                     ErrorCode.CONFIG_SAVE_FAILED,
                     "Failed to save secrets configuration; see logs for details",
@@ -2177,8 +1901,7 @@ def save_plugin_config():
                                 plugin_instance.on_disable()
                     except Exception as lifecycle_error:
                         # Log the error but don't fail the save - config is already saved
-                        import logging
-                        logging.warning(f"Lifecycle method error for {plugin_id}: {lifecycle_error}", exc_info=True)
+                        logger.warning("Lifecycle method error for %s: %s", plugin_id, lifecycle_error, exc_info=True)
         except Exception as hook_err:
             # Do not fail the save if hook fails; just log
             logger.warning("on_config_change failed: %s", hook_err)
@@ -2226,48 +1949,9 @@ def _prepare_plugin_config_for_save(plugin_id, plugin_config, schema, schema_mgr
     Returns ``(regular_config, secrets_config, None)``, or
     ``(None, None, error_response)`` when validation fails.
     """
-    # JSON path: fix numeric-keyed dicts that should be arrays.
-    # JS dotToNested() converts feeds.custom_feeds.0.name → {'0': {name:...}}
-    # instead of [{name:...}]. The form-data path has fix_array_structures for this;
-    # mirror that logic here for JSON submissions.
+    # The form path has already done this, before its checkbox pass.
     if is_json and schema and 'properties' in schema:
-        def _fix_json_arrays(cfg, props):
-            for k, ps in props.items():
-                if not isinstance(cfg, dict) or k not in cfg:
-                    continue
-                pt = ps.get('type')
-                val = cfg[k]
-                if pt == 'array':
-                    items_schema = ps.get('items', {})
-                    item_type = items_schema.get('type')
-                    if isinstance(val, dict):
-                        keys = list(val.keys())
-                        if keys and all(str(x).isdigit() for x in keys):
-                            sorted_keys = sorted(keys, key=lambda x: int(str(x)))
-                            arr = [val[sk] for sk in sorted_keys]
-                            if item_type in ('integer', 'number'):
-                                converted = []
-                                for v in arr:
-                                    if isinstance(v, str):
-                                        try:
-                                            converted.append(int(v) if item_type == 'integer' else float(v))
-                                        except (ValueError, TypeError, OverflowError):
-                                            converted.append(v)
-                                    else:
-                                        converted.append(v)
-                                arr = converted
-                            cfg[k] = arr
-                        elif not keys:
-                            cfg[k] = []
-                    # Recurse into each element when items are objects with properties,
-                    # covering both freshly-converted and already-list values.
-                    if item_type == 'object' and 'properties' in items_schema:
-                        for elem in (cfg[k] if isinstance(cfg[k], list) else []):
-                            if isinstance(elem, dict):
-                                _fix_json_arrays(elem, items_schema['properties'])
-                elif pt == 'object' and 'properties' in ps and isinstance(val, dict):
-                    _fix_json_arrays(val, ps['properties'])
-        _fix_json_arrays(plugin_config, schema['properties'])
+        coerce_array_shapes(plugin_config, schema['properties'])
 
     # PRE-PROCESSING: Preserve 'enabled' state if not in request
     # This prevents overwriting the enabled state when saving config from a form that doesn't include the toggle
@@ -2276,7 +1960,6 @@ def _prepare_plugin_config_for_save(plugin_id, plugin_config, schema, schema_mgr
             current_config = api_v3.config_manager.load_config()
             if plugin_id in current_config and 'enabled' in current_config[plugin_id]:
                 plugin_config['enabled'] = current_config[plugin_id]['enabled']
-                # logger.debug(f"Preserving enabled state for {plugin_id}: {plugin_config['enabled']}")
             elif api_v3.plugin_manager:
                 # Fallback to plugin instance if config doesn't have it
                 plugin_instance = api_v3.plugin_manager.get_plugin(plugin_id)
@@ -2311,9 +1994,8 @@ def _prepare_plugin_config_for_save(plugin_id, plugin_config, schema, schema_mgr
         defaults = schema_mgr.generate_default_config(plugin_id, use_cache=True)
         plugin_config = prepare_plugin_config(plugin_config, schema, defaults)
 
-    # After merging defaults, replace any None array values with their schema defaults.
-    # merge_with_defaults gives user config higher priority, so a None submitted by
-    # the client can survive the merge — this pass cleans those up.
+    # The defaults merge replaces a None only where the schema has a default,
+    # so an array the client sent as None, or left out, can still be one here.
     def _fix_none_arrays(cfg, props):
         for k, pschema in props.items():
             if pschema.get('type') == 'array':
@@ -2371,14 +2053,8 @@ def _prepare_plugin_config_for_save(plugin_id, plugin_config, schema, schema_mgr
                 # Check integer first (more specific than number)
                 if 'integer' in prop_type:
                     if isinstance(value, str):
-                        value_stripped = value.strip()
-                        if value_stripped == '':
-                            # Empty string with null allowed - already handled above, but double-check
-                            if 'null' in prop_type:
-                                normalized[key] = None
-                                continue
                         try:
-                            normalized[key] = int(value_stripped)
+                            normalized[key] = int(value.strip())
                             continue
                         except (ValueError, TypeError, OverflowError):
                             pass
@@ -2389,14 +2065,8 @@ def _prepare_plugin_config_for_save(plugin_id, plugin_config, schema, schema_mgr
                 # Check number (less specific, but handles floats)
                 if 'number' in prop_type:
                     if isinstance(value, str):
-                        value_stripped = value.strip()
-                        if value_stripped == '':
-                            # Empty string with null allowed - already handled above, but double-check
-                            if 'null' in prop_type:
-                                normalized[key] = None
-                                continue
                         try:
-                            normalized[key] = float(value_stripped)
+                            normalized[key] = float(value.strip())
                             continue
                         except (ValueError, TypeError, OverflowError):
                             pass
@@ -2410,21 +2080,7 @@ def _prepare_plugin_config_for_save(plugin_id, plugin_config, schema, schema_mgr
                         normalized[key] = value.strip().lower() in ('true', '1', 'on', 'yes')
                         continue
 
-                # If no conversion worked and null is allowed, try to set to None
-                # This handles cases where the value is an empty string or can't be converted
-                if 'null' in prop_type:
-                    if isinstance(value, str):
-                        value_stripped = value.strip()
-                        if value_stripped == '' or value_stripped.lower() in ('null', 'none', 'undefined'):
-                            normalized[key] = None
-                            continue
-                    # If it's already None, keep it
-                    if value is None:
-                        normalized[key] = None
-                        continue
-
-                # If no conversion worked, keep original value (will fail validation, but that's expected)
-                # Log a warning for debugging
+                # Nothing converted: keep the value for validation to report.
                 logger.warning(f"Could not normalize field {field_path}: value={repr(value)}, type={type(value)}, schema_type={prop_type}")
                 normalized[key] = value
                 continue
@@ -2550,37 +2206,24 @@ def _prepare_plugin_config_for_save(plugin_id, plugin_config, schema, schema_mgr
         enhanced_schema_for_filtering = _enhance_schema_with_core_properties(schema)
         plugin_config = _filter_config_by_schema(plugin_config, enhanced_schema_for_filtering)
 
-    # Debug logging for union type fields (temporary)
-    if 'rotation_settings' in plugin_config and 'random_seed' in plugin_config.get('rotation_settings', {}):
-        seed_value = plugin_config['rotation_settings']['random_seed']
-        logger.debug(f"After normalization, random_seed value: {repr(seed_value)}, type: {type(seed_value)}")
-
-    # Validate configuration against schema before saving
+    # A uniqueItems array can arrive with a repeat -- the form merges onto
+    # the stored list, so a stock symbol already saved and submitted again
+    # appears twice -- and validation would refuse the whole save for it.
     if schema:
-        # Log what we're validating for debugging
-        logger.info(f"Validating config for {plugin_id}")
-        # Only the shape. plugin_config still holds the submitted secret
-        # values at this point -- separate_secrets does not run until
-        # below -- so logging it wrote live credentials to the journal.
-        logger.info(f"Config keys being validated: {list(plugin_config.keys())}")
+        dedup_unique_arrays(plugin_config, schema)
 
-        # Schema keys including the injected core properties, for the error
-        enhanced_schema = _enhance_schema_with_core_properties(schema)
-
+    if schema:
         is_valid, validation_errors = schema_mgr.validate_config_against_schema(
             plugin_config, schema, plugin_id
         )
         if not is_valid:
-            # Log validation errors for debugging
-            logger.error(f"Config validation failed for {plugin_id}")
-            logger.error(f"Validation errors: {validation_errors}")
-            # Keys only, for the same reason as above.
-            logger.error(f"Config keys that failed: {list(plugin_config.keys())}")
-            logger.error(f"Schema properties: {list(enhanced_schema.get('properties', {}).keys())}")
-
-            # Also print to console for immediate visibility
-            logger.warning("Config validation failed for plugin (see debug logs)")
-
+            # Schema keys including the injected core properties, for the error
+            enhanced_schema = _enhance_schema_with_core_properties(schema)
+            # Keys, never values: plugin_config still holds the submitted
+            # secrets here (separate_secrets runs below), and logging it wrote
+            # live credentials to the journal.
+            logger.warning("Config validation failed for %s: %s (config keys: %s)",
+                           plugin_id, validation_errors, list(plugin_config.keys()))
             return None, None, error_response(
                 ErrorCode.CONFIG_VALIDATION_FAILED,
                 'Configuration validation failed',
@@ -2704,8 +2347,13 @@ def reset_plugin_config():
         # Replace all secrets with defaults
         current_secrets[plugin_id] = default_secrets
 
-    # Save updated configs
-    api_v3.config_manager.save_config(current_config)
+    success, error_msg = _pkg._save_config_atomic(api_v3.config_manager, current_config, create_backup=True)
+    if not success:
+        return error_response(
+            ErrorCode.CONFIG_SAVE_FAILED,
+            f"Failed to save configuration: {error_msg}",
+            status_code=500
+        )
     if default_secrets or not preserve_secrets:
         api_v3.config_manager.save_raw_file_content('secrets', current_secrets)
 
@@ -2715,7 +2363,8 @@ def reset_plugin_config():
             plugin_instance = api_v3.plugin_manager.get_plugin(plugin_id)
             if plugin_instance:
                 merged_config = api_v3.config_manager.load_config()
-                plugin_full_config = merged_config.get(plugin_id, {})
+                plugin_full_config = _pkg._prepared_plugin_config(
+                    plugin_id, merged_config.get(plugin_id, {}))
                 if hasattr(plugin_instance, 'on_config_change'):
                     plugin_instance.on_config_change(plugin_full_config)
     except Exception as hook_err:
@@ -2761,13 +2410,8 @@ def execute_plugin_action():
         if plugin_id is None:
             return jsonify({'status': 'error', 'message': 'Invalid plugin_id'}), 400
 
-        # Get plugin directory
-        if api_v3.plugin_manager:
-            plugin_dir = api_v3.plugin_manager.get_plugin_directory(plugin_id)
-        else:
-            plugin_dir = PROJECT_ROOT / 'plugins' / plugin_id
-
-        if not plugin_dir or not Path(plugin_dir).exists():
+        plugin_dir = _plugin_directory(plugin_id)
+        if not plugin_dir:
             return jsonify({'status': 'error', 'message': 'Plugin not found'}), 404
 
         # Load manifest to get action definition
@@ -2989,6 +2633,10 @@ sys.exit(proc.returncode)
                                     'message': 'Could not generate authorization URL'
                                 }), 400
                         except Exception as e:
+                            # Not a copy of the blueprint handler: without it, a
+                            # TimeoutExpired from the plugin's script would reach
+                            # this route's own `except subprocess.TimeoutExpired`
+                            # and be answered as a 408 "Action timed out".
                             logger.error("Error executing action step 1", exc_info=True)
                             return jsonify({
                                 'status': 'error',
@@ -3121,7 +2769,7 @@ def upload_plugin_asset():
         if total_size + file_size > max_total_size:
             return jsonify({
                 'status': 'error',
-                'message': f'Upload would exceed 50MB total storage limit'
+                'message': 'Upload would exceed 50MB total storage limit'
             }), 400
 
         # Validate file is actually an image (check magic bytes)
@@ -3222,13 +2870,8 @@ def serve_plugin_static(plugin_id, file_path):
     if not safe_parts:
         return jsonify({'status': 'error', 'message': 'Invalid file path'}), 400
 
-    # Get plugin directory
-    if api_v3.plugin_manager:
-        plugin_dir = api_v3.plugin_manager.get_plugin_directory(safe_plugin_id)
-    else:
-        plugin_dir = PROJECT_ROOT / 'plugins' / safe_plugin_id
-
-    if not plugin_dir or not Path(plugin_dir).exists():
+    plugin_dir = _plugin_directory(safe_plugin_id)
+    if not plugin_dir:
         return jsonify({'status': 'error', 'message': 'Plugin not found'}), 404
 
     # Containment is still checked after resolving: name validation cannot
@@ -3300,14 +2943,8 @@ def upload_calendar_credentials():
             'message': 'File does not appear to be a valid Google OAuth credentials file'
         }), 400
 
-    # Get plugin directory
-    plugin_id = 'calendar'
-    if api_v3.plugin_manager:
-        plugin_dir = api_v3.plugin_manager.get_plugin_directory(plugin_id)
-    else:
-        plugin_dir = PROJECT_ROOT / 'plugins' / plugin_id
-
-    if not plugin_dir or not Path(plugin_dir).exists():
+    plugin_dir = _plugin_directory('calendar')
+    if not plugin_dir:
         return jsonify({'status': 'error', 'message': 'Plugin not found'}), 404
 
     # Save file to plugin directory
@@ -3316,7 +2953,6 @@ def upload_calendar_credentials():
     # Backup existing file if it exists
     if credentials_path.exists():
         backup_path = Path(plugin_dir) / f'credentials.json.backup.{int(_pkg.time.time())}'
-        import shutil
         shutil.copy2(credentials_path, backup_path)
         _prune_credential_backups(Path(plugin_dir))
 

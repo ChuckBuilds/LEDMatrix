@@ -1,12 +1,12 @@
 """Routes with no larger group of their own: errors, integrations,
 cache, sync, logs, health and hardware.
 
-Routes decorate the shared `api_v3` Blueprint from ._common, so their
-endpoint names are unchanged by living here.
+Routes decorate the shared `api_v3` Blueprint from the package `__init__`,
+so their endpoint names are unchanged by living here.
 """
 from web_interface.blueprints.api_v3 import (
-    _coerce_to_bool,
-    ErrorCode, Path, _JOURNALCTL, _MQTT_BRIDGE_CONFIG, _MQTT_BRIDGE_DEFAULTS,
+    _coerce_to_bool, _discovered_plugin_manifests,
+    ErrorCode, _JOURNALCTL, _MQTT_BRIDGE_CONFIG, _MQTT_BRIDGE_DEFAULTS,
     _MQTT_BRIDGE_DIR, _SUDO, _coerce_mqtt_bridge_value,
     _get_display_service_status, _mqtt_bridge_service_state,
     _read_mqtt_bridge_config, api_v3, contextlib, describe_exception,
@@ -16,6 +16,7 @@ from web_interface.blueprints.api_v3 import (
 from src.common.path_safety import safe_path_component
 from src.common import sync_manager as _sync
 from src import error_aggregator as _errors
+from web_interface import display_preview
 import web_interface.blueprints.api_v3 as _pkg
 # Read through the module rather than bound by value: tests patch these
 # as module attributes, and a value binding would not see the patch.
@@ -34,11 +35,9 @@ def get_health():
             'checks': {}
         }
 
-        # Check web interface service
-        # Stamp the start _pkg.time before measuring against it -- reading it with a
-        # fallback of _pkg.time.time() and only assigning afterwards made the very
-        # first call subtract two separate clock reads, reporting a small
-        # negative uptime.
+        # Stamp the start time before measuring against it: reading it with a
+        # fallback of time.time() and assigning it afterwards made the first
+        # call subtract two separate clock reads, a small negative uptime.
         if not hasattr(get_health, '_start_time'):
             get_health._start_time = _pkg.time.time()
         health_status['services']['web_interface'] = {
@@ -56,7 +55,7 @@ def get_health():
         # Check config file accessibility
         try:
             if api_v3.config_manager:
-                test_config = api_v3.config_manager.load_config()
+                api_v3.config_manager.load_config()
                 health_status['checks']['config_file'] = {
                     'status': 'accessible',
                     'readable': True
@@ -66,7 +65,8 @@ def get_health():
                     'status': 'unknown',
                     'readable': False
                 }
-        except Exception as e:
+        except Exception:
+            logger.warning("Health check could not read the config file", exc_info=True)
             health_status['checks']['config_file'] = {
                 'status': 'error',
                 'readable': False,
@@ -76,8 +76,7 @@ def get_health():
         # Check plugin system
         try:
             if api_v3.plugin_manager:
-                # Try to discover plugins (lightweight check)
-                plugin_count = len(api_v3.plugin_manager.get_available_plugins()) if hasattr(api_v3.plugin_manager, 'get_available_plugins') else 0
+                plugin_count = len(_discovered_plugin_manifests())
                 health_status['checks']['plugin_system'] = {
                     'status': 'operational',
                     'plugin_count': plugin_count
@@ -86,7 +85,8 @@ def get_health():
                 health_status['checks']['plugin_system'] = {
                     'status': 'not_initialized'
                 }
-        except Exception as e:
+        except Exception:
+            logger.warning("Health check could not count plugins", exc_info=True)
             health_status['checks']['plugin_system'] = {
                 'status': 'error',
                 'error': 'see logs for details'
@@ -94,7 +94,7 @@ def get_health():
 
         # Check hardware connectivity (if display manager available)
         try:
-            snapshot_path = "/tmp/led_matrix_preview.png"
+            snapshot_path = display_preview.SNAPSHOT_PATH
             if os.path.exists(snapshot_path):
                 # Check if snapshot is recent (updated in last 60 seconds)
                 mtime = os.path.getmtime(snapshot_path)
@@ -108,7 +108,8 @@ def get_health():
                     'status': 'no_snapshot',
                     'note': 'Display service may not be running'
                 }
-        except Exception as e:
+        except Exception:
+            logger.warning("Health check could not read the preview snapshot", exc_info=True)
             health_status['checks']['hardware'] = {
                 'status': 'unknown',
                 'error': 'see logs for details'

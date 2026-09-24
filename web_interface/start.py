@@ -11,10 +11,16 @@ import sys
 import logging
 from pathlib import Path
 
+logger = logging.getLogger('web_interface.start')
+
+# No route to host, broken pipe, connection reset: a client went away.
+_CLIENT_DISCONNECT_ERRNOS = (113, 32, 104)
+
+
 def get_local_ips():
     """Get list of local IP addresses the service will be accessible on."""
     ips = []
-    
+
     # Check if AP mode is active
     try:
         result = subprocess.run(
@@ -27,7 +33,7 @@ def get_local_ips():
             ips.append("192.168.4.1 (AP Mode)")
     except Exception:  # nosec B110 - AP mode IP detection is non-critical startup info; systemctl may not exist
         pass
-    
+
     # Get IPs from hostname -I
     try:
         result = subprocess.run(
@@ -43,7 +49,7 @@ def get_local_ips():
                     ips.append(ip)
     except Exception:  # nosec B110 - hostname -I output parsing; non-critical startup info
         pass
-    
+
     # Fallback: try socket method
     if not ips:
         try:
@@ -57,7 +63,7 @@ def get_local_ips():
                 s.close()
         except Exception:
             pass
-    
+
     return ips if ips else ["localhost"]
 
 def main():
@@ -65,15 +71,15 @@ def main():
     # Change to project root directory
     project_root = Path(__file__).parent.parent
     os.chdir(project_root)
-    
+
     # Add to Python path
     sys.path.insert(0, str(project_root))
-    
+
     # Configure logging to suppress non-critical socket errors
     # These occur when clients disconnect and are harmless
     werkzeug_logger = logging.getLogger('werkzeug')
     original_log_exception = werkzeug_logger.error
-    
+
     def log_exception_filtered(message, *args, **kwargs):
         """Filter out non-critical socket errors from werkzeug logs."""
         if isinstance(message, str):
@@ -90,51 +96,38 @@ def main():
         if 'exc_info' in kwargs and kwargs['exc_info']:
             exc_type, exc_value, exc_tb = kwargs['exc_info']
             if isinstance(exc_value, OSError):
-                # Suppress common non-critical socket errors
-                if exc_value.errno in (113, 32, 104):  # No route to host, Broken pipe, Connection reset
+                if exc_value.errno in _CLIENT_DISCONNECT_ERRNOS:
                     werkzeug_logger.debug(message, *args, **kwargs)
                     return
         # Log everything else normally
         original_log_exception(message, *args, **kwargs)
-    
+
     werkzeug_logger.error = log_exception_filtered
-    
-    # Import and run the Flask app
+
+    # Importing the app also sets up logging, so the lines below reach the
+    # journal through it.
     from web_interface.app import app, start_auto_update_scheduler
     start_auto_update_scheduler()
 
-    print("Starting LED Matrix Web Interface V3...")
-    print("Web server binding to: 0.0.0.0:5000")
-    
-    # Get and display accessible IP addresses
-    ips = get_local_ips()
-    if ips:
-        print("Access the interface at:")
-        for ip in ips:
-            if "AP Mode" in ip:
-                print("  - http://192.168.4.1:5000 (AP Mode - connect to LEDMatrix-Setup WiFi)")
-            else:
-                print(f"  - http://{ip}:5000")
-    else:
-        print("  - http://localhost:5000 (local only)")
-        print("  - http://<your-pi-ip>:5000 (replace with your Pi's IP address)")
-    
-    # Run the web server with error handling for client disconnections
+    logger.info("Starting LED Matrix Web Interface V3, binding to 0.0.0.0:5000")
+    # get_local_ips() always returns at least "localhost".
+    logger.info("Access the interface at:")
+    for ip in get_local_ips():
+        if "AP Mode" in ip:
+            logger.info("  - http://192.168.4.1:5000 (AP Mode - connect to LEDMatrix-Setup WiFi)")
+        else:
+            logger.info("  - http://%s:5000", ip)
+
     try:
         # threaded=True is Flask's default since 1.0, but set it explicitly
-        # so it's self-documenting: the two /api/v3/stream/* SSE endpoints
+        # so it's self-documenting: the three /api/v3/stream/* SSE endpoints
         # hold long-lived connections and would starve other requests under
         # a single-threaded server.
         app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
-    except (OSError, BrokenPipeError) as e:
-        # Suppress non-critical socket errors (client disconnections)
-        if isinstance(e, OSError) and e.errno in (113, 32, 104):  # No route to host, Broken pipe, Connection reset
-            werkzeug_logger.debug(f"Client disconnected: {e}", exc_info=True)
-            # Re-raise only if it's not a client disconnection error
-            if e.errno not in (113, 32, 104):
-                raise
-        else:
+    except OSError as e:
+        if e.errno not in _CLIENT_DISCONNECT_ERRNOS:
             raise
+        werkzeug_logger.debug("Client disconnected: %s", e, exc_info=True)
 
 if __name__ == '__main__':
     main()
