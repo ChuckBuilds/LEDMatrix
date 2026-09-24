@@ -301,3 +301,114 @@ def test_watchdog_rate_limits_its_dumps(caplog):
     dumps = [r for r in caplog.records if r.getMessage().startswith("Render stall:")]
     assert len(dumps) == 1
     assert dog.stalls == 2
+
+
+# --- measuring the panel, and runs that never locked -------------------------
+# The refresh measurement and the "not locked" cases came from the first
+# version of scripts/render_bench.py, which graded runs with its own module.
+
+class FakePanel:
+    """A matrix whose swaps block for a fixed period, like real vsync."""
+
+    def __init__(self, period, fail=False):
+        self.period = period
+        self.fail = fail
+        self.swaps = 0
+
+    def CreateFrameCanvas(self):  # noqa: N802 - mirrors rgbmatrix
+        if self.fail:
+            raise RuntimeError("no hardware here")
+        return object()
+
+    def SwapOnVSync(self, canvas, framerate_fraction=1):  # noqa: N802
+        self.swaps += 1
+        time.sleep(self.period)
+        return canvas
+
+
+def test_measure_refresh_times_the_swaps_not_the_loop():
+    # A loop that spun without waiting for each swap would report far more
+    # than the 200Hz a 5ms swap allows; the lower bound is loose because
+    # sleep() on a loaded runner overshoots.
+    measured = frame_timing.measure_refresh_hz(FakePanel(0.005), seconds=0.2)
+    assert 0 < measured <= 210.0
+
+
+def test_measure_refresh_discards_the_first_swap():
+    panel = FakePanel(0.005)
+    frame_timing.measure_refresh_hz(panel, seconds=0.05)
+    assert panel.swaps >= 2
+
+
+def test_measure_refresh_without_hardware_reports_nothing():
+    assert frame_timing.measure_refresh_hz(FakePanel(0.0, fail=True), seconds=0.1) == 0.0
+    assert frame_timing.measure_refresh_hz(object(), seconds=0.1) == 0.0
+
+
+def _seeded(tmp_path, hz=100.0):
+    return FrameTimingRecorder(path=str(tmp_path / "s.json"),
+                               flush_interval=float("inf"), refresh_hz=hz)
+
+
+def test_a_seeded_recorder_catches_a_loop_that_never_waited(tmp_path):
+    # The first bench build free-ran at 827fps once the dirty-tracking skip
+    # fired mid-scroll. Estimated from its own frames that looks fine; against
+    # the measured panel rate every frame is early.
+    r = _seeded(tmp_path)
+    _feed(r, [0.0012] * 500)
+    r.drain()
+    assert r.totals["early_frames"] == 500
+    assert abs(1.0 / r.refresh_period - 100.0) < 0.5
+
+
+def test_a_seeded_recorder_catches_a_loop_stuck_at_half_rate(tmp_path):
+    # Hold 1, but every frame takes two refreshes: self-consistent at 50Hz,
+    # late on every frame against the panel's 100Hz.
+    r = _seeded(tmp_path)
+    _feed(r, [2 * PERIOD] * 500)
+    r.drain()
+    assert r.totals["late_frames"] == 500
+
+
+def test_a_seeded_recorder_still_passes_a_panel_a_little_slower_than_idle(tmp_path):
+    # 100.4Hz idle, 96.3Hz while rendering: not a single frame is late.
+    r = _seeded(tmp_path, hz=100.4)
+    _feed(r, [1 / 96.3] * 500)
+    r.drain()
+    assert r.totals["late_frames"] == r.totals["early_frames"] == 0
+
+
+def test_soak_calls_a_rate_faster_than_the_panel_not_locked(tmp_path):
+    r = _recorder(tmp_path)
+    r.info = {"limit_refresh_rate_hz": 100}
+    before = json.loads(json.dumps(r.snapshot()))
+    _feed(r, [0.0012] * 500)           # unseeded: nothing looks early...
+    r.drain()
+    after = json.loads(json.dumps(r.snapshot()))
+    after["updated"] = before["updated"] + 10.0
+    report = frame_soak.build_report(before, after, preview=False)
+    assert report["early_pct"] == 0.0
+    assert report["measured_refresh_hz"] > 800
+    assert not frame_soak.locked(report, 0.1)   # ...but 833Hz beats a 100Hz cap
+    assert not frame_soak.passed(report, 0.1)
+
+
+def test_soak_reports_the_rate_held_while_rendering(tmp_path):
+    r = _recorder(tmp_path)
+    before = json.loads(json.dumps(r.snapshot()))
+    _feed(r, [1 / 96.3] * 500)
+    r.drain()
+    after = json.loads(json.dumps(r.snapshot()))
+    after["updated"] = before["updated"] + 10.0
+    report = frame_soak.build_report(before, after, preview=False)
+    assert 95.0 <= report["held_refresh_hz"] <= 97.0
+
+
+def test_render_bench_strip_lights_a_real_share_of_pixels():
+    # How long SetImage takes depends on how many subpixels are lit; a mostly
+    # dark strip would flatter the panel.
+    import render_bench
+    strip = render_bench.build_strip(128, 32, "test")
+    assert strip.width >= 128 * 4
+    lit = sum(1 for px in strip.getdata() if px != (0, 0, 0))
+    assert lit / (strip.width * strip.height) > 0.05

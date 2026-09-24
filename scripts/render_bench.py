@@ -4,9 +4,17 @@
 The question this answers is the one that decides whether a rig ships: *does
 every frame present on the refresh it was meant to?* It drives the production
 path -- a real ``DisplayManager`` and ``ScrollHelper``, the same crisp speed
-resolver every ticker uses -- scrolls for a while, and grades the result with
-``src.common.frame_pacing``. A run passes when the loop was genuinely locked to
-the panel and fewer than ``--max-missed`` percent of frames slipped a refresh.
+resolver every ticker uses -- scrolls a synthetic strip for a while, and grades
+it with the same frame-timing recorder the display service uses
+(``src.common.frame_timing``), printing the same report as
+``scripts/frame_soak.py``. A run passes when the loop was genuinely locked to
+the panel and no more than ``--max-late-pct`` percent of frames were late.
+
+Where frame_soak.py measures the service as it runs -- live content, plugin
+updates, the web preview -- this measures the hardware and the render path
+with nothing else in the way, on content that is identical every run. That is
+what makes it the tool for comparing rigs (a Pi 3 against a Pi 4, one HAT
+against another) and for A/B testing a change to the render path.
 
     # stop the service first; it owns the GPIO
     sudo systemctl stop ledmatrix
@@ -40,7 +48,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.common import frame_pacing, scroll_config  # noqa: E402
+from src.common import frame_timing, scroll_config  # noqa: E402
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import frame_soak  # noqa: E402  (same report, same verdict as the soak)
 
 REPO = Path(__file__).resolve().parent.parent
 CONFIG = REPO / "config" / "config.json"
@@ -52,6 +63,10 @@ DEFAULT_SECONDS = 60.0
 #: Seconds spent timing bare swaps before the scroll starts. The measurement
 #: has to settle, but every second here is a second not scrolling.
 MEASURE_SECONDS = 4.0
+
+#: Scrolling discarded before the graded run starts: the first frames carry
+#: first-touch costs and the scrolling state settling.
+WARMUP_SECONDS = 2.0
 
 
 def load_config() -> dict:
@@ -163,6 +178,7 @@ class BackgroundLoad:
             zlib.compress(image.tobytes(), 1)
 
 
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -174,15 +190,13 @@ def main(argv=None) -> int:
                              "panel can show in whole pixels (default: one pixel "
                              "per refresh)")
     parser.add_argument("--hz", type=float, default=None,
-                        help="skip the measurement and grade against this refresh "
-                             "rate instead (for reproducing a rig's numbers)")
+                        help="skip the idle measurement and take this as the "
+                             "panel's rate (for reproducing a rig's numbers)")
     parser.add_argument("--busy", type=int, default=0, metavar="N",
                         help="run N background workers imitating plugin updates")
-    parser.add_argument("--max-missed", type=float,
-                        default=frame_pacing.DEFAULT_MAX_MISSED_PERCENT,
-                        metavar="PCT",
-                        help="percent of frames allowed to slip a refresh "
-                             f"(default {frame_pacing.DEFAULT_MAX_MISSED_PERCENT})")
+    parser.add_argument("--max-late-pct", "--max-missed", dest="max_late_pct",
+                        type=float, default=0.1, metavar="PCT",
+                        help="fail above this percentage of late frames (default 0.1)")
     parser.add_argument("--json", dest="json_path", default=None, metavar="PATH",
                         help="also write the report as JSON, for comparing rigs")
     parser.add_argument("--label", default=None,
@@ -190,8 +204,10 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
 
     # Everything the display service logs would otherwise land in the middle of
-    # the report; the benchmark's own output is the point.
+    # the report; the benchmark's own output is the point. The stall watchdog
+    # is the exception: a stack dump naming what held a frame up belongs here.
     logging.basicConfig(level=logging.ERROR, stream=sys.stderr)
+    logging.getLogger("src.common.frame_timing").setLevel(logging.WARNING)
 
     if hasattr(os, "geteuid") and os.geteuid() != 0:
         print("this needs root for GPIO access - rerun with sudo", file=sys.stderr)
@@ -219,21 +235,21 @@ def main(argv=None) -> int:
     width, height = display.width, display.height
 
     if args.hz is not None:
-        refresh_hz = float(args.hz)
-        print(f"grading against {refresh_hz:.1f}Hz (given, not measured)")
+        idle_hz = float(args.hz)
+        print(f"taking the panel's rate as {idle_hz:.1f}Hz (given, not measured)")
     else:
         print(f"measuring the panel for {MEASURE_SECONDS:.0f}s...", flush=True)
-        refresh_hz = frame_pacing.measure_refresh_hz(display.matrix, MEASURE_SECONDS)
-        if refresh_hz <= 0:
+        idle_hz = frame_timing.measure_refresh_hz(display.matrix, MEASURE_SECONDS)
+        if idle_hz <= 0:
             print("the panel did not answer a swap; cannot measure it",
                   file=sys.stderr)
             return 2
         cap = scroll_config.refresh_hz_from_config(config)
-        note = (f" (cap is {cap:.0f}Hz)" if refresh_hz < cap * 0.98
+        note = (f" (cap is {cap:.0f}Hz)" if idle_hz < cap * 0.98
                 else " (at its configured cap)")
-        print(f"panel refreshes at {refresh_hz:.1f}Hz{note}")
+        print(f"panel refreshes at {idle_hz:.1f}Hz{note}")
 
-    requested = args.speed if args.speed else refresh_hz
+    requested = args.speed if args.speed else idle_hz
 
     # Configured through the shared resolver rather than by setting the helper
     # up by hand, so the benchmark measures the engine every ticker runs on. A
@@ -244,7 +260,7 @@ def main(argv=None) -> int:
         helper,
         plugin_config={"scroll_pixels_per_second": requested},
         global_config=config,
-        refresh_hz=refresh_hz,
+        refresh_hz=idle_hz,
         display_manager=display,
     )
     choice = settings.crisp
@@ -258,20 +274,42 @@ def main(argv=None) -> int:
     helper.set_scrolling_image(
         build_strip(width, height, f"{choice.pixels_per_second:.0f} px/s"))
 
+    # The display service's own recorder, owned outright here: never flushed to
+    # the service's stats file, drained exactly at the start and end of the
+    # graded run, and seeded with the idle rate so a loop that never locked
+    # (free-running, or stuck at a fraction of the refresh) shows as early or
+    # late frames instead of looking self-consistent.
+    recorder = frame_timing.FrameTimingRecorder(
+        flush_interval=float("inf"),
+        info=display._frame_timing_info(),  # pylint: disable=protected-access
+        refresh_hz=idle_hz,
+    )
+    recorder.scrolling_now = display._scrolling_now  # pylint: disable=protected-access
+    display.frame_timing = recorder
+
     print(f"scrolling {width}x{height} for {args.seconds:.0f}s"
           + (f" with {args.busy} background worker(s)" if args.busy else "")
           + " ...", flush=True)
 
-    intervals: list = []
+    frames = 0
     duplicates = 0
     blanks = 0
     restarts = 0
     last_column = None
+    before = None
     started = time.perf_counter()
-    previous = None
+    run_started = None
     try:
         with BackgroundLoad(args.busy):
-            while time.perf_counter() - started < args.seconds:
+            while True:
+                now = time.perf_counter()
+                if run_started is None and now - started >= WARMUP_SECONDS:
+                    recorder.drain()
+                    before = recorder.snapshot()
+                    run_started = now
+                    frames = duplicates = blanks = restarts = 0
+                if run_started is not None and now - run_started >= args.seconds:
+                    break
                 helper.update_scroll_position()
                 if helper.is_scroll_complete():
                     # The helper parks at the end of the strip and stops
@@ -300,71 +338,65 @@ def main(argv=None) -> int:
                 # Every ticker re-announces per frame; so does this.
                 display.set_scrolling_state(True, frame_hold=choice.frame_hold)
                 display.update_display()
-                now = time.perf_counter()
-                if previous is not None:
-                    intervals.append(now - previous)
-                previous = now
+                frames += 1
     except KeyboardInterrupt:
         print("\ninterrupted - reporting what was measured so far")
     finally:
-        elapsed = time.perf_counter() - started
         display.set_scrolling_state(False)
         try:
             display.clear()
         except Exception:
             pass
 
-    # The panel does not refresh at its idle rate while the Pi is also pushing
-    # frames into it; see frame_pacing.refresh_from_intervals. Grading against
-    # the idle number reports misses a locked loop never had, so the rate the
-    # panel actually held during the scroll is read back from the frames.
-    idle_hz = refresh_hz
-    loaded_hz = frame_pacing.refresh_from_intervals(intervals, choice.frame_hold)
-    graded_hz = loaded_hz if 0 < loaded_hz <= idle_hz * 1.02 else idle_hz
+    if before is None:
+        print("interrupted during warm-up; nothing was graded", file=sys.stderr)
+        return 2
+    recorder.drain()
+    report = frame_soak.build_report(before, recorder.snapshot(), preview=False)
+    report["idle_refresh_hz"] = round(idle_hz, 2)
 
-    report = frame_pacing.analyze(intervals, graded_hz, choice.frame_hold,
-                                  seconds=elapsed)
     print()
-    if loaded_hz > 0:
-        drop = 100.0 * (idle_hz - loaded_hz) / idle_hz
-        print(f"panel held {loaded_hz:.1f}Hz while rendering "
-              f"({drop:.1f}% below its {idle_hz:.1f}Hz idle rate)")
-    print(report.describe(args.max_missed))
+    frame_soak.print_report(report, args.max_late_pct)
+    held = report.get("held_refresh_hz")
+    if held:
+        drop = 100.0 * (idle_hz - held) / idle_hz
+        print(f"\npanel held ~{held:.1f}Hz while rendering, {drop:.1f}% below its "
+              f"{idle_hz:.1f}Hz idle rate (a widening gap is a render-cost "
+              "regression even with nothing late)")
     if duplicates:
         # A frame that shows the same columns as the one before it is work the
         # panel did not need. It is not a miss -- the frame arrived on time --
         # but it means the loop is presenting faster than the strip is moving.
-        print(f"  duplicate   {duplicates} frames advanced no pixels "
-              f"({100.0 * duplicates / max(1, len(intervals)):.2f}%)")
+        print(f"duplicate   {duplicates} frames advanced no pixels "
+              f"({100.0 * duplicates / max(1, frames):.2f}%)")
     if blanks:
-        print(f"  blank       {blanks} frames had no visible slice to draw")
+        print(f"blank       {blanks} frames had no visible slice to draw")
     if restarts:
-        print(f"  restarts    {restarts} (the strip was scrolled through "
+        print(f"restarts    {restarts} (the strip was scrolled through "
               f"{restarts} time{'s' if restarts != 1 else ''})")
 
     if args.json_path:
-        payload = report.as_dict()
-        payload.update({
+        report.update({
             "label": args.label or os.uname().nodename,
-            "width": width,
-            "height": height,
+            "bench": True,
             "requested_pixels_per_second": requested,
             "pixels_per_second": choice.pixels_per_second,
             "pixels_per_frame": choice.pixels_per_frame,
+            "frame_hold": choice.frame_hold,
             "busy_workers": args.busy,
             "duplicate_frames": duplicates,
             "blank_frames": blanks,
             "strip_restarts": restarts,
-            "idle_refresh_hz": idle_hz,
-            "loaded_refresh_hz": loaded_hz,
-            "max_missed_percent": args.max_missed,
-            "passed": report.passed(args.max_missed),
+            "max_late_pct": args.max_late_pct,
+            "passed": frame_soak.passed(report, args.max_late_pct),
         })
-        Path(args.json_path).write_text(json.dumps(payload, indent=2) + "\n",
+        Path(args.json_path).write_text(json.dumps(report, indent=2) + "\n",
                                         encoding="utf-8")
         print(f"\nwrote {args.json_path}")
 
-    return 0 if report.passed(args.max_missed) else 1
+    if report["late_pct"] is None:
+        return 2
+    return 0 if frame_soak.passed(report, args.max_late_pct) else 1
 
 
 if __name__ == "__main__":

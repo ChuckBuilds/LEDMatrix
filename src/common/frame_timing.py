@@ -45,6 +45,14 @@ cutting it by more than ``MAX_REFRESH_DROP`` is ignored. A panel's refresh does
 not jump like that; swaps that stopped blocking do, and adopting their period
 would make every early frame look on time.
 
+A caller that has measured the panel independently -- ``scripts/render_bench.py``
+times bare swaps first with :func:`measure_refresh_hz` -- passes that rate in
+as ``refresh_hz``. The estimate then starts from it instead of from the frames,
+which is what catches a loop that never locked at all: one that free-runs
+faster than the panel (every frame early) or sits at half its rate (every
+frame late), both of which look self-consistent to an estimate taken from
+their own intervals.
+
 Stall watchdog
 --------------
 Counting a freeze says that it happened, not why. ``StallWatchdog`` watches the
@@ -155,6 +163,45 @@ def _pi_model() -> Optional[str]:
         return None
 
 
+def measure_refresh_hz(matrix: Any, seconds: float = 4.0) -> float:
+    """The panel's refresh rate with nothing else running, by timing bare swaps.
+
+    ``SwapOnVSync`` blocks until the panel's next refresh, so a loop that does
+    nothing else runs at exactly the panel's rate. ``limit_refresh_rate_hz`` is
+    a *cap*, and a long chain, a high ``pwm_bits`` or an older Pi will sit well
+    under it. Solving scroll speeds against a cap the panel cannot reach is
+    what produces "3px every 4 refreshes" and the judder that comes with it.
+
+    This is the idle rate. The panel refreshes a few percent slower while the
+    Pi is also pushing frames into it (100.4Hz idle against 96.3Hz scrolling on
+    a Pi 4 driving 512x64), which is why the recorder reads the rendering rate
+    back from the frames rather than trusting this.
+
+    Pass the matrix the display is already running on rather than opening a
+    second one: the GPIO has a single owner, and the options in force change
+    the answer.
+
+    :returns: measured Hz, or 0.0 if the matrix cannot be swapped (no
+        hardware, a stub, a mock).
+    """
+    try:
+        canvas = matrix.CreateFrameCanvas()
+        # Discard the first swap: it carries construction and first-touch costs
+        # that have nothing to do with the steady-state refresh.
+        canvas = matrix.SwapOnVSync(canvas)
+    except Exception:  # pylint: disable=broad-except
+        return 0.0
+
+    frames = 0
+    started = time.perf_counter()
+    while time.perf_counter() - started < seconds:
+        canvas = matrix.SwapOnVSync(canvas)
+        frames += 1
+    elapsed = time.perf_counter() - started
+    if elapsed <= 0 or frames <= 0:
+        return 0.0
+    return frames / elapsed
+
 class FrameTimingRecorder:
     """Collects per-frame timings on the render thread; aggregates elsewhere.
 
@@ -167,7 +214,13 @@ class FrameTimingRecorder:
         path: Optional[str] = None,
         flush_interval: float = FLUSH_INTERVAL,
         info: Optional[Dict[str, Any]] = None,
+        refresh_hz: Optional[float] = None,
     ):
+        """
+        :param refresh_hz: the panel's rate, measured independently (see the
+            module docstring). Omit it to estimate from the frames alone, as
+            the display service does.
+        """
         self.path = path or default_stats_path()
         self.flush_interval = flush_interval
         self.info = dict(info or {})
@@ -182,7 +235,8 @@ class FrameTimingRecorder:
 
         # Worker-thread state. Nothing on the render thread reads these.
         self.started = time.time()
-        self.refresh_period: Optional[float] = None
+        self.refresh_period: Optional[float] = (
+            1.0 / refresh_hz if refresh_hz and refresh_hz > 0 else None)
         self.totals: Dict[str, Any] = {
             "static_frames": 0,
             "scroll_frames": 0,
@@ -250,6 +304,18 @@ class FrameTimingRecorder:
             self._worker = threading.Thread(
                 target=self._run, daemon=True, name="frame-timing")
             self._worker.start()
+
+    def drain(self) -> None:
+        """Aggregate everything recorded so far, on the calling thread.
+
+        For a caller that owns the recorder outright and wants exact numbers at
+        a moment of its choosing -- the benchmark, between warm-up and run and
+        at the end. Construct it with ``flush_interval=float('inf')`` so the
+        worker never runs; the two must not aggregate at once.
+        """
+        batch, self._pending = self._pending, []
+        static, self._static_frames = self._static_frames, 0
+        self.aggregate(batch, static)
 
     # -- worker thread ------------------------------------------------------
 

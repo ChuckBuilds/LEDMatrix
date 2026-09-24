@@ -132,7 +132,7 @@ def build_report(before, after, preview: bool) -> Dict[str, Any]:
     frames = totals["scroll_frames"]
     hours = delta["seconds"] / 3600.0 if delta["seconds"] > 0 else 0.0
     bucket_ms = after.get("bucket_ms", 0.25)
-    return {
+    report = {
         "seconds": round(delta["seconds"], 1),
         "preview": preview,
         "info": after.get("info"),
@@ -156,6 +156,14 @@ def build_report(before, after, preview: bool) -> Dict[str, Any]:
         "timing_ms": {name: percentiles(h, bucket_ms)
                       for name, h in delta["histograms"].items()},
     }
+    # The rate the panel held while rendering: the typical frame's interval
+    # per refresh held. A few percent under the idle rate is normal (the Pi is
+    # bit-banging the panel and pushing frames at once); a widening gap between
+    # the two is a render-cost regression even when nothing is late.
+    typical = (report["timing_ms"].get("interval_per_hold") or {}).get("p50")
+    report["held_refresh_hz"] = (round(1000.0 / typical, 1)
+                                 if isinstance(typical, (int, float)) and typical else None)
+    return report
 
 
 def print_report(report: Dict[str, Any], limit: float) -> None:
@@ -202,18 +210,56 @@ def print_report(report: Dict[str, Any], limit: float) -> None:
     if report["late_pct"] is None:
         print("RESULT  nothing scrolled - no verdict")
     elif not locked(report, limit):
-        print(f"RESULT  FAIL  NOT LOCKED: {report['early_pct']}% of frames came a "
-              "refresh early, so the swaps were not waiting for the panel and "
-              "the late count means nothing")
+        ceiling = refresh_ceiling(report)
+        if (report.get("early_pct") or 0.0) > limit:
+            why = (f"{report['early_pct']}% of frames came a refresh early, so the "
+                   "swaps were not waiting for the panel")
+        else:
+            why = (f"frames arrived at {report['measured_refresh_hz']}Hz, faster than "
+                   f"the panel can refresh ({ceiling:g}Hz)")
+        print(f"RESULT  FAIL  NOT LOCKED: {why}, and the late count means nothing")
     elif report["late_pct"] <= limit:
         print(f"RESULT  PASS  {report['late_pct']}% late <= {limit}%")
     else:
         print(f"RESULT  FAIL  {report['late_pct']}% late > {limit}%")
 
 
+#: How far over the panel's rate frames may arrive before the loop cannot have
+#: been waiting for it. The margin covers the refresh wandering a little.
+CEILING_MARGIN = 1.05
+
+
+def refresh_ceiling(report: Dict[str, Any]) -> Optional[float]:
+    """The fastest the panel can refresh, as far as this run knows.
+
+    The benchmark measures it (``idle_refresh_hz``); the service only knows its
+    cap. With neither, there is no ceiling to check against.
+    """
+    idle = report.get("idle_refresh_hz")
+    if idle:
+        return float(idle)
+    cap = (report.get("info") or {}).get("limit_refresh_rate_hz")
+    try:
+        cap = float(cap)
+    except (TypeError, ValueError):
+        return None
+    return cap if cap > 0 else None
+
+
 def locked(report: Dict[str, Any], limit: float) -> bool:
-    """Whether the loop was paced by the panel at all."""
-    return (report.get("early_pct") or 0.0) <= limit
+    """Whether the loop was paced by the panel at all.
+
+    Two ways it is not. Frames a whole refresh early mean some swaps did not
+    wait. And a loop that never waited at all -- the dirty-tracking skip firing
+    mid-scroll let one free-run at 827fps -- looks self-consistent to a refresh
+    estimate taken from its own frames, so nothing registers as early; what
+    gives it away is a "refresh" faster than the panel can physically do.
+    """
+    if (report.get("early_pct") or 0.0) > limit:
+        return False
+    ceiling = refresh_ceiling(report)
+    measured = report.get("measured_refresh_hz")
+    return not (ceiling and measured and measured > ceiling * CEILING_MARGIN)
 
 
 def passed(report: Dict[str, Any], limit: float) -> bool:

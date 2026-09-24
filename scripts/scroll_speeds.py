@@ -42,7 +42,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.common import frame_pacing, scroll_config  # noqa: E402
+from src.common import frame_timing, scroll_config  # noqa: E402
 
 CONFIG = Path(__file__).resolve().parent.parent / "config" / "config.json"
 
@@ -101,11 +101,11 @@ def measure_refresh(config, seconds=6.0):
 
     What an older Pi or a longer chain will really give you, as opposed to
     whatever limit_refresh_rate_hz optimistically asks for. The timing loop
-    itself lives in src.common.frame_pacing so the benchmark grades a soak
-    against the same measurement this ladder is built from.
+    itself lives in src.common.frame_timing so the benchmark grades against
+    the same measurement this ladder is built from.
     """
     matrix = open_matrix(config, refresh_override=0)
-    measured = frame_pacing.measure_refresh_hz(matrix, seconds)
+    measured = frame_timing.measure_refresh_hz(matrix, seconds)
     matrix.Clear()
     return measured
 

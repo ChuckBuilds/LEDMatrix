@@ -374,14 +374,16 @@ GIL-releasing binding. Vegas mode with live content, 8-minute soaks with
 - These soaks were taken before the recorder counted 1–2 s stalls as freezes,
   so a stall of that length would be missing from these rows.
 
-## Measuring a rig
+### Without the service: `render_bench.py`
 
-The journal lines above tell you how one scroller behaved while everything else
-was also happening. `scripts/render_bench.py` answers the narrower question a
-release has to answer per rig: *with nothing else in the way, can this hardware
-present every frame on time?* It drives the production path -- a real
-`DisplayManager`, a real `ScrollHelper`, the same `scroll_config` resolver every
-ticker uses -- so a regression in any of them shows up here.
+The soak measures the service as it really runs: live content, plugin
+updates, the web preview. `scripts/render_bench.py` answers the narrower
+question underneath: *with nothing else in the way, can this hardware present
+every frame on time?* It scrolls a synthetic strip through the production path
+-- a real `DisplayManager`, a real `ScrollHelper`, the same `scroll_config`
+resolver every ticker uses -- on content that is identical every run, which
+makes it the tool for comparing rigs (a Pi 3 against a Pi 4, one HAT against
+another) and for A/B testing a change to the render path.
 
 ```bash
 sudo systemctl stop ledmatrix          # the service owns the GPIO
@@ -395,53 +397,37 @@ sudo python3 scripts/render_bench.py --json /tmp/pi4-512x64.json
 sudo systemctl start ledmatrix
 ```
 
-It never starts or stops the service itself, for the same reason
-`scroll_speeds.py` does not: a crash in a script must not be able to leave the
-panel dark. Exit status is 0 for a pass, 1 for a fail, and **2 when the run
-could not be set up at all** -- no root, no panel, a fallback display -- so a
-rig that was never measured can never be mistaken for one that passed.
+It never starts or stops the service itself, so a crash in it cannot leave
+the panel dark. It grades with the same recorder as the soak and prints the
+same report, with the same exit status, except that **2** also means the run
+could not be set up at all (no root, no panel, a fallback display), so a rig
+that was never measured cannot pass by accident.
 
-### Reading the report
+Two differences from the soak matter:
 
-A two-minute run on a Pi 4 driving 512x64 at `pwm_bits` 8:
+- **It measures the panel first.** Before scrolling it times bare swaps for a
+  few seconds to get the idle refresh rate, and seeds the recorder with it.
+  That is what catches a loop that never locked to the panel at all. The first
+  version of the bench announced its scrolling state once instead of every
+  frame; the state expired, the dirty-tracking skip fired mid-scroll, and the
+  loop free-ran at 827 fps. Graded against its own frames that looks perfectly
+  steady; graded against the panel's measured rate every frame is early, and
+  the run fails as NOT LOCKED. (The soak has no idle measurement, so it checks
+  the rate against `limit_refresh_rate_hz` instead: a "refresh" faster than
+  the cap cannot have been waiting for the panel.)
+- **The stall watchdog prints to the terminal.** A frame held up for more than
+  250 ms prints the stack of what held it up, in the middle of the run.
 
-```
-measuring the panel for 4s...
-panel refreshes at 100.4Hz (cap is 120Hz)
-asked for 100.4 px/s ->  100.4 px/s  (1px every 1 refresh  = 100.4 fps, smooth)
-scrolling 512x64 for 120s ...
-
-panel held 96.3Hz while rendering (4.1% below its 100.4Hz idle rate)
- 95.44 fps presented over 11449 frames in 120.0s (expected 96.30 fps = 1 refresh of 96.3Hz)
-  frame time  median  10.46ms  p95  10.55ms  p99  11.10ms  max  22.16ms  min   7.36ms (target 10.38ms)
-  missed      8 (0.070%)  gate 0.100%
-  refreshes   1x:11441 2x:8
-  PASS
-  restarts    5 (the strip was scrolled through 5 times)
-```
-
-The same rig with `--busy 2` -- two threads parsing JSON, resizing images and
-compressing bytes throughout, to imitate plugins updating -- held the same
-95.4 fps and missed 3 frames in 11,445 (0.026%). Competing for the GIL did not
-cost this loop its pacing.
-
-A **missed** frame is one whose interval rounds up to at least one more refresh
-than its frame hold asked for: the panel showed the previous frame again. The
-half-refresh rounding boundary is deliberate -- a frame 1 ms late on a 10 ms
-refresh still presented on the refresh it was meant to, and counting it would
-fail every rig for nothing.
-
-**NOT LOCKED** is the verdict that matters more than the miss count. A loop
-that never blocked on vsync -- an emulator, a fallback display, or the
-dirty-tracking skip firing mid-scroll -- can report a beautiful zero misses
-while presenting nothing at all. The check is that the typical frame is not
-*shorter* than the panel could physically present, which a bucket count alone
-cannot see: 8 ms frames on a 100 Hz panel all land in the one-refresh bucket
-while running 25% too fast. A run that is not locked always fails.
+Measured with the first version of the bench on hdpi (Pi 4, 512x64,
+`pwm_bits` 8), two-minute runs at one pixel per refresh: 8 of 11,449 frames
+late (0.070%), and with `--busy 2` 3 of 11,445 (0.026%). The render path and
+the hardware pass on their own. Compare the soak results above, from the same
+rig with the service running, for how much of the late rate comes from
+everything else.
 
 ### The panel is slower while you are rendering into it
 
-The benchmark measures the refresh **twice**, and the two numbers differ:
+The bench prints two refresh rates, and they differ:
 
 | | Pi 4, 512x64, `pwm_bits` 8 |
 |---|---|
@@ -450,19 +436,12 @@ The benchmark measures the refresh **twice**, and the two numbers differ:
 
 Both are real. Driving an LED matrix is bit-banging on the same machine, so
 `SetImage` over a 512x64 chain contends with the refresh itself and slows it.
-Grading a soak against the idle number reports 96.3 fps against an expected
-100.4 and looks broken; once the gap passes half a refresh period, every single
-frame is counted as a miss. The give-away that nothing is actually being missed
-is that the intervals cluster tightly around 10.46 ms instead of splitting
-between 9.96 ms and 19.92 ms, which is what missing every twenty-fifth vsync
-would look like.
-
-So `frame_pacing.refresh_from_intervals()` reads the period back out of the
-frames -- swaps that block on vsync can only return on a refresh boundary, so
-the low end of `interval / frame_hold` *is* the period -- and the run is graded
-against that. The idle figure is still printed, because the gap between the two
-is itself the measure of how expensive a frame is: **a rise in that gap is a
-render-cost regression even when the miss count stays at zero.**
+The recorder therefore reads the rendering rate back from the frames: swaps
+that block on vsync can only return on a refresh boundary, so the low end of
+`interval / frame_hold` is the period. The idle figure is still printed,
+because the gap between the two is itself a measure of how expensive a frame
+is: **a rise in that gap is a render-cost regression even when nothing is
+late.**
 
 The practical consequence for config: set `limit_refresh_rate_hz` near the rate
 the panel holds *while rendering*, not the idle rate and certainly not a cap it
@@ -470,17 +449,17 @@ can never reach. A cap well above the real rate makes `scroll_config` solve
 speeds against a refresh that does not exist, which is where "3px every 4
 refreshes" comes from.
 
-### Other counters
+### Bench-only counters
 
 | line | meaning |
 |---|---|
 | `duplicate` | frames that advanced no pixels. A crisp fixed-step scroll should show none; any at all means the loop is presenting faster than the strip is moving. |
-| `blank` | frames with no visible slice to draw -- the helper had no content. Should be zero. |
-| `restarts` | how many times the strip was scrolled through end to end. Informational: the benchmark restarts the strip where a plugin would hand over to the next one. |
+| `blank` | frames with no visible slice to draw: the helper had no content. Should be zero. |
+| `restarts` | how many times the strip was scrolled through end to end. Informational: the bench restarts the strip where a plugin would hand over to the next one. |
 
-`--json` writes all of it, plus the panel geometry and the speed that was
-solved, so two rigs (or one rig before and after a change) can be compared
-without re-reading a terminal.
+`--json` writes the full report plus the panel geometry, the solved speed and
+these counters, so two rigs (or one rig before and after a change) can be
+compared without re-reading a terminal.
 
 ## Rebuilding the binding
 
