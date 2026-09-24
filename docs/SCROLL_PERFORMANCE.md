@@ -231,6 +231,9 @@ advances by elapsed time at `scroll_speed / scroll_delay` px/s.
 
 ## Diagnosing a juddery scroller
 
+To check a whole rig rather than one scroller, soak it -- see *Soaking a rig*
+below.
+
 **An average will lie to you.** A 2 ms duplicate frame and a 21 ms double-wait
 mean exactly 10 ms, so a ticker stalling on half its frames still averages to a
 healthy 100 fps. The stats line reports the tail for that reason — read the
@@ -302,6 +305,170 @@ journalctl -u ledmatrix --since "-5min" --no-pager | grep -iE "px/s|px/frame"
 
 If a plugin logs its scroll config **twice** with different modes, the second
 line is what is running.
+
+## Soaking a rig
+
+The per-scroller lines above tell you *which* scroller misbehaves. The soak
+answers the question a release has to answer for each rig: **over a long run,
+how often did a moving frame reach the panel late?**
+
+Every frame reaches the panel through `DisplayManager.update_display`, so it is
+timed there once, whoever drew it -- Vegas, a ticker plugin, anything. The
+render thread only appends a tuple; a worker thread aggregates and rewrites
+`/dev/shm/ledmatrix_frame_stats.json` every 10 seconds (RAM, so no SD-card
+wear). `src/common/frame_timing.py` has the details.
+
+```bash
+python3 scripts/frame_soak.py                 # 10 minutes, as the display is now
+python3 scripts/frame_soak.py --preview       # with the web preview open
+python3 scripts/frame_soak.py --show          # totals since the service started
+python3 scripts/frame_soak.py --json a.json   # keep the report to compare later
+```
+
+It runs as any user next to the display service and stops nothing. It needs
+something to *scroll* during the run: a live game holding a static scoreboard
+on screen gives no verdict. `--preview` keeps the web preview's viewer marker
+fresh, which puts the preview's PNG encoding at full rate -- run it as the web
+service's user.
+
+| line | what it tells you |
+|---|---|
+| **Late frames** | Frames presented one or more refreshes after they were due: the panel showed the previous frame again, a visible hitch. **The pass/fail number**, 0.1% by default (`--max-late-pct`). Only intervals between two scrolling frames count, and a frame held for `frame_hold` refreshes is due `frame_hold` refreshes after the last. |
+| **Freezes** | Gaps of 250 ms or more inside a scroll: recomposes, plugin handovers, blocking calls on the render thread. Reported but not failed on, because some are handovers between plugins rather than faults. A gap still counts when the display's scroll state went missing across it (it expires after 2 s, and plugins clear it from their own `display()`), as long as the scroll carries on straight after. |
+| **blit** | Copying the frame into the matrix canvas (`SetImage`). It grows with width × height × `pwm_bits`: ~5.5 ms at 512×64 with 8 bits on a Pi 4. It is the biggest fixed cost, and it sets the refresh rates a rig can hold one pixel per refresh at. |
+| **wait** | Time blocked in `SwapOnVSync`, i.e. the slack left in each refresh. A p50 near zero means the rig has no headroom and anything extra lands a frame late. |
+| **work** | Everything else between two frames: drawing, scrolling, and waiting for the GIL. A wide gap between its p50 and p99 is another thread getting in the way. |
+| **Binding** | `STOCK` means the rgbmatrix binding holds the GIL through the vsync wait, which starves every other thread. See *Rebuilding the binding*. |
+
+The refresh rate is estimated from the frames themselves (swaps that block on
+vsync can only land on refresh boundaries). Cross-check it with
+`scroll_speeds.py --measure` if it looks wrong. It can read high on a rig where
+nothing ever presented at the full refresh rate.
+
+A soak is only meaningful against a fixed workload. Compare runs with the same
+content and `--preview` setting, and alternate which build goes first when you
+A/B two of them. A live-API workload drifts over time.
+
+The soak says how often; the service's log says why. A scroll that presents no
+frame for 250 ms logs `Render stall:` with the stack of the render thread and
+the top of every other thread's, and whether the whole interpreter was blocked
+(C code holding the GIL) rather than one thread. To see what is behind the
+shorter hitches, run the service with `LEDMATRIX_STALL_WATCHDOG_MS=30`, which
+dumps at three refreshes late instead: its extra polling costs a little GIL
+time of its own, so do that on a diagnostic run, not a soak you are grading.
+`LEDMATRIX_STALL_WATCHDOG=0` turns it off.
+
+### Results: hdpi, 2026-09-24
+
+Pi 4, 4×128×64 on one chain (512×64), `gpio_slowdown` 3, cap 120 Hz, the
+GIL-releasing binding. Vegas mode with live content, 8-minute soaks with
+`--preview`, run in the order shown so each build went both first and last.
+
+| run | build | pacing | pwm_bits | refresh | late | 1 | 2 | 3–5 | 6+ | freezes |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | main | time-based, blended, 90 px/s | 8 | 94.5 Hz | 6.33% | 2,542 | 74 | 19 | 4 | 0 |
+| 2 | #628 | 1 px / refresh | 8 | 100.2 Hz | 0.66% | 238 | 32 | 30 | 5 | 2 |
+| 3 | #628 | 1 px / refresh | 8 | 100.3 Hz | 0.70% | 252 | 38 | 26 | 6 | 2 |
+| 4 | main | time-based, blended, 90 px/s | 8 | 94.5 Hz | 6.46% | 2,659 | 90 | 10 | 4 | 0 |
+| 5 | #628 | 1 px / 2 refreshes (53 px/s) | **7** | 107.2 Hz | 0.32% | 68 | 7 | 4 | 2 | 1 |
+
+- Blending cost the panel refresh rate as well as frames: 94.5 Hz against
+  ~100 Hz for the same hardware under whole-pixel pacing.
+- The freezes and the 3+ rows in the #628 runs line up with canvas-bound
+  plugins fetched on the render thread (`drain_deferred`): `news` took ~320 ms
+  and `hockey-scoreboard` ~660 ms there. Moving those
+  fetches off the render thread is proposed separately (offscreen rendering).
+- Run 5 changed two things at once: the speed, and `pwm_bits` (changed on the
+  rig between runs). Its lower late rate cannot be credited to either alone.
+- These soaks were taken before the recorder counted 1–2 s stalls as freezes,
+  so a stall of that length would be missing from these rows.
+
+### Without the service: `render_bench.py`
+
+The soak measures the service as it really runs: live content, plugin
+updates, the web preview. `scripts/render_bench.py` answers the narrower
+question underneath: *with nothing else in the way, can this hardware present
+every frame on time?* It scrolls a synthetic strip through the production path
+-- a real `DisplayManager`, a real `ScrollHelper`, the same `scroll_config`
+resolver every ticker uses -- on content that is identical every run, which
+makes it the tool for comparing rigs (a Pi 3 against a Pi 4, one HAT against
+another) and for A/B testing a change to the render path.
+
+```bash
+sudo systemctl stop ledmatrix          # the service owns the GPIO
+
+sudo python3 scripts/render_bench.py                 # 60s at one pixel per refresh
+sudo python3 scripts/render_bench.py --seconds 600   # the shipping gate
+sudo python3 scripts/render_bench.py --speed 50      # a held (frame_hold 2) speed
+sudo python3 scripts/render_bench.py --busy 2        # with threads imitating plugin updates
+sudo python3 scripts/render_bench.py --json /tmp/pi4-512x64.json
+
+sudo systemctl start ledmatrix
+```
+
+It never starts or stops the service itself, so a crash in it cannot leave
+the panel dark. It grades with the same recorder as the soak and prints the
+same report, with the same exit status, except that **2** also means the run
+could not be set up at all (no root, no panel, a fallback display), so a rig
+that was never measured cannot pass by accident.
+
+Two differences from the soak matter:
+
+- **It measures the panel first.** Before scrolling it times bare swaps for a
+  few seconds to get the idle refresh rate, and seeds the recorder with it.
+  That is what catches a loop that never locked to the panel at all. The first
+  version of the bench announced its scrolling state once instead of every
+  frame; the state expired, the dirty-tracking skip fired mid-scroll, and the
+  loop free-ran at 827 fps. Graded against its own frames that looks perfectly
+  steady; graded against the panel's measured rate every frame is early, and
+  the run fails as NOT LOCKED. (The soak has no idle measurement, so it checks
+  the rate against `limit_refresh_rate_hz` instead: a "refresh" faster than
+  the cap cannot have been waiting for the panel.)
+- **The stall watchdog prints to the terminal.** A frame held up for more than
+  250 ms prints the stack of what held it up, in the middle of the run.
+
+Measured with the first version of the bench on hdpi (Pi 4, 512x64,
+`pwm_bits` 8), two-minute runs at one pixel per refresh: 8 of 11,449 frames
+late (0.070%), and with `--busy 2` 3 of 11,445 (0.026%). The render path and
+the hardware pass on their own. Compare the soak results above, from the same
+rig with the service running, for how much of the late rate comes from
+everything else.
+
+### The panel is slower while you are rendering into it
+
+The bench prints two refresh rates, and they differ:
+
+| | Pi 4, 512x64, `pwm_bits` 8 |
+|---|---|
+| idle, timing bare swaps | 100.4 Hz |
+| while scrolling | 96.3 Hz |
+
+Both are real. Driving an LED matrix is bit-banging on the same machine, so
+`SetImage` over a 512x64 chain contends with the refresh itself and slows it.
+The recorder therefore reads the rendering rate back from the frames: swaps
+that block on vsync can only return on a refresh boundary, so the low end of
+`interval / frame_hold` is the period. The idle figure is still printed,
+because the gap between the two is itself a measure of how expensive a frame
+is: **a rise in that gap is a render-cost regression even when nothing is
+late.**
+
+The practical consequence for config: set `limit_refresh_rate_hz` near the rate
+the panel holds *while rendering*, not the idle rate and certainly not a cap it
+can never reach. A cap well above the real rate makes `scroll_config` solve
+speeds against a refresh that does not exist, which is where "3px every 4
+refreshes" comes from.
+
+### Bench-only counters
+
+| line | meaning |
+|---|---|
+| `duplicate` | frames that advanced no pixels. A crisp fixed-step scroll should show none; any at all means the loop is presenting faster than the strip is moving. |
+| `blank` | frames with no visible slice to draw: the helper had no content. Should be zero. |
+| `restarts` | how many times the strip was scrolled through end to end. Informational: the bench restarts the strip where a plugin would hand over to the next one. |
+
+`--json` writes the full report plus the panel geometry, the solved speed and
+these counters, so two rigs (or one rig before and after a change) can be
+compared without re-reading a terminal.
 
 ---
 

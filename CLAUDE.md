@@ -34,6 +34,7 @@
 - Browser preview without the display loop: `python3 scripts/dev_server.py` → http://localhost:5001
 - Full display in emulator mode: `python3 run.py -e` (or `EMULATOR=true python3 run.py`)
 - Validate one plugin headlessly: `python3 scripts/check_plugin.py --plugin <id>`
+- Soak a rig for frame timing (on the Pi, service running): `python3 scripts/frame_soak.py --preview` — late-frame rate across every scroller; see `docs/SCROLL_PERFORMANCE.md`
 
 ## Plugin Store Architecture
 - Official plugins live in the `ledmatrix-plugins` monorepo (not individual repos)
