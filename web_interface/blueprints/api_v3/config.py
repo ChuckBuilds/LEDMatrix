@@ -47,15 +47,11 @@ def _day_setting(data, day, flat_key, nested_key):
 @api_v3.route('/config/main', methods=['GET'])
 def get_main_config():
     """Get main configuration, with credentials redacted."""
-    try:
-        if not api_v3.config_manager:
-            return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 500
+    if not api_v3.config_manager:
+        return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 500
 
-        config = api_v3.config_manager.load_config()
-        return jsonify({'status': 'success', 'data': _redact_credentials(config)})
-    except Exception as e:
-        logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
+    config = api_v3.config_manager.load_config()
+    return jsonify({'status': 'success', 'data': _redact_credentials(config)})
 @api_v3.route('/config/schedule', methods=['GET'])
 def get_schedule_config():
     """Get current schedule configuration"""
@@ -1165,20 +1161,16 @@ def save_main_config():
 @api_v3.route('/config/secrets', methods=['GET'])
 def get_secrets_config():
     """Get secrets configuration"""
-    try:
-        if not api_v3.config_manager:
-            return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 500
+    if not api_v3.config_manager:
+        return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 500
 
-        config = api_v3.config_manager.get_raw_file_content('secrets')
-        # This interface has no authentication, and this file is nothing but
-        # credentials. It was handing all of them to anyone who could reach
-        # the port. Values are masked; empty and YOUR_* placeholders are left
-        # alone so a client can still tell "set" from "not set".
-        return jsonify({'status': 'success',
-                        'data': mask_all_secret_values(config)})
-    except Exception as e:
-        logger.error('Unhandled exception', exc_info=True)
-        return jsonify({'status': 'error', 'message': 'An error occurred; see logs for details', 'details': describe_exception(e)}), 500
+    config = api_v3.config_manager.get_raw_file_content('secrets')
+    # This interface has no authentication, and this file is nothing but
+    # credentials. It was handing all of them to anyone who could reach
+    # the port. Values are masked; empty and YOUR_* placeholders are left
+    # alone so a client can still tell "set" from "not set".
+    return jsonify({'status': 'success',
+                    'data': mask_all_secret_values(config)})
 @api_v3.route('/config/raw/main', methods=['POST'])
 def save_raw_main_config():
     """Save raw main configuration JSON"""

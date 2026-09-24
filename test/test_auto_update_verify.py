@@ -320,5 +320,6 @@ def test_units_installers_and_updater_agree():
         assert (f'systemd/{unit}', f'/etc/systemd/system/{unit}') in StartupValidator._UNITS
 
     # Triggering takes no privilege any more; no sudoers rule should linger.
-    for sudoers in ('scripts/install/configure_web_sudo.sh', 'first_time_install.sh'):
+    for sudoers in ('scripts/install/configure_web_sudo.sh', 'first_time_install.sh',
+                    'scripts/install/lib_sudoers.sh'):
         assert not re.search(r'NOPASSWD:.*update-verify', (ROOT / sudoers).read_text(encoding='utf-8')), sudoers

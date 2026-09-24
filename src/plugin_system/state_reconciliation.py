@@ -15,6 +15,7 @@ from enum import Enum
 from pathlib import Path
 
 from src.core_config_keys import CORE_CONFIG_KEYS
+from src.plugin_system.plugin_dirs import PluginDirectoryIndex
 from src.plugin_system.state_manager import PluginStateManager
 from src.logging_config import get_logger
 
@@ -102,31 +103,25 @@ def config_plugin_ids(config: Dict[str, Any], ignored_keys: Set[str]) -> Set[str
 def disk_plugin_ids(plugins_dir) -> Set[str]:
     """Plugin ids actually installed on disk.
 
-    A directory counts only when it is not a standalone backup and its
-    manifest.json parses. A corrupt manifest must not read as installed, or a
-    live "in config but not on disk" finding gets cleared on the strength of an
-    unreadable file.
+    A directory counts only when it is not a standalone backup (or hidden)
+    and its manifest.json parses. A corrupt manifest must not read as
+    installed, or a live "in config but not on disk" finding gets cleared on
+    the strength of an unreadable file.
+
+    The id is the manifest's ``id`` -- what discovery registers and what the
+    config is keyed by -- and the directory name only when the manifest has
+    none. Directory names alone made a plugin living in ``ledmatrix-stocks/``
+    with id ``stocks`` read as both "stocks in config but not on disk" and
+    "ledmatrix-stocks on disk but not in config".
     """
-    ids: Set[str] = set()
-    root = Path(plugins_dir)
     try:
-        if not root.exists():
-            return ids
-        for entry in root.iterdir():
-            if not entry.is_dir() or '.standalone-backup-' in entry.name:
-                continue
-            manifest = entry / "manifest.json"
-            if not manifest.exists():
-                continue
-            try:
-                with open(manifest, 'r') as f:
-                    json.load(f)
-            except (OSError, ValueError):
-                continue
-            ids.add(entry.name)
+        return _disk_index(plugins_dir).installed_ids(require_parseable_manifest=True)
     except OSError:
-        return ids
-    return ids
+        return set()
+
+
+def _disk_index(plugins_dir) -> PluginDirectoryIndex:
+    return PluginDirectoryIndex.scan(Path(plugins_dir))
 
 
 def still_unresolved(entries: List[Dict[str, Any]],
@@ -326,16 +321,15 @@ class StateReconciliation:
         """Get plugin state from disk (installed plugins)."""
         state = {}
         try:
-            # Membership comes from the shared extractor so the web interface
-            # re-checks stored findings against this same definition; the
-            # manifest is then re-read here only for version/name.
-            for plugin_id in disk_plugin_ids(self.plugins_dir):
-                manifest_path = self.plugins_dir / plugin_id / "manifest.json"
-                try:
-                    with open(manifest_path, 'r') as f:
-                        manifest = json.load(f)
-                except (OSError, ValueError):  # nosec B112 - raced or corrupt; skip
-                    continue
+            # Membership uses the same index and rule as disk_plugin_ids, so
+            # the web interface re-checks stored findings against this same
+            # definition; each manifest is read once, by the scan.
+            index = _disk_index(self.plugins_dir)
+            for plugin_id in index.installed_ids(require_parseable_manifest=True):
+                entry = index.entry_for_installed_id(plugin_id)
+                manifest = entry.manifest if entry is not None else None
+                if not isinstance(manifest, dict):
+                    manifest = {}
                 state[plugin_id] = {
                     'exists_on_disk': True,
                     'version': manifest.get('version'),
