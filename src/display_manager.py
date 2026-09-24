@@ -1435,6 +1435,8 @@ class DisplayManager:
         """Clean up resources."""
         if hasattr(self, '_snapshot_cond'):
             self._stop_snapshot_writer()
+        if getattr(self, 'frame_timing', None) is not None:
+            self.frame_timing.close()
         if hasattr(self, 'matrix') and self.matrix is not None:
             try:
                 self.matrix.Clear()
