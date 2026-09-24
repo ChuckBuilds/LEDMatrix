@@ -102,6 +102,9 @@ that is not root-owned or is group/world-writable. The rules cover:
 - `mkdir -p /etc/NetworkManager/dnsmasq-shared.d`
 - `cp` of `/tmp/hostapd.conf` and `/tmp/dnsmasq.conf` to their fixed
   destinations, and `rm -f /etc/dnsmasq.d/ledmatrix-captive.conf`
+- `cp /tmp/ledmatrix-nm-dnsmasq.conf` to
+  `/etc/NetworkManager/dnsmasq-shared.d/ledmatrix-captive.conf`, and
+  `rm -f` of that file
 
 **`iptables` is deliberately not granted.** The captive portal's rules are
 built from the interface name and port, so a rule covering them would need a
@@ -126,8 +129,8 @@ directory.
 |---|---|---|---|
 | `fix_plugin_permissions.sh` | `sudo` | `plugins/` and `plugin-repos/` to `root:<user>`, dirs `2775`, files `664`; makes a `700` home directory `755` so root can traverse it | Safe. Group-writable, so the web user keeps write access |
 | `fix_assets_permissions.sh` | `sudo` | `assets/` to `<user>:<group>`, mode `777` recursively | Works, but looser than the installer's `755`/`644` |
-| `fix_cache_permissions.sh` | `sudo` | Creates `/var/cache/ledmatrix` and `~/.ledmatrix_cache`, sets them to `<user>:<group>` mode `777`; creates `placeholder_logos/` | Replaces the `ledmatrix` group ownership. Prefer `sudo bash scripts/install/setup_cache.sh`, which restores the installer's `ledmatrix` group, `2775` and `660` |
-| `fix_web_permissions.sh` | the web user, **without** `sudo` | Resets project file ownership for the web user (it calls `sudo` itself) | Refuses to run as root. It does not write sudoers rules |
+| `fix_cache_permissions.sh` | `sudo` | Runs [`setup_cache.sh`](../scripts/install/setup_cache.sh) for `/var/cache/ledmatrix` (`root:ledmatrix`, `2775`, files `660`), then makes `~/.ledmatrix_cache` (the fallback cache) `<user>:<group>` mode `777` | Safe. The `~/.ledmatrix_cache` mode is still `777` |
+| `fix_web_permissions.sh` | the web user, **without** `sudo` | Resets project file ownership for the web user (it calls `sudo` itself), then makes `safe_plugin_rm.sh` and `safe_pip_install.sh` `root:root` `755` again and restores `config_secrets.json` to its owner, group `ledmatrix`, mode `640` | Refuses to run as root. It does not write sudoers rules |
 | `safe_plugin_rm.sh`, `safe_pip_install.sh` | — | Called by the web interface through sudo | Not for manual use |
 
 To reinstall the sudoers rules, run
