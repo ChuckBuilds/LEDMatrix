@@ -105,6 +105,7 @@ def env(tmp_path, api_v3_module):
         def stored(plugin_id=PLUGIN_ID):
             return json.loads(config_file.read_text())[plugin_id]
 
+    Env.config_manager = config_manager
     return Env
 
 
@@ -127,3 +128,55 @@ class TestUniqueItemsRepeats:
 
         assert response.status_code == 200, response.get_json()
         assert env.stored()["stock_symbols"] == ["TSLA", "AAPL", "FNMA"]
+
+
+class TestReset:
+    """POST /plugins/config/reset saves the way every other plugin save does."""
+
+    def test_reset_saves_atomically_with_a_backup(self, env, monkeypatch):
+        cm = env.config_manager
+        calls = []
+        real_atomic = cm.save_config_atomic
+
+        def spy(config, create_backup=True, **kwargs):
+            calls.append(create_backup)
+            return real_atomic(config, create_backup=create_backup, **kwargs)
+
+        def no_plain_save(_config):
+            raise AssertionError("reset bypassed the atomic save")
+
+        monkeypatch.setattr(cm, "save_config_atomic", spy)
+        monkeypatch.setattr(cm, "save_config", no_plain_save)
+
+        response = env.client.post("/api/v3/plugins/config/reset",
+                                   json={"plugin_id": PLUGIN_ID})
+
+        assert response.status_code == 200, response.get_json()
+        assert calls == [True]
+        assert env.stored()["stock_symbols"] == ["AAPL"]
+
+    def test_reset_notifies_the_plugin_with_its_prepared_config(self, env):
+        plugin = MagicMock()
+        env.plugin_manager.get_plugin.return_value = plugin
+        env.plugin_manager.prepare_plugin_config.side_effect = (
+            lambda _pid, raw: {**raw, "prepared": True})
+
+        response = env.client.post("/api/v3/plugins/config/reset",
+                                   json={"plugin_id": PLUGIN_ID})
+
+        assert response.status_code == 200, response.get_json()
+        handed_over = plugin.on_config_change.call_args.args[0]
+        assert handed_over["prepared"] is True
+        assert handed_over["stock_symbols"] == ["AAPL"]
+
+    def test_a_failed_save_is_reported(self, env, monkeypatch):
+        failed = MagicMock(message="disk full")
+        failed.status.value = "failed"
+        monkeypatch.setattr(env.config_manager, "save_config_atomic",
+                            MagicMock(return_value=failed))
+
+        response = env.client.post("/api/v3/plugins/config/reset",
+                                   json={"plugin_id": PLUGIN_ID})
+
+        assert response.status_code == 500
+        assert "disk full" in response.get_json()["message"]

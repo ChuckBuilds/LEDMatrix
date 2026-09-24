@@ -436,17 +436,13 @@ def toggle_plugin():
             config[plugin_id] = {}
         config[plugin_id]['enabled'] = enabled
 
-        # Use atomic save if available
-        if hasattr(api_v3.config_manager, 'save_config_atomic'):
-            result = api_v3.config_manager.save_config_atomic(config, create_backup=True)
-            if result.status.value != 'success':
-                return error_response(
-                    ErrorCode.CONFIG_SAVE_FAILED,
-                    f"Failed to save configuration: {result.message}",
-                    status_code=500
-                )
-        else:
-            api_v3.config_manager.save_config(config)
+        success, error_msg = _pkg._save_config_atomic(api_v3.config_manager, config, create_backup=True)
+        if not success:
+            return error_response(
+                ErrorCode.CONFIG_SAVE_FAILED,
+                f"Failed to save configuration: {error_msg}",
+                status_code=500
+            )
 
         # Update state manager if available
         if api_v3.plugin_state_manager:
@@ -2710,8 +2706,13 @@ def reset_plugin_config():
         # Replace all secrets with defaults
         current_secrets[plugin_id] = default_secrets
 
-    # Save updated configs
-    api_v3.config_manager.save_config(current_config)
+    success, error_msg = _pkg._save_config_atomic(api_v3.config_manager, current_config, create_backup=True)
+    if not success:
+        return error_response(
+            ErrorCode.CONFIG_SAVE_FAILED,
+            f"Failed to save configuration: {error_msg}",
+            status_code=500
+        )
     if default_secrets or not preserve_secrets:
         api_v3.config_manager.save_raw_file_content('secrets', current_secrets)
 
@@ -2721,7 +2722,8 @@ def reset_plugin_config():
             plugin_instance = api_v3.plugin_manager.get_plugin(plugin_id)
             if plugin_instance:
                 merged_config = api_v3.config_manager.load_config()
-                plugin_full_config = merged_config.get(plugin_id, {})
+                plugin_full_config = _pkg._prepared_plugin_config(
+                    plugin_id, merged_config.get(plugin_id, {}))
                 if hasattr(plugin_instance, 'on_config_change'):
                     plugin_instance.on_config_change(plugin_full_config)
     except Exception as hook_err:
