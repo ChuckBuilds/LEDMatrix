@@ -23,6 +23,7 @@ Entry point: :func:`main` — instantiates :class:`DisplayController` and calls
 import time
 import os
 import inspect
+import signal
 import json
 import threading
 import types
@@ -43,6 +44,10 @@ from src.vegas_mode.render_pipeline import SYNC_SEND_INTERVAL
 
 # Get logger with consistent configuration
 logger = get_logger(__name__)
+
+# How often the unchanged current mode is republished for the web UI, which
+# treats display_current_state older than 120 s as unknown.
+CURRENT_STATE_REFRESH_SECONDS = 30
 
 # How long startup will wait for plugins to fetch their first data before
 # showing anything. Each plugin's update blocks for up to the executor's 30s
@@ -216,6 +221,10 @@ class DisplayController:
         # the main run loop reconciles (loads/unloads) on its own thread so
         # mutating available_modes never races with rendering.
         self._pending_plugin_reconcile = False
+        # Set by the config-watcher thread when Vegas is switched on but no
+        # coordinator exists (Vegas was off at startup). The render thread
+        # creates it in _is_vegas_mode_active(), never the watcher thread.
+        self._pending_vegas_init = False
         # Monotonic stamp of the last mailbox disk read; see
         # _poll_on_demand_requests. None means "never polled", so the first
         # call always goes through.
@@ -422,8 +431,9 @@ class DisplayController:
         # Display rotation state
         self.current_mode_index = 0
         self.current_display_mode = None
-        # Last mode written to the display_current_state cache key.
+        # Last mode written to the display_current_state cache key, and when.
         self._last_published_mode: Optional[str] = None
+        self._last_published_at = 0.0
         self.global_dynamic_config = (
             self.config.get("display", {}).get("dynamic_duration", {}) or {}
         )
@@ -573,6 +583,7 @@ class DisplayController:
 
     def _is_vegas_mode_active(self) -> bool:
         """Check if Vegas mode should be running."""
+        self._apply_pending_vegas_init()
         if not self.vegas_coordinator:
             return False
         # A stopped coordinator never reaches run_frame(), where queued config
@@ -583,6 +594,19 @@ class DisplayController:
         if self.on_demand_active:
             return False  # On-demand takes priority
         return True
+
+    def _apply_pending_vegas_init(self) -> None:
+        """Create the Vegas coordinator if Vegas was switched on after startup.
+
+        Render thread only: the config watcher just sets _pending_vegas_init.
+        Called from _is_vegas_mode_active() and from the main loop before the
+        sync-follower branch, which skips _is_vegas_mode_active() while a
+        follower is connected but still needs the coordinator to show the
+        leader's scroll image.
+        """
+        if not self.vegas_coordinator and self._pending_vegas_init:
+            self._pending_vegas_init = False
+            self._initialize_vegas_mode()
 
     def _check_vegas_interrupt(self) -> bool:
         """
@@ -1190,13 +1214,22 @@ class DisplayController:
             }
             self.cache_manager.set('display_current_state', state)
             self._last_published_mode = self.current_display_mode
+            self._last_published_at = time.monotonic()
         except (OSError, RuntimeError, ValueError, TypeError) as err:
             logger.error("Failed to publish current display state: %s", err, exc_info=True)
 
     def _publish_current_mode_state_if_changed(self) -> None:
-        """Publish current mode state only when it actually changed, to avoid
-        writing to the shared cache on every render tick."""
-        if self.current_display_mode != self._last_published_mode:
+        """Publish the current mode state when it changed, or when the last
+        publish is older than CURRENT_STATE_REFRESH_SECONDS.
+
+        The web UI reads this key with a max_age (api_v3/display.py), so a mode
+        that stays on screen longer than that -- a live game under live
+        priority, a single enabled plugin -- has to be republished or the UI
+        reports it as unknown. Otherwise this writes only on a change, not on
+        every render tick.
+        """
+        if (self.current_display_mode != self._last_published_mode
+                or time.monotonic() - self._last_published_at >= CURRENT_STATE_REFRESH_SECONDS):
             self._publish_current_mode_state()
 
     def _publish_on_demand_state(self) -> None:
@@ -1304,6 +1337,9 @@ class DisplayController:
             self._check_on_demand_expiration()
             self._evaluate_schedule()
             self._apply_brightness_target(repaint=True)
+            # A Vegas iteration or a long screen keeps the main loop away for
+            # minutes; keep the web UI's "Now showing" from going stale.
+            self._publish_current_mode_state_if_changed()
         except Exception:  # pylint: disable=broad-except
             # Called from inside Vegas and the render loops; a failure here
             # must not take the display loop down with it.
@@ -1987,6 +2023,7 @@ class DisplayController:
                     continue
                 
                 self._publish_current_mode_state_if_changed()
+                self._apply_pending_vegas_init()
                 logger.debug("Display active, processing mode: %s", self.current_display_mode)
                 
                 # Plugins update on their own schedules - no forced sync updates needed
@@ -3207,10 +3244,14 @@ class DisplayController:
         # new one only when it changed: applying it rebuilds the strip.
         # (getattr: this can fire before __init__ creates the coordinator.)
         vegas = getattr(self, 'vegas_coordinator', None)
+        new_vegas = (new_config.get('display', {}) or {}).get('vegas_scroll')
         if vegas is not None and (
-                (old_config.get('display', {}) or {}).get('vegas_scroll')
-                != (new_config.get('display', {}) or {}).get('vegas_scroll')):
+                (old_config.get('display', {}) or {}).get('vegas_scroll') != new_vegas):
             vegas.update_config(new_config)
+        elif vegas is None and (new_vegas or {}).get('enabled', False):
+            # No coordinator yet because Vegas was off at startup. Creating
+            # one here would race the render thread; flag it instead.
+            self._pending_vegas_init = True
         # If a plugin was enabled/disabled, flag a reconcile for the main
         # loop to apply (loading/unloading off the watcher thread is unsafe).
         if (self._enabled_set_changed(old_config, new_config)
@@ -3282,9 +3323,23 @@ class DisplayController:
             self.display_manager.cleanup()
         logger.info("Cleanup complete.")
 
+def _raise_keyboard_interrupt(signum, frame):
+    """SIGTERM handler: stop the way Ctrl-C does.
+
+    systemd stops ledmatrix.service with SIGTERM. Python's default action for
+    it ends the process at once, so run()'s ``finally: self.cleanup()`` --
+    which stops the update worker, tears down Vegas and clears the panel --
+    never ran. Raising KeyboardInterrupt sends SIGTERM down that same path.
+    """
+    raise KeyboardInterrupt
+
+
 def main():
     """Application entry point — create a DisplayController and run until interrupted."""
     controller = DisplayController()
+    # Installed after construction: a SIGTERM while plugins are still loading
+    # keeps the default immediate exit rather than waiting for the loads.
+    signal.signal(signal.SIGTERM, _raise_keyboard_interrupt)
     controller.run()
 
 if __name__ == "__main__":
