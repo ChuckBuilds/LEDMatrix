@@ -45,7 +45,8 @@ def test_find_command_looks_outside_path():
                    if Path(d, "sh").exists() or Path(d, "reboot").exists()), None)
     name = "reboot" if Path(target, "reboot").exists() else "sh"
     script = _function_source(WEB_SUDO, "find_command") + f'find_command {name}\n'
-    out = subprocess.run(["bash", "-c", script], env={"PATH": "/nonexistent"},
+    # Absolute bash: with PATH=/nonexistent, "bash" itself would not be found.
+    out = subprocess.run([shutil.which("bash"), "-c", script], env={"PATH": "/nonexistent"},
                          capture_output=True, text=True)
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip().endswith("/" + name)
@@ -75,7 +76,9 @@ def test_compat_package_check_reports_an_installed_package_as_installed():
                 if "dpkg-query -W" in l).strip()
     with TemporaryDirectory() as tmp:
         stub = Path(tmp, "dpkg-query")
-        stub.write_text('#!/bin/sh\n[ "$4" = "git" ] && printf "install ok installed"\n')
+        # The package name is the last argument: dpkg-query -W -f=... <pkg>.
+        stub.write_text('#!/bin/sh\nfor a; do last=$a; done\n'
+                        '[ "$last" = "git" ] && printf "install ok installed"\nexit 0\n')
         stub.chmod(0o755)
         script = ("set -Eeuo pipefail\n"
                   f"for pkg in git notthere; do {line} echo \"$pkg:yes\"; else echo \"$pkg:no\"; fi; done\n")
