@@ -623,6 +623,11 @@ class PluginStoreManager:
 
             return dict(self._EMPTY_REPO_INFO)
 
+        except requests.exceptions.RequestException as e:
+            # Offline, DNS or a timeout reaching GitHub: the listing still
+            # works without the extra repo info, so this is not an error.
+            self.logger.warning("GitHub repo info unavailable for %s: %s", repo_url, e)
+            return dict(self._EMPTY_REPO_INFO)
         except Exception as e:
             self.logger.error(f"Error fetching GitHub repo info for {repo_url}: {e}")
             return dict(self._EMPTY_REPO_INFO)
