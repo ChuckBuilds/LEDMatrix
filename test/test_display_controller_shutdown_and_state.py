@@ -123,3 +123,57 @@ def test_config_changes_without_vegas_enabled_do_not_flag_init():
     same = {"display": {"vegas_scroll": {"enabled": False}}}
     dc._controller_config_change(same, same)
     assert dc._pending_vegas_init is False
+
+
+def test_sigterm_handler_is_installed_only_after_construction():
+    """A SIGTERM while plugins load in __init__ keeps the default exit."""
+    seen = {}
+
+    class FakeController:
+        def __init__(self):
+            seen["during_init"] = signal.getsignal(signal.SIGTERM)
+
+        def run(self):
+            seen["during_run"] = signal.getsignal(signal.SIGTERM)
+
+    previous = signal.getsignal(signal.SIGTERM)
+    try:
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+        with patch.object(dc_module, "DisplayController", FakeController):
+            dc_module.main()
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+    assert seen["during_init"] is not dc_module._raise_keyboard_interrupt
+    assert seen["during_run"] is dc_module._raise_keyboard_interrupt
+
+
+def test_service_pending_changes_keeps_the_state_fresh_during_long_renders():
+    """Vegas iterations and long screens call _service_pending_changes, not
+    the main loop, for minutes at a time; it republishes a stale state."""
+    dc = _publisher()
+    dc._last_pending_service = None
+    dc.PENDING_CHANGES_INTERVAL = 0.25
+    for name in ("_poll_on_demand_requests", "_check_on_demand_expiration",
+                 "_evaluate_schedule", "_apply_brightness_target"):
+        setattr(dc, name, MagicMock())
+    now = [5000.0]
+    with patch.object(dc_module.time, "monotonic", lambda: now[0]):
+        dc._last_published_mode = "mlb_live"
+        dc._last_published_at = now[0] - dc_module.CURRENT_STATE_REFRESH_SECONDS - 1
+        dc._service_pending_changes()
+    dc.cache_manager.set.assert_called_once()
+
+
+def test_pending_vegas_init_is_applied_by_the_helper_the_main_loop_calls():
+    dc = _vegas_controller(enabled_at_start=False)
+    dc._pending_vegas_init = True
+    dc._initialize_vegas_mode = MagicMock()
+    dc._apply_pending_vegas_init()
+    dc._initialize_vegas_mode.assert_called_once_with()
+    assert dc._pending_vegas_init is False
+
+
+def test_main_loop_applies_pending_vegas_init_before_the_follower_branch():
+    import inspect
+    src = inspect.getsource(DisplayController.run)
+    assert src.index("self._apply_pending_vegas_init()") < src.index("self.sync_manager.is_follower_active()")

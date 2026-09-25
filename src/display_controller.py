@@ -583,11 +583,7 @@ class DisplayController:
 
     def _is_vegas_mode_active(self) -> bool:
         """Check if Vegas mode should be running."""
-        if not self.vegas_coordinator and self._pending_vegas_init:
-            # Vegas was switched on after startup: create it here, on the
-            # render thread, now that the config says so.
-            self._pending_vegas_init = False
-            self._initialize_vegas_mode()
+        self._apply_pending_vegas_init()
         if not self.vegas_coordinator:
             return False
         # A stopped coordinator never reaches run_frame(), where queued config
@@ -598,6 +594,19 @@ class DisplayController:
         if self.on_demand_active:
             return False  # On-demand takes priority
         return True
+
+    def _apply_pending_vegas_init(self) -> None:
+        """Create the Vegas coordinator if Vegas was switched on after startup.
+
+        Render thread only: the config watcher just sets _pending_vegas_init.
+        Called from _is_vegas_mode_active() and from the main loop before the
+        sync-follower branch, which skips _is_vegas_mode_active() while a
+        follower is connected but still needs the coordinator to show the
+        leader's scroll image.
+        """
+        if not self.vegas_coordinator and self._pending_vegas_init:
+            self._pending_vegas_init = False
+            self._initialize_vegas_mode()
 
     def _check_vegas_interrupt(self) -> bool:
         """
@@ -1328,6 +1337,9 @@ class DisplayController:
             self._check_on_demand_expiration()
             self._evaluate_schedule()
             self._apply_brightness_target(repaint=True)
+            # A Vegas iteration or a long screen keeps the main loop away for
+            # minutes; keep the web UI's "Now showing" from going stale.
+            self._publish_current_mode_state_if_changed()
         except Exception:  # pylint: disable=broad-except
             # Called from inside Vegas and the render loops; a failure here
             # must not take the display loop down with it.
@@ -2011,6 +2023,7 @@ class DisplayController:
                     continue
                 
                 self._publish_current_mode_state_if_changed()
+                self._apply_pending_vegas_init()
                 logger.debug("Display active, processing mode: %s", self.current_display_mode)
                 
                 # Plugins update on their own schedules - no forced sync updates needed
@@ -3323,8 +3336,10 @@ def _raise_keyboard_interrupt(signum, frame):
 
 def main():
     """Application entry point — create a DisplayController and run until interrupted."""
-    signal.signal(signal.SIGTERM, _raise_keyboard_interrupt)
     controller = DisplayController()
+    # Installed after construction: a SIGTERM while plugins are still loading
+    # keeps the default immediate exit rather than waiting for the loads.
+    signal.signal(signal.SIGTERM, _raise_keyboard_interrupt)
     controller.run()
 
 if __name__ == "__main__":
