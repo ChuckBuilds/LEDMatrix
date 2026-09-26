@@ -2080,10 +2080,29 @@ def _prepare_plugin_config_for_save(plugin_id, plugin_config, schema, schema_mgr
                         normalized[key] = value.strip().lower() in ('true', '1', 'on', 'yes')
                         continue
 
-                # Nothing converted: keep the value for validation to report.
-                logger.warning(f"Could not normalize field {field_path}: value={repr(value)}, type={type(value)}, schema_type={prop_type}")
-                normalized[key] = value
-                continue
+                # The scalar conversions above are the only ones this branch
+                # knows, so a union naming a structural or string type fell
+                # through here even when the value already matched it --
+                # customization.modes.<mode> makes every override nullable
+                # (see element_style._nullable), so every per-mode colour is
+                # ['array', 'null'] and warned on a perfectly valid [r, g, b].
+                # Worse than the noise: `continue` skipped the single-type
+                # handling below, so a nullable array never had its items
+                # normalized and form-posted ["0", "249", "0"] stayed strings
+                # where a plain 'array' field would have become ints. Re-enter
+                # that handling with the matched member instead.
+                if isinstance(value, list) and 'array' in prop_type:
+                    prop_type = 'array'
+                elif isinstance(value, dict) and 'object' in prop_type:
+                    prop_type = 'object'
+                elif isinstance(value, str) and 'string' in prop_type:
+                    normalized[key] = value
+                    continue
+                else:
+                    # Nothing converted: keep the value for validation to report.
+                    logger.warning(f"Could not normalize field {field_path}: value={repr(value)}, type={type(value)}, schema_type={prop_type}")
+                    normalized[key] = value
+                    continue
 
             if isinstance(value, dict) and prop_type == 'object' and 'properties' in prop_schema:
                 # Recursively normalize nested objects
