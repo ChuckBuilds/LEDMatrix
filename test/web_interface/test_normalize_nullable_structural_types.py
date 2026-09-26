@@ -125,6 +125,33 @@ class TestNullableArrayOverride:
         assert _colour(_save(_submit(blank))) is None
 
 
+class TestFractionalItemsReachTheValidator:
+    """int(2.5) == 2 would store a corrected number where the client sent a
+    wrong one, so the save looks successful and the config is quietly wrong.
+    Routing nullable arrays into the shared item handling made this reachable
+    for them too, so both paths convert only genuinely integral values."""
+
+    @pytest.mark.parametrize("nullable", [True, False])
+    def test_a_fractional_item_is_not_truncated(self, nullable) -> None:
+        """2.5 reaches the validator intact, which then refuses it for an
+        integer item. Storing 2 would make the save look successful."""
+        assert _colour(_save(_submit([2.5, 249, 0]),
+                             nullable=nullable)) == [2.5, 249, 0]
+
+    @pytest.mark.parametrize("nullable", [True, False])
+    def test_a_whole_float_still_converts(self, nullable) -> None:
+        """JSON has no int/float distinction, so 2.0 is a legitimate integer."""
+        assert _colour(_save(_submit([2.0, 249.0, 0.0]),
+                             nullable=nullable)) == [2, 249, 0]
+
+    @pytest.mark.parametrize("nullable", [True, False])
+    def test_a_fractional_string_is_preserved_too(self, nullable) -> None:
+        """int('2.5') raises, so this path always preserved the value --
+        pinned so the numeric and string cases cannot drift apart again."""
+        assert _colour(_save(_submit(["2.5", "249", "0"]),
+                             nullable=nullable)) == ["2.5", 249, 0]
+
+
 class TestUnionFallbackStillReports:
     """A union the value genuinely does not match must still warn."""
 

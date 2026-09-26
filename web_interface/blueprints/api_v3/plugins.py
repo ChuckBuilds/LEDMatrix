@@ -2131,7 +2131,16 @@ def _prepare_plugin_config_for_save(plugin_id, plugin_config, schema, schema_mgr
                                 except (ValueError, TypeError, OverflowError):
                                     pass
                             elif isinstance(v, (int, float)):
-                                normalized_array.append(int(v))
+                                # Only a genuinely integral value converts.
+                                # int(2.5) == 2 would store a silently
+                                # corrected number where the client sent a
+                                # wrong one; leaving it lets the validator
+                                # reject it. A whole float (2.0 out of JSON)
+                                # is integral and still converts.
+                                if isinstance(v, int) or float(v).is_integer():
+                                    normalized_array.append(int(v))
+                                else:
+                                    normalized_array.append(v)
                                 continue
                         elif 'number' in item_type:
                             if isinstance(v, str):
@@ -2157,7 +2166,11 @@ def _prepare_plugin_config_for_save(plugin_id, plugin_config, schema, schema_mgr
                             except (ValueError, TypeError, OverflowError):
                                 normalized_array.append(v)
                         elif isinstance(v, (int, float)):
-                            normalized_array.append(int(v))
+                            # Integral only -- see the union branch above.
+                            if isinstance(v, int) or float(v).is_integer():
+                                normalized_array.append(int(v))
+                            else:
+                                normalized_array.append(v)
                         else:
                             normalized_array.append(v)
                     normalized[key] = normalized_array
