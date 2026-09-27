@@ -19,6 +19,16 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+- Security and input-validation fixes:
+  - Installing from a URL (and a registry install whose manifest renames the plugin) refuses a plugin id that isn't a single safe name, so `../x` can no longer delete and replace a directory outside the plugins directory.
+  - Plugin uninstall and config reset refuse core config sections (`display`, `schedule`, ...) and ids with path parts. Uninstall still cleans the config of a plugin whose directory is already gone.
+  - A config field marked `x-secret` whose value is an object or array is saved to `config_secrets.json`, not to `config.json` in plain text.
+  - Restoring a backup onto a device without `config_secrets.json`, `wifi_config.json` or `ytm_auth.json` creates them with mode 640 instead of world-readable 644.
+  - Backup export skips a plugin `manifest.json` that isn't a JSON object instead of failing, and two exports in the same second no longer share a temp file or overwrite each other (the second gets a `-2` suffix).
+  - Every font that ships in `assets/fonts/` is protected from deletion; `MatrixChunky8X`, `MatrixLight6X`, `MatrixLight8X` and `ic8x8u` could be deleted from the Fonts tab.
+  - The raw config and secrets editors, and endpoints using `validate_request_json`, answer 400 for a JSON body that isn't an object.
+  - A blank Max Dynamic Duration keeps the stored value instead of failing the Display save with a 500; other values must be whole seconds from 30 to 1800.
+
 - Fixes found testing on a Pi:
   - Stopping `ledmatrix.service` runs the controller's cleanup (SIGTERM now takes the Ctrl-C path).
   - The Logs tab's "Now showing" no longer reads "unknown" when one screen stays up longer than 2 minutes.

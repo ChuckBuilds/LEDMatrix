@@ -417,3 +417,65 @@ def test_restore_still_carries_the_previous_owner_across(
     assert result.success, result.errors
     owners = {(c.args[1], c.args[2]) for c in chown.call_args_list}
     assert owners == {(old.st_uid, old.st_gid)}
+
+
+def test_restore_onto_a_fresh_device_keeps_secrets_private(
+    project: Path, empty_project: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no existing file to take a mode from, the restored file took the
+    extracted temp file's umask mode -- 0o644, so config_secrets.json,
+    wifi_config.json and ytm_auth.json came back world-readable.
+
+    Recorded through os.chmod because Windows cannot represent 0o640.
+    """
+    zip_path = create_backup(project, output_dir=tmp_path / "exports")
+    chmods = []
+    real_chmod = os.chmod
+
+    def recording_chmod(path, mode, *args, **kwargs):
+        chmods.append((Path(path).name.lstrip("."), mode))
+        return real_chmod(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(os, "chmod", recording_chmod)
+
+    result = restore_backup(zip_path, empty_project, RestoreOptions(
+        restore_fonts=False, restore_plugin_uploads=False, reinstall_plugins=False,
+    ))
+
+    assert result.success, result.errors
+    private = {name.split(".json")[0]: mode for name, mode in chmods
+               if name.startswith(("config_secrets.json", "wifi_config.json", "ytm_auth.json"))}
+    assert private == {"config_secrets": 0o640, "wifi_config": 0o640, "ytm_auth": 0o640}
+    assert all(mode != 0o640 for name, mode in chmods if name.startswith("config.json"))
+
+
+def test_a_manifest_that_is_not_an_object_is_skipped(project: Path) -> None:
+    broken = project / "plugin-repos" / "broken"
+    broken.mkdir()
+    (broken / "manifest.json").write_text("[1, 2]", encoding="utf-8")
+
+    ids = [p["plugin_id"] for p in list_installed_plugins(project)]
+
+    assert "my-plugin" in ids and "broken" not in ids
+
+
+def test_same_second_exports_do_not_overwrite_each_other(
+    project: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import datetime as real_datetime
+
+    class FrozenDatetime:
+        @staticmethod
+        def now(*a, **k):
+            return real_datetime(2026, 1, 2, 3, 4, 5)
+
+    monkeypatch.setattr(backup_manager, "datetime", FrozenDatetime)
+    out = tmp_path / "exports"
+
+    first = create_backup(project, output_dir=out)
+    second = create_backup(project, output_dir=out)
+
+    assert first != second
+    assert first.exists() and second.exists()
+    assert second.name == first.name[:-len(".zip")] + "-2.zip"
+    assert not list(out.glob("*.tmp"))

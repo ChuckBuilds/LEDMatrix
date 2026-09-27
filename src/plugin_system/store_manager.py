@@ -1345,6 +1345,13 @@ class PluginStoreManager:
                     self.logger.error("Plugin manifest missing 'id' field")
                     self._safe_remove_directory(plugin_path)
                     return False
+                # The manifest id becomes a directory name below (and the old
+                # directory is removed to make room), so a downloaded manifest
+                # saying "../x" must not steer that outside plugins_dir.
+                if not self._is_valid_plugin_id(manifest_plugin_id):
+                    self.logger.error(f"Plugin manifest has an invalid 'id': {manifest_plugin_id!r}")
+                    self._safe_remove_directory(plugin_path)
+                    return False
                 
                 # If manifest ID doesn't match directory name, rename directory to match manifest
                 if manifest_plugin_id != plugin_id:
@@ -1523,6 +1530,14 @@ class PluginStoreManager:
                 return {
                     'success': False,
                     'error': 'No plugin ID found in manifest'
+                }
+            # plugin_id names the directory that is removed and then replaced
+            # below, and it comes from the request body or a downloaded
+            # manifest -- so "../x" would reach outside plugins_dir.
+            if not self._is_valid_plugin_id(plugin_id):
+                return {
+                    'success': False,
+                    'error': f'Invalid plugin ID: {plugin_id!r}'
                 }
             
             # Validate manifest has required fields
