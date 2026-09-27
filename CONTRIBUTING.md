@@ -58,10 +58,13 @@ integration tests.
 3. **Keep PRs focused.** One conceptual change per PR. If you find
    adjacent bugs while working, fix them in a separate PR.
 4. **Follow the existing code style.** The pre-commit hooks run
-   `flake8` (E9, F63, F7, F82 plus bugbear `B` checks), `mypy` on
-   `src/`, `bandit`, and `gitleaks` — install the CLI with
+   `flake8` (E9, F63, F7, F82 plus bugbear `B` checks), `bandit`,
+   and `gitleaks` — install the CLI with
    `python -m pip install pre-commit`, then run
-   `pre-commit install` so they run on every commit; HTML/JS in
+   `pre-commit install` so they run on every commit. `mypy` on
+   `src/` is a manual hook while existing type errors are paid down
+   (`pre-commit run mypy --hook-stage manual`): please don't add new
+   errors in the files you touch. HTML/JS in
    `web_interface/` follows the patterns already in `templates/v3/`
    and `static/v3/`.
 5. **Update documentation** alongside code changes. If you add a

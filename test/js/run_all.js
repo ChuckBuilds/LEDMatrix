@@ -3,7 +3,7 @@
 //
 //   node run_all.js                        unit suites, plus DOM suites if a
 //                                          web interface is reachable
-//   BASE=http://10.0.10.169:5000 node run_all.js   point the DOM suites at a rig
+//   BASE=http://<pi-ip>:5000 node run_all.js   point the DOM suites at a rig
 //
 // Unit suites need nothing but node. The DOM suites need `npm install` (jsdom)
 // and a running web interface, because they deliberately test against the real

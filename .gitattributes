@@ -1,2 +1,8 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Files the Pi executes must stay LF even in a Windows checkout with
+# core.autocrlf=true: a CRLF shebang line fails with "bad interpreter",
+# and systemd rejects CRLF unit files.
+*.sh text eol=lf
+*.service text eol=lf

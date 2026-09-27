@@ -4,4 +4,3 @@ exclude_paths:
   - "plugins/**"
   - "assets/**"
   - "test/**"
-  - "scripts/debug/**"

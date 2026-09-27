@@ -31,9 +31,11 @@ display; **diagnostic** — run by hand on a Pi when something is wrong.
 | `diagnose_web_interface.sh` | diagnostic | Checks why the web interface is not reachable |
 | `download_pixlet.sh` | keep | Downloads the bundled Pixlet binaries for Starlark apps (also run from the web UI) |
 | `emergency_reconnect.sh` | diagnostic | Reconnects to your WiFi network if captive-portal testing leaves the Pi offline |
+| `frame_soak.py` | diagnostic | Soaks a running display and reports how often frames reached the panel late (docs/SCROLL_PERFORMANCE.md) |
 | `install_dependencies_apt.py` | keep | Dependency installer that tries apt packages first, then pip (installer Step 7, plugin loader) |
 | `install_plugin_dependencies.sh` | diagnostic | Installs plugin requirements by hand when the automatic install fails |
 | `prove_security.py` | keep | Security property checks run by pre-commit |
+| `render_bench.py` | diagnostic | Benchmarks the render loop against the panel's real refresh rate on a synthetic strip |
 | `render_plugin.py` | dev-only | Runs a plugin's `update()` + `display()` and saves the frame as a PNG |
 | `run_plugin_tests.py` | dev-only | Discovers and runs plugin test suites |
 | `scroll_speeds.py` | keep | Shows and tries the scroll speeds your panel can display cleanly |

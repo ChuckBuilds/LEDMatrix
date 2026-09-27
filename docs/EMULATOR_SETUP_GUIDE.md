@@ -17,13 +17,13 @@ The LEDMatrix emulator allows you to run and test LEDMatrix displays on your com
 ## Prerequisites
 
 ### System Requirements
-- Python 3.7 or higher
+- Python 3.10 or higher
 - Windows, macOS, or Linux
 - At least 2GB RAM (4GB recommended)
 - Internet connection for plugin downloads
 
 ### Required Software
-- Python 3.7+
+- Python 3.10+
 - pip (Python package manager)
 - Git (for plugin management)
 
@@ -50,8 +50,7 @@ pip install -r requirements-emulator.txt
 ```
 
 This installs:
-- `RGBMatrixEmulator` - The core emulation library
-- Additional dependencies for display adapters
+- `RGBMatrixEmulator` - the emulation library (and whatever it depends on)
 
 ### 3. Install Standard Dependencies
 
@@ -63,8 +62,9 @@ pip install -r requirements.txt
 
 ### 1. Emulator Configuration File
 
-The emulator uses `emulator_config.json` for configuration. Here's the
-default configuration as it ships in the repo:
+The emulator uses `emulator_config.json` for configuration. It isn't in
+the repo (it's gitignored): RGBMatrixEmulator writes it on first run.
+A typical file looks like this:
 
 ```json
 {

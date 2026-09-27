@@ -948,7 +948,7 @@ sudo systemctl enable ledmatrix-web.service
 - **On-Demand Controls**: Start specific displays (weather, stocks, sports) on demand
 - **Service Management**: Start/stop the main display service
 - **System Controls**: Restart, update code, and manage the system
-- **API Metrics**: Monitor API usage and system performance
+- **System Stats**: CPU, memory and temperature on the Overview tab
 - **Logs**: View system logs in real-time
 
 ### Troubleshooting Web Interface

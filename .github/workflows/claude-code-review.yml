@@ -6,6 +6,10 @@ on:
 
 jobs:
   claude-review:
+    # Pull requests from forks get no repository secrets, so without this
+    # guard every outside contributor's PR showed this check red for a reason
+    # they can't fix. Skipped checks don't block merging.
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       contents: read

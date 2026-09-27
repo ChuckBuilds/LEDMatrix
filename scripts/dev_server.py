@@ -423,7 +423,7 @@ def main():
     global _extra_dirs
     _extra_dirs = args.extra_dir
 
-    print(f"LEDMatrix Dev Preview Server")
+    print("LEDMatrix Dev Preview Server")
     print(f"Open http://{args.host}:{args.port} in your browser")
     print(f"Plugin search dirs: {[str(d) for d in get_search_dirs()]}")
     print()

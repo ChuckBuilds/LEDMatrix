@@ -87,7 +87,6 @@ def find_duplicate_fields(schema: Dict[str, Any], path: str = "") -> List[str]:
 
 def validate_schema_syntax(schema_path: Path) -> tuple[bool, List[str]]:
     """Validate JSON Schema syntax."""
-    errors = []
     try:
         with open(schema_path, 'r', encoding='utf-8') as f:
             schema = json.load(f)
@@ -164,7 +163,7 @@ def analyze_schema(schema_path: Path) -> Dict[str, Any]:
                     if "update_interval_seconds" in properties:
                         analysis["update_interval_variant"] = "update_interval_seconds"
                         analysis["naming_issues"].append(
-                            f"Uses 'update_interval_seconds' instead of 'update_interval'"
+                            "Uses 'update_interval_seconds' instead of 'update_interval'"
                         )
                     else:
                         analysis["missing_common_fields"].append(field_name)
@@ -239,7 +238,7 @@ def main():
             print(f"  Missing common fields: {', '.join(result['missing_common_fields'])}")
         
         if result['naming_issues']:
-            print(f"  Naming issues:")
+            print("  Naming issues:")
             for issue in result['naming_issues']:
                 print(f"    - {issue}")
         

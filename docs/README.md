@@ -56,6 +56,8 @@ Going deeper:
 - [ADVANCED_FEATURES.md](ADVANCED_FEATURES.md) — Vegas scroll, on-demand display,
   cache management, background services, permissions
 - [FONT_MANAGER.md](FONT_MANAGER.md) — font system
+- [SCROLL_PERFORMANCE.md](SCROLL_PERFORMANCE.md) — how scrolling is paced, and how to make a plugin's marquee smooth
+- [OFFSCREEN_RENDERING.md](OFFSCREEN_RENDERING.md) — rendering plugin content off the render thread
 - [PERMISSIONS.md](PERMISSIONS.md) — file ownership, sudo rules, repair scripts
 - [MQTT bridge](../integrations/mqtt_bridge/README.md) — control the display from Home Assistant over MQTT
 

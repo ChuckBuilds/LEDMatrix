@@ -3,15 +3,13 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Secrets
-config/config_secrets.json
-# Atomic writes leave these behind when a save or a test is interrupted;
-# the suite drops several per run.
-config/.config_secrets.json.tmp.*
-config/config.json
-config/config.json.backup
-config/wifi_config.json
-config/uninstalled_plugins.json
+# Secrets and per-device state. Everything the software writes into config/
+# is local to one device -- config.json, config_secrets.json, wifi_config.json,
+# ytm_auth.json (a login session), saved_repositories.json, font_overrides.json,
+# and the temp files atomic writes leave behind when interrupted -- so only
+# the templates are tracked. Listing files one by one missed several.
+config/*
+!config/*.template.json
 credentials.json
 token.pickle
 

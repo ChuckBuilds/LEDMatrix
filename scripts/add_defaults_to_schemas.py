@@ -194,7 +194,7 @@ def process_schema_file(schema_path: Path) -> bool:
         print(f"  ✓ Modified {len(modified_fields)} fields")
         return True
     else:
-        print(f"  ✓ No changes needed")
+        print("  ✓ No changes needed")
         return False
 
 
