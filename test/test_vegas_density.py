@@ -1385,6 +1385,41 @@ class TestContinuousExtension:
             widths.append(p.scroll_helper.total_scroll_width)
         assert max(widths) < 6000, f"strip grew unbounded: {max(widths)}"
 
+    def test_reset_drops_the_previous_runs_prepared_content(self):
+        # Vegas off then on: the group lined up for the old run, and any
+        # canvas-bound plugins still queued, must not reach the new one.
+        groups = [[('a', [self._block(600)])], [('old', [self._block(600)])]]
+        p, _ = self._pipeline(groups, continuous_scroll=True)
+        p.compose_scroll_content()
+        p.start_prefetch()
+        if p._prefetch_thread:
+            p._prefetch_thread.join(timeout=5)
+        p._deferred_queue.append('old-canvas')
+        assert p._prepared_group is not None
+
+        p.reset()
+        assert p._prepared_group is None
+        assert not p.has_deferred()
+
+    def test_a_prefetch_in_flight_across_reset_is_discarded(self):
+        import threading
+        release = threading.Event()
+        groups = [[('a', [self._block(600)])], [('old', [self._block(600)])]]
+        p, stream = self._pipeline(groups, continuous_scroll=True)
+        p.compose_scroll_content()
+        take = stream.take_next_group
+
+        def slow_take(count=None, offscreen_only=False):
+            release.wait(timeout=5)
+            return take(count, offscreen_only)
+        stream.take_next_group = slow_take
+
+        p.start_prefetch()
+        p.reset()          # Vegas stops while the fetch is still running
+        release.set()
+        p._prefetch_thread.join(timeout=5)
+        assert p._prepared_group is None
+
 
 class TestDeferredDraining:
     """

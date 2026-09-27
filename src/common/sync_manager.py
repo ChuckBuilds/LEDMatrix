@@ -53,6 +53,17 @@ HEARTBEAT_INTERVAL = 2.0   # follower sends heartbeat every 2 s
 PEER_TIMEOUT = 6.0         # leader: no heartbeat → follower gone
 LEADER_TIMEOUT = 6.0       # follower: no frame → leader gone
 STATUS_FILE = os.path.join(tempfile.gettempdir(), "led_matrix_sync_status.json")
+# Serialises writes to STATUS_FILE (several threads report status) against
+# its removal in stop(), so a write already under way cannot put the file back
+# after the display process has shut down.
+_STATUS_LOCK = threading.Lock()
+
+
+def _remove_status_file() -> None:
+    try:
+        os.remove(STATUS_FILE)
+    except FileNotFoundError:
+        pass
 
 
 class SyncRole(Enum):
@@ -82,6 +93,10 @@ class DisplaySyncManager:
     only the scroll position. The follower draws what it receives and goes
     back to its own plugins when the leader stops sending.
     """
+
+    # Set by stop(); status writes after that are dropped. Class-level so
+    # instances built without __init__ (tests) have it too.
+    _status_closed = False
 
     def __init__(
         self,
@@ -138,6 +153,14 @@ class DisplaySyncManager:
         self._send_sock: Optional[socket.socket] = None
 
         if self.role == SyncRole.STANDALONE:
+            # Standalone never writes a status file, so one still here is
+            # from an earlier run as leader or follower. The web UI would
+            # keep reporting that run's peer as if it were live.
+            try:
+                with _STATUS_LOCK:
+                    _remove_status_file()
+            except OSError as exc:
+                logger.debug("Sync: could not remove stale status file: %s", exc)
             return
 
         if self.role == SyncRole.LEADER:
@@ -692,18 +715,38 @@ class DisplaySyncManager:
 
     def write_status_file(self) -> None:
         """Write current sync status to STATUS_FILE for the web UI to read."""
+        tmp = None
         try:
             status = self.get_status()
             status["ts"] = time.time()
-            tmp = STATUS_FILE + ".tmp"
-            with open(tmp, "w") as f:
-                json.dump(status, f)
-            os.replace(tmp, STATUS_FILE)
+            with _STATUS_LOCK:
+                if self._status_closed:
+                    return
+                # A unique temp name per write, like frame_timing's stats
+                # file: the receive loop, watchdog and hello handler all
+                # write, and with one fixed ".tmp" name one thread's
+                # os.replace() could move the other's half-written file.
+                fd, tmp = tempfile.mkstemp(
+                    dir=os.path.dirname(STATUS_FILE) or ".",
+                    prefix=".led_matrix_sync_status.", suffix=".tmp")
+                with os.fdopen(fd, "w") as f:
+                    json.dump(status, f)
+                # mkstemp makes it owner-only; the web UI may run as a
+                # different user from the display service.
+                os.chmod(tmp, 0o644)
+                os.replace(tmp, STATUS_FILE)
+                tmp = None
         except Exception as exc:
             self.logger.debug("Sync: status file write error: %s", exc)
+        finally:
+            if tmp is not None:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
 
     def stop(self) -> None:
-        """Shut down threads and close sockets."""
+        """Shut down threads, close sockets and withdraw the status file."""
         self._running = False
         for sock in (self._recv_sock, self._send_sock, self._img_server_sock):
             if sock:
@@ -711,3 +754,11 @@ class DisplaySyncManager:
                     sock.close()
                 except Exception as exc:
                     self.logger.debug("Sync: error closing socket: %s", exc)
+        # The web UI reads this file as live status. Left behind, it went on
+        # reporting a connected peer after the display service had stopped.
+        try:
+            with _STATUS_LOCK:
+                self._status_closed = True
+                _remove_status_file()
+        except OSError as exc:
+            self.logger.debug("Sync: could not remove status file: %s", exc)

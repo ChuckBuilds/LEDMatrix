@@ -254,6 +254,27 @@ class TestDimSchedule:
         assert dim_at(dc, "23:00", day="tuesday") == 90  # day disabled
         assert dc.is_dimmed is False
 
+    def test_disabled_day_stays_normal_within_the_minute(self):
+        # Dim late Monday, then Tuesday (dimming disabled) begins. The second
+        # call in the same minute is served from the minute-gate cache, which
+        # the disabled-day branch used to leave holding Monday's dim value --
+        # so brightness flipped back to dim for the rest of every minute.
+        dc = make_controller(self._config(mode="per-day", days={
+            "monday": {"enabled": True, "start_time": "22:00",
+                       "end_time": "06:00"},
+            "tuesday": {"enabled": False},
+        }))
+        assert dim_at(dc, "23:59", day="monday") == 25
+        dc._dim_checked_minute = None
+        p = at("00:00", day="tuesday")
+        try:
+            assert dc._check_dim_schedule() == 90
+            assert dc._check_dim_schedule() == 90  # cached, same minute
+        finally:
+            p.stop()
+        assert dc.is_dimmed is False
+        assert dc._was_dimmed is False
+
     def test_no_legacy_inference_for_dim(self):
         # Unlike _check_schedule, dim mode defaults to GLOBAL even when a
         # days config exists — no legacy inference.
