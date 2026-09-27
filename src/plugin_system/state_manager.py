@@ -13,6 +13,7 @@ from datetime import datetime
 from dataclasses import dataclass, asdict
 from enum import Enum
 
+from src.config_manager_atomic import atomic_write_text
 from src.logging_config import get_logger
 
 
@@ -283,6 +284,10 @@ class PluginStateManager:
             return
         
         try:
+            # The write stays under the lock and goes through a temp file:
+            # Flask serves requests on threads, and two saves racing on a
+            # plain open('w') could interleave or leave a truncated file
+            # that _load_state then drops wholesale.
             with self._lock:
                 # Convert states to dicts
                 states_data = {
@@ -296,16 +301,15 @@ class PluginStateManager:
                     'last_updated': datetime.now().isoformat()
                 }
             
-            # Ensure directory exists with proper permissions
-            from src.common.permission_utils import (
-                ensure_directory_permissions,
-                get_config_dir_mode
-            )
-            ensure_directory_permissions(self.state_file.parent, get_config_dir_mode())
-            
-            # Write to file
-            with open(self.state_file, 'w') as f:
-                json.dump(state_data, f, indent=2)
+                # Ensure directory exists with proper permissions
+                from src.common.permission_utils import (
+                    ensure_directory_permissions,
+                    get_config_dir_mode
+                )
+                ensure_directory_permissions(self.state_file.parent, get_config_dir_mode())
+                
+                # Write to file
+                atomic_write_text(self.state_file, json.dumps(state_data, indent=2))
             
         except Exception as e:
             self.logger.error(f"Error saving plugin state: {e}", exc_info=True)

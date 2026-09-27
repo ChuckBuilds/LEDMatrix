@@ -193,7 +193,7 @@ def declared_min_version(manifest: Dict[str, Any]) -> Optional[str]:
     """The core version this plugin says it needs, or ``None`` if it doesn't say.
 
     Checked in order of specificity. `ledmatrix_min` is the deprecated spelling
-    of `ledmatrix_min_version` (`store_manager._validate_manifest_fields` flags
+    of `ledmatrix_min_version` (`store_manager._validate_manifest_version_fields` flags
     it); both are read because a large share of published manifests still carry
     the old one.
 

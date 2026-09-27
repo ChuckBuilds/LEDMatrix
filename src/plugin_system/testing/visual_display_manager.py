@@ -29,6 +29,7 @@ through src/common/bdf_font.py, so those pixels cannot drift.
 import math
 import os
 import time
+import warnings
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, List, Optional, Tuple
@@ -38,8 +39,11 @@ from src.common.bdf_font import draw_bdf_text, load_bdf_face
 from src.common.font_layout import crisp_size, load_truetype
 
 from src.logging_config import get_logger
+from src.plugin_system.testing.mocks import DRAW_IMAGE_DEPRECATION
 
 logger = get_logger(__name__)
+
+_draw_image_warning_logged = False
 
 
 class _MatrixProxy:
@@ -321,17 +325,26 @@ class VisualTestDisplayManager:
             else:
                 self.draw.text((x, y), text, font=current_font, fill=color)
         except Exception as e:
-            logger.debug(f"Error drawing text: {e}")
+            # WARNING, not DEBUG: the real DisplayManager logs this at ERROR,
+            # and a test double that hides it lets a broken draw pass.
+            logger.warning(f"Error drawing text: {e}")
 
     def draw_image(self, image: Image.Image, x: int, y: int):
-        """Draw an image on the display."""
+        """Draw an image on the display. Deprecated: see DRAW_IMAGE_DEPRECATION."""
+        warnings.warn(DRAW_IMAGE_DEPRECATION, DeprecationWarning, stacklevel=2)
+        global _draw_image_warning_logged
+        if not _draw_image_warning_logged:
+            # Also logged once: the dev preview server drives this class
+            # outside pytest, where DeprecationWarning is hidden by default.
+            _draw_image_warning_logged = True
+            logger.warning(DRAW_IMAGE_DEPRECATION)
         self.draw_calls.append({
             'type': 'image', 'image': image, 'x': x, 'y': y,
         })
         try:
             self.image.paste(image, (x, y))
         except Exception as e:
-            logger.debug(f"Error drawing image: {e}")
+            logger.warning(f"Error drawing image: {e}")
 
     def _draw_bdf_text(self, text, x, y, color=(255, 255, 255), font=None):
         """Draw text in a BDF ``freetype.Face`` with (x, y) as its top-left.
