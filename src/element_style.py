@@ -840,7 +840,7 @@ def defaults_from_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
                     defaults['align'] = align_spec['default']
                 scale_spec = spec.get('scale')
                 if isinstance(scale_spec, dict) and 'default' in scale_spec:
-                    layout.setdefault(element_key, {})['scale'] =                         scale_spec['default']
+                    layout.setdefault(element_key, {})['scale'] = scale_spec['default']
                 elif scale_spec is True:
                     layout.setdefault(element_key, {})['scale'] = 1.0
                 if defaults:
@@ -856,7 +856,7 @@ def defaults_from_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
                         continue
                     scale_prop = (block.get('properties') or {}).get('scale')
                     if isinstance(scale_prop, dict) and 'default' in scale_prop:
-                        layout.setdefault(element_key, {})['scale'] =                             scale_prop['default']
+                        layout.setdefault(element_key, {})['scale'] = scale_prop['default']
             for element_key, block in properties.items():
                 if element_key in ('layout', 'modes') or element_key in elements:
                     continue

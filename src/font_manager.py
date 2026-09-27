@@ -426,6 +426,9 @@ class FontManager:
         keys_to_remove = [key for key in self.font_cache.keys() if key.startswith(f"{plugin_id}::")]
         for key in keys_to_remove:
             del self.font_cache[key]
+        if keys_to_remove:
+            # Font objects someone may hold were dropped; see cache_generation.
+            self.cache_generation += 1
 
     @deprecated("3.7.0")
     def get_plugin_fonts(self, plugin_id: str) -> List[str]:
@@ -732,6 +735,9 @@ class FontManager:
         """Clear font and metrics cache."""
         self.font_cache.clear()
         self.metrics_cache.clear()
+        # Holders of derived caches (layout fits, font usage) key off this;
+        # without the bump they kept serving results for the dropped fonts.
+        self.cache_generation += 1
         logger.info("Font cache cleared")
 
     @deprecated("3.7.0", "read font_catalog")

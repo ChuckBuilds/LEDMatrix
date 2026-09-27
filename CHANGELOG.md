@@ -27,6 +27,19 @@ accepts both, but the store flags the old spelling as deprecated
   - `check_system_compatibility.sh` no longer reports installed packages as missing.
   - A network failure fetching GitHub repo info logs a warning, not an error.
 
+- Web UI and `src.common` fixes:
+  - A wrong Wi-Fi password is reported as one again ("Incorrect password for ..."); the fallback that restores the old network or brings up the setup AP was replacing the signal.
+  - Plugin tabs show the manifest's `icon`: `/api/v3/plugins/installed` now includes it.
+  - `POST /api/v3/starlark/apps/<id>/toggle` goes through the same code as `/plugins/toggle`: `"false"` disables, a failed save no longer leaves the running app out of step with disk, and a loaded app with no manifest entry no longer answers 500.
+  - `/api/v3/` JSON responses are sent `Cache-Control: no-store`, so a reload right after an install, toggle or Wi-Fi connect shows the new state. Non-JSON files served through the API keep the 5 s cache.
+  - `ScrollHelper.set_scrolling_image()` accepts RGBA, L and palette images (transparent pixels become black), and a new scrolling image no longer jumps ahead by the time the helper sat idle.
+  - `LogoHelper.load_logo_with_download()` waits an hour before retrying a download that failed for a missing logo, instead of retrying (with a 30 s timeout) on every call.
+  - Restamping a placeholder logo writes the file atomically.
+  - `FontManager.clear_cache()` and unregistering a plugin's fonts bump `cache_generation`, so cached layouts are rebuilt.
+  - The odds manager logs cache hits, misses and fetches at DEBUG, and a bad JSON body is logged as a parse error rather than a failed fetch.
+  - Startup plugin validation no longer gives up on a `null` plugin block, and plugins are discovered once at startup instead of twice.
+  - `src/common/README.md` lists `frame_timing`, `json_body` and `render_gate`.
+
 - Scripts and installer:
   - `fix_web_permissions.sh` makes `safe_plugin_rm.sh` and `safe_pip_install.sh` root-owned again after resetting ownership. A web-user-owned copy of either is a root shell, since sudo lets the web user run them as root. It also restores `config_secrets.json` to mode 640.
   - `configure_wifi_permissions.sh` checks its rules with `visudo -c` before installing them, and grants the NetworkManager captive-portal `cp` and `rm` commands `wifi_manager` runs.

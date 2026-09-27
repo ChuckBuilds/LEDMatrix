@@ -570,10 +570,16 @@ def add_security_headers(response):
         response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
         response.headers['Expires'] = (datetime.now() + timedelta(days=365)).strftime('%a, %d %b %Y %H:%M:%S GMT')
     elif request.path.startswith('/api/v3/'):
-        # Short cache for API responses (5 seconds) to allow for quick updates
-        # but reduce server load for repeated requests
         if request.method == 'GET' and 'stream' not in request.path:
-            response.headers['Cache-Control'] = 'private, max-age=5, must-revalidate'
+            if response.mimetype == 'application/json':
+                # JSON is live state. A cached copy made a fetch() right after
+                # an install, toggle or Wi-Fi connect show the state from
+                # before it for up to the cache lifetime.
+                response.headers['Cache-Control'] = 'no-store'
+            else:
+                # Files served through the API (plugin web UI assets, backup
+                # downloads) keep the short cache.
+                response.headers['Cache-Control'] = 'private, max-age=5, must-revalidate'
     else:
         # No cache for HTML pages to ensure fresh content
         response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'

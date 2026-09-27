@@ -27,9 +27,12 @@ Rules for the package:
 | [`bdf_font`](#bdf_font) | Load and draw BDF bitmap fonts | Yes, if drawing BDF text directly | Unreleased |
 | [`espn_dates`](#espn_dates) | Fetch ESPN scoreboards across a date range | Yes (scoreboards) | 3.5.0 |
 | [`font_layout`](#font_layout) | Reproducible TrueType loading, crisp sizes | Yes | 3.4.0 |
+| [`frame_timing`](#frame_timing) | Timing of every presented frame, stall watchdog | No, core-internal | n/a |
+| [`json_body`](#json_body) | Parse a response body as JSON, with orjson if installed | Optional (large payloads) | Unreleased |
 | [`logo_helper`](#logo_helper) | Load, resize and cache team logos | Yes | — |
 | [`path_safety`](#path_safety) | Turn request-supplied names into safe paths | No, core-internal | n/a |
 | [`permission_utils`](#permission_utils) | File modes and shared-group ownership | Rarely | — |
+| [`render_gate`](#render_gate) | Keep background Python off the GIL while the panel swaps | No, core-internal | n/a |
 | [`scroll_config`](#scroll_config) | Plugin scroll config → configured `ScrollHelper` | Yes (scrollers) | 3.4.0 |
 | [`scroll_helper`](#scroll_helper) | Pre-rendered horizontal scrolling | Yes | — |
 | [`snapshot_policy`](#snapshot_policy) | When to write the web preview frame | No, core-internal | n/a |
@@ -107,6 +110,24 @@ the size a bundled face renders on whole pixels at. `resolve_asset_path()`
 resolves `assets/fonts/...` against the install root rather than the
 working directory.
 
+### frame_timing
+
+[`frame_timing.py`](frame_timing.py). Core-internal. `DisplayManager`
+records every presented frame in a `FrameTimingRecorder`, which writes
+cumulative late-frame counters and histograms to `/dev/shm` for
+`scripts/frame_soak.py` and `scripts/render_bench.py`. `StallWatchdog` logs
+the stack of whatever holds up a scroll. See
+[docs/SCROLL_PERFORMANCE.md](../../docs/SCROLL_PERFORMANCE.md).
+
+### json_body
+
+[`json_body.py`](json_body.py). `response_json(response)` is
+`response.json()` parsed by orjson when it is installed, falling back to the
+stdlib parser (and requests' own error) otherwise. For multi-MB payloads such
+as a season schedule, where the parse holds the GIL and freezes the display.
+A plugin that also runs on older cores should guard the import, as
+`espn_dates` does.
+
 ### logo_helper
 
 [`logo_helper.py`](logo_helper.py). `LogoHelper(display_width,
@@ -133,6 +154,14 @@ let the root display service and the web user share files:
 `safe_pip_install.sh` path). `ConfigManager`, `CacheManager` and the store
 already call these; a plugin needs them only when it creates its own files
 outside the cache. See [docs/PERMISSIONS.md](../../docs/PERMISSIONS.md).
+
+### render_gate
+
+[`render_gate.py`](render_gate.py). Core-internal. `RenderGate` is opened by
+the render thread around each vsync swap; a background thread inside
+`gate.yielding()` (Vegas's prefetch) parks while the gate is closed, so the
+render thread finds the GIL free when its refresh arrives. It never parks a
+thread holding a guarded lock or inside logging, threading or import code.
 
 ### scroll_config
 

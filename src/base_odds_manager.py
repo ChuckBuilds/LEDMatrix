@@ -123,8 +123,10 @@ class BaseOddsManager:
         # Check cache first
         cached_data = self.cache_manager.get_with_auto_strategy(cache_key)
 
+        # Per-game chatter, logged on every update of every game on the
+        # slate: debug, not the journal.
         if cached_data:
-            self.logger.info(f"Using cached odds from ESPN for {cache_key}")
+            self.logger.debug(f"Using cached odds from ESPN for {cache_key}")
             return cached_data
 
         if time.monotonic() < self._skip_network_until:
@@ -137,7 +139,7 @@ class BaseOddsManager:
                 self._skip_network_until - time.monotonic())
             return None
 
-        self.logger.info(f"Cache miss - fetching fresh odds from ESPN for {cache_key}")
+        self.logger.debug(f"Cache miss - fetching fresh odds from ESPN for {cache_key}")
 
         try:
             # Map league names to ESPN API format
@@ -151,7 +153,7 @@ class BaseOddsManager:
             
             espn_league = league_mapping.get(league, league)
             url = f"{self.base_url}/{sport}/leagues/{espn_league}/events/{event_id}/competitions/{event_id}/odds"
-            self.logger.info(f"Requesting odds from URL: {url}")
+            self.logger.debug(f"Requesting odds from URL: {url}")
             
             response = self.session.get(url, timeout=self.request_timeout)
             response.raise_for_status()
@@ -163,9 +165,9 @@ class BaseOddsManager:
             
             odds_data = self._extract_espn_data(raw_data)
             if odds_data:
-                self.logger.info(f"Successfully extracted odds data: {odds_data}")
+                self.logger.debug(f"Successfully extracted odds data: {odds_data}")
                 self.cache_manager.set(cache_key, odds_data, ttl=interval)
-                self.logger.info(f"Saved odds data to cache for {cache_key} with TTL {interval}s")
+                self.logger.debug(f"Saved odds data to cache for {cache_key} with TTL {interval}s")
             else:
                 self.logger.debug(f"No odds data available for {cache_key}")
                 # Cache the absence too, so the game is not re-requested
@@ -174,14 +176,19 @@ class BaseOddsManager:
             
             return odds_data
 
+        # Before RequestException: requests' JSONDecodeError subclasses it, so
+        # listed second this branch never ran and a bad body was reported as a
+        # failed fetch. It holds off like a failed fetch did, so only the
+        # message changes.
+        except (json.JSONDecodeError, requests.exceptions.JSONDecodeError):
+            self._skip_network_until = time.monotonic() + self._FAILURE_COOLDOWN
+            self.logger.error(f"Error decoding JSON response from ESPN API for {cache_key}.")
         except requests.exceptions.RequestException as e:
             self._skip_network_until = time.monotonic() + self._FAILURE_COOLDOWN
             self.logger.error(
                 "Error fetching odds from ESPN API for %s: %s. Holding off on odds "
                 "for %.0fs so a slate of games does not pay this timeout each.",
                 cache_key, e, self._FAILURE_COOLDOWN)
-        except json.JSONDecodeError:
-            self.logger.error(f"Error decoding JSON response from ESPN API for {cache_key}.")
         
         return self.cache_manager.get_with_auto_strategy(cache_key)
 
