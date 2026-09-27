@@ -424,7 +424,7 @@
                     <dd class="text-lg font-semibold text-gray-900" id="ledmatrix-version">Loading...</dd>
                 </div>
             </div>
-            <button onclick="checkForUpdates()" 
+            <button onclick="checkForUpdates(this)" 
                     class="inline-flex items-center px-3 py-2 border border-blue-300 text-sm font-medium rounded-md text-blue-700 bg-white hover:bg-blue-50">
                 <i class="fas fa-sync-alt mr-2"></i>
                 Check Updates
@@ -458,7 +458,7 @@
                     hx-vals='{"action": "git_pull"}'
                     hx-confirm="This will stash any local changes and update the code. Continue?"
                     hx-swap="none"
-                    hx-on:htmx:after-request="var m='Code update completed',s='info'; try { var d=JSON.parse(event.detail.xhr.responseText); m=d.message||m; s=d.status||s; } catch(e) { s=(event.detail.xhr&&event.detail.xhr.status>=400?'error':s); } showNotification(m,s);"
+                    hx-on:htmx:after-request="var m='Code update completed',s='info'; try { var d=JSON.parse(event.detail.xhr.responseText); m=d.message||m; s=d.status||s; if (d.restart_required) window.notifyCodeUpdateRestart(); } catch(e) { s=(event.detail.xhr&&event.detail.xhr.status>=400?'error':s); } showNotification(m,s);"
                     class="inline-flex items-center px-4 py-2 border border-gray-300 text-base font-semibold rounded-md text-gray-900 bg-white hover:bg-gray-50">
                 <i class="fas fa-download mr-2"></i>
                 Update Code
@@ -575,14 +575,27 @@
         });
 })();
 
-// Check for updates function
-window.checkForUpdates = function() {
-    const btn = event.target.closest('button');
+// A pull only replaces files on disk; the running services keep the code
+// they loaded at boot. Same wording as the update banner in base.html.
+window.notifyCodeUpdateRestart = function() {
+    if (typeof window.showRestartPending === 'function') {
+        window.showRestartPending(
+            'Update installed \u2014 restart the display and web ' +
+            'services to run the new code');
+    }
+};
+
+// Check for updates function: the same git_pull (and the same confirmation)
+// as the Update Code quick action below.
+window.checkForUpdates = function(btn) {
+    if (!confirm('This will stash any local changes and update the code. Continue?')) {
+        return;
+    }
     if (btn) {
         const originalContent = btn.innerHTML;
         btn.disabled = true;
         btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Checking...';
-        
+
         fetch('/api/v3/system/action', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -592,9 +605,10 @@ window.checkForUpdates = function() {
         .then(data => {
             btn.innerHTML = originalContent;
             btn.disabled = false;
-            
+
             if (data.status === 'success') {
-                showNotification('Update successful: ' + (data.stdout || 'Code updated'), 'success');
+                showNotification(data.message || 'Code updated', 'success');
+                if (data.restart_required) window.notifyCodeUpdateRestart();
                 // Reload version after a short delay
                 setTimeout(() => {
                     fetch('/api/v3/system/version')
@@ -607,7 +621,7 @@ window.checkForUpdates = function() {
                         });
                 }, 1000);
             } else {
-                showNotification('Update failed: ' + (data.stderr || data.message || 'Unknown error'), 'error');
+                showNotification(data.message || 'Update failed', 'error');
             }
         })
         .catch(error => {

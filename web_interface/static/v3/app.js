@@ -229,31 +229,32 @@ document.addEventListener('DOMContentLoaded', function() {
 // SSE streams (and window.reconnectSSE) are owned by window.LEDStreams in
 // js/app-shell.js — do not open EventSources for stats/display here.
 
-// Auto-resize textareas
-document.addEventListener('DOMContentLoaded', function() {
-    const textareas = document.querySelectorAll('textarea');
-    textareas.forEach(textarea => {
-        textarea.addEventListener('input', function() {
-            this.style.height = 'auto';
-            this.style.height = this.scrollHeight + 'px';
-        });
-    });
-});
-
 // Keyboard shortcuts
 document.addEventListener('keydown', function(e) {
-    // Ctrl/Cmd + R to refresh
-    if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
-        e.preventDefault();
-        location.reload();
-    }
-
-    // Ctrl/Cmd + S to save current form
+    // Ctrl/Cmd + S to save the form on the active tab: the first visible form
+    // in that tab's panel (#<tab>-content, or #plugin-config-<id> for a plugin
+    // tab). The panel is looked up by activeTab rather than by visibility
+    // alone because during the x-transition between tabs both are visible.
+    // requestSubmit() runs validation and onsubmit guards like a real submit;
+    // with no visible form, do nothing. Inside a modal dialog the shortcut is
+    // the dialog's (json-file-manager saves its file on Ctrl+S), so the tab's
+    // form is left alone.
     if ((e.ctrlKey || e.metaKey) && e.key === 's') {
         e.preventDefault();
-        const form = document.querySelector('form');
-        if (form) {
-            form.dispatchEvent(new Event('submit'));
+        const active = document.activeElement;
+        if (active && active.closest && active.closest('[aria-modal="true"]')) {
+            return;
+        }
+        const app = typeof window.getApp === 'function' ? window.getApp() : null;
+        const tab = app && app.activeTab;
+        const panel = (tab && (document.getElementById(tab + '-content') ||
+                               document.getElementById('plugin-config-' + tab))) ||
+                      document.getElementById('tab-content');
+        if (!panel) return;
+        const form = Array.from(panel.querySelectorAll('form'))
+            .find(f => f.getClientRects().length > 0);
+        if (form && typeof form.requestSubmit === 'function') {
+            form.requestSubmit();
         }
     }
 });

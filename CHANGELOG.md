@@ -27,6 +27,16 @@ accepts both, but the store flags the old spelling as deprecated
   - `check_system_compatibility.sh` no longer reports installed packages as missing.
   - A network failure fetching GitHub repo info logs a warning, not an error.
 
+- Web UI fixes:
+  - The Operation History plugin filter lists installed plugins (it showed one option, "plugins").
+  - Ctrl/Cmd+S submits the active tab's visible form (with its validation) instead of the first form in the page; it does nothing inside a dialog or on a tab without a form. The Ctrl/Cmd+R override (the browser's own reload) and the textarea auto-resize (no textarea exists at load) are removed.
+  - Overview "Check Updates" asks for the same confirmation as "Update Code" and shows the server's message. Both, and the Tools tab's git pull, show the restart-pending banner when the update needs a restart.
+  - Tools tab actions and diagnostics show the server's error message; only a non-JSON error falls back to `HTTP <status>`.
+  - An uninstalled plugin no longer reappears in the installed list: writes through `PluginAPI` clear its 5s GET cache, and Refresh and the post-uninstall reload bypass both list caches.
+  - Plugin widgets load from `/static/plugin-widgets/` only; the two other paths it tried have no route.
+  - The raw JSON editor escapes the parse error, and the slider widget escapes its value, min, max and step.
+  - Removed unused array-of-objects and key-value helpers from `plugins_manager.js` (about 640 lines, no callers) and a redundant `?v=` on its script tag.
+
 - Scripts and installer:
   - `fix_web_permissions.sh` makes `safe_plugin_rm.sh` and `safe_pip_install.sh` root-owned again after resetting ownership. A web-user-owned copy of either is a root shell, since sudo lets the web user run them as root. It also restores `config_secrets.json` to mode 640.
   - `configure_wifi_permissions.sh` checks its rules with `visudo -c` before installing them, and grants the NetworkManager captive-portal `cp` and `rm` commands `wifi_manager` runs.

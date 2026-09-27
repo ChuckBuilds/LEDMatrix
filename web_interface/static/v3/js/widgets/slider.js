@@ -85,7 +85,7 @@
                 html += `
                     <div class="flex justify-center mb-2">
                         <span id="${fieldId}_value" class="text-lg font-semibold text-gray-700">
-                            ${escapeHtml(prefix)}${currentValue}${escapeHtml(suffix)}
+                            ${escapeHtml(prefix)}${escapeHtml(currentValue)}${escapeHtml(suffix)}
                         </span>
                     </div>
                 `;
@@ -96,10 +96,10 @@
                 <input type="range"
                        id="${fieldId}_input"
                        name="${escapeHtml(options.name || fieldId)}"
-                       value="${currentValue}"
-                       min="${min}"
-                       max="${max}"
-                       step="${step}"
+                       value="${escapeAttr(currentValue)}"
+                       min="${escapeAttr(min)}"
+                       max="${escapeAttr(max)}"
+                       step="${escapeAttr(step)}"
                        ${disabled ? 'disabled' : ''}
                        oninput="window.LEDMatrixWidgets.getHandlers('slider').onInput('${fieldId}')"
                        onchange="window.LEDMatrixWidgets.getHandlers('slider').onChange('${fieldId}')"
@@ -110,8 +110,8 @@
             if (showMinMax) {
                 html += `
                     <div class="flex justify-between mt-1">
-                        <span class="text-xs text-gray-400">${escapeHtml(prefix)}${min}${escapeHtml(suffix)}</span>
-                        <span class="text-xs text-gray-400">${escapeHtml(prefix)}${max}${escapeHtml(suffix)}</span>
+                        <span class="text-xs text-gray-400">${escapeHtml(prefix)}${escapeHtml(min)}${escapeHtml(suffix)}</span>
+                        <span class="text-xs text-gray-400">${escapeHtml(prefix)}${escapeHtml(max)}${escapeHtml(suffix)}</span>
                     </div>
                 `;
             }
