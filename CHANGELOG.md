@@ -19,6 +19,14 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+- Fixes found testing on a Pi:
+  - Stopping `ledmatrix.service` runs the controller's cleanup (SIGTERM now takes the Ctrl-C path).
+  - The Logs tab's "Now showing" no longer reads "unknown" when one screen stays up longer than 2 minutes.
+  - Turning Vegas on in the web UI works without a restart when it was off at startup.
+  - `configure_web_sudo.sh` run as the web user keeps the reboot/poweroff rules.
+  - `check_system_compatibility.sh` no longer reports installed packages as missing.
+  - A network failure fetching GitHub repo info logs a warning, not an error.
+
 - Scripts and installer:
   - `fix_web_permissions.sh` makes `safe_plugin_rm.sh` and `safe_pip_install.sh` root-owned again after resetting ownership. A web-user-owned copy of either is a root shell, since sudo lets the web user run them as root. It also restores `config_secrets.json` to mode 640.
   - `configure_wifi_permissions.sh` checks its rules with `visudo -c` before installing them, and grants the NetworkManager captive-portal `cp` and `rm` commands `wifi_manager` runs.

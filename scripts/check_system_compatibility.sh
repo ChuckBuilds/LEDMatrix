@@ -155,7 +155,10 @@ ESSENTIAL_PACKAGES=(
 
 for pkg_info in "${ESSENTIAL_PACKAGES[@]}"; do
     IFS=':' read -r pkg desc <<< "$pkg_info"
-    if dpkg -l | grep -q "^ii  $pkg "; then
+    # dpkg-query rather than `dpkg -l | grep -q`: under pipefail, grep -q
+    # exiting on its first match kills dpkg with SIGPIPE and fails the pipeline,
+    # which reported installed packages as missing.
+    if [ "$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null)" = "install ok installed" ]; then
         print_success "$desc ($pkg) is installed"
     else
         print_warning "$desc ($pkg) not installed - will be installed during setup"

@@ -26,11 +26,26 @@ fi
 # Get the full paths to commands and validate each one
 MISSING_CMDS=()
 
-SYSTEMCTL_PATH=$(command -v systemctl) || true
-REBOOT_PATH=$(command -v reboot)    || true
-POWEROFF_PATH=$(command -v poweroff)  || true
-BASH_PATH=$(command -v bash)        || true
-JOURNALCTL_PATH=$(command -v journalctl) || true
+# Full path of a command, also looking in the sbin directories. This script runs
+# as the web user, whose PATH usually lacks /usr/sbin and /sbin -- where reboot
+# and poweroff live -- so `command -v` alone silently dropped their rules.
+find_command() {
+    local found
+    found=$(command -v "$1" 2>/dev/null) && { printf '%s\n' "$found"; return 0; }
+    for dir in /usr/sbin /sbin /usr/bin /bin; do
+        if [ -x "$dir/$1" ]; then
+            printf '%s\n' "$dir/$1"
+            return 0
+        fi
+    done
+    return 1
+}
+
+SYSTEMCTL_PATH=$(find_command systemctl) || true
+REBOOT_PATH=$(find_command reboot)    || true
+POWEROFF_PATH=$(find_command poweroff)  || true
+BASH_PATH=$(find_command bash)        || true
+JOURNALCTL_PATH=$(find_command journalctl) || true
 SAFE_RM_PATH="$PROJECT_ROOT/scripts/fix_perms/safe_plugin_rm.sh"
 SAFE_PIP_INSTALL_PATH="$PROJECT_ROOT/scripts/fix_perms/safe_pip_install.sh"
 
