@@ -99,6 +99,31 @@ class TestPinSurvivesARestart:
         assert set(c.on_demand_modes) == {'app_a', 'app_b', 'app_c'}
 
 
+class TestASecondRequestKeepsTheResumePoint:
+    """Clearing returns to where the normal rotation was, not the last request.
+
+    A second start while on-demand was showing overwrote the saved resume
+    index with the first request's mode, so stopping resumed rotation there.
+    """
+
+    def test_clear_resumes_the_original_rotation(self, test_display_controller):
+        c = test_display_controller
+        _plugin_with_modes(c, 'clock', ['clock'])
+        _plugin_with_modes(c, 'weather', ['weather'])
+        _plugin_with_modes(c, 'stocks', ['stocks'])
+        c.available_modes = ['clock', 'weather', 'stocks']
+        c.current_mode_index = 0
+        c.current_display_mode = 'clock'
+
+        c._activate_on_demand({'plugin_id': 'weather', 'mode': 'weather'})
+        c._activate_on_demand({'plugin_id': 'stocks', 'mode': 'stocks'})
+        assert c.current_display_mode == 'stocks'
+
+        c._clear_on_demand(reason='requested-stop')
+        assert c.current_mode_index == 0
+        assert c.current_display_mode == 'clock'
+
+
 class TestRestartDoesNotStarveTheOtherPlugins:
     """Restarting mid-on-demand used to load only the on-demand plugin.
 

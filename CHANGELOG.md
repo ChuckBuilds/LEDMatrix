@@ -37,6 +37,15 @@ accepts both, but the store flags the old spelling as deprecated
   - `check_system_compatibility.sh` no longer reports installed packages as missing.
   - A network failure fetching GitHub repo info logs a warning, not an error.
 
+- Display runtime:
+  - Vegas comes back after live content interrupts it. It stayed paused, and the display fell back to normal rotation until a restart.
+  - A day with dimming turned off in a per-day dim schedule stays at normal brightness. Before, brightness went back to dim for most of each minute.
+  - Stopping on-demand after a second request resumes rotation where it was first interrupted, not at the first request's screen.
+  - Turning Vegas off and on no longer shows content prepared for the previous run, including plugins disabled in between.
+  - How long a Vegas iteration runs is timed with the monotonic clock, so an NTP clock step on a Pi without an RTC doesn't cut it short or stretch it.
+  - The sync status file is removed when the display service stops, and at startup in standalone mode, so the web UI no longer reports a peer from an earlier run. Concurrent writes each use their own temp file.
+  - `render_gate.swap_releases_gil()` delegates to `frame_timing.binding_releases_gil()` instead of duplicating it.
+
 - Scripts and installer:
   - `fix_web_permissions.sh` makes `safe_plugin_rm.sh` and `safe_pip_install.sh` root-owned again after resetting ownership. A web-user-owned copy of either is a root shell, since sudo lets the web user run them as root. It also restores `config_secrets.json` to mode 640.
   - `configure_wifi_permissions.sh` checks its rules with `visudo -c` before installing them, and grants the NetworkManager captive-portal `cp` and `rm` commands `wifi_manager` runs.
