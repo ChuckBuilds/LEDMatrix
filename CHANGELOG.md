@@ -19,6 +19,14 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+- Display thread-safety and consistency fixes:
+  - `DisplayManager.defer_update()` from a plugin's update thread no longer loses queued updates while the render thread processes the queue; the queue is locked, and the queued callables still run outside the lock.
+  - BDF fonts: `FontManager.get_font()` and `element_style.load_font()` no longer hand one `freetype.Face` to every thread. BDF faces come from `load_bdf_face`, which already caches them per thread; TrueType fonts are cached as before. `element_style`'s font cache is locked (a concurrent eviction could raise `KeyError`).
+  - **Behaviour change:** when `display.hardware.limit_refresh_rate_hz` is missing from config, the panel is now capped at 100 Hz (the config template's value) instead of 90 Hz. Scroll pacing already assumed 100 Hz in that case, so it now matches what the panel does. Configs that set the key (every config migrated from the template) are unaffected.
+  - A sync follower adopts the leader's scroll image between frames on the render thread, instead of the TCP thread swapping the image, array and width while a frame is being drawn.
+  - `update_display()` errors are logged once with a traceback, then at most once a minute with a count, instead of an untraced line every frame. Several swallowed exceptions in `DisplayController` now log at DEBUG.
+  - The repo-root `display_controller.py` now runs `run.py` (the real entry point), so it gets run.py's `-e`/`-d` flags, logging setup and `sys.dont_write_bytecode`.
+
 - The display loop no longer spins at 100% CPU when no enabled mode has anything to show (for example, only a sports plugin enabled in its off-season). After one full rotation of empty modes it checks one mode per second until something shows; live content still takes over at once.
 
 - Contributor tooling and docs:

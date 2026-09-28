@@ -74,8 +74,11 @@ class StreamManager:
 
         # Segments composed into the current cycle (swap mode only).
         self._active_buffer: Deque[ContentSegment] = deque()
-        # Reentrant: _prefetch_content releases and re-acquires it around the
-        # slow fetch while a caller may already hold it.
+        # Reentrant: get_next_segment holds it while calling
+        # _prefetch_content, which acquires it again. _prefetch_content's
+        # release() around the slow fetch only frees the lock when its caller
+        # did not already hold it (initialize); from get_next_segment the
+        # count only drops to 1, so the fetch runs with the lock held.
         self._buffer_lock = threading.RLock()
 
         # Plugin rotation, and the position of the next plugin to fetch in it.
@@ -536,7 +539,10 @@ class StreamManager:
 
                 plugin_id = self._ordered_plugins[self._prefetch_index]
 
-                # Release lock for potentially slow content fetch
+                # Release for the potentially slow content fetch. This frees
+                # the lock only when the caller did not hold it already
+                # (initialize); under get_next_segment's hold the RLock count
+                # just drops to 1 and other threads still wait.
                 self._buffer_lock.release()
                 try:
                     segment = self._fetch_plugin_content(plugin_id)
@@ -726,7 +732,6 @@ class StreamManager:
                 continue
             if images:
                 self.stats['segments_fetched'] += 1
-            if images:
                 group.append((plugin_id, images))
             else:
                 group.append((plugin_id, None if defer_empty else []))

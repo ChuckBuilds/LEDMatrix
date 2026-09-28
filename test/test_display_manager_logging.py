@@ -47,3 +47,28 @@ def test_debug_output_appears_when_the_root_is_at_debug():
         assert dm.logger.isEnabledFor(logging.DEBUG)
     finally:
         root.setLevel(previous)
+
+
+def test_update_display_errors_are_rate_limited(caplog):
+    # update_display() runs every frame; a persistent fault logged an ERROR
+    # line per frame (~100 a second) and never a traceback.
+    from unittest.mock import MagicMock
+
+    dm_obj = object.__new__(dm.DisplayManager)
+    dm_obj._writes_suppressed = MagicMock(side_effect=RuntimeError("boom"))
+
+    with caplog.at_level(logging.ERROR, logger='src.display_manager'):
+        for _ in range(50):
+            dm_obj.update_display()  # must not raise
+        errors = [r for r in caplog.records
+                  if r.getMessage().startswith('Error updating display')]
+        assert len(errors) == 1
+        assert errors[0].exc_info is not None
+
+        # Once the interval has passed, one more line reports what was skipped.
+        dm_obj._update_error_logged_at -= dm._UPDATE_ERROR_LOG_INTERVAL + 1
+        dm_obj.update_display()
+        errors = [r for r in caplog.records
+                  if r.getMessage().startswith('Error updating display')]
+        assert len(errors) == 2
+        assert '49 more' in errors[1].getMessage()
