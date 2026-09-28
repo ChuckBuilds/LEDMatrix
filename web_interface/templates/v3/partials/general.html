@@ -88,9 +88,6 @@
         </div>
         <script>
         (function() {
-            // Track if already initialized to prevent re-render
-            if (window.__timezoneWidgetInitialized) return;
-
             function initTimezoneWidget() {
                 if (!window.LEDMatrixWidgets) { setTimeout(initTimezoneWidget, 50); return; }
                 var widget = window.LEDMatrixWidgets.get('timezone-selector');
@@ -107,7 +104,6 @@
                     fieldId: 'timezone',
                     name: 'timezone'
                 });
-                window.__timezoneWidgetInitialized = true;
             }
             if (document.readyState === 'loading') {
                 document.addEventListener('DOMContentLoaded', initTimezoneWidget);

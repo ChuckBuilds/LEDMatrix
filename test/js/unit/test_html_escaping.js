@@ -89,8 +89,6 @@ const ESCAPERS = [
    'static/v3/plugins_manager.js', 'function escapeHtml(text) {', 'escapeHtml', false],
   ['plugins_manager.js (starlark escapeHtml)',
    'static/v3/plugins_manager.js', 'function escapeHtml(str) {', 'escapeHtml', false],
-  ['error_handler.js (escapeHtml)',
-   'static/v3/js/utils/error_handler.js', 'function escapeHtml(text) {', 'escapeHtml', false],
   ['json-file-manager.js (_esc)',
    'static/v3/js/widgets/json-file-manager.js', '_esc(str) {', '_esc', true],
   ['plugin-file-manager.js (escHtml)',

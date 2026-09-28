@@ -31,8 +31,6 @@ const RequestThrottler = {
         
         debugLog('[RequestThrottler] Creating new request for:', key);
         
-        // Create throttled request with abort support
-        let abortController = null;
         const promise = new Promise((resolve, reject) => {
             setTimeout(async () => {
                 try {
@@ -54,22 +52,8 @@ const RequestThrottler = {
                     this.pending.delete(key);
                 }
             }, delay);
-            
-            // Store abort controller if available
-            if (fn.abort && typeof fn.abort === 'function') {
-                abortController = fn.abort;
-            }
         });
-        
-        // Add abort method if available
-        if (abortController) {
-            promise.abort = () => {
-                debugLog('[RequestThrottler] Aborting request for:', key);
-                abortController.abort();
-                this.pending.delete(key);
-            };
-        }
-        
+
         this.pending.set(key, promise);
         return promise;
     },
@@ -83,18 +67,6 @@ const RequestThrottler = {
         } else {
             this.cache.clear();
         }
-    },
-    
-    /**
-     * Get statistics about pending requests and cache
-     */
-    getStats() {
-        return {
-            pendingCount: this.pending.size,
-            cacheSize: this.cache.size,
-            pendingKeys: Array.from(this.pending.keys()),
-            cacheKeys: Array.from(this.cache.keys())
-        };
     }
 };
 
@@ -226,18 +198,6 @@ const PluginAPI = {
     },
     
     /**
-     * Batch multiple requests together for better performance
-     * 
-     * @param {Array} requests - Array of {endpoint, method, data} objects
-     * @returns {Promise<Array>} Array of response data
-     */
-    async batch(requests) {
-        return Promise.all(requests.map(req => 
-            this.request(req.endpoint, req.method || 'GET', req.data || null, false)
-        ));
-    },
-    
-    /**
      * Clear API cache
      */
     clearCache() {
@@ -309,34 +269,6 @@ const PluginAPI = {
     },
     
     /**
-     * Get plugin schema.
-     * 
-     * @param {string} pluginId - Plugin identifier
-     * @returns {Promise<Object>} Plugin schema
-     */
-    async getPluginSchema(pluginId) {
-        const response = await this.request(`/plugins/schema?plugin_id=${encodeURIComponent(pluginId)}`);
-        return response.data?.schema || null;
-    },
-    
-    /**
-     * Install plugin from store.
-     * 
-     * @param {string} pluginId - Plugin identifier
-     * @param {string} branch - Optional branch name to install from
-     * @returns {Promise<Object>} Response data
-     */
-    async installPlugin(pluginId, branch = null) {
-        const data = {
-            plugin_id: pluginId
-        };
-        if (branch) {
-            data.branch = branch;
-        }
-        return await this.request('/plugins/install', 'POST', data);
-    },
-    
-    /**
      * Update plugin.
      * 
      * @param {string} pluginId - Plugin identifier
@@ -346,28 +278,6 @@ const PluginAPI = {
         return await this.request('/plugins/update', 'POST', {
             plugin_id: pluginId
         });
-    },
-    
-    /**
-     * Uninstall plugin.
-     * 
-     * @param {string} pluginId - Plugin identifier
-     * @returns {Promise<Object>} Response data
-     */
-    async uninstallPlugin(pluginId) {
-        return await this.request('/plugins/uninstall', 'POST', {
-            plugin_id: pluginId
-        });
-    },
-    
-    /**
-     * Get plugin store.
-     * 
-     * @returns {Promise<Array>} List of available plugins
-     */
-    async getPluginStore() {
-        const response = await this.request('/plugins/store/list');
-        return response.data || [];
     },
     
     /**

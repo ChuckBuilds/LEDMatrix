@@ -227,7 +227,7 @@
      */
     window.handleFiles = async function(fieldId, files) {
         const uploadConfig = window.getUploadConfig ? window.getUploadConfig(fieldId) : {};
-        const pluginId = uploadConfig.plugin_id || window.currentPluginConfig?.pluginId || 'static-image';
+        const pluginId = uploadConfig.plugin_id || 'static-image';
         const maxFiles = uploadConfig.max_files || 10;
         const maxSizeMB = uploadConfig.max_size_mb || 5;
         const fileType = uploadConfig.file_type || 'image';
@@ -333,30 +333,24 @@
      * @param {string} pluginId - Plugin ID
      */
     window.deleteUploadedImage = async function(fieldId, imageId, pluginId) {
-        return window.deleteUploadedFile(fieldId, imageId, pluginId, 'image', null);
+        return window.deleteUploadedFile(fieldId, imageId, pluginId);
     };
 
     /**
-     * Delete uploaded file (generic)
+     * Delete an uploaded plugin asset
      * @param {string} fieldId - Field ID
      * @param {string} fileId - File ID
      * @param {string} pluginId - Plugin ID
-     * @param {string} fileType - File type ('image' or 'json')
-     * @param {string|null} customDeleteEndpoint - Custom delete endpoint
      */
-    window.deleteUploadedFile = async function(fieldId, fileId, pluginId, fileType, customDeleteEndpoint) {
-        const fileTypeLabel = fileType === 'json' ? 'file' : 'image';
-        if (!confirm(`Are you sure you want to delete this ${fileTypeLabel}?`)) {
+    window.deleteUploadedFile = async function(fieldId, fileId, pluginId) {
+        if (!confirm('Are you sure you want to delete this image?')) {
             return;
         }
-        
+
         try {
-            const deleteEndpoint = customDeleteEndpoint || (fileType === 'json' ? '/api/v3/plugins/of-the-day/json/delete' : '/api/v3/plugins/assets/delete');
-            const requestBody = fileType === 'json' 
-                ? { file_id: fileId }
-                : { plugin_id: pluginId, image_id: fileId };
-            
-            const response = await fetch(deleteEndpoint, {
+            const requestBody = { plugin_id: pluginId, image_id: fileId };
+
+            const response = await fetch('/api/v3/plugins/assets/delete', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(requestBody)
@@ -381,7 +375,7 @@
                     window.updateImageList(fieldId, newFiles);
                 }
                 
-                window.showNotification(`${fileType === 'json' ? 'File' : 'Image'} deleted successfully`, 'success');
+                window.showNotification('Image deleted successfully', 'success');
             } else {
                 window.showNotification(`Delete failed: ${data.message}`, 'error');
             }
@@ -392,14 +386,13 @@
     };
 
     /**
-     * Get upload configuration for a file upload field.
-     * Priority: 1) data attributes on the file input element (server-rendered),
-     *           2) schema lookup via window.currentPluginConfig (client-rendered).
+     * Get upload configuration for a file upload field, read from the data
+     * attributes the server renders on the file input or its drop zone.
      * @param {string} fieldId - Field ID
      * @returns {Object} Upload configuration
      */
     window.getUploadConfig = function(fieldId) {
-        // Strategy 1: Read from data attributes on the file input element or
+        // Read from data attributes on the file input element or
         // the drop zone wrapper (which survives progress-helper re-renders).
         // Accept any upload-related data attribute — not just pluginId.
         const configSource = getConfigSourceElement(fieldId);
@@ -415,45 +408,6 @@
                 config.allowed_types = ds.allowedTypes.split(',').map(t => t.trim());
             }
             return config;
-        }
-
-        // Strategy 2: Extract config from schema (client-side rendered forms)
-        const schema = window.currentPluginConfig?.schema;
-        if (!schema || !schema.properties) return {};
-
-        // Find the property that matches this fieldId
-        // FieldId is like "image_config_images" for "image_config.images" (client-side)
-        // or "static-image-images" for plugin "static-image", field "images" (server-side)
-        const key = fieldId.replace(/_/g, '.');
-        const keys = key.split('.');
-        let prop = schema.properties;
-
-        for (const k of keys) {
-            if (prop && prop[k]) {
-                prop = prop[k];
-                if (prop.properties && prop.type === 'object') {
-                    prop = prop.properties;
-                } else if (prop.type === 'array' && prop['x-widget'] === 'file-upload') {
-                    break;
-                } else {
-                    break;
-                }
-            }
-        }
-
-        // If we found an array with x-widget, get its config
-        if (prop && prop.type === 'array' && prop['x-widget'] === 'file-upload') {
-            return prop['x-upload-config'] || {};
-        }
-
-        // Try to find nested images array (legacy fallback)
-        if (schema.properties && schema.properties.image_config &&
-            schema.properties.image_config.properties &&
-            schema.properties.image_config.properties.images) {
-            const imagesProp = schema.properties.image_config.properties.images;
-            if (imagesProp['x-widget'] === 'file-upload') {
-                return imagesProp['x-upload-config'] || {};
-            }
         }
 
         return {};
@@ -501,7 +455,7 @@
         if (!imageList) return;
 
         const uploadConfig = window.getUploadConfig(fieldId);
-        const pluginId = uploadConfig.plugin_id || window.currentPluginConfig?.pluginId || 'static-image';
+        const pluginId = uploadConfig.plugin_id || 'static-image';
 
         const openEditor = imageList.querySelector('[id^="schedule_"]:not(.hidden)');
         const openScheduleId = openEditor ? openEditor.id.slice('schedule_'.length) : null;

@@ -1044,11 +1044,7 @@ document.getElementById('brightness').addEventListener('input', function() {
     }
     function startSyncPolling() {
         updateSyncUI();
-        if (window.LEDVisibility) {
-            window.LEDVisibility.onActive('display', startSyncTimer, stopSyncTimer, 'display-sync-status');
-        } else if (!window.syncStatusInterval) {
-            window.syncStatusInterval = setInterval(pollSyncStatus, 5000);
-        }
+        window.LEDVisibility.onActive('display', startSyncTimer, stopSyncTimer, 'display-sync-status');
     }
 
     if (document.readyState === 'loading') {

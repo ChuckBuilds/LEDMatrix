@@ -1101,6 +1101,7 @@
                 (function() {
                     var WIDGET = {{ str_widget|tojson|safe }};
                     var PLUGIN = {{ plugin_id|tojson|safe }};
+                    var VERSION = {{ ((plugin.version if plugin is defined and plugin else '') or '')|string|tojson|safe }};
                     function initPluginWidget() {
                         if (!window.LEDMatrixWidgets || !window.LEDMatrixWidgets.ensureWidget) {
                             setTimeout(initPluginWidget, 50);
@@ -1109,7 +1110,7 @@
                         var container = document.getElementById('{{ field_id }}_container');
                         var fallback = document.getElementById('{{ field_id }}');
                         if (!container) { return; }
-                        window.LEDMatrixWidgets.ensureWidget(WIDGET, PLUGIN).then(function(available) {
+                        window.LEDMatrixWidgets.ensureWidget(WIDGET, PLUGIN, VERSION).then(function(available) {
                             if (!available) { container.remove(); return; }
                             var widget = window.LEDMatrixWidgets.get(WIDGET);
                             if (!widget || typeof widget.render !== 'function') { container.remove(); return; }

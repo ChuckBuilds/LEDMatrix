@@ -651,12 +651,7 @@ function markPanelLoadFailed(event) {
                             // Also update window.installedPlugins for consistency
                             window.installedPlugins = this.installedPlugins;
                             debugLog(`[FULL] Loaded ${this.installedPlugins.length} plugins:`, this.installedPlugins.map(p => p.id));
-                            
-                            // Debug: Log enabled status for each plugin
-                            this.installedPlugins.forEach(plugin => {
-                                debugLog(`[DEBUG Alpine] Plugin ${plugin.id}: enabled=${plugin.enabled} (type: ${typeof plugin.enabled})`);
-                            });
-                            
+
                             this.updatePluginTabs();
                         } else {
                             console.error('[FULL] Failed to load plugins:', data.message);

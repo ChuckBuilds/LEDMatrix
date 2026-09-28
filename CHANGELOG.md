@@ -19,6 +19,14 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+- Web UI cleanup and dependency pins:
+  - A plugin's own config widget (`/static/plugin-widgets/<id>/<widget>.js`) is requested with `?v=<plugin version>`, so an updated plugin's widget reaches browsers instead of the copy cached as immutable for a year.
+  - A failed installed-plugins reload after a toggle, install or uninstall shows one error, not a second generic "unexpected error" toast.
+  - The timezone picker on the General tab renders again when the tab is reloaded in the same page session.
+  - Removed dead code: the plugin-action button's six plugin-id fallbacks (the button always passes its id) and its `[DEBUG]` logging, `window.currentPluginConfig` (never set to anything but `null`), the file-upload widget's JSON delete branch (its endpoint never existed), unused `PluginAPI` / `PluginInstallManager` / `PluginStateManager` helpers, `loadPluginWidgetsFromManifest`, no-longer-reachable fallbacks for a stale `install_manager.js` and a missing `LEDVisibility`, and 13 unused CSS utility rules.
+  - `pytz` may be any release before 2027, so current timezone data installs; `requirements-test.txt` caps `psutil` below 7 like the runtime requirements and allows `pytest-cov` up to 7.x (checked against pytest 9 with the CI coverage run).
+  - The Claude GitHub Actions workflows pin `anthropics/claude-code-action` to a commit SHA like the other actions.
+
 - The display loop no longer spins at 100% CPU when no enabled mode has anything to show (for example, only a sports plugin enabled in its off-season). After one full rotation of empty modes it checks one mode per second until something shows; live content still takes over at once.
 
 - Contributor tooling and docs:
