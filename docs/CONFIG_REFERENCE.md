@@ -180,5 +180,5 @@ See [PLUGIN_CONFIG_CORE_PROPERTIES.md](PLUGIN_CONFIG_CORE_PROPERTIES.md).
 
 | Key | Meaning |
 |---|---|
-| `github.api_token` | Optional GitHub token the Plugin Store uses to avoid API rate limits (`src/plugin_system/store_manager.py`) |
+| `github.api_token` | Optional GitHub token the Plugin Store uses to avoid API rate limits (`src/plugin_system/store_registry.py`) |
 | `<plugin-id>.*` | Secrets a plugin declares with `"x-secret": true` in its config schema; merged into that plugin's config at load time |

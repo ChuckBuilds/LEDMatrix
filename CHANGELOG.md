@@ -19,6 +19,7 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+- `src/plugin_system/store_manager.py` (2,977 lines) is split into mixins: `store_registry.py` (registry, GitHub metadata, search, manifest validation), `store_install.py` (install paths and dependencies) and `store_update.py` (updates, rollback, local git state). `PluginStoreManager` is still imported from `store_manager.py` and has exactly the same methods and attributes; every method body is byte-identical.
 - `BaseOddsManager.get_odds()` no longer returns the cached "no odds" marker (`{"no_odds": True}`) as if it were odds. A game ESPN had no odds for is cached that way so it isn't re-requested every update; on the next update the cache hit handed the marker back, and callers saw a truthy dict. It now returns `None` for it, on the cache hit and in the stale-cache fallback after a failed fetch, as the plugins' bundled copies already did.
 - `web_interface/blueprints/api_v3/plugins.py` (3,285 lines) is split by area into `plugins.py` (installed list, enable/disable, plugin actions), `plugin_store.py`, `plugin_config.py`, `plugin_assets.py`, `plugin_health.py`, `plugin_operations.py` and `plugin_calendar.py`. Pure move: every function body and route decorator is byte-identical, and URLs and endpoint names are unchanged.
 

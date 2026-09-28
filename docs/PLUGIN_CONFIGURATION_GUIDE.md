@@ -202,7 +202,7 @@ plugin-repos/
 ```
 
 The Plugin Store refuses a manifest that lacks any of `id`, `name`,
-`class_name` or `display_modes` (`store_manager.py`); the loader itself
+`class_name` or `display_modes` (`store_install.py`); the loader itself
 needs `class_name`. `version` is not required, but the store compares it
 with the registry's `latest_version` to offer updates, so set it.
 `entry_point` defaults to `manager.py` if omitted. The config schema is not
