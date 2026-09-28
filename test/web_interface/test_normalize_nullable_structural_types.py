@@ -15,7 +15,7 @@ import logging
 
 import pytest
 
-from web_interface.blueprints.api_v3.plugins import (
+from web_interface.blueprints.api_v3.plugin_config import (
     _prepare_plugin_config_for_save,
 )
 

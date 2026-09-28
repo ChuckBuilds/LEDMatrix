@@ -203,7 +203,7 @@ Forms are rendered on the server, not generated in the browser:
    from the schema (widgets named by `x-widget` are rendered by the scripts in
    `web_interface/static/v3/js/widgets/`)
 4. **Save Configuration** posts the form to `/api/v3/plugins/config`
-   (`web_interface/blueprints/api_v3/plugins.py`), which validates it against
+   (`web_interface/blueprints/api_v3/plugin_config.py`), which validates it against
    the schema, writes `config.json` (secret fields go to
    `config_secrets.json`) and shows a notification
 
