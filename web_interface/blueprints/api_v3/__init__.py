@@ -170,9 +170,16 @@ def _get_plugin_version(plugin_id: str) -> str:
     that arrived in a request body, so the name is validated here rather
     than relying on each of them to have done it.
     """
-    manifest_path = resolve_under(
-        api_v3.plugin_store_manager.plugins_dir, plugin_id, "manifest.json"
-    )
+    # The resolver first: a plugin installed as ledmatrix-<id>, or whose
+    # directory is named differently from its manifest id, is not at
+    # plugins_dir/<id>, and recording '' as its version hid that it worked.
+    plugin_dir = _plugin_directory(plugin_id)
+    if plugin_dir is not None:
+        manifest_path = plugin_dir / "manifest.json"
+    else:
+        manifest_path = resolve_under(
+            api_v3.plugin_store_manager.plugins_dir, plugin_id, "manifest.json"
+        )
     if manifest_path is None:
         logger.warning("[PluginVersion] Rejected unsafe plugin id %r", plugin_id)
         return ''

@@ -42,6 +42,8 @@ class WiFiMonitorDaemon:
         """
         self.check_interval = check_interval
         self.wifi_manager = WiFiManager()
+        # mtime of wifi_config.json as last loaded; see _reload_config_if_changed.
+        self._config_mtime = self._config_file_mtime()
         self.running = True
         self.last_state = None
         # Counts consecutive checks where nmcli says "connected" but internet is unreachable.
@@ -57,7 +59,32 @@ class WiFiMonitorDaemon:
         """Handle shutdown signals"""
         logger.info(f"Received signal {signum}, shutting down...")
         self.running = False
-    
+
+    def _config_file_mtime(self):
+        try:
+            return self.wifi_manager.config_path.stat().st_mtime_ns
+        except OSError:
+            return None
+
+    def _reload_config_if_changed(self):
+        """Re-read wifi_config.json when it has changed on disk.
+
+        The web UI's auto-enable toggle (POST /api/v3/wifi/ap/auto-enable)
+        only writes the file; this process read it once at startup, so the
+        toggle did nothing until the daemon restarted. One stat per check.
+        """
+        mtime = self._config_file_mtime()
+        if mtime is None or mtime == self._config_mtime:
+            return
+        before = self.wifi_manager.config.get("auto_enable_ap_mode", True)
+        self.wifi_manager._load_config()
+        # _load_config can itself save (it fills in missing keys), so take
+        # the mtime after it, or that save would trigger another reload.
+        self._config_mtime = self._config_file_mtime()
+        after = self.wifi_manager.config.get("auto_enable_ap_mode", True)
+        if after != before:
+            logger.info(f"wifi_config.json changed: auto_enable_ap_mode={after}")
+
     def run(self):
         """Main daemon loop"""
         logger.info("WiFi Monitor Daemon started")
@@ -78,6 +105,8 @@ class WiFiMonitorDaemon:
         
         while self.running:
             try:
+                self._reload_config_if_changed()
+
                 # One combined check that also returns the state it observed —
                 # the previous flow fetched status before AND after the check
                 # on top of the check's own internal fetch, each one several

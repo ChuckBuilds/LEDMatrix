@@ -305,8 +305,9 @@ def enable_ap_mode():
     from src.wifi_manager import WiFiManager
 
     wifi_manager = WiFiManager()
-    _force_raw = (request.get_json(silent=True) or {}).get('force', False)
-    force = _force_raw is True or (isinstance(_force_raw, str) and _force_raw.lower() in ('true', '1'))
+    # The same parsing as every other boolean on these routes. Anything it
+    # does not recognise (None) is not a request to force.
+    force = _parse_bool_ish((request.get_json(silent=True) or {}).get('force', False)) is True
     success, message = wifi_manager.enable_ap_mode(force=force)
 
     if success:

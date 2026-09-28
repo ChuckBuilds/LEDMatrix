@@ -4,7 +4,7 @@ Routes decorate the shared `api_v3` Blueprint from the package `__init__`,
 so their endpoint names are unchanged by living here.
 """
 from web_interface.blueprints.api_v3 import (
-    _ensure_display_service_running,
+    _coerce_to_bool, _ensure_display_service_running,
     _get_display_service_status, _stop_display_service, api_v3,
     jsonify, logger, request, uuid,
 )
@@ -151,8 +151,10 @@ def start_on_demand_display():
     plugin_id = data.get('plugin_id')
     mode = data.get('mode')
     duration = data.get('duration')
-    pinned = bool(data.get('pinned', False))
-    start_service = data.get('start_service', True)
+    # _coerce_to_bool: bool("false") is True, so a string "false" pinned the
+    # mode or (re)started the service it asked to leave alone.
+    pinned = _coerce_to_bool(data.get('pinned', False))
+    start_service = _coerce_to_bool(data.get('start_service', True))
 
     if not plugin_id and not mode:
         return jsonify({'status': 'error', 'message': 'plugin_id or mode is required'}), 400

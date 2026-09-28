@@ -19,6 +19,19 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+- Web backend and WiFi fixes:
+  - Plugins installed as `ledmatrix-<id>` (or in a directory not named after their id) work in the installed list, the update button, recorded versions, the plugin config form and plugin web UI pages. Those routes built `plugins_dir/<id>` themselves instead of asking the plugin manager.
+  - The captive-portal checks (`/generate_204` and friends) also detect an access point brought up through NetworkManager, the fallback `enable_ap_mode` uses without hostapd; only hostapd was checked, so phones on that AP were told the internet worked.
+  - The WiFi monitor daemon re-reads `wifi_config.json` when it changes, so the "auto-enable AP mode" toggle takes effect without restarting the daemon.
+  - Disconnecting from WiFi in the web UI no longer runs an AP-mode check that could never enable the AP; it only added seconds of waiting. The daemon still enables the AP after its grace period.
+  - The WiFi status message file follows each WiFi manager's own config directory, and the config path falls back to this checkout rather than `/home/ledpi/LEDMatrix`.
+  - Fonts tab: the preview endpoint renders BDF fonts with the panel's own rasterizer instead of refusing them. (The Fonts page still skips the request for `.bdf`; enabling it there is a separate template change.)
+  - Uploading several plugin images checks every file before saving any, so a rejected file no longer leaves the others saved; the images' `.metadata.json` and the calendar plugin's `credentials.json` are written atomically, and the credentials upload no longer returns the server's absolute path.
+  - `"false"` sent as a string no longer counts as true when toggling a plugin (including Starlark apps) or starting on-demand mode (`pinned`, `start_service`); `force` on the AP-enable route is parsed like every other WiFi boolean (`"yes"` and `1` now force).
+  - The live-preview stream starts a new broadcast thread for a client that connects while the previous one is shutting down; that client got no updates.
+  - The web server's log filter no longer raises when werkzeug logs with `exc_info=True`.
+  - The raw secrets editor's save errors carry `error_code` like the main config's; the asset delete route answers 400 for a missing body instead of 415/500. Dead code removed: an unused manifest scan on each Plugins-tab load, backup routes' duplicate catch-alls, redundant imports.
+
 - The display loop no longer spins at 100% CPU when no enabled mode has anything to show (for example, only a sports plugin enabled in its off-season). After one full rotation of empty modes it checks one mode per second until something shows; live content still takes over at once.
 
 - Contributor tooling and docs:

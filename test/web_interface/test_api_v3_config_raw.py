@@ -178,6 +178,25 @@ class TestSaveRawSecrets:
         monkeypatch.setattr(env.config_manager, "save_raw_file_content", boom)
         assert env.client.post(SECRETS, json={"a": 1}).status_code == 500
 
+    @pytest.mark.parametrize("error,code", [
+        (ConfigError("cannot write", config_path="/etc/s.json"), "CONFIG_SAVE_FAILED"),
+        (RuntimeError("nope"), "UNKNOWN_ERROR"),
+    ])
+    def test_errors_answer_in_the_main_routes_shape(self, env, monkeypatch, error, code):
+        # Both raw routes build their 500 with one helper now; this one used
+        # to hand-roll a body without error_code or context. raw_json.html
+        # reads only `message`, which both shapes carry.
+        def boom(kind, data):
+            raise error
+        monkeypatch.setattr(env.config_manager, "save_raw_file_content", boom)
+        secrets = env.client.post(SECRETS, json={"a": 1})
+        main = env.client.post(MAIN, json={"a": 1})
+        assert secrets.status_code == main.status_code == 500
+        body = secrets.get_json()
+        assert body["error_code"] == code
+        assert body["message"] == main.get_json()["message"]
+        assert set(body) == set(main.get_json())
+
 
 class TestRawEndpointsBypassSecretSeparation:
     """Pinned behaviour, deliberately not "fixed".

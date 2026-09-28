@@ -44,6 +44,7 @@ from src.plugin_system.operation_history import OperationHistory
 
 _JOURNALCTL = shutil.which('journalctl')
 _SYSTEMCTL = shutil.which('systemctl')
+_NMCLI = shutil.which('nmcli')
 _VCGENCMD = shutil.which('vcgencmd')
 
 from web_interface import display_preview
@@ -288,6 +289,7 @@ except ImportError:
 # (AP mode) or per SSE tick (display service). A failed check keeps the last
 # known answer for the same TTL rather than retrying on every request.
 from web_interface.cache import TTLCache
+from src.wifi_manager import AP_PROFILE_NAME
 _service_status_cache = TTLCache()
 _AP_MODE_CACHE_TTL = 30  # seconds — AP mode is user-initiated; 30s is fine
 _LEDMATRIX_SERVICE_CACHE_TTL = 15  # seconds
@@ -319,12 +321,49 @@ def _unit_is_active(unit, ttl):
     _service_status_cache.set(unit, active, ttl=ttl)
     return active
 
+def _nmcli_ap_is_active(ttl):
+    """Whether NetworkManager has our access-point profile up, cached for
+    ``ttl`` seconds.
+
+    WiFiManager.enable_ap_mode falls back to an nmcli AP when hostapd is not
+    available, and there is no hostapd unit running then. The match is
+    WiFiManager._get_ap_status_nmcli's: our profile name, or a connection of
+    a hotspot type. False where there is no nmcli; on a failed check, the
+    last known answer.
+    """
+    active = _service_status_cache.get('nmcli-ap')
+    if active is not None:
+        return active
+    active = _service_status_cache.peek('nmcli-ap', False)
+    if _NMCLI:
+        try:
+            result = subprocess.run(  # nosec B603 - fixed argv  # nosemgrep
+                [_NMCLI, '-t', '-f', 'NAME,TYPE', 'connection', 'show', '--active'],
+                capture_output=True, text=True, timeout=2)
+            active = False
+            for line in result.stdout.splitlines():
+                parts = line.split(':')
+                if len(parts) < 2:
+                    continue
+                if parts[0].strip() == AP_PROFILE_NAME or 'hotspot' in parts[1].strip().lower():
+                    active = True
+                    break
+        except (subprocess.SubprocessError, OSError) as e:
+            logging.getLogger('web_interface').warning(
+                "nmcli active-connection check failed: %s", e)
+    _service_status_cache.set('nmcli-ap', active, ttl=ttl)
+    return active
+
 def is_ap_mode_active():
     """
     Check if access point mode is currently active (cached, 30s TTL).
-    Uses a direct systemctl check instead of instantiating WiFiManager.
+    Uses direct systemctl/nmcli checks instead of instantiating WiFiManager,
+    and the same two WiFiManager._is_ap_mode_active uses: hostapd, else the
+    nmcli AP it falls back to. Checking hostapd alone meant the captive
+    portal never triggered on a Pi whose AP came up through nmcli.
     """
-    return _unit_is_active('hostapd', _AP_MODE_CACHE_TTL)
+    return (_unit_is_active('hostapd', _AP_MODE_CACHE_TTL)
+            or _nmcli_ap_is_active(_AP_MODE_CACHE_TTL))
 
 # Captive portal detection endpoints
 # When AP mode is active, return responses that TRIGGER the captive portal popup.
@@ -377,7 +416,6 @@ def not_found_error(error):
 @app.errorhandler(500)
 def internal_error(error):
     """Handle 500 errors."""
-    import logging
     logger = logging.getLogger('web_interface')
     logger.error("Internal server error", exc_info=True)
     payload = {
@@ -416,7 +454,6 @@ def handle_exception(error):
             'message': error.description,
         }), error.code or 500
 
-    import logging
     logger = logging.getLogger('web_interface')
     logger.error("Unhandled exception", exc_info=True)
     return jsonify({
@@ -620,6 +657,11 @@ class _StreamBroadcaster:
                 if not self._clients:
                     # No subscribers — exit so the thread doesn't spin indefinitely.
                     # subscribe() will restart it when a new client arrives.
+                    # Drop the handle here, under the lock: between this break
+                    # and the thread actually ending (closing the generator
+                    # can take a while) is_alive() is still True, and a
+                    # client subscribing then got no thread at all.
+                    self._thread = None
                     break
                 for q in self._clients:
                     try:
@@ -870,8 +912,7 @@ def favicon():
     return '', 204
 
 _reconciliation_started = False
-import threading as _threading
-_reconciliation_lock = _threading.Lock()
+_reconciliation_lock = threading.Lock()
 
 def _run_startup_reconciliation() -> None:
     """Run state reconciliation in background to auto-repair missing plugins.
@@ -911,7 +952,7 @@ def _run_startup_reconciliation() -> None:
         # Write status file so the web UI can surface unresolved issues as a
         # banner without the user having to read journalctl. Mirrors the
         # hw_status pattern (/tmp/led_matrix_hw_status.json).
-        import json as _json, tempfile as _tempfile, os as _os
+        import tempfile
         _recon_status = {
             "done": True,
             "successful": result.reconciliation_successful,
@@ -925,21 +966,21 @@ def _run_startup_reconciliation() -> None:
                 for inc in result.inconsistencies_manual
             ],
         }
-        _recon_path = _os.path.join(_tempfile.gettempdir(), "ledmatrix_reconciliation.json")
+        _recon_path = os.path.join(tempfile.gettempdir(), "ledmatrix_reconciliation.json")
         _tmp = None
         try:
-            if not _os.path.islink(_recon_path):
-                _fd, _tmp = _tempfile.mkstemp(dir=_tempfile.gettempdir(), prefix=".led_recon_")
-                with _os.fdopen(_fd, "w") as _f:
-                    _json.dump(_recon_status, _f)
-                _os.replace(_tmp, _recon_path)
+            if not os.path.islink(_recon_path):
+                _fd, _tmp = tempfile.mkstemp(dir=tempfile.gettempdir(), prefix=".led_recon_")
+                with os.fdopen(_fd, "w") as _f:
+                    json.dump(_recon_status, _f)
+                os.replace(_tmp, _recon_path)
                 _tmp = None  # Rename succeeded; nothing to clean up
         except (OSError, ValueError, TypeError) as _e:
             _logger.warning("[Reconciliation] Could not write status file: %s", _e)
         finally:
-            if _tmp is not None and _os.path.exists(_tmp):
+            if _tmp is not None and os.path.exists(_tmp):
                 try:
-                    _os.unlink(_tmp)
+                    os.unlink(_tmp)
                 except OSError:
                     pass
     except Exception as e:
@@ -953,7 +994,7 @@ def start_startup_reconciliation():
     with _reconciliation_lock:
         if not _reconciliation_started:
             _reconciliation_started = True
-            _threading.Thread(target=_run_startup_reconciliation, daemon=True).start()
+            threading.Thread(target=_run_startup_reconciliation, daemon=True).start()
 
 _auto_updater = None
 
@@ -983,10 +1024,9 @@ def start_auto_update_scheduler():
 
 
 if __name__ == '__main__':
-    import os as _os
     start_auto_update_scheduler()
     # threaded=True is Flask's default since 1.0 but stated explicitly so that
     # long-lived /api/v3/stream/* SSE connections don't starve other requests.
     # Debug mode is off by default; opt in with FLASK_DEBUG=1 in the environment.
-    _debug = _os.environ.get('FLASK_DEBUG', '0') == '1'
+    _debug = os.environ.get('FLASK_DEBUG', '0') == '1'
     app.run(host='0.0.0.0', port=5000, debug=_debug, threaded=True)  # nosec B104 - intentional; local network device

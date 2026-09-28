@@ -26,6 +26,7 @@ from src.common.path_safety import (
 )
 from src.web_interface.config_arrays import coerce_array_shapes
 from src.web_interface.validators import dedup_unique_arrays
+from src.config_manager_atomic import atomic_write_text
 import web_interface.blueprints.api_v3 as _pkg
 # Read through the module rather than bound by value: tests patch these
 # as module attributes, and a value binding would not see the patch.
@@ -70,9 +71,12 @@ def get_installed_plugins():
             plugin_state = state_info.get('state')
             plugin_error_info = state_info.get('error_info')
 
-        # Re-read manifest from disk to ensure we have the latest metadata
-        manifest_path = Path(api_v3.plugin_manager.plugins_dir) / plugin_id / "manifest.json"
-        if manifest_path.exists():
+        # Re-read manifest from disk to ensure we have the latest metadata.
+        # Through the resolver, not plugins_dir/<id>: a plugin installed as
+        # ledmatrix-<id> otherwise never had its manifest refreshed here.
+        plugin_path = _plugin_directory(plugin_id)
+        manifest_path = plugin_path / "manifest.json" if plugin_path else None
+        if manifest_path is not None and manifest_path.exists():
             try:
                 with open(manifest_path, 'r', encoding='utf-8') as f:
                     fresh_manifest = json.load(f)
@@ -103,8 +107,7 @@ def get_installed_plugins():
         update_available = _is_plugin_update_available(installed_version, latest_version)
 
         # Local git info (single subprocess on cache miss, zero on hit)
-        plugin_path = Path(api_v3.plugin_manager.plugins_dir) / plugin_id
-        local_git_info = api_v3.plugin_store_manager._get_local_git_info(plugin_path) if plugin_path.exists() else None
+        local_git_info = api_v3.plugin_store_manager._get_local_git_info(plugin_path) if plugin_path else None
 
         if local_git_info:
             sha = local_git_info.get('sha', '')
@@ -390,7 +393,10 @@ def toggle_plugin():
             if not data or 'plugin_id' not in data or 'enabled' not in data:
                 return jsonify({'status': 'error', 'message': 'plugin_id and enabled required'}), 400
             plugin_id = data['plugin_id']
-            enabled = data['enabled']
+            # Coerced, not stored raw: "false" is a truthy string, and this
+            # value is written to config.json and handed to the Starlark
+            # toggle, so {"enabled": "false"} used to switch a plugin ON.
+            enabled = _coerce_to_bool(data['enabled'])
         else:
             # Form data or query string (HTMX submission)
             plugin_id = request.args.get('plugin_id') or request.form.get('plugin_id')
@@ -901,8 +907,10 @@ def update_plugin():
 
         # Always do direct updates (they're fast git pull operations)
         # Operation queue is reserved for longer operations like install/uninstall
-        plugins_base = Path(api_v3.plugin_store_manager.plugins_dir)
-        plugin_dir = plugins_base / plugin_id
+        # The resolver finds a plugin installed as ledmatrix-<id>; the plain
+        # join stays as the fallback for one no manager knows about yet.
+        plugin_dir = (_plugin_directory(plugin_id)
+                      or Path(api_v3.plugin_store_manager.plugins_dir) / plugin_id)
         manifest_path = resolve_under(plugin_dir, "manifest.json")
         if manifest_path is None:
             return error_response(
@@ -937,22 +945,11 @@ def update_plugin():
             except Exception as e:
                 logger.debug("Could not read local manifest for plugin: %s", e)
 
-        if api_v3.plugin_store_manager:
-            git_info_before = api_v3.plugin_store_manager._get_local_git_info(plugin_dir)
-            if git_info_before:
-                current_commit = git_info_before.get('sha')
-                current_branch = git_info_before.get('branch')
-
-        # Check if plugin is a git repo first (for better error messages)
-        # plugin_id is validated above; reuse the same directory rather
-        # than rebuilding it from a value that might not match.
-        plugin_path_dir = plugin_dir
-        is_git_repo = False
-        if plugin_path_dir.exists():
-            git_info = api_v3.plugin_store_manager._get_local_git_info(plugin_path_dir)
-            is_git_repo = git_info is not None
-            if is_git_repo:
-                logger.debug("Plugin is a git repository, will update via git pull")
+        git_info_before = api_v3.plugin_store_manager._get_local_git_info(plugin_dir)
+        if git_info_before:
+            current_commit = git_info_before.get('sha')
+            current_branch = git_info_before.get('branch')
+            logger.debug("Plugin is a git repository, will update via git pull")
 
         remote_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id, fetch_latest_from_github=True)
         remote_commit = remote_info.get('last_commit_sha') if remote_info else None
@@ -975,11 +972,10 @@ def update_plugin():
 
             updated_commit = None
             updated_branch = remote_branch or current_branch
-            if api_v3.plugin_store_manager:
-                git_info_after = api_v3.plugin_store_manager._get_local_git_info(plugin_dir)
-                if git_info_after:
-                    updated_commit = git_info_after.get('sha')
-                    updated_branch = git_info_after.get('branch') or updated_branch
+            git_info_after = api_v3.plugin_store_manager._get_local_git_info(plugin_dir)
+            if git_info_after:
+                updated_commit = git_info_after.get('sha')
+                updated_branch = git_info_after.get('branch') or updated_branch
 
             # update_plugin() answers True for "nothing to do" as well as for
             # a real update (a ZIP-installed monorepo plugin already at the
@@ -1048,11 +1044,10 @@ def update_plugin():
                 message=message
             )
         else:
-            plugin_path_dir = plugin_dir
-            if not plugin_path_dir.exists():
+            if not plugin_dir.exists():
                 client_msg = 'Plugin update failed: plugin not found'
             else:
-                git_info = api_v3.plugin_store_manager._get_local_git_info(plugin_path_dir)
+                git_info = api_v3.plugin_store_manager._get_local_git_info(plugin_dir)
                 if not git_info:
                     plugin_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id)
                     if not plugin_info:
@@ -2738,6 +2733,16 @@ def _plugin_uploads_dir(plugin_id):
     return resolve_under(PROJECT_ROOT / 'assets' / 'plugins', plugin_id, 'uploads')
 
 
+def _write_upload_metadata(metadata_file, metadata):
+    """Replace an uploads directory's .metadata.json atomically.
+
+    The plugin config page reads this file to list a plugin's images; one cut
+    off mid-write (a power loss on a Pi) failed to parse, and every upload it
+    recorded dropped out of the list while the files stayed on disk.
+    """
+    atomic_write_text(metadata_file, json.dumps(metadata, indent=2))
+
+
 @api_v3.route('/plugins/assets/upload', methods=['POST'])
 def upload_plugin_asset():
     """Upload asset files for a plugin"""
@@ -2783,6 +2788,11 @@ def upload_plugin_asset():
         if 'size' in entry:
             total_size += entry.get('size', 0)
 
+    # Every file is checked before any is saved. Checking and saving in one
+    # loop meant a bad third file answered 400 after the first two were
+    # already written -- on disk and in the metadata the UI lists, though
+    # the user was told the upload failed.
+    accepted = []
     for file in files:
         if not file.filename:
             continue
@@ -2832,6 +2842,10 @@ def upload_plugin_asset():
                 'message': f'File {file.filename} is not a valid image file'
             }), 400
 
+        total_size += file_size
+        accepted.append((file, file_ext, file_size, file_content))
+
+    for file, file_ext, file_size, file_content in accepted:
         # Generate unique filename
         timestamp = int(_pkg.time.time())
         file_hash = hashlib.md5(file_content + file.filename.encode()).hexdigest()[:8]
@@ -2873,11 +2887,7 @@ def upload_plugin_asset():
             'uploaded_at': metadata[image_id]['uploaded_at']
         })
 
-        total_size += file_size
-
-    # Save metadata
-    with open(metadata_file, 'w') as f:
-        json.dump(metadata, f, indent=2)
+    _write_upload_metadata(metadata_file, metadata)
 
     return jsonify({
         'status': 'success',
@@ -2997,16 +3007,20 @@ def upload_calendar_credentials():
         shutil.copy2(credentials_path, backup_path)
         _prune_credential_backups(Path(plugin_dir))
 
-    # Save new file
-    file.save(str(credentials_path))
-
-    # Set proper permissions
-    os.chmod(credentials_path, 0o600)  # Read/write for owner only
+    # Save new file: atomically, and created 0o600 (read/write for owner
+    # only) rather than chmod-ed after. file.save() truncated the old file
+    # first, so a failure mid-write left the plugin with a broken
+    # credentials.json, and the secret sat world-readable until the chmod.
+    atomic_write_text(credentials_path,
+                      file_content.decode(json.detect_encoding(file_content)),
+                      mode=0o600)
 
     return jsonify({
         'status': 'success',
         'message': 'Credentials file uploaded successfully',
-        'path': str(credentials_path)
+        # Relative to the plugin: nothing reads this field, and the server's
+        # absolute layout is not the client's business.
+        'path': credentials_path.name
     })
 
 @api_v3.route('/plugins/calendar/authenticate', methods=['POST'])
@@ -3149,7 +3163,12 @@ def list_calendar_calendars():
 @api_v3.route('/plugins/assets/delete', methods=['POST'])
 def delete_plugin_asset():
     """Delete an asset file for a plugin"""
-    data = request.get_json()
+    # silent=True: without it a missing or non-JSON body raised inside
+    # get_json() and came back as a 415 in the generic error shape, or, for
+    # a JSON array, an AttributeError 500.
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({'status': 'error', 'message': 'plugin_id and image_id are required'}), 400
     plugin_id = data.get('plugin_id')
     image_id = data.get('image_id')
 
@@ -3188,9 +3207,7 @@ def delete_plugin_asset():
     # Remove from metadata
     del metadata[image_id]
 
-    # Save metadata
-    with open(metadata_file, 'w') as f:
-        json.dump(metadata, f, indent=2)
+    _write_upload_metadata(metadata_file, metadata)
 
     return jsonify({'status': 'success', 'message': 'Image deleted successfully'})
 
