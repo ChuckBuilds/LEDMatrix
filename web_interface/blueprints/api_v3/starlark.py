@@ -21,6 +21,7 @@ from web_interface.blueprints.api_v3 import (
     subprocess, tempfile,
 )
 import web_interface.blueprints.api_v3 as _pkg
+from web_interface.blueprints.api_v3.wifi import _parse_bool_ish
 # Read through the module rather than bound by value: tests patch these
 # as module attributes, and a value binding would not see the patch.
 # Several are also called from helpers that live in __init__, so the
@@ -547,36 +548,33 @@ def toggle_starlark_app(app_id):
     try:
         data = request.get_json(silent=True) or {}
 
-        starlark_plugin = _pkg._get_starlark_plugin()
-        if starlark_plugin:
-            app = starlark_plugin.apps.get(app_id)
-            if not app:
-                return jsonify({'status': 'error', 'message': f'App not found: {app_id}'}), 404
-            enabled = data.get('enabled')
-            if enabled is None:
+        # The write itself goes through _toggle_starlark_app, the same helper
+        # /plugins/toggle uses: it saves to disk before touching the loaded
+        # app, and tolerates a loaded app with no on-disk entry. This route
+        # used to carry its own copy without either fix, and stored "false"
+        # (a truthy string) as-is.
+        enabled = data.get('enabled')
+        if enabled is None:
+            _, err = _validate_starlark_app_path(app_id)
+            if err:
+                return jsonify({'status': 'error', 'message': err}), 400
+            # No explicit state: flip the current one.
+            starlark_plugin = _pkg._get_starlark_plugin()
+            app = starlark_plugin.apps.get(app_id) if starlark_plugin else None
+            if app is not None:
                 enabled = not app.is_enabled()
-            app.manifest['enabled'] = enabled
-            # Use safe manifest update to prevent race conditions
-            def update_fn(manifest):
-                manifest['apps'][app_id]['enabled'] = enabled
-            starlark_plugin._update_manifest_safe(update_fn)
-            return jsonify({'status': 'success', 'message': f"App {'enabled' if enabled else 'disabled'}", 'enabled': enabled})
-
-        # Standalone: update manifest directly
-        with _starlark_manifest_lock():
-            manifest = _pkg._read_starlark_manifest()
-            app_data = manifest.get('apps', {}).get(app_id)
-            if not app_data:
-                return jsonify({'status': 'error', 'message': f'App not found: {app_id}'}), 404
-
-            enabled = data.get('enabled')
-            if enabled is None:
-                enabled = not app_data.get('enabled', True)
-            app_data['enabled'] = enabled
-            if _pkg._write_starlark_manifest(manifest):
-                return jsonify({'status': 'success', 'message': f"App {'enabled' if enabled else 'disabled'}", 'enabled': enabled})
             else:
-                return jsonify({'status': 'error', 'message': 'Failed to save'}), 500
+                app_data = _pkg._read_starlark_manifest().get('apps', {}).get(app_id)
+                if not app_data:
+                    return jsonify({'status': 'error', 'message': f'App not found: {app_id}'}), 404
+                enabled = not app_data.get('enabled', True)
+        else:
+            enabled = _parse_bool_ish(enabled)
+            if enabled is None:
+                return jsonify({'status': 'error',
+                                'message': 'enabled must be true or false'}), 400
+
+        return _pkg._toggle_starlark_app(app_id, enabled)
 
     except Exception as e:
         logger.exception("[Starlark] toggle_starlark_app failed")

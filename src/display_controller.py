@@ -318,13 +318,19 @@ class DisplayController:
             except Exception as e:
                 logger.warning("Could not enable plugin health/resource monitoring: %s", e)
 
+            # Discover plugins. Before the plugin checks so they can reuse the
+            # list: each discover_plugins() call rescans the plugins directory
+            # and logs every plugin again.
+            discovered_plugins = self.plugin_manager.discover_plugins()
+            logger.info("Discovered %d plugin(s)", len(discovered_plugins))
+
             # Only the plugin checks: validate_all() above has run the rest,
             # and running it again logged every config warning twice.
             try:
                 from src.startup_validator import StartupValidator
                 validator = StartupValidator(self.config_manager, self.plugin_manager,
                                              cache_manager=self.cache_manager)
-                validator._validate_plugins()
+                validator._validate_plugins(discovered_plugins=discovered_plugins)
                 for warning in validator.warnings:
                     logger.warning("Plugin validation warning: %s", warning)
                 if validator.errors:
@@ -332,10 +338,6 @@ class DisplayController:
                                  "\n".join(f"  - {e}" for e in validator.errors))
             except Exception as e:
                 logger.warning("Plugin validation could not be completed: %s", e)
-
-            # Discover plugins
-            discovered_plugins = self.plugin_manager.discover_plugins()
-            logger.info("Discovered %d plugin(s)", len(discovered_plugins))
 
             # Check for on-demand plugin filter from cache
             on_demand_config = self.cache_manager.get('display_on_demand_config', max_age=3600)

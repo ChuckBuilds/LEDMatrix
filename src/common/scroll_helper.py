@@ -254,6 +254,9 @@ class ScrollHelper:
         now = time.time()
         self.scroll_start_time = now
         self.last_progress_log_time = now
+        # The position just went back to 0; the first update must not advance
+        # it by however long the helper sat idle (off-screen) before this.
+        self.last_update_time = now
         self.logger.info(
             "Dynamic duration target set to %ds (min=%ds, max=%ds, buffer=%.2f)",
             self.calculated_duration,
@@ -776,6 +779,18 @@ class ScrollHelper:
             self.clear_cache()
             return
         
+        # Every frame is cut from cached_array with Image.frombytes('RGB', ...),
+        # which reads a 4-channel (RGBA) array as garbage and raises on a
+        # 1-channel (L) one. Transparent pixels go to black, the panel's
+        # background, rather than to whatever colour hides under the alpha.
+        if image.mode != 'RGB':
+            if 'A' in image.mode or 'transparency' in image.info:
+                rgba = image.convert('RGBA')
+                image = Image.new('RGB', rgba.size, (0, 0, 0))
+                image.paste(rgba, (0, 0), rgba)
+            else:
+                image = image.convert('RGB')
+
         # Set the cached image
         self.cached_image = image
         
@@ -802,6 +817,9 @@ class ScrollHelper:
         self.scroll_start_time = now
         self.last_progress_log_time = now
         self.last_step_time = now  # Initialize step timer for frame-based scrolling
+        # The position just went back to 0; the first update must not advance
+        # it by however long the helper sat idle before this image arrived.
+        self.last_update_time = now
         
         self.logger.debug("Set scrolling image: %dx%d, total_scroll_width=%d", 
                          image.width, image.height, self.total_scroll_width)

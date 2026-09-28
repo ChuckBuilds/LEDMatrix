@@ -25,8 +25,9 @@ class RecordingValidator:
         self.warnings = ['config warning']
         return True, [], list(self.warnings)
 
-    def _validate_plugins(self):
+    def _validate_plugins(self, discovered_plugins=None):
         RecordingValidator.calls.append(('plugins',))
+        RecordingValidator.discovered = discovered_plugins
         self.warnings = ['plugin warning']
 
 
@@ -73,5 +74,21 @@ def test_each_check_runs_once(mock_config_manager, mock_display_manager,
                            if 'config warning' in r.getMessage()]
         assert len(config_warnings) == 1
         assert any('plugin warning' in r.getMessage() for r in caplog.records)
+    finally:
+        controller.cleanup()
+
+
+def test_plugins_are_discovered_once(mock_config_manager, mock_display_manager,
+                                     mock_cache_manager, test_config_with_plugins,
+                                     emulator_mode):
+    """The plugin checks reuse the controller's discovery rather than rescanning
+    the plugins directory (and logging every plugin) a second time."""
+    RecordingValidator.calls = []
+    RecordingValidator.discovered = None
+    controller = _build_controller(mock_config_manager, mock_display_manager,
+                                   mock_cache_manager, test_config_with_plugins)
+    try:
+        assert controller.plugin_manager.discover_plugins.call_count == 1
+        assert RecordingValidator.discovered == []
     finally:
         controller.cleanup()

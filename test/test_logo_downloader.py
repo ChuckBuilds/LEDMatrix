@@ -356,6 +356,18 @@ class TestRefreshPlaceholderTimestamp:
     def test_missing_file_is_not_an_error(self, tmp_path):
         assert refresh_placeholder_timestamp(tmp_path / "nope.png") is False
 
+    def test_the_restamp_is_atomic(self, tmp_path):
+        # It used to save over the file in place, so a renderer opening the
+        # logo mid-write read a truncated PNG. A failed write must now leave
+        # the previous placeholder intact and no temp file behind.
+        assert LogoDownloader().create_placeholder_logo("COLL", str(tmp_path))
+        path = tmp_path / "COLL.png"
+        before = path.read_bytes()
+        with patch("src.logo_downloader.os.replace", side_effect=OSError("disk full")):
+            assert refresh_placeholder_timestamp(path) is False
+        assert path.read_bytes() == before
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["COLL.png"]
+
 
 class TestFailurePaths:
     def test_a_team_without_logos_is_a_failed_download(self, tmp_path):

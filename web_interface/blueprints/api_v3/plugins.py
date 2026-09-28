@@ -153,6 +153,9 @@ def get_installed_plugins():
             'category': plugin_info.get('category', 'General'),
             'description': plugin_info.get('description', 'No description available'),
             'tags': plugin_info.get('tags', []),
+            # The tab nav uses this as the <i> element's Font Awesome class
+            # (app-shell.js / app-early.js); only a string can be one.
+            'icon': plugin_info.get('icon') if isinstance(plugin_info.get('icon'), str) else None,
             'enabled': enabled,
             'verified': verified,
             'loaded': plugin_info.get('loaded', False),

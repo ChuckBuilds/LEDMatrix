@@ -235,7 +235,10 @@ def refresh_placeholder_timestamp(filepath: Path) -> bool:
         metadata = PngInfo()
         metadata.add_text(PLACEHOLDER_MARKER, str(time.time()))
         with Image.open(filepath) as img:
-            img.copy().save(filepath, "PNG", pnginfo=metadata)
+            image = img.copy()
+        # Atomically, like every other logo write: a renderer can open this
+        # file at any moment, and an in-place save exposes a truncated PNG.
+        save_png_atomically(image, filepath, pnginfo=metadata)
         return True
     except Exception:
         logger.debug("Could not refresh placeholder timestamp for %s", filepath,

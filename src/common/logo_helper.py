@@ -80,6 +80,11 @@ class LogoHelper:
         # Time-bounded rather than permanent so a logo that appears later (the
         # downloader writes them at runtime) is still picked up.
         self._missing_logos: Dict[str, float] = {}
+
+        # Failed downloads by logo path. A logo that is absent (not a stale
+        # placeholder) has no on-disk timestamp to back off on, so without this
+        # every call retried the download -- up to a 30s timeout each time.
+        self._download_failures: Dict[str, float] = {}
         
         # Session for HTTP requests
         self.session = requests.Session()
@@ -204,7 +209,12 @@ class LogoHelper:
             return self.load_logo(team_abbr, logo_path, max_width, max_height,
                                   scale)
         
-        # Download if URL provided and file doesn't exist
+        # Download if URL provided and file doesn't exist, unless the last
+        # attempt for this path failed recently.
+        failed_at = self._download_failures.get(str(logo_path))
+        if (logo_url and failed_at is not None
+                and time.time() - failed_at < MISSING_LOGO_RECHECK_SECONDS):
+            logo_url = None
         if logo_url:
             try:
                 self.logger.info(f"Downloading logo for {team_abbr} from {logo_url}")
@@ -218,6 +228,7 @@ class LogoHelper:
                                   scale)
             except Exception as e:
                 self.logger.error(f"Failed to download logo for {team_abbr}: {e}")
+                self._download_failures[str(logo_path)] = time.time()
                 # The retry failed, so restart the back-off. The stale
                 # placeholder is still on disk with its old timestamp, and
                 # leaving it there means the next call retries immediately --
@@ -240,6 +251,7 @@ class LogoHelper:
         # leaving it would hide a logo we just downloaded.
         for key in [k for k in self._missing_logos if k.startswith(prefix)]:
             del self._missing_logos[key]
+        self._download_failures.pop(str(logo_path), None)
 
     @staticmethod
     def _refresh_stale_placeholder(logo_path: Path) -> None:
@@ -332,6 +344,7 @@ class LogoHelper:
         self._logo_cache.clear()
         self._cache_order.clear()
         self._missing_logos.clear()
+        self._download_failures.clear()
         self.logger.debug("Logo cache cleared")
     
     def get_cache_stats(self) -> Dict[str, int]:

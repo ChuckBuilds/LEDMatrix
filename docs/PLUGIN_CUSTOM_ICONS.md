@@ -5,11 +5,9 @@
 A plugin can name an icon for its tab in the web interface's second nav row
 (next to **Plugin Manager**) with the `icon` field in `manifest.json`.
 
-> **Status:** the tab code honors `icon`, but `GET /api/v3/plugins/installed`
-> (`web_interface/blueprints/api_v3/plugins.py`) does not currently include
-> the manifest's `icon` in its response, so every tab shows the default
-> puzzle piece. Setting `icon` is harmless and will take effect once the API
-> passes it through again.
+`GET /api/v3/plugins/installed` passes the manifest's `icon` through (a
+non-string value comes back as `null`), and a plugin without one gets the
+default puzzle piece.
 
 ## Font Awesome classes only
 
@@ -55,8 +53,8 @@ With no `icon` (or an empty one) the tab shows `fas fa-puzzle-piece`.
    or misspelled class renders as a blank space.
 2. Include the style prefix (`fas`, `far` or `fab`) as well as the icon
    class.
-3. See the status note above: the icon is currently not passed through by
-   the API.
+3. The manifest is re-read on each plugin list load; reload the page after
+   editing `icon`.
 
 ## Related Documentation
 
