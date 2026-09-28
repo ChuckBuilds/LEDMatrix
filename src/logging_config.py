@@ -125,6 +125,7 @@ def setup_logging(
     root_logger.handlers.clear()
     
     # Create formatter based on type
+    formatter: logging.Formatter
     if format_type == 'json':
         formatter = StructuredFormatter()
     else:
@@ -244,7 +245,7 @@ class PluginLoggerAdapter(logging.LoggerAdapter):
 
     def process(self, msg, kwargs):
         extra = dict(kwargs.get('extra') or {})
-        extra.setdefault('plugin_id', self.extra.get('plugin_id'))
+        extra.setdefault('plugin_id', self.extra.get('plugin_id'))  # type: ignore[union-attr]  # get_logger always passes a dict
         kwargs['extra'] = extra
         return msg, kwargs
 
@@ -290,7 +291,7 @@ def log_with_context(
         operation_id: Optional operation ID for request tracking
         exc_info: Optional exception info for error logging
     """
-    extra = {}
+    extra: Dict[str, Any] = {}
     
     if context:
         extra['context'] = context

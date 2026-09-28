@@ -109,7 +109,7 @@ def exception_error_response(
     )
 
 
-def validate_request_json(required_fields: list, data: Optional[Dict] = None) -> Tuple[Optional[Dict], Optional[Any]]:
+def validate_request_json(required_fields: list, data: Any = None) -> Tuple[Optional[Dict], Optional[Any]]:
     """
     Validate request JSON has required fields.
     

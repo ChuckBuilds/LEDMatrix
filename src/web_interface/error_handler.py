@@ -152,7 +152,7 @@ def create_success_response(
     Returns:
         Dictionary for jsonify
     """
-    response = {
+    response: dict[str, Any] = {
         "status": "success"
     }
     

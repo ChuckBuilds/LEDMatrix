@@ -41,7 +41,7 @@ def deprecated(removal: str, alternative: Optional[str] = None) -> Callable[[F],
                 warnings.warn(message, DeprecationWarning, stacklevel=2)
             return func(*args, **kwargs)
 
-        wrapper.__deprecated__ = message
+        wrapper.__deprecated__ = message  # type: ignore[attr-defined]  # functools' _Wrapped doesn't declare it
         return wrapper  # type: ignore[return-value]
 
     return decorate

@@ -20,7 +20,7 @@ Usage:
 import logging
 import time
 import requests
-from typing import Dict, List
+from typing import Any, Dict, List
 
 from src.common.api_helper import DEFAULT_HTTP_HEADERS
 
@@ -35,7 +35,7 @@ class DynamicTeamResolver:
     """
     
     # Cache for rankings data
-    _rankings_cache: Dict[str, List[str]] = {}
+    _rankings_cache: Dict[str, int] = {}  # team abbreviation -> AP rank
     _cache_timestamp: float = 0
     _cache_duration: int = 3600  # 1 hour cache
     # A failed or empty fetch is remembered briefly too: during an ESPN
@@ -45,7 +45,7 @@ class DynamicTeamResolver:
     _failure_backoff: int = 300  # 5 minutes
     
     # Supported dynamic team patterns
-    DYNAMIC_PATTERNS = {
+    DYNAMIC_PATTERNS: Dict[str, Dict[str, Any]] = {
         'AP_TOP_25': {'sport': 'ncaa_fb', 'limit': 25},
         'AP_TOP_10': {'sport': 'ncaa_fb', 'limit': 10}, 
         'AP_TOP_5': {'sport': 'ncaa_fb', 'limit': 5},

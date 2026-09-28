@@ -83,6 +83,8 @@ class VegasModeCoordinator:
 
     # Class-level so coordinators built without __init__ (tests) have it.
     _last_live_check: float = float('-inf')
+    # Set only while Vegas has changed the GIL switch interval; read with getattr.
+    _saved_switch_interval: Optional[float]
 
     def __init__(
         self,
@@ -331,7 +333,7 @@ class VegasModeCoordinator:
             self._saved_switch_interval = sys.getswitchinterval()
         sys.setswitchinterval(ms / 1000.0)
         logger.info("Vegas: GIL switch interval %.1fms (was %.1fms)",
-                    ms, self._saved_switch_interval * 1000.0)
+                    ms, self._saved_switch_interval * 1000.0)  # type: ignore[operator]  # set just above; getattr hides it
 
     def _restore_switch_interval(self) -> None:
         saved = getattr(self, '_saved_switch_interval', None)
@@ -842,7 +844,7 @@ class VegasModeCoordinator:
         plugin_id = self.render_pipeline.next_static_trigger()
         if not plugin_id:
             return None
-        plugin = self.plugin_manager.get_plugin(plugin_id)
+        plugin: Optional['BasePlugin'] = self.plugin_manager.get_plugin(plugin_id)
         if not plugin:
             logger.debug("[%s] STATIC turn reached, but the plugin is no longer loaded",
                          plugin_id)

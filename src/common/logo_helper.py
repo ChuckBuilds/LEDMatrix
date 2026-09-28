@@ -154,7 +154,7 @@ class LogoHelper:
                 return None
             
             # Load image
-            logo = Image.open(logo_path)
+            logo: Image.Image = Image.open(logo_path)
             if logo.mode != 'RGBA':
                 logo = logo.convert('RGBA')
             
@@ -359,7 +359,7 @@ class LogoHelper:
         self._download_failures.clear()
         self.logger.debug("Logo cache cleared")
     
-    def get_cache_stats(self) -> Dict[str, int]:
+    def get_cache_stats(self) -> Dict[str, float]:
         """
         Get cache statistics.
         
