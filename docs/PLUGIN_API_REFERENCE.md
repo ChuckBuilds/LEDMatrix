@@ -26,7 +26,7 @@ fields:
 | Check | Fields | What happens when one is missing |
 |---|---|---|
 | JSON schema, [`schema/manifest_schema.json`](../schema/manifest_schema.json) | `id`, `name`, `version`, `author`, `entry_point`, `class_name`, `compatible_versions` | Install from URL logs a warning (`PluginStoreManager._validate_manifest_schema()`); nothing is refused |
-| Plugin Store install, [`src/plugin_system/store_manager.py`](../src/plugin_system/store_manager.py) | `id`, `name`, `class_name`, `display_modes` | Install is refused. A registry install first tries to detect a missing `class_name` from the entry-point file |
+| Plugin Store install, [`src/plugin_system/store_install.py`](../src/plugin_system/store_install.py) | `id`, `name`, `class_name`, `display_modes` | Install is refused. A registry install first tries to detect a missing `class_name` from the entry-point file |
 | Plugin loader, [`src/plugin_system/plugin_loader.py`](../src/plugin_system/plugin_loader.py) | `class_name` | The plugin fails to load |
 
 Defaults and other uses:

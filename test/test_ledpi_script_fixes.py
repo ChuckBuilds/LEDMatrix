@@ -92,7 +92,7 @@ def test_github_network_failure_logs_a_warning_not_an_error(caplog):
     from src.plugin_system.store_manager import PluginStoreManager
     with TemporaryDirectory() as tmp:
         sm = PluginStoreManager(plugins_dir=tmp)
-        with patch("src.plugin_system.store_manager.requests.get",
+        with patch("src.plugin_system.store_registry.requests.get",
                    side_effect=requests.ConnectionError("offline")), \
                 caplog.at_level(logging.WARNING):
             info = sm._get_github_repo_info("https://github.com/owner/repo")

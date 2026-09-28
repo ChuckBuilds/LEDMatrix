@@ -19,6 +19,8 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+- `src/plugin_system/store_manager.py` (2,977 lines) is split into mixins: `store_registry.py` (registry, GitHub metadata, search, manifest validation), `store_install.py` (install paths and dependencies) and `store_update.py` (updates, rollback, local git state). `PluginStoreManager` is still imported from `store_manager.py` and has exactly the same methods and attributes; every method body is byte-identical.
+
 - Background data fetches retry at one level instead of two. The session adapter retried a connection error three times inside every attempt of the service's own retry loop, so a dead network cost up to 16 connection attempts per request and held one of the few worker threads throughout; now it is the loop's `max_retries + 1` attempts. ESPN date-range chunks, which don't go through that loop and skip a chunk that fails, keep a small connection retry of their own so a brief blip doesn't drop a month from a cached season.
 - CI installs `web_interface/requirements.txt` too, so flask-limiter, flask-compress and the web floors are tested. `test_api_helper_does_not_hand_set_brotli` now checks what it meant: core doesn't add `br` itself, and `requests` may advertise it when a brotli decoder is installed.
 - All Discord links point to the LEDMatrix server's invite.

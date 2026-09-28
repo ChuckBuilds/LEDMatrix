@@ -157,7 +157,7 @@ class TestGitInfoCache(unittest.TestCase):
 
     def test_cache_hits_avoid_subprocess_calls(self):
         with patch(
-            "src.plugin_system.store_manager.subprocess.run",
+            "src.plugin_system.store_update.subprocess.run",
             side_effect=self._fake_subprocess_run,
         ) as mock_run:
             first = self.sm._get_local_git_info(self.plugin_path)
@@ -174,7 +174,7 @@ class TestGitInfoCache(unittest.TestCase):
 
     def test_cache_invalidates_on_head_mtime_change(self):
         with patch(
-            "src.plugin_system.store_manager.subprocess.run",
+            "src.plugin_system.store_update.subprocess.run",
             side_effect=self._fake_subprocess_run,
         ) as mock_run:
             self.sm._get_local_git_info(self.plugin_path)
@@ -229,7 +229,7 @@ class TestGitInfoCache(unittest.TestCase):
             return result
 
         with patch(
-            "src.plugin_system.store_manager.subprocess.run",
+            "src.plugin_system.store_update.subprocess.run",
             side_effect=fake_subprocess_run,
         ):
             first = self.sm._get_local_git_info(self.plugin_path)
@@ -284,7 +284,7 @@ class TestGitInfoCache(unittest.TestCase):
             return result
 
         with patch(
-            "src.plugin_system.store_manager.subprocess.run",
+            "src.plugin_system.store_update.subprocess.run",
             side_effect=fake_subprocess_run,
         ):
             first = self.sm._get_local_git_info(self.plugin_path)
@@ -442,7 +442,7 @@ class TestStaleOnErrorFallbacks(unittest.TestCase):
         self.sm.cache_timeout = 1  # force re-fetch
 
         import requests as real_requests
-        with patch("src.plugin_system.store_manager.requests.get",
+        with patch("src.plugin_system.store_registry.requests.get",
                    side_effect=real_requests.ConnectionError("boom")):
             result = self.sm._get_github_repo_info("https://github.com/owner/repo")
         self.assertEqual(result["stars"], 42)
@@ -472,7 +472,7 @@ class TestStaleOnErrorFallbacks(unittest.TestCase):
             call_count["n"] += 1
             raise real_requests.ConnectionError("boom")
 
-        with patch("src.plugin_system.store_manager.requests.get", side_effect=counting_get):
+        with patch("src.plugin_system.store_registry.requests.get", side_effect=counting_get):
             first = self.sm._get_github_repo_info("https://github.com/owner/repo")
             self.assertEqual(first["stars"], 99)
             self.assertEqual(call_count["n"], 1)
@@ -505,7 +505,7 @@ class TestStaleOnErrorFallbacks(unittest.TestCase):
             call_count["n"] += 1
             return rate_limited
 
-        with patch("src.plugin_system.store_manager.requests.get", side_effect=counting_get):
+        with patch("src.plugin_system.store_registry.requests.get", side_effect=counting_get):
             self.sm._get_github_repo_info("https://github.com/owner/repo")
             self.assertEqual(call_count["n"], 1)
             self.sm._get_github_repo_info("https://github.com/owner/repo")
@@ -523,7 +523,7 @@ class TestStaleOnErrorFallbacks(unittest.TestCase):
         self.sm.commit_cache_timeout = 1  # force re-fetch
 
         import requests as real_requests
-        with patch("src.plugin_system.store_manager.requests.get",
+        with patch("src.plugin_system.store_registry.requests.get",
                    side_effect=real_requests.ConnectionError("boom")):
             result = self.sm._get_latest_commit_info(
                 "https://github.com/owner/repo", branch="main"
@@ -553,7 +553,7 @@ class TestStaleOnErrorFallbacks(unittest.TestCase):
         not_found = MagicMock()
         not_found.status_code = 404
         not_found.text = "Not Found"
-        with patch("src.plugin_system.store_manager.requests.get", return_value=not_found):
+        with patch("src.plugin_system.store_registry.requests.get", return_value=not_found):
             result = self.sm._get_latest_commit_info(
                 "https://github.com/owner/repo", branch="main"
             )

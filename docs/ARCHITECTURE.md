@@ -127,7 +127,7 @@ then normal rotation.
 | Circuit breaker | [`plugin_health.py`](../src/plugin_system/plugin_health.py) (`PluginHealthTracker`: 3 consecutive failures open the circuit for 300 s) |
 | Resource metrics | [`resource_monitor.py`](../src/plugin_system/resource_monitor.py) |
 | Config schemas and defaults | [`schema_manager.py`](../src/plugin_system/schema_manager.py) |
-| Install, update, uninstall | [`store_manager.py`](../src/plugin_system/store_manager.py) (`PluginStoreManager`) |
+| Install, update, uninstall | [`store_manager.py`](../src/plugin_system/store_manager.py) (`PluginStoreManager`), with its methods split across [`store_registry.py`](../src/plugin_system/store_registry.py) (registry, GitHub), [`store_install.py`](../src/plugin_system/store_install.py) and [`store_update.py`](../src/plugin_system/store_update.py) |
 | Core-version gate | [`compatibility.py`](../src/plugin_system/compatibility.py) |
 
 Discovery scans only `plugin_system.plugins_directory` (default

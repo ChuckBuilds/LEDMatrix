@@ -25,7 +25,7 @@ which runs as root.** Anything installed only into another user's
 The web interface is not root, so it installs through a narrow sudo helper:
 
 1. `PluginStoreManager._install_dependencies()`
-   (`src/plugin_system/store_manager.py`) calls
+   (`src/plugin_system/store_install.py`) calls
    `install_requirements_file()` (`src/common/permission_utils.py`).
 2. That runs `sudo -n bash scripts/fix_perms/safe_pip_install.sh <plugin>/requirements.txt`.
    The helper checks the path is the project's own `requirements.txt` or a
@@ -154,7 +154,7 @@ For more, see the [Plugin Dependency Troubleshooting Guide](PLUGIN_DEPENDENCY_TR
 ## Files to Reference
 
 - Service units: `systemd/ledmatrix.service`, `systemd/ledmatrix-web.service`
-- Store installs: `src/plugin_system/store_manager.py` (`_install_dependencies`)
+- Store installs: `src/plugin_system/store_install.py` (`_install_dependencies`)
 - Root install helper: `src/common/permission_utils.py` (`install_requirements_file`), `scripts/fix_perms/safe_pip_install.sh`
 - Load-time installs: `src/plugin_system/plugin_loader.py` (`install_dependencies`)
 - Sudo rules: `scripts/install/lib_sudoers.sh` (written by `first_time_install.sh`
