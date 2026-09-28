@@ -40,8 +40,9 @@ the entry below says so.
 
 > The API blueprint is the `api_v3` package in
 > `web_interface/blueprints/api_v3/` (one module per area: `config.py`,
-> `display.py`, `plugins.py`, `system.py`, `backup.py`, `fonts.py`,
-> `misc.py`, `wifi.py`, `starlark.py`). `web_interface/app.py` registers it
+> `display.py`, `system.py`, `backup.py`, `fonts.py`, `misc.py`, `wifi.py`,
+> `starlark.py`, and `plugins.py` plus the `plugin_*.py` modules for the
+> plugin routes). `web_interface/app.py` registers it
 > at `/api/v3` (`app.register_blueprint(api_v3, url_prefix='/api/v3')`).
 > The three SSE endpoints (`/api/v3/stream/*`) are defined directly on the
 > Flask app in `app.py` (`stream_stats`, `stream_display`, `stream_logs`).

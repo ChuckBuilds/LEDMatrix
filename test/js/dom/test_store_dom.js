@@ -1,5 +1,5 @@
 // Real-DOM (jsdom) test of the migrated Plugin Store toolbar, against the
-// server's actual 48-plugin registry — enough data for 4 pages, so pagination,
+// server's actual plugin registry (48+ plugins) — enough data for 4 pages, so pagination,
 // the ellipsis strip and per-page changes are exercised for real.
 // The card renderer itself is stubbed: Step 2 did not touch it, and stubbing
 // keeps the assertions on the parts that did change.
@@ -119,7 +119,12 @@ function slice(src, a, b) {
   // ── per-page ───────────────────────────────────────────────────────────
   change($('store-per-page'), '48');
   ok('per-page 48 shows all in one page', cards() === Math.min(48, N), cards());
-  ok('pagination hidden when one page', pagTop().trim() === '' || pageBtns().length === 0, pagTop().slice(0, 80));
+  // The live registry outgrew 48 plugins, so check whichever case it is.
+  if (N <= 48) {
+    ok('pagination hidden when one page', pagTop().trim() === '' || pageBtns().length === 0, pagTop().slice(0, 80));
+  } else {
+    ok('pagination still shown when 48 per page leaves more', pageBtns().length > 0, pagTop().slice(0, 80));
+  }
   ok('per-page persisted', window.localStorage.getItem('storePerPage') === '48');
   change($('store-per-page'), '12');
   ok('back to 12 restores pagination', cards() === 12 && pageBtns().length > 0);
