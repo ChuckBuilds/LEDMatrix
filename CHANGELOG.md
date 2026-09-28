@@ -19,6 +19,17 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+- Plugin system fixes:
+  - Unloading a plugin waits (up to 5s) for an in-flight `update()` before running `cleanup()`/`on_disable()`, and an update that finishes after the unload no longer puts the plugin back to ENABLED.
+  - A plugin whose load fails after its module was imported (constructor, `validate_config()` or `on_enable()` raising) no longer leaves that module cached: fixing the plugin and reloading it runs the new code without a restart. Its font registrations are dropped too.
+  - `POST /api/v3/plugins/limits/<id>` answers 400 for a limit that isn't a non-negative number (a string limit used to make every later update of that plugin raise). A bad cached limits record is ignored with a warning instead of raising.
+  - The config schema is found for a plugin installed as `ledmatrix-<id>` or in a directory named differently from its manifest id, resolved the way the loader resolves it (plugins/ is still searched before plugin-repos/). A plugin with no schema is logged once at DEBUG instead of a warning on every lookup.
+  - Installing from a URL over an existing install sets the old copy aside and restores it if the move fails, under the same per-plugin lock as a registry install.
+  - The operation queue refuses a second operation for a plugin whose first is still waiting (a double-clicked Install ran twice), and no longer keeps every finished operation in memory.
+  - `get_vegas_render_width()` reads `display_manager.width` first, as plugins are told to.
+  - Store and state files are read as UTF-8 regardless of the system locale.
+  - Docs: `update_interval` in `config.json` sets the scheduler's cadence only for a plugin whose manifest has none (TROUBLESHOOTING, PLUGIN_CONFIGURATION_GUIDE). The health/metrics reset and limits routes note that they only change the web process's view.
+
 - The display loop no longer spins at 100% CPU when no enabled mode has anything to show (for example, only a sports plugin enabled in its off-season). After one full rotation of empty modes it checks one mode per second until something shows; live content still takes over at once.
 
 - Contributor tooling and docs:

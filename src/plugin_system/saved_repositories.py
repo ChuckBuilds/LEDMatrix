@@ -5,11 +5,11 @@ Manages saved GitHub repository URLs for easy plugin discovery and installation.
 """
 
 import json
-import logging
 import os
 from pathlib import Path
 from typing import List, Dict, Optional
 
+from src.logging_config import get_logger
 from src.plugin_system.repo_urls import normalize_repo_url
 
 
@@ -24,7 +24,7 @@ class SavedRepositoriesManager:
             config_path: Path to JSON file storing saved repositories
         """
         self.config_path = Path(config_path)
-        self.logger = logging.getLogger(__name__)
+        self.logger = get_logger(__name__)
         self.repositories = self._load_repositories()
     
     def _load_repositories(self) -> List[Dict[str, str]]:

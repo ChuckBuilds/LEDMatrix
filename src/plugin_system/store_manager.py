@@ -21,10 +21,10 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Optional, Any, Tuple, Set
-import logging
 
 from jsonschema import Draft7Validator, ValidationError
 
+from src.logging_config import get_logger
 from src.common.permission_utils import (
     ensure_directory_permissions, get_plugin_dir_mode, install_requirements_file,
     sudo_remove_directory,
@@ -79,7 +79,7 @@ class PluginStoreManager:
                 ``config/uninstalled_plugins.json`` under the project root.
         """
         self.plugins_dir = Path(plugins_dir)
-        self.logger = logging.getLogger(__name__)
+        self.logger = get_logger(__name__)
         self.registry_cache = None
         self.registry_cache_time = None  # Timestamp of when registry was cached
         self.github_cache = {}  # Cache for GitHub API responses
@@ -333,7 +333,7 @@ class PluginStoreManager:
         try:
             config_path = Path(__file__).parent.parent.parent / "config" / "config_secrets.json"
             if config_path.exists():
-                with open(config_path, 'r') as f:
+                with open(config_path, 'r', encoding='utf-8') as f:
                     config = json.load(f)
                     token = config.get('github', {}).get('api_token', '').strip()
                     if token and token != "YOUR_GITHUB_PERSONAL_ACCESS_TOKEN":
@@ -1528,7 +1528,7 @@ class PluginStoreManager:
                     'error': 'No manifest.json found in repository' + (f' at path: {plugin_path}' if plugin_path else '')
                 }
             
-            with open(manifest_path, 'r') as f:
+            with open(manifest_path, 'r', encoding='utf-8') as f:
                 manifest = json.load(f)
             
             requested_id = plugin_id
@@ -1590,7 +1590,7 @@ class PluginStoreManager:
             if 'entry_point' not in manifest:
                 manifest['entry_point'] = 'manager.py'
                 # Write updated manifest back to file
-                with open(manifest_path, 'w') as f:
+                with open(manifest_path, 'w', encoding='utf-8') as f:
                     json.dump(manifest, f, indent=2)
                 self.logger.info(f"Added missing entry_point field to {plugin_id} manifest (defaulted to manager.py)")
             
@@ -1599,16 +1599,33 @@ class PluginStoreManager:
             # manifest's id -- so it can differ from the manifest id, which
             # discovery tolerates by reading the manifest.
             final_path = self.plugins_dir / plugin_id
-            if final_path.exists():
-                self.logger.warning(f"Plugin {plugin_id} already exists, removing existing copy")
-                if not self._safe_remove_directory(final_path):
-                    return {
-                        'success': False,
-                        'error': f'Failed to remove existing plugin directory: {final_path}'
-                    }
-            
-            shutil.move(str(temp_dir), str(final_path))
-            temp_dir = None  # Prevent cleanup since we moved it
+            # Set the existing copy aside rather than deleting it, and put it
+            # back if the move fails: deleting first left the user with no
+            # plugin at all whenever the move broke part-way. Under the
+            # per-plugin reinstall lock, as install_plugin() is, so two
+            # overlapping installs of one id can't interleave their renames.
+            with self._get_reinstall_lock(plugin_id):
+                backup_path = None
+                if final_path.exists():
+                    self.logger.warning(f"Plugin {plugin_id} already exists, replacing existing copy")
+                    backup_path = final_path.with_name(
+                        f"{final_path.name}{BACKUP_MARKER}preinstall")
+                    problem = self._set_aside(final_path, backup_path)
+                    if problem:
+                        return {
+                            'success': False,
+                            'error': f'Failed to replace existing plugin directory: {problem}'
+                        }
+
+                try:
+                    shutil.move(str(temp_dir), str(final_path))
+                except Exception:
+                    if backup_path is not None:
+                        self._restore_backup(plugin_id, final_path, backup_path, "Install")
+                    raise
+                temp_dir = None  # Prevent cleanup since we moved it
+                if backup_path is not None:
+                    self._discard_backup(plugin_id, backup_path, "install")
 
             # Install dependencies
             self._install_dependencies(final_path)

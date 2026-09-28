@@ -616,6 +616,15 @@ sudo systemctl cat ledmatrix-web | grep User
    ```
    **Note:** Minimum recommended: 300 seconds (5 minutes)
 
+   How often the core calls the plugin's `update()` comes from the plugin
+   itself first: its `get_update_interval()` if it has one, then
+   `update_interval` in its `manifest.json`. The `update_interval` in
+   `config.json` is used by the scheduler only when the manifest sets none.
+   Many plugins also read their own config `update_interval` and skip the
+   API call inside `update()` until it has elapsed, which is what makes the
+   setting above effective; check the plugin's settings form or
+   `config_schema.json` for the option it actually honours.
+
 2. **Check current rate limit usage:**
    - OpenWeatherMap free tier: 1,000 calls/day, 60 calls/minute
    - With 300s interval: 288 calls/day (well within limits)

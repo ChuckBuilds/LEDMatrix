@@ -52,6 +52,10 @@ class PluginManager:
     - PluginExecutor: Handles plugin execution with timeout and error isolation
     - PluginStateManager: Manages plugin state machine
     """
+
+    # How long unload_plugin() waits for an in-flight update() to finish
+    # before tearing the instance down anyway.
+    UNLOAD_LOCK_TIMEOUT = 5.0
     
     def __init__(self, plugins_dir: str = "plugins", 
                  config_manager: Optional[Any] = None, 
@@ -408,10 +412,12 @@ class PluginManager:
                 try:
                     if not plugin_instance.validate_config():
                         self.logger.error("Plugin %s configuration validation failed", plugin_id)
+                        self._discard_failed_load(plugin_id)
                         self.state_manager.set_state(plugin_id, PluginState.ERROR)
                         return False
                 except Exception as e:
                     self.logger.error("Error validating plugin %s config: %s", plugin_id, e, exc_info=True)
+                    self._discard_failed_load(plugin_id)
                     self.state_manager.set_state(plugin_id, PluginState.ERROR, error=e)
                     return False
 
@@ -456,12 +462,34 @@ class PluginManager:
             
         except PluginError as e:
             self.logger.error("Plugin error loading %s: %s", plugin_id, e, exc_info=True)
+            self._discard_failed_load(plugin_id)
             self.state_manager.set_state(plugin_id, PluginState.ERROR, error=e)
             return False
         except Exception as e:
             self.logger.error("Unexpected error loading plugin %s: %s", plugin_id, e, exc_info=True)
+            self._discard_failed_load(plugin_id)
             self.state_manager.set_state(plugin_id, PluginState.ERROR, error=e)
             return False
+
+    def _discard_failed_load(self, plugin_id: str) -> None:
+        """Forget a plugin's imported module and font registrations after a
+        failed load.
+
+        load_module() reuses ``plugin_<id>`` from sys.modules, so a module
+        left behind by a load that failed after import (instantiation,
+        validate_config, on_enable) would keep serving the old code even
+        after the user fixes the plugin and reloads it. Never raises.
+        """
+        try:
+            sys.modules.pop(f"plugin_{plugin_id.replace('-', '_')}", None)
+            self.plugin_loader.unregister_plugin_modules(plugin_id)
+        except Exception as e:  # pragma: no cover - defensive
+            self.logger.debug("Could not drop modules of %s: %s", plugin_id, e)
+        try:
+            if self.font_manager is not None and hasattr(self.font_manager, 'forget_manager_fonts'):
+                self.font_manager.forget_manager_fonts(plugin_id)
+        except Exception as e:
+            self.logger.debug("Could not forget fonts of %s: %s", plugin_id, e)
     
     #: Config keys the **core** reads out of a plugin's own config block. The
     #: plugin never declares them, so a schema with
@@ -607,6 +635,28 @@ class PluginManager:
             self.logger.warning("Plugin %s not loaded", plugin_id)
             return False
         
+        # Take the plugin's lock so cleanup()/on_disable() can't run while
+        # the update worker is mid-update() on this instance. Bounded: an
+        # update() that hangs past PluginExecutor's timeout keeps holding the
+        # lock from its lingering thread, and unload must still go through.
+        lock = self.get_plugin_lock(plugin_id)
+        lock_acquired = lock.acquire(timeout=self.UNLOAD_LOCK_TIMEOUT)
+        if not lock_acquired:
+            self.logger.warning(
+                "Plugin %s still busy after %.1fs; unloading without its lock",
+                plugin_id, self.UNLOAD_LOCK_TIMEOUT)
+        try:
+            return self._unload_plugin_locked(plugin_id)
+        finally:
+            if lock_acquired:
+                lock.release()
+
+    def _unload_plugin_locked(self, plugin_id: str) -> bool:
+        """Body of unload_plugin(); caller holds (or gave up on) the plugin lock."""
+        if plugin_id not in self.plugins:  # unloaded while we waited
+            self.logger.warning("Plugin %s not loaded", plugin_id)
+            return False
+
         try:
             plugin = self.plugins[plugin_id]
             
@@ -904,6 +954,14 @@ class PluginManager:
         non-numeric hook is ignored rather than allowed to stop the plugin
         updating, since a scheduler that propagates a plugin bug stops every
         other plugin too.
+
+        Precedence, first match wins: the ``get_update_interval()`` hook, then
+        ``update_interval`` in the plugin's **manifest**, then
+        ``update_interval`` in the plugin's section of config.json, then 60s.
+        So a config value only drives the scheduler for a plugin whose
+        manifest sets none; when the manifest sets one, the config value is
+        ignored here (a plugin may still read it itself, e.g. to skip fetches
+        inside update()).
 
         The static result is cached per plugin_id after the first lookup, so
         the manifest/config resolution is not repeated on every scheduling
@@ -1206,6 +1264,15 @@ class PluginManager:
                     return
                 finished['done'] = True
             try:
+                # The plugin was unloaded (or reloaded as a new instance)
+                # while this update() ran: unload_plugin() already cleared its
+                # lifecycle state, so recording success/failure here would
+                # resurrect a torn-down plugin as ENABLED. Only release.
+                if self.plugins.get(plugin_id) is not plugin_instance:
+                    if lock is not None:
+                        with self._pending_lock:
+                            self._pending_updates.discard(plugin_id)
+                    return
                 # Drop the queue reservation *before* the state goes back to
                 # ENABLED. The other order leaves a window where a scheduler
                 # sees ENABLED, reserves the plugin, then finds it still in

@@ -124,6 +124,14 @@ Plugins are configured by adding their plugin ID as a top-level key in the confi
 }
 ```
 
+How often the core calls a plugin's `update()`: the plugin's
+`get_update_interval()` if it returns a number, else `update_interval` in the
+plugin's `manifest.json`, else `update_interval` in its `config.json` section
+as above, else 60 seconds. A config `update_interval` therefore only sets the
+scheduler's cadence for a plugin whose manifest does not; plugins that expose
+it in their config schema typically also honour it themselves inside
+`update()`. See [PLUGIN_API_REFERENCE.md](PLUGIN_API_REFERENCE.md#get_update_interval---optionalfloat).
+
 ### Plugin Display Durations
 
 Add plugin display modes to the `display_durations` section:
