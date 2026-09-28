@@ -1466,9 +1466,8 @@ def _run_calendar_registration(plugin_dir: Path, stdin_payload: str):
     except subprocess.TimeoutExpired:
         return None, 'Authentication timed out after 120s'
     except OSError as e:
-        # The exception (a path, an errno) goes to the log, not the client.
-        logger.error('Could not run calendar_registration.py: %s', e, exc_info=True)
-        return None, 'Could not run the authentication script; see the web service log'
+        logger.error('Could not run calendar_registration.py', exc_info=True)
+        return None, 'Could not run the authentication script: %s' % describe_exception(e)
 
     for line in reversed((result.stdout or '').splitlines()):
         line = line.strip()

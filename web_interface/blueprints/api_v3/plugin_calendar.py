@@ -6,7 +6,7 @@ so their endpoint names do not depend on which module they live in.
 from web_interface.blueprints.api_v3 import (
     Path, _CALENDAR_LIST_MAX_PAGES, _plugin_directory,
     _prune_credential_backups, _run_calendar_registration, api_v3,
-    json, jsonify, logger, os, redact_text, request,
+    describe_exception, json, jsonify, logger, os, redact_text, request,
     shutil,
 )
 from src.config_manager_atomic import atomic_write_text
@@ -162,13 +162,14 @@ def list_calendar_calendars():
         from google.auth.transport.requests import Request as GoogleRequest
         from googleapiclient.discovery import build as build_google_service
     except ImportError as e:
-        # Which module is missing goes to the log; the exception itself (it
-        # can quote a path) doesn't go to the client.
-        logger.warning('Calendar picker: Google API libraries missing: %s', e)
         return jsonify({
             'status': 'error',
+            # The name of the missing module is the whole diagnosis, but it
+            # arrives as an exception, so it goes through the redactor like
+            # any other -- an ImportError can quote a path.
             'message': ('The Google API libraries are not installed. Install '
-                        "the calendar plugin's requirements.txt.")
+                        "the calendar plugin's requirements.txt. (%s)"
+                        % describe_exception(e))
         }), 500
 
     with open(token_file, 'rb') as handle:
