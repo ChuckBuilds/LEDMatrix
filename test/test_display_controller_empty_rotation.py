@@ -93,3 +93,68 @@ class TestRunLoopWithNothingToShow:
         # one pause per further pass -- not thousands of passes a second.
         assert [n for n, _ in sleeps] == [3, 4]
         assert all(d == DisplayController.EMPTY_ROTATION_PAUSE for _, d in sleeps)
+
+
+class TestRotationChanges:
+    def test_a_new_rotation_starts_a_new_streak(self):
+        # A long empty streak in a one-mode on-demand session must not make
+        # the normal rotation pause before its own modes have been tried.
+        dc = _bare_controller(["a", "b", "c"], on_demand_modes=["x"])
+        for _ in range(4):
+            dc._note_empty_pass()
+        assert len(dc.sleeps) == 4
+        dc.on_demand_active = False
+        dc._note_empty_pass()
+        dc._note_empty_pass()
+        assert len(dc.sleeps) == 4
+        dc._note_empty_pass()
+        assert len(dc.sleeps) == 5
+
+    def test_a_changed_mode_list_starts_a_new_streak(self):
+        dc = _bare_controller(["a"])
+        dc._note_empty_pass()
+        assert len(dc.sleeps) == 1
+        dc.available_modes = ["a", "b"]  # a plugin was enabled
+        dc._note_empty_pass()
+        assert len(dc.sleeps) == 1
+
+
+class TestOnDemandDuringThePause:
+    def test_the_requested_mode_is_shown_first(self, test_display_controller):
+        controller = test_display_controller
+        controller.available_modes = ["m1", "m2", "m3"]
+        controller.current_mode_index = 0
+        controller.plugin_modes = {}
+
+        tried = []
+        original_note = controller._note_empty_pass
+
+        def recording_note():
+            tried.append(controller.current_display_mode)
+            if len(tried) > 50:
+                raise RuntimeError("stop-test-loop: spinning")
+            original_note()
+
+        sleeps = []
+
+        def fake_sleep(duration, tick_interval=1.0):
+            sleeps.append(duration)
+            if len(sleeps) == 1:
+                # What the real pause does when an on-demand request lands:
+                # activate it and return early.
+                controller.on_demand_active = True
+                controller.on_demand_modes = ["x", "y"]
+                controller.on_demand_mode_index = 0
+                controller.current_display_mode = "x"
+            else:
+                raise RuntimeError("stop-test-loop")
+
+        controller._note_empty_pass = recording_note
+        controller._sleep_with_plugin_updates = fake_sleep
+
+        controller.run()
+
+        # m1, m2, m3 empty -> pause -> on-demand starts; "x" must come next,
+        # not be skipped by rotating the empty pass that was interrupted.
+        assert tried[:3] == ["m1", "m2", "m3"]
+        assert tried[3] == "x"
