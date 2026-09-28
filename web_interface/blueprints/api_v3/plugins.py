@@ -375,14 +375,18 @@ def manage_plugin_limits(plugin_id):
     else:
         # POST - Set limits
         data = request.get_json(silent=True) or {}
-        from src.plugin_system.resource_monitor import limits_from_dict
+        from src.plugin_system.resource_monitor import invalid_limit_field, limits_from_dict
 
         # Validate here: a string limit stored as-is made every later update
-        # of the plugin raise TypeError inside the resource monitor.
-        try:
-            limits = limits_from_dict(data)
-        except ValueError as e:
-            return jsonify({'status': 'error', 'message': str(e)}), 400
+        # of the plugin raise TypeError inside the resource monitor. The
+        # message is built from the field name, not from an exception.
+        bad = invalid_limit_field(data)
+        if bad == 'limits':
+            return jsonify({'status': 'error', 'message': 'Limits must be a JSON object'}), 400
+        if bad:
+            return jsonify({'status': 'error',
+                            'message': f'{bad} must be a non-negative number or null'}), 400
+        limits = limits_from_dict(data)
 
         api_v3.plugin_manager.resource_monitor.set_limits(plugin_id, limits)
 

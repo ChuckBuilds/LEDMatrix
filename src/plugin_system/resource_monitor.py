@@ -33,6 +33,30 @@ class ResourceLimits:
     warning_threshold: float = 0.8  # Warning at 80% of limit
 
 
+_LIMIT_FIELDS = ('max_memory_mb', 'max_cpu_percent', 'max_execution_time',
+                 'warning_threshold')
+
+
+def invalid_limit_field(data: Any) -> Optional[str]:
+    """The first field of a limits mapping that isn't a valid limit, or None.
+
+    ``"limits"`` when ``data`` isn't a mapping at all. Separate from
+    limits_from_dict so a caller can report the problem without passing an
+    exception's text back to a client.
+    """
+    if not isinstance(data, dict):
+        return 'limits'
+    for name in _LIMIT_FIELDS:
+        value = data.get(name)
+        if value is None:
+            continue
+        # bool is an int subclass; True is not a limit anyone meant.
+        if (isinstance(value, bool) or not isinstance(value, (int, float))
+                or not math.isfinite(value) or value < 0):
+            return name
+    return None
+
+
 def limits_from_dict(data: Any) -> ResourceLimits:
     """Build ResourceLimits from a JSON-shaped mapping, validating each value.
 
@@ -45,21 +69,14 @@ def limits_from_dict(data: Any) -> ResourceLimits:
     Raises:
         ValueError: naming the first offending field.
     """
-    if not isinstance(data, dict):
+    bad = invalid_limit_field(data)
+    if bad == 'limits':
         raise ValueError(f"limits must be an object, got {type(data).__name__}")
-    values = {}
-    for name in ('max_memory_mb', 'max_cpu_percent', 'max_execution_time',
-                 'warning_threshold'):
-        value = data.get(name)
-        if value is None:
-            continue
-        # bool is an int subclass; True is not a limit anyone meant.
-        if (isinstance(value, bool) or not isinstance(value, (int, float))
-                or not math.isfinite(value) or value < 0):
-            raise ValueError(
-                f"{name} must be a non-negative number or null, got {value!r}")
-        values[name] = value
-    return ResourceLimits(**values)
+    if bad:
+        raise ValueError(
+            f"{bad} must be a non-negative number or null, got {data.get(bad)!r}")
+    return ResourceLimits(**{name: data[name] for name in _LIMIT_FIELDS
+                             if data.get(name) is not None})
 
 
 @dataclass
