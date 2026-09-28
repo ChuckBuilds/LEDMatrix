@@ -614,7 +614,7 @@ class _InstallMixin:
         # Try default branch (Git's configured default) as last resort
         try:
             cmd = ['git', 'clone', '--depth', '1', repo_url, str(target_path)]
-            subprocess.run(
+            subprocess.run(  # nosec B603 - list-form argv, no shell  # nosemgrep
                 cmd,
                 check=True,
                 capture_output=True,
