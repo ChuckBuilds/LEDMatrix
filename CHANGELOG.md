@@ -19,6 +19,8 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+- CI runs the web UI's DOM test suites (jsdom against the real server-rendered pages and API) in a new **Web UI JS tests** job, with the web interface started in emulator mode; `REQUIRE_DOM=1` makes a suite that can't run fail instead of being skipped. Two suites that had gone stale were fixed: the Tools suite now installs `LEDEscape` the way `base.html` does and supplies sample Starlark apps when the server has none, and the Store suite no longer assumes the registry has 48 plugins or fewer.
+
 - Background data fetches retry at one level instead of two. The session adapter retried a connection error three times inside every attempt of the service's own retry loop, so a dead network cost up to 16 connection attempts per request and held one of the few worker threads throughout; now it is the loop's `max_retries + 1` attempts. ESPN date-range chunks, which don't go through that loop and skip a chunk that fails, keep a small connection retry of their own so a brief blip doesn't drop a month from a cached season.
 - CI installs `web_interface/requirements.txt` too, so flask-limiter, flask-compress and the web floors are tested. `test_api_helper_does_not_hand_set_brotli` now checks what it meant: core doesn't add `br` itself, and `requests` may advertise it when a brotli decoder is installed.
 - All Discord links point to the LEDMatrix server's invite.

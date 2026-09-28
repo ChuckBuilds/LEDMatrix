@@ -4,6 +4,8 @@
 //   node run_all.js                        unit suites, plus DOM suites if a
 //                                          web interface is reachable
 //   BASE=http://<pi-ip>:5000 node run_all.js   point the DOM suites at a rig
+//   REQUIRE_DOM=1 node run_all.js          fail, rather than skip, when the DOM
+//                                          suites can't run (CI sets this)
 //
 // Unit suites need nothing but node. The DOM suites need `npm install` (jsdom)
 // and a running web interface, because they deliberately test against the real
@@ -44,7 +46,11 @@ function run(file) {
   const haveJsdom = fs.existsSync(path.join(__dirname, 'node_modules', 'jsdom'));
   const up = await reachable(BASE + '/');
 
-  if (!haveJsdom) {
+  if (process.env.REQUIRE_DOM && (!haveJsdom || !up)) {
+    // A skipped suite reads as a pass in CI; say why and fail instead.
+    results.push([haveJsdom ? `DOM suites (no web interface at ${BASE})`
+                            : 'DOM suites (jsdom not installed)', false]);
+  } else if (!haveJsdom) {
     console.log(`\nSKIPPING DOM suites: jsdom not installed (run: npm install)\n`);
   } else if (!up) {
     console.log(`\nSKIPPING DOM suites: no web interface reachable at ${BASE}`);

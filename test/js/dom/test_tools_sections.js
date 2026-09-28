@@ -12,6 +12,19 @@ const get = p => new Promise((res, rej) =>
   const partial = await get('/partials/tools');
   const bridge = JSON.parse(await get('/api/v3/integrations/mqtt-bridge'));
   const apps = JSON.parse(await get('/api/v3/starlark/editor/apps'));
+  // A dev box or CI runner has no Starlark apps and no Pixlet binary, which
+  // leaves the editor section with nothing to render. Keep the real payload's
+  // shape but give it two apps -- one id carrying a quote, which is what the
+  // dataset (not inline onclick) check below exists to catch.
+  if (!(apps.data && apps.data.apps && apps.data.apps.length)) {
+    apps.data = Object.assign({}, apps.data, {
+      pixlet_available: true,
+      apps: [
+        { id: 'clock-demo', name: 'Clock demo', editable: true },
+        { id: "it's-quoted", name: 'Quoted id', editable: true },
+      ],
+    });
+  }
 
   const errs = [];
   const vc = new VirtualConsole();
@@ -37,7 +50,13 @@ const get = p => new Promise((res, rej) =>
   // and the page fails in ways it never would in a browser.
   const dom = new JSDOM(`<!doctype html><html><body>${partial}</body></html>`,
     { runScripts: 'dangerously', virtualConsole: vc, url: BASE + '/',
-      beforeParse(w) { w.fetch = stubFetch; w.confirm = () => true; } });
+      beforeParse(w) {
+        w.fetch = stubFetch; w.confirm = () => true;
+        // The partial runs inside base.html, which defines LEDEscape (in
+        // app-early.js) before any tab loads; rendered on its own it needs it
+        // installed the same way.
+        require('../led_escape').install(w);
+      } });
   const { window } = dom;
 
   const tick = ms => new Promise(r => setTimeout(r, ms));
