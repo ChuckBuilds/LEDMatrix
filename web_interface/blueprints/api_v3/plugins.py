@@ -28,6 +28,7 @@ from src.web_interface.config_arrays import coerce_array_shapes
 from src.web_interface.validators import dedup_unique_arrays
 from src.config_manager_atomic import atomic_write_text
 import web_interface.blueprints.api_v3 as _pkg
+from typing import Optional
 # Read through the module rather than bound by value: tests patch these
 # as module attributes, and a value binding would not see the patch.
 # Several are also called from helpers that live in __init__, so the
@@ -848,6 +849,22 @@ def get_plugin_config():
         return success_response(data=plugin_config)
     except Exception as e:
         return exception_error_response(e, ErrorCode.CONFIG_LOAD_FAILED)
+def _listed_plugin_dir(base: Path, name: str) -> Optional[Path]:
+    """The entry of ``base`` called ``name``, or None.
+
+    The path returned comes from listing ``base``, not from joining ``name``
+    onto it, so a caller that validated ``name`` doesn't have to rely on that
+    validation alone: nothing reaches the filesystem unless it's already there.
+    """
+    try:
+        for entry in base.iterdir():
+            if entry.name == name:
+                return entry
+    except OSError:
+        pass
+    return None
+
+
 @api_v3.route('/plugins/update', methods=['POST'])
 def update_plugin():
     """Update plugin"""
@@ -907,24 +924,31 @@ def update_plugin():
 
         # Always do direct updates (they're fast git pull operations)
         # Operation queue is reserved for longer operations like install/uninstall
-        # The resolver finds a plugin installed as ledmatrix-<id>; the plain
-        # join stays as the fallback for one no manager knows about yet.
-        plugin_dir = (_plugin_directory(plugin_id)
-                      or Path(api_v3.plugin_store_manager.plugins_dir) / plugin_id)
-        manifest_path = resolve_under(plugin_dir, "manifest.json")
-        if manifest_path is None:
-            return error_response(
-                ErrorCode.INVALID_INPUT,
-                'Invalid plugin_id',
-                status_code=400
-            )
+        # The resolver finds a plugin installed as ledmatrix-<id>. Either way
+        # the directory used is taken from a listing of plugins_dir, matched by
+        # name, never built from the request value -- so no path here depends
+        # on user input. None means nothing by that name is installed; the
+        # store manager still gets the id and reports that itself.
+        resolved = _plugin_directory(plugin_id)
+        plugin_dir = _listed_plugin_dir(
+            Path(api_v3.plugin_store_manager.plugins_dir),
+            resolved.name if resolved else plugin_id)
+        manifest_path = None
+        if plugin_dir is not None:
+            manifest_path = resolve_under(plugin_dir, "manifest.json")
+            if manifest_path is None:
+                return error_response(
+                    ErrorCode.INVALID_INPUT,
+                    'Invalid plugin_id',
+                    status_code=400
+                )
 
         current_last_updated = None
         current_version = None
         current_commit = None
         current_branch = None
 
-        if manifest_path.exists():
+        if manifest_path is not None and manifest_path.exists():
             try:
                 with open(manifest_path, 'r', encoding='utf-8') as f:
                     manifest = json.load(f)
@@ -945,7 +969,8 @@ def update_plugin():
             except Exception as e:
                 logger.debug("Could not read local manifest for plugin: %s", e)
 
-        git_info_before = api_v3.plugin_store_manager._get_local_git_info(plugin_dir)
+        git_info_before = (api_v3.plugin_store_manager._get_local_git_info(plugin_dir)
+                           if plugin_dir is not None else None)
         if git_info_before:
             current_commit = git_info_before.get('sha')
             current_branch = git_info_before.get('branch')
@@ -962,7 +987,7 @@ def update_plugin():
             updated_last_updated = current_last_updated
             updated_version = current_version
             try:
-                if manifest_path.exists():
+                if manifest_path is not None and manifest_path.exists():
                     with open(manifest_path, 'r', encoding='utf-8') as f:
                         manifest = json.load(f)
                         updated_last_updated = manifest.get('last_updated', current_last_updated)
@@ -972,7 +997,8 @@ def update_plugin():
 
             updated_commit = None
             updated_branch = remote_branch or current_branch
-            git_info_after = api_v3.plugin_store_manager._get_local_git_info(plugin_dir)
+            git_info_after = (api_v3.plugin_store_manager._get_local_git_info(plugin_dir)
+                              if plugin_dir is not None else None)
             if git_info_after:
                 updated_commit = git_info_after.get('sha')
                 updated_branch = git_info_after.get('branch') or updated_branch
@@ -1044,7 +1070,7 @@ def update_plugin():
                 message=message
             )
         else:
-            if not plugin_dir.exists():
+            if plugin_dir is None or not plugin_dir.exists():
                 client_msg = 'Plugin update failed: plugin not found'
             else:
                 git_info = api_v3.plugin_store_manager._get_local_git_info(plugin_dir)

@@ -113,6 +113,24 @@ class TestUpdateRoute:
         self._update(api_v3_client, api)
         assert api.plugin_store_manager._get_local_git_info.call_count == 2
 
+    def test_a_plugin_that_is_not_installed_touches_no_path(
+            self, api_v3_client, api_v3_module, prefixed_plugin):
+        # The directory is taken from a listing of plugins_dir, so an id
+        # with nothing by that name installed never becomes a path at all.
+        api = api_v3_module.api_v3
+        api.plugin_store_manager.get_plugin_info = MagicMock(return_value=None)
+        api.plugin_store_manager.update_plugin = MagicMock(return_value=False)
+        api.plugin_store_manager._get_local_git_info = MagicMock(return_value=None)
+        api.plugin_manager.plugins = {}
+        api.operation_history = None
+
+        response = api_v3_client.post("/api/v3/plugins/update", json={"plugin_id": "ghost"})
+
+        assert response.status_code >= 400
+        assert "not found" in response.get_json()["message"]
+        api.plugin_store_manager._get_local_git_info.assert_not_called()
+        api.plugin_store_manager.update_plugin.assert_called_once_with("ghost")
+
 
 @pytest.fixture
 def pages(tmp_path, monkeypatch):
