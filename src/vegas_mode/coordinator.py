@@ -23,7 +23,6 @@ from src.vegas_mode.config import VegasModeConfig
 from src.vegas_mode.plugin_adapter import PluginAdapter
 from src.vegas_mode.stream_manager import StreamManager
 from src.vegas_mode.render_pipeline import RenderPipeline
-from src.plugin_system.base_plugin import VegasDisplayMode
 
 if TYPE_CHECKING:
     from src.plugin_system.plugin_manager import PluginManager
@@ -77,6 +76,10 @@ class VegasModeCoordinator:
     - Process config updates
     - Provide status and control interface
     """
+
+    #: How long a STATIC pause waits for the plugin's lock (held while its
+    #: update() runs) before skipping that turn.
+    STATIC_LOCK_TIMEOUT = 1.0
 
     # Class-level so coordinators built without __init__ (tests) have it.
     _last_live_check: float = float('-inf')
@@ -542,8 +545,7 @@ class VegasModeCoordinator:
                 if not self._handle_static_pause(static_plugin):
                     # Static pause was interrupted
                     return False
-                # After static pause, skip this segment and continue
-                self.stream_manager.get_next_segment()  # Consume the segment
+                # The trigger consumed the plugin's marker; carry on scrolling.
                 continue
 
             # Run frame
@@ -822,32 +824,30 @@ class VegasModeCoordinator:
         """
         Check if a STATIC mode plugin should take over display.
 
-        Called during iteration to detect when scroll should pause
-        for a static plugin display.
+        Called every frame. The render pipeline marks where each STATIC
+        plugin's turn falls in the strip, and this reports the one the scroll
+        has just reached.
+
+        This used to peek at the front of the stream manager's segment
+        buffer, which continuous scrolling (the default) never advances: it
+        extends the strip with take_next_group() instead. The same first
+        segment was examined on every frame, so a STATIC plugin paused the
+        scroll only if it happened to be first, once, at startup -- and
+        otherwise just scrolled past as ordinary content. Swap mode fared no
+        better: nothing advanced the buffer mid-cycle either.
 
         Returns:
             Plugin instance if static pause should begin, None otherwise
         """
-        # Get the next plugin that would be displayed
-        next_segment = self.stream_manager.peek_next_segment()
-        if not next_segment:
+        plugin_id = self.render_pipeline.next_static_trigger()
+        if not plugin_id:
             return None
-
-        plugin_id = next_segment.plugin_id
         plugin = self.plugin_manager.get_plugin(plugin_id)
-
         if not plugin:
+            logger.debug("[%s] STATIC turn reached, but the plugin is no longer loaded",
+                         plugin_id)
             return None
-
-        # Check if this plugin is configured for STATIC mode
-        try:
-            display_mode = plugin.get_vegas_display_mode()
-            if display_mode == VegasDisplayMode.STATIC:
-                return plugin
-        except (AttributeError, TypeError):
-            logger.exception("Error checking vegas mode for %s", plugin_id)
-
-        return None
+        return plugin
 
     def _handle_static_pause(self, plugin: 'BasePlugin') -> bool:
         """
@@ -877,15 +877,32 @@ class VegasModeCoordinator:
         self.display_manager.set_scrolling_state(False)
 
         try:
-            # Display the plugin using its standard display() method
-            plugin.display(force_clear=True)
+            # Display the plugin using its standard display() method, under
+            # its plugin lock like every other display() call: without it this
+            # could draw while the update worker is inside the plugin's
+            # update(). If update() holds the lock past the wait, skip this
+            # turn rather than stall the marquee.
+            get_lock = getattr(self.plugin_manager, 'get_plugin_lock', None)
+            plugin_lock = get_lock(plugin_id) if get_lock else None
+            if plugin_lock is not None and not plugin_lock.acquire(
+                    timeout=self.STATIC_LOCK_TIMEOUT):
+                logger.info("Static pause skipped for %s: its update() is still running",
+                            plugin_id)
+                return True
+            try:
+                plugin.display(force_clear=True)
+            finally:
+                if plugin_lock is not None:
+                    plugin_lock.release()
             self.display_manager.update_display()
 
-            # Wait for the plugin's display duration
+            # Wait for the plugin's display duration. Monotonic, like the
+            # iteration clock: an NTP step on an RTC-less Pi would otherwise
+            # end the pause at once or stretch it by the correction.
             duration = plugin.get_display_duration()
-            start = time.time()
+            start = time.monotonic()
 
-            while time.time() - start < duration:
+            while time.monotonic() - start < duration:
                 # Check for interruptions
                 if self._should_stop:
                     logger.info("Static pause interrupted by stop request")
@@ -905,7 +922,7 @@ class VegasModeCoordinator:
 
             logger.info(
                 "Static pause completed for %s after %.1fs",
-                plugin_id, time.time() - start
+                plugin_id, time.monotonic() - start
             )
 
         except Exception:

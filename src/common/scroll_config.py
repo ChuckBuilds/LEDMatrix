@@ -51,6 +51,8 @@ import logging
 from dataclasses import dataclass, replace
 from typing import Any, Dict, Optional
 
+from src.matrix_support import DEFAULT_REFRESH_LIMIT_HZ
+
 logger = logging.getLogger(__name__)
 
 #: Speed used when a plugin supplies nothing usable. One pixel per refresh on a
@@ -63,8 +65,9 @@ MIN_PIXELS_PER_SECOND = 1.0
 MAX_PIXELS_PER_SECOND = 500.0
 
 #: Assumed refresh when the caller does not say. Matches the usual
-#: ``display.hardware.limit_refresh_rate_hz``.
-DEFAULT_REFRESH_HZ = 100.0
+#: ``display.hardware.limit_refresh_rate_hz``, and is the cap DisplayManager
+#: applies when that key is missing.
+DEFAULT_REFRESH_HZ = float(DEFAULT_REFRESH_LIMIT_HZ)
 
 #: How far px/s may sit from a whole number of pixels per refresh before it is
 #: worth warning about. 0.05px per frame is invisible; a third of a pixel is not.

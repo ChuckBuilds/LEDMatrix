@@ -8,6 +8,7 @@ Provides utilities for extracting defaults, validating configurations, and manag
 import copy
 import json
 import logging
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import jsonschema
@@ -15,6 +16,8 @@ from jsonschema import Draft7Validator, ValidationError
 
 from src.core_config_keys import CORE_CONFIG_KEYS
 from src.element_style import expand_style_elements
+from src.logging_config import get_logger
+from src.plugin_system.plugin_dirs import resolve_plugin_dir
 
 
 def _renders_as_object(prop: Dict[str, Any]) -> bool:
@@ -367,7 +370,7 @@ class SchemaManager:
                 device-wide ``location`` that seeds plugin location defaults.
                 Omitting it simply leaves schema defaults untouched.
         """
-        self.logger = logger or logging.getLogger(__name__)
+        self.logger = logger or get_logger(__name__)
         self.plugins_dir = plugins_dir
         self.project_root = project_root or Path.cwd()
         self.config_manager = config_manager
@@ -377,23 +380,67 @@ class SchemaManager:
         
         # Default config cache: plugin_id -> default config dict
         self._defaults_cache: Dict[str, Dict[str, Any]] = {}
-    
+
+        # Schema-path misses: plugin_id -> monotonic time of the miss. A
+        # lookup now scans each search directory's manifests, and plugins
+        # without a schema are asked about on every page render.
+        self._schema_path_misses: Dict[str, float] = {}
+        self._schema_miss_logged: set = set()
+
+    #: How long a "no schema" answer is reused before the directories are
+    #: searched again -- short, so a plugin installed by a path that doesn't
+    #: call invalidate_cache() (a dev symlink, a manual copy) still shows up.
+    SCHEMA_MISS_TTL = 30.0
+
     def get_schema_path(self, plugin_id: str) -> Optional[Path]:
         """
         Get the path to a plugin's config_schema.json file.
-        
-        Tries multiple locations in order:
+
+        Each search directory -- plugins_dir, then PROJECT_ROOT/plugins, then
+        PROJECT_ROOT/plugin-repos -- is first resolved the way the plugin
+        loader resolves it (``plugin_dirs.resolve_plugin_dir``: the directory
+        whose manifest declares the id, else ``<id>`` / ``ledmatrix-<id>``,
+        case-insensitively). Only if none of those holds a schema are the
+        literal locations tried:
         1. plugins_dir / plugin_id / config_schema.json
         2. PROJECT_ROOT / plugins / plugin_id / config_schema.json
         3. PROJECT_ROOT / plugin-repos / plugin_id / config_schema.json
-        
+        4. a case-insensitive match of plugin_id in plugins/ and plugin-repos/
+
+        A miss is remembered for SCHEMA_MISS_TTL seconds (or until
+        invalidate_cache()) and logged once, at DEBUG: PluginManager already
+        warns at load time about a plugin that ships no schema.
+
         Args:
             plugin_id: Plugin identifier
-            
+
         Returns:
             Path to schema file or None if not found
         """
+        missed_at = self._schema_path_misses.get(plugin_id)
+        if missed_at is not None and time.monotonic() - missed_at < self.SCHEMA_MISS_TTL:
+            return None
+
+        search_dirs = []
+        if self.plugins_dir:
+            search_dirs.append(Path(self.plugins_dir))
+        search_dirs.extend([self.project_root / 'plugins',
+                            self.project_root / 'plugin-repos'])
+
+        # Resolved the way the loader does, so a plugin installed as
+        # ``ledmatrix-<id>`` or under a directory named differently from its
+        # manifest id still gets its schema. One directory at a time keeps
+        # the documented plugins/-before-plugin-repos/ order.
         possible_paths = []
+        for search_dir in search_dirs:
+            try:
+                resolved = resolve_plugin_dir(
+                    plugin_id, [search_dir], prefix=True, case_insensitive=True)
+            except Exception as e:  # pragma: no cover - defensive
+                self.logger.debug(f"Could not resolve {plugin_id} in {search_dir}: {e}")
+                resolved = None
+            if resolved is not None:
+                possible_paths.append(resolved / 'config_schema.json')
         
         # Try plugins_dir if set
         if self.plugins_dir:
@@ -416,9 +463,14 @@ class SchemaManager:
         for path in possible_paths:
             if path.exists():
                 self.logger.debug(f"Found schema for {plugin_id} at {path}")
+                self._schema_path_misses.pop(plugin_id, None)
+                self._schema_miss_logged.discard(plugin_id)
                 return path
-        
-        self.logger.warning(f"Schema file not found for plugin {plugin_id}")
+
+        self._schema_path_misses[plugin_id] = time.monotonic()
+        if plugin_id not in self._schema_miss_logged:
+            self._schema_miss_logged.add(plugin_id)
+            self.logger.debug(f"Schema file not found for plugin {plugin_id}")
         return None
     
     def load_schema(self, plugin_id: str, use_cache: bool = True) -> Optional[Dict[str, Any]]:
@@ -481,10 +533,12 @@ class SchemaManager:
         if plugin_id:
             self._schema_cache.pop(plugin_id, None)
             self._defaults_cache.pop(plugin_id, None)
+            self._schema_path_misses.pop(plugin_id, None)
             self.logger.debug(f"Invalidated cache for plugin {plugin_id}")
         else:
             self._schema_cache.clear()
             self._defaults_cache.clear()
+            self._schema_path_misses.clear()
             self.logger.debug("Invalidated all schema caches")
     
     def extract_defaults_from_schema(self, schema: Dict[str, Any], prefix: str = '') -> Dict[str, Any]:

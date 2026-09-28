@@ -235,6 +235,14 @@ class TestLoadLogoWithDownload:
             "PHI", tmp_path / "missing.png", None, max_width=16, max_height=16)
         assert logo is not None and logo.size == (16, 16)
 
+    def test_placeholder_uses_the_scaled_box(self, helper, tmp_path):
+        # A real logo at scale 2 is fitted into 32x32; the stand-in for a
+        # missing one must be the same size, not the unscaled 16x16.
+        logo = helper.load_logo_with_download(
+            "PHI", tmp_path / "missing.png", None, max_width=16, max_height=16,
+            scale=2.0)
+        assert logo is not None and logo.size == (32, 32)
+
 
 class TestDownloadLogo:
     def test_writes_file_and_sets_permissions(self, helper, tmp_path):

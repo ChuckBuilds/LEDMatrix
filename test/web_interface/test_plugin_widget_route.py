@@ -215,7 +215,7 @@ def config_form(tmp_path):
     orig_cm = getattr(pv.pages_v3, "config_manager", None)
 
     def _render(plugin_id="soccer-scoreboard", schema=None, widgets=None,
-                files=None):
+                files=None, version=None):
         d = _make_plugin(tmp_path, plugin_id, widgets=widgets, files=files)
         (d / "config_schema.json").write_text(
             json.dumps(schema or {"type": "object", "properties": {}}),
@@ -224,6 +224,8 @@ def config_form(tmp_path):
         pm = MagicMock()
         pm.plugins_dir = str(tmp_path)
         pm.get_plugin_info.return_value = {"id": plugin_id, "name": plugin_id}
+        if version is not None:
+            pm.get_plugin_info.return_value["version"] = version
         pm.get_plugin.return_value = None
         pv.pages_v3.plugin_manager = pm
 
@@ -260,6 +262,23 @@ class TestTheFormRequestsPluginWidgets:
         body = r.get_data(as_text=True)
         assert "ensureWidget" in body
         assert '"custom-leagues"' in body
+
+    def test_the_plugin_version_is_passed_to_the_loader(self, config_form):
+        """/static/ is cached as immutable for a year, so the loader adds
+        ?v=<version>; without it an updated widget never reaches the browser."""
+        r = config_form(schema=_schema_with_widget("custom-leagues"),
+                        widgets=[{"name": "custom-leagues"}],
+                        files={"custom-leagues.js": WIDGET_BODY},
+                        version="1.4.2")
+        body = r.get_data(as_text=True)
+        assert 'var VERSION = "1.4.2";' in body
+        assert "ensureWidget(WIDGET, PLUGIN, VERSION)" in body
+
+    def test_a_plugin_without_a_version_passes_an_empty_one(self, config_form):
+        r = config_form(schema=_schema_with_widget("custom-leagues"),
+                        widgets=[{"name": "custom-leagues"}],
+                        files={"custom-leagues.js": WIDGET_BODY})
+        assert 'var VERSION = "";' in r.get_data(as_text=True)
 
     def test_the_text_input_remains_as_the_fallback(self, config_form):
         """A widget that fails to load must not cost the user their value."""

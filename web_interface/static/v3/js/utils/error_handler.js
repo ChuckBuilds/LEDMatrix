@@ -176,19 +176,19 @@ function showErrorModal(error, context, message, suggestions, docLink) {
     }
 
     // Build modal content
-    const contextText = context ? `<div class="text-sm text-gray-600 mb-2">${escapeHtml(context)}</div>` : '';
+    const contextText = context ? `<div class="text-sm text-gray-600 mb-2">${window.LEDEscape.html(context)}</div>` : '';
     const suggestionsHtml = suggestions.length > 0 ? `
         <div class="mt-4">
             <h4 class="text-sm font-semibold text-gray-900 mb-2">Suggested fixes:</h4>
             <ul class="list-disc list-inside space-y-1 text-sm text-gray-700">
-                ${suggestions.map(s => `<li>${escapeHtml(s)}</li>`).join('')}
+                ${suggestions.map(s => `<li>${window.LEDEscape.html(s)}</li>`).join('')}
             </ul>
         </div>
     ` : '';
 
     const docLinkHtml = docLink ? `
         <div class="mt-4">
-            <a href="${escapeHtml(docLink)}" target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:text-blue-800 text-sm underline">
+            <a href="${window.LEDEscape.html(docLink)}" target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:text-blue-800 text-sm underline">
                 <i class="fas fa-book mr-1" aria-hidden="true"></i>View troubleshooting guide<span style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;"> (opens in a new tab)</span>
             </a>
         </div>
@@ -198,14 +198,14 @@ function showErrorModal(error, context, message, suggestions, docLink) {
         <div class="mt-4">
             <details class="cursor-pointer">
                 <summary class="text-sm font-medium text-gray-700 hover:text-gray-900">Technical details</summary>
-                <pre class="mt-2 text-xs bg-gray-100 p-3 rounded overflow-auto max-h-48 text-gray-800">${escapeHtml(error.details)}</pre>
+                <pre class="mt-2 text-xs bg-gray-100 p-3 rounded overflow-auto max-h-48 text-gray-800">${window.LEDEscape.html(error.details)}</pre>
             </details>
         </div>
     ` : '';
 
     const errorCodeHtml = error.error_code ? `
         <div class="mt-2 text-xs text-gray-500">
-            Error code: <code class="bg-gray-100 px-1 py-0.5 rounded">${escapeHtml(error.error_code)}</code>
+            Error code: <code class="bg-gray-100 px-1 py-0.5 rounded">${window.LEDEscape.html(error.error_code)}</code>
         </div>
     ` : '';
 
@@ -223,7 +223,7 @@ function showErrorModal(error, context, message, suggestions, docLink) {
                             <h3 id="error-modal-title" class="text-lg leading-6 font-medium text-gray-900">Something went wrong</h3>
                             <div class="mt-2" id="error-modal-description">
                                 ${contextText}
-                                <p class="text-sm text-gray-500">${escapeHtml(message)}</p>
+                                <p class="text-sm text-gray-500">${window.LEDEscape.html(message)}</p>
                                 ${errorCodeHtml}
                                 ${suggestionsHtml}
                                 ${docLinkHtml}
@@ -283,8 +283,6 @@ function closeErrorModal() {
         release();
     }
 }
-
-function escapeHtml(text) { return window.LEDEscape.html(text); }
 
 /**
  * Copy error details to clipboard.

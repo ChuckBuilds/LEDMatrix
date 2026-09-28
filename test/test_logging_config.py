@@ -57,6 +57,17 @@ class TestStructuredFormatter:
         assert out["plugin_id"] == "clock"
         assert out["operation_id"] == "op-1"
 
+    def test_non_json_context_values_are_stringified(self):
+        # A datetime/Path in the context used to raise TypeError from
+        # json.dumps, and the handler dropped the whole record.
+        from datetime import datetime
+        from pathlib import Path
+        record = make_record(context={"at": datetime(2026, 1, 2, 3, 4, 5),
+                                      "path": Path("a/b")})
+        out = json.loads(StructuredFormatter().format(record))
+        assert out["context"]["at"] == "2026-01-02 03:04:05"
+        assert out["context"]["path"] == str(Path("a/b"))
+
     def test_exception_key_when_exc_info_present(self):
         try:
             raise ValueError("kaboom")

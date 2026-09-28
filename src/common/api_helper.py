@@ -84,7 +84,11 @@ class APIHelper:
         self.session.headers.update({**DEFAULT_HTTP_HEADERS, 'Connection': 'keep-alive'})
         
         # Rate limiting
-        self._last_request_time = 0
+        self._last_request_time = 0  # wall clock, reported by get_request_stats()
+        # The interval is measured on time.monotonic(): a wall-clock step
+        # back (NTP correcting a Pi with no RTC) made time_since_last
+        # negative and the "remaining interval" sleep as long as the step.
+        self._last_request_monotonic: Optional[float] = None
         self._min_request_interval = 1.0  # Minimum seconds between requests
     
     def get(self, url: str, params: Optional[Dict] = None, 
@@ -333,13 +337,14 @@ class APIHelper:
     
     def _enforce_rate_limit(self) -> None:
         """Enforce rate limiting between requests."""
-        current_time = time.time()
-        time_since_last = current_time - self._last_request_time
-        
-        if time_since_last < self._min_request_interval:
-            sleep_time = self._min_request_interval - time_since_last
-            time.sleep(sleep_time)
-        
+        if self._last_request_monotonic is not None:
+            time_since_last = time.monotonic() - self._last_request_monotonic
+
+            if time_since_last < self._min_request_interval:
+                sleep_time = self._min_request_interval - time_since_last
+                time.sleep(sleep_time)
+
+        self._last_request_monotonic = time.monotonic()
         self._last_request_time = time.time()
     
     def set_rate_limit(self, min_interval: float) -> None:
@@ -362,5 +367,8 @@ class APIHelper:
         return {
             'min_request_interval': self._min_request_interval,
             'last_request_time': self._last_request_time,
-            'time_since_last_request': time.time() - self._last_request_time
+            'time_since_last_request': (
+                time.monotonic() - self._last_request_monotonic
+                if self._last_request_monotonic is not None
+                else time.time() - self._last_request_time),
         }

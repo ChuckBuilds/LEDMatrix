@@ -6,9 +6,10 @@ and circuit breaker state. Provides automatic recovery mechanisms.
 """
 
 import time
-import logging
 from typing import Dict, Optional, Any, Tuple
 from enum import Enum
+
+from src.logging_config import get_logger
 
 
 class CircuitState(Enum):
@@ -43,7 +44,7 @@ class PluginHealthTracker:
         self.failure_threshold = failure_threshold
         self.cooldown_period = cooldown_period
         self.half_open_timeout = half_open_timeout
-        self.logger = logging.getLogger(__name__)
+        self.logger = get_logger(__name__)
         
         # In-memory health state (also persisted to cache)
         self._health_state: Dict[str, Dict[str, Any]] = {}

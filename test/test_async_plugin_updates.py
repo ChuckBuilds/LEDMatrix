@@ -254,6 +254,51 @@ class TestFailurePaths:
         assert target_id not in pm._pending_updates
         assert pm.state_manager.get_state(target_id) == PluginState.UNLOADED
 
+    def test_unload_waits_for_in_flight_update(self, pm):
+        """unload_plugin() must not run cleanup() while update() is still
+        executing on the same instance -- it waits on the plugin lock."""
+        observed = {}
+
+        class CleanupPlugin(SlowPlugin):
+            def cleanup(self):
+                observed['in_update_at_cleanup'] = self.in_update
+
+        plugin = CleanupPlugin(update_seconds=0.5)
+        plugin_id = _install(pm, plugin)
+        pm._enqueue_update(plugin_id, time.time())
+        deadline = time.monotonic() + 2
+        while not plugin.in_update and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert plugin.in_update
+
+        assert pm.unload_plugin(plugin_id) is True
+        assert observed == {'in_update_at_cleanup': False}
+
+    def test_update_finishing_after_unload_does_not_resurrect(self, pm):
+        """When unload gives up waiting for a hung update(), that update's
+        eventual completion must not flip the cleared state back to ENABLED."""
+        pm.UNLOAD_LOCK_TIMEOUT = 0.05
+        plugin = SlowPlugin(update_seconds=0.5)
+        plugin_id = _install(pm, plugin)
+        pm._enqueue_update(plugin_id, time.time())
+        deadline = time.monotonic() + 2
+        while not plugin.in_update and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert plugin.in_update
+
+        assert pm.unload_plugin(plugin_id) is True
+        deadline = time.monotonic() + 3
+        while plugin.update_calls and plugin.in_update and time.monotonic() < deadline:
+            time.sleep(0.02)
+        time.sleep(0.2)  # let _finish() run
+
+        assert pm.state_manager.get_state(plugin_id) == PluginState.UNLOADED
+        assert plugin_id not in pm.plugin_last_update
+        assert plugin_id not in pm._pending_updates
+        lock = pm.get_plugin_lock(plugin_id)
+        assert lock.acquire(blocking=False) is True
+        lock.release()
+
 
 class TestKillSwitch:
     def test_synchronous_mode_blocks_like_before(self, pm):

@@ -45,7 +45,7 @@
  * installFromCustomRegistry, removeSavedRepository, executePluginAction,
  * openOnDemandModal, requestOnDemandStop, loadOnDemandStatus,
  * installStarlarkApp, installPixlet, the GitHub token functions,
- * window.installedPlugins and window.currentPluginConfig.
+ * and window.installedPlugins.
  */
 
 // ─── LocalStorage Safety Wrappers ────────────────────────────────────────────
@@ -215,7 +215,7 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
             if (plugin) {
                 plugin.enabled = !enabled;
             }
-            window.pluginManager.loadInstalledPlugins();
+            window.pluginManager.loadInstalledPlugins().catch(() => {});
         }
 
         // Clear token and re-enable UI
@@ -243,7 +243,7 @@ window.togglePlugin = window.togglePlugin || function(pluginId, enabled) {
         if (plugin) {
             plugin.enabled = !enabled;
         }
-        window.pluginManager.loadInstalledPlugins();
+        window.pluginManager.loadInstalledPlugins().catch(() => {});
 
         // Clear token and re-enable UI
         delete window._pluginToggleRequests[pluginId];
@@ -452,10 +452,9 @@ window.handleGitHubPluginInstall = function() {
             }
             urlInput.value = '';
 
-            // Show notification if available
             showNotification(`Plugin ${data.plugin_id} installed successfully`, 'success');
 
-            setTimeout(() => window.pluginManager.loadInstalledPlugins(true), 1000);
+            setTimeout(() => window.pluginManager.loadInstalledPlugins(true).catch(() => {}), 1000);
         } else {
             if (statusDiv) {
                 statusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>${window.LEDEscape.html(data.message || 'Installation failed')}</span>`;
@@ -609,7 +608,6 @@ window.checkGitHubAuthStatus = function checkGitHubAuthStatus() {
 
     // Local variables for this instance
 let installedPlugins = [];
-window.currentPluginConfig = null;
     let pluginStoreCache = null; // Cache for plugin store to speed up subsequent loads
     let cacheTimestamp = null;
     const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes in milliseconds
@@ -904,6 +902,9 @@ const pluginLoadCache = {
     }
 };
 
+// Rejects after it has reported the failure itself (panel error or toast),
+// so fire-and-forget callers add .catch(() => {}) rather than leave it to
+// the global unhandledrejection handler, which would toast it again.
 function loadInstalledPlugins(forceRefresh = false) {
     // Return cached data if valid and not forcing refresh
     if (!forceRefresh && pluginLoadCache.isValid()) {
@@ -1381,7 +1382,7 @@ function handlePluginAction(event) {
                     .then(data => {
                         if (data.status === 'success') {
                             showNotification('Starlark app uninstalled', 'success');
-                            loadInstalledPlugins(true);
+                            loadInstalledPlugins(true).catch(() => {});
                         } else {
                             alert('Uninstall failed: ' + (data.message || 'Unknown error'));
                         }
@@ -1544,19 +1545,8 @@ function runUpdateAllPlugins() {
                 return;
             }
             // Counted by install_manager.js from each answer's update_status:
-            // a no-op update is "already up to date", not "updated". A cached
-            // install_manager.js from before that helper gets a plain count.
-            const manager = window.PluginInstallManager;
-            const summary = (manager && typeof manager.summarizeUpdateResults === 'function')
-                ? manager.summarizeUpdateResults(results)
-                : (() => {
-                    const failed = results.filter(r => !r.success).length;
-                    const checked = results.length - failed;
-                    return {
-                        text: `${checked} checked` + (failed ? `, ${failed} failed` : ''),
-                        type: failed ? (checked ? 'warning' : 'error') : 'success'
-                    };
-                })();
+            // a no-op update is "already up to date", not "updated".
+            const summary = window.PluginInstallManager.summarizeUpdateResults(results);
             showNotification(summary.text, summary.type);
         })
         .catch(error => {
@@ -1887,157 +1877,37 @@ function closeOnDemandModalOnBackdrop(event) {
 }
 
 // Generic Plugin Action Handler
-window.executePluginAction = function(actionId, actionIndex, pluginIdParam = null) {
-    debugLog('[DEBUG] executePluginAction called - actionId:', actionId, 'actionIndex:', actionIndex, 'pluginIdParam:', pluginIdParam);
-
-    // Construct button ID first (we have actionId and actionIndex)
+window.executePluginAction = function(actionId, actionIndex, pluginId) {
     const actionIdFull = `action-${actionId}-${actionIndex}`;
     const statusId = `action-status-${actionId}-${actionIndex}`;
     const btn = document.getElementById(actionIdFull);
     const statusDiv = document.getElementById(statusId);
 
-    // Get plugin ID from multiple sources with comprehensive fallback logic
-    let pluginId = pluginIdParam;
-
-    // Fallback 1: Try to get from button's data-plugin-id attribute
-    if (!pluginId && btn) {
-        pluginId = btn.getAttribute('data-plugin-id');
-        if (pluginId) {
-            debugLog('[DEBUG] Got pluginId from button data attribute:', pluginId);
-        }
-    }
-
-    // Fallback 2: Try to get from closest parent with data-plugin-id
-    if (!pluginId && btn) {
-        const parentWithPluginId = btn.closest('[data-plugin-id]');
-        if (parentWithPluginId) {
-            pluginId = parentWithPluginId.getAttribute('data-plugin-id');
-            if (pluginId) {
-                debugLog('[DEBUG] Got pluginId from parent element:', pluginId);
-            }
-        }
-    }
-
-    // Fallback 3: Try to get from plugin-config-container or plugin-config-tab
-    if (!pluginId && btn) {
-        const container = btn.closest('.plugin-config-container, .plugin-config-tab, [id^="plugin-config-"]');
-        if (container) {
-            // Try data-plugin-id first
-            pluginId = container.getAttribute('data-plugin-id');
-            if (!pluginId) {
-                // Try to extract from ID like "plugin-config-{pluginId}"
-                const idMatch = container.id.match(/plugin-config-(.+)/);
-                if (idMatch) {
-                    pluginId = idMatch[1];
-                }
-            }
-            if (pluginId) {
-                debugLog('[DEBUG] Got pluginId from container:', pluginId);
-            }
-        }
-    }
-
-    // Fallback 4: Try to get from currentPluginConfig
+    // The action button (plugin_config.html) always passes its plugin's id.
     if (!pluginId) {
-        pluginId = currentPluginConfig?.pluginId;
-        if (pluginId) {
-            debugLog('[DEBUG] Got pluginId from currentPluginConfig:', pluginId);
-        }
-    }
-
-    // Fallback 5: the active tab, when it is a plugin's tab
-    if (!pluginId) {
-        const appData = window.getApp();
-        if (appData && appData.activeTab && appData.activeTab !== 'overview' && appData.activeTab !== 'plugins' && appData.activeTab !== 'wifi') {
-            pluginId = appData.activeTab;
-            debugLog('[DEBUG] Got pluginId from Alpine activeTab:', pluginId);
-        }
-    }
-
-    // Fallback 6: Try to find from plugin tab elements (scoped to button context)
-    if (!pluginId && btn) {
-        try {
-            // Search within the button's Alpine.js context (closest x-data element)
-            const buttonContext = btn.closest('[x-data]');
-            if (buttonContext) {
-                const pluginTab = buttonContext.querySelector('[x-show*="activeTab === plugin.id"]');
-                if (pluginTab && window.Alpine) {
-                    try {
-                        const pluginData = Alpine.$data(buttonContext);
-                        if (pluginData && pluginData.plugin) {
-                            pluginId = pluginData.plugin.id;
-                            if (pluginId) {
-                                debugLog('[DEBUG] Got pluginId from Alpine plugin data (scoped to button context):', pluginId);
-                            }
-                        }
-                    } catch (e) {
-                        console.warn('[DEBUG] Error accessing Alpine plugin data:', e);
-                    }
-                }
-            }
-            // If not found in button context, try container element
-            if (!pluginId) {
-                const container = btn.closest('.plugin-config-container, .plugin-config-tab, [id^="plugin-config-"]');
-                if (container) {
-                    const containerContext = container.querySelector('[x-show*="activeTab === plugin.id"]');
-                    if (containerContext && window.Alpine) {
-                        try {
-                            const containerData = Alpine.$data(container.closest('[x-data]'));
-                            if (containerData && containerData.plugin) {
-                                pluginId = containerData.plugin.id;
-                                if (pluginId) {
-                                    debugLog('[DEBUG] Got pluginId from Alpine plugin data (scoped to container):', pluginId);
-                                }
-                            }
-                        } catch (e) {
-                            console.warn('[DEBUG] Error accessing Alpine plugin data from container:', e);
-                        }
-                    }
-                }
-            }
-        } catch (e) {
-            console.warn('[DEBUG] Error in fallback 6 DOM lookup:', e);
-        }
-    }
-
-    // Final check - if still no pluginId, show error
-    if (!pluginId) {
-        console.error('No plugin ID available after all fallbacks. actionId:', actionId, 'actionIndex:', actionIndex);
-        console.error('[DEBUG] Button found:', !!btn);
-        console.error('[DEBUG] currentPluginConfig:', currentPluginConfig);
+        console.error('executePluginAction called without a plugin ID. actionId:', actionId, 'actionIndex:', actionIndex);
         showNotification('Unable to determine plugin ID. Please refresh the page.', 'error');
         return;
     }
-
-    debugLog('[DEBUG] executePluginAction - Final pluginId:', pluginId, 'actionId:', actionId, 'actionIndex:', actionIndex);
 
     if (!btn || !statusDiv) {
         console.error(`Action elements not found: ${actionIdFull}`);
         return;
     }
 
-    // Get action definition - try currentPluginConfig first, then fetch from API
-    let action = currentPluginConfig?.webUiActions?.[actionIndex];
-
-    if (!action) {
-        // Try to get from installed plugins
-        if (window.installedPlugins) {
-            const plugin = window.installedPlugins.find(p => p.id === pluginId);
-            if (plugin && plugin.web_ui_actions) {
-                action = plugin.web_ui_actions[actionIndex];
-            }
+    let action = null;
+    if (window.installedPlugins) {
+        const plugin = window.installedPlugins.find(p => p.id === pluginId);
+        if (plugin && plugin.web_ui_actions) {
+            action = plugin.web_ui_actions[actionIndex];
         }
     }
 
     if (!action) {
         console.error(`Action not found: ${actionId} for plugin ${pluginId}`);
-        debugLog('[DEBUG] currentPluginConfig:', currentPluginConfig);
-        debugLog('[DEBUG] installedPlugins:', window.installedPlugins);
         showNotification(`Action ${actionId} not found. Please refresh the page.`, 'error');
         return;
     }
-
-    debugLog('[DEBUG] Found action:', action);
 
     // Check if we're in step 2 (completing OAuth flow)
     if (btn.dataset.step === '2') {
@@ -2210,11 +2080,11 @@ function pollOperationStatus(operationId, pluginId, pluginName, options = {}) {
     const onComplete = options.onComplete || (() => handleUninstallSuccess(pluginId));
     const onFailed = options.onFailed || ((errorMsg) => {
         showNotification(errorMsg || `Operation failed for ${pluginName}`, 'error');
-        setTimeout(() => loadInstalledPlugins(), 1000);
+        setTimeout(() => loadInstalledPlugins().catch(() => {}), 1000);
     });
     const onTimeout = options.onTimeout || (() => {
         showNotification(`Operation timed out for ${pluginName}`, 'error');
-        setTimeout(() => loadInstalledPlugins(), 1000);
+        setTimeout(() => loadInstalledPlugins().catch(() => {}), 1000);
     });
 
     if (attempt >= maxAttempts) {
@@ -2250,7 +2120,7 @@ function pollOperationStatus(operationId, pluginId, pluginName, options = {}) {
             console.error('Error polling operation status:', error);
             // On error, refresh plugin list to see actual state
             setTimeout(() => {
-                loadInstalledPlugins();
+                loadInstalledPlugins().catch(() => {});
             }, 1000);
         });
 }
@@ -2268,7 +2138,7 @@ function handleUninstallSuccess(pluginId) {
     // refreshInstalledPlugins() bypasses them.
     pluginLoadCache.invalidate();
     setTimeout(() => {
-        refreshInstalledPlugins();
+        refreshInstalledPlugins().catch(() => {});
     }, 1000);
 }
 
@@ -2284,7 +2154,7 @@ function refreshPlugins() {
     refreshInstalledPlugins().then(() => {
         searchPluginStore(true);
         showNotification('Plugins refreshed with latest metadata from GitHub', 'success');
-    });
+    }, () => {});
 }
 
 function restartDisplay() {
@@ -2637,7 +2507,7 @@ window.installPlugin = function(pluginId, branch = null) {
             }
         });
         // Refresh installed plugins list, then re-render store to update badges
-        loadInstalledPlugins();
+        loadInstalledPlugins().catch(() => {});
         setTimeout(() => applyStoreFiltersAndSort(true), 500);
     }
 
@@ -2696,7 +2566,7 @@ window.installFromCustomRegistry = function(pluginId, registryUrl, pluginPath, b
         if (data.status === 'success') {
             showNotification(`Plugin ${data.plugin_id} installed successfully`, 'success');
             // Refresh installed plugins and re-render custom registry
-            loadInstalledPlugins();
+            loadInstalledPlugins().catch(() => {});
             // Re-render custom registry to update install buttons
             const registryUrlInput = document.getElementById('github-registry-url');
             if (registryUrlInput && registryUrlInput.value.trim()) {
@@ -2890,7 +2760,7 @@ function attachInstallButtonHandler() {
 
                         // Refresh installed plugins list
                         setTimeout(() => {
-                            loadInstalledPlugins();
+                            loadInstalledPlugins().catch(() => {});
                         }, 1000);
                     } else {
                         if (pluginStatusDiv) {

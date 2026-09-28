@@ -42,7 +42,9 @@ class CacheError(LEDMatrixError):
             context: Optional context dictionary
         """
         if cache_key:
-            context = context or {}
+            # Copy so the caller's dict isn't mutated (a reused context
+            # dict would otherwise collect every error's keys).
+            context = dict(context or {})
             context['cache_key'] = cache_key
         super().__init__(message, context)
         self.cache_key = cache_key
@@ -62,7 +64,9 @@ class ConfigError(LEDMatrixError):
             context: Optional context dictionary
         """
         if config_path or field:
-            context = context or {}
+            # Copy so the caller's dict isn't mutated (a reused context
+            # dict would otherwise collect every error's keys).
+            context = dict(context or {})
             if config_path:
                 context['config_path'] = config_path
             if field:
@@ -85,7 +89,9 @@ class PluginError(LEDMatrixError):
             context: Optional context dictionary
         """
         if plugin_id:
-            context = context or {}
+            # Copy so the caller's dict isn't mutated (a reused context
+            # dict would otherwise collect every error's keys).
+            context = dict(context or {})
             context['plugin_id'] = plugin_id
         super().__init__(message, context)
         self.plugin_id = plugin_id
@@ -104,7 +110,9 @@ class DisplayError(LEDMatrixError):
             context: Optional context dictionary
         """
         if display_mode:
-            context = context or {}
+            # Copy so the caller's dict isn't mutated (a reused context
+            # dict would otherwise collect every error's keys).
+            context = dict(context or {})
             context['display_mode'] = display_mode
         super().__init__(message, context)
         self.display_mode = display_mode

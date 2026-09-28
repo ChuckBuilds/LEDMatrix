@@ -74,6 +74,13 @@ MAPPING_OUTPUTS: Dict[str, int] = {
     'classic-pi1': 1,
 }
 
+#: The refresh cap (``display.hardware.limit_refresh_rate_hz``) when config
+#: omits it -- config/config.template.json's value. DisplayManager passes it to
+#: the library and reports it as ``refresh_hz`` for scroll pacing, so the two
+#: must be the same number: they were 90 and 100, and pacing solved against a
+#: rate the panel was capped below.
+DEFAULT_REFRESH_LIMIT_HZ = 100
+
 #: What DisplayManager passes when a key is missing from display.hardware /
 #: display.runtime. Config migration normally fills these from
 #: config/config.template.json first, so they rarely apply.
@@ -81,7 +88,7 @@ DISPLAY_MANAGER_DEFAULTS: Dict[str, Any] = {
     'rows': 32, 'cols': 64, 'chain_length': 2, 'parallel': 1,
     'hardware_mapping': 'adafruit-hat-pwm', 'brightness': 90, 'pwm_bits': 10,
     'pwm_lsb_nanoseconds': 150, 'led_rgb_sequence': 'RGB',
-    'row_address_type': 0, 'multiplexing': 0, 'limit_refresh_rate_hz': 90,
+    'row_address_type': 0, 'multiplexing': 0, 'limit_refresh_rate_hz': DEFAULT_REFRESH_LIMIT_HZ,
     'gpio_slowdown': 3,
 }
 

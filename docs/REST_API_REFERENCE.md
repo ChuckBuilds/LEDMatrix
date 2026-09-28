@@ -869,7 +869,13 @@ Get a plugin's resource limits. `data` is `null` when none are configured.
 **POST** `/api/v3/plugins/limits/<plugin_id>`
 
 Set a plugin's resource limits. The body replaces all four limits: a key you
-omit is stored as no limit (`warning_threshold` defaults to `0.8`).
+omit is stored as no limit (`warning_threshold` defaults to `0.8`). Each value
+must be a non-negative number or `null`; anything else is a 400.
+
+The limits are stored in the shared cache. A display service that has already
+read limits for the plugin keeps using those until it restarts; likewise the
+health and metrics reset routes clear the stored record and the web process's
+copy, not the display service's in-memory state.
 
 **Request Body**:
 ```json

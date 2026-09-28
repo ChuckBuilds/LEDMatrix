@@ -8,11 +8,13 @@ from pathlib import Path
 def validate_file_upload(filename: str, max_size_mb: int = 10, 
                         allowed_extensions: Optional[List[str]] = None) -> Tuple[bool, Optional[str]]:
     """
-    Validate file upload parameters.
+    Validate an upload's filename (not its contents or size).
     
     Args:
         filename: Name of the file
-        max_size_mb: Maximum file size in MB
+        max_size_mb: Unused. Kept so existing callers keep working; this
+            function only sees the filename, so callers must enforce the
+            size limit themselves on the uploaded stream.
         allowed_extensions: List of allowed file extensions (e.g., ['.ttf', '.otf'])
     
     Returns:

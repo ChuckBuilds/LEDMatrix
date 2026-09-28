@@ -776,28 +776,35 @@ class BasePlugin(ABC):
         tighter arrangement instead of being cropped afterwards.
 
         Vegas also narrows ``display_manager`` for the duration of the call, so
-        a plugin that already sizes itself from ``matrix.width`` needs no
-        changes. Read this only when you size content some other way.
+        a plugin that already sizes itself from ``display_manager.width`` needs
+        no changes. Read this only when you size content some other way.
 
         Controlled by the plugin's own ``vegas_width_pct`` config value, else
         the global ``display.vegas_scroll.render_width_pct``.
 
         Returns:
             Target width in pixels. Outside a Vegas content request, the full
-            display width.
+            display width: ``display_manager.width``, which falls back to the
+            canvas size when ``matrix`` is None (hardware init failed).
         """
         requested = getattr(self, '_vegas_render_width', None)
         if isinstance(requested, int) and requested > 0:
             return requested
 
+        # display_manager.width first, as CLAUDE.md asks of every plugin: it
+        # already reads matrix.width when there is a matrix. matrix.width is
+        # only the fallback for a display_manager without a width (a test
+        # double, an older wrapper).
         display_manager = getattr(self, 'display_manager', None)
-        matrix = getattr(display_manager, 'matrix', None)
-        if matrix is not None and getattr(matrix, 'width', None):
-            return int(matrix.width)
         width = getattr(display_manager, 'width', None)
         if callable(width):
             width = width()
-        return int(width) if width else 128
+        if width:
+            return int(width)
+        matrix = getattr(display_manager, 'matrix', None)
+        if matrix is not None and getattr(matrix, 'width', None):
+            return int(matrix.width)
+        return 128
 
     def get_vegas_content(self) -> Optional[Any]:
         """
