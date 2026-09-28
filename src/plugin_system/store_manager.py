@@ -1994,6 +1994,7 @@ class PluginStoreManager:
                     tmp_file.write(chunk)
                 tmp_zip_path = tmp_file.name
             
+            temp_extract = None
             try:
                 # Extract zip
                 with zipfile.ZipFile(tmp_zip_path, 'r') as zip_ref:
@@ -2015,7 +2016,6 @@ class PluginStoreManager:
                                 f"Zip-slip detected: member {member!r} resolves outside "
                                 f"temp directory, aborting"
                             )
-                            shutil.rmtree(temp_extract, ignore_errors=True)
                             return False
                     zip_ref.extractall(temp_extract)
                     
@@ -2027,10 +2027,6 @@ class PluginStoreManager:
                     else:
                         # No root dir, move everything
                         shutil.move(str(temp_extract), str(target_path))
-                    
-                    # Cleanup temp extract dir
-                    if temp_extract.exists():
-                        shutil.rmtree(temp_extract, ignore_errors=True)
                 
                 return True
                 
@@ -2038,6 +2034,12 @@ class PluginStoreManager:
                 # Remove temporary zip file
                 if os.path.exists(tmp_zip_path):
                     os.remove(tmp_zip_path)
+                # Cleanup temp extract dir here rather than on the success
+                # path, so a failed extract or move doesn't leave a copy of
+                # the plugin in /tmp on every attempt. (Gone already when the
+                # whole dir was moved into place.)
+                if temp_extract is not None and temp_extract.exists():
+                    shutil.rmtree(temp_extract, ignore_errors=True)
             
         except Exception as e:
             self.logger.error(f"Download failed: {e}")

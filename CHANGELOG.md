@@ -37,6 +37,14 @@ accepts both, but the store flags the old spelling as deprecated
   - `check_system_compatibility.sh` no longer reports installed packages as missing.
   - A network failure fetching GitHub repo info logs a warning, not an error.
 
+- Plugin system:
+  - A plugin whose `on_enable()` raises is no longer left registered: the next load retries it instead of reporting "already loaded" for a plugin that never ran.
+  - One plugin's `get_info()` raising no longer breaks the installed-plugins list; it is logged and shown with empty runtime info.
+  - `plugin_state.json` and the operation history are written atomically (temp file + rename) under their lock, so concurrent saves or a failed save can't leave a truncated file.
+  - Plugin dependency installs run one `pip` at a time during parallel startup loading.
+  - A failed store download no longer leaves its extraction directory in the temp dir.
+  - Test doubles: `draw_image()` on `MockDisplayManager`, `VisualTestDisplayManager` and `BoundsCheckingDisplayManager` now emits a `DeprecationWarning` — the real `DisplayManager` has no such method; use `display_manager.image.paste(img, (x, y))`. `MockDisplayManager.draw_text` accepts the real signature's `small_font`/`centered` and default `x`/`y`, and `VisualTestDisplayManager` logs draw errors at WARNING.
+  - Removed the unused `PluginOperationQueue.get_active_operations()`.
 - Display runtime:
   - Vegas comes back after live content interrupts it. It stayed paused, and the display fell back to normal rotation until a restart.
   - A day with dimming turned off in a per-day dim schedule stays at normal brightness. Before, brightness went back to dim for most of each minute.

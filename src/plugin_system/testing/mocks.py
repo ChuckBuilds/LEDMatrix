@@ -5,8 +5,20 @@ Provides mock implementations of display_manager, cache_manager, config_manager,
 and plugin_manager for use in plugin unit tests.
 """
 
+import warnings
 from typing import Dict, Any, Optional
 from PIL import Image
+
+#: Why draw_image() warns. Kept (rather than removed) so existing plugin test
+#: suites that call it keep passing, but a plugin that calls it passes its
+#: tests and then crashes on the Pi.
+DRAW_IMAGE_DEPRECATION = (
+    "display_manager.draw_image() exists only on the test doubles; the real "
+    "DisplayManager has no such method, so this raises AttributeError on a "
+    "device. Paste onto the canvas instead: "
+    "display_manager.image.paste(img, (x, y)) (with the image as mask, "
+    "image.paste(rgba, (x, y), rgba), for transparency)."
+)
 
 
 class MockDisplayManager:
@@ -31,8 +43,16 @@ class MockDisplayManager:
         """Update the display."""
         self.update_called = True
     
-    def draw_text(self, text: str, x: int, y: int, color: tuple = (255, 255, 255), font=None):
-        """Draw text on the display."""
+    def draw_text(self, text: str, x: int = None, y: int = None, color: tuple = (255, 255, 255),
+                  font=None, small_font: bool = False, centered: bool = False):
+        """Draw text on the display.
+
+        Accepts every argument the real ``DisplayManager.draw_text`` does, so
+        a plugin passing ``small_font``/``centered`` (or leaving x/y to
+        default) doesn't fail here while working on the device. ``font``
+        stays fifth for callers of the old mock signature; pass the rest by
+        keyword, as the real method's positional order differs.
+        """
         self.draw_calls.append({
             'type': 'text',
             'text': text,
@@ -43,7 +63,8 @@ class MockDisplayManager:
         })
     
     def draw_image(self, image: Image.Image, x: int, y: int):
-        """Draw an image on the display."""
+        """Draw an image on the display. Deprecated: see DRAW_IMAGE_DEPRECATION."""
+        warnings.warn(DRAW_IMAGE_DEPRECATION, DeprecationWarning, stacklevel=2)
         self.draw_calls.append({
             'type': 'image',
             'image': image,
