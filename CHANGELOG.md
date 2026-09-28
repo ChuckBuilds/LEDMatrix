@@ -19,6 +19,18 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+- Core services and `src.common` fixes:
+  - A plugin font declared as a `.zip` URL is served as the font extracted from it after a restart, instead of registering the archive itself. Font downloads time out after 30s and land in the cache only once complete, so an interrupted download is retried rather than served forever.
+  - `APIHelper`'s rate limit and the display-sync heartbeat/leader timeouts measure elapsed time with `time.monotonic()`. A wall-clock step (NTP correcting a Pi with no RTC) could stall API requests for as long as the step or fake a sync timeout. `get_request_stats()['last_request_time']` is still wall-clock time.
+  - `LogoHelper.load_logo_with_download()` sizes its placeholder to the scaled logo box, like a real logo (only differs when `scale` isn't 1).
+  - The AP Top 25 resolver remembers a failed or empty rankings fetch for 5 minutes, so an ESPN outage no longer costs every scoreboard update a 30s timeout. Its duplicate INFO log line is gone.
+  - `sudo_remove_directory()` tries each bash path the sudoers rule might name, as `install_requirements_file()` already did.
+  - An element's saved layout `scale` equal to its schema default is no longer treated as a user choice when the default is declared under an alias (`score` for `score_text`).
+  - `BackgroundDataService` runs a cache-hit callback outside its lock, as the fetch path does.
+  - Plugin config saves recombine position-keyed inputs for nullable array fields (`"type": ["array", "null"]`).
+  - A hand-edited non-object `auto_update` value reads as off instead of raising at startup, and a failed result write no longer leaves a temp file behind.
+  - `CacheError`/`ConfigError`/`PluginError`/`DisplayError` no longer write their key into the caller's `context` dict; the JSON log formatter stringifies values it can't encode instead of dropping the record.
+  - Removed `ErrorAggregator`'s unused JSON export (`export_path`, `export_to_file()`); nothing called it. Docstring fixes in `validate_file_upload`, `StartupValidator.raise_on_errors`, `DisplaySyncManager.set_on_new_cycle`, `dynamic_team_resolver` and `config_arrays`.
 - Display thread-safety and consistency fixes:
   - `DisplayManager.defer_update()` from a plugin's update thread no longer loses queued updates while the render thread processes the queue; the queue is locked, and the queued callables still run outside the lock.
   - BDF fonts: `FontManager.get_font()` and `element_style.load_font()` no longer hand one `freetype.Face` to every thread. BDF faces come from `load_bdf_face`, which already caches them per thread; TrueType fonts are cached as before. `element_style`'s font cache is locked (a concurrent eviction could raise `KeyError`).

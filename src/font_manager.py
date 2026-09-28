@@ -28,10 +28,10 @@ for accurate width/height calculations.
 import os
 import logging
 import freetype
+import requests
 import json
 import hashlib
 import urllib.parse
-import urllib.request
 import zipfile
 import tempfile
 import time
@@ -49,6 +49,9 @@ from typing import Dict, Tuple, Optional, Union, Any, List
 from src.deprecation import deprecated
 
 logger = logging.getLogger(__name__)
+
+# Seconds before a stalled font download gives up (connect and per-read).
+_FONT_DOWNLOAD_TIMEOUT = 30
 
 class FontManager:
     """
@@ -320,37 +323,75 @@ class FontManager:
             extension = self._get_font_extension(url)
             cache_filename = f"{family}_{url_hash}{extension}"
             cache_path = self.temp_font_dir / cache_filename
+            is_zip = url.endswith('.zip')
+            extract_dir = self.temp_font_dir / f"{family}_{url_hash}"
 
-            # Check if already downloaded
-            if cache_path.exists():
+            # Check if already downloaded. For a zip the font is the file
+            # extracted from it, so look there first -- returning the cached
+            # .zip itself would register the archive as the font after a
+            # restart.
+            if is_zip:
+                extracted = self._find_extracted_font(extract_dir)
+                if extracted:
+                    logger.info(f"Using cached font: {extracted}")
+                    return extracted
+            elif cache_path.exists():
                 logger.info(f"Using cached font: {cache_path}")
                 return str(cache_path)
 
-            # Download font — restrict to http/https to prevent file:// reads
-            parsed = urllib.parse.urlparse(url)
-            if parsed.scheme not in ('http', 'https'):
-                raise ValueError(f"Font URL must use http or https, got: {parsed.scheme!r}")
-            logger.info(f"Downloading font from {url}")
-            urllib.request.urlretrieve(url, cache_path)  # nosec B310 - scheme validated above
+            if not cache_path.exists():
+                # Download font — restrict to http/https to prevent file:// reads
+                parsed = urllib.parse.urlparse(url)
+                if parsed.scheme not in ('http', 'https'):
+                    raise ValueError(f"Font URL must use http or https, got: {parsed.scheme!r}")
+                logger.info(f"Downloading font from {url}")
+                # Download to a temp file and rename into place, with a
+                # timeout: writing straight to cache_path left a truncated
+                # file after a stalled/interrupted download, and the exists()
+                # check above then served it forever.
+                fd, tmp_name = tempfile.mkstemp(dir=self.temp_font_dir, suffix='.part')
+                try:
+                    with os.fdopen(fd, 'wb') as tmp_file:
+                        response = requests.get(url, timeout=_FONT_DOWNLOAD_TIMEOUT, stream=True)
+                        response.raise_for_status()
+                        for chunk in response.iter_content(chunk_size=65536):
+                            if chunk:
+                                tmp_file.write(chunk)
+                    os.replace(tmp_name, cache_path)
+                except BaseException:
+                    try:
+                        os.unlink(tmp_name)
+                    except OSError:
+                        pass
+                    raise
 
             # Handle zip files
-            if url.endswith('.zip'):
-                extract_dir = self.temp_font_dir / f"{family}_{url_hash}"
+            if is_zip:
                 extract_dir.mkdir(exist_ok=True)
-                
+
                 with zipfile.ZipFile(cache_path, 'r') as zip_ref:
                     zip_ref.extractall(extract_dir)
-                
+
                 # Find the actual font file
-                for file in extract_dir.iterdir():
-                    if file.suffix.lower() in ['.ttf', '.otf', '.bdf']:
-                        return str(file)
+                extracted = self._find_extracted_font(extract_dir)
+                if extracted:
+                    return extracted
 
             return str(cache_path)
 
         except Exception as e:
             logger.error(f"Error downloading font from {url}: {e}")
             return None
+
+    @staticmethod
+    def _find_extracted_font(extract_dir: Path) -> Optional[str]:
+        """Return the first font file in a zip's extract dir, if any."""
+        if not extract_dir.is_dir():
+            return None
+        for file in extract_dir.iterdir():
+            if file.suffix.lower() in ['.ttf', '.otf', '.bdf']:
+                return str(file)
+        return None
 
     def _get_font_extension(self, url: str) -> str:
         """Extract font file extension from URL."""

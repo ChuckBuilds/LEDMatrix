@@ -8,13 +8,18 @@ test here asserts observable behavior: returned font types, cache identity,
 fallback selection, and BDF native-size reading.
 """
 
+import hashlib
+import io
 import json
 import shutil
+import zipfile
+from unittest.mock import MagicMock
 
 import freetype
 import pytest
 from PIL import ImageFont
 
+import src.font_manager as fm_module
 from src.common.font_layout import resolve_asset_path
 from src.font_manager import FontManager
 
@@ -188,3 +193,63 @@ class TestPluginFonts:
         assert fm.register_plugin_fonts("my-plugin", self.MANIFEST)
 
         assert fm.font_catalog["my-plugin::bundled"] == str(plugin_dir / "fonts" / "Bundled.ttf")
+
+
+class TestDownloadFont:
+    """_download_font: plugin fonts declared by URL, cached in temp_font_dir."""
+
+    URL = "https://fonts.example/pack.zip"
+
+    @staticmethod
+    def _zip_bytes():
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("MyFont.ttf", b"not really a font")
+        return buf.getvalue()
+
+    @staticmethod
+    def _response(chunks):
+        response = MagicMock()
+        response.raise_for_status.return_value = None
+        response.iter_content.side_effect = lambda chunk_size: iter(chunks)
+        return response
+
+    def test_a_zip_is_served_as_its_extracted_font_after_a_restart(self, fm, tmp_path):
+        # The state a previous run leaves: the .zip and its extracted font.
+        # The cache check used to find the .zip first and register the
+        # archive itself as the font.
+        fm.temp_font_dir = tmp_path
+        url_hash = hashlib.sha256(self.URL.encode()).hexdigest()[:16]
+        zip_path = tmp_path / f"pack_{url_hash}.zip"
+        zip_path.write_bytes(self._zip_bytes())
+        extract_dir = tmp_path / f"pack_{url_hash}"
+        with zipfile.ZipFile(zip_path) as zf:
+            zf.extractall(extract_dir)
+
+        path = fm._download_font(self.URL, {"family": "pack"})
+
+        assert path == str(extract_dir / "MyFont.ttf")
+
+    def test_download_has_a_timeout_and_lands_atomically(self, fm, tmp_path, monkeypatch):
+        fm.temp_font_dir = tmp_path
+        get = MagicMock(return_value=self._response([self._zip_bytes()]))
+        monkeypatch.setattr(fm_module.requests, "get", get)
+
+        path = fm._download_font(self.URL, {"family": "pack"})
+
+        assert path is not None and path.endswith("MyFont.ttf")
+        assert get.call_args.kwargs.get("timeout")
+        assert not list(tmp_path.glob("*.part"))
+
+    def test_an_interrupted_download_leaves_nothing_to_be_served(self, fm, tmp_path, monkeypatch):
+        fm.temp_font_dir = tmp_path
+
+        def chunks():
+            yield b"partial"
+            raise OSError("connection reset")
+        response = self._response([])
+        response.iter_content.side_effect = lambda chunk_size: chunks()
+        monkeypatch.setattr(fm_module.requests, "get", MagicMock(return_value=response))
+
+        assert fm._download_font("https://fonts.example/Font.ttf", {"family": "f"}) is None
+        assert list(tmp_path.iterdir()) == []

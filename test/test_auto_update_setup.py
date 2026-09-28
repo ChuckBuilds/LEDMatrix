@@ -75,6 +75,25 @@ def test_does_nothing_while_updates_are_off(tmp_path):
     assert not (root / aus.RESULT_REL).exists()
 
 
+@pytest.mark.parametrize('value', [True, 'yes', ['enabled']])
+def test_a_non_object_auto_update_value_reads_as_off(value):
+    """A hand-edited "auto_update": true raised AttributeError and aborted
+    setup; the web UI's save treats a non-object as {} (off), so this does too."""
+    assert aus.is_enabled({'auto_update': value}) is False
+
+
+def test_a_failed_result_write_leaves_no_temp_file(tmp_path, monkeypatch):
+    root, etc = project(tmp_path)
+
+    def broken_dump(*args, **kwargs):
+        raise OSError('disk full')
+    monkeypatch.setattr(aus.json, 'dump', broken_dump)
+    setup(root, etc, FakeSystemctl())._report('failed', 'x')
+    leftovers = [p.name for p in (root / aus.RESULT_REL).parent.iterdir()
+                 if p.name.startswith('.auto_update_setup_')]
+    assert leftovers == []
+
+
 def test_installs_both_units_for_the_web_user(tmp_path):
     root, etc = project(tmp_path)
     systemctl = FakeSystemctl()

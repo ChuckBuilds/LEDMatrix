@@ -13,7 +13,8 @@ Supported dynamic teams:
 Usage:
     resolver = DynamicTeamResolver()
     resolved_teams = resolver.resolve_teams(["UGA", "AP_TOP_25", "AUB"])
-    # Returns: ["UGA", "UGA", "AUB", "MICH", "OSU", ...] (AP_TOP_25 teams)
+    # Returns: ["UGA", "MICH", "OSU", ..., "AUB"] -- AP_TOP_25 expanded in
+    # place, and UGA (also ranked) kept once, at its first position
 """
 
 import logging
@@ -37,6 +38,11 @@ class DynamicTeamResolver:
     _rankings_cache: Dict[str, List[str]] = {}
     _cache_timestamp: float = 0
     _cache_duration: int = 3600  # 1 hour cache
+    # A failed or empty fetch is remembered briefly too: during an ESPN
+    # outage every resolve would otherwise wait out request_timeout (30s)
+    # again, on each scoreboard's update.
+    _failure_timestamp: float = 0
+    _failure_backoff: int = 300  # 5 minutes
     
     # Supported dynamic team patterns
     DYNAMIC_PATTERNS = {
@@ -70,8 +76,8 @@ class DynamicTeamResolver:
             if team in self.DYNAMIC_PATTERNS:
                 # Resolve dynamic team
                 dynamic_teams = self._resolve_dynamic_team(team, sport)
+                # _resolve_dynamic_team already logs the result.
                 resolved_teams.extend(dynamic_teams)
-                self.logger.info(f"Resolved {team} to {len(dynamic_teams)} teams: {dynamic_teams[:5]}{'...' if len(dynamic_teams) > 5 else ''}")
             elif self._is_potential_dynamic_team(team):
                 # Unknown dynamic team, skip it
                 self.logger.warning(f"Unknown dynamic team '{team}' - skipping")
@@ -138,7 +144,11 @@ class DynamicTeamResolver:
         if (self._rankings_cache and 
             current_time - self._cache_timestamp < self._cache_duration):
             return self._rankings_cache
-            
+
+        # A recent attempt failed: don't pay the request timeout again yet.
+        if current_time - self._failure_timestamp < self._failure_backoff:
+            return {}
+
         try:
             self.logger.info("Fetching fresh NCAA Football rankings from ESPN API")
             rankings_url = "https://site.api.espn.com/apis/site/v2/sports/football/college-football/rankings"
@@ -185,7 +195,9 @@ class DynamicTeamResolver:
                 
         except Exception as e:
             self.logger.error(f"Error fetching NCAA Football rankings: {e}")
-            
+
+        # On the class, for the same reason as the rankings cache above.
+        DynamicTeamResolver._failure_timestamp = current_time
         return {}
     
     def get_available_dynamic_teams(self) -> List[str]:
@@ -229,6 +241,7 @@ class DynamicTeamResolver:
         shadow the shared cache for this instance."""
         DynamicTeamResolver._rankings_cache = {}
         DynamicTeamResolver._cache_timestamp = 0
+        DynamicTeamResolver._failure_timestamp = 0
         self.logger.info("Cleared dynamic team rankings cache")
 
 

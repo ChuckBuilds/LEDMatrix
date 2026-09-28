@@ -93,6 +93,33 @@ class TestCacheHit:
         stats = service.get_statistics()
         assert stats["cached_hits"] == 1
 
+    def test_cache_hit_callback_runs_outside_the_service_lock(
+            self, service, mock_cache_manager):
+        """The worker path calls plugin callbacks after releasing the lock;
+        the cache-hit path held it, so a slow callback stalled every other
+        thread's submit and result bookkeeping."""
+        import threading
+        mock_cache_manager.get.return_value = {"events": []}
+        seen = {}
+
+        def callback(result):
+            # The result is already filed, as before.
+            seen["filed"] = service.get_result(result.request_id) is result
+            other = {}
+
+            def try_lock():
+                other["got"] = service._lock.acquire(timeout=1)
+                if other["got"]:
+                    service._lock.release()
+            t = threading.Thread(target=try_lock)
+            t.start()
+            t.join()
+            seen["lock_free"] = other["got"]
+
+        service.submit_fetch_request(sport="nba", year=2024, url="https://x.com",
+                                     cache_key="k", callback=callback)
+        assert seen == {"filed": True, "lock_free": True}
+
 
 # ---------------------------------------------------------------------------
 # Actual fetch path (mocked HTTP)
