@@ -36,9 +36,6 @@ New modules a plugin may import via `src.*` (floor on 3.5.0):
   deletes a copy and leans on an older module having grown the method fails at
   runtime with `AttributeError`, which no load-time check sees, while a missing
   module fails at load. Nothing in core uses it yet.
-- `test/test_common_is_hardware_free.py` — `src/common` must import without
-  `rgbmatrix` and never import `src.base_classes`, `src.display_manager` or
-  `src.plugin_system` at module level.
 - `src/common/espn_dates.py` — `fetch_espn_scoreboard`,
   `fetch_espn_date_chunks`, `espn_date_chunks`, `clamp_espn_limit`,
   `ESPN_MAX_LIMIT`: fetch an ESPN scoreboard date range now that ESPN rejects
@@ -910,6 +907,10 @@ core, the monorepo or the registry's third-party plugins calls them:
   claims corrected against the code.
 - `test/test_js_unit_suites.py` runs every `test/js/unit/*.js` suite under
   pytest; CI used to run one of the eight (#605).
+- New test `test/test_common_is_hardware_free.py`: `src/common` must import
+  without `rgbmatrix`, and never import `src.base_classes`,
+  `src.display_manager` or `src.plugin_system` at module level, so plugins can
+  use it on machines with no panel library.
 
 ### Removed
 
