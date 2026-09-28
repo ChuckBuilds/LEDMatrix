@@ -20,9 +20,12 @@
      * Load a plugin-specific widget
      * @param {string} pluginId - Plugin ID
      * @param {string} widgetName - Widget name
+     * @param {string} [version] - Plugin version, appended as ?v= so an
+     *     updated plugin's widget is not served from the year-long
+     *     immutable cache /static/ responses get (app.py)
      * @returns {Promise<void>} Promise that resolves when widget is loaded
      */
-    window.LEDMatrixWidgets.loadPluginWidget = async function(pluginId, widgetName) {
+    window.LEDMatrixWidgets.loadPluginWidget = async function(pluginId, widgetName, version) {
         if (!pluginId || !widgetName) {
             throw new Error('Plugin ID and widget name are required');
         }
@@ -36,8 +39,9 @@
         // The one route that serves plugin widgets (serve_plugin_widget in
         // blueprints/pages_v3.py); nothing is served under /plugins/<id>/ or
         // /static/plugins/<id>/, so trying those only added two failed imports.
+        const versionQuery = version ? `?v=${encodeURIComponent(version)}` : '';
         const possiblePaths = [
-            `/static/plugin-widgets/${pluginId}/${widgetName}.js`
+            `/static/plugin-widgets/${pluginId}/${widgetName}.js${versionQuery}`
         ];
 
         let lastError = null;
@@ -69,9 +73,10 @@
      * Called automatically when a widget is referenced in a plugin's config schema
      * @param {string} widgetName - Widget name
      * @param {string} pluginId - Plugin ID (optional, for plugin-specific widgets)
+     * @param {string} [version] - Plugin version (optional, see loadPluginWidget)
      * @returns {Promise<boolean>} True if widget is available (either already registered or successfully loaded)
      */
-    window.LEDMatrixWidgets.ensureWidget = async function(widgetName, pluginId) {
+    window.LEDMatrixWidgets.ensureWidget = async function(widgetName, pluginId, version) {
         // Check if widget is already registered
         if (this.has(widgetName)) {
             return true;
@@ -80,7 +85,7 @@
         // If plugin ID provided, try to load as plugin widget
         if (pluginId) {
             try {
-                await this.loadPluginWidget(pluginId, widgetName);
+                await this.loadPluginWidget(pluginId, widgetName, version);
                 return this.has(widgetName);
             } catch (error) {
                 console.warn(`[PluginWidgetLoader] Could not load widget ${widgetName} from plugin ${pluginId}:`, error);
@@ -90,38 +95,5 @@
 
         // Widget not found
         return false;
-    };
-
-    /**
-     * Load all widgets specified in plugin manifest
-     * @param {string} pluginId - Plugin ID
-     * @param {Object} manifest - Plugin manifest object
-     * @returns {Promise<Array<string>>} Array of successfully loaded widget names
-     */
-    window.LEDMatrixWidgets.loadPluginWidgetsFromManifest = async function(pluginId, manifest) {
-        if (!manifest || !manifest.widgets || !Array.isArray(manifest.widgets)) {
-            return [];
-        }
-
-        const loadedWidgets = [];
-        
-        for (const widgetDef of manifest.widgets) {
-            const widgetName = widgetDef.name || widgetDef.script?.replace(/\.js$/, '');
-            if (!widgetName) {
-                console.warn(`[PluginWidgetLoader] Invalid widget definition in manifest:`, widgetDef);
-                continue;
-            }
-
-            try {
-                await this.loadPluginWidget(pluginId, widgetName);
-                if (this.has(widgetName)) {
-                    loadedWidgets.push(widgetName);
-                }
-            } catch (error) {
-                console.error(`[PluginWidgetLoader] Failed to load widget ${widgetName} from plugin ${pluginId}:`, error);
-            }
-        }
-
-        return loadedWidgets;
     };
 })();

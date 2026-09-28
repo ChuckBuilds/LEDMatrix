@@ -83,7 +83,6 @@ global.document = {
 global.window = global;
 require('../led_escape').install(window);
 window.LEDMatrixWidgets = { register() {} };
-window.currentPluginConfig = null;
 window.getUploadConfig = () => ({ plugin_id: 'static-image' });
 
 // eslint-disable-next-line no-eval

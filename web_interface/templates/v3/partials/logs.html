@@ -264,11 +264,7 @@ window._filteredLogs = [];
         }
         stopRealtimeLogs();
     }
-    if (window.LEDVisibility) {
-        window.LEDVisibility.onActive('logs', startLogsActivity, stopLogsActivity);
-    } else {
-        startLogsActivity();
-    }
+    window.LEDVisibility.onActive('logs', startLogsActivity, stopLogsActivity);
 
     // Handle window resize for responsive height. Added once: this script
     // re-runs on every partial load, and the handler reads window globals.

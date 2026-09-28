@@ -12,44 +12,39 @@
                             if (!target) {
                                 console.warn('[HTMX] Target is null, skipping swap');
                                 event.detail.shouldSwap = false;
-                                return false;
+                                return;
                             }
                             
                             // Check if target is a valid DOM element
                             if (!(target instanceof Element)) {
                                 console.warn('[HTMX] Target is not a valid Element, skipping swap');
                                 event.detail.shouldSwap = false;
-                                return false;
+                                return;
                             }
                             
                             // Check if target has a parent node (required for insertBefore)
                             if (!target.parentNode) {
                                 console.warn('[HTMX] Target has no parent node, skipping swap');
                                 event.detail.shouldSwap = false;
-                                return false;
+                                return;
                             }
                             
                             // Ensure target is in the DOM
                             if (!document.body.contains(target) && !document.head.contains(target)) {
                                 console.warn('[HTMX] Target is not in DOM, skipping swap');
                                 event.detail.shouldSwap = false;
-                                return false;
+                                return;
                             }
                             
                             // Additional check: ensure parent is also in DOM
                             if (target.parentNode && !document.body.contains(target.parentNode) && !document.head.contains(target.parentNode)) {
                                 console.warn('[HTMX] Target parent is not in DOM, skipping swap');
                                 event.detail.shouldSwap = false;
-                                return false;
                             }
-                            
-                            // All checks passed, allow swap
-                            return true;
                         } catch (e) {
                             // If validation fails, cancel swap
                             console.warn('[HTMX] Error validating target:', e);
                             event.detail.shouldSwap = false;
-                            return false;
                         }
                     });
                     

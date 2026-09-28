@@ -275,17 +275,17 @@
     <!-- Alpine.js app function - defined early so it's available when Alpine initializes -->
     <script src="{{ url_for('static', filename='v3/js/app-early.js') }}"></script>
 
+    <!-- App shell (full app(), Alpine stores, SSE streams). Deferred so it
+         doesn't block rendering, and placed before Alpine: deferred scripts run
+         in document order, and its alpine:init listener must be registered
+         before Alpine starts. -->
+    <script defer src="{{ url_for('static', filename='v3/js/app-shell.js') }}"></script>
     <!-- Alpine.js for reactive components.
          Load the local copy first (always works, no CDN round-trip, no AP-mode
          branch needed). `defer` on an HTML-parsed <script> is honored and runs
          after DOM parse but before DOMContentLoaded, which is exactly what
          Alpine wants — so no deferLoadingAlpine gymnastics are needed.
          The inline rescue below only fires if the local file is missing. -->
-    <!-- App shell (full app(), Alpine stores, SSE streams). Deferred so it
-         doesn't block rendering, and placed before Alpine: deferred scripts run
-         in document order, and its alpine:init listener must be registered
-         before Alpine starts. -->
-    <script defer src="{{ url_for('static', filename='v3/js/app-shell.js') }}"></script>
     <script defer src="{{ url_for('static', filename='v3/js/alpinejs.min.js') }}"></script>
     <script>
         // Rescue: if the local Alpine didn't load for any reason, pull the CDN

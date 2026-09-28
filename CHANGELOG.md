@@ -19,6 +19,13 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+- Web UI cleanup and dependency pins:
+  - A plugin's own config widget (`/static/plugin-widgets/<id>/<widget>.js`) is requested with `?v=<plugin version>`, so an updated plugin's widget reaches browsers instead of the copy cached as immutable for a year.
+  - A failed installed-plugins reload after a toggle, install or uninstall shows one error, not a second generic "unexpected error" toast.
+  - The timezone picker on the General tab renders again when the tab is reloaded in the same page session.
+  - Removed dead code: the plugin-action button's six plugin-id fallbacks (the button always passes its id) and its `[DEBUG]` logging, `window.currentPluginConfig` (never set to anything but `null`), the file-upload widget's JSON delete branch (its endpoint never existed), unused `PluginAPI` / `PluginInstallManager` / `PluginStateManager` helpers, `loadPluginWidgetsFromManifest`, no-longer-reachable fallbacks for a stale `install_manager.js` and a missing `LEDVisibility`, and 13 unused CSS utility rules.
+  - `pytz` may be any release before 2027, so current timezone data installs; `requirements-test.txt` caps `psutil` below 7 like the runtime requirements and allows `pytest-cov` up to 7.x (checked against pytest 9 with the CI coverage run).
+  - The Claude GitHub Actions workflows pin `anthropics/claude-code-action` to a commit SHA like the other actions.
 - Core services and `src.common` fixes:
   - A plugin font declared as a `.zip` URL is served as the font extracted from it after a restart, instead of registering the archive itself. Font downloads time out after 30s and land in the cache only once complete, so an interrupted download is retried rather than served forever.
   - `APIHelper`'s rate limit and the display-sync heartbeat/leader timeouts measure elapsed time with `time.monotonic()`. A wall-clock step (NTP correcting a Pi with no RTC) could stall API requests for as long as the step or fake a sync timeout. `get_request_stats()['last_request_time']` is still wall-clock time.

@@ -1,83 +1,11 @@
 /**
  * Plugin installation and update management.
  * 
- * Handles plugin installation, updates, and uninstallation operations.
+ * Handles Check & Update All: which installed plugins it sends, retrying
+ * across a web-service restart, and summarising the results.
  */
 
 const PluginInstallManager = {
-    /**
-     * Install a plugin.
-     * 
-     * @param {string} pluginId - Plugin identifier
-     * @param {string} branch - Optional branch name to install from
-     * @returns {Promise<Object>} Installation result
-     */
-    async install(pluginId, branch = null) {
-        try {
-            const result = await window.PluginAPI.installPlugin(pluginId, branch);
-            
-            // Refresh installed plugins list
-            if (window.PluginStateManager) {
-                await window.PluginStateManager.loadInstalledPlugins();
-            }
-            
-            return result;
-        } catch (error) {
-            if (window.errorHandler) {
-                window.errorHandler.displayError(error, `Failed to install plugin ${pluginId}`);
-            }
-            throw error;
-        }
-    },
-    
-    /**
-     * Update a plugin.
-     * 
-     * @param {string} pluginId - Plugin identifier
-     * @returns {Promise<Object>} Update result
-     */
-    async update(pluginId) {
-        try {
-            const result = await window.PluginAPI.updatePlugin(pluginId);
-            
-            // Refresh installed plugins list
-            if (window.PluginStateManager) {
-                await window.PluginStateManager.loadInstalledPlugins();
-            }
-            
-            return result;
-        } catch (error) {
-            if (window.errorHandler) {
-                window.errorHandler.displayError(error, `Failed to update plugin ${pluginId}`);
-            }
-            throw error;
-        }
-    },
-    
-    /**
-     * Uninstall a plugin.
-     * 
-     * @param {string} pluginId - Plugin identifier
-     * @returns {Promise<Object>} Uninstall result
-     */
-    async uninstall(pluginId) {
-        try {
-            const result = await window.PluginAPI.uninstallPlugin(pluginId);
-            
-            // Refresh installed plugins list
-            if (window.PluginStateManager) {
-                await window.PluginStateManager.loadInstalledPlugins();
-            }
-            
-            return result;
-        } catch (error) {
-            if (window.errorHandler) {
-                window.errorHandler.displayError(error, `Failed to uninstall plugin ${pluginId}`);
-            }
-            throw error;
-        }
-    },
-    
     /**
      * Whether POST /plugins/update can update this installed-list entry.
      *
