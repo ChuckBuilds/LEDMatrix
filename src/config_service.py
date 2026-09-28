@@ -206,7 +206,8 @@ class ConfigService:
                 # Sleep with periodic checks for stop signal
                 for _ in range(int(self._watch_interval)):
                     if self._stop_watching:
-                        break
+                        # Set from another thread; mypy keeps the while's narrowing.
+                        break  # type: ignore[unreachable]
                     time.sleep(1)
                     
             except Exception as e:

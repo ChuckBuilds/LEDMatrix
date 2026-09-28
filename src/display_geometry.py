@@ -132,6 +132,7 @@ def apply_pixel_mappers(width: int, height: int, mapper_config: str,
     ``multiplexing`` isn't modelled: its mappers give back the configured
     size for the panel sizes they are made for.
     """
+    param: Optional[str]
     for entry in (mapper_config or '').split(';'):
         name, colon, param = entry.partition(':')
         name = name.lower()

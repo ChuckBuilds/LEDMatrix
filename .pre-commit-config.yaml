@@ -37,19 +37,21 @@ repos:
         types: [python]
         pass_filenames: false
 
-  # Manual only: src/ still has ~500 type errors, so running this on every
-  # commit would block every contributor. Run it with
+  # The mypy ratchet -- the same check as CI's "Type check (mypy ratchet)"
+  # job: mypy on exactly the modules listed in mypy-clean.txt. Run it with
   #   pre-commit run mypy --hook-stage manual
-  # and don't add new errors in the files you touch. mypy.ini's `files = src`
-  # is what gives it a target, since pass_filenames is off.
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.8.0
+  # A local hook rather than mirrors-mypy so mypy sees the packages installed
+  # from requirements.txt, as CI does; an isolated hook env without them types
+  # PIL, requests and friends as Any and reports different errors. Needs
+  # mypy==1.20.2 (the version CI pins) in the environment you commit from.
+  - repo: local
     hooks:
       - id: mypy
-        additional_dependencies: [types-requests, types-pytz]
-        args: [--ignore-missing-imports, --no-error-summary]
+        name: mypy (ratchet, mypy-clean.txt)
+        entry: python scripts/check_types.py
+        language: system
         pass_filenames: false
-        files: ^src/
+        always_run: true
         stages: [manual]
 
   - repo: https://github.com/PyCQA/bandit

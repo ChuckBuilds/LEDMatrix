@@ -6,7 +6,7 @@ and plugin_manager for use in plugin unit tests.
 """
 
 import warnings
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional
 from PIL import Image
 
 #: Why draw_image() warns. Kept (rather than removed) so existing plugin test
@@ -32,7 +32,7 @@ class MockDisplayManager:
         self.image = Image.new('RGB', (width, height), color=(0, 0, 0))
         self.clear_called = False
         self.update_called = False
-        self.draw_calls = []
+        self.draw_calls: List[Dict[str, Any]] = []
     
     def clear(self):
         """Clear the display."""
@@ -43,7 +43,7 @@ class MockDisplayManager:
         """Update the display."""
         self.update_called = True
     
-    def draw_text(self, text: str, x: int = None, y: int = None, color: tuple = (255, 255, 255),
+    def draw_text(self, text: str, x: Optional[int] = None, y: Optional[int] = None, color: tuple = (255, 255, 255),
                   font=None, small_font: bool = False, centered: bool = False):
         """Draw text on the display.
 
@@ -166,8 +166,8 @@ class MockConfigManager:
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         self._config = config or {}
-        self.load_config_calls = []
-        self.save_config_calls = []
+        self.load_config_calls: List[Dict[str, Any]] = []
+        self.save_config_calls: List[Dict[str, Any]] = []
     
     def load_config(self) -> Dict[str, Any]:
         """Load configuration."""

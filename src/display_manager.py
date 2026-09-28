@@ -51,13 +51,16 @@ from src.pi5_matrix_support import is_raspberry_pi_5
 import threading
 import time
 from collections import OrderedDict, deque
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, TYPE_CHECKING
 import math
 import zlib
 import freetype
 
 from src.common import snapshot_policy
 from src.common.frame_timing import FrameTimingRecorder
+
+if TYPE_CHECKING:
+    from src.common.render_gate import RenderGate
 from src.deprecation import deprecated
 from src.logging_config import get_logger
 from src.common.permission_utils import (
@@ -341,7 +344,7 @@ class DisplayManager:
         # A src.common.render_gate.RenderGate while Vegas runs with
         # vegas_scroll.prefetch_gate on: opened around each swap so the
         # prefetch thread only runs Python while this thread waits on vsync.
-        self.render_gate = None
+        self.render_gate: Optional['RenderGate'] = None
 
         # Timing of every presented frame, whoever drew it, for
         # scripts/frame_soak.py. See src/common/frame_timing.py.

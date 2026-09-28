@@ -13,7 +13,7 @@ import time
 import logging
 import requests
 import json
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, UnidentifiedImageError
 from src.common.font_layout import load_truetype, resolve_asset_path
@@ -481,7 +481,7 @@ class LogoDownloader:
             logger.info(f"Fetching team data for {league} from ESPN API...")
             response = self.session.get(api_url, params={'limit':1000},headers=self.headers, timeout=self.request_timeout)
             response.raise_for_status()
-            data = response.json()
+            data: Dict = response.json()
             
             logger.info(f"Successfully fetched team data for {league}")
             return data
@@ -505,7 +505,7 @@ class LogoDownloader:
             logger.info(f"Fetching team data for team {team_id} in {league} from ESPN API...")
             response = self.session.get(f"{api_url}/{team_id}", headers=self.headers, timeout=self.request_timeout)
             response.raise_for_status()
-            data = response.json()
+            data: Dict = response.json()
             
             logger.info(f"Successfully fetched team data for {team_id} in {league}")
             return data
@@ -815,6 +815,7 @@ class LogoDownloader:
             draw = ImageDraw.Draw(logo)
             
             # Try to load a font, fallback to default
+            font: Optional[Union[ImageFont.FreeTypeFont, ImageFont.ImageFont]]
             try:
                 font = load_truetype(resolve_asset_path("assets/fonts/PressStart2P-Regular.ttf"), 12)
             except (OSError, IOError):

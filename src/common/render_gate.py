@@ -46,7 +46,7 @@ import sys
 import threading
 import time
 from collections import deque
-from typing import Any, Callable, Deque, List, Optional
+from typing import Any, Callable, Deque, List, Optional, cast
 
 from src.common.frame_timing import binding_releases_gil
 
@@ -103,8 +103,8 @@ def _held(lock: Any) -> bool:
     """Is ``lock`` held? RLocks report this thread's ownership; plain locks, anyone's."""
     is_owned = getattr(lock, "_is_owned", None)
     if is_owned is not None:
-        return is_owned()
-    return lock.locked()
+        return cast(bool, is_owned())
+    return cast(bool, lock.locked())
 
 
 class RenderGate:

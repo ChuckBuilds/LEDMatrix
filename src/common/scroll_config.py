@@ -49,7 +49,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, replace
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, cast
 
 from src.matrix_support import DEFAULT_REFRESH_LIMIT_HZ
 
@@ -132,14 +132,14 @@ def crisp_ladder(
     refresh_hz: float = DEFAULT_REFRESH_HZ,
     max_frame_hold: int = MAX_FRAME_HOLD,
     max_pixels_per_frame: int = MAX_PIXELS_PER_FRAME,
-):
+) -> List[CrispSpeed]:
     """Every whole-pixel speed this panel can show, slowest first.
 
     Duplicates are collapsed keeping the gentlest option: 100 px/s is reachable
     as 1px every refresh or 2px every 2nd refresh, and the former moves in
     smaller increments, so that is the one worth offering.
     """
-    best = {}
+    best: Dict[float, CrispSpeed] = {}
     for hold in range(1, max_frame_hold + 1):
         for ppf in range(1, max_pixels_per_frame + 1):
             pps = refresh_hz / hold * ppf
@@ -434,7 +434,8 @@ def configure(
     # they start scrolling. configure() only reports what is needed.
 
     if choice:
-        requested = settings.requested_pixels_per_second
+        # Set whenever there is a crisp choice (see the replace() above).
+        requested = cast(float, settings.requested_pixels_per_second)
         if abs(requested - applied) > 0.05:
             log.info(
                 "Scroll configured: %s (asked for %.1f px/s from %s; "

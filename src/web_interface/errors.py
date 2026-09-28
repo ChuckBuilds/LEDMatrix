@@ -142,7 +142,7 @@ class WebInterfaceError:
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert error to dictionary for JSON response."""
-        result = {
+        result: Dict[str, Any] = {
             "status": "error",
             "error_code": self.error_code.value,
             "message": self.message,

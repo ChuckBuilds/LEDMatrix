@@ -16,7 +16,7 @@ import time
 
 import requests
 import json
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, cast
 
 from src.common.api_helper import DEFAULT_HTTP_HEADERS
 
@@ -100,7 +100,7 @@ class BaseOddsManager:
     _FAILURE_COOLDOWN = 60.0
 
     def get_odds(self, sport: str | None, league: str | None, event_id: str,
-                 update_interval_seconds: int = None) -> Optional[Dict[str, Any]]:
+                 update_interval_seconds: Optional[int] = None) -> Optional[Dict[str, Any]]:
         """
         Fetch odds data for a specific game.
         
@@ -121,7 +121,7 @@ class BaseOddsManager:
         cache_key = f"odds_espn_{sport}_{league}_{event_id}"
 
         # Check cache first
-        cached_data = self.cache_manager.get_with_auto_strategy(cache_key)
+        cached_data: Optional[Dict[str, Any]] = self.cache_manager.get_with_auto_strategy(cache_key)
 
         # Per-game chatter, logged on every update of every game on the
         # slate: debug, not the journal.
@@ -190,7 +190,7 @@ class BaseOddsManager:
                 "for %.0fs so a slate of games does not pay this timeout each.",
                 cache_key, e, self._FAILURE_COOLDOWN)
         
-        return self.cache_manager.get_with_auto_strategy(cache_key)
+        return cast(Optional[Dict[str, Any]], self.cache_manager.get_with_auto_strategy(cache_key))
 
     def _extract_espn_data(self, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """

@@ -7,7 +7,7 @@ Manages saved GitHub repository URLs for easy plugin discovery and installation.
 import json
 import os
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, cast
 
 from src.logging_config import get_logger
 from src.plugin_system.repo_urls import normalize_repo_url
@@ -37,7 +37,7 @@ class SavedRepositoriesManager:
                     if isinstance(data, list):
                         return data
                     elif isinstance(data, dict) and 'repositories' in data:
-                        return data['repositories']
+                        return cast(List[Dict[str, str]], data['repositories'])
                     else:
                         return []
             return []

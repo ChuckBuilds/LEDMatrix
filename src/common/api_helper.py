@@ -11,11 +11,15 @@ import time
 from datetime import datetime
 from types import MappingProxyType
 from src.common.espn_dates import ESPN_MAX_LIMIT
-from typing import Any, Dict, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional, cast
 
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+
+if TYPE_CHECKING:
+    # What Session() puts in .headers; the stubs only promise a MutableMapping.
+    from requests.structures import CaseInsensitiveDict
 
 
 #: The User-Agent core sends to ESPN and other data APIs. It names the client
@@ -84,7 +88,7 @@ class APIHelper:
         self.session.headers.update({**DEFAULT_HTTP_HEADERS, 'Connection': 'keep-alive'})
         
         # Rate limiting
-        self._last_request_time = 0  # wall clock, reported by get_request_stats()
+        self._last_request_time: float = 0  # wall clock, reported by get_request_stats()
         # The interval is measured on time.monotonic(): a wall-clock step
         # back (NTP correcting a Pi with no RTC) made time_since_last
         # negative and the "remaining interval" sleep as long as the step.
@@ -112,14 +116,14 @@ class APIHelper:
             cached = self._get_from_cache(cache_key, cache_ttl)
             if cached is not None:
                 self.logger.debug(f"Using cached response for {cache_key}")
-                return cached
+                return cast(Dict[Any, Any], cached)
         
         # Rate limiting
         self._enforce_rate_limit()
         
         try:
             # Prepare request
-            request_headers = self.session.headers.copy()
+            request_headers = cast('CaseInsensitiveDict[Any]', self.session.headers).copy()
             if headers:
                 request_headers.update(headers)
             
@@ -133,7 +137,7 @@ class APIHelper:
             response.raise_for_status()
             
             # Parse JSON response
-            data = response.json()
+            data: Dict[Any, Any] = response.json()
             
             # Cache response if cache key provided
             if cache_key and self.cache_manager:
@@ -247,7 +251,7 @@ class APIHelper:
         self._enforce_rate_limit()
         
         try:
-            request_headers = self.session.headers.copy()
+            request_headers = cast('CaseInsensitiveDict[Any]', self.session.headers).copy()
             if headers:
                 request_headers.update(headers)
             
@@ -260,7 +264,7 @@ class APIHelper:
             )
             response.raise_for_status()
             
-            return response.json()
+            return cast(Optional[Dict[Any, Any]], response.json())
             
         except requests.exceptions.RequestException as e:
             self.logger.error(f"POST request failed for {url}: {e}")

@@ -144,7 +144,8 @@ def resolve_font_color(config: Optional[Dict[str, Any]],
         if len(matches) > 1:
             configured = []
             for element in matches:
-                colour = element_color(config, element, None, mode)
+                # None as the default makes it come back when unconfigured.
+                colour = element_color(config, element, None, mode)  # type: ignore[arg-type]
                 if colour is not None and colour not in configured:
                     configured.append(colour)
             if len(configured) == 1:

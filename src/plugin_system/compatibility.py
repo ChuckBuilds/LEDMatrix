@@ -191,7 +191,7 @@ def satisfies_compatible_versions(
     return any(parsed)
 
 
-def declared_min_version(manifest: Dict[str, Any]) -> Optional[str]:
+def declared_min_version(manifest: Dict[str, Any]) -> Any:
     """The core version this plugin says it needs, or ``None`` if it doesn't say.
 
     Checked in order of specificity. `ledmatrix_min` is the deprecated spelling
@@ -206,6 +206,10 @@ def declared_min_version(manifest: Dict[str, Any]) -> Optional[str]:
     untrustworthy-core branch of :func:`check` calls this for *every* manifest,
     so one malformed file would take down the install path rather than just
     itself. A shape we do not recognise means "no declared floor".
+
+    The value is returned as the manifest holds it -- normally a version
+    string, but nothing here checks that; callers hand it to
+    :func:`parse_semver`, which accepts anything.
     """
     declared = manifest.get('min_ledmatrix_version')
     if not declared:
@@ -222,7 +226,7 @@ def declared_min_version(manifest: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def is_update_available(installed_version: str, latest_version: str) -> bool:
+def is_update_available(installed_version: Any, latest_version: Any) -> bool:
     """Return True when the registry's ``latest_version`` is strictly newer
     than the installed version.
 

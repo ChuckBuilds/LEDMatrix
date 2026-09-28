@@ -5,10 +5,10 @@ Provides functions for identifying, masking, separating, and filtering
 secret fields in plugin configurations based on JSON Schema x-secret markers.
 """
 
-from typing import Any, Dict, Optional, Set, Tuple
+from typing import Any, Dict, Optional, Set, Tuple, cast
 
 
-def find_secret_fields(properties: Dict[str, Any], prefix: str = '') -> Set[str]:
+def find_secret_fields(properties: Any, prefix: str = '') -> Set[str]:
     """Find all fields marked with ``x-secret: true`` in a JSON Schema properties dict.
 
     Recurses into nested objects and array items to discover secrets at any
@@ -336,4 +336,4 @@ def _contains_mask(value: Any) -> bool:
         return any(_contains_mask(v) for v in value.values())
     if isinstance(value, list):
         return any(_contains_mask(item) for item in value)
-    return value == SECRET_MASK
+    return cast(bool, value == SECRET_MASK)

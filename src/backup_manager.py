@@ -481,7 +481,8 @@ def validate_backup(zip_path: Path) -> Tuple[bool, str, Dict[str, Any]]:
             ):
                 detected.append("plugin_uploads")
 
-            plugins: List[Dict[str, Any]] = []
+            # Whatever the archive's manifest holds; checked below.
+            plugins: Any = []
             if PLUGINS_MANIFEST_NAME in names:
                 try:
                     plugins = json.loads(zf.read(PLUGINS_MANIFEST_NAME).decode("utf-8"))

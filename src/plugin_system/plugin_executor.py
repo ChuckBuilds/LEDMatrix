@@ -6,7 +6,7 @@ error isolation, and performance monitoring.
 """
 
 import time
-from typing import Any, Optional, Callable
+from typing import Any, Dict, Optional, Callable
 from threading import Thread
 import logging
 
@@ -62,7 +62,7 @@ class PluginExecutor:
         plugin_context = f"plugin {plugin_id}" if plugin_id else "plugin"
         
         # Use threading-based timeout (more reliable than signal-based)
-        result_container = {'value': None, 'exception': None, 'completed': False}
+        result_container: Dict[str, Any] = {'value': None, 'exception': None, 'completed': False}
         
         def target():
             try:
