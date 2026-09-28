@@ -34,7 +34,8 @@ class _RegistryMixin:
                 with open(config_path, 'r', encoding='utf-8') as f:
                     config = json.load(f)
                     token = config.get('github', {}).get('api_token', '').strip()
-                    if token and token != "YOUR_GITHUB_PERSONAL_ACCESS_TOKEN":
+                    # The config template's placeholder, not a credential.
+                    if token and token != "YOUR_GITHUB_PERSONAL_ACCESS_TOKEN":  # nosec B105  # nosemgrep
                         return token
         except Exception as e:
             self.logger.debug(f"Could not load GitHub token: {e}")

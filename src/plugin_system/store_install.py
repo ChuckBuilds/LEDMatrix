@@ -9,7 +9,7 @@ import errno
 import os
 import re
 import json
-import subprocess
+import subprocess  # nosec B404 - list-form argv only, no shell  # nosemgrep
 import shutil
 import zipfile
 import tempfile
@@ -596,7 +596,7 @@ class _InstallMixin:
         for try_branch in branches_to_try:
             try:
                 cmd = ['git', 'clone', '--depth', '1', '--branch', try_branch, repo_url, str(target_path)]
-                subprocess.run(
+                subprocess.run(  # nosec B603 - list-form argv, no shell  # nosemgrep
                     cmd,
                     check=True,
                     capture_output=True,

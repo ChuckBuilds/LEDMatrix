@@ -6,7 +6,7 @@ methods reach shared state and helpers through ``self``.
 """
 
 import json
-import subprocess
+import subprocess  # nosec B404 - list-form argv only, no shell  # nosemgrep
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 from src.plugin_system.plugin_dirs import BACKUP_MARKER
