@@ -126,7 +126,6 @@ class TestUpdateRouteReportsNoOps:
         self._install(tmp_path, 'clock', '1.0.0')
         store._get_local_git_info.side_effect = [
             {'sha': 'aaaaaaa000', 'branch': 'main'},   # before
-            {'sha': 'aaaaaaa000', 'branch': 'main'},   # is-git check
             {'sha': 'bbbbbbb111', 'branch': 'main'},   # after
         ]
         body = client.post('/api/v3/plugins/update', json={'plugin_id': 'clock'}).get_json()

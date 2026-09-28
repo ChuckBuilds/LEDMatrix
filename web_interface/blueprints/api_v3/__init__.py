@@ -170,9 +170,16 @@ def _get_plugin_version(plugin_id: str) -> str:
     that arrived in a request body, so the name is validated here rather
     than relying on each of them to have done it.
     """
-    manifest_path = resolve_under(
-        api_v3.plugin_store_manager.plugins_dir, plugin_id, "manifest.json"
-    )
+    # The resolver first: a plugin installed as ledmatrix-<id>, or whose
+    # directory is named differently from its manifest id, is not at
+    # plugins_dir/<id>, and recording '' as its version hid that it worked.
+    plugin_dir = _plugin_directory(plugin_id)
+    if plugin_dir is not None:
+        manifest_path = plugin_dir / "manifest.json"
+    else:
+        manifest_path = resolve_under(
+            api_v3.plugin_store_manager.plugins_dir, plugin_id, "manifest.json"
+        )
     if manifest_path is None:
         logger.warning("[PluginVersion] Rejected unsafe plugin id %r", plugin_id)
         return ''
@@ -1420,9 +1427,11 @@ def _plugin_directory(plugin_id: str) -> Optional[Path]:
     is no fallback to the legacy plugins/ directory: the loader never scans
     it, so a plugin found only there is one that never runs.
     """
-    if not api_v3.plugin_manager:
+    # getattr: the blueprint only has plugin_manager once the app has set it.
+    manager = getattr(api_v3, 'plugin_manager', None)
+    if not manager:
         return None
-    plugin_dir = api_v3.plugin_manager.get_plugin_directory(plugin_id)
+    plugin_dir = manager.get_plugin_directory(plugin_id)
     if not plugin_dir or not Path(plugin_dir).exists():
         return None
     return Path(plugin_dir)

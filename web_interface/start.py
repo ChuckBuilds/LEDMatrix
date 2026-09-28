@@ -17,6 +17,21 @@ logger = logging.getLogger('web_interface.start')
 _CLIENT_DISCONNECT_ERRNOS = (113, 32, 104)
 
 
+def _exc_info_value(exc_info):
+    """The exception a logging call's ``exc_info`` argument refers to.
+
+    logging accepts a (type, value, traceback) tuple, an exception instance,
+    or True for the exception being handled. The werkzeug filter below used
+    to unpack it as a tuple, so True or an instance raised TypeError from
+    inside the logging call itself.
+    """
+    if isinstance(exc_info, BaseException):
+        return exc_info
+    if isinstance(exc_info, tuple):
+        return exc_info[1] if len(exc_info) > 1 else None
+    return sys.exc_info()[1]
+
+
 def get_local_ips():
     """Get list of local IP addresses the service will be accessible on."""
     ips = []
@@ -94,7 +109,7 @@ def main():
                 return
         # For exceptions, check if it's a socket error
         if 'exc_info' in kwargs and kwargs['exc_info']:
-            exc_type, exc_value, exc_tb = kwargs['exc_info']
+            exc_value = _exc_info_value(kwargs['exc_info'])
             if isinstance(exc_value, OSError):
                 if exc_value.errno in _CLIENT_DISCONNECT_ERRNOS:
                     werkzeug_logger.debug(message, *args, **kwargs)

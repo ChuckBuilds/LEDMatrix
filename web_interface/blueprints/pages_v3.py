@@ -320,13 +320,31 @@ def serve_plugin_web_ui(plugin_id, filename):
         return 'Error serving file', 500, {'Content-Type': 'text/plain'}
 
 
+def _resolved_plugin_dir(plugin_id):
+    """The plugin manager's answer for where ``plugin_id`` lives, or None.
+
+    Its discovery map is authoritative (a plugin whose directory name is not
+    its id is found there), and it refuses anything that is not one plain
+    path segment. See src/plugin_system/plugin_dirs.py.
+    """
+    found = pages_v3.plugin_manager.get_plugin_directory(plugin_id)
+    if isinstance(found, (str, Path)) and Path(found).exists():
+        return Path(found)
+    return None
+
+
 def _plugin_dir_for(safe_id):
     """A sanitised plugin id's directory, which may not exist.
 
-    Contained under the configured plugins directory, with PluginManager's
-    ``ledmatrix-`` prefix fallback. Raises ValueError for an id that would
-    leave it; the routes answer that with a 403.
+    The plugin manager's resolver first; otherwise contained under the
+    configured plugins directory, with PluginManager's ``ledmatrix-`` prefix
+    fallback. Raises ValueError for an id that would leave it; the routes
+    answer that with a 403.
     """
+    resolved = _resolved_plugin_dir(safe_id)
+    if resolved is not None:
+        return resolved
+
     plugins_base = Path(pages_v3.plugin_manager.plugins_dir).resolve()
     plugin_dir = resolve_under(plugins_base, safe_id)
     if plugin_dir is None:
@@ -556,91 +574,15 @@ def _load_schedule_partial():
 
 def _load_plugins_partial():
     """Load plugins management partial"""
-    # Load plugin data from the plugin system
-    plugins_data = []
-
-    # Get installed plugins if managers are available
-    if pages_v3.plugin_manager and pages_v3.plugin_store_manager:
-        try:
-            # Get all installed plugin info
-            all_plugin_info = pages_v3.plugin_manager.get_all_plugin_info()
-
-            # Load config once before the loop (not per-plugin)
-            full_config = pages_v3.config_manager.load_config() if pages_v3.config_manager else {}
-
-            # Format for the web interface
-            for plugin_info in all_plugin_info:
-                plugin_id = plugin_info.get('id')
-
-                # Re-read manifest from disk to ensure we have the latest metadata
-                manifest_path = Path(pages_v3.plugin_manager.plugins_dir) / plugin_id / "manifest.json"
-                if manifest_path.exists():
-                    try:
-                        with open(manifest_path, 'r', encoding='utf-8') as f:
-                            fresh_manifest = json.load(f)
-                        # Update plugin_info with fresh manifest data
-                        plugin_info.update(fresh_manifest)
-                    except Exception:
-                        # If we can't read the fresh manifest, use the cached one
-                        logger.warning("Could not read fresh manifest for plugin: %s", plugin_id)
-
-                # Get enabled status from config (source of truth)
-                # Read from config file first, fall back to plugin instance if config doesn't have the key
-                enabled = None
-                if pages_v3.config_manager:
-                    plugin_config = full_config.get(plugin_id, {})
-                    # Check if 'enabled' key exists in config (even if False)
-                    if 'enabled' in plugin_config:
-                        enabled = bool(plugin_config['enabled'])
-                
-                # Fallback to plugin instance if config doesn't have enabled key
-                if enabled is None:
-                    plugin_instance = pages_v3.plugin_manager.get_plugin(plugin_id)
-                    if plugin_instance:
-                        enabled = plugin_instance.enabled
-                    else:
-                        # Default to True if no config key and plugin not loaded (matches BasePlugin default)
-                        enabled = True
-
-                # Get verified status from store registry (no GitHub API calls needed)
-                store_info = pages_v3.plugin_store_manager.get_registry_info(plugin_id)
-                verified = store_info.get('verified', False) if store_info else False
-
-                last_updated = plugin_info.get('last_updated')
-                last_commit = plugin_info.get('last_commit') or plugin_info.get('last_commit_sha')
-                branch = plugin_info.get('branch')
-
-                if store_info:
-                    last_updated = last_updated or store_info.get('last_updated') or store_info.get('last_updated_iso')
-                    last_commit = last_commit or store_info.get('last_commit') or store_info.get('last_commit_sha')
-                    branch = branch or store_info.get('branch') or store_info.get('default_branch')
-
-                plugins_data.append({
-                    'id': plugin_id,
-                    'name': plugin_info.get('name', plugin_id),
-                    'author': plugin_info.get('author', 'Unknown'),
-                    'category': plugin_info.get('category', 'General'),
-                    'description': plugin_info.get('description', 'No description available'),
-                    'tags': plugin_info.get('tags', []),
-                    'enabled': enabled,
-                    'verified': verified,
-                    'loaded': plugin_info.get('loaded', False),
-                    'last_updated': last_updated,
-                    'last_commit': last_commit,
-                    'branch': branch
-                })
-        except Exception:
-            logger.error("Error loading plugin data", exc_info=True)
-
-    return render_template('v3/partials/plugins.html',
-                         plugins=plugins_data)
+    # plugins.html takes no plugin data: plugins_manager.js fetches the list
+    # from /api/v3/plugins/installed. Building it here read every manifest on
+    # disk on each Plugins-tab load for nothing.
+    return render_template('v3/partials/plugins.html')
 
 def _load_fonts_partial():
     """Load fonts management partial"""
-    # This would load font data from the font system
-    fonts_data = {}  # Placeholder for font data
-    return render_template('v3/partials/fonts.html',
-                         fonts=fonts_data)
+    # The page fetches its font data from /api/v3/fonts/* itself.
+    return render_template('v3/partials/fonts.html')
 
 def _load_logs_partial():
     """Load logs viewer partial"""
@@ -748,6 +690,11 @@ def _load_plugin_config_partial(plugin_id):
 
         if not plugin_info:
             return '<div class="text-red-500 p-4">Plugin not found</div>', 404
+
+        # The containment check above only validates the id. The files are
+        # read from wherever the plugin manager says the plugin lives, which
+        # for one installed as ledmatrix-<id> is not plugins_dir/<id>.
+        _plugin_dir = _resolved_plugin_dir(plugin_id) or _plugin_dir
 
         # Get plugin instance (may be None if not loaded)
         plugin_instance = pages_v3.plugin_manager.get_plugin(plugin_id)

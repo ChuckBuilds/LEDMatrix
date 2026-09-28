@@ -1150,6 +1150,27 @@ def get_secrets_config():
     # alone so a client can still tell "set" from "not set".
     return jsonify({'status': 'success',
                     'data': mask_all_secret_values(config)})
+def _raw_config_save_error(e):
+    """The 500 both raw-config save routes answer a failed save with.
+
+    A ConfigError that names its file says which one; the rest is the same
+    for every failure. raw_json.html reads only ``message``, which this
+    keeps, alongside ``status`` and ``details`` as before.
+    """
+    from src.exceptions import ConfigError
+    error_message = 'An error occurred; see logs for details'
+    config_path = getattr(e, 'config_path', None) if isinstance(e, ConfigError) else None
+    if config_path:
+        error_message = f"{error_message} (config_path: {config_path})"
+    return error_response(
+        ErrorCode.CONFIG_SAVE_FAILED if isinstance(e, ConfigError) else ErrorCode.UNKNOWN_ERROR,
+        error_message,
+        details=describe_exception(e),
+        context={'config_path': config_path} if config_path else None,
+        status_code=500
+    )
+
+
 @api_v3.route('/config/raw/main', methods=['POST'])
 def save_raw_main_config():
     """Save raw main configuration JSON"""
@@ -1193,31 +1214,8 @@ def save_raw_main_config():
             logger.warning("Automatic update setup could not be started", exc_info=True)
         return jsonify({'status': 'success', 'message': message})
     except Exception as e:
-        from src.exceptions import ConfigError
         logger.error("Error saving raw main config", exc_info=True)
-
-        # Extract more specific error message if it's a ConfigError
-        if isinstance(e, ConfigError):
-            error_message = 'An error occurred; see logs for details'
-            if hasattr(e, 'config_path') and e.config_path:
-                error_message = f"{error_message} (config_path: {e.config_path})"
-            return error_response(
-                ErrorCode.CONFIG_SAVE_FAILED,
-                error_message,
-                details=describe_exception(e),
-
-                context={'config_path': e.config_path} if hasattr(e, 'config_path') and e.config_path else None,
-                status_code=500
-            )
-        else:
-            error_message = 'An error occurred; see logs for details'
-            return error_response(
-                ErrorCode.UNKNOWN_ERROR,
-                error_message,
-                details=describe_exception(e),
-
-                status_code=500
-            )
+        return _raw_config_save_error(e)
 @api_v3.route('/config/raw/secrets', methods=['POST'])
 def save_raw_secrets_config():
     """Save raw secrets configuration JSON"""
@@ -1257,17 +1255,5 @@ def save_raw_secrets_config():
 
         return jsonify({'status': 'success', 'message': 'Secrets configuration saved successfully'})
     except Exception as e:
-        from src.exceptions import ConfigError
         logger.error("Error saving raw secrets config", exc_info=True)
-
-        # Extract more specific error message if it's a ConfigError
-        if isinstance(e, ConfigError):
-            # ConfigError has a message attribute and may have context
-            error_message = 'An error occurred; see logs for details'
-            if hasattr(e, 'config_path') and e.config_path:
-                error_message = f"{error_message} (config_path: {e.config_path})"
-        else:
-            error_message = 'An error occurred; see logs for details'
-
-        return jsonify({'status': 'error', 'message': error_message,
-                        'details': describe_exception(e)}), 500
+        return _raw_config_save_error(e)

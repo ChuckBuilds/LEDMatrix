@@ -44,14 +44,12 @@ def get_wifi_config_path():
     # Try to determine project root
     project_root = os.environ.get('LEDMATRIX_ROOT')
     if not project_root:
-        # Try to find project root by looking for config directory
-        current = Path(__file__).resolve().parent.parent
-        if (current / 'config').exists():
-            project_root = str(current)
-        else:
-            # Fallback to common location
-            project_root = "/home/ledpi/LEDMatrix"
-    
+        # This file is <root>/src/wifi_manager.py. The root is used even when
+        # config/ does not exist yet (WiFiManager creates it): the old
+        # fallback was a hardcoded /home/ledpi/LEDMatrix, which is some other
+        # user's checkout, or nothing, on any install not made as ledpi.
+        project_root = str(Path(__file__).resolve().parents[1])
+
     return Path(project_root) / "config" / "wifi_config.json"
 
 
@@ -90,8 +88,11 @@ AP_PROFILE_NAME = "LEDMatrix-Setup-AP"
 #: Deleted by name only, never by SSID, so a saved home network is never hit.
 AP_PROFILE_NAMES = (AP_PROFILE_NAME, "Hotspot", "TickerSetup-AP")
 
-# LED status message file (for display_controller integration)
-LED_STATUS_FILE = None  # Will be set dynamically
+# LED status message file (for display_controller integration). None means
+# each WiFiManager writes next to its own config file, which for the default
+# config is get_wifi_status_path(), the file the display reads. Set only to
+# redirect it (tests).
+LED_STATUS_FILE = None
 
 
 @dataclass
@@ -131,12 +132,12 @@ class WiFiManager:
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
         self._load_config()
         
-        # Set LED status file path (for display_controller integration)
-        global LED_STATUS_FILE
-        if LED_STATUS_FILE is None:
-            project_root = self.config_path.parent.parent
-            LED_STATUS_FILE = project_root / "config" / "wifi_status.json"
-        
+        # LED status file (for display_controller integration): next to this
+        # manager's config. It used to be a module global set by whichever
+        # manager was built first, so a later one with a different config
+        # path wrote its messages to the first one's directory.
+        self._led_status_file = self.config_path.parent / "wifi_status.json"
+
         # Check which tools are available
         self.has_nmcli = self._check_command("nmcli")
         self.has_iwlist = self._check_command("iwlist")
@@ -182,21 +183,22 @@ class WiFiManager:
             duration: How long to show message (seconds)
         """
         try:
-            if LED_STATUS_FILE is None:
+            status_file = LED_STATUS_FILE or getattr(self, '_led_status_file', None)
+            if status_file is None:
                 return
-            
+
             status = {
                 'message': message,
                 'timestamp': time.time(),
                 'duration': duration
             }
-            LED_STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            status_file.parent.mkdir(parents=True, exist_ok=True)
             # Write-then-rename: the display reads this at ~1 Hz and deletes
             # a file it can't parse, so a half-written one would lose the message.
-            tmp_path = LED_STATUS_FILE.with_name(LED_STATUS_FILE.name + '.tmp')
+            tmp_path = status_file.with_name(status_file.name + '.tmp')
             with open(tmp_path, 'w') as f:
                 json.dump(status, f)
-            os.replace(tmp_path, LED_STATUS_FILE)
+            os.replace(tmp_path, status_file)
             logger.info(f"LED message: {message}")
         except Exception as e:
             logger.debug(f"Could not write LED status message: {e}")
@@ -204,8 +206,9 @@ class WiFiManager:
     def _clear_led_message(self):
         """Clear any WiFi status message from LED display."""
         try:
-            if LED_STATUS_FILE and LED_STATUS_FILE.exists():
-                LED_STATUS_FILE.unlink()
+            status_file = LED_STATUS_FILE or getattr(self, '_led_status_file', None)
+            if status_file and status_file.exists():
+                status_file.unlink()
         except Exception as e:
             logger.debug(f"Could not clear LED status message: {e}")
     
@@ -1668,8 +1671,9 @@ class WiFiManager:
         Disconnect from the current WiFi network
         
         Args:
-            skip_ap_check: If True, skip auto-enabling AP mode after disconnect
-                          (useful when switching networks)
+            skip_ap_check: Accepted for callers that still pass it; ignored.
+                          Auto-enabling AP mode after a disconnect is the
+                          wifi monitor daemon's job.
         
         Returns:
             Tuple of (success, message)
@@ -1705,18 +1709,13 @@ class WiFiManager:
                     logger.info("Successfully disconnected from WiFi network")
                     # Wait longer for the disconnect to fully complete
                     time.sleep(2)
-                    
-                    # Check if AP mode should be auto-enabled
-                    # Skip if we're switching networks (skip_ap_check=True)
-                    if not skip_ap_check:
-                        auto_enable = self.config.get("auto_enable_ap_mode", True)
-                        if auto_enable:
-                            # Give it a moment, then check if we should enable AP mode
-                            time.sleep(1)
-                            self.check_and_manage_ap_mode()
-                    else:
-                        logger.debug("Skipping AP mode check (network switch in progress)")
-                    
+
+                    # No AP-mode check here. It used to run one, but the web
+                    # routes build a fresh WiFiManager per request, so its
+                    # grace-period counter started at 0 and one check could
+                    # never reach the 3 needed to enable the AP: it only added
+                    # seconds of sleeps and nmcli calls. The monitor daemon's
+                    # long-lived manager is what counts consecutive checks.
                     return True, "Disconnected from WiFi network"
                 else:
                     error_msg = result.stderr.strip() or result.stdout.strip()

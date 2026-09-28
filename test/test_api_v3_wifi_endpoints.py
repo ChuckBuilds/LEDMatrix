@@ -261,8 +261,13 @@ class TestApMode:
     @pytest.mark.parametrize("raw,expected", [
         (True, True), (False, False),
         ("true", True), ("TRUE", True), ("1", True),
-        ("false", False), ("no", False), ("yes", False),
-        (1, False),  # only real True or the listed strings count
+        ("false", False), ("no", False),
+        # Parsed by _parse_bool_ish like every other boolean on these routes
+        # (the radio route's force included); this one used to have its own
+        # rules, under which "yes" and 1 meant False.
+        ("yes", True), (1, True), (0, False),
+        # Anything unrecognised is not a request to force.
+        ("typo", False), (None, False), (2, False),
     ])
     def test_force_coercion(self, api_v3_client, wifi_manager, raw, expected):
         wifi_manager.enable_ap_mode.return_value = (True, "ok")

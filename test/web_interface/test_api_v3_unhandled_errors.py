@@ -122,8 +122,22 @@ def test_credentials_are_redacted_from_the_detail(client):
     assert body["details"].startswith("RuntimeError: forced failure")
 
 
-def test_a_client_error_keeps_its_own_status(client):
+def _raise_415():
+    raise UnsupportedMediaType(
+        "Did not attempt to load JSON data because the request Content-Type "
+        "was not 'application/json'.")
+
+
+# An api_v3 route raising a 415 from inside. No route does that on its own
+# any more (the asset delete route, which used to, now reads its body with
+# get_json(silent=True)), so one route's view is swapped for one that does;
+# the endpoint stays api_v3's, so its error handler is the one that answers.
+_SWAPPED_ENDPOINT = "api_v3.delete_plugin_asset"
+
+
+def test_a_client_error_keeps_its_own_status(client, monkeypatch):
     """HTTPExceptions subclass Exception; a 415 must not become a 500."""
+    monkeypatch.setitem(client.application.view_functions, _SWAPPED_ENDPOINT, _raise_415)
     resp = client.post("/api/v3/plugins/assets/delete", data="not json",
                        content_type="text/plain")
     assert resp.status_code == 415
@@ -151,8 +165,9 @@ class TestInTheRealApp:
         assert resp.get_json() == EXPECTED
 
     def test_client_errors_read_the_same_as_the_global_handler(
-            self, web_app, exploding_managers):
+            self, web_app, exploding_managers, monkeypatch):
         """The blueprint's 4xx shape must not drift from app.py's."""
+        monkeypatch.setitem(web_app.app.view_functions, _SWAPPED_ENDPOINT, _raise_415)
         resp = web_app.app.test_client().post(
             "/api/v3/plugins/assets/delete", data="not json",
             content_type="text/plain")

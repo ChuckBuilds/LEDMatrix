@@ -309,13 +309,30 @@ def get_font_preview() -> tuple[Response, int] | Response:
 
     # Load font
     font = None
-    if str(font_path).endswith('.bdf'):
-        # BDF fonts require complex per-glyph rendering via freetype
-        # Return explicit error rather than showing misleading preview with default font
-        return jsonify({
-            'status': 'error',
-            'message': 'BDF font preview not supported. BDF fonts will render correctly on the LED matrix.'
-        }), 400
+    bdf_face = None
+    lines = text.split('\n')
+    line_height = 0
+    if font_path.suffix.lower() == '.bdf':
+        # PIL cannot draw a BDF strike, so it goes through the same loader
+        # and glyph rasterizer the panel uses (src/common/bdf_font.py). The
+        # face comes back at the file's native size when it has no strike at
+        # the one asked for -- which is also what the panel would draw.
+        from src.common.bdf_font import load_bdf_face, draw_bdf_text
+        try:
+            bdf_face, realised_px = load_bdf_face(str(font_path), size)
+        except Exception as e:
+            logger.warning("[FontPreview] Failed to load BDF font %s: %s", font_path, e)
+            return jsonify({'status': 'error', 'message': 'Could not load BDF font'}), 400
+        line_height = (bdf_face.size.height >> 6) or realised_px
+        line_widths = []
+        for line in lines:
+            width = 0
+            for char in line:
+                bdf_face.load_char(char)
+                width += bdf_face.glyph.advance.x >> 6
+            line_widths.append(width)
+        text_width = max(line_widths)
+        text_height = line_height * len(lines)
     else:
         # TTF/OTF fonts
         try:
@@ -325,12 +342,12 @@ def get_font_preview() -> tuple[Response, int] | Response:
             logger.warning("[FontPreview] Failed to load font %s: %s", font_path, e)
             font = ImageFont.load_default()
 
-    # Calculate text size
-    temp_img = Image.new('RGB', (1, 1))
-    temp_draw = ImageDraw.Draw(temp_img)
-    bbox = temp_draw.textbbox((0, 0), text, font=font)
-    text_width = bbox[2] - bbox[0]
-    text_height = bbox[3] - bbox[1]
+        # Calculate text size
+        temp_img = Image.new('RGB', (1, 1))
+        temp_draw = ImageDraw.Draw(temp_img)
+        bbox = temp_draw.textbbox((0, 0), text, font=font)
+        text_width = bbox[2] - bbox[0]
+        text_height = bbox[3] - bbox[1]
 
     # Create image with padding
     padding = 10
@@ -350,7 +367,11 @@ def get_font_preview() -> tuple[Response, int] | Response:
     x = (img_width - text_width) // 2
     y = (img_height - text_height) // 2
 
-    draw.text((x, y), text, font=font, fill=fg_rgb)
+    if bdf_face is not None:
+        for index, line in enumerate(lines):
+            draw_bdf_text(draw, line, x, y + index * line_height, bdf_face, color=fg_rgb)
+    else:
+        draw.text((x, y), text, font=font, fill=fg_rgb)
 
     # Convert to base64
     buffer = io.BytesIO()
