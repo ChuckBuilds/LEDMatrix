@@ -32,6 +32,7 @@ from typing import Callable, Optional
 import numpy as np
 from PIL import Image
 
+from src.config_manager_atomic import _replace
 from src.display_geometry import DEFAULT_CHAIN_LENGTH, DEFAULT_COLS, DEFAULT_ROWS
 
 # Raw-frame wire format: 8-byte magic + 4-byte header + raw RGB pixels
@@ -742,7 +743,9 @@ class DisplaySyncManager:
                 # mkstemp makes it owner-only; the web UI may run as a
                 # different user from the display service.
                 os.chmod(tmp, 0o644)
-                os.replace(tmp, STATUS_FILE)
+                # _replace: on Windows a rename can briefly fail with
+                # "Access is denied" while a scanner holds the target open.
+                _replace(tmp, STATUS_FILE)
                 tmp = None
         except Exception as exc:
             self.logger.debug("Sync: status file write error: %s", exc)
