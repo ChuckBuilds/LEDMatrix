@@ -50,29 +50,51 @@ def helper(cache):
 class TestRateLimiting:
     def test_sleeps_for_remaining_interval(self, helper, monkeypatch):
         fake_time = MagicMock()
-        fake_time.time.side_effect = [102.0, 105.0]
+        fake_time.monotonic.side_effect = [102.0, 105.0]
+        fake_time.time.return_value = 5000.0
         monkeypatch.setattr(api_helper_module, 'time', fake_time)
 
         helper.set_rate_limit(5)
-        helper._last_request_time = 100.0
+        helper._last_request_monotonic = 100.0
         helper._enforce_rate_limit()
 
         # 2s elapsed of a 5s interval -> sleep the remaining 3s.
         fake_time.sleep.assert_called_once()
         assert fake_time.sleep.call_args[0][0] == pytest.approx(3.0)
-        assert helper._last_request_time == 105.0
+        assert helper._last_request_monotonic == 105.0
+        assert helper._last_request_time == 5000.0
 
     def test_no_sleep_when_interval_elapsed(self, helper, monkeypatch):
         fake_time = MagicMock()
-        fake_time.time.side_effect = [200.0, 201.0]
+        fake_time.monotonic.side_effect = [200.0, 201.0]
         monkeypatch.setattr(api_helper_module, 'time', fake_time)
 
         helper.set_rate_limit(5)
-        helper._last_request_time = 100.0
+        helper._last_request_monotonic = 100.0
         helper._enforce_rate_limit()
 
         fake_time.sleep.assert_not_called()
-        assert helper._last_request_time == 201.0
+        assert helper._last_request_monotonic == 201.0
+
+    def test_wall_clock_step_back_does_not_stall_requests(self, helper, monkeypatch):
+        # NTP stepping the wall clock back an hour between two requests must
+        # not turn into an hour-long "remaining interval" sleep.
+        wall = {"now": 10_000.0}
+        mono = {"now": 50.0}
+        sleeps = []
+        fake_time = MagicMock()
+        fake_time.time.side_effect = lambda: wall["now"]
+        fake_time.monotonic.side_effect = lambda: mono["now"]
+        fake_time.sleep.side_effect = sleeps.append
+        monkeypatch.setattr(api_helper_module, 'time', fake_time)
+
+        helper.set_rate_limit(5)
+        helper._enforce_rate_limit()
+        wall["now"] -= 3600
+        mono["now"] += 10
+        helper._enforce_rate_limit()
+
+        assert all(s <= 5 for s in sleeps)
 
 
 # ---------------------------------------------------------------------------

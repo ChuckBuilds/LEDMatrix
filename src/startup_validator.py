@@ -318,12 +318,21 @@ class StartupValidator:
     
     def raise_on_errors(self) -> None:
         """
-        Raise exceptions if validation errors exist.
-        
+        Raise one exception if validation errors exist; return None if not.
+
+        Nothing in core calls this (see the module docstring). Errors are
+        grouped by a keyword in their message, not by which check produced
+        them, and only the first non-empty group is raised, in the order
+        config > cache > plugin: a "plugin ... config" message counts as a
+        config error, and cache/plugin errors are not reported while a
+        config error exists. The raised exception's ``context['errors']``
+        holds that group's messages only.
+
         Raises:
-            ConfigError: If configuration validation fails
-            CacheError: If cache validation fails
-            PluginError: If plugin validation fails
+            ConfigError: If any message mentions config/configuration, or if
+                none matches any group
+            CacheError: If a message mentions cache (and none config)
+            PluginError: If a message mentions plugin (and none of the above)
         """
         if not self.errors:
             return

@@ -44,7 +44,9 @@ from src.display_geometry import (
     DEFAULT_CHAIN_LENGTH, DEFAULT_COLS, DEFAULT_PARALLEL, DEFAULT_ROWS,
     compose_pixel_mapper_config, physical_size, resolve_double_sided,
 )
-from src.matrix_support import MatrixSettingsRefused, library_refusals, refusal_message
+from src.matrix_support import (
+    DEFAULT_REFRESH_LIMIT_HZ, MatrixSettingsRefused, library_refusals, refusal_message,
+)
 from src.pi5_matrix_support import is_raspberry_pi_5
 import threading
 import time
@@ -71,6 +73,10 @@ logger = get_logger(__name__)
 #: size regardless, but a Face needs an active size before its metrics --
 #: and therefore get_font_height() -- report anything but 0.
 _CALENDAR_FONT_PX = 7
+
+#: Seconds between repeats of update_display()'s error log. It runs every
+#: frame, so a fault that persists would otherwise log ~100 lines a second.
+_UPDATE_ERROR_LOG_INTERVAL = 60.0
 
 
 def _bdf_native_size(face) -> int:
@@ -236,6 +242,11 @@ class DisplayManager:
 
     _instance = None
 
+    # update_display()'s error-log throttle. Class defaults so instances built
+    # without __init__ (tests, doubles) have them too.
+    _update_error_logged_at: Optional[float] = None
+    _update_errors_suppressed = 0
+
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
             cls._instance = super(DisplayManager, cls).__new__(cls)
@@ -345,6 +356,13 @@ class DisplayManager:
             'max_deferred_updates': 50,  # Limit queue size to prevent memory issues
             'deferred_update_ttl': 300.0  # 5 minutes TTL for deferred updates
         }
+        # Guards _scrolling_state['deferred_updates']. defer_update() is called
+        # from plugin update() on the update worker thread while
+        # process_deferred_updates() runs on the render thread, and both
+        # rebuild the list (TTL filter, [n:] slice) and assign it back -- an
+        # append landing between one side's read and its assignment was lost.
+        # Never held while a queued callable runs: those may defer again.
+        self._deferred_lock = threading.Lock()
         
         self._setup_matrix()
         logger.info("Matrix setup completed in %.3f seconds", time.time() - start_time)
@@ -976,7 +994,21 @@ class DisplayManager:
                 # Write a snapshot for the web preview (throttled)
                 self._write_snapshot_if_due(frame_checksum)
         except Exception as e:
-            logger.error(f"Error updating display: {e}")
+            # Once with the traceback, then at most every
+            # _UPDATE_ERROR_LOG_INTERVAL with a count of what was skipped.
+            now = time.monotonic()
+            last = self._update_error_logged_at
+            if last is None:
+                self._update_error_logged_at = now
+                logger.error("Error updating display: %s", e, exc_info=True)
+            elif now - last >= _UPDATE_ERROR_LOG_INTERVAL:
+                skipped = self._update_errors_suppressed
+                self._update_error_logged_at = now
+                self._update_errors_suppressed = 0
+                logger.error("Error updating display: %s (%d more since the "
+                             "last report)", e, skipped)
+            else:
+                self._update_errors_suppressed += 1
 
     def _setup_scan_order_compensation(self) -> None:
         """Work out which rows to show a refresh behind while scrolling.
@@ -1547,7 +1579,7 @@ class DisplayManager:
         options.panel_type = hardware_config.get('panel_type', '')
         options.disable_hardware_pulsing = hardware_config.get('disable_hardware_pulsing', False)
         options.show_refresh_rate = hardware_config.get('show_refresh_rate', False)
-        options.limit_refresh_rate_hz = hardware_config.get('limit_refresh_rate_hz', 90)
+        options.limit_refresh_rate_hz = hardware_config.get('limit_refresh_rate_hz', DEFAULT_REFRESH_LIMIT_HZ)
         options.gpio_slowdown = runtime_config.get('gpio_slowdown', 3)
 
         # Disable internal privilege dropping - we manage this via systemd or remain root
@@ -1593,7 +1625,7 @@ class DisplayManager:
             value = float(hardware.get('limit_refresh_rate_hz') or 0)
         except (TypeError, ValueError):
             value = 0.0
-        return value if value > 0 else 100.0
+        return value if value > 0 else float(DEFAULT_REFRESH_LIMIT_HZ)
 
     def _scrolling_now(self) -> bool:
         """Whether a scroll is running, without is_currently_scrolling()'s
@@ -1704,26 +1736,28 @@ class DisplayManager:
         """
         current_time = time.time()
         
-        # Clean up expired updates before adding new ones
-        self._cleanup_expired_deferred_updates(current_time)
-        
-        # Limit queue size to prevent memory issues
-        if len(self._scrolling_state['deferred_updates']) >= self._scrolling_state['max_deferred_updates']:
-            # Remove oldest update to make room
-            self._scrolling_state['deferred_updates'].pop(0)
-            logger.debug("Removed oldest deferred update due to queue size limit")
-        
-        self._scrolling_state['deferred_updates'].append({
-            'func': update_func,
-            'priority': priority,
-            'timestamp': current_time
-        })
-        
-        # Only sort if we have a reasonable number of updates to avoid excessive sorting
-        if len(self._scrolling_state['deferred_updates']) <= 20:
-            self._scrolling_state['deferred_updates'].sort(key=lambda x: x['priority'])
-        
-        logger.debug(f"Deferred update added. Total deferred: {len(self._scrolling_state['deferred_updates'])}")
+        with self._deferred_lock:
+            # Clean up expired updates before adding new ones
+            self._cleanup_expired_deferred_updates(current_time)
+            
+            # Limit queue size to prevent memory issues
+            if len(self._scrolling_state['deferred_updates']) >= self._scrolling_state['max_deferred_updates']:
+                # Remove oldest update to make room
+                self._scrolling_state['deferred_updates'].pop(0)
+                logger.debug("Removed oldest deferred update due to queue size limit")
+            
+            self._scrolling_state['deferred_updates'].append({
+                'func': update_func,
+                'priority': priority,
+                'timestamp': current_time
+            })
+            
+            # Only sort if we have a reasonable number of updates to avoid excessive sorting
+            if len(self._scrolling_state['deferred_updates']) <= 20:
+                self._scrolling_state['deferred_updates'].sort(key=lambda x: x['priority'])
+            
+            queued = len(self._scrolling_state['deferred_updates'])
+        logger.debug(f"Deferred update added. Total deferred: {queued}")
 
     def process_deferred_updates(self):
         """Process any deferred updates if not currently scrolling."""
@@ -1731,21 +1765,26 @@ class DisplayManager:
         
         # Always clean up expired updates, even if scrolling
         # This prevents memory leaks from accumulated expired updates
-        self._cleanup_expired_deferred_updates(current_time)
+        with self._deferred_lock:
+            self._cleanup_expired_deferred_updates(current_time)
         
         if self.is_currently_scrolling():
             return
             
-        if not self._scrolling_state['deferred_updates']:
-            return
-            
-        # Process only a limited number of updates per call to avoid blocking
-        max_updates_per_call = min(5, len(self._scrolling_state['deferred_updates']))
-        updates_to_process = self._scrolling_state['deferred_updates'][:max_updates_per_call]
-        self._scrolling_state['deferred_updates'] = self._scrolling_state['deferred_updates'][max_updates_per_call:]
+        with self._deferred_lock:
+            if not self._scrolling_state['deferred_updates']:
+                return
+                
+            # Process only a limited number of updates per call to avoid blocking
+            max_updates_per_call = min(5, len(self._scrolling_state['deferred_updates']))
+            updates_to_process = self._scrolling_state['deferred_updates'][:max_updates_per_call]
+            self._scrolling_state['deferred_updates'] = self._scrolling_state['deferred_updates'][max_updates_per_call:]
+            queued = len(self._scrolling_state['deferred_updates'])
         
-        logger.debug(f"Processing {len(updates_to_process)} deferred updates (queue size: {len(self._scrolling_state['deferred_updates'])})")
+        logger.debug(f"Processing {len(updates_to_process)} deferred updates (queue size: {queued})")
         
+        # The callables run outside the lock: they are plugin code of any
+        # length, and one that defers again would deadlock on it.
         failed_updates = []
         for update_info in updates_to_process:
             try:
@@ -1764,10 +1803,15 @@ class DisplayManager:
         
         # Re-add failed updates to the end of the queue (not the beginning)
         if failed_updates:
-            self._scrolling_state['deferred_updates'].extend(failed_updates)
+            with self._deferred_lock:
+                self._scrolling_state['deferred_updates'].extend(failed_updates)
 
     def _cleanup_expired_deferred_updates(self, current_time: float):
-        """Remove expired deferred updates to prevent memory leaks."""
+        """Remove expired deferred updates to prevent memory leaks.
+
+        Callers hold ``_deferred_lock``: this reads the list and assigns a
+        filtered copy back.
+        """
         ttl = self._scrolling_state['deferred_update_ttl']
         initial_count = len(self._scrolling_state['deferred_updates'])
         

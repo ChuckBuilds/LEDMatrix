@@ -48,9 +48,11 @@ def reset_class_cache():
     """Reset the CLASS-level shared cache between tests."""
     DynamicTeamResolver._rankings_cache = {}
     DynamicTeamResolver._cache_timestamp = 0
+    DynamicTeamResolver._failure_timestamp = 0
     yield
     DynamicTeamResolver._rankings_cache = {}
     DynamicTeamResolver._cache_timestamp = 0
+    DynamicTeamResolver._failure_timestamp = 0
 
 
 @pytest.fixture
@@ -158,12 +160,20 @@ class TestRankingsParsing:
         assert list(rankings.keys()) == ['A1', 'B2', 'C3']
         assert list(rankings.values()) == [1, 2, 3]
 
-    def test_empty_rankings_returns_empty_and_caches_nothing(
-            self, resolver, mock_get):
+    def test_empty_rankings_returns_empty_and_backs_off(
+            self, resolver, mock_get, monkeypatch):
         mock_get.return_value = _make_response({'rankings': []})
 
         assert resolver._fetch_ncaa_fb_rankings() == {}
-        # Nothing was cached, so the next call hits HTTP again.
+        # No rankings were cached, but the failure is: the next call inside
+        # the back-off window doesn't hit HTTP again.
+        assert resolver._fetch_ncaa_fb_rankings() == {}
+        assert mock_get.call_count == 1
+        assert DynamicTeamResolver._rankings_cache == {}
+
+        stamp = DynamicTeamResolver._failure_timestamp
+        monkeypatch.setattr(
+            dtr_module, 'time', types.SimpleNamespace(time=lambda: stamp + 301))
         assert resolver._fetch_ncaa_fb_rankings() == {}
         assert mock_get.call_count == 2
 
@@ -226,7 +236,7 @@ class TestSharedCache:
 
 class TestFailureHandling:
     def test_network_failure_drops_dynamic_keeps_static_caches_nothing(
-            self, resolver, mock_get):
+            self, resolver, mock_get, monkeypatch):
         mock_get.side_effect = [
             requests.exceptions.RequestException('boom'),
             _make_response(_rankings_payload()),
@@ -237,11 +247,28 @@ class TestFailureHandling:
         # Dynamic name silently dropped, static name kept, nothing raises.
         assert result == ['UGA']
 
-        # Nothing was cached on failure: a subsequent call refetches and
-        # succeeds.
+        # Inside the back-off window the outage isn't retried: each resolve
+        # would otherwise wait out the full request timeout again.
+        assert resolver.resolve_teams(['UGA', 'AP_TOP_5']) == ['UGA']
+        assert mock_get.call_count == 1
+
+        # No rankings were cached on failure: once the window passes, the
+        # next call refetches and succeeds.
+        stamp = DynamicTeamResolver._failure_timestamp
+        monkeypatch.setattr(
+            dtr_module, 'time', types.SimpleNamespace(time=lambda: stamp + 301))
         result = resolver.resolve_teams(['UGA', 'AP_TOP_5'])
         assert result == ['UGA', 'MICH', 'OSU', 'TEX', 'ALA']
         assert mock_get.call_count == 2
+
+    def test_clear_cache_forgets_a_failure(self, resolver, mock_get):
+        mock_get.side_effect = [
+            requests.exceptions.RequestException('boom'),
+            _make_response(_rankings_payload()),
+        ]
+        assert resolver.resolve_teams(['AP_TOP_5']) == []
+        resolver.clear_cache()
+        assert resolver.resolve_teams(['AP_TOP_5']) == TOP_TEAMS[:5]
 
 
 # ---------------------------------------------------------------------------

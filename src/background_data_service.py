@@ -247,15 +247,19 @@ class BackgroundDataService:
                 # same object the dict holds.
                 self.completed_requests[request_id] = result
 
-                if callback:
-                    try:
-                        callback(result)
-                    except Exception as e:
-                        logger.error(f"Error in callback for request {request_id}: {e}")
-                    self._release_payload(result)
+            # The callback runs outside the lock, as on the worker path: it is
+            # plugin code, and holding the service lock through it blocked
+            # every worker's result bookkeeping (and any other thread's
+            # submit) for as long as the callback took.
+            if callback:
+                try:
+                    callback(result)
+                except Exception as e:
+                    logger.error(f"Error in callback for request {request_id}: {e}")
+                self._release_payload(result)
 
-                logger.debug(f"Cache hit for {sport} {year} data")
-                return request_id
+            logger.debug(f"Cache hit for {sport} {year} data")
+            return request_id
         
         # limit above 500 makes an ESPN *scoreboard* return a truncated list
         # (src/common/espn_dates.py). Other endpoints need more: /teams has 762
