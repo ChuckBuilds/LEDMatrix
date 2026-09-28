@@ -129,7 +129,17 @@ def validate_request_json(required_fields: list, data: Optional[Dict] = None) ->
             "Request body must be valid JSON",
             status_code=400
         )
-    
+
+    # A JSON array passes the check above, and ``field in data`` then tests
+    # list membership: ["plugin_id"] "had" every required field and the
+    # handler's data['plugin_id'] raised TypeError -- a 500, not a 400.
+    if not isinstance(data, dict):
+        return None, error_response(
+            ErrorCode.INVALID_INPUT,
+            "Request body must be a JSON object",
+            status_code=400
+        )
+
     missing_fields = [field for field in required_fields if field not in data]
     if missing_fields:
         return None, error_response(
