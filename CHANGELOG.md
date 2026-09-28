@@ -19,6 +19,8 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+- The display loop no longer spins at 100% CPU when no enabled mode has anything to show (for example, only a sports plugin enabled in its off-season). After one full rotation of empty modes it checks one mode per second until something shows; live content still takes over at once.
+
 - Contributor tooling and docs:
   - `mypy.ini` parses again. A multi-line `exclude` and trailing comments on values made mypy refuse the whole file, so none of its settings applied and the pre-commit hook failed with "Missing target". The mypy hook is now manual (`pre-commit run mypy --hook-stage manual`) while the ~500 existing type errors in `src/` are paid down.
   - `.gitignore` ignores everything in `config/` except the templates; `ytm_auth.json`, `saved_repositories.json`, `wifi_status.json` and `font_overrides.json` weren't ignored.

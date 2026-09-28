@@ -101,6 +101,14 @@ class DisplayController:
     it and start the run loop.
     """
 
+    #: How long the run loop pauses per pass once a whole rotation has had
+    #: nothing to show. See _note_empty_pass.
+    EMPTY_ROTATION_PAUSE = 1.0
+
+    #: Consecutive passes whose mode had nothing to show. Class-level so
+    #: controllers built without __init__ (tests) have it too.
+    _empty_pass_streak = 0
+
     def __init__(self):
         start_time = time.time()
         logger.info("Starting DisplayController initialization")
@@ -1087,6 +1095,31 @@ class DisplayController:
                     or self.is_display_active != display_active
                     or self.on_demand_active != on_demand):
                 break
+
+    def _note_empty_pass(self) -> None:
+        """Record a pass whose mode had nothing to show; pause once a whole
+        rotation has been empty.
+
+        A mode with no content rotates to the next one at once, with no dwell.
+        When every mode is empty -- say, only a sports plugin enabled in its
+        off-season -- the loop went round with no sleep at all: 100% of a core,
+        a plugin-executor thread per pass and several log lines each time,
+        indefinitely. After one full rotation of empty passes, each further
+        one pauses EMPTY_ROTATION_PAUSE seconds. Live content is still picked
+        up at once (the live-priority check runs at the top of every pass),
+        the pause services plugin updates, and it returns early on an
+        on-demand request or a schedule change. The streak resets as soon as
+        any mode shows something.
+        """
+        self._empty_pass_streak += 1
+        modes = self.on_demand_modes if self.on_demand_active else self.available_modes
+        rotation = max(1, len(modes))
+        if self._empty_pass_streak < rotation:
+            return
+        if self._empty_pass_streak == rotation:
+            logger.info("No mode has anything to show; checking one mode every %.0fs "
+                        "until one does", self.EMPTY_ROTATION_PAUSE)
+        self._sleep_with_plugin_updates(self.EMPTY_ROTATION_PAUSE)
 
     def _get_display_duration(self, mode_key):
         """Seconds to show a mode: the Rotation & Durations page's value for it
@@ -2347,6 +2380,7 @@ class DisplayController:
 
                 # If display() returned False, skip to next mode immediately
                 if not display_result:
+                    self._note_empty_pass()
                     if self.on_demand_active:
                         logger.info("No content for on-demand mode %s, skipping to next mode", active_mode)
                         if not self.on_demand_modes:
@@ -2395,6 +2429,7 @@ class DisplayController:
                         # If no exception (just no content), fall through to normal rotation logic
                         # This allows trying other modes (recent, upcoming) from the same plugin
                 else:
+                    self._empty_pass_streak = 0
                     # Get base duration for current mode
                     base_duration = self._get_display_duration(active_mode)
                     dynamic_enabled = self._plugin_supports_dynamic(manager_to_display)
