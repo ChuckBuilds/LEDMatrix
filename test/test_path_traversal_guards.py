@@ -281,7 +281,7 @@ class TestPluginAssetRoutes:
 
     @pytest.fixture
     def project(self, tmp_path, api_v3_module, monkeypatch):
-        import web_interface.blueprints.api_v3.plugins as plugins_module
+        import web_interface.blueprints.api_v3.plugin_assets as plugins_module
 
         monkeypatch.setattr(plugins_module, "PROJECT_ROOT", tmp_path)
         (tmp_path / "config").mkdir()

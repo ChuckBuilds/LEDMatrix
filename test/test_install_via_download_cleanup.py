@@ -42,8 +42,8 @@ def _run(tmp_path, move_side_effect=None):
         return path
 
     with patch.object(sm, '_http_get_with_retries', return_value=_response(_zip_bytes())), \
-            patch('src.plugin_system.store_manager.tempfile.mkdtemp', side_effect=tracking_mkdtemp), \
-            patch('src.plugin_system.store_manager.shutil.move', side_effect=move_side_effect):
+            patch('src.plugin_system.store_install.tempfile.mkdtemp', side_effect=tracking_mkdtemp), \
+            patch('src.plugin_system.store_install.shutil.move', side_effect=move_side_effect):
         ok = sm._install_via_download('https://example.invalid/demo.zip', plugins_dir / 'demo')
     return ok, created
 

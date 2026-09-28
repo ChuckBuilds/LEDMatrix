@@ -468,7 +468,7 @@ class TestGitPullGate:
         import src
         monkeypatch.setattr(src, '__version__', '3.2.0')
         monkeypatch.setattr(
-            'src.plugin_system.store_manager.subprocess.run', fail_stash)
+            'src.plugin_system.store_update.subprocess.run', fail_stash)
         assert mgr.update_plugin('gitplug') is False
 
         assert self._head(work) == before, "must not pull what it cannot undo"
@@ -496,7 +496,7 @@ class TestGitPullGate:
         import src
         monkeypatch.setattr(src, '__version__', '3.2.0')
         monkeypatch.setattr(
-            'src.plugin_system.store_manager.subprocess.run', fail_reset)
+            'src.plugin_system.store_update.subprocess.run', fail_reset)
         assert mgr.update_plugin('gitplug') is False
 
         logged = ' '.join(str(c) for c in mgr.logger.error.call_args_list)
