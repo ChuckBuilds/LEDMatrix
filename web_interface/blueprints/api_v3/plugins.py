@@ -6,7 +6,7 @@ so their endpoint names are unchanged by living here.
 from web_interface.blueprints.api_v3 import (
     ErrorCode, OperationType, PROJECT_ROOT, Path, Response,
     _CALENDAR_LIST_MAX_PAGES, _RENDERED_SECTION_FIELD, _SKIP_FIELD, _coerce_to_bool,
-    _do_transactional_uninstall, _enhance_schema_with_core_properties,
+    _do_transactional_uninstall, _enhance_schema_with_core_properties, _non_plugin_id_error,
     _filter_config_by_schema, _get_plugin_version, _get_schema_property,
     _hidden_array_item_property, _installed_plugin_ids, _is_plugin_update_available,
     _plugin_directory,
@@ -153,6 +153,9 @@ def get_installed_plugins():
             'category': plugin_info.get('category', 'General'),
             'description': plugin_info.get('description', 'No description available'),
             'tags': plugin_info.get('tags', []),
+            # The tab nav uses this as the <i> element's Font Awesome class
+            # (app-shell.js / app-early.js); only a string can be one.
+            'icon': plugin_info.get('icon') if isinstance(plugin_info.get('icon'), str) else None,
             'enabled': enabled,
             'verified': verified,
             'loaded': plugin_info.get('loaded', False),
@@ -1107,6 +1110,9 @@ def uninstall_plugin():
 
         plugin_id = data['plugin_id']
         preserve_config = data.get('preserve_config', False)
+        id_error = _non_plugin_id_error(plugin_id)
+        if id_error:
+            return id_error
 
         # Both queued and direct paths use the same transactional helper so
         # snapshot/rollback behaviour is consistent regardless of deployment.
@@ -2338,6 +2344,9 @@ def reset_plugin_config():
 
     if not plugin_id:
         return jsonify({'status': 'error', 'message': 'plugin_id required'}), 400
+    id_error = _non_plugin_id_error(plugin_id)
+    if id_error:
+        return id_error
 
     # Get schema manager instance
     schema_mgr = api_v3.schema_manager

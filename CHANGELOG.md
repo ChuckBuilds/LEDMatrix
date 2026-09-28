@@ -26,6 +26,15 @@ accepts both, but the store flags the old spelling as deprecated
   - The Claude code-review check is skipped on pull requests from forks, which get no secrets and always failed it.
   - `check_system_compatibility.sh` treats Python 3.13 (what Trixie ships) as supported and anything below 3.10 as an error.
   - Doc fixes: emulator guide (Python 3.10+, `emulator_config.json` isn't in the repo), README's nonexistent "API Metrics" feature, a stale route count, and missing index entries for the scroll-performance and offscreen-rendering docs and the frame-soak and render-bench scripts.
+- Security and input-validation fixes:
+  - Installing from a URL (and a registry install whose manifest renames the plugin) refuses a plugin id that isn't a single safe name, so `../x` can no longer delete and replace a directory outside the plugins directory.
+  - Plugin uninstall and config reset refuse core config sections (`display`, `schedule`, ...) and ids with path parts. Uninstall still cleans the config of a plugin whose directory is already gone.
+  - A config field marked `x-secret` whose value is an object or array is saved to `config_secrets.json`, not to `config.json` in plain text.
+  - Restoring a backup onto a device without `config_secrets.json`, `wifi_config.json` or `ytm_auth.json` creates them with mode 640 instead of world-readable 644.
+  - Backup export skips a plugin `manifest.json` that isn't a JSON object instead of failing, and two exports in the same second no longer share a temp file or overwrite each other (the second gets a `-2` suffix).
+  - Every font that ships in `assets/fonts/` is protected from deletion; `MatrixChunky8X`, `MatrixLight6X`, `MatrixLight8X` and `ic8x8u` could be deleted from the Fonts tab.
+  - The raw config and secrets editors, and endpoints using `validate_request_json`, answer 400 for a JSON body that isn't an object.
+  - A blank Max Dynamic Duration keeps the stored value instead of failing the Display save with a 500; other values must be whole seconds from 30 to 1800.
 
 - Fixes found testing on a Pi:
   - Stopping `ledmatrix.service` runs the controller's cleanup (SIGTERM now takes the Ctrl-C path).
@@ -34,6 +43,44 @@ accepts both, but the store flags the old spelling as deprecated
   - `configure_web_sudo.sh` run as the web user keeps the reboot/poweroff rules.
   - `check_system_compatibility.sh` no longer reports installed packages as missing.
   - A network failure fetching GitHub repo info logs a warning, not an error.
+
+- Web UI fixes:
+  - The Operation History plugin filter lists installed plugins (it showed one option, "plugins").
+  - Ctrl/Cmd+S submits the active tab's visible form (with its validation) instead of the first form in the page; it does nothing inside a dialog or on a tab without a form. The Ctrl/Cmd+R override (the browser's own reload) and the textarea auto-resize (no textarea exists at load) are removed.
+  - Overview "Check Updates" asks for the same confirmation as "Update Code" and shows the server's message. Both, and the Tools tab's git pull, show the restart-pending banner when the update needs a restart.
+  - Tools tab actions and diagnostics show the server's error message; only a non-JSON error falls back to `HTTP <status>`.
+  - An uninstalled plugin no longer reappears in the installed list: writes through `PluginAPI` clear its 5s GET cache, and Refresh and the post-uninstall reload bypass both list caches.
+  - Plugin widgets load from `/static/plugin-widgets/` only; the two other paths it tried have no route.
+  - The raw JSON editor escapes the parse error, and the slider widget escapes its value, min, max and step.
+  - Removed unused array-of-objects and key-value helpers from `plugins_manager.js` (about 640 lines, no callers) and a redundant `?v=` on its script tag.
+- Web UI and `src.common` fixes:
+  - A wrong Wi-Fi password is reported as one again ("Incorrect password for ..."); the fallback that restores the old network or brings up the setup AP was replacing the signal.
+  - Plugin tabs show the manifest's `icon`: `/api/v3/plugins/installed` now includes it.
+  - `POST /api/v3/starlark/apps/<id>/toggle` goes through the same code as `/plugins/toggle`: `"false"` disables, a failed save no longer leaves the running app out of step with disk, and a loaded app with no manifest entry no longer answers 500.
+  - `/api/v3/` JSON responses are sent `Cache-Control: no-store`, so a reload right after an install, toggle or Wi-Fi connect shows the new state. Non-JSON files served through the API keep the 5 s cache.
+  - `ScrollHelper.set_scrolling_image()` accepts RGBA, L and palette images (transparent pixels become black), and a new scrolling image no longer jumps ahead by the time the helper sat idle.
+  - `LogoHelper.load_logo_with_download()` waits an hour before retrying a download that failed for a missing logo, instead of retrying (with a 30 s timeout) on every call.
+  - Restamping a placeholder logo writes the file atomically.
+  - `FontManager.clear_cache()` and unregistering a plugin's fonts bump `cache_generation`, so cached layouts are rebuilt.
+  - The odds manager logs cache hits, misses and fetches at DEBUG, and a bad JSON body is logged as a parse error rather than a failed fetch.
+  - Startup plugin validation no longer gives up on a `null` plugin block, and plugins are discovered once at startup instead of twice.
+  - `src/common/README.md` lists `frame_timing`, `json_body` and `render_gate`.
+- Plugin system:
+  - A plugin whose `on_enable()` raises is no longer left registered: the next load retries it instead of reporting "already loaded" for a plugin that never ran.
+  - One plugin's `get_info()` raising no longer breaks the installed-plugins list; it is logged and shown with empty runtime info.
+  - `plugin_state.json` and the operation history are written atomically (temp file + rename) under their lock, so concurrent saves or a failed save can't leave a truncated file.
+  - Plugin dependency installs run one `pip` at a time during parallel startup loading.
+  - A failed store download no longer leaves its extraction directory in the temp dir.
+  - Test doubles: `draw_image()` on `MockDisplayManager`, `VisualTestDisplayManager` and `BoundsCheckingDisplayManager` now emits a `DeprecationWarning` — the real `DisplayManager` has no such method; use `display_manager.image.paste(img, (x, y))`. `MockDisplayManager.draw_text` accepts the real signature's `small_font`/`centered` and default `x`/`y`, and `VisualTestDisplayManager` logs draw errors at WARNING.
+  - Removed the unused `PluginOperationQueue.get_active_operations()`.
+- Display runtime:
+  - Vegas comes back after live content interrupts it. It stayed paused, and the display fell back to normal rotation until a restart.
+  - A day with dimming turned off in a per-day dim schedule stays at normal brightness. Before, brightness went back to dim for most of each minute.
+  - Stopping on-demand after a second request resumes rotation where it was first interrupted, not at the first request's screen.
+  - Turning Vegas off and on no longer shows content prepared for the previous run, including plugins disabled in between.
+  - How long a Vegas iteration runs is timed with the monotonic clock, so an NTP clock step on a Pi without an RTC doesn't cut it short or stretch it.
+  - The sync status file is removed when the display service stops, and at startup in standalone mode, so the web UI no longer reports a peer from an earlier run. Concurrent writes each use their own temp file.
+  - `render_gate.swap_releases_gil()` delegates to `frame_timing.binding_releases_gil()` instead of duplicating it.
 
 - Scripts and installer:
   - `fix_web_permissions.sh` makes `safe_plugin_rm.sh` and `safe_pip_install.sh` root-owned again after resetting ownership. A web-user-owned copy of either is a root shell, since sudo lets the web user run them as root. It also restores `config_secrets.json` to mode 640.

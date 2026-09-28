@@ -414,3 +414,28 @@ def test_pi5_form_warns_about_a_stored_unsupported_row_address_type(display_page
     board(PI5_MODEL)
     body = display_page(_config_with(hardware={'row_address_type': 5}))
     assert "Your saved row address type (5) can't be used on this Raspberry Pi 5" in body
+
+
+@pytest.mark.parametrize('value,stored', [(180, 180), ('600', 600), (30, 30), ('1800', 1800)])
+def test_max_dynamic_duration_in_range_is_saved(api_v3_client, saved, value, stored):
+    response = _post(api_v3_client, {'max_dynamic_duration_seconds': value})
+    assert response.status_code == 200, response.get_data(as_text=True)[:200]
+    assert saved['config']['display']['dynamic_duration']['max_duration_seconds'] == stored
+
+
+@pytest.mark.parametrize('value', ['', '  ', None])
+def test_a_blank_max_dynamic_duration_keeps_the_stored_cap(api_v3_client, api_v3_module, saved, value):
+    """A cleared box posts "": int("") was a 500 that lost the whole Display save."""
+    api_v3_module.api_v3.config_manager.load_config.return_value = {
+        'display': {'dynamic_duration': {'max_duration_seconds': 240}}}
+    response = _post(api_v3_client, {'max_dynamic_duration_seconds': value, 'brightness': 50})
+    assert response.status_code == 200, response.get_data(as_text=True)[:200]
+    assert saved['config']['display']['dynamic_duration']['max_duration_seconds'] == 240
+    assert saved['config']['display']['hardware']['brightness'] == 50
+
+
+@pytest.mark.parametrize('value', ['abc', 29, 1801, '12.5', True])
+def test_an_invalid_max_dynamic_duration_is_a_400(api_v3_client, saved, value):
+    response = _post(api_v3_client, {'max_dynamic_duration_seconds': value})
+    assert response.status_code == 400
+    assert 'config' not in saved

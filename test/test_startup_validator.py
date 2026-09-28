@@ -242,6 +242,28 @@ class TestPlugins:
         assert is_valid is True
         assert errors == []
 
+    def test_a_null_plugin_block_does_not_abandon_the_checks(self, good_cache, tmp_path):
+        # config.get(id, {}) returns None for "known": null, and .get() on it
+        # raised -- caught as "Could not validate plugins", skipping every
+        # plugin after it.
+        pm = MagicMock()
+        pm.discover_plugins.return_value = ['nulled', 'known']
+        plugin_dir = tmp_path / "known"
+        plugin_dir.mkdir()  # no manifest.json
+        pm.get_plugin_directory.return_value = str(plugin_dir)
+
+        config = dict(GOOD_CONFIG, nulled=None, known={'enabled': True})
+        validator = StartupValidator(make_config_manager(config), pm)
+        validator._validate_plugins()
+        assert not any('Could not validate plugins' in w for w in validator.warnings)
+        assert "Plugin 'known' manifest.json not found" in validator.errors
+
+    def test_a_passed_discovery_is_reused(self, good_cache):
+        pm = MagicMock()
+        validator = StartupValidator(make_config_manager(dict(GOOD_CONFIG)), pm)
+        validator._validate_plugins(discovered_plugins=[])
+        pm.discover_plugins.assert_not_called()
+
 
 class TestIdempotence:
     """validate_all() resets error/warning state each run (the fixed bug)."""

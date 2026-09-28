@@ -451,9 +451,11 @@
         })
         .then(r => {
             if (!r.ok) {
+                // Only a non-JSON body falls back to the status code; the
+                // rejection carrying the server's message must not be caught.
                 return r.json()
-                    .then(d => Promise.reject(new Error(d.message || `HTTP ${r.status}`)))
-                    .catch(() => Promise.reject(new Error(`HTTP ${r.status}`)));
+                    .catch(() => null)
+                    .then(d => Promise.reject(new Error((d && d.message) || `HTTP ${r.status}`)));
             }
             return r.json();
         })
@@ -465,6 +467,14 @@
                 showOutput ? (data.output || '') : '',
                 showPluginDetails ? (data.details || []) : null
             );
+            // A pull replaces files on disk; the services keep running the
+            // code they loaded at boot until restarted.
+            if (ok && action === 'git_pull' && data.restart_required &&
+                    typeof window.showRestartPending === 'function') {
+                window.showRestartPending(
+                    'Update installed \u2014 restart the display and web ' +
+                    'services to run the new code');
+            }
         })
         .catch(err => {
             showResult(resultId, false, 'Request failed: ' + err.message);
@@ -717,8 +727,8 @@
         fetch('/api/v3/system/status')
             .then(r => {
                 if (!r.ok) return r.json()
-                    .then(d => Promise.reject(d.message || `HTTP ${r.status}`))
-                    .catch(() => Promise.reject(`HTTP ${r.status}`));
+                    .catch(() => null)
+                    .then(d => Promise.reject((d && d.message) || `HTTP ${r.status}`));
                 return r.json();
             })
             .then(res => {

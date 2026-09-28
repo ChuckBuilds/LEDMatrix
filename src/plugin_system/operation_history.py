@@ -11,6 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from dataclasses import dataclass, asdict
 
+from src.config_manager_atomic import atomic_write_text
 from src.logging_config import get_logger
 
 
@@ -180,15 +181,16 @@ class OperationHistory:
             return
         
         try:
+            # Held across the write, and written via a temp file, so two
+            # threads saving at once can't interleave or truncate the file.
             with self._lock:
                 history_data = [record.to_dict() for record in self._history]
             
-            # Ensure directory exists
-            self.history_file.parent.mkdir(parents=True, exist_ok=True)
-            
-            # Write to file
-            with open(self.history_file, 'w') as f:
-                json.dump(history_data, f, indent=2)
+                # Ensure directory exists
+                self.history_file.parent.mkdir(parents=True, exist_ok=True)
+                
+                # Write to file
+                atomic_write_text(self.history_file, json.dumps(history_data, indent=2))
             
         except Exception as e:
             self.logger.error(f"Error saving operation history: {e}", exc_info=True)

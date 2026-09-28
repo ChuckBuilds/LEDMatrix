@@ -33,11 +33,11 @@
             return;
         }
 
-        // Try multiple possible paths for plugin widgets
+        // The one route that serves plugin widgets (serve_plugin_widget in
+        // blueprints/pages_v3.py); nothing is served under /plugins/<id>/ or
+        // /static/plugins/<id>/, so trying those only added two failed imports.
         const possiblePaths = [
-            `/static/plugin-widgets/${pluginId}/${widgetName}.js`,
-            `/plugins/${pluginId}/widgets/${widgetName}.js`,
-            `/static/plugins/${pluginId}/widgets/${widgetName}.js`
+            `/static/plugin-widgets/${pluginId}/${widgetName}.js`
         ];
 
         let lastError = null;

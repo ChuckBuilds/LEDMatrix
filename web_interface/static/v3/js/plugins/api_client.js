@@ -212,8 +212,16 @@ const PluginAPI = {
         // Use throttling for GET requests, immediate execution for POST/PUT/DELETE
         if (useThrottle && method === 'GET') {
             return await RequestThrottler.throttle(requestKey, makeRequest, 100);
-        } else {
+        } else if (method === 'GET') {
             return await makeRequest();
+        } else {
+            // A write (install, uninstall, toggle, config save) can change any
+            // cached GET, e.g. the installed list; drop the cache once it lands.
+            try {
+                return await makeRequest();
+            } finally {
+                RequestThrottler.clearCache();
+            }
         }
     },
     

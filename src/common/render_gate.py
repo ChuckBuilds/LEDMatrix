@@ -48,6 +48,8 @@ import time
 from collections import deque
 from typing import Any, Callable, Deque, List, Optional
 
+from src.common.frame_timing import binding_releases_gil
+
 #: Park background threads this long before the refresh a swap will return on,
 #: so a short C call already under way has finished by then.
 MARGIN_SECONDS = 0.002
@@ -90,19 +92,11 @@ def _unsafe(frame: Any, base: Any) -> bool:
 def swap_releases_gil() -> Optional[bool]:
     """Whether the loaded rgbmatrix binding releases the GIL, or None if none is loaded.
 
-    The rebuilt binding links PyEval_SaveThread and the stock one never does.
-    The same test as src.common.frame_timing.binding_releases_gil (#629); one
-    of the two goes once both have landed.
+    A thin delegate to src.common.frame_timing.binding_releases_gil (#629),
+    which this used to duplicate line for line. The name stays because the
+    coordinator calls it here and tests replace it here.
     """
-    module = sys.modules.get("rgbmatrix.core")
-    path = getattr(module, "__file__", None)
-    if not path:
-        return None
-    try:
-        with open(path, "rb") as handle:
-            return b"PyEval_SaveThread" in handle.read()
-    except OSError:
-        return None
+    return binding_releases_gil()
 
 
 def _held(lock: Any) -> bool:

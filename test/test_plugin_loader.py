@@ -342,3 +342,49 @@ class TestPluginLoader:
 
         assert result is False
         mock_subprocess.assert_not_called()
+
+    @patch('src.plugin_system.plugin_loader.requirements_are_satisfied', return_value=False)
+    def test_install_dependencies_never_runs_pip_concurrently(
+        self, mock_satisfied, tmp_plugins_dir
+    ):
+        """Startup loads plugins on a thread pool; two pip processes writing
+        the same site-packages at once can corrupt it, so installs for
+        different plugins must run one at a time."""
+        import threading
+        import time
+
+        state = {'running': 0, 'peak': 0}
+        guard = threading.Lock()
+
+        def fake_pip(*args, **kwargs):
+            with guard:
+                state['running'] += 1
+                state['peak'] = max(state['peak'], state['running'])
+            time.sleep(0.05)
+            with guard:
+                state['running'] -= 1
+            return MagicMock(returncode=0, stderr="")
+
+        plugin_dirs = []
+        for n in range(4):
+            d = tmp_plugins_dir / f"plugin_{n}"
+            d.mkdir()
+            (d / "requirements.txt").write_text("package1==1.0.0\n")
+            plugin_dirs.append(d)
+
+        results = []
+
+        def install(d):
+            results.append(PluginLoader().install_dependencies(
+                d, d.name, plugins_dir=tmp_plugins_dir))
+
+        with patch('subprocess.run', side_effect=fake_pip) as mock_subprocess:
+            threads = [threading.Thread(target=install, args=(d,)) for d in plugin_dirs]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+        assert results == [True] * 4
+        assert mock_subprocess.call_count == 4
+        assert state['peak'] == 1
