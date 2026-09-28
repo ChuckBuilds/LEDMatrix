@@ -1038,7 +1038,7 @@ def save_main_config():
                     )
                 schema = schema_mgr.load_schema(plugin_id, use_cache=False)
 
-                from web_interface.blueprints.api_v3.plugins import (
+                from web_interface.blueprints.api_v3.plugin_config import (
                     _merge_onto_stored_plugin_config, _prepare_plugin_config_for_save,
                 )
                 plugin_config = _merge_onto_stored_plugin_config(

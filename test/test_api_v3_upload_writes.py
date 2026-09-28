@@ -25,7 +25,7 @@ PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 20
 
 @pytest.fixture
 def project(tmp_path, api_v3_module, monkeypatch):
-    import web_interface.blueprints.api_v3.plugins as plugins_module
+    import web_interface.blueprints.api_v3.plugin_assets as plugins_module
     monkeypatch.setattr(plugins_module, "PROJECT_ROOT", tmp_path)
     return tmp_path / "assets" / "plugins" / "static-image" / "uploads"
 
