@@ -122,4 +122,24 @@ def test_display_manager_defaults_match_display_manager():
     for field, value in ms.DISPLAY_MANAGER_DEFAULTS.items():
         if field in ('rows', 'cols', 'chain_length', 'parallel'):
             continue  # read through display_geometry's DEFAULT_* constants
+        if field == 'limit_refresh_rate_hz':
+            assert "get('limit_refresh_rate_hz', DEFAULT_REFRESH_LIMIT_HZ)" in source
+            continue
         assert f"get('{field}', {value!r})" in source, field
+
+
+def test_missing_refresh_limit_applies_the_rate_pacing_assumes():
+    """With limit_refresh_rate_hz absent the library was capped at 90 Hz while
+    refresh_hz (what scroll pacing solves against) reported 100. One default,
+    and it is the template's."""
+    import os
+    from types import SimpleNamespace
+    os.environ.setdefault("EMULATOR", "true")  # import off-Pi, as other modules do
+    from src.display_manager import DisplayManager
+
+    options = DisplayManager.apply_matrix_options(SimpleNamespace(), {})
+    reported = DisplayManager.refresh_hz.fget(SimpleNamespace(config={}))
+    assert options.limit_refresh_rate_hz == reported
+    template = json.loads((REPO_ROOT / 'config' / 'config.template.json').read_text(encoding='utf-8'))
+    assert options.limit_refresh_rate_hz == template['display']['hardware']['limit_refresh_rate_hz']
+    assert ms.DISPLAY_MANAGER_DEFAULTS['limit_refresh_rate_hz'] == options.limit_refresh_rate_hz

@@ -74,8 +74,11 @@ class StreamManager:
 
         # Segments composed into the current cycle (swap mode only).
         self._active_buffer: Deque[ContentSegment] = deque()
-        # Reentrant: _prefetch_content releases and re-acquires it around the
-        # slow fetch while a caller may already hold it.
+        # Reentrant: get_next_segment holds it while calling
+        # _prefetch_content, which acquires it again. _prefetch_content's
+        # release() around the slow fetch only frees the lock when its caller
+        # did not already hold it (initialize); from get_next_segment the
+        # count only drops to 1, so the fetch runs with the lock held.
         self._buffer_lock = threading.RLock()
 
         # Plugin rotation, and the position of the next plugin to fetch in it.
@@ -536,7 +539,10 @@ class StreamManager:
 
                 plugin_id = self._ordered_plugins[self._prefetch_index]
 
-                # Release lock for potentially slow content fetch
+                # Release for the potentially slow content fetch. This frees
+                # the lock only when the caller did not hold it already
+                # (initialize); under get_next_segment's hold the RLock count
+                # just drops to 1 and other threads still wait.
                 self._buffer_lock.release()
                 try:
                     segment = self._fetch_plugin_content(plugin_id)
@@ -667,6 +673,37 @@ class StreamManager:
                 grouped.append((segment.plugin_id, list(segment.images)))
         return grouped
 
+    def get_static_layout(self) -> List[Tuple[str, bool]]:
+        """
+        The buffer's composition order, with STATIC segments kept in place.
+
+        get_grouped_content_for_composition() drops STATIC segments because
+        they contribute no columns; this says where they sat. Each entry is
+        (plugin_id, is_static), and only segments that composition keeps or
+        that are STATIC are listed, so the non-static entries line up one to
+        one with get_grouped_content_for_composition()'s groups.
+        """
+        layout: List[Tuple[str, bool]] = []
+        with self._buffer_lock:
+            for segment in self._active_buffer:
+                if segment.display_mode == VegasDisplayMode.STATIC:
+                    layout.append((segment.plugin_id, True))
+                elif segment.images:
+                    layout.append((segment.plugin_id, False))
+        return layout
+
+    def is_static_plugin(self, plugin_id: str) -> bool:
+        """Whether a loaded plugin asks Vegas to pause for it (STATIC mode)."""
+        plugin = getattr(self.plugin_manager, 'plugins', {}).get(plugin_id)
+        if plugin is None:
+            return False
+        try:
+            return plugin.get_vegas_display_mode() == VegasDisplayMode.STATIC
+        except Exception:
+            logger.debug("[%s] get_vegas_display_mode() failed; treating as not STATIC",
+                         plugin_id, exc_info=True)
+            return False
+
     def take_next_group(
         self, count: Optional[int] = None, offscreen_only: bool = False
     ) -> List[Tuple[str, Optional[List[Image.Image]]]]:
@@ -692,6 +729,8 @@ class StreamManager:
             content path now draws on a canvas of its own, so a background
             fetch that comes back empty had nothing to show, and ``images``
             is an empty list rather than a request for the render thread.
+            A STATIC plugin is also returned with an empty list, unfetched: it
+            pauses the scroll instead of adding to it (see is_static_plugin).
         """
         if count is None:
             count = self.config.plugins_per_cycle
@@ -717,6 +756,12 @@ class StreamManager:
             plugin = plugins.get(plugin_id)
             if not plugin:
                 continue
+            if self.is_static_plugin(plugin_id):
+                # A STATIC plugin pauses the scroll rather than scrolling by,
+                # so it contributes no columns. It keeps its place in the
+                # group (empty) so the pipeline can mark where its turn falls.
+                group.append((plugin_id, []))
+                continue
             try:
                 images = self.plugin_adapter.get_content(
                     plugin, plugin_id, offscreen_only=offscreen_only)
@@ -726,7 +771,6 @@ class StreamManager:
                 continue
             if images:
                 self.stats['segments_fetched'] += 1
-            if images:
                 group.append((plugin_id, images))
             else:
                 group.append((plugin_id, None if defer_empty else []))

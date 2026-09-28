@@ -48,6 +48,7 @@ import json
 import logging
 import math
 import os
+import threading
 from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple, Union
@@ -68,8 +69,10 @@ _FONTS_SUBDIR = os.path.join('assets', 'fonts')
 _FALLBACK_FONT_NAME = 'PressStart2P-Regular.ttf'
 
 # (resolved absolute path, requested size) -> (font face, realised size).
-# BDF faces are stateful in principle, but the core's own FontManager shares
-# faces the same way.
+# TTF only: a BDF ``freetype.Face`` must never be shared between threads
+# (FreeType does not allow it, and ``load_char`` rewrites the face's glyph
+# slot), and this cache is process-wide. BDF faces come from
+# ``load_bdf_face`` every time, which already caches them per thread.
 #
 # Bounded LRU rather than the unbounded dict this started as: the display
 # process runs for weeks, and every config save can introduce a new
@@ -78,14 +81,28 @@ _FALLBACK_FONT_NAME = 'PressStart2P-Regular.ttf'
 # every other hot cache (display_manager, font_manager, adaptive_layout).
 _FONT_CACHE_MAX = 256
 _font_cache: 'OrderedDict[Tuple[str, int], Tuple[Any, int]]' = OrderedDict()
+# load_font is called from the display thread and from plugin update threads.
+# A get() then move_to_end() pair on an unguarded OrderedDict raises KeyError
+# when another thread evicts the key in between.
+_font_cache_lock = threading.Lock()
+
+
+def _cache_get(key: Tuple[str, int]) -> Optional[Tuple[Any, int]]:
+    """The cached entry for ``key`` (marked most recently used), or None."""
+    with _font_cache_lock:
+        cached = _font_cache.get(key)
+        if cached is not None:
+            _font_cache.move_to_end(key)
+        return cached
 
 
 def _cache_put(key: Tuple[str, int], value: Tuple[Any, int]) -> None:
     """Insert, evicting the least recently used entry past the bound."""
-    _font_cache[key] = value
-    _font_cache.move_to_end(key)
-    while len(_font_cache) > _FONT_CACHE_MAX:
-        _font_cache.popitem(last=False)
+    with _font_cache_lock:
+        _font_cache[key] = value
+        _font_cache.move_to_end(key)
+        while len(_font_cache) > _FONT_CACHE_MAX:
+            _font_cache.popitem(last=False)
 
 # Config keys a style element block carries, in schema/UI order.
 _STYLE_KEYS = ('font', 'font_size', 'text_color', 'visible', 'align')
@@ -222,14 +239,15 @@ def _load_font_sized(font_name: str, size: int) -> Tuple[Any, int]:
         logger.warning("Font file not found: %s, using fallback", font_name)
         return _load_fallback_font(size)
 
+    is_bdf = path.lower().endswith('.bdf')
     cache_key = (path, size)
-    cached = _font_cache.get(cache_key)
-    if cached is not None:
-        _font_cache.move_to_end(cache_key)
-        return cached
+    if not is_bdf:
+        cached = _cache_get(cache_key)
+        if cached is not None:
+            return cached
 
     try:
-        if path.lower().endswith('.bdf'):
+        if is_bdf:
             font, effective = _load_bdf(path, size)
         else:
             font, effective = load_truetype(path, size), size
@@ -238,7 +256,9 @@ def _load_font_sized(font_name: str, size: int) -> Tuple[Any, int]:
                        path, size, e)
         return _load_fallback_font(size)
 
-    _cache_put(cache_key, (font, effective))
+    # Not BDF: load_bdf_face caches those per thread (see _font_cache).
+    if not is_bdf:
+        _cache_put(cache_key, (font, effective))
     return font, effective
 
 
@@ -247,9 +267,8 @@ def _load_fallback_font(size: int) -> Tuple[Any, int]:
     path = resolve_font_path(_FALLBACK_FONT_NAME)
     if path is not None:
         cache_key = (path, size)
-        cached = _font_cache.get(cache_key)
+        cached = _cache_get(cache_key)
         if cached is not None:
-            _font_cache.move_to_end(cache_key)
             return cached
         try:
             entry = (load_truetype(path, size), size)
