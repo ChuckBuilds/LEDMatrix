@@ -34,7 +34,14 @@ class TestSharedHeaders:
         assert APIHelper().session.headers['User-Agent'] == USER_AGENT
 
     def test_api_helper_does_not_hand_set_brotli(self):
-        assert 'br' not in APIHelper().session.headers.get('Accept-Encoding', '')
+        # Accept-Encoding is left to requests, which advertises br only when
+        # a brotli decoder is installed (flask-compress pulls one in, so the
+        # web requirements do). What must not happen is core adding it by
+        # hand, advertising a body the client may not be able to read.
+        import requests
+        assert 'accept-encoding' not in _lower_keys(DEFAULT_HTTP_HEADERS)
+        assert (APIHelper().session.headers.get('Accept-Encoding')
+                == requests.utils.default_headers()['Accept-Encoding'])
 
     def test_logo_helper_sends_the_same_user_agent(self):
         from src.common.logo_helper import LogoHelper

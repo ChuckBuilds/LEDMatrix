@@ -9,7 +9,7 @@ improvements, and code changes.
 - **Bugs / feature requests**: open an issue using one of the templates
   in [`.github/ISSUE_TEMPLATE/`](.github/ISSUE_TEMPLATE/).
 - **Real-time discussion**: the
-  [LEDMatrix Discord](https://discord.gg/uW36dVAtcT).
+  [LEDMatrix Discord](https://discord.gg/RdrC37rEag).
 - **Plugin development**:
   [`docs/PLUGIN_DEVELOPMENT_GUIDE.md`](docs/PLUGIN_DEVELOPMENT_GUIDE.md)
   and the [`ledmatrix-plugins`](https://github.com/ChuckBuilds/ledmatrix-plugins)

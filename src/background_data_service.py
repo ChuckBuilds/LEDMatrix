@@ -103,6 +103,32 @@ class FetchResult:
     # FAILED, which turns "you cancelled this" into "this errored".
     final_status: Optional[FetchStatus] = None
 
+class _ConnectionRetryingSession:
+    """``session.get`` that retries a connection error a few times.
+
+    For ESPN date chunks, which bypass _make_request_with_retry: a failed
+    chunk is logged and skipped, so a brief network blip would otherwise drop
+    a month from a cached season. That protection used to come from the
+    session adapter's own retries, which every other request stacked with the
+    retry loop.
+    """
+
+    ATTEMPTS = 3
+    DELAY = 0.5
+
+    def __init__(self, session):
+        self._session = session
+
+    def get(self, *args, **kwargs):
+        for attempt in range(self.ATTEMPTS):
+            try:
+                return self._session.get(*args, **kwargs)
+            except requests.ConnectionError:
+                if attempt == self.ATTEMPTS - 1:
+                    raise
+                time.sleep(self.DELAY * (attempt + 1))
+
+
 class BackgroundDataService:
     """
     Background data service for fetching season data without blocking the main thread.
@@ -163,10 +189,16 @@ class BackgroundDataService:
             'average_fetch_time': 0.0
         }
         
-        # Session for HTTP requests
+        # Session for HTTP requests. No retries at the adapter: a fetch goes
+        # through _make_request_with_retry (max_retries + 1 attempts with
+        # exponential backoff, logged), and date-range chunks through
+        # _ConnectionRetryingSession. With the adapter also retrying
+        # connection errors three times, a dead network cost up to 16
+        # connection attempts per request and held one of the few worker
+        # threads for all of them.
         self.session = requests.Session()
-        self.session.mount('http://', requests.adapters.HTTPAdapter(max_retries=3))
-        self.session.mount('https://', requests.adapters.HTTPAdapter(max_retries=3))
+        self.session.mount('http://', requests.adapters.HTTPAdapter(max_retries=0))
+        self.session.mount('https://', requests.adapters.HTTPAdapter(max_retries=0))
         
         # Default headers: core's shared set (real User-Agent, no hand-set
         # Accept-Encoding) -- see src/common/api_helper.py.
@@ -564,7 +596,7 @@ class BackgroundDataService:
         """
         logger.info("Recovering %s %s from a rejected date range", request.sport, request.year)
         return fetch_espn_date_chunks(
-            self.session,
+            _ConnectionRetryingSession(self.session),
             request.url,
             params=request.params,
             headers=request.headers,

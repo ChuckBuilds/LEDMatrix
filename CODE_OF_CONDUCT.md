@@ -63,7 +63,7 @@ ChuckBuilds, and any other forums hosted by or affiliated with the project.
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
 reported to the community leaders responsible for enforcement on the
-[LEDMatrix Discord](https://discord.gg/uW36dVAtcT) (DM a moderator or
+[LEDMatrix Discord](https://discord.gg/RdrC37rEag) (DM a moderator or
 ChuckBuilds directly) or by opening a private GitHub Security Advisory if
 the issue involves account safety. All complaints will be reviewed and
 investigated promptly and fairly.

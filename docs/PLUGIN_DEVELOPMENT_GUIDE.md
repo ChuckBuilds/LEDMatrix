@@ -645,7 +645,7 @@ To have your plugin added to the official plugin store:
 
 3. **Contact maintainers** (own-repository plugins):
    - Open a GitHub issue in the [ledmatrix-plugins](https://github.com/ChuckBuilds/ledmatrix-plugins) repository
-   - Or reach out on Discord: https://discord.gg/uW36dVAtcT
+   - Or reach out on Discord: https://discord.gg/RdrC37rEag
    - Include: Repository URL, plugin description, why it's useful
 
 4. **Review process**:
